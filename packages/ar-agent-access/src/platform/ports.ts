@@ -57,6 +57,61 @@ export interface AgentSessionStorePort {
   delete(sessionId: string): Promise<void>;
 }
 
+export interface AgentMcpSessionRegistration {
+  sessionId: string;
+  tenantId: string;
+  grantId: string;
+  clientId: string;
+  actorSub: string;
+  createdAt: number;
+  idleExpiresAt: number;
+  absoluteExpiresAt: number;
+  maxConcurrentSessions: number;
+}
+
+export interface AgentMcpExpiredSession {
+  sessionId: string;
+  tenantId: string;
+  grantId: string;
+  clientId: string;
+}
+
+/**
+ * Cross-session admission registry. Implementations must make the concurrent-limit check and
+ * registration one atomic operation for each Grant/client scope.
+ */
+export interface AgentMcpSessionRegistryPort {
+  register(
+    input: AgentMcpSessionRegistration
+  ): Promise<'registered' | 'limit_exceeded' | 'conflict'>;
+  touch(input: {
+    sessionId: string;
+    tenantId: string;
+    grantId: string;
+    clientId: string;
+    now: number;
+    idleExpiresAt: number;
+  }): Promise<boolean>;
+  delete(input: {
+    sessionId: string;
+    tenantId: string;
+    grantId: string;
+    clientId: string;
+  }): Promise<void>;
+  listExpired(now: number, limit: number): Promise<AgentMcpExpiredSession[]>;
+}
+
+export interface AgentDiscoveryProfileSelection {
+  profileIds: string[];
+  updatedAt: number;
+}
+
+/** Session-local MCP discovery state. It can narrow but never expand the Grant's Tool ceiling. */
+export interface AgentDiscoveryProfileStorePort {
+  get(): Promise<AgentDiscoveryProfileSelection | null>;
+  put(selection: AgentDiscoveryProfileSelection): Promise<void>;
+}
+
 export interface AgentProtocolEvent {
   id: string;
   sessionId: string;
@@ -194,6 +249,25 @@ export interface AgentRateLimitResult {
 
 export interface AgentRateLimiterPort {
   consume(request: AgentRateLimitRequest): Promise<AgentRateLimitResult>;
+}
+
+export interface AgentMcpAdmissionAuditEvent {
+  eventType: string;
+  occurredAt: number;
+  correlationId: string;
+  outcome: 'success' | 'denied' | 'failed';
+  httpStatus: number;
+  method: string;
+  host: string;
+  tenantId?: string;
+  clientIpHash?: string;
+  sessionIdHash?: string;
+  details: JsonObject;
+}
+
+/** Security telemetry for the HTTP boundary before a verified Agent actor exists. */
+export interface AgentMcpAdmissionAuditPort {
+  write(event: AgentMcpAdmissionAuditEvent): Promise<void>;
 }
 
 /** Live tenant policy lookup. Implementations must reject unavailable or malformed stores. */

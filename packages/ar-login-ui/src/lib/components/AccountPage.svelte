@@ -5,12 +5,15 @@
 	import {
 		accountAPI,
 		type AccountConsent,
+		type AccountCapabilities,
 		type AccountDevice,
 		type AccountOperation,
 		type AccountPasskey,
 		type AccountProfile,
 		type AccountProfileSession,
 		type AccountSession,
+		type AccountPageScreen,
+		type AccountPageScreenField,
 		type AccountTotpCredential
 	} from '$lib/api/account';
 	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
@@ -31,6 +34,7 @@
 	} from '$lib/webauthn/signal';
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
+	import type { APIError } from '$lib/api/client';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 
 	let loading = $state(true);
@@ -50,10 +54,10 @@
 	let operations = $state<AccountOperation[]>([]);
 	let consents = $state<AccountConsent[]>([]);
 	let authenticationMethods = $state<AuthenticationMethods | null>(null);
+	let accountCapabilities = $state<AccountCapabilities | null>(null);
 	let accountError = $state('');
 	let profileError = $state('');
 	let consentError = $state('');
-	let consentActionLoading = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
 	let securityError = $state('');
@@ -75,9 +79,34 @@
 		| { type: 'add-totp'; label: string }
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
-		| { type: 'withdraw-consent'; consent: AccountConsent }
 		| null
 	>(null);
+
+	function localizeApiError(error: APIError | null | undefined, fallback: string): string {
+		if (!error) return fallback;
+		switch (error.error) {
+			case 'invalid_request':
+				return $LL.error_invalid_request();
+			case 'access_denied':
+				return $LL.error_access_denied();
+			case 'temporarily_unavailable':
+				return $LL.error_temporarily_unavailable();
+			case 'server_error':
+				return $LL.error_server_error();
+			case 'login_required':
+			case 'reauthentication_required':
+				return $LL.account_reauthRequired();
+			default:
+				return fallback;
+		}
+	}
+
+	function firstLocalizedApiError(
+		errors: Array<APIError | null | undefined>,
+		fallback: string
+	): string {
+		return localizeApiError(errors.find(Boolean), fallback);
+	}
 	let passkeyReauthAvailable = $derived(
 		Boolean(
 			passkeySupported &&
@@ -110,6 +139,91 @@
 				(authenticationMethods.totp.accountLinkEnabled ?? false))
 		)
 	);
+
+	function configuredScreen(screenKey: string): AccountPageScreen | null {
+		return (
+			accountCapabilities?.account_page?.screens.find(
+				(screen) => screen.screen_key === screenKey
+			) ?? null
+		);
+	}
+
+	function localizedPageCopy(): { title: string; description: string } {
+		const definition = accountCapabilities?.account_page?.definition;
+		const localized = definition?.localizations?.[getLocale()];
+		return {
+			title: localized?.title || definition?.title || $LL.account_title(),
+			description: localized?.description || definition?.description || ''
+		};
+	}
+
+	function placementVisible(condition: string): boolean {
+		switch (condition) {
+			case 'hidden':
+				return false;
+			case 'passkey_enabled':
+				return Boolean(authenticationMethods?.passkey?.enabled);
+			case 'totp_enabled':
+				return totpManagementEnabled;
+			case 'external_idp_enabled':
+				return Boolean(authenticationMethods?.external?.enabled);
+			case 'consent_records_available':
+				return consents.length > 0;
+			case 'multiple_sessions':
+				return sessions.length > 1;
+			default:
+				return true;
+		}
+	}
+
+	function safeHref(value: string | null | undefined): string | null {
+		if (!value) return null;
+		if (/^#[a-zA-Z][\w-]*$/u.test(value) || /^\/(?!\/)/u.test(value)) return value;
+		try {
+			const url = new URL(value);
+			return url.protocol === 'https:' ? url.toString() : null;
+		} catch {
+			return null;
+		}
+	}
+
+	function localizedScreenFields(screen: AccountPageScreen): AccountPageScreenField[] {
+		const language = getLocale();
+		const localized = screen.localizations?.[language]?.fields ?? {};
+		return [...screen.fields]
+			.sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+			.map((field, index) => {
+				const key = field.block_id ?? `${field.field}-${index}`;
+				return { ...field, ...(localized[key] ?? {}) };
+			});
+	}
+
+	function accountWidgetTitle(field: AccountPageScreenField): string {
+		const defaultTitles: Partial<
+			Record<NonNullable<AccountPageScreenField['block_type']>, string>
+		> = {
+			account_profile_widget: $LL.account_profileTitle(),
+			account_device_list_widget: $LL.account_devices(),
+			account_session_widget: $LL.account_sessions(),
+			account_passkey_widget: $LL.account_passkeys(),
+			account_totp_widget: $LL.account_totp(),
+			account_consent_widget: $LL.account_consentTitle(),
+			account_activity_widget: $LL.account_activityTitle(),
+			account_social_account_widget: $LL.account_socialAccounts()
+		};
+		const title = defaultTitles[field.block_type ?? 'text'];
+		const defaultLabels = new Set([
+			'User profile',
+			'Devices',
+			'Sessions',
+			'Passkeys',
+			'Authenticator app',
+			'Consent information',
+			'Account activity',
+			'Connected accounts'
+		]);
+		return !field.label || defaultLabels.has(field.label) ? (title ?? field.label) : field.label;
+	}
 
 	function isDedicatedLoginUiHostname(hostname: string): boolean {
 		const firstLabel = hostname.split('.')[0]?.toLowerCase() ?? '';
@@ -163,6 +277,15 @@
 		loading = false;
 	});
 
+	onMount(() => {
+		const handleLocaleChange = (event: Event) => {
+			const locale = (event as CustomEvent<{ locale?: string }>).detail?.locale;
+			if (locale) void refreshLocalizedAccountData(locale);
+		};
+		window.addEventListener('authrim:locale-change', handleLocaleChange);
+		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
+	});
+
 	async function detectPasskeySupport(): Promise<boolean> {
 		return window.isSecureContext && window.PublicKeyCredential !== undefined;
 	}
@@ -202,7 +325,7 @@
 			accountAPI.getPasskeys(),
 			accountAPI.getTotpCredentials(),
 			accountAPI.getOperations(),
-			accountAPI.getConsents(),
+			accountAPI.getConsents(getLocale()),
 			accountAPI.getCapabilities()
 		]);
 
@@ -210,7 +333,7 @@
 			if (profileResult.error.error === 'unauthorized') {
 				return 'unauthorized';
 			}
-			accountError = profileResult.error.error_description || profileResult.error.error;
+			accountError = localizeApiError(profileResult.error, $LL.account_loadFailed());
 			return 'error';
 		}
 		profile = profileResult.data?.profile ?? null;
@@ -224,11 +347,14 @@
 		totpBackupCodes = totpResult.data?.backup_codes ?? { total: 0, remaining: 0 };
 		operations = operationsResult.data?.operations ?? [];
 		consents = consentsResult.data?.consents ?? [];
+		accountCapabilities = capabilitiesResult.data ?? null;
 		await Promise.all([
 			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
 			signalCurrentUserDetails(profile)
 		]);
-		consentError = consentsResult.error?.error_description || consentsResult.error?.error || '';
+		consentError = consentsResult.error
+			? localizeApiError(consentsResult.error, $LL.account_loadFailed())
+			: '';
 		if (
 			devicesResult.error ||
 			sessionsResult.error ||
@@ -237,16 +363,29 @@
 			operationsResult.error ||
 			capabilitiesResult.error
 		) {
-			securityError =
-				devicesResult.error?.error_description ||
-				sessionsResult.error?.error_description ||
-				passkeysResult.error?.error_description ||
-				totpResult.error?.error_description ||
-				operationsResult.error?.error_description ||
-				capabilitiesResult.error?.error_description ||
-				$LL.account_loadFailed();
+			securityError = firstLocalizedApiError(
+				[
+					devicesResult.error,
+					sessionsResult.error,
+					passkeysResult.error,
+					totpResult.error,
+					operationsResult.error,
+					capabilitiesResult.error
+				],
+				$LL.account_loadFailed()
+			);
 		}
 		return 'ok';
+	}
+
+	async function refreshLocalizedAccountData(locale: string) {
+		const result = await accountAPI.getConsents(locale);
+		if (result.data) {
+			consents = result.data.consents;
+			consentError = '';
+		} else if (result.error) {
+			consentError = localizeApiError(result.error, $LL.account_loadFailed());
+		}
 	}
 
 	async function refreshSecurity() {
@@ -268,13 +407,16 @@
 			totpBackupCodes = totpResult.data?.backup_codes ?? totpBackupCodes;
 			operations = operationsResult.data?.operations ?? operations;
 			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
-			securityError =
-				devicesResult.error?.error_description ||
-				sessionsResult.error?.error_description ||
-				passkeysResult.error?.error_description ||
-				totpResult.error?.error_description ||
-				operationsResult.error?.error_description ||
-				'';
+			const refreshErrors = [
+				devicesResult.error,
+				sessionsResult.error,
+				passkeysResult.error,
+				totpResult.error,
+				operationsResult.error
+			];
+			securityError = refreshErrors.some(Boolean)
+				? firstLocalizedApiError(refreshErrors, $LL.account_loadFailed())
+				: '';
 		} finally {
 			securityLoading = false;
 		}
@@ -315,50 +457,6 @@
 			await deleteTotpCredential(pending.id, pending.code);
 		} else if (pending?.type === 'regenerate-totp-backup-codes') {
 			await regenerateTotpBackupCodes(pending.code);
-		} else if (pending?.type === 'withdraw-consent') {
-			await withdrawConsent(pending.consent, false);
-		}
-	}
-
-	async function withdrawConsent(consent: AccountConsent, confirm = true) {
-		const kind = consent.kind === 'oauth_client' ? 'oauth_client' : consent.recordType;
-		if (
-			confirm &&
-			!window.confirm(
-				consent.recordType === 'document_acceptance'
-					? getLocale() === 'ja'
-						? '同じ文書バージョンを利用するすべてのサービスに影響します。同意を取り下げますか？'
-						: 'This acceptance is shared by every service using the same document version. Withdraw it?'
-					: getLocale() === 'ja'
-						? 'このサービスへの情報提供の許可を取り下げますか？'
-						: 'Withdraw this service release grant?'
-			)
-		) {
-			return;
-		}
-		consentActionLoading = consent.id;
-		consentError = '';
-		try {
-			const result = await accountAPI.withdrawConsent(kind, consent.id);
-			if (result.error) {
-				if (result.error.error === 'reauth_required') {
-					requestReauth({ type: 'withdraw-consent', consent });
-					return;
-				}
-				consentError = handleApiError(result.error.error_description, $LL.account_actionFailed());
-				return;
-			}
-			const refreshed = await accountAPI.getConsents();
-			if (refreshed.error) {
-				consentError = handleApiError(
-					refreshed.error.error_description,
-					$LL.account_actionFailed()
-				);
-				return;
-			}
-			consents = refreshed.data?.consents ?? [];
-		} finally {
-			consentActionLoading = '';
 		}
 	}
 
@@ -369,10 +467,7 @@
 		try {
 			const optionsResult = await accountAPI.createPasskeyReauthOptions();
 			if (optionsResult.error) {
-				reauthError = handleApiError(
-					optionsResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				reauthError = localizeApiError(optionsResult.error, $LL.account_actionFailed());
 				return;
 			}
 
@@ -384,10 +479,7 @@
 				credential
 			);
 			if (completeResult.error) {
-				reauthError = handleApiError(
-					completeResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				reauthError = localizeApiError(completeResult.error, $LL.account_actionFailed());
 				return;
 			}
 
@@ -406,7 +498,7 @@
 		try {
 			const result = await accountAPI.sendEmailCodeReauth();
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			emailReauthChallengeId = result.data!.challenge_id;
@@ -430,7 +522,7 @@
 				emailReauthCode
 			);
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await finishReauth();
@@ -448,7 +540,7 @@
 		try {
 			const result = await accountAPI.completeTotpReauth(totpReauthCode.trim());
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await finishReauth();
@@ -459,10 +551,6 @@
 		}
 	}
 
-	function handleApiError(message: string | undefined, fallback: string): string {
-		return message || fallback;
-	}
-
 	async function saveProfileName(name: string) {
 		profileError = '';
 		profileSaved = false;
@@ -470,7 +558,7 @@
 		try {
 			const result = await accountAPI.updateProfileName(name);
 			if (result.error) {
-				profileError = handleApiError(result.error.error_description, $LL.account_saveFailed());
+				profileError = localizeApiError(result.error, $LL.account_saveFailed());
 				return;
 			}
 			profile = result.data?.profile ?? profile;
@@ -489,7 +577,7 @@
 		try {
 			const result = await accountAPI.revokeSession(id);
 			if (result.error) {
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			if (result.data?.session.current) {
@@ -516,10 +604,7 @@
 					requestReauth({ type: 'add-passkey', deviceName });
 					return;
 				}
-				securityError = handleApiError(
-					optionsResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				securityError = localizeApiError(optionsResult.error, $LL.account_actionFailed());
 				return;
 			}
 			const credential = await startRegistration({
@@ -534,10 +619,7 @@
 				if (shouldSignalUnknownCredentialAfterRegistrationFailure(completeResult.error)) {
 					await signalUnknownCredential(credential.id);
 				}
-				securityError = handleApiError(
-					completeResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				securityError = localizeApiError(completeResult.error, $LL.account_actionFailed());
 				return;
 			}
 			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
@@ -565,7 +647,7 @@
 					securityError = $LL.account_remainingLoginMethodRequired();
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await signalAllAcceptedCredentials(result.data?.webauthn_signal);
@@ -587,7 +669,7 @@
 					requestReauth({ type: 'add-totp', label });
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			if (!result.data) return;
@@ -613,7 +695,7 @@
 				code.trim()
 			);
 			if (result.error) {
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			totpEnrollment = {
@@ -642,7 +724,7 @@
 					securityError = $LL.account_remainingLoginMethodRequired();
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await refreshSecurity();
@@ -663,7 +745,7 @@
 					requestReauth({ type: 'regenerate-totp-backup-codes', code });
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				securityError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			totpEnrollment = {
@@ -708,7 +790,12 @@
 			<header class="account-header">
 				<div>
 					<p class="account-kicker">Authrim</p>
-					<h1>{$LL.account_title()}</h1>
+					<h1>{localizedPageCopy().title}</h1>
+					{#if localizedPageCopy().description}
+						<p class="account-description">
+							{localizedPageCopy().description}
+						</p>
+					{/if}
 				</div>
 				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
 					{$LL.header_logout()}
@@ -721,7 +808,10 @@
 			<header class="account-header">
 				<div>
 					<p class="account-kicker">Authrim</p>
-					<h1>{$LL.account_title()}</h1>
+					<h1>{localizedPageCopy().title}</h1>
+					{#if localizedPageCopy().description}<p class="account-description">
+							{localizedPageCopy().description}
+						</p>{/if}
 				</div>
 				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
 					{$LL.header_logout()}
@@ -729,44 +819,236 @@
 			</header>
 
 			<section class="account-grid">
-				<AccountProfileSection
-					{profile}
-					saving={profileSaving}
-					error={profileError}
-					saved={profileSaved}
-					onSave={saveProfileName}
-				/>
-				<AccountSecuritySection
-					{devices}
-					{sessions}
-					{passkeys}
-					{totpCredentials}
-					{totpBackupCodes}
-					{totpEnrollment}
-					loading={securityLoading}
-					{actionLoading}
-					error={securityError}
-					{reauthNeeded}
-					{passkeySupported}
-					{totpManagementEnabled}
-					onRefresh={refreshSecurity}
-					onRevokeSession={revokeSession}
-					onAddPasskey={addPasskey}
-					onDeletePasskey={deletePasskey}
-					onStartTotpEnrollment={startTotpEnrollment}
-					onActivateTotpEnrollment={activateTotpEnrollment}
-					onDeleteTotpCredential={deleteTotpCredential}
-					onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-					onClearTotpEnrollment={() => (totpEnrollment = null)}
-					onReauth={() => requestReauth()}
-				/>
-				<AccountConsentSection
-					{consents}
-					error={consentError}
-					withdrawingId={consentActionLoading}
-					onWithdraw={withdrawConsent}
-				/>
-				<AccountActivitySection {operations} />
+				{#if accountCapabilities?.account_page}
+					{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item.condition)) as placement (placement.id)}
+						{@const screen = configuredScreen(placement.screen_key)}
+						{#if screen}
+							<section
+								id={placement.id}
+								class="account-screen"
+								class:full={placement.width === 'full'}
+							>
+								{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
+									{#if field.block_type !== 'layout_row'}
+										<div
+											class="account-screen__block"
+											style={placement.width === 'full' &&
+											(field.layout_column === 1 || field.layout_column === 2)
+												? `grid-column: ${field.layout_column};`
+												: undefined}
+										>
+											{#if field.block_type === 'heading'}
+												<header class="account-screen__heading">
+													<h2>{field.label}</h2>
+													{#if field.text}<p>{field.text}</p>{/if}
+												</header>
+											{:else if field.block_type === 'text'}
+												<p class="account-screen__text">{field.text || field.label}</p>
+											{:else if field.block_type === 'link' && safeHref(field.href)}
+												<a class="account-screen__link" href={safeHref(field.href) ?? '#'}
+													>{field.label}</a
+												>
+											{:else if field.block_type === 'divider'}
+												<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
+											{:else if field.block_type === 'account_profile_widget'}
+												<AccountProfileSection
+													{profile}
+													title={accountWidgetTitle(field)}
+													saving={profileSaving}
+													error={profileError}
+													saved={profileSaved}
+													onSave={saveProfileName}
+												/>
+											{:else if field.block_type === 'account_consent_widget'}
+												<AccountConsentSection
+													{consents}
+													title={accountWidgetTitle(field)}
+													error={consentError}
+												/>
+											{:else if field.block_type === 'account_activity_widget'}
+												<AccountActivitySection {operations} title={accountWidgetTitle(field)} />
+											{:else if field.block_type === 'account_device_list_widget'}
+												<AccountSecuritySection
+													{devices}
+													{sessions}
+													{passkeys}
+													{totpCredentials}
+													{totpBackupCodes}
+													{totpEnrollment}
+													areas={['devices']}
+													title={accountWidgetTitle(field)}
+													showSectionHeadings={false}
+													loading={securityLoading}
+													{actionLoading}
+													error={securityError}
+													{reauthNeeded}
+													{passkeySupported}
+													{totpManagementEnabled}
+													onRefresh={refreshSecurity}
+													onRevokeSession={revokeSession}
+													onAddPasskey={addPasskey}
+													onDeletePasskey={deletePasskey}
+													onStartTotpEnrollment={startTotpEnrollment}
+													onActivateTotpEnrollment={activateTotpEnrollment}
+													onDeleteTotpCredential={deleteTotpCredential}
+													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+													onClearTotpEnrollment={() => (totpEnrollment = null)}
+													onReauth={() => requestReauth()}
+												/>
+											{:else if field.block_type === 'account_session_widget'}
+												<AccountSecuritySection
+													{devices}
+													{sessions}
+													{passkeys}
+													{totpCredentials}
+													{totpBackupCodes}
+													{totpEnrollment}
+													areas={['sessions']}
+													title={accountWidgetTitle(field)}
+													showSectionHeadings={false}
+													loading={securityLoading}
+													{actionLoading}
+													error={securityError}
+													{reauthNeeded}
+													{passkeySupported}
+													{totpManagementEnabled}
+													onRefresh={refreshSecurity}
+													onRevokeSession={revokeSession}
+													onAddPasskey={addPasskey}
+													onDeletePasskey={deletePasskey}
+													onStartTotpEnrollment={startTotpEnrollment}
+													onActivateTotpEnrollment={activateTotpEnrollment}
+													onDeleteTotpCredential={deleteTotpCredential}
+													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+													onClearTotpEnrollment={() => (totpEnrollment = null)}
+													onReauth={() => requestReauth()}
+												/>
+											{:else if field.block_type === 'account_passkey_widget'}
+												<AccountSecuritySection
+													{devices}
+													{sessions}
+													{passkeys}
+													{totpCredentials}
+													{totpBackupCodes}
+													{totpEnrollment}
+													areas={['passkeys']}
+													title={accountWidgetTitle(field)}
+													showSectionHeadings={false}
+													loading={securityLoading}
+													{actionLoading}
+													error={securityError}
+													{reauthNeeded}
+													{passkeySupported}
+													{totpManagementEnabled}
+													onRefresh={refreshSecurity}
+													onRevokeSession={revokeSession}
+													onAddPasskey={addPasskey}
+													onDeletePasskey={deletePasskey}
+													onStartTotpEnrollment={startTotpEnrollment}
+													onActivateTotpEnrollment={activateTotpEnrollment}
+													onDeleteTotpCredential={deleteTotpCredential}
+													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+													onClearTotpEnrollment={() => (totpEnrollment = null)}
+													onReauth={() => requestReauth()}
+												/>
+											{:else if field.block_type === 'account_totp_widget'}
+												<AccountSecuritySection
+													{devices}
+													{sessions}
+													{passkeys}
+													{totpCredentials}
+													{totpBackupCodes}
+													{totpEnrollment}
+													areas={['totp']}
+													title={accountWidgetTitle(field)}
+													showSectionHeadings={false}
+													loading={securityLoading}
+													{actionLoading}
+													error={securityError}
+													{reauthNeeded}
+													{passkeySupported}
+													{totpManagementEnabled}
+													onRefresh={refreshSecurity}
+													onRevokeSession={revokeSession}
+													onAddPasskey={addPasskey}
+													onDeletePasskey={deletePasskey}
+													onStartTotpEnrollment={startTotpEnrollment}
+													onActivateTotpEnrollment={activateTotpEnrollment}
+													onDeleteTotpCredential={deleteTotpCredential}
+													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+													onClearTotpEnrollment={() => (totpEnrollment = null)}
+													onReauth={() => requestReauth()}
+												/>
+											{:else if field.block_type === 'account_social_account_widget'}
+												<AccountSecuritySection
+													{devices}
+													{sessions}
+													{passkeys}
+													{totpCredentials}
+													{totpBackupCodes}
+													{totpEnrollment}
+													areas={['social']}
+													title={accountWidgetTitle(field)}
+													showSectionHeadings={false}
+													loading={securityLoading}
+													{actionLoading}
+													error={securityError}
+													{reauthNeeded}
+													{passkeySupported}
+													{totpManagementEnabled}
+													onRefresh={refreshSecurity}
+													onRevokeSession={revokeSession}
+													onAddPasskey={addPasskey}
+													onDeletePasskey={deletePasskey}
+													onStartTotpEnrollment={startTotpEnrollment}
+													onActivateTotpEnrollment={activateTotpEnrollment}
+													onDeleteTotpCredential={deleteTotpCredential}
+													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+													onClearTotpEnrollment={() => (totpEnrollment = null)}
+													onReauth={() => requestReauth()}
+												/>
+											{/if}
+										</div>
+									{/if}
+								{/each}
+							</section>
+						{/if}
+					{/each}
+				{:else}
+					<AccountProfileSection
+						{profile}
+						saving={profileSaving}
+						error={profileError}
+						saved={profileSaved}
+						onSave={saveProfileName}
+					/>
+					<AccountSecuritySection
+						{devices}
+						{sessions}
+						{passkeys}
+						{totpCredentials}
+						{totpBackupCodes}
+						{totpEnrollment}
+						loading={securityLoading}
+						{actionLoading}
+						error={securityError}
+						{reauthNeeded}
+						{passkeySupported}
+						{totpManagementEnabled}
+						onRefresh={refreshSecurity}
+						onRevokeSession={revokeSession}
+						onAddPasskey={addPasskey}
+						onDeletePasskey={deletePasskey}
+						onStartTotpEnrollment={startTotpEnrollment}
+						onActivateTotpEnrollment={activateTotpEnrollment}
+						onDeleteTotpCredential={deleteTotpCredential}
+						onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+						onClearTotpEnrollment={() => (totpEnrollment = null)}
+						onReauth={() => requestReauth()}
+					/>
+					<AccountConsentSection {consents} error={consentError} />
+					<AccountActivitySection {operations} />
+				{/if}
 			</section>
 		</div>
 	{/if}
@@ -865,81 +1147,19 @@
 
 <style>
 	.account-shell {
-		--account-card-bg: #fefdfa;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #f7f3ec;
-		--account-primary-bg: #2c2724;
-		--account-primary-hover: #1a1715;
-		--account-modal-bg: #fffaf3;
-		--account-modal-border: #ded4c5;
+		--account-card-bg: var(--bg-card, #fefdfa);
+		--account-control-bg: var(--bg-input, #ffffff);
+		--account-control-hover: var(--surface-muted, var(--bg-subtle, #f7f3ec));
+		--account-primary-bg: var(--button-primary-bg, var(--primary, #2c2724));
+		--account-primary-hover: var(--primary-hover, #1a1715);
+		--account-modal-bg: var(--bg-card, #fffaf3);
+		--account-modal-border: var(--border, #ded4c5);
 
-		min-height: 100vh;
+		min-height: 100dvh;
 		background: var(--bg-page);
 		color: var(--text-primary);
 		isolation: isolate;
 		padding: 24px;
-	}
-
-	:global([data-theme='light'][data-variant='blue-gray'] .account-shell) {
-		--account-card-bg: #f8fafc;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #eef4fb;
-		--account-primary-bg: #3b82f6;
-		--account-primary-hover: #2563eb;
-		--account-modal-bg: #ffffff;
-		--account-modal-border: #d8e2ef;
-	}
-
-	:global([data-theme='light'][data-variant='green'] .account-shell) {
-		--account-card-bg: #f8fcf8;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #edf8ef;
-		--account-primary-bg: #10b981;
-		--account-primary-hover: #059669;
-		--account-modal-bg: #ffffff;
-		--account-modal-border: #d8eadb;
-	}
-
-	:global([data-theme='dark'] .account-shell) {
-		--account-card-bg: #2d2824;
-		--account-control-bg: #3c3630;
-		--account-control-hover: #463f38;
-		--account-primary-bg: #c8b8a8;
-		--account-primary-hover: #d4c4b4;
-		--account-modal-bg: #211d19;
-		--account-modal-border: #4f463d;
-	}
-
-	:global([data-theme='dark'][data-variant='navy'] .account-shell) {
-		--account-card-bg: #232c38;
-		--account-control-bg: #2d3748;
-		--account-control-hover: #344257;
-		--account-primary-bg: #6495ed;
-		--account-primary-hover: #93c5fd;
-		--account-modal-bg: #182231;
-		--account-modal-border: #3c4a5f;
-	}
-
-	:global([data-theme='dark'][data-variant='slate'] .account-shell) {
-		--account-card-bg: #2d343c;
-		--account-control-bg: #374151;
-		--account-control-hover: #414d5f;
-		--account-primary-bg: #94a3b8;
-		--account-primary-hover: #cbd5e1;
-		--account-modal-bg: #202832;
-		--account-modal-border: #4a5565;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		:global(:root:not([data-theme]) .account-shell) {
-			--account-card-bg: #2d2824;
-			--account-control-bg: #3c3630;
-			--account-control-hover: #463f38;
-			--account-primary-bg: #c8b8a8;
-			--account-primary-hover: #d4c4b4;
-			--account-modal-bg: #211d19;
-			--account-modal-border: #4f463d;
-		}
 	}
 
 	:global(.account-shell .card),
@@ -1019,7 +1239,7 @@
 	}
 
 	.account-layout {
-		width: min(720px, 100%);
+		width: min(1040px, 100%);
 		margin: 0 auto;
 	}
 
@@ -1028,6 +1248,14 @@
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: 24px;
+	}
+
+	.account-description {
+		max-width: 60ch;
+		margin: 6px 0 0;
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		line-height: 1.6;
 	}
 
 	.account-kicker {
@@ -1046,8 +1274,57 @@
 
 	.account-grid {
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 16px;
+	}
+
+	.account-screen {
+		display: grid;
+		min-width: 0;
+		gap: 12px;
+	}
+
+	.account-screen.full {
+		grid-column: 1 / -1;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.account-screen__block {
+		min-width: 0;
+		grid-column: 1 / -1;
+	}
+
+	.account-screen__heading h2,
+	.account-screen__heading p,
+	.account-screen__text {
+		margin: 0;
+	}
+
+	.account-screen__heading h2 {
+		font-size: 1.05rem;
+	}
+
+	.account-screen__heading p,
+	.account-screen__text {
+		margin-top: 4px;
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		line-height: 1.65;
+	}
+
+	.account-screen__divider {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+
+	.account-screen__divider::before,
+	.account-screen__divider::after {
+		content: '';
+		flex: 1;
+		border-top: 1px solid var(--border);
 	}
 
 	.account-error {
@@ -1141,5 +1418,29 @@
 		font: inherit;
 		letter-spacing: 0.08em;
 		padding: 0 14px;
+	}
+
+	@media (max-width: 760px) {
+		.account-shell {
+			padding: 16px;
+		}
+
+		.account-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.account-screen.full {
+			grid-column: auto;
+			grid-template-columns: 1fr;
+		}
+
+		.account-screen__block {
+			grid-column: 1 !important;
+		}
+
+		.account-header {
+			align-items: flex-start;
+			gap: 16px;
+		}
 	}
 </style>

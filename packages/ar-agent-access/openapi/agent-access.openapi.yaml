@@ -36,7 +36,9 @@ paths:
       summary: Return readiness status.
       responses:
         '200':
-          $ref: '#/components/responses/Health'
+          $ref: '#/components/responses/Readiness'
+        '503':
+          $ref: '#/components/responses/Readiness'
   /mcp:
     parameters:
       - $ref: '#/components/parameters/McpProtocolVersion'
@@ -52,6 +54,7 @@ paths:
         - $ref: '#/components/parameters/DpopProof'
       requestBody:
         required: true
+        description: Exactly one JSON-RPC object, with a maximum encoded body size of 1 MiB. JSON-RPC batch arrays are rejected.
         content:
           application/json:
             schema:
@@ -75,6 +78,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/Unavailable'
     get:
@@ -106,6 +111,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
     delete:
       tags: [MCP]
       operationId: terminateMcpSession
@@ -128,6 +137,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   securitySchemes:
     oauth2:
@@ -201,6 +214,26 @@ components:
               service:
                 type: string
                 const: ar-agent-access
+    Readiness:
+      description: Required storage, Durable Object, service binding, and secret readiness.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [status, service, checks]
+            properties:
+              status:
+                type: string
+                enum: [ok, unavailable]
+              service:
+                type: string
+                const: ar-agent-access
+              checks:
+                type: object
+                additionalProperties:
+                  type: string
+                  enum: [ok, unavailable]
     ProtocolError:
       description: Invalid Streamable HTTP or MCP version contract.
       content:
@@ -225,6 +258,16 @@ components:
             $ref: '#/components/schemas/Error'
     NotFound:
       description: Agent MCP is disabled or the session does not exist.
+    RateLimited:
+      description: Request, session initialization, or concurrent-session admission limit exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonRpcEnvelope'
     Unavailable:
       description: Live authorization state is unavailable; the request fails closed.
       content:

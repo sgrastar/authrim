@@ -95,7 +95,7 @@ describe('authentication methods API', () => {
 		expect(authrimFetchMock).toHaveBeenCalledTimes(1);
 	});
 
-	it('reloads the HTTP cache on a fresh page request while retaining the in-memory TTL cache', async () => {
+	it('allows the HTTP cache on a fresh page request while retaining the in-memory TTL cache', async () => {
 		const { fetchAuthenticationMethods } = await loadApi();
 		authrimFetchMock.mockResolvedValueOnce(
 			new Response(JSON.stringify(createAuthenticationMethodsResponse()), {
@@ -108,7 +108,8 @@ describe('authentication methods API', () => {
 
 		expect(authrimFetchMock).toHaveBeenCalledWith(
 			'/api/auth/authentication-methods',
-			expect.objectContaining({ cache: 'reload', method: 'GET' })
+			expect.objectContaining({ method: 'GET' })
 		);
+		expect(authrimFetchMock.mock.calls[0]?.[1]).not.toMatchObject({ cache: 'reload' });
 	});
 });

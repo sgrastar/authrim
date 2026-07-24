@@ -1,5 +1,10 @@
 import type { RequestEvent } from '@sveltejs/kit';
 
+import {
+	createLoginUiRuntimeContractPreview,
+	getNewFlowTemplate
+} from '$lib/admin/new-flow-templates';
+
 const DEV_ADMIN_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
 const DEV_ADMIN_MOCK_SENTINEL = '__AUTHRIM_ADMIN_UI_DEV_MOCK_SENTINEL__';
 const TENANT_ID = 'dev-tenant';
@@ -373,6 +378,22 @@ interface DevSettings {
 	version: string;
 	values: Record<string, unknown>;
 	sources: Record<string, 'default' | 'kv' | 'env'>;
+}
+
+interface DevScreen {
+	id: string;
+	tenant_id: string;
+	screen_key: string;
+	display_name: string;
+	description: string;
+	screen_kind: string;
+	fields: Array<Record<string, unknown>>;
+	localizations: Record<string, unknown>;
+	settings: Record<string, unknown>;
+	is_active: number;
+	is_system: number;
+	created_at: number;
+	updated_at: number;
 }
 
 interface DevStorageDestination {
@@ -3077,7 +3098,12 @@ function devFlowEditor(
 }
 
 function devRuntimeNodeShouldRender(type: unknown): boolean {
-	return type !== 'entry' && type !== 'session_check' && type !== 'account_action';
+	return (
+		type !== 'entry' &&
+		type !== 'session_check' &&
+		type !== 'account_action' &&
+		type !== 'condition'
+	);
 }
 
 function devFlowRuntime(
@@ -3124,6 +3150,8 @@ function devRuntimeComponentForNode(type: string): string {
 			return 'account_action';
 		case 'complete':
 			return 'completion';
+		case 'condition':
+			return 'condition';
 		default:
 			return 'interaction_context';
 	}
@@ -3133,9 +3161,9 @@ function installDevFlow(
 	id: string,
 	kind: 'login' | 'registration',
 	displayName: string,
-	options: { noConsent?: boolean; templateId?: string } = {}
+	options: { noConsent?: boolean; templateId?: string; editor?: Record<string, unknown> } = {}
 ) {
-	const editor = devFlowEditor(kind, { noConsent: options.noConsent });
+	const editor = options.editor ?? devFlowEditor(kind, { noConsent: options.noConsent });
 	const runtime = devFlowRuntime(id, kind, editor);
 	const publishedVersionId = `${id}-version-1`;
 	flows.set(id, {
@@ -3200,6 +3228,14 @@ installDevFlow(
 		templateId: 'default-registration-no-consent'
 	}
 );
+const samlSpOidcRpTemplate = getNewFlowTemplate('saml-sp-oidc-rp');
+if (!samlSpOidcRpTemplate) {
+	throw new Error('Missing SAML SP/OIDC RP Flow template');
+}
+installDevFlow('flow-saml-sp-oidc-rp', 'login', 'SAML SP/OIDC RP Flow', {
+	templateId: 'saml-sp-oidc-rp',
+	editor: createLoginUiRuntimeContractPreview(samlSpOidcRpTemplate).editor
+});
 flowAssignments.set(flowAssignmentKey('tenant', null, 'login'), {
 	id: 'flow-assignment-default-login',
 	tenant_id: TENANT_ID,
@@ -3405,6 +3441,9 @@ let agentAccessSettings: {
 	maxTokenTtlSeconds: number;
 	elevationMode: 'self_reauth' | 'approval' | 'both';
 	elevationTtlSeconds: number;
+	requestRateLimitPerMinute: number;
+	sessionInitializationRateLimitPerMinute: number;
+	maxConcurrentSessions: number;
 	rateLimitPerMinute: number;
 	publicClientStandardRateLimitPerMinute: number;
 	highRiskPermissionsAdditional: string[];
@@ -3415,7 +3454,10 @@ let agentAccessSettings: {
 	maxTokenTtlSeconds: 600,
 	elevationMode: 'self_reauth',
 	elevationTtlSeconds: 180,
-	rateLimitPerMinute: 60,
+	requestRateLimitPerMinute: 600,
+	sessionInitializationRateLimitPerMinute: 30,
+	maxConcurrentSessions: 20,
+	rateLimitPerMinute: 120,
 	publicClientStandardRateLimitPerMinute: 10,
 	highRiskPermissionsAdditional: [] as string[],
 	publicClientStandardToolIds: [] as string[],
@@ -3532,6 +3574,60 @@ const settings = new Map<string, DevSettings>([
 		}
 	]
 ]);
+
+const accountScreenPresets = [
+	['overview', 'account_overview', 'Account overview', 'アカウント概要', 'heading'],
+	['profile', 'account_profile', 'User profile', 'ユーザー情報', 'account_profile_widget'],
+	['devices', 'account_devices', 'Devices', 'デバイス', 'account_device_list_widget'],
+	['sessions', 'account_sessions', 'Sessions', 'セッション', 'account_session_widget'],
+	['passkeys', 'account_passkeys', 'Passkeys', 'Passkey', 'account_passkey_widget'],
+	['totp', 'account_totp', 'Authenticator app', '認証アプリ', 'account_totp_widget'],
+	['consents', 'account_consents', 'Consents', '同意情報', 'account_consent_widget'],
+	['activity', 'account_activity', 'Account activity', '操作履歴', 'account_activity_widget'],
+	[
+		'social-accounts',
+		'account_social_accounts',
+		'Connected accounts',
+		'外部アカウント',
+		'account_social_account_widget'
+	],
+	['custom', 'account_custom', 'Custom guidance', 'カスタム案内', 'text']
+] as const;
+
+const devScreens = new Map<string, DevScreen>(
+	accountScreenPresets.map(([id, screenKey, displayName, jaDisplayName, blockType]) => [
+		`dev-account-${id}`,
+		{
+			id: `dev-account-${id}`,
+			tenant_id: TENANT_ID,
+			screen_key: screenKey,
+			display_name: displayName,
+			description: `${displayName} account screen`,
+			screen_kind: 'account',
+			fields: [
+				{
+					field: id,
+					label: displayName,
+					required: false,
+					block_type: blockType,
+					block_id: `${id}-widget`,
+					order: 0
+				}
+			],
+			localizations: {
+				ja: {
+					display_name: jaDisplayName,
+					fields: { [`${id}-widget`]: { label: jaDisplayName } }
+				}
+			},
+			settings: { canvas_layout: 'wide' },
+			is_active: 1,
+			is_system: 1,
+			created_at: NOW,
+			updated_at: NOW
+		}
+	])
+);
 
 const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 	[
@@ -9432,6 +9528,11 @@ async function handleAgentAccess(
 						? input.elevationMode
 						: 'self_reauth',
 				elevationTtlSeconds: Number(input.elevationTtlSeconds),
+				requestRateLimitPerMinute: Number(input.requestRateLimitPerMinute),
+				sessionInitializationRateLimitPerMinute: Number(
+					input.sessionInitializationRateLimitPerMinute
+				),
+				maxConcurrentSessions: Number(input.maxConcurrentSessions),
 				rateLimitPerMinute: Number(input.rateLimitPerMinute),
 				publicClientStandardRateLimitPerMinute: Number(
 					input.publicClientStandardRateLimitPerMinute
@@ -10719,6 +10820,74 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			});
 		}
 	}
+	return null;
+}
+
+async function handleScreens(event: RequestEvent, segments: string[]): Promise<Response | null> {
+	if (segments[0] !== 'screens') return null;
+
+	const method = event.request.method;
+	const screenId = segments[1];
+	if (!screenId && method === 'GET') {
+		return json({ screens: [...devScreens.values()] });
+	}
+
+	if (!screenId && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `dev-screen-${Date.now()}`;
+		const screen: DevScreen = {
+			id,
+			tenant_id: TENANT_ID,
+			screen_key:
+				typeof input.screen_key === 'string' && input.screen_key.trim()
+					? input.screen_key.trim()
+					: id,
+			display_name:
+				typeof input.display_name === 'string' && input.display_name.trim()
+					? input.display_name.trim()
+					: 'Custom screen',
+			description: typeof input.description === 'string' ? input.description : '',
+			screen_kind: typeof input.screen_kind === 'string' ? input.screen_kind : 'custom',
+			fields: Array.isArray(input.fields) ? (input.fields as Array<Record<string, unknown>>) : [],
+			localizations:
+				input.localizations && typeof input.localizations === 'object'
+					? (input.localizations as Record<string, unknown>)
+					: {},
+			settings:
+				input.settings && typeof input.settings === 'object'
+					? (input.settings as Record<string, unknown>)
+					: {},
+			is_active: input.is_active === false ? 0 : 1,
+			is_system: 0,
+			created_at: Date.now(),
+			updated_at: Date.now()
+		};
+		devScreens.set(id, screen);
+		return json({ screen }, 201);
+	}
+
+	const screen = screenId ? devScreens.get(screenId) : undefined;
+	if (!screen) return json({ error_description: 'Dev mock screen not found' }, 404);
+	if (method === 'GET') return json({ screen });
+	if (method === 'DELETE') {
+		devScreens.delete(screen.id);
+		return json({ success: true });
+	}
+	if (method === 'PUT') {
+		const input = await readJson(event.request);
+		const updated: DevScreen = {
+			...screen,
+			...Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),
+			id: screen.id,
+			tenant_id: screen.tenant_id,
+			is_active:
+				input.is_active === undefined ? screen.is_active : input.is_active === false ? 0 : 1,
+			updated_at: Date.now()
+		};
+		devScreens.set(screen.id, updated);
+		return json({ screen: updated });
+	}
+
 	return null;
 }
 
@@ -12274,6 +12443,8 @@ export async function handleDevAdminMock(
 		const response = await handleClients(event, segments);
 		if (response) return response;
 	}
+	const screensResponse = await handleScreens(event, segments);
+	if (screensResponse) return screensResponse;
 	const settingsResponse = await handleSettings(event, segments);
 	if (settingsResponse) return settingsResponse;
 	if (segments[0] === 'logging-policies' && segments[1] === 'notifications') {

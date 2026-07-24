@@ -1,4 +1,3 @@
-import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core/types/admin-user';
 import type { AgentToolDefinition, JsonObject } from '../../core';
 import type {
   AgentAccessMcpPromptDefinition,
@@ -7,39 +6,17 @@ import type {
   AgentAccessMcpResourceTemplateDefinition,
 } from './server';
 import type { AgentConfigurationResourceReaderPort } from '../../platform/ports';
+import { ADMIN_CONFIGURATION_TOOL_DEFINITIONS } from './admin-configuration-tools';
 
-function authorizationTool(
-  id: string,
-  permission: string,
-  scope: 'agent:read' | 'agent:write' = 'agent:read'
-): AgentToolDefinition {
-  return {
-    id,
-    name: id.replaceAll('.', '_'),
-    title: id,
-    description: 'Internal authorization contract for MCP context discovery.',
-    contractVersion: '1',
-    requiredPermissions: [permission],
-    requiredScope: scope,
-    riskLevel: 'low',
-    schemaDigest: `sha256:${id}-v1`,
-    inputSchema: { type: 'object' },
-    taskSupport: 'forbidden',
-  };
+function requireCapabilitiesAuthorization(): AgentToolDefinition {
+  const tool = ADMIN_CONFIGURATION_TOOL_DEFINITIONS.find(
+    (candidate) => candidate.id === 'admin.read.configuration.capabilities'
+  );
+  if (!tool) throw new TypeError('Configuration capability authorization is missing');
+  return tool;
 }
 
-const CAPABILITIES_AUTH = authorizationTool(
-  'admin.read.configuration.capabilities',
-  ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_READ
-);
-const TASK_SET_AUTH = authorizationTool(
-  'admin.read.configuration.task-sets',
-  ADMIN_PERMISSIONS.AGENT_TASK_SETS_READ
-);
-const SCOPE_POLICY_AUTH = authorizationTool(
-  'admin.read.configuration.scope-policies',
-  ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_READ
-);
+const CAPABILITIES_AUTH = requireCapabilitiesAuthorization();
 
 function jsonResource(input: {
   uri: string;
@@ -77,7 +54,7 @@ export const ADMIN_CONFIGURATION_RESOURCES: readonly AgentAccessMcpResourceDefin
     name: 'task_sets_v1',
     title: 'Task Set contract',
     description: 'Versioned flat Tool-ID bundles. Task and target scope remain separate.',
-    authorizationTool: TASK_SET_AUTH,
+    authorizationTool: CAPABILITIES_AUTH,
     value: {
       schema_version: 'authrim-task-set-v1',
       nesting_allowed: false,
@@ -89,7 +66,7 @@ export const ADMIN_CONFIGURATION_RESOURCES: readonly AgentAccessMcpResourceDefin
     name: 'scope_policies_v1',
     title: 'Scope Policy contract',
     description: 'Six structured target axes with version pinning and narrowing-only overrides.',
-    authorizationTool: SCOPE_POLICY_AUTH,
+    authorizationTool: CAPABILITIES_AUTH,
     value: {
       schema_version: 'authrim-scope-policy-v1',
       axes: ['tenant', 'environment', 'domain', 'resource', 'field_pii', 'quantity'],

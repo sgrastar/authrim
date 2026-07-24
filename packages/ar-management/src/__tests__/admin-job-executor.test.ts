@@ -246,6 +246,7 @@ describe('generic admin job executor', () => {
     });
     const kv = {
       get: vi.fn(async () => tenantSettings),
+      put: vi.fn(async () => undefined),
       delete: vi.fn(async () => undefined),
     };
     const tokenKv = {
@@ -293,6 +294,9 @@ describe('generic admin job executor', () => {
 
     expect(r2.put).toHaveBeenCalledOnce();
     expect(kv.get).toHaveBeenCalledWith('settings:tenant:tenant-a:tenant');
+    expect(kv.put).toHaveBeenCalledWith('v1:tenant-exists:tenant-a', 'true', {
+      expirationTtl: 3600,
+    });
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
       expect.arrayContaining(['active', 'tenant-a', 'restore_validating'])

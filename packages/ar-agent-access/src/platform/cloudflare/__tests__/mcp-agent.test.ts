@@ -6,9 +6,11 @@ import { sanitizeCloudflareAgentAccessMcpPropsForStorage } from '../mcp-props';
 import {
   AGENT_ACCESS_MCP_SESSION_ABSOLUTE_MS,
   AGENT_ACCESS_MCP_SESSION_IDLE_MS,
+  createCloudflareAgentDiscoveryProfileStore,
   evaluateCloudflareAgentAccessMcpSession,
   toCloudflareAgentAccessSessionBinding,
   validateCloudflareAgentAccessMcpSession,
+  type CloudflareAgentAccessMcpState,
 } from '../mcp-agent';
 
 const props: CloudflareAgentAccessMcpProps = {
@@ -47,6 +49,33 @@ describe('Cloudflare McpAgent props persistence boundary', () => {
     expect(stored).toEqual({ context: props.context });
     expect(stored).not.toHaveProperty('sourceAccessToken');
     expect(JSON.stringify(stored)).not.toContain('raw-bearer-token');
+  });
+
+  it('persists Discovery Profiles within one session state without crossing sessions', async () => {
+    let firstState: CloudflareAgentAccessMcpState = { initializedAt: 1 };
+    let secondState: CloudflareAgentAccessMcpState = { initializedAt: 2 };
+    const first = createCloudflareAgentDiscoveryProfileStore({
+      getState: () => firstState,
+      setState: (state) => {
+        firstState = state;
+      },
+    });
+    const second = createCloudflareAgentDiscoveryProfileStore({
+      getState: () => secondState,
+      setState: (state) => {
+        secondState = state;
+      },
+    });
+
+    await first.put({ profileIds: ['flows_consent'], updatedAt: 100 });
+
+    await expect(first.get()).resolves.toEqual({
+      profileIds: ['flows_consent'],
+      updatedAt: 100,
+    });
+    await expect(second.get()).resolves.toBeNull();
+    expect(firstState).toMatchObject({ initializedAt: 1 });
+    expect(secondState).toEqual({ initializedAt: 2 });
   });
 
   it('enforces idle and absolute session deadlines at their exact boundaries', () => {

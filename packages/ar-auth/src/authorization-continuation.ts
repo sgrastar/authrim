@@ -3,7 +3,6 @@ const AUTHORIZATION_REQUEST_STRING_FIELDS = [
   'client_id',
   'redirect_uri',
   'scope',
-  'resource',
   'state',
   'nonce',
   'code_challenge',

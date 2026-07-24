@@ -10,7 +10,7 @@ import { confirm } from '@inquirer/prompts';
 import { t } from '../../i18n/index.js';
 import {
   getMigrationStatus,
-  migrateToNewStructure,
+  migrateToNewStructureLocked,
   validateMigration,
   type MigrationOptions,
 } from '../../core/migrate.js';
@@ -121,7 +121,7 @@ export async function migrateCommand(options: MigrateCommandOptions): Promise<vo
     onProgress: (msg) => console.log(msg),
   };
 
-  const result = await migrateToNewStructure(migrationOptions);
+  const result = await migrateToNewStructureLocked(migrationOptions);
 
   // Show results
   console.log('');

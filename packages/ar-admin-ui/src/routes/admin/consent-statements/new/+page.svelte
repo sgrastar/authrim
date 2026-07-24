@@ -34,8 +34,8 @@
 	type ContentLanguageCode =
 		| 'en'
 		| 'ja'
-		| 'zh_CN'
-		| 'zh_TW'
+		| 'zh-CN'
+		| 'zh-TW'
 		| 'es'
 		| 'pt'
 		| 'fr'
@@ -61,8 +61,8 @@
 	const languageOptions: Array<{ code: ContentLanguageCode; label: string }> = [
 		{ code: 'en', label: 'English (en)' },
 		{ code: 'ja', label: 'Japanese (ja)' },
-		{ code: 'zh_CN', label: 'Chinese PRC (zh_CN)' },
-		{ code: 'zh_TW', label: 'Chinese Taiwan (zh_TW)' },
+		{ code: 'zh-CN', label: 'Chinese PRC (zh-CN)' },
+		{ code: 'zh-TW', label: 'Chinese Taiwan (zh-TW)' },
 		{ code: 'es', label: 'Spanish (es)' },
 		{ code: 'pt', label: 'Portuguese (pt)' },
 		{ code: 'fr', label: 'French (fr)' },
@@ -865,8 +865,8 @@
 		return {
 			en: 'I have read and agree to the %link1%.',
 			ja: '%link1%を読み、その内容に同意します。',
-			zh_CN: '我已阅读%link1%并同意其内容。',
-			zh_TW: '我已閱讀%link1%並同意其內容。',
+			'zh-CN': '我已阅读%link1%并同意其内容。',
+			'zh-TW': '我已閱讀%link1%並同意其內容。',
 			es: 'He leído los %link1% y los acepto.',
 			pt: 'Li os %link1% e concordo com eles.',
 			fr: "J'ai lu les %link1% et je les accepte.",
@@ -881,8 +881,8 @@
 		return {
 			en: 'I have read and agree to the %link1%.',
 			ja: '%link1%を読み、その内容に同意します。',
-			zh_CN: '我已阅读%link1%并同意其内容。',
-			zh_TW: '我已閱讀%link1%並同意其內容。',
+			'zh-CN': '我已阅读%link1%并同意其内容。',
+			'zh-TW': '我已閱讀%link1%並同意其內容。',
 			es: 'He leído la %link1% y la acepto.',
 			pt: 'Li a %link1% e concordo com ela.',
 			fr: "J'ai lu la %link1% et je l'accepte.",
@@ -897,8 +897,8 @@
 		return {
 			en: 'Choose how to handle the requested attribute release for this service.',
 			ja: 'このサービスへの属性送信をどのように扱うか選択してください。',
-			zh_CN: '请选择如何处理向此服务发送所请求属性。',
-			zh_TW: '請選擇如何處理向此服務傳送所要求的屬性。',
+			'zh-CN': '请选择如何处理向此服务发送所请求属性。',
+			'zh-TW': '請選擇如何處理向此服務傳送所要求的屬性。',
 			es: 'Elige cómo gestionar el envío de los atributos solicitados a este servicio.',
 			pt: 'Escolha como tratar o envio dos atributos solicitados para este serviço.',
 			fr: "Choisissez comment gérer l'envoi des attributs demandés à ce service.",
@@ -950,8 +950,8 @@
 		return {
 			en: 'Allow this time only',
 			ja: '今回のみ同意',
-			zh_CN: '仅本次允许',
-			zh_TW: '僅本次允許',
+			'zh-CN': '仅本次允许',
+			'zh-TW': '僅本次允許',
 			es: 'Permitir solo esta vez',
 			pt: 'Permitir apenas desta vez',
 			fr: 'Autoriser uniquement cette fois',
@@ -966,8 +966,8 @@
 		return {
 			en: 'Allow this attribute release only for the current sign-in.',
 			ja: '今回のログインに限って属性送信を許可します。',
-			zh_CN: '仅允许在本次登录时发送这些属性。',
-			zh_TW: '僅允許在本次登入時傳送這些屬性。',
+			'zh-CN': '仅允许在本次登录时发送这些属性。',
+			'zh-TW': '僅允許在本次登入時傳送這些屬性。',
 			es: 'Permite este envío de atributos solo para el inicio de sesión actual.',
 			pt: 'Permite este envio de atributos apenas para o login atual.',
 			fr: "Autorise cet envoi d'attributs uniquement pour la connexion actuelle.",
@@ -982,8 +982,8 @@
 		return {
 			en: 'Always allow for this service',
 			ja: '今後も同意',
-			zh_CN: '始终允许此服务',
-			zh_TW: '一律允許此服務',
+			'zh-CN': '始终允许此服务',
+			'zh-TW': '一律允許此服務',
 			es: 'Permitir siempre para este servicio',
 			pt: 'Permitir sempre para este serviço',
 			fr: 'Toujours autoriser pour ce service',
@@ -998,8 +998,8 @@
 		return {
 			en: 'Remember this choice for future sign-ins to this service.',
 			ja: 'このサービスへの今後のログインでも、この選択を利用します。',
-			zh_CN: '记住此选择，并在今后登录此服务时使用。',
-			zh_TW: '記住此選擇，並在日後登入此服務時使用。',
+			'zh-CN': '记住此选择，并在今后登录此服务时使用。',
+			'zh-TW': '記住此選擇，並在日後登入此服務時使用。',
 			es: 'Recuerda esta elección para futuros inicios de sesión en este servicio.',
 			pt: 'Lembre esta escolha para futuros logins neste serviço.',
 			fr: 'Mémorise ce choix pour les prochaines connexions à ce service.',
@@ -1014,8 +1014,8 @@
 		return {
 			en: 'Do not allow',
 			ja: '同意しない',
-			zh_CN: '不允许',
-			zh_TW: '不允許',
+			'zh-CN': '不允许',
+			'zh-TW': '不允許',
 			es: 'No permitir',
 			pt: 'Não permitir',
 			fr: 'Ne pas autoriser',
@@ -1030,8 +1030,8 @@
 		return {
 			en: 'Do not release these attributes.',
 			ja: 'これらの属性を送信しません。',
-			zh_CN: '不发送这些属性。',
-			zh_TW: '不傳送這些屬性。',
+			'zh-CN': '不发送这些属性。',
+			'zh-TW': '不傳送這些屬性。',
 			es: 'No enviar estos atributos.',
 			pt: 'Não enviar estes atributos.',
 			fr: 'Ne pas envoyer ces attributs.',
@@ -1052,8 +1052,8 @@
 						{
 							en: 'I agree',
 							ja: '同意します',
-							zh_CN: '我同意',
-							zh_TW: '我同意',
+							'zh-CN': '我同意',
+							'zh-TW': '我同意',
 							es: 'Acepto',
 							pt: 'Concordo',
 							fr: "J'accepte",
@@ -1073,8 +1073,8 @@
 						{
 							en: 'I consent',
 							ja: '同意します',
-							zh_CN: '我同意',
-							zh_TW: '我同意',
+							'zh-CN': '我同意',
+							'zh-TW': '我同意',
 							es: 'Doy mi consentimiento',
 							pt: 'Dou meu consentimento',
 							fr: 'Je consens',
@@ -1159,8 +1159,8 @@
 						labels: {
 							en: 'Terms of Service',
 							ja: '利用規約',
-							zh_CN: '服务条款',
-							zh_TW: '服務條款',
+							'zh-CN': '服务条款',
+							'zh-TW': '服務條款',
 							es: 'Términos de servicio',
 							pt: 'Termos de Serviço',
 							fr: "Conditions d'utilisation",
@@ -1179,8 +1179,8 @@
 						labels: {
 							en: 'Privacy Policy',
 							ja: 'プライバシーポリシー',
-							zh_CN: '隐私政策',
-							zh_TW: '隱私權政策',
+							'zh-CN': '隐私政策',
+							'zh-TW': '隱私權政策',
 							es: 'Política de privacidad',
 							pt: 'Política de Privacidade',
 							fr: 'Politique de confidentialité',
@@ -1457,9 +1457,9 @@
 				return 'ログイン中の本人';
 			case 'ko':
 				return '현재 로그인한 사용자';
-			case 'zh_CN':
+			case 'zh-CN':
 				return '当前登录的本人';
-			case 'zh_TW':
+			case 'zh-TW':
 				return '目前登入的本人';
 			case 'es':
 				return 'el sujeto que ha iniciado sesión';

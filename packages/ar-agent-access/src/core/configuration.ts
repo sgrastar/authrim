@@ -55,6 +55,8 @@ export interface AgentConfigurationPlanStepDefinition {
 
 export interface AgentConfigurationPlanDefinition {
   schemaVersion: 'authrim-agent-plan-v1';
+  /** Human-readable intended outcome, cryptographically bound into the immutable Plan digest. */
+  goal: string;
   steps: readonly AgentConfigurationPlanStepDefinition[];
 }
 
@@ -242,6 +244,9 @@ export async function resolveAgentConfigurationPlan(input: {
   const { definition } = input;
   if (
     definition.schemaVersion !== 'authrim-agent-plan-v1' ||
+    typeof definition.goal !== 'string' ||
+    definition.goal.trim().length === 0 ||
+    definition.goal.trim().length > 500 ||
     definition.steps.length === 0 ||
     definition.steps.length > input.maxOperations
   ) {
@@ -283,6 +288,7 @@ export async function resolveAgentConfigurationPlan(input: {
   });
   const normalized: AgentConfigurationPlanDefinition = {
     schemaVersion: 'authrim-agent-plan-v1',
+    goal: definition.goal.trim(),
     steps: normalizedSteps,
   };
   return {

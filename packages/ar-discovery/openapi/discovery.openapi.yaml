@@ -364,8 +364,8 @@ components:
           type: boolean
         tls_client_certificate_bound_access_tokens:
           type: boolean
-              - PS256
-              - EdDSA
+            - PS256
+            - EdDSA
         authorization_signing_alg_values_supported:
           type: array
           items:
@@ -408,6 +408,7 @@ components:
       additionalProperties: false
       required:
         - resource
+        - resource_name
         - authorization_servers
         - scopes_supported
         - bearer_methods_supported
@@ -416,6 +417,10 @@ components:
         resource:
           type: string
           format: uri
+        resource_name:
+          type: string
+          description: Human-readable product and deployment name intended for client display.
+          example: Authrim (test)
         authorization_servers:
           type: array
           minItems: 1

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADMIN_PERMISSIONS, type AdminAuthContext, type Env } from '@authrim/ar-lib-core';
+import { createAdminToolCatalog } from '@authrim/ar-agent-access/protocol/mcp';
 
 const mocks = vi.hoisted(() => ({
   auth: {} as AdminAuthContext,
@@ -84,6 +85,7 @@ const definition = {
   canaryTenantIds: ['tenant-1'],
   plan: {
     schemaVersion: 'authrim-agent-plan-v1',
+    goal: 'Apply an approved Authrim configuration change',
     steps: [
       {
         id: 'step-1',
@@ -152,7 +154,7 @@ describe('Agent Bulk Plan management routes', () => {
           toolId: 'admin.write.clients.metadata',
           toolName: 'update_client_metadata',
           contractVersion: '1',
-          schemaDigest: 'sha256:855fae1148b9949986c9cad7e1f63bc17e14ae20beb5128437f35d90c6d811c5',
+          schemaDigest: createAdminToolCatalog().get('update_client_metadata')!.schemaDigest,
           permissions: [ADMIN_PERMISSIONS.CLIENTS_WRITE],
           requiredScope: 'agent:write',
           riskLevel: 'standard',

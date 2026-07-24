@@ -133,7 +133,7 @@
 	// ---------------------------------------------------------------------------
 	onMount(async () => {
 		if (!challengeId) {
-			error = 'Missing challenge_id parameter';
+			error = $LL.error_invalid_request();
 			loading = false;
 			return;
 		}
@@ -149,7 +149,7 @@
 		try {
 			const { data, error: apiError } = await consentAPI.getData(challengeId);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to load consent data');
+				throw new Error($LL.error_server_error());
 			}
 
 			consentData = data as ConsentScreenData;
@@ -169,7 +169,7 @@
 			}
 			loading = false;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load consent data';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 			loading = false;
 		}
 	}
@@ -207,17 +207,17 @@
 			const { data, error: apiError } = await consentAPI.submit(submitPayload);
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to approve consent');
+				throw new Error($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
 					window.location.href = data.redirect_url;
 				} else {
-					error = 'Invalid redirect URL received from server';
+					error = $LL.device_errorInvalidRedirect();
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to approve consent';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			allowLoading = false;
 		}
@@ -234,17 +234,17 @@
 			});
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to deny consent');
+				throw new Error($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
 					window.location.href = data.redirect_url;
 				} else {
-					error = 'Invalid redirect URL received from server';
+					error = $LL.device_errorInvalidRedirect();
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to deny consent';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			denyLoading = false;
 		}
@@ -731,7 +731,7 @@
 					class="i-heroicons-exclamation-circle h-12 w-12 mx-auto mb-4"
 					style="color: var(--danger);"
 				></div>
-				<p style="color: var(--danger);">{error || 'Failed to load consent data'}</p>
+				<p style="color: var(--danger);">{error || $LL.error_unknown()}</p>
 			</Card>
 		{/if}
 	</div>

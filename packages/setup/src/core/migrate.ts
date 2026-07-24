@@ -20,9 +20,9 @@
  *           └── keys/
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { mkdir, copyFile, readFile, writeFile, readdir, rm, chmod } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import {
   LEGACY_CONFIG_FILE,
@@ -31,16 +31,26 @@ import {
   getEnvironmentPaths,
   getExternalKeysDir,
   findKeysDirectory,
-  getLegacyPaths,
+  getLegacyConfigFileName,
+  getLegacyLockFileName,
   detectStructure,
   listEnvironments,
   validateEnvName,
 } from './paths.js';
 
 import { AuthrimConfigSchema, type AuthrimConfig } from './config.js';
-import { AuthrimLockSchema, type AuthrimLock } from './lock.js';
+import {
+  AuthrimLockSchema,
+  acquireEnvironmentOperationForEnvironment,
+  acquireEnvironmentOperationLock,
+  type AuthrimLock,
+} from './lock.js';
 import { saveMasterWranglerConfigs } from './wrangler-sync.js';
 import type { ResourceIds } from './wrangler.js';
+import {
+  environmentOperationBlockMessage,
+  evaluateEnvironmentOperation,
+} from './environment-operation-policy.js';
 
 // File permission constants
 const SENSITIVE_FILE_MODE = 0o600; // Owner read/write only
@@ -109,6 +119,47 @@ export interface ValidationResult {
   issues: string[];
 }
 
+export async function migrateToNewStructureLocked(
+  options: MigrationOptions = {}
+): Promise<MigrationResult> {
+  if (options.dryRun) return migrateToNewStructure(options);
+
+  const baseDir = resolve(options.baseDir ?? process.cwd());
+  const environments = (options.env ? [options.env] : getEnvironmentsToMigrate(baseDir)).sort();
+  const operationLocks: Array<{ release: () => Promise<void> }> = [];
+  try {
+    for (const env of environments) {
+      const operation = await acquireEnvironmentOperationForEnvironment({
+        baseDir,
+        env,
+        operation: 'structure-migrate',
+      });
+      operationLocks.push(operation);
+      const destinationLockPath = getEnvironmentPaths({ baseDir, env }).lock;
+      if (operation.lockFilePath !== destinationLockPath) {
+        operationLocks.push(
+          await acquireEnvironmentOperationLock(
+            destinationLockPath,
+            'structure-migrate-destination'
+          )
+        );
+      }
+      const decision = evaluateEnvironmentOperation({
+        operation: 'structure_migration',
+        lock: operation.lock,
+      });
+      if (!decision.allowed) {
+        throw new Error(environmentOperationBlockMessage(decision));
+      }
+    }
+    return await migrateToNewStructure({ ...options, baseDir });
+  } finally {
+    for (const operationLock of operationLocks.reverse()) {
+      await operationLock.release();
+    }
+  }
+}
+
 // =============================================================================
 // Migration Detection
 // =============================================================================
@@ -117,39 +168,83 @@ export interface ValidationResult {
  * Check if migration from legacy structure is needed
  */
 export function needsMigration(baseDir: string = process.cwd()): boolean {
-  const structure = detectStructure(baseDir);
-  return structure.type === 'legacy';
+  return getEnvironmentsToMigrate(baseDir).length > 0;
+}
+
+const LEGACY_METADATA_PATTERN = /^authrim(?:-([a-z][a-z0-9-]*))?-(config|lock)\.json$/u;
+
+function readLegacyMetadataEnvironment(path: string, kind: 'config' | 'lock'): string | undefined {
+  try {
+    const value = JSON.parse(readFileSync(path, 'utf-8')) as {
+      environment?: { prefix?: unknown };
+      env?: unknown;
+    };
+    const environment = kind === 'config' ? value.environment?.prefix : value.env;
+    return typeof environment === 'string' && validateEnvName(environment)
+      ? environment
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function listLegacyMetadataFiles(baseDir: string): string[] {
+  try {
+    return readdirSync(baseDir, { withFileTypes: true })
+      .filter(
+        (entry: { isFile: () => boolean; name: string }) =>
+          entry.isFile() && LEGACY_METADATA_PATTERN.test(entry.name)
+      )
+      .map((entry: { name: string }) => join(baseDir, entry.name))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function resolveLegacyMetadataPath(
+  baseDir: string,
+  env: string,
+  kind: 'config' | 'lock'
+): string | undefined {
+  const named = join(
+    baseDir,
+    kind === 'config' ? getLegacyConfigFileName(env) : getLegacyLockFileName(env)
+  );
+  const generic = join(baseDir, kind === 'config' ? LEGACY_CONFIG_FILE : LEGACY_LOCK_FILE);
+  for (const candidate of [named, generic]) {
+    if (!existsSync(candidate)) continue;
+    const embeddedEnvironment = readLegacyMetadataEnvironment(candidate, kind);
+    if (embeddedEnvironment === env) return candidate;
+    const filenameEnvironment = basename(candidate).match(LEGACY_METADATA_PATTERN)?.[1];
+    if (!embeddedEnvironment && filenameEnvironment === env) return candidate;
+  }
+  return undefined;
 }
 
 /**
  * Get list of environments that need migration
  */
 export function getEnvironmentsToMigrate(baseDir: string = process.cwd()): string[] {
-  const legacyConfigPath = join(baseDir, LEGACY_CONFIG_FILE);
   const legacyKeysDir = join(baseDir, LEGACY_KEYS_DIR);
+  const environments = new Set<string>();
 
-  const environments: string[] = [];
-
-  // Check if legacy config exists and extract environment from it
-  if (existsSync(legacyConfigPath)) {
-    try {
-      const content = require('fs').readFileSync(legacyConfigPath, 'utf-8');
-      const config = JSON.parse(content);
-      if (config.environment?.prefix) {
-        environments.push(config.environment.prefix);
-      }
-    } catch {
-      // Ignore parse errors
-    }
+  for (const path of listLegacyMetadataFiles(baseDir)) {
+    const match = basename(path).match(LEGACY_METADATA_PATTERN);
+    if (!match) continue;
+    const kind = match[2] as 'config' | 'lock';
+    const embeddedEnvironment = readLegacyMetadataEnvironment(path, kind);
+    const environment = embeddedEnvironment ?? match[1];
+    if (environment && validateEnvName(environment)) environments.add(environment);
   }
 
   // Also check for environments in .keys directory
   if (existsSync(legacyKeysDir)) {
     try {
-      const entries = require('fs').readdirSync(legacyKeysDir, { withFileTypes: true });
+      const entries = readdirSync(legacyKeysDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && !environments.includes(entry.name)) {
-          environments.push(entry.name);
+        if (entry.isDirectory() && validateEnvName(entry.name)) {
+          environments.add(entry.name);
         }
       }
     } catch {
@@ -157,7 +252,7 @@ export function getEnvironmentsToMigrate(baseDir: string = process.cwd()): strin
     }
   }
 
-  return environments;
+  return [...environments].sort();
 }
 
 // =============================================================================
@@ -182,22 +277,12 @@ export async function createBackup(
     // Create backup directory
     await mkdir(backupDir, { recursive: true });
 
-    // Backup legacy config
-    const legacyConfigPath = join(baseDir, LEGACY_CONFIG_FILE);
-    if (existsSync(legacyConfigPath)) {
-      const destPath = join(backupDir, LEGACY_CONFIG_FILE);
-      await copyFile(legacyConfigPath, destPath);
-      files.push(LEGACY_CONFIG_FILE);
-      onProgress?.(`  Backed up ${LEGACY_CONFIG_FILE}`);
-    }
-
-    // Backup legacy lock file
-    const legacyLockPath = join(baseDir, LEGACY_LOCK_FILE);
-    if (existsSync(legacyLockPath)) {
-      const destPath = join(backupDir, LEGACY_LOCK_FILE);
-      await copyFile(legacyLockPath, destPath);
-      files.push(LEGACY_LOCK_FILE);
-      onProgress?.(`  Backed up ${LEGACY_LOCK_FILE}`);
+    for (const legacyMetadataPath of listLegacyMetadataFiles(baseDir)) {
+      const fileName = basename(legacyMetadataPath);
+      const destPath = join(backupDir, fileName);
+      await copyFile(legacyMetadataPath, destPath);
+      files.push(fileName);
+      onProgress?.(`  Backed up ${fileName}`);
     }
 
     // Backup .keys directory
@@ -301,21 +386,20 @@ export async function migrateToNewStructure(
     migratedFiles: [],
   };
 
-  // Check if migration is needed
-  const structure = detectStructure(baseDir);
-  if (structure.type !== 'legacy') {
+  const legacyEnvironments = getEnvironmentsToMigrate(baseDir);
+  if (legacyEnvironments.length === 0) {
+    const structure = detectStructure(baseDir);
     if (structure.type === 'new') {
       onProgress?.('Already using new directory structure');
       result.success = true;
       return result;
-    } else {
-      result.errors.push('No configuration files found to migrate');
-      return result;
     }
+    result.errors.push('No configuration files found to migrate');
+    return result;
   }
 
   // Determine environments to migrate
-  const environments = env ? [env] : getEnvironmentsToMigrate(baseDir);
+  const environments = env ? [env] : legacyEnvironments;
 
   if (environments.length === 0) {
     result.errors.push('No environments detected for migration');
@@ -360,7 +444,7 @@ export async function migrateToNewStructure(
   // Delete legacy files if requested and migration succeeded
   if (deleteLegacy && !dryRun && result.migratedEnvs.length > 0 && result.errors.length === 0) {
     onProgress?.('\nCleaning up legacy files...');
-    await deleteLegacyFiles(baseDir, onProgress);
+    await deleteLegacyFiles(baseDir, result.migratedEnvs, onProgress);
   }
 
   result.success = result.errors.length === 0 && result.migratedEnvs.length > 0;
@@ -389,7 +473,12 @@ async function migrateEnvironment(
   }
 
   const newPaths = getEnvironmentPaths({ baseDir, env });
-  const legacyPaths = getLegacyPaths(baseDir, env);
+  const legacyConfigPath = resolveLegacyMetadataPath(baseDir, env, 'config');
+  const legacyLockPath = resolveLegacyMetadataPath(baseDir, env, 'lock');
+  if (!legacyConfigPath || !legacyLockPath) {
+    errors.push(`Legacy config/lock pair for environment ${env} was not found or did not match.`);
+    return { success: false, files, errors };
+  }
 
   // Create new directory structure with secure permissions
   if (!dryRun) {
@@ -401,18 +490,27 @@ async function migrateEnvironment(
   }
 
   // Migrate config.json
-  if (existsSync(legacyPaths.config)) {
+  if (existsSync(legacyConfigPath)) {
     try {
-      const content = await readFile(legacyPaths.config, 'utf-8');
-      const config = JSON.parse(content) as AuthrimConfig;
-
-      // Update secretsPath to relative path within new structure
-      if (config.keys) {
-        config.keys.secretsPath = './keys/';
+      const content = await readFile(legacyConfigPath, 'utf-8');
+      const rawConfig = JSON.parse(content) as Record<string, unknown>;
+      const config = AuthrimConfigSchema.parse(rawConfig);
+      if (config.environment?.prefix !== env) {
+        throw new Error(`config environment is ${config.environment?.prefix ?? 'missing'}`);
       }
 
+      // Update secretsPath to relative path within new structure
+      const rawKeys =
+        rawConfig.keys && typeof rawConfig.keys === 'object' && !Array.isArray(rawConfig.keys)
+          ? (rawConfig.keys as Record<string, unknown>)
+          : {};
+      const migratedConfig = {
+        ...rawConfig,
+        keys: { ...rawKeys, secretsPath: './keys/' },
+      };
+
       if (!dryRun) {
-        await writeFile(newPaths.config, JSON.stringify(config, null, 2));
+        await writeFile(newPaths.config, JSON.stringify(migratedConfig, null, 2));
         onProgress?.('  Migrated config.json');
       } else {
         onProgress?.('  Would migrate config.json');
@@ -426,13 +524,15 @@ async function migrateEnvironment(
   }
 
   // Migrate lock.json
-  if (existsSync(legacyPaths.lock)) {
+  if (existsSync(legacyLockPath)) {
     try {
-      const content = await readFile(legacyPaths.lock, 'utf-8');
-      const lock = JSON.parse(content) as AuthrimLock;
+      const content = await readFile(legacyLockPath, 'utf-8');
+      const rawLock = JSON.parse(content) as Record<string, unknown>;
+      const lock = AuthrimLockSchema.parse(rawLock);
+      if (lock.env !== env) throw new Error(`lock environment is ${lock.env ?? 'missing'}`);
 
       if (!dryRun) {
-        await writeFile(newPaths.lock, JSON.stringify(lock, null, 2));
+        await writeFile(newPaths.lock, JSON.stringify(rawLock, null, 2));
         onProgress?.('  Migrated lock.json');
       } else {
         onProgress?.('  Would migrate lock.json');
@@ -567,10 +667,16 @@ async function migrateEnvironment(
         onProgress?.('  Would generate wrangler configs');
       }
     } catch (error) {
-      // Non-fatal: wrangler generation failure doesn't fail the migration
-      onProgress?.(
-        `  Warning: Could not generate wrangler configs: ${error instanceof Error ? error.message : String(error)}`
+      errors.push(
+        `Wrangler generation failed: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+  }
+
+  if (!dryRun && errors.length === 0) {
+    const validation = await validateMigration(baseDir, env);
+    if (!validation.valid) {
+      errors.push(...validation.issues.map((issue) => `Post-migration validation: ${issue}`));
     }
   }
 
@@ -586,27 +692,27 @@ async function migrateEnvironment(
  */
 async function deleteLegacyFiles(
   baseDir: string,
+  environments: string[],
   onProgress?: (msg: string) => void
 ): Promise<void> {
-  // Delete legacy config
-  const legacyConfigPath = join(baseDir, LEGACY_CONFIG_FILE);
-  if (existsSync(legacyConfigPath)) {
-    await rm(legacyConfigPath);
-    onProgress?.(`  Deleted ${LEGACY_CONFIG_FILE}`);
+  const deletedMetadata = new Set<string>();
+  for (const env of environments) {
+    for (const kind of ['config', 'lock'] as const) {
+      const path = resolveLegacyMetadataPath(baseDir, env, kind);
+      if (!path || deletedMetadata.has(path)) continue;
+      await rm(path);
+      deletedMetadata.add(path);
+      onProgress?.(`  Deleted ${basename(path)}`);
+    }
+    const legacyKeysDir = join(baseDir, LEGACY_KEYS_DIR, env);
+    if (existsSync(legacyKeysDir)) {
+      await rm(legacyKeysDir, { recursive: true });
+      onProgress?.(`  Deleted ${LEGACY_KEYS_DIR}/${env}/`);
+    }
   }
-
-  // Delete legacy lock
-  const legacyLockPath = join(baseDir, LEGACY_LOCK_FILE);
-  if (existsSync(legacyLockPath)) {
-    await rm(legacyLockPath);
-    onProgress?.(`  Deleted ${LEGACY_LOCK_FILE}`);
-  }
-
-  // Delete legacy keys directory
-  const legacyKeysDir = join(baseDir, LEGACY_KEYS_DIR);
-  if (existsSync(legacyKeysDir)) {
-    await rm(legacyKeysDir, { recursive: true });
-    onProgress?.(`  Deleted ${LEGACY_KEYS_DIR}/`);
+  const legacyKeysRoot = join(baseDir, LEGACY_KEYS_DIR);
+  if (existsSync(legacyKeysRoot) && (await readdir(legacyKeysRoot)).length === 0) {
+    await rm(legacyKeysRoot);
   }
 }
 
@@ -697,24 +803,20 @@ export function getMigrationStatus(baseDir: string = process.cwd()): {
   legacyFiles: string[];
 } {
   const structure = detectStructure(baseDir);
+  const environmentsToMigrate = getEnvironmentsToMigrate(baseDir);
 
   const legacyFiles: string[] = [];
-  if (existsSync(join(baseDir, LEGACY_CONFIG_FILE))) {
-    legacyFiles.push(LEGACY_CONFIG_FILE);
-  }
-  if (existsSync(join(baseDir, LEGACY_LOCK_FILE))) {
-    legacyFiles.push(LEGACY_LOCK_FILE);
-  }
+  legacyFiles.push(...listLegacyMetadataFiles(baseDir).map((path) => basename(path)));
   if (existsSync(join(baseDir, LEGACY_KEYS_DIR))) {
     legacyFiles.push(LEGACY_KEYS_DIR + '/');
   }
 
   const environments =
-    structure.type === 'new' ? listEnvironments(baseDir) : getEnvironmentsToMigrate(baseDir);
+    environmentsToMigrate.length > 0 ? environmentsToMigrate : listEnvironments(baseDir);
 
   return {
-    needsMigration: structure.type === 'legacy',
-    currentStructure: structure.type,
+    needsMigration: environmentsToMigrate.length > 0,
+    currentStructure: environmentsToMigrate.length > 0 ? 'legacy' : structure.type,
     environments,
     legacyFiles,
   };

@@ -22,21 +22,6 @@ const GENERIC_DIRECT_AUTH_ERRORS = new Set([
 	'token_binding_failed'
 ]);
 
-function getErrorDetailsCode(error: APIError): string {
-	const code = error.error_details?.code;
-	return typeof code === 'string' ? code : '';
-}
-
-function shouldExposeInvalidRequestDescription(error: APIError): boolean {
-	const description = error.error_description?.trim();
-	if (!description) return false;
-
-	const detailsCode = getErrorDetailsCode(error);
-	if (detailsCode.startsWith('DIRECT_SESSION_')) return true;
-
-	return description.toLowerCase().includes('authorization challenge');
-}
-
 export function messageForApiError(
 	error: APIError | null | undefined,
 	messages: LoginUiErrorMessages
@@ -51,9 +36,6 @@ export function messageForApiError(
 
 	switch (error.error) {
 		case 'invalid_request':
-			if (shouldExposeInvalidRequestDescription(error)) {
-				return error.error_description;
-			}
 			return messages.invalidRequest();
 		case 'access_denied':
 			return messages.accessDenied();
@@ -63,6 +45,6 @@ export function messageForApiError(
 		case 'login_required':
 			return messages.loginRequired();
 		default:
-			return error.error_description || messages.unknown();
+			return messages.unknown();
 	}
 }

@@ -70,7 +70,7 @@
 		try {
 			const { data, error: apiError } = await deviceFlowAPI.verify(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || $LL.device_errorInvalidOrExpiredCode());
+				throw new Error($LL.device_errorInvalidOrExpiredCode());
 			}
 			if (data) {
 				deviceInfo = data as DeviceInfo;
@@ -92,7 +92,7 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { data, error: apiError } = await deviceFlowAPI.approve(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || $LL.device_errorApproveFailed());
+				throw new Error($LL.device_errorApproveFailed());
 			}
 			if (!data?.redirect_url) {
 				success = $LL.device_success();
@@ -121,7 +121,7 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { error: apiError } = await deviceFlowAPI.deny(cleanCode);
 			if (apiError) {
-				throw new Error(apiError.error_description || $LL.device_errorDenyFailed());
+				throw new Error($LL.device_errorDenyFailed());
 			}
 			window.location.href = '/';
 		} catch (err) {

@@ -132,12 +132,11 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 
 type AuthorizationChallengeType = 'login' | 'reauth';
-type AuthorizationContinuationChallengeType = AuthorizationChallengeType | 'consent';
 type AuthenticationMethodUsage = 'login' | 'signup' | 'reauth' | 'account_link';
 
 export interface AuthorizationChallengeContinuation {
   redirectUrl: string;
-  type: AuthorizationContinuationChallengeType;
+  type: AuthorizationChallengeType;
 }
 
 interface AuthorizationChallengeData {
@@ -489,12 +488,11 @@ export async function consumeAuthorizationChallengeContinuation(
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
-  fallbackIssuer: string,
-  consentGateReceiptId?: string
+  fallbackIssuer: string
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
   let challengeData: AuthorizationChallengeData;
-  let type: AuthorizationContinuationChallengeType;
+  let type: AuthorizationChallengeType;
 
   try {
     challengeData = (await challengeStore.consumeChallengeRpc({
@@ -514,34 +512,24 @@ export async function consumeAuthorizationChallengeContinuation(
       })) as AuthorizationChallengeData;
       type = 'reauth';
     } catch {
-      try {
-        challengeData = (await challengeStore.consumeChallengeRpc({
-          id: challengeId,
-          tenantId,
-          type: 'consent',
-          challenge: challengeId,
-        })) as AuthorizationChallengeData;
-        type = 'consent';
-      } catch {
-        return {
-          error: new Response(
-            JSON.stringify({
-              error: 'invalid_request',
-              error_description: 'Authorization challenge is invalid or expired',
-            }),
-            {
-              status: 400,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          ),
-        };
-      }
+      return {
+        error: new Response(
+          JSON.stringify({
+            error: 'invalid_request',
+            error_description: 'Authorization challenge is invalid or expired',
+          }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        ),
+      };
     }
   }
 
   const metadata = challengeData.metadata || {};
   const expectedUserId =
-    type === 'reauth' || type === 'consent'
+    type === 'reauth'
       ? metadataString(metadata, 'sessionUserId') || challengeData.userId
       : undefined;
   if (expectedUserId && expectedUserId !== authenticatedUserId) {
@@ -561,36 +549,24 @@ export async function consumeAuthorizationChallengeContinuation(
 
   const confirmationId = crypto.randomUUID();
   const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
-  const isConsentContinuation = type === 'consent' || Boolean(consentGateReceiptId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
     tenantId,
-    type: isConsentContinuation ? 'consent' : 'reauth',
+    type: 'reauth',
     userId: authenticatedUserId,
     challenge: confirmationId,
     ttl: 60,
     metadata: {
-      purpose: isConsentContinuation ? 'authorize_consent_confirmation' : 'authorize_confirmation',
+      purpose: 'authorize_confirmation',
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
       authorization_request: createAuthorizationRequestContinuation(metadata),
-      ...(isConsentContinuation && consentGateReceiptId
-        ? {
-            consent_gate_receipt_id: consentGateReceiptId,
-            consent_gate_protocol_request_id: challengeId,
-          }
-        : {}),
     },
   });
 
   return {
     type,
-    redirectUrl: buildAuthorizeContinuationUrl(
-      metadata,
-      confirmationId,
-      fallbackIssuer,
-      isConsentContinuation ? '_consent_confirmation_challenge' : '_confirmation_challenge'
-    ),
+    redirectUrl: buildAuthorizeContinuationUrl(metadata, confirmationId, fallbackIssuer),
   };
 }
 

@@ -56,6 +56,47 @@ function requiredId(input: JsonObject, key: string): string {
   return encodeURIComponent(value);
 }
 
+function requiredClientId(input: JsonObject): string {
+  const value = stringValue(input, 'client_id');
+  if (!value || value.length > 2048) throw new TypeError('Invalid client_id');
+  if (/^[A-Za-z0-9._~-]+$/u.test(value)) return encodeURIComponent(value);
+  let metadataUrl: URL;
+  try {
+    metadataUrl = new URL(value);
+  } catch {
+    throw new TypeError('Invalid client_id');
+  }
+  if (
+    metadataUrl.protocol !== 'https:' ||
+    metadataUrl.href !== value ||
+    metadataUrl.username ||
+    metadataUrl.password ||
+    metadataUrl.hash
+  ) {
+    throw new TypeError('Invalid client_id');
+  }
+  return encodeURIComponent(value);
+}
+
+function agentGrantListPath(input: JsonObject): string {
+  const limit = pageSize(input);
+  const offset = input.offset;
+  if (!Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) > 10_000) {
+    if (offset !== undefined) throw new TypeError('Invalid offset');
+  }
+  const query = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset ?? 0),
+  });
+  const status = stringValue(input, 'status');
+  if (status) query.set('status', status);
+  const delegatorId = stringValue(input, 'delegator_id');
+  if (delegatorId) query.set('delegator_id', delegatorId);
+  const principalId = stringValue(input, 'principal_id');
+  if (principalId) query.set('principal_id', principalId);
+  return `/api/admin/agent-grants?${query.toString()}`;
+}
+
 function tenantSettingsPath(tenantId: string, category: string): string {
   return `/api/admin/tenants/${requiredId({ tenant_id: tenantId }, 'tenant_id')}/settings/${category}`;
 }
@@ -188,6 +229,58 @@ export function projectAgentSettingsResponse(body: JsonValue): JsonValue {
   };
 }
 
+function projectedGrantSummary(value: JsonValue): JsonValue | null {
+  const grant = recordValue(value);
+  if (!grant || typeof grant.id !== 'string' || typeof grant.client_id !== 'string') return null;
+  const stringArray = (candidate: JsonValue | undefined): string[] =>
+    Array.isArray(candidate)
+      ? candidate.filter((item): item is string => typeof item === 'string').slice(0, 256)
+      : [];
+  return {
+    id: grant.id,
+    client_id: grant.client_id.slice(0, 2048),
+    machine_principal_id:
+      typeof grant.machine_principal_id === 'string' ? grant.machine_principal_id : null,
+    purpose: typeof grant.purpose === 'string' ? grant.purpose.slice(0, 500) : null,
+    status: typeof grant.status === 'string' ? grant.status : 'unknown',
+    delegation_mode: typeof grant.delegation_mode === 'string' ? grant.delegation_mode : 'unknown',
+    permissions: stringArray(grant.permissions),
+    scopes: stringArray(grant.scopes),
+    task_set_id: typeof grant.task_set_id === 'string' ? grant.task_set_id : null,
+    task_set_version: Number.isSafeInteger(grant.task_set_version)
+      ? (grant.task_set_version as number)
+      : null,
+    scope_policy_id: typeof grant.scope_policy_id === 'string' ? grant.scope_policy_id : null,
+    scope_policy_version: Number.isSafeInteger(grant.scope_policy_version)
+      ? (grant.scope_policy_version as number)
+      : null,
+    expires_at: Number.isSafeInteger(grant.expires_at) ? (grant.expires_at as number) : null,
+    last_used_at: Number.isSafeInteger(grant.last_used_at) ? (grant.last_used_at as number) : null,
+    created_at: Number.isSafeInteger(grant.created_at) ? (grant.created_at as number) : null,
+    updated_at: Number.isSafeInteger(grant.updated_at) ? (grant.updated_at as number) : null,
+  };
+}
+
+/** Allowlists Agent Grant summaries; full authorization details and internal hashes stay private. */
+export function projectAgentGrantListResponse(body: JsonValue): JsonValue {
+  const record = recordValue(body);
+  const pagination = recordValue(record?.pagination);
+  const grants = Array.isArray(record?.grants)
+    ? record.grants
+        .slice(0, 50)
+        .map(projectedGrantSummary)
+        .filter((grant): grant is JsonValue => grant !== null)
+    : [];
+  return {
+    grants,
+    pagination: {
+      total: safePostureCount(pagination?.total) ?? grants.length,
+      limit: safePostureCount(pagination?.limit) ?? grants.length,
+      offset: safePostureCount(pagination?.offset) ?? 0,
+    },
+  };
+}
+
 export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOperationRoute>> = {
   'admin.read.users.search': {
     method: 'GET',
@@ -208,7 +301,12 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
   },
   'admin.read.clients.get': {
     method: 'GET',
-    path: (input) => `/api/admin/agent-read/clients/${requiredId(input, 'client_id')}`,
+    path: (input) => `/api/admin/agent-read/clients/${requiredClientId(input)}`,
+  },
+  'admin.read.agent-grants.list': {
+    method: 'GET',
+    path: agentGrantListPath,
+    response: projectAgentGrantListResponse,
   },
   'admin.read.audit.search': {
     method: 'GET',

@@ -63,9 +63,21 @@ describe('discovery app routes', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       resource: 'https://auth.example.com/mcp',
+      resource_name: 'Authrim',
       authorization_servers: ['https://auth.example.com/oauth/admin-agent'],
       scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
       bearer_methods_supported: ['header'],
+    });
+  });
+
+  it('includes the configured environment in the MCP resource display name', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      { ...createAgentMetadataEnv(), AUTHRIM_ENVIRONMENT_NAME: 'test' }
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      resource_name: 'Authrim (test)',
     });
   });
 

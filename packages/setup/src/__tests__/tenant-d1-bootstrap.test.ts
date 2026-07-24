@@ -45,9 +45,14 @@ vi.mock('../core/tenant-database.js', async (importOriginal) => {
 import { createDefaultConfig } from '../core/config.js';
 import {
   ensureInitialTenantD1Resources,
+  inspectTenantD1Topology,
   markTenantD1SlotsDeploymentState,
   publishInitialTenantD1RuntimeSnapshot,
 } from '../core/tenant-d1-bootstrap.js';
+import {
+  calculateReleaseManifestChecksum,
+  type ReleaseMigrationManifest,
+} from '../core/release-migrations.js';
 
 let root: string;
 
@@ -150,6 +155,65 @@ describe('tenant D1 bootstrap orchestration', () => {
       'INITIAL TENANT SQL'
     );
     expect(progress.some((message) => message.includes('Ensuring initial tenant'))).toBe(true);
+  });
+
+  it('detects missing or unregistered tenant topology without mutating resources', () => {
+    const manifest: ReleaseMigrationManifest = {
+      formatVersion: 1,
+      productVersion: '1.0.0',
+      streams: [
+        { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+        { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+      ],
+    };
+    const currentLock = lock();
+    delete currentLock.d1.TDB_SLOT_0001_PII;
+
+    expect(
+      inspectTenantD1Topology({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        productVersion: '1.0.0',
+        manifest,
+      })
+    ).toEqual([
+      {
+        binding: 'TDB_SLOT_0001_CORE',
+        reason: 'schema_not_registered',
+        targetId: 'd1:core-id:d1-core',
+      },
+      { binding: 'TDB_SLOT_0001_PII', reason: 'missing_binding' },
+    ]);
+    expect(mocks.createD1Database).not.toHaveBeenCalled();
+
+    currentLock.d1.TDB_SLOT_0001_PII = { id: 'pii-id', name: 'pii-db' };
+    const manifestChecksum = calculateReleaseManifestChecksum(manifest);
+    currentLock.schemaTargets = {
+      'd1:core-id:d1-core': {
+        productVersion: '1.0.0',
+        manifestChecksum,
+        streamId: 'd1-core',
+        appliedBy: 'automatic',
+        updatedAt: new Date().toISOString(),
+      },
+      'd1:pii-id:d1-pii': {
+        productVersion: '1.0.0',
+        manifestChecksum,
+        streamId: 'd1-pii',
+        appliedBy: 'automatic',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    expect(
+      inspectTenantD1Topology({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        productVersion: '1.0.0',
+        manifest,
+      })
+    ).toEqual([]);
   });
 
   it('reuses locked databases and reports missing migrations or migration failures', async () => {

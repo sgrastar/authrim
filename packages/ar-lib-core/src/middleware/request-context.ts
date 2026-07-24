@@ -93,17 +93,41 @@ const REQUEST_CONTEXT_CACHE_DEFAULT_TTL_MS = 180_000;
 const REQUEST_CONTEXT_CACHE_MIN_TTL_MS = 10_000;
 const REQUEST_CONTEXT_CACHE_MAX_TTL_MS = 600_000;
 const REQUEST_CONTEXT_CACHE_MAX_ENTRIES = 256;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const DIAGNOSTIC_TIMING_PATHS = new Set([
+  '/api/auth/authentication-methods',
+  '/api/v1/login/interactions/start',
+]);
 const tenantExistsCache = new WeakMap<object, Map<string, RequestContextCacheEntry<true>>>();
 const runtimeUserStoreSourcesCache = new WeakMap<
   object,
   Map<string, RequestContextCacheEntry<ResolvedUserStoreRuntimeSources>>
 >();
 
-function isFlowRuntimeTimingEnabled(env: Env, path: string): boolean {
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isFlowRuntimeTimingEnabled(env: Env, path: string, request: Request): boolean {
+  if (
+    DIAGNOSTIC_TIMING_PATHS.has(path) &&
+    isDiagnosticTimingEnabled(env) &&
+    sanitizeDiagnosticSessionId(request.headers.get(DIAGNOSTIC_SESSION_ID_HEADER))
+  ) {
+    return true;
+  }
   if (path !== '/api/v1/login/interactions/start') {
     return false;
   }
   const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
 }
 
@@ -207,6 +231,10 @@ function isTenantDatabaseControlPlanePath(path: string): boolean {
   return path.startsWith('/api/admin/jobs/tenant-databases/');
 }
 
+function isPublicAuthenticationMethodsPath(path: string): boolean {
+  return path === '/api/auth/authentication-methods';
+}
+
 function shouldResolveRuntimeUserStoreSources(
   requestClass:
     | 'platform_admin'
@@ -218,6 +246,10 @@ function shouldResolveRuntimeUserStoreSources(
   path: string
 ): boolean {
   if (isTenantDatabaseControlPlanePath(path)) {
+    return false;
+  }
+
+  if (isPublicAuthenticationMethodsPath(path)) {
     return false;
   }
 
@@ -324,7 +356,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const requestId = crypto.randomUUID();
     const startTime = Date.now();
-    const timingEnabled = isFlowRuntimeTimingEnabled(c.env, c.req.path);
+    const diagnosticSessionId = sanitizeDiagnosticSessionId(
+      c.req.raw.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
+    );
+    const timingEnabled = isFlowRuntimeTimingEnabled(c.env, c.req.path, c.req.raw);
     const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
     const requestClass = classifyTenantRequestPath(c.req.path);
     const requestedTenantId = isAdminTenantHeaderRequired(c.req.path)
@@ -385,10 +420,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       !tenantResult.success &&
       shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
     ) {
-      const vanityTenantId = await resolveTenantFromVanityHost(
-        authCoreSource,
-        c.env.AUTHRIM_CONFIG,
-        requestHost
+      const vanityTenantId = await timeDiagnosticSpan(timingSpans, 'rc_vanity_host', () =>
+        resolveTenantFromVanityHost(authCoreSource, c.env.AUTHRIM_CONFIG, requestHost)
       );
       if (vanityTenantId) {
         tenantResult.success = true;
@@ -485,9 +518,11 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       !!c.env.BASE_DOMAIN &&
       requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
     ) {
-      const primaryVanity = await getPrimaryTenantVanityDomain(
-        { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
-        tenantId
+      const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
+        getPrimaryTenantVanityDomain(
+          { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
+          tenantId
+        )
       );
       if (primaryVanity && primaryVanity.hostname !== requestHost) {
         const isBrowserNavigation =
@@ -592,6 +627,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         });
         appendServerTiming(c, timingSpans);
         logger.info('Request context timing', {
+          diagnosticSessionId,
           path: c.req.path,
           request_class: requestClass,
           duration_ms: roundDiagnosticDurationMs(duration),

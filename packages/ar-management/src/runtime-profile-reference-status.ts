@@ -6,7 +6,7 @@ import type {
   StorageProfile,
   StorageTarget,
 } from '@authrim/ar-lib-core';
-import { resolveHyperdriveBindingForAuditTarget } from '@authrim/ar-lib-core';
+import { resolveHyperdriveBindingForAuditTarget, targetToBackendId } from '@authrim/ar-lib-core';
 
 export type RuntimeProfileReferenceResolution =
   | 'configured'
@@ -63,6 +63,94 @@ export const RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY: RuntimeProfileReferenc
     activationPolicy: 'save_ok_activate_ng',
     note: 'bindingRef and connectionRef resources are provisioned through setup today. Admin APIs may store profile references, but default activation is rejected when required runtime references are unresolved.',
   };
+
+function registeredSchemaReferences(env: Env): ReadonlySet<string> {
+  try {
+    const parsed = JSON.parse(env.AUTHRIM_REGISTERED_SCHEMA_REFS ?? '[]') as unknown;
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === 'string')
+        : []
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function requiredStorageStream(target: StorageTarget): string | null {
+  if (target.driver === 'mysql') return null;
+  if (target.driver === 'd1') {
+    if (target.role === 'pii' || target.role === 'tenant_pii') return 'd1-pii';
+    if (target.role === 'admin' || target.role === 'control') return 'd1-admin';
+    return 'd1-core';
+  }
+  return target.role === 'pii' ? 'external-postgres-pii' : 'external-postgres-core';
+}
+
+function registrationKeys(
+  target: Pick<StorageTarget, 'bindingRef' | 'connectionRef'>,
+  streamId: string
+): string[] {
+  return [
+    ...(target.bindingRef ? [`binding:${target.bindingRef}:${streamId}`] : []),
+    ...(target.connectionRef ? [`connection:${target.connectionRef}:${streamId}`] : []),
+  ];
+}
+
+function blockUnregisteredDatabaseTargets(
+  env: Env,
+  profile: RuntimeProfile,
+  entries: RuntimeProfileReferenceStatusEntry[]
+): RuntimeProfileReferenceStatusEntry[] {
+  if (profile.builtin) return entries;
+  const registered = registeredSchemaReferences(env);
+
+  const requiredByPath = new Map<string, { streamId: string | null; keys: string[] }>();
+  if (profile.kind === 'storage') {
+    for (const [slice, target] of Object.entries((profile as StorageProfile).slices)) {
+      if (!target) continue;
+      const streamId = requiredStorageStream(target);
+      requiredByPath.set(`slices.${slice}`, {
+        streamId,
+        keys: streamId ? registrationKeys(target, streamId) : [],
+      });
+    }
+  } else if (profile.kind === 'audit') {
+    const audit = profile as AuditProfile;
+    const targets = [
+      ...(audit.primary ? ([['primary', audit.primary]] as const) : []),
+      ...(audit.archive ? ([['archive', audit.archive]] as const) : []),
+      ...audit.sinks.map((target, index) => [`sinks[${index}]`, target] as const),
+    ];
+    for (const [path, target] of targets) {
+      if (target.type !== 'd1' && target.type !== 'postgres' && target.type !== 'mysql') continue;
+      const backendId = target.type === 'd1' ? targetToBackendId(target) : null;
+      const streamId =
+        backendId === 'd1-core' || backendId === 'd1-pii' || backendId === 'd1-admin'
+          ? backendId
+          : null;
+      requiredByPath.set(path, {
+        streamId,
+        keys: streamId ? registrationKeys(target, streamId) : [],
+      });
+    }
+  }
+
+  return entries.map((entry) => {
+    const required = requiredByPath.get(entry.path);
+    if (!required || entry.activation === 'blocked') return entry;
+    const registeredTarget = required.keys.some((key) => registered.has(key));
+    if (required.streamId && registeredTarget) return entry;
+    return {
+      ...entry,
+      severity: 'error',
+      activation: 'blocked',
+      reason: required.streamId
+        ? `Database target is not registered with setup for release stream ${required.streamId}.`
+        : `No published release migration stream is registered for this ${entry.type} database target.`,
+    };
+  });
+}
 
 function createEntry(
   entry: RuntimeProfileReferenceStatusEntry
@@ -448,18 +536,22 @@ export function describeRuntimeProfileReferenceStatus(
   profile: RuntimeProfile
 ): RuntimeProfileReferenceStatusEntry[] {
   if (profile.kind === 'storage') {
-    return Object.entries((profile as StorageProfile).slices).flatMap(([slice, target]) =>
-      target ? [describeStorageTarget(env, `slices.${slice}`, target)] : []
+    return blockUnregisteredDatabaseTargets(
+      env,
+      profile,
+      Object.entries((profile as StorageProfile).slices).flatMap(([slice, target]) =>
+        target ? [describeStorageTarget(env, `slices.${slice}`, target)] : []
+      )
     );
   }
 
   if (profile.kind === 'audit') {
     const auditProfile = profile as AuditProfile;
-    return [
+    return blockUnregisteredDatabaseTargets(env, profile, [
       ...(auditProfile.primary ? [describeAuditTarget(env, 'primary', auditProfile.primary)] : []),
       ...(auditProfile.archive ? [describeAuditTarget(env, 'archive', auditProfile.archive)] : []),
       ...auditProfile.sinks.map((sink, index) => describeAuditTarget(env, `sinks[${index}]`, sink)),
-    ];
+    ]);
   }
 
   return [];

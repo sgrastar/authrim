@@ -369,12 +369,32 @@ function readCompletionBlockProtocol(config: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function editorCompletionProtocols(editor: FlowEditorState): Set<string> {
+  const protocols = new Set<string>();
+  for (const node of editor.nodes) {
+    const protocol = readCompletionBlockProtocol(node.config);
+    if (protocol) protocols.add(protocol);
+  }
+  return protocols;
+}
+
+function consentReferenceIssueLevel(
+  editorProtocols: Set<string>,
+  node: FlowEditorState['nodes'][number]
+): FlowValidationIssue['level'] {
+  const protocol = readCompletionBlockProtocol(node.config);
+  if (!protocol || editorProtocols.size <= 1) return 'error';
+  return 'warning';
+}
+
 async function validateDraftReferences(
   db: DatabaseAdapter,
   tenantId: string,
   editor: FlowEditorState
 ): Promise<FlowValidationIssue[]> {
   const issues: FlowValidationIssue[] = [];
+  const completionProtocols = editorCompletionProtocols(editor);
+
   for (const [index, node] of editor.nodes.entries()) {
     const path = `$.editor.nodes[${index}].config`;
     if (node.type === 'registration' || node.type === 'authentication') {
@@ -393,8 +413,17 @@ async function validateDraftReferences(
 
     const policyRef = readConfigString(node.config, 'consent_policy_ref');
     if (policyRef) {
+      const issueLevel =
+        node.type === 'consent' ? consentReferenceIssueLevel(completionProtocols, node) : 'error';
       issues.push(
-        ...(await validateConsentPolicyReference(db, tenantId, node.id, path, policyRef, 'error'))
+        ...(await validateConsentPolicyReference(
+          db,
+          tenantId,
+          node.id,
+          path,
+          policyRef,
+          issueLevel
+        ))
       );
     }
   }

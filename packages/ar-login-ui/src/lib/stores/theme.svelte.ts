@@ -16,6 +16,12 @@
  */
 
 import { browser } from '$app/environment';
+import {
+	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
+	LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS
+} from '$lib/theme-bootstrap';
 
 // Theme types
 export type ThemeMode = 'light' | 'dark';
@@ -45,6 +51,7 @@ const STORAGE_KEY_DARK_VARIANT = 'authrim-dark-variant';
 // Default values
 const DEFAULT_LIGHT_VARIANT: LightVariant = 'beige';
 const DEFAULT_DARK_VARIANT: DarkVariant = 'brown';
+const PERSISTED_THEME_HINT_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 function getSavedPreferences() {
 	if (!browser) {
@@ -66,6 +73,15 @@ function getSavedPreferences() {
 function getSystemTheme(): ThemeMode {
 	if (!browser) return 'light';
 	return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function getCookieAttributes(maxAgeSeconds: number): string {
+	const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+	return `Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`;
+}
+
+function setThemeHintCookie(name: string, value: string, maxAgeSeconds: number): void {
+	document.cookie = `${name}=${encodeURIComponent(value)}; ${getCookieAttributes(maxAgeSeconds)}`;
 }
 
 // Create reactive state
@@ -190,6 +206,15 @@ export function createThemeStore() {
 		const html = document.documentElement;
 		html.setAttribute('data-theme', mode);
 		html.setAttribute('data-variant', currentVariant);
+		writeThemeHintCookies(LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS);
+	}
+
+	function writeThemeHintCookies(maxAgeSeconds: number) {
+		if (!browser) return;
+
+		setThemeHintCookie(LOGIN_UI_THEME_HINT_COOKIE, mode, maxAgeSeconds);
+		setThemeHintCookie(LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE, lightVariant, maxAgeSeconds);
+		setThemeHintCookie(LOGIN_UI_DARK_VARIANT_HINT_COOKIE, darkVariant, maxAgeSeconds);
 	}
 
 	// Save to localStorage
@@ -199,6 +224,7 @@ export function createThemeStore() {
 		localStorage.setItem(STORAGE_KEY_THEME, mode);
 		localStorage.setItem(STORAGE_KEY_LIGHT_VARIANT, lightVariant);
 		localStorage.setItem(STORAGE_KEY_DARK_VARIANT, darkVariant);
+		writeThemeHintCookies(PERSISTED_THEME_HINT_MAX_AGE_SECONDS);
 	}
 
 	// Toggle between light and dark mode

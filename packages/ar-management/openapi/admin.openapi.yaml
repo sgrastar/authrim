@@ -4637,6 +4637,8 @@ paths:
         Machine Principal boundary, and all permission ceilings. Every Grant must pin a Task Set and
         Scope Policy pair; the server resolves Tool, permission, scope, resource, and risk snapshots
         and never accepts caller-supplied permission or scope strings.
+        Grants are never permanent: expires_at defaults to 30 days and must be between one hour
+        and 90 days from creation.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4701,6 +4703,7 @@ paths:
                 expires_at:
                   type: integer
                   format: int64
+                  description: Recertification deadline in epoch milliseconds; defaults to 30 days and cannot exceed 90 days.
       responses:
         '201':
           description: >-
@@ -4871,6 +4874,7 @@ paths:
         updates mutable metadata while revalidating the updater, original grantor, delegator, and
         optional Machine Principal ceilings. The Grant generation and consent version, prior consent
         revocation, token-family revocation outbox, and audit event are committed atomically.
+        Extending expires_at is the explicit recertification operation and requires renewed consent.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -4893,8 +4897,9 @@ paths:
                   type: [string, 'null']
                   maxLength: 500
                 expires_at:
-                  type: [integer, 'null']
+                  type: integer
                   format: int64
+                  description: Required time-bounded recertification deadline, no more than 90 days from the update.
       responses:
         '200':
           description: Grant updated and old authorization invalidated.
@@ -5062,8 +5067,9 @@ paths:
       summary: Resume a suspended Agent Grant without restoring prior consent.
       description: >-
         Revalidates the current updater, original grantor, delegator, OAuth client, and optional
-        Machine Principal. The Grant becomes active, while both consent records remain revoked and
-        the delegator must consent again before token issuance.
+        Machine Principal. This human operation recertifies the Grant with a new 30-day deadline.
+        The Grant becomes active, while both consent records remain revoked and the delegator must
+        consent again before token issuance.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -5077,13 +5083,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [grant_id, status, generation, consent_version, consent_required]
+                required:
+                  [grant_id, status, generation, consent_version, consent_required, expires_at]
                 properties:
                   grant_id: { type: string }
                   status: { type: string, enum: [active] }
                   generation: { type: integer, minimum: 1 }
                   consent_version: { type: integer, minimum: 1 }
                   consent_required: { type: boolean, enum: [true] }
+                  expires_at: { type: integer, format: int64 }
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -7159,304 +7167,6 @@ paths:
                       type: object
         '400':
           $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/consent-gate-policy-bindings:
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentGatePolicyBindings
-      summary: List Consent Gate Policy bindings.
-      description: Lists tenant-scoped exact target and tenant-default Policy bindings.
-      responses:
-        '200':
-          description: Consent Gate Policy bindings.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - bindings
-                properties:
-                  bindings:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/ConsentGatePolicyBinding'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Consent
-      operationId: postApiAdminConsentGatePolicyBindings
-      summary: Create a Consent Gate Policy binding.
-      description: Creates an exact target or tenant-default binding to a Policy owned by the same tenant.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConsentGatePolicyBindingCreateRequest'
-      responses:
-        '201':
-          description: Created Consent Gate Policy binding.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - binding
-                properties:
-                  binding:
-                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/consent-gate-policy-bindings/preview:
-    post:
-      tags:
-        - Consent
-      operationId: postApiAdminConsentGatePolicyBindingsPreview
-      summary: Preview the effective Consent Gate Policy binding.
-      description: Resolves fixed, exact target, tenant-default, and fallback Policy selection without trusting a browser-supplied effective Policy ID.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - gate_kind
-                - target_type
-              properties:
-                gate_kind:
-                  $ref: '#/components/schemas/ConsentGateKind'
-                target_type:
-                  $ref: '#/components/schemas/ConsentGateTargetType'
-                target_id:
-                  type:
-                    - string
-                    - 'null'
-                node_config:
-                  $ref: '#/components/schemas/ConsentGateNodeConfig'
-      responses:
-        '200':
-          description: Effective Policy selection.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - effective
-                properties:
-                  effective:
-                    type: object
-                    required:
-                      - gate_kind
-                      - target_type
-                      - target_id
-                      - policy_id
-                      - source
-                      - binding_id
-                      - policy
-                      - statement_versions
-                      - affected_targets
-                    properties:
-                      gate_kind:
-                        $ref: '#/components/schemas/ConsentGateKind'
-                      target_type:
-                        $ref: '#/components/schemas/ConsentGateTargetType'
-                      target_id:
-                        type: [string, 'null']
-                      policy_id:
-                        type: [string, 'null']
-                      source:
-                        type: string
-                        enum: [fixed, exact_binding, tenant_default, fallback, skip]
-                      binding_id:
-                        type: [string, 'null']
-                      policy:
-                        anyOf:
-                          - type: object
-                            additionalProperties: false
-                            required: [id, display_name, description]
-                            properties:
-                              id:
-                                type: string
-                              display_name:
-                                type: string
-                              description:
-                                type: [string, 'null']
-                          - type: 'null'
-                      statement_versions:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: false
-                          required:
-                            - statement_id
-                            - statement_slug
-                            - version
-                            - requirement
-                            - checkbox_mode
-                            - checkbox_default_checked
-                          properties:
-                            statement_id:
-                              type: string
-                            statement_slug:
-                              type: string
-                            version:
-                              type: [string, 'null']
-                            requirement:
-                              type: string
-                            checkbox_mode:
-                              type: string
-                            checkbox_default_checked:
-                              type: integer
-                      affected_targets:
-                        type: array
-                        items:
-                          type: object
-                          additionalProperties: false
-                          required: [target_type, target_id, binding_id]
-                          properties:
-                            target_type:
-                              $ref: '#/components/schemas/ConsentGateTargetType'
-                            target_id:
-                              type: [string, 'null']
-                            binding_id:
-                              type: string
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/consent-gate-policy-bindings/{id}':
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-        description: Consent Gate Policy binding identifier.
-    get:
-      tags:
-        - Consent
-      operationId: getApiAdminConsentGatePolicyBindingsById
-      summary: Get a Consent Gate Policy binding.
-      responses:
-        '200':
-          description: Consent Gate Policy binding.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - binding
-                properties:
-                  binding:
-                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Consent
-      operationId: putApiAdminConsentGatePolicyBindingsById
-      summary: Update a Consent Gate Policy binding.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConsentGatePolicyBindingUpdateRequest'
-      responses:
-        '200':
-          description: Updated Consent Gate Policy binding.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - binding
-                properties:
-                  binding:
-                    $ref: '#/components/schemas/ConsentGatePolicyBinding'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    delete:
-      tags:
-        - Consent
-      operationId: deleteApiAdminConsentGatePolicyBindingsById
-      summary: Delete a Consent Gate Policy binding.
-      responses:
-        '200':
-          description: Deletion result.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - success
-                properties:
-                  success:
-                    type: boolean
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -11439,6 +11149,7 @@ paths:
                     - login
                     - consent
                     - code_input
+                    - account
                     - custom
                 fields:
                   type: array
@@ -11464,9 +11175,18 @@ paths:
                           - consent_widget
                           - heading
                           - text
+                          - link
                           - security_verification
                           - divider
                           - layout_row
+                          - account_profile_widget
+                          - account_device_list_widget
+                          - account_session_widget
+                          - account_passkey_widget
+                          - account_totp_widget
+                          - account_consent_widget
+                          - account_activity_widget
+                          - account_social_account_widget
                       block_id:
                         type: string
                       value_type:
@@ -11490,6 +11210,10 @@ paths:
                           - string
                           - 'null'
                       placeholder:
+                        type:
+                          - string
+                          - 'null'
+                      href:
                         type:
                           - string
                           - 'null'
@@ -11637,6 +11361,7 @@ paths:
                     - login
                     - consent
                     - code_input
+                    - account
                     - custom
                 fields:
                   type: array
@@ -11662,9 +11387,18 @@ paths:
                           - consent_widget
                           - heading
                           - text
+                          - link
                           - security_verification
                           - divider
                           - layout_row
+                          - account_profile_widget
+                          - account_device_list_widget
+                          - account_session_widget
+                          - account_passkey_widget
+                          - account_totp_widget
+                          - account_consent_widget
+                          - account_activity_widget
+                          - account_social_account_widget
                       block_id:
                         type: string
                       value_type:
@@ -11688,6 +11422,10 @@ paths:
                           - string
                           - 'null'
                       placeholder:
+                        type:
+                          - string
+                          - 'null'
+                      href:
                         type:
                           - string
                           - 'null'
@@ -22265,9 +22003,7 @@ paths:
         - Users
       operationId: getApiAdminUsersByUserIdConsentRecords
       summary: List user consent records
-      description: >-
-        Returns current consent statement records and Consent Gate evidence for a user, including the
-        Gate kind, target context, Flow version, and receipt correlation identifier.
+      description: Returns consent statement records for a user with statement slug and category metadata.
       responses:
         '200':
           $ref: '#/components/responses/UserConsentRecords'
@@ -37150,35 +36886,50 @@ components:
             $ref: '#/components/schemas/AdminSettingsRateLimitsResponse'
           example:
             profiles:
-              standard:
+              strict:
                 current:
-                  maxRequests: 100
+                  maxRequests: 10
                   windowSeconds: 60
                 source:
                   maxRequests: default
                   windowSeconds: default
                 default:
-                  maxRequests: 100
+                  maxRequests: 10
+                  windowSeconds: 60
+                kv_values:
+                  maxRequests: null
+                  windowSeconds: null
+              publicRead:
+                current:
+                  maxRequests: 600
+                  windowSeconds: 60
+                source:
+                  maxRequests: default
+                  windowSeconds: default
+                default:
+                  maxRequests: 600
                   windowSeconds: 60
                 kv_values:
                   maxRequests: null
                   windowSeconds: null
               loadTest:
                 current:
-                  maxRequests: 1000000
+                  maxRequests: 10000
                   windowSeconds: 60
                 source:
                   maxRequests: default
                   windowSeconds: default
                 default:
-                  maxRequests: 1000000
+                  maxRequests: 10000
                   windowSeconds: 60
                 kv_values:
                   maxRequests: null
                   windowSeconds: null
             env_rate_limit_profile: null
-            cache_ttl_seconds: 10
-            note: Changes take effect within 10 seconds (cache TTL)
+            cache_ttl_seconds: 300
+            note: >-
+              Changes refresh asynchronously and may take up to a few minutes to apply across active
+              isolates.
     AdminSettingsRateLimitProfile:
       description: Rate limit profile.
       content:
@@ -37186,19 +36937,19 @@ components:
           schema:
             $ref: '#/components/schemas/AdminSettingsRateLimitProfileResponse'
           example:
-            profile: standard
+            profile: publicRead
             current:
-              maxRequests: 100
+              maxRequests: 600
               windowSeconds: 60
             source:
               maxRequests: default
               windowSeconds: default
             default:
-              maxRequests: 100
+              maxRequests: 600
               windowSeconds: 60
             kv_keys:
-              maxRequests: rate_limit_standard_max_requests
-              windowSeconds: rate_limit_standard_window_seconds
+              maxRequests: rate_limit_public_read_max_requests
+              windowSeconds: rate_limit_public_read_window_seconds
     AdminSettingsRateLimitProfileUpdate:
       description: Rate limit profile updated.
       content:
@@ -37207,14 +36958,16 @@ components:
             $ref: '#/components/schemas/AdminSettingsRateLimitProfileUpdateResponse'
           example:
             success: true
-            profile: standard
+            profile: publicRead
             updated:
-              maxRequests: 100
+              maxRequests: 900
               windowSeconds: 60
             kv_keys:
-              maxRequests: rate_limit_standard_max_requests
-              windowSeconds: rate_limit_standard_window_seconds
-            note: Changes will take effect within 10 seconds (cache TTL)
+              maxRequests: rate_limit_public_read_max_requests
+              windowSeconds: rate_limit_public_read_window_seconds
+            note: >-
+              Changes refresh asynchronously and may take up to a few minutes to apply across active
+              isolates.
     AdminSettingsRateLimitProfileReset:
       description: Rate limit profile reset.
       content:
@@ -37223,11 +36976,13 @@ components:
             $ref: '#/components/schemas/AdminSettingsRateLimitProfileResetResponse'
           example:
             success: true
-            profile: standard
+            profile: publicRead
             reset_to_default:
-              maxRequests: 100
+              maxRequests: 600
               windowSeconds: 60
-            note: Profile reset to default values. Changes will take effect within 10 seconds.
+            note: >-
+              Profile reset to default values. Changes refresh asynchronously and may take up to a few
+              minutes to apply across active isolates.
     AdminSettingsRateLimitProfileOverride:
       description: Global rate limit profile override.
       content:
@@ -37238,8 +36993,12 @@ components:
             profile_override: null
             kv_key: rate_limit_profile_override
             valid_profiles:
-              - standard
               - strict
+              - moderate
+              - lenient
+              - publicRead
+              - loginStart
+              - sendChallenge
               - loadTest
             note: No profile override set. Endpoints use their default profiles.
     AdminSettingsRateLimitProfileOverrideUpdate:
@@ -37256,8 +37015,8 @@ components:
               windowSeconds: 60
             kv_key: rate_limit_profile_override
             note: >-
-              All rate-limited endpoints now using "loadTest" profile. Changes take effect within 10
-              seconds.
+              All rate-limited endpoints now using "loadTest" profile. Changes refresh asynchronously
+              and may take up to a few minutes to apply across active isolates.
             warning: Load test profile is active. Remember to clear override after testing!
     AdminSettingsRateLimitProfileOverrideClear:
       description: Global rate limit profile override cleared.
@@ -38734,21 +38493,6 @@ components:
                 updated_at: 1770000000000
                 slug: terms
                 category: terms
-            evidence:
-              - id: evidence_123
-                gate_kind: oidc_authorization
-                protocol: oidc
-                consent_kind: scope_claim_release
-                target_type: oidc_client
-                target_id: client_123
-                statement_id: oidc-release:client_123
-                statement_version: release_hash_123
-                flow_id: login_flow
-                flow_version_id: flow_version_123
-                flow_node_id: authorization_consent
-                receipt_id: cgr_0123456789abcdef0123456789abcdef
-                status: active
-                created_at: 1770000000
     UserConsentHistory:
       description: Successful JSON response.
       content:
@@ -42092,107 +41836,6 @@ components:
         updated_at:
           type: integer
           format: int64
-    ConsentGateKind:
-      type: string
-      enum:
-        - legal_document
-        - oidc_authorization
-        - saml_attribute_release
-    ConsentGateTargetType:
-      type: string
-      enum:
-        - tenant
-        - oidc_client
-        - saml_sp
-    ConsentGateNodeConfig:
-      type: object
-      additionalProperties: false
-      properties:
-        policy_resolution:
-          type: string
-          enum:
-            - fixed
-            - target_binding
-        consent_policy_ref:
-          type: string
-        fallback_policy_ref:
-          type: string
-        policy_required:
-          type: boolean
-    ConsentGatePolicyBinding:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - tenant_id
-        - gate_kind
-        - target_type
-        - target_id
-        - policy_id
-        - enabled
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        tenant_id:
-          type: string
-        gate_kind:
-          $ref: '#/components/schemas/ConsentGateKind'
-        target_type:
-          $ref: '#/components/schemas/ConsentGateTargetType'
-        target_id:
-          type:
-            - string
-            - 'null'
-        policy_id:
-          type: string
-        enabled:
-          type: integer
-          enum:
-            - 0
-            - 1
-        created_at:
-          type: integer
-        updated_at:
-          type: integer
-    ConsentGatePolicyBindingCreateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - gate_kind
-        - target_type
-        - policy_id
-      properties:
-        gate_kind:
-          $ref: '#/components/schemas/ConsentGateKind'
-        target_type:
-          $ref: '#/components/schemas/ConsentGateTargetType'
-        target_id:
-          type:
-            - string
-            - 'null'
-        policy_id:
-          type: string
-        enabled:
-          type: boolean
-    ConsentGatePolicyBindingUpdateRequest:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        gate_kind:
-          $ref: '#/components/schemas/ConsentGateKind'
-        target_type:
-          $ref: '#/components/schemas/ConsentGateTargetType'
-        target_id:
-          type:
-            - string
-            - 'null'
-        policy_id:
-          type: string
-        enabled:
-          type: boolean
     AgentConfigurationPlanDefinition:
       type: object
       additionalProperties: false
@@ -42404,6 +42047,9 @@ components:
         - maxTokenTtlSeconds
         - elevationMode
         - elevationTtlSeconds
+        - requestRateLimitPerMinute
+        - sessionInitializationRateLimitPerMinute
+        - maxConcurrentSessions
         - rateLimitPerMinute
         - publicClientStandardRateLimitPerMinute
         - highRiskPermissionsAdditional
@@ -42423,6 +42069,21 @@ components:
           type: integer
           minimum: 60
           maximum: 300
+        requestRateLimitPerMinute:
+          type: integer
+          minimum: 10
+          maximum: 10000
+          description: Authenticated MCP HTTP requests admitted per Grant and OAuth client each minute.
+        sessionInitializationRateLimitPerMinute:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: New MCP initialize requests admitted per Grant and OAuth client each minute; it cannot exceed requestRateLimitPerMinute.
+        maxConcurrentSessions:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Active stateful MCP sessions allowed per Grant and OAuth client.
         rateLimitPerMinute:
           type: integer
           minimum: 1
@@ -58536,8 +58197,11 @@ components:
           type: string
           enum:
             - strict
-            - normal
-            - relaxed
+            - moderate
+            - lenient
+            - publicRead
+            - loginStart
+            - sendChallenge
             - loadTest
       additionalProperties: false
     AdminSettingsRateLimitProfileOverrideResponse:
@@ -61711,60 +61375,12 @@ components:
       additionalProperties: false
       required:
         - records
-        - evidence
       properties:
         records:
           type: array
           items:
             type: object
             additionalProperties: true
-        evidence:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - id
-              - gate_kind
-              - protocol
-              - consent_kind
-              - statement_id
-              - statement_version
-              - status
-              - created_at
-            properties:
-              id:
-                type: string
-              gate_kind:
-                type: string
-                enum: [legal_document, oidc_authorization, saml_attribute_release]
-              protocol:
-                type: string
-              consent_kind:
-                type: string
-              target_type:
-                type: [string, 'null']
-              target_id:
-                type: [string, 'null']
-              statement_id:
-                type: string
-              statement_version:
-                type: string
-              policy_id:
-                type: [string, 'null']
-              flow_id:
-                type: [string, 'null']
-              flow_version_id:
-                type: [string, 'null']
-              flow_node_id:
-                type: [string, 'null']
-              receipt_id:
-                type: [string, 'null']
-              status:
-                type: string
-              created_at:
-                type: integer
-                format: int64
     UserConsentHistoryResponse:
       type: object
       additionalProperties: false

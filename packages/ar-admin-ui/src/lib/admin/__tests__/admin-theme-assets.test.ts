@@ -93,6 +93,15 @@ describe('Admin UI theme assets', () => {
 		expect(screenEditor.match(/var\(--button-primary-color/g)).toHaveLength(2);
 	});
 
+	it('keeps the screen list hierarchy clear and the selected screen aligned to the top', () => {
+		const screenEditor = readSource('routes/admin/screens/+page.svelte');
+
+		expect(screenEditor).toMatch(
+			/<span>\{screen\.display_name\}<\/span>\s*<small>\{kindLabel\(screen\.screen_kind\)\}<\/small>/
+		);
+		expect(screenEditor).toMatch(/\.detail-panel,\s*\.editor\s*\{[^}]*align-content: start;/s);
+	});
+
 	it('keeps detail and danger surfaces theme-token driven', () => {
 		const themesCss = readSource('lib/styles/themes.css');
 		const detailHeader = readSource('lib/components/admin/AdminDetailHeader.svelte');

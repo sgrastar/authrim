@@ -1,5 +1,8 @@
 import type { Context } from 'hono';
-import { evaluateAgentMcpFeatureFlag } from '@authrim/ar-agent-access/core';
+import {
+  evaluateAgentMcpFeatureFlag,
+  getAgentAccessDisplayName,
+} from '@authrim/ar-agent-access/core';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   ALLOWED_DPOP_ALGS,
@@ -8,7 +11,10 @@ import {
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
-type AgentDiscoveryEnv = Env & { ENABLE_AGENT_MCP?: string };
+type AgentDiscoveryEnv = Env & {
+  ENABLE_AGENT_MCP?: string;
+  AUTHRIM_ENVIRONMENT_NAME?: string;
+};
 
 type FeatureDecision = 'enabled' | 'disabled' | 'error';
 
@@ -87,9 +93,11 @@ function metadataHeaders(c: Context): void {
 export async function agentProtectedResourceMetadataHandler(c: Context<{ Bindings: Env }>) {
   const access = await requireAgentAccess(c);
   if (access instanceof Response) return access;
+  const env = c.env as AgentDiscoveryEnv;
   metadataHeaders(c);
   return c.json({
     resource: `${access.baseIssuer}/mcp`,
+    resource_name: getAgentAccessDisplayName(env.AUTHRIM_ENVIRONMENT_NAME),
     authorization_servers: [`${access.baseIssuer}/oauth/admin-agent`],
     scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
     bearer_methods_supported: ['header'],

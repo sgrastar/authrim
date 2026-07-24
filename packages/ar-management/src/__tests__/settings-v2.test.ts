@@ -431,6 +431,35 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('login-ui.brand_name');
       });
 
+      it('bumps the authentication methods cache revision for tenant Login UI changes', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.brand_name': 'Tenant Brand' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        await expect(
+          mockKV.get('cache:authentication-methods:v1:revision:tenant:tenant_123')
+        ).resolves.toEqual(expect.any(String));
+      });
+
       it('rejects unsafe Login UI custom CSS', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });
@@ -457,6 +486,80 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as ApiResponse;
         expect(body.error).toBe('validation_failed');
+      });
+
+      it('rejects unsafe published Account Page snapshots', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+        const now = Date.now();
+        const definition = {
+          schema_version: 'authrim.account_page.v1',
+          screens: [
+            {
+              id: 'unsafe',
+              screen_key: 'unsafe_account',
+              width: 'full',
+              enabled: true,
+              condition: 'always',
+            },
+          ],
+        };
+        const document = {
+          schema_version: 'authrim.account_pages.v1',
+          default_page_id: 'unsafe-page',
+          pages: [
+            {
+              id: 'unsafe-page',
+              name: 'Unsafe page',
+              base_preset_id: 'authrim-default',
+              base_preset_version: 1,
+              draft: definition,
+              published: {
+                ...definition,
+                resolved_at: new Date(now).toISOString(),
+                screen_snapshots: {
+                  unsafe_account: {
+                    screen_key: 'unsafe_account',
+                    screen_kind: 'account',
+                    fields: [
+                      {
+                        field: 'auth.passkey',
+                        label: 'Injected action',
+                        block_type: 'auth_widget',
+                      },
+                    ],
+                  },
+                },
+              },
+              published_version: 1,
+              published_at: new Date(now).toISOString(),
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        };
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.account_pages': JSON.stringify(document) },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        expect((await res.json()) as ApiResponse).toMatchObject({ error: 'validation_failed' });
       });
 
       it('rejects untrusted external post-login redirect URLs', async () => {
@@ -698,8 +801,14 @@ describe('Settings API v2', () => {
           kv: mockKV,
           env: {
             DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
+            AUTHRIM_REGISTERED_SCHEMA_REFS: JSON.stringify([
+              'connection:tenant-a-pii:external-postgres-pii',
+            ]),
           },
         });
+        (mockEnv as unknown as Record<string, unknown>).HYPERDRIVE_TENANT_A_PII = {
+          connectionString: 'postgres://tenant-a-pii',
+        };
 
         const getRes = await app.request(
           '/api/admin/tenants/tenant_123/settings/tenant',
@@ -1183,6 +1292,37 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as ApiResponse;
         expect(body.error).toBe('validation_failed');
+      });
+
+      it('bumps the authentication methods cache revision for client Login UI overrides', async () => {
+        const mockKV = createMockKV({
+          'client:test-tenant:client_abc:metadata': JSON.stringify({ tenant_id: 'test-tenant' }),
+        });
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/clients/client_abc/settings/login-ui',
+          { method: 'GET', headers: { 'X-Tenant-Id': 'test-tenant' } },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/clients/client_abc/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'test-tenant' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.brand_name': 'Client Brand' },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        await expect(
+          mockKV.get('cache:authentication-methods:v1:revision:tenant:test-tenant')
+        ).resolves.toEqual(expect.any(String));
       });
 
       it('should reject disabling App Login on the configured target client', async () => {

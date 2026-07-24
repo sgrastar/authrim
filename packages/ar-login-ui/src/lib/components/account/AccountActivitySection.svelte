@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { Card } from '$lib/components';
 	import type { AccountOperation } from '$lib/api/account';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { formatTimestamp } from '$lib/utils/date';
 
-	let { operations = [] } = $props<{ operations?: AccountOperation[] }>();
+	let { operations = [], title = '' } = $props<{
+		operations?: AccountOperation[];
+		title?: string;
+	}>();
 
 	function formatAction(action: string): string {
 		switch (action) {
@@ -26,14 +29,14 @@
 
 <Card>
 	<section class="activity-panel">
-		<h2>{$LL.account_activityTitle()}</h2>
+		<h2>{title || $LL.account_activityTitle()}</h2>
 		{#if operations.length === 0}
 			<p class="empty-text">{$LL.account_empty()}</p>
 		{:else}
 			<ul>
 				{#each operations as operation (operation.id)}
 					<li>
-						<span>{formatTimestamp(operation.created_at)}</span>
+						<span>{formatTimestamp(operation.created_at, getLocale())}</span>
 						<strong>{formatAction(operation.action)}</strong>
 					</li>
 				{/each}

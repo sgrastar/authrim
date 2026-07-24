@@ -6,5 +6,6 @@ export * from './admin-configuration-tools';
 export * from './admin-bulk-tools';
 export * from './admin-configuration-context';
 export * from './admin-tools';
+export * from './admin-discovery-tools';
 export * from './sdk-server';
 export * from './json-schema-validator';

@@ -2,7 +2,7 @@ const adminScreens = {
 	admin_screens_page_title: 'スクリーン - Authrim管理画面',
 	admin_screens_title: 'スクリーン',
 	admin_screens_description:
-		'新規登録、プロフィール追加入力、ログインで使用する再利用可能なスクリーンを管理します。',
+		'ログインフローとアカウントページで使用する再利用可能なスクリーンを管理します。',
 	admin_screens_loading: 'スクリーンを読み込んでいます...',
 	admin_screens_load_failed: 'スクリーンの読み込みに失敗しました。',
 	admin_screens_save_failed: 'スクリーンの保存に失敗しました。',

@@ -111,6 +111,11 @@
 			{ path: '/admin/themes', label: $LL.admin_header_theme(), icon: 'i-ph-palette' },
 			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
 			{
+				path: '/admin/account-page',
+				label: $LL.admin_nav_account_page(),
+				icon: 'i-ph-layout'
+			},
+			{
 				path: '/admin/tenant-discovery',
 				label: $LL.admin_nav_tenant_discovery(),
 				icon: 'i-ph-signpost'

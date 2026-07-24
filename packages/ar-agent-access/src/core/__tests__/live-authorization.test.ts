@@ -15,6 +15,7 @@ const grant: AgentGrantContract = {
   generation: 1,
   status: 'active',
   delegationMode: 'user_consent',
+  expiresAt: 1_000,
   taskSetId: 'ats_read-only',
   taskSetVersion: 1,
   scopePolicyId: 'asp_tenant-1',

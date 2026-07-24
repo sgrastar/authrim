@@ -1,6 +1,8 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { canonicalizeJson, isPublicClientStandardOptInEligibleTool } from '../../../core';
+import {
+  computeAgentToolContractDigest,
+  isPublicClientStandardOptInEligibleTool,
+} from '../../../core';
 import { ADMIN_WRITE_TOOL_DEFINITIONS } from '../admin-write-tools';
 import { ADMIN_CONFIGURATION_INSPECTION_TOOL_DEFINITIONS } from '../admin-inspection-tools';
 import { createAdminToolCatalog } from '../admin-tools';
@@ -8,8 +10,7 @@ import { createAdminToolCatalog } from '../admin-tools';
 describe('Admin write tool catalog', () => {
   it('pins schema digests and write contracts for every write tool', () => {
     for (const tool of ADMIN_WRITE_TOOL_DEFINITIONS) {
-      const digest = createHash('sha256').update(canonicalizeJson(tool.inputSchema)).digest('hex');
-      expect(tool.schemaDigest).toBe(`sha256:${digest}`);
+      expect(tool.schemaDigest).toBe(computeAgentToolContractDigest(tool));
       expect(['standard', 'high']).toContain(tool.riskLevel);
       expect(tool.requiredScope).toBe('agent:write');
       expect(tool.annotations).toMatchObject({
@@ -22,7 +23,7 @@ describe('Admin write tool catalog', () => {
 
   it('publishes read and reviewed write tools from one immutable catalog', () => {
     const catalog = createAdminToolCatalog();
-    expect(catalog.list()).toHaveLength(47);
+    expect(catalog.list()).toHaveLength(50);
     expect(catalog.get('inspect_protocol_security')).toMatchObject({
       id: 'admin.read.protocol-security.inspect',
       requiredPermissions: ['admin:settings:read'],
@@ -79,8 +80,7 @@ describe('Admin write tool catalog', () => {
 
   it('pins every broad configuration inspection to a closed input schema', () => {
     for (const tool of ADMIN_CONFIGURATION_INSPECTION_TOOL_DEFINITIONS) {
-      const digest = createHash('sha256').update(canonicalizeJson(tool.inputSchema)).digest('hex');
-      expect(tool.schemaDigest).toBe(`sha256:${digest}`);
+      expect(tool.schemaDigest).toBe(computeAgentToolContractDigest(tool));
       expect(tool.inputSchema).toMatchObject({ additionalProperties: false });
       expect(tool.requiredScope).toBe('agent:read');
     }

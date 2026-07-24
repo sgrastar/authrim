@@ -65,6 +65,7 @@ const adminShell = {
 	admin_nav_resolution_center: 'Resolution Center',
 	admin_nav_login_methods: 'Authentication Methods',
 	admin_nav_login_ui: 'Login UI',
+	admin_nav_account_page: 'Account page',
 	admin_nav_tenant_discovery: 'Tenant Discovery',
 	admin_nav_info: 'Info',
 	admin_nav_settings: 'Settings',

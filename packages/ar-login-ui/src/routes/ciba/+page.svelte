@@ -33,7 +33,7 @@
 		try {
 			const { data, error: apiError } = await cibaAPI.getPending();
 			if (apiError) {
-				error = apiError.error_description || $LL.ciba_errorLoadPending();
+				error = $LL.ciba_errorLoadPending();
 			} else {
 				pendingRequests = (data as typeof pendingRequests) || [];
 			}
@@ -56,7 +56,7 @@
 			const { error: apiError } = await cibaAPI.approve(authReqId);
 
 			if (apiError) {
-				error = apiError.error_description || $LL.ciba_errorApproveFailed();
+				error = $LL.ciba_errorApproveFailed();
 			} else {
 				successMessage = $LL.ciba_approvedSuccess();
 				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);
@@ -84,7 +84,7 @@
 			const { error: apiError } = await cibaAPI.reject(authReqId);
 
 			if (apiError) {
-				error = apiError.error_description || $LL.ciba_errorDenyFailed();
+				error = $LL.ciba_errorDenyFailed();
 			} else {
 				successMessage = $LL.ciba_rejectedSuccess();
 				pendingRequests = pendingRequests.filter((r) => r.auth_req_id !== authReqId);

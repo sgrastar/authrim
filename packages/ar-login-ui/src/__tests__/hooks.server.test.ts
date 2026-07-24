@@ -108,6 +108,68 @@ describe('Login UI proxy hooks', () => {
 		expect(shouldProxyPath('/login')).toBe(false);
 	});
 
+	it('applies the detected browser locale to the initial document language', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'zh-Hant-TW,ja;q=0.8' } }),
+			url,
+			locals: {
+				authenticationMethods: {
+					ui: {
+						theme: 'dark',
+						variant: 'navy',
+						pageTemplate: { backgroundColor: '#112233' }
+					}
+				}
+			},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+		let renderedHtml = '';
+
+		await localeHandle({
+			event: event as never,
+			resolve: async (_event, options) => {
+				const transformedHtml = await options?.transformPageChunk?.({
+					html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" style="background: __AUTHRIM_INITIAL_BACKGROUND__; color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__"></html>',
+					done: true
+				});
+				renderedHtml = transformedHtml ?? '';
+				return new Response(renderedHtml, { headers: { 'Content-Type': 'text/html' } });
+			}
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'zh-TW' });
+		expect(renderedHtml).toContain('<html lang="zh-TW"');
+		expect(renderedHtml).toContain('background: #112233; color-scheme: dark');
+		expect(renderedHtml).not.toContain('__AUTHRIM_INITIAL_');
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			'authrim_theme_hint',
+			'dark',
+			expect.objectContaining({ path: '/', maxAge: 3600, sameSite: 'lax' })
+		);
+	});
+
+	it('honors Accept-Language quality values and ignores excluded languages', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, {
+				headers: { 'Accept-Language': 'en;q=0, fr;q=0.4, de-DE;q=0.9' }
+			}),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'de' });
+	});
+
 	it('preserves Set-Cookie headers from proxied auth responses', async () => {
 		const { buildProxyResponse } = await import('../hooks.server');
 		const upstream = new Response(JSON.stringify({ ok: true }), {
@@ -402,6 +464,125 @@ describe('Login UI proxy hooks', () => {
 		);
 		expect(shouldPrefetchLoginUITheme('/login')).toBe(true);
 		expect(shouldPrefetchLoginUITheme('/discover')).toBe(false);
+	});
+
+	it('bootstraps the configured theme for plain login and signup documents', async () => {
+		const { resolveInitialLoginUIAppearance, shouldBootstrapLoginUITheme } =
+			await import('../hooks.server');
+
+		expect(shouldBootstrapLoginUITheme('/login')).toBe(true);
+		expect(shouldBootstrapLoginUITheme('/signup')).toBe(true);
+		expect(shouldBootstrapLoginUITheme('/discover')).toBe(false);
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: {
+					theme: 'dark',
+					variant: 'navy',
+					pageTemplate: { backgroundColor: '#112233' }
+				}
+			} as never)
+		).toEqual({ background: '#112233', colorScheme: 'dark' });
+		expect(resolveInitialLoginUIAppearance(null)).toEqual({
+			background: '#eeeae3',
+			colorScheme: 'light'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'dark',
+				darkVariant: 'navy'
+			})
+		).toEqual({
+			background: '#0a0e14',
+			colorScheme: 'dark'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'light',
+				lightVariant: 'green'
+			})
+		).toEqual({
+			background: '#e8f2e8',
+			colorScheme: 'light'
+		});
+	});
+
+	it('skips server-side theme bootstrap for same-origin plain /login', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const url = new URL('https://first.test.authrim.com/login');
+		const event = {
+			request: new Request(url),
+			url,
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+					PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+				}
+			},
+			cookies: { get: () => undefined }
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+				PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+			})
+		).toBe(false);
+	});
+
+	it('keeps server-side theme bootstrap for protocol login and signup documents', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const loginUrl = new URL('https://first.test.authrim.com/login?challenge_id=challenge-1');
+		const signupUrl = new URL('https://first.test.authrim.com/signup');
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(
+				{
+					request: new Request(loginUrl),
+					url: loginUrl,
+					platform: { env: platformEnv },
+					cookies: { get: () => undefined }
+				} as never,
+				platformEnv
+			)
+		).toBe(true);
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(
+				{
+					request: new Request(signupUrl),
+					url: signupUrl,
+					platform: { env: platformEnv },
+					cookies: { get: () => undefined }
+				} as never,
+				platformEnv
+			)
+		).toBe(true);
+	});
+
+	it('keeps plain /login theme bootstrap when an Origin-Trial token is configured', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const url = new URL('https://first.test.authrim.com/login');
+		const event = {
+			request: new Request(url),
+			url,
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+					EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+				}
+			},
+			cookies: { get: () => undefined }
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			})
+		).toBe(true);
 	});
 
 	it('resolves the challenge client before fetching an overridden Login UI theme', async () => {

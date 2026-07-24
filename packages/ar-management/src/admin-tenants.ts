@@ -37,19 +37,25 @@ import {
   usesNakedDomainIssuer,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  putTenantExistsCache,
+  deleteTenantExistsCache,
 } from '@authrim/ar-lib-core';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 
 /**
- * Invalidate the tenant existence KV cache for a given tenant.
- * Called after create, lifecycle_state change, and deactivate to ensure
- * request-context middleware picks up the new state promptly.
+ * Synchronize the tenant existence positive cache with lifecycle changes.
+ * Only active tenants get a positive cache entry; every other state deletes it.
  */
-async function invalidateTenantExistsCache(
+async function syncTenantExistsCache(
   kv: KVNamespace | undefined,
-  tenantId: string
+  tenantId: string,
+  lifecycleState: TenantLifecycleState
 ): Promise<void> {
-  await kv?.delete(`v1:tenant-exists:${tenantId}`).catch(() => {});
+  if (lifecycleState === 'active') {
+    await putTenantExistsCache(kv, tenantId);
+    return;
+  }
+  await deleteTenantExistsCache(kv, tenantId);
 }
 import { z } from 'zod';
 import {
@@ -1101,8 +1107,11 @@ async function runTenantD1PoolProvisioning(
       );
     }
     await activateTenantDatabaseSlot(adminAdapter, slot.slot_id, input.id);
-    // Delete stale positive entries too: deferred tenants must be re-evaluated as provisioning.
-    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id);
+    await syncTenantExistsCache(
+      c.env.AUTHRIM_CONFIG,
+      input.id,
+      options.deferActivation ? 'provisioning' : 'active'
+    );
     await recordTenantSlotAudit(adminAdapter, {
       tenantId: input.id,
       slotId: slot.slot_id,
@@ -1140,7 +1149,7 @@ async function runTenantD1PoolProvisioning(
         ? [
             c.env.AUTHRIM_CONFIG.delete(contractKey),
             c.env.AUTHRIM_CONFIG.delete(`settings:tenant:${input.id}:tenant`),
-            c.env.AUTHRIM_CONFIG.delete(`v1:tenant-exists:${input.id}`),
+            deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id),
           ]
         : []),
       ...(c.env.SETTINGS
@@ -1279,8 +1288,11 @@ export async function provisionTenant(
     );
     await seedTenantDefaultSettings(c, input.id);
     await initTenantKeyManager(c.env.KEY_MANAGER, input.id);
-    // Delete stale positive entries too: deferred tenants must be re-evaluated as provisioning.
-    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id);
+    await syncTenantExistsCache(
+      c.env.AUTHRIM_CONFIG,
+      input.id,
+      input.deferActivation ? 'provisioning' : 'active'
+    );
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
     log.error('Tenant provisioning failed - rolling back', { tenantId: input.id }, error as Error);
@@ -1289,7 +1301,7 @@ export async function provisionTenant(
       adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [input.id]),
       c.env.AUTHRIM_CONFIG?.delete(contractKey),
       c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${input.id}:tenant`),
-      c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${input.id}`),
+      deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id),
       c.env.SETTINGS?.delete(`settings:tenant:${input.id}:login-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${input.id}:tenant-discovery-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${input.id}:authentication-methods`),
@@ -1342,7 +1354,7 @@ export async function activateProvisionedTenant(
     "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
     [nowTs, tenantId]
   );
-  await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId);
+  await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId, 'active');
 
   const activated = await platformAdapter.queryOne<TenantRow>(
     'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
@@ -1478,7 +1490,7 @@ export async function rollbackProvisionedTenant(
       'tenant_identity_settings',
       c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:tenant`),
     ],
-    ['tenant_exists_cache', c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${tenantId}`)],
+    ['tenant_exists_cache', deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId)],
   ];
   const cleanupResults = await Promise.allSettled(cleanupTasks.map(([, task]) => task));
   cleanupResults.forEach((result, index) => {
@@ -2000,7 +2012,7 @@ async function executeTenantLifecycleCommand(
     throw error;
   }
 
-  await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+  await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, nextState);
   await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
     job_id: jobId,
     source_state: tenant.lifecycle_state,
@@ -2327,7 +2339,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
       ),
       c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', id)),
       c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${id}:tenant`),
-      c.env.AUTHRIM_CONFIG?.delete(`v1:tenant-exists:${id}`),
+      deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, id),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:login-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:tenant-discovery-ui`),
       c.env.SETTINGS?.delete(`settings:tenant:${id}:authentication-methods`),
@@ -2455,7 +2467,7 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // Invalidate cache so subsequent requests to this tenant return 404 immediately.
-    await invalidateTenantExistsCache(c.env.AUTHRIM_CONFIG, id);
+    await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, 'deleting');
 
     await createAuditLogFromContext(c, 'tenant.delete_queued', 'tenant', id, {
       tenant_id: id,

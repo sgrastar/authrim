@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentToolCatalog } from '../tool-catalog';
+import { sealAgentToolDefinition } from '../tool-contract';
 import {
   assertNoRawSecrets,
   assertScopePolicyNarrows,
@@ -28,7 +29,7 @@ const schemaValidator = {
   },
 };
 
-const tool: AgentToolDefinition = {
+const tool: AgentToolDefinition = sealAgentToolDefinition({
   id: 'admin.write.clients.metadata',
   name: 'update_client_metadata',
   title: 'Update client metadata',
@@ -37,7 +38,6 @@ const tool: AgentToolDefinition = {
   requiredPermissions: ['admin:clients:write'],
   requiredScope: 'agent:write',
   riskLevel: 'standard',
-  schemaDigest: 'sha256:test',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -47,7 +47,7 @@ const tool: AgentToolDefinition = {
     },
     required: ['client_id'],
   },
-};
+});
 
 const policy: AgentScopePolicyDefinition = {
   tenantIds: ['tenant-a'],
@@ -145,6 +145,7 @@ describe('Agent Configuration Copilot contracts', () => {
       schemaValidator,
       definition: {
         schemaVersion: 'authrim-agent-plan-v1',
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-1',
@@ -157,7 +158,24 @@ describe('Agent Configuration Copilot contracts', () => {
       },
     });
     expect(resolved.risks).toEqual(['standard']);
+    expect(resolved.definition.goal).toBe('Apply an approved Authrim configuration change');
     expect(resolved.digest).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    await expect(
+      resolveAgentConfigurationPlan({
+        catalog,
+        maxOperations: 10,
+        schemaValidator,
+        definition: { ...resolved.definition, goal: '   ' },
+      })
+    ).rejects.toThrow('schema version is invalid');
+    await expect(
+      resolveAgentConfigurationPlan({
+        catalog,
+        maxOperations: 10,
+        schemaValidator,
+        definition: { ...resolved.definition, goal: 'Use a different target outcome' },
+      })
+    ).resolves.not.toMatchObject({ digest: resolved.digest });
     await expect(
       resolveAgentConfigurationPlan({
         catalog,
@@ -165,6 +183,7 @@ describe('Agent Configuration Copilot contracts', () => {
         schemaValidator,
         definition: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-1',
@@ -183,6 +202,7 @@ describe('Agent Configuration Copilot contracts', () => {
         schemaValidator,
         definition: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-1',
@@ -203,6 +223,7 @@ describe('Agent Configuration Copilot contracts', () => {
         schemaValidator,
         definition: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-1',

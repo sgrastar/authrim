@@ -598,6 +598,7 @@ export interface ResumeAdminAgentGrantInput {
   clientId: string;
   expectedGeneration: number;
   transitionId: string;
+  expiresAt: number;
   now: number;
   audit: AdminAgentAuditWrite;
 }
@@ -2009,6 +2010,23 @@ export class AdminAgentAccessRepository {
     return row ? toGrant(row) : null;
   }
 
+  async getSystemManagedTaskSetCatalogVersion(
+    tenantId: string,
+    taskSetId: string,
+    taskSetVersion: number
+  ): Promise<string | null> {
+    if (!taskSetId || !Number.isSafeInteger(taskSetVersion) || taskSetVersion < 1) return null;
+    const row = await this.adapter.queryOne<{ catalog_version: string }>(
+      `SELECT v.catalog_version
+       FROM agent_task_sets s
+       JOIN agent_task_set_versions v ON v.task_set_id = s.id
+       WHERE s.tenant_id = ? AND s.id = ? AND s.management_mode = 'system_managed'
+         AND v.version = ? AND v.status = 'active'`,
+      [tenantId, taskSetId, taskSetVersion]
+    );
+    return row?.catalog_version ?? null;
+  }
+
   async getActiveDelegatorPermissions(
     targetTenantId: string,
     delegatorId: string,
@@ -2951,7 +2969,7 @@ export class AdminAgentAccessRepository {
            WHERE g.id = f.grant_id AND g.tenant_id = f.tenant_id
              AND g.generation = f.grant_generation AND g.delegator_id = f.admin_user_id
              AND g.client_id = f.client_id AND g.consent_version = f.consent_version
-             AND g.status = 'active' AND (g.expires_at IS NULL OR g.expires_at > ?)
+             AND g.status = 'active' AND g.expires_at IS NOT NULL AND g.expires_at > ?
          )
          AND EXISTS (
            SELECT 1 FROM agent_consents c
@@ -3004,7 +3022,7 @@ export class AdminAgentAccessRepository {
          AND f.consent_version = ? AND f.status = 'active' AND f.expires_at > ?
          AND g.generation = f.grant_generation AND g.delegator_id = f.admin_user_id
          AND g.client_id = f.client_id AND g.consent_version = f.consent_version
-         AND g.status = 'active' AND (g.expires_at IS NULL OR g.expires_at > ?)
+         AND g.status = 'active' AND g.expires_at IS NOT NULL AND g.expires_at > ?
          AND EXISTS (
            SELECT 1 FROM agent_consents c
            WHERE c.grant_id = f.grant_id AND c.tenant_id = f.tenant_id
@@ -3419,11 +3437,12 @@ export class AdminAgentAccessRepository {
     const results = await this.adapter.batch([
       {
         sql: `UPDATE admin_agent_grants
-         SET status = 'active', active_uniqueness_key = 'active', updated_at = ?,
+         SET status = 'active', active_uniqueness_key = 'active', expires_at = ?, updated_at = ?,
              last_mutation_id = ?
          WHERE tenant_id = ? AND id = ? AND client_id = ?
            AND generation = ? AND status = 'suspended'`,
         params: [
+          input.expiresAt,
           input.now,
           input.transitionId,
           input.tenantId,

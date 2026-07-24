@@ -143,12 +143,167 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
   requestUrl.protocol = 'https:';
   return c.redirect(requestUrl.toString(), 308);
 }
+
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY = 'authrimLoginInteractionStartDiagnostics';
+
+interface MiddlewareDiagnosticSpan {
+  name: string;
+  durationMs: number;
+}
+
+interface MiddlewareDiagnosticState {
+  sessionId: string;
+  startedAt: number;
+  lastMarkAt: number;
+  spans: MiddlewareDiagnosticSpan[];
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function getMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>
+): MiddlewareDiagnosticState | null {
+  return (
+    ((c as unknown as { get(key: string): unknown }).get(
+      LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY
+    ) as MiddlewareDiagnosticState | undefined) ?? null
+  );
+}
+
+function setMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>,
+  state: MiddlewareDiagnosticState
+): void {
+  (c as unknown as { set(key: string, value: unknown): void }).set(
+    LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY,
+    state
+  );
+}
+
+function appendMiddlewareDiagnosticServerTiming(
+  c: Context<{ Bindings: Env }>,
+  spans: MiddlewareDiagnosticSpan[]
+): void {
+  if (spans.length === 0) return;
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+function recordMiddlewareDiagnosticSpan(c: Context<{ Bindings: Env }>, name: string): void {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) return;
+  const now = performance.now();
+  state.spans.push({
+    name,
+    durationMs: roundDiagnosticDurationMs(now - state.lastMarkAt),
+  });
+  state.lastMarkAt = now;
+}
+
+async function timeMiddlewareDiagnosticOperation<T>(
+  c: Context<{ Bindings: Env }>,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) {
+    return operation();
+  }
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    const now = performance.now();
+    state.spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(now - startedAt),
+    });
+    state.lastMarkAt = now;
+  }
+}
+
+function loginInteractionStartDiagnosticStartMiddleware() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
+    if (!sessionId || !isDiagnosticTimingEnabled(c.env)) {
+      return next();
+    }
+
+    const startedAt = performance.now();
+    setMiddlewareDiagnosticState(c, {
+      sessionId,
+      startedAt,
+      lastMarkAt: startedAt,
+      spans: [],
+    });
+
+    try {
+      await next();
+    } finally {
+      const state = getMiddlewareDiagnosticState(c);
+      if (!state) return;
+      recordMiddlewareDiagnosticSpan(c, 'auth_handler_downstream');
+      state.spans.push({
+        name: 'auth_total',
+        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
+      });
+      appendMiddlewareDiagnosticServerTiming(c, state.spans);
+      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+      getLogger(c)
+        .module('LOGIN-RUNTIME-FLOW-TIMING')
+        .info('LoginUI runtime Flow middleware diagnostics', {
+          diagnosticSessionId: state.sessionId,
+          method: c.req.method,
+          path: c.req.path,
+          status: c.res.status,
+          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+        });
+    }
+  };
+}
+
+function loginInteractionStartDiagnosticCheckpoint(name: string) {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    recordMiddlewareDiagnosticSpan(c, name);
+    await next();
+  };
+}
+
 const AUTH_REQUEST_BODY_MAX_BYTES = 100 * 1024;
 
 // Middleware
+app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticStartMiddleware());
 app.use('*', logger());
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_logger')
+);
 app.use('*', redirectExternalHttpToHttps);
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_redirect_https')
+);
 app.use('*', requestContextMiddleware());
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_request_context')
+);
 app.use('*', (c, next) =>
   bodyLimit({
     maxSize: AUTH_REQUEST_BODY_MAX_BYTES,
@@ -163,10 +318,18 @@ app.use('*', (c, next) =>
   })(c, next)
 );
 app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_body_limit')
+);
+app.use(
   '*',
   diagnosticLoggingMiddleware({
     excludePatterns: [/^\/api\/health/, /^\/health\//, /^\/admin-init-setup/],
   })
+);
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_diagnostic_logging')
 );
 
 // Notification plugin context.
@@ -238,6 +401,10 @@ app.use('*', async (c, next) => {
     },
   })(c, next);
 });
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_secure_headers')
+);
 
 // CORS configuration with origin validation
 // Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
@@ -283,6 +450,7 @@ app.use('*', async (c, next) => {
 
   return corsMiddleware(c, next);
 });
+app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticCheckpoint('auth_cors'));
 
 // Rate limiting for sensitive endpoints
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
@@ -426,6 +594,7 @@ app.use(
 app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
+app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticCheckpoint('auth_csrf'));
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
 
@@ -662,13 +831,31 @@ app.use('/api/v1/auth/direct/*', async (c, next) => {
   })(c, next);
 });
 
+app.use('/api/v1/login/interactions/start', async (c, next) => {
+  const profile = await timeMiddlewareDiagnosticOperation(c, 'auth_rate_limit_profile', () =>
+    getRateLimitProfileAsync(c.env, 'loginStart', c.executionCtx)
+  );
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/api/v1/login/interactions/start'],
+    endpointClass: 'loginStart',
+  })(c, next);
+});
 app.use('/api/v1/login/interactions/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  if (c.req.path === '/api/v1/login/interactions/start') {
+    return next();
+  }
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate', c.executionCtx);
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/v1/login/interactions'],
+    endpointClass: 'loginInteraction',
   })(c, next);
 });
+app.use(
+  '/api/v1/login/interactions/start',
+  loginInteractionStartDiagnosticCheckpoint('auth_rate_limit')
+);
 
 app.post('/api/v1/login/interactions/start', loginRuntimeInteractionStartHandler);
 app.post(

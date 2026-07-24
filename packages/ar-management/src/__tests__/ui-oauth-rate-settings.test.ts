@@ -327,7 +327,15 @@ describe('UI, OAuth, and rate-limit settings', () => {
     const all = (await (
       await getRateLimitSettings(context({ store, env: { RATE_LIMIT_PROFILE: 'strict' } }))
     ).json()) as { profiles: Record<string, unknown> };
-    expect(Object.keys(all.profiles)).toEqual(['strict', 'moderate', 'lenient', 'loadTest']);
+    expect(Object.keys(all.profiles)).toEqual([
+      'strict',
+      'moderate',
+      'lenient',
+      'publicRead',
+      'loginStart',
+      'sendChallenge',
+      'loadTest',
+    ]);
     expect((await getRateLimitProfile(context({ param: 'invalid' }))).status).toBe(400);
     expect((await getRateLimitProfile(context({ store, param: 'loadTest' }))).status).toBe(200);
   });

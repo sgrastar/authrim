@@ -307,7 +307,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     params?: unknown[]
   ): Array<{ field: string; value: unknown; operator?: string }> {
     const conditions: Array<{ field: string; value: unknown; operator?: string }> = [];
-    const whereMatch = sql.match(/WHERE\s+([\s\S]+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
+    const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
     if (!whereMatch) return conditions;
 
     const wherePart = whereMatch[1];
@@ -414,7 +414,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     if (!params) return { limitVal: 0, offsetVal: 0 };
 
     // Count WHERE conditions
-    const whereMatch = sql.match(/WHERE\s+([\s\S]+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
+    const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
     let whereParamCount = 0;
     if (whereMatch) {
       const wherePart = whereMatch[1];

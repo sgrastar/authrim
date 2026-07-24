@@ -4,6 +4,7 @@ import {
   AdminAgentAccessRepository,
   AgentConfigurationRepository,
   canonicalizeJson,
+  resolveAgentGrantExpiration,
   getAgentTaskSetWithBuiltins,
   hasCompleteAgentConfigurationSnapshot,
   normalizeSelfServiceAgentAuthorizationDetails,
@@ -83,13 +84,6 @@ function stringField(value: unknown, maximum: number = 256): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
   return normalized.length > 0 && normalized.length <= maximum ? normalized : null;
-}
-
-function expiration(value: unknown, now: number): number | undefined | null {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  const normalized = value < 1e12 ? Math.floor(value * 1000) : Math.floor(value);
-  return normalized > now ? normalized : null;
 }
 
 function positiveVersion(value: unknown): number | undefined | null {
@@ -684,17 +678,16 @@ agentGrantsRouter.patch('/:id', async (c) => {
         : (stringField(body.purpose, MAX_PURPOSE_LENGTH) ?? null);
   const now = Date.now();
   const expiresAt =
-    body.expires_at === undefined
+    body.expires_at === undefined && grant.expiresAt !== undefined
       ? grant.expiresAt
-      : body.expires_at === null
-        ? undefined
-        : expiration(body.expires_at, now);
+      : resolveAgentGrantExpiration(body.expires_at, now);
   if (
     !permissions ||
     !requestedScopes ||
     details === null ||
     purpose === null ||
-    expiresAt === null
+    expiresAt === null ||
+    resolveAgentGrantExpiration(expiresAt, now) !== expiresAt
   ) {
     return error(c, 400, 'AGENT_GRANT_INVALID_REQUEST');
   }
@@ -874,7 +867,7 @@ agentGrantsRouter.post('/', async (c) => {
       ? undefined
       : (stringField(body.purpose, MAX_PURPOSE_LENGTH) ?? null);
   const now = Date.now();
-  const expiresAt = expiration(body.expires_at, now);
+  const expiresAt = resolveAgentGrantExpiration(body.expires_at, now);
   if (
     !clientId ||
     !delegatorId ||
@@ -1282,6 +1275,8 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
     return error(c, 400, 'AGENT_GRANT_CLIENT_SCOPE_NOT_ALLOWED');
   }
   const now = Date.now();
+  const expiresAt = resolveAgentGrantExpiration(undefined, now);
+  if (expiresAt === null) return error(c, 503, 'AGENT_GRANT_EXPIRY_POLICY_INVALID');
   const [grantorPermissions, delegatorPermissions] = await Promise.all([
     repository.getActiveDelegatorPermissions(tenant, grant.grantorId, now),
     repository.getActiveDelegatorPermissions(tenant, grant.delegatorId, now),
@@ -1344,6 +1339,7 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
       clientId: grant.clientId,
       expectedGeneration: grant.generation,
       transitionId,
+      expiresAt,
       now,
       audit: {
         id: transitionId,
@@ -1357,7 +1353,12 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
         actorType: 'admin_user',
         actorSub: `admin_user:${current.userId}`,
         grantId: grant.grantId,
-        metadata: { consent_required: true, generation: grant.generation },
+        metadata: {
+          consent_required: true,
+          generation: grant.generation,
+          expires_at: expiresAt,
+          recertified: true,
+        },
         createdAt: now,
       },
     });
@@ -1368,6 +1369,7 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
       generation: grant.generation,
       consent_version: grant.consentVersion,
       consent_required: true,
+      expires_at: expiresAt,
     });
   } catch (caught) {
     if (String(caught).includes('UNIQUE')) return error(c, 409, 'AGENT_GRANT_ALREADY_EXISTS');

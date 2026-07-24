@@ -67,6 +67,7 @@
 	type EditorEdge = Edge<FlowEditorEdgeData, 'editor'>;
 	type ConditionDraftType =
 		| 'always'
+		| 'protocol'
 		| 'authenticated'
 		| 'first_login'
 		| 'client_id'
@@ -75,6 +76,14 @@
 		| 'requested_scope'
 		| 'authentication_method';
 	type ConditionOtherwiseMode = 'output' | 'terminal_error';
+
+	interface ConditionRowDraft {
+		id: string;
+		label: string;
+		type: ConditionDraftType;
+		value: string;
+		outputHandle: string;
+	}
 
 	const COMPACT_NODE_Y_GAP = 145;
 	const DEFAULT_NODE_X = 360;
@@ -93,14 +102,11 @@
 		authProfile: string;
 		screen: string;
 		consentPolicy: string;
-		consentGateKind: '' | 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
-		consentPolicyResolution: 'fixed' | 'target_binding';
-		consentFallbackPolicy: string;
-		consentPolicyRequired: boolean;
 		conditionType: ConditionDraftType;
 		conditionValue: string;
 		conditionOutputHandle: string;
 		conditionOutputLabel: string;
+		conditionRows: ConditionRowDraft[];
 		conditionOtherwiseMode: ConditionOtherwiseMode;
 		conditionOtherwiseOutputHandle: string;
 		conditionOtherwiseOutputLabel: string;
@@ -264,14 +270,19 @@
 			authProfile: 'default',
 			screen: 'basic_profile',
 			consentPolicy: 'registration_consent_policy',
-			consentGateKind: '',
-			consentPolicyResolution: 'fixed',
-			consentFallbackPolicy: '',
-			consentPolicyRequired: false,
 			conditionType: 'always',
 			conditionValue: '',
 			conditionOutputHandle: 'matched',
 			conditionOutputLabel: $LL.admin_flows_output_matched(),
+			conditionRows: [
+				{
+					id: 'condition-1',
+					label: $LL.admin_flows_output_matched(),
+					type: 'always',
+					value: '',
+					outputHandle: 'matched'
+				}
+			],
 			conditionOtherwiseMode: 'output',
 			conditionOtherwiseOutputHandle: 'otherwise',
 			conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
@@ -1519,6 +1530,7 @@
 	function isConditionDraftType(value: unknown): value is ConditionDraftType {
 		return (
 			value === 'always' ||
+			value === 'protocol' ||
 			value === 'authenticated' ||
 			value === 'first_login' ||
 			value === 'client_id' ||
@@ -1532,6 +1544,7 @@
 	function getConditionTypeOptions(): Array<{ value: ConditionDraftType; label: string }> {
 		return [
 			{ value: 'always', label: $LL.admin_flows_condition_type_always() },
+			{ value: 'protocol', label: ft('プロトコル', 'Protocol') },
 			{ value: 'authenticated', label: $LL.admin_flows_condition_type_authenticated() },
 			{ value: 'first_login', label: $LL.admin_flows_condition_type_first_login() },
 			{ value: 'client_id', label: $LL.admin_flows_condition_type_client_id() },
@@ -1555,21 +1568,44 @@
 	function getConditionDraft(config: Record<string, unknown>): Partial<NodeDraft> {
 		const conditions = getConfigRecord(config.conditions);
 		const rows = Array.isArray(conditions.rows) ? conditions.rows : [];
-		const row = getConfigRecord(rows[0]);
-		const condition = getConfigRecord(row.condition);
 		const otherwise = getConfigRecord(conditions.otherwise);
 		const terminalError = getConfigRecord(otherwise.terminal_error);
-		const outputHandle = getConfigString(row, 'output_handle', 'matched');
 		const otherwiseOutputHandle = getConfigString(otherwise, 'output_handle', 'otherwise');
 		const outputs = getConfigOutputs(config, 'condition');
-		const type = isConditionDraftType(condition.type) ? condition.type : 'always';
+		const conditionRows = rows.map((value, index): ConditionRowDraft => {
+			const row = getConfigRecord(value);
+			const condition = getConfigRecord(row.condition);
+			const outputHandle = getConfigString(row, 'output_handle', `matched-${index + 1}`);
+			return {
+				id: getConfigString(row, 'id', `condition-${index + 1}`),
+				label:
+					getConfigString(row, 'label', '') ||
+					outputs.find((output) => output.id === outputHandle)?.label ||
+					$LL.admin_flows_output_matched(),
+				type: isConditionDraftType(condition.type) ? condition.type : 'always',
+				value: conditionValueToDraft(condition),
+				outputHandle
+			};
+		});
+		const normalizedRows =
+			conditionRows.length > 0
+				? conditionRows
+				: [
+						{
+							id: 'condition-1',
+							label: $LL.admin_flows_output_matched(),
+							type: 'always' as const,
+							value: '',
+							outputHandle: 'matched'
+						}
+					];
+		const firstRow = normalizedRows[0];
 		return {
-			conditionType: type,
-			conditionValue: conditionValueToDraft(condition),
-			conditionOutputHandle: outputHandle,
-			conditionOutputLabel:
-				outputs.find((output) => output.id === outputHandle)?.label ||
-				$LL.admin_flows_output_matched(),
+			conditionType: firstRow.type,
+			conditionValue: firstRow.value,
+			conditionOutputHandle: firstRow.outputHandle,
+			conditionOutputLabel: firstRow.label,
+			conditionRows: normalizedRows,
 			conditionOtherwiseMode: terminalError.error ? 'terminal_error' : 'output',
 			conditionOtherwiseOutputHandle: otherwiseOutputHandle,
 			conditionOtherwiseOutputLabel:
@@ -1581,54 +1617,59 @@
 	}
 
 	function getConditionOutputsFromDraft(source: NodeDraft): FlowEditorNodeOutput[] {
-		const outputs: FlowEditorNodeOutput[] = [
-			{
-				id: normalizeOutputHandle(source.conditionOutputHandle || 'matched'),
-				label: source.conditionOutputLabel.trim() || $LL.admin_flows_output_matched()
-			}
-		];
-		if (source.conditionOtherwiseMode === 'output') {
+		const outputs: FlowEditorNodeOutput[] = [];
+		for (const row of source.conditionRows) {
+			const id = normalizeOutputHandle(row.outputHandle || 'matched');
+			if (outputs.some((output) => output.id === id)) continue;
 			outputs.push({
-				id: normalizeOutputHandle(source.conditionOtherwiseOutputHandle || 'otherwise'),
-				label: source.conditionOtherwiseOutputLabel.trim() || $LL.admin_flows_output_otherwise()
+				id,
+				label: row.label.trim() || $LL.admin_flows_output_matched()
 			});
+		}
+		if (source.conditionOtherwiseMode === 'output') {
+			const otherwiseId = normalizeOutputHandle(
+				source.conditionOtherwiseOutputHandle || 'otherwise'
+			);
+			if (!outputs.some((output) => output.id === otherwiseId)) {
+				outputs.push({
+					id: otherwiseId,
+					label: source.conditionOtherwiseOutputLabel.trim() || $LL.admin_flows_output_otherwise()
+				});
+			}
 		}
 		return outputs;
 	}
 
-	function buildConditionExpression(source: NodeDraft): Record<string, unknown> {
-		if (source.conditionType === 'always') {
+	function buildConditionExpression(row: ConditionRowDraft): Record<string, unknown> {
+		if (row.type === 'always') {
 			return { type: 'always' };
 		}
-		if (source.conditionType === 'authenticated' || source.conditionType === 'first_login') {
+		if (row.type === 'authenticated' || row.type === 'first_login') {
 			return {
-				type: source.conditionType,
-				value: source.conditionValue.trim().toLowerCase() === 'false' ? false : true
+				type: row.type,
+				value: row.value.trim().toLowerCase() === 'false' ? false : true
 			};
 		}
-		const values = source.conditionValue
+		const values = row.value
 			.split(/[\s,]+/)
 			.map((value) => value.trim())
 			.filter(Boolean);
 		return values.length > 1
-			? { type: source.conditionType, values }
-			: { type: source.conditionType, value: values[0] ?? '' };
+			? { type: row.type, values }
+			: { type: row.type, value: values[0] ?? '' };
 	}
 
 	function buildConditionConfig(source: NodeDraft): Record<string, unknown> {
-		const matchedHandle = normalizeOutputHandle(source.conditionOutputHandle || 'matched');
 		const otherwiseHandle = normalizeOutputHandle(
 			source.conditionOtherwiseOutputHandle || 'otherwise'
 		);
 		return {
-			rows: [
-				{
-					id: 'condition-1',
-					label: source.conditionOutputLabel.trim() || $LL.admin_flows_output_matched(),
-					condition: buildConditionExpression(source),
-					output_handle: matchedHandle
-				}
-			],
+			rows: source.conditionRows.map((row, index) => ({
+				id: row.id.trim() || `condition-${index + 1}`,
+				label: row.label.trim() || $LL.admin_flows_output_matched(),
+				condition: buildConditionExpression(row),
+				output_handle: normalizeOutputHandle(row.outputHandle || `matched-${index + 1}`)
+			})),
 			otherwise:
 				source.conditionOtherwiseMode === 'terminal_error'
 					? {
@@ -1643,17 +1684,45 @@
 		};
 	}
 
+	function getNodeConditionRows(node: EditorNode): ConditionRowDraft[] {
+		const value = node.data.conditionRows;
+		if (Array.isArray(value)) {
+			const rows = value
+				.map((item, index): ConditionRowDraft | null => {
+					const row = getConfigRecord(item);
+					const type = isConditionDraftType(row.type) ? row.type : 'always';
+					return {
+						id: getConfigString(row, 'id', `condition-${index + 1}`),
+						label: getConfigString(row, 'label', $LL.admin_flows_output_matched()),
+						type,
+						value: getConfigString(row, 'value', ''),
+						outputHandle: getConfigString(row, 'outputHandle', `matched-${index + 1}`)
+					};
+				})
+				.filter((row): row is ConditionRowDraft => row !== null);
+			if (rows.length > 0) return rows;
+		}
+		return [
+			{
+				id: 'condition-1',
+				label: getConfigValue(node, 'conditionOutputLabel', $LL.admin_flows_output_matched()),
+				type: getConfigConditionType(node),
+				value: getConfigValue(node, 'conditionValue', ''),
+				outputHandle: getConfigValue(node, 'conditionOutputHandle', 'matched')
+			}
+		];
+	}
+
 	function nodeConditionDraft(node: EditorNode): NodeDraft {
+		const conditionRows = getNodeConditionRows(node);
+		const firstRow = conditionRows[0];
 		return {
 			...createEmptyDraft(),
-			conditionType: getConfigConditionType(node),
-			conditionValue: getConfigValue(node, 'conditionValue', ''),
-			conditionOutputHandle: getConfigValue(node, 'conditionOutputHandle', 'matched'),
-			conditionOutputLabel: getConfigValue(
-				node,
-				'conditionOutputLabel',
-				$LL.admin_flows_output_matched()
-			),
+			conditionType: firstRow.type,
+			conditionValue: firstRow.value,
+			conditionOutputHandle: firstRow.outputHandle,
+			conditionOutputLabel: firstRow.label,
+			conditionRows,
 			conditionOtherwiseMode: getConfigOtherwiseMode(node),
 			conditionOtherwiseOutputHandle: getConfigValue(
 				node,
@@ -1685,13 +1754,8 @@
 				'consent_policy_ref',
 				'registration_consent_policy'
 			);
-			const consentGateKind = getConfigString(config, 'consent_gate_kind', '');
-			const consentPolicyResolution = getConfigString(
-				config,
-				'policy_resolution',
-				consentGateKind ? 'target_binding' : 'fixed'
-			);
 			const conditionDraft = getConditionDraft(config);
+			const conditionNodeDraft: NodeDraft = { ...createEmptyDraft(), ...conditionDraft };
 			return createEditorNode({
 				id: node.id,
 				kind,
@@ -1707,16 +1771,14 @@
 				outputs:
 					kind === 'session'
 						? getDefaultOutputsForRuntimeType('session_check')
-						: getConfigOutputs(config, node.type),
+						: kind === 'decision'
+							? getConditionOutputsFromDraft(conditionNodeDraft)
+							: getConfigOutputs(config, node.type),
 				data: {
 					runtimeType: kind === 'session' ? 'session_check' : node.type,
 					authProfile,
 					screen,
 					consentPolicy,
-					consentGateKind,
-					consentPolicyResolution,
-					consentFallbackPolicy: getConfigString(config, 'fallback_policy_ref', ''),
-					consentPolicyRequired: config.policy_required === true,
 					completionBlock: getCompletionBlockFromConfig(config),
 					...conditionDraft
 				}
@@ -2093,19 +2155,14 @@
 			consentPolicyOptions,
 			''
 		);
-		const consentGateKindValue = getConfigValue(node, 'consentGateKind', '');
-		const consentGateKind =
-			consentGateKindValue === 'legal_document' ||
-			consentGateKindValue === 'oidc_authorization' ||
-			consentGateKindValue === 'saml_attribute_release'
-				? consentGateKindValue
-				: '';
 		const nodeScreenOptions = screenOptionsForNodeKind(node.data.kind);
 		const screen = normalizeOptionValue(
 			getConfigValue(node, 'screen', firstScreenForNodeKind(node.data.kind, 'basic_profile')),
 			nodeScreenOptions,
 			firstSelectableValue(nodeScreenOptions) || 'basic_profile'
 		);
+		const conditionRows = getNodeConditionRows(node);
+		const firstConditionRow = conditionRows[0];
 		draft = {
 			title: node.data.title,
 			description: node.data.description,
@@ -2113,21 +2170,11 @@
 			authProfile,
 			screen,
 			consentPolicy,
-			consentGateKind,
-			consentPolicyResolution:
-				getConfigValue(node, 'consentPolicyResolution', 'fixed') === 'target_binding'
-					? 'target_binding'
-					: 'fixed',
-			consentFallbackPolicy: getConfigValue(node, 'consentFallbackPolicy', ''),
-			consentPolicyRequired: node.data.consentPolicyRequired === true,
-			conditionType: getConfigConditionType(node),
-			conditionValue: getConfigValue(node, 'conditionValue', ''),
-			conditionOutputHandle: getConfigValue(node, 'conditionOutputHandle', 'matched'),
-			conditionOutputLabel: getConfigValue(
-				node,
-				'conditionOutputLabel',
-				$LL.admin_flows_output_matched()
-			),
+			conditionType: firstConditionRow.type,
+			conditionValue: firstConditionRow.value,
+			conditionOutputHandle: firstConditionRow.outputHandle,
+			conditionOutputLabel: firstConditionRow.label,
+			conditionRows: conditionRows.map((row) => ({ ...row })),
 			conditionOtherwiseMode: getConfigOtherwiseMode(node),
 			conditionOtherwiseOutputHandle: getConfigValue(
 				node,
@@ -2147,6 +2194,23 @@
 
 	function closeNodeConfig() {
 		editingNodeId = null;
+	}
+
+	function addConditionRow() {
+		let index = draft.conditionRows.length + 1;
+		while (draft.conditionRows.some((row) => row.id === `condition-${index}`)) index += 1;
+		draft.conditionRows.push({
+			id: `condition-${index}`,
+			label: ft(`条件 ${index}`, `Condition ${index}`),
+			type: 'always',
+			value: '',
+			outputHandle: `matched-${index}`
+		});
+	}
+
+	function removeConditionRow(rowId: string) {
+		if (draft.conditionRows.length <= 1) return;
+		draft.conditionRows = draft.conditionRows.filter((row) => row.id !== rowId);
 	}
 
 	function getDraftSettings(kind: FlowEditorNodeKind): string[] {
@@ -2205,11 +2269,13 @@
 			];
 		}
 		if (kind === 'decision') {
-			const conditionLabel =
-				getConditionTypeOptions().find((option) => option.value === draft.conditionType)?.label ??
-				draft.conditionType;
 			return [
-				`${conditionLabel}${draft.conditionValue ? `: ${draft.conditionValue}` : ''}`,
+				...draft.conditionRows.map((row) => {
+					const conditionLabel =
+						getConditionTypeOptions().find((option) => option.value === row.type)?.label ??
+						row.type;
+					return `${conditionLabel}${row.value ? `: ${row.value}` : ''}`;
+				}),
 				...freeTextSettings
 			];
 		}
@@ -2219,6 +2285,7 @@
 	function applyNodeConfig() {
 		const node = editingNode;
 		if (!node) return;
+		const firstConditionRow = draft.conditionRows[0];
 
 		const outputs =
 			node.data.kind === 'registration' || node.data.kind === 'authentication'
@@ -2237,14 +2304,14 @@
 				authProfile: draft.authProfile,
 				screen: draft.screen,
 				consentPolicy: draft.consentPolicy,
-				consentGateKind: draft.consentGateKind,
-				consentPolicyResolution: draft.consentPolicyResolution,
-				consentFallbackPolicy: draft.consentFallbackPolicy,
-				consentPolicyRequired: draft.consentPolicyRequired,
-				conditionType: draft.conditionType,
-				conditionValue: draft.conditionValue,
-				conditionOutputHandle: normalizeOutputHandle(draft.conditionOutputHandle || 'matched'),
-				conditionOutputLabel: draft.conditionOutputLabel,
+				conditionType: firstConditionRow?.type ?? 'always',
+				conditionValue: firstConditionRow?.value ?? '',
+				conditionOutputHandle: normalizeOutputHandle(firstConditionRow?.outputHandle || 'matched'),
+				conditionOutputLabel: firstConditionRow?.label || $LL.admin_flows_output_matched(),
+				conditionRows: draft.conditionRows.map((row) => ({
+					...row,
+					outputHandle: normalizeOutputHandle(row.outputHandle || 'matched')
+				})),
 				conditionOtherwiseMode: draft.conditionOtherwiseMode,
 				conditionOtherwiseOutputHandle: normalizeOutputHandle(
 					draft.conditionOtherwiseOutputHandle || 'otherwise'
@@ -2506,6 +2573,15 @@
 													conditionValue: '',
 													conditionOutputHandle: 'matched',
 													conditionOutputLabel: $LL.admin_flows_output_matched(),
+													conditionRows: [
+														{
+															id: 'condition-1',
+															label: $LL.admin_flows_output_matched(),
+															type: 'always',
+															value: '',
+															outputHandle: 'matched'
+														}
+													],
 													conditionOtherwiseMode: 'output',
 													conditionOtherwiseOutputHandle: 'otherwise',
 													conditionOtherwiseOutputLabel: $LL.admin_flows_output_otherwise(),
@@ -2717,18 +2793,6 @@
 				'consentPolicy',
 				node.data.kind === 'consent' ? 'registration_consent_policy' : ''
 			);
-			if (node.data.kind === 'consent' && node.data.consentGateKind) {
-				config.consent_gate_kind = node.data.consentGateKind;
-				config.policy_resolution =
-					node.data.consentPolicyResolution === 'target_binding' ? 'target_binding' : 'fixed';
-				config.policy_required = node.data.consentPolicyRequired === true;
-				if (config.policy_resolution === 'target_binding') {
-					delete config.consent_policy_ref;
-					if (node.data.consentFallbackPolicy) {
-						config.fallback_policy_ref = node.data.consentFallbackPolicy;
-					}
-				}
-			}
 		}
 		if (node.data.kind === 'decision') {
 			config.conditions = buildConditionConfig(nodeConditionDraft(node));
@@ -3156,86 +3220,73 @@
 					</select>
 				</label>
 				<label class="field field-wide">
-					<span>{ft('Consent Gate 種別', 'Consent Gate kind')}</span>
-					<select class="admin-input" bind:value={draft.consentGateKind}>
-						<option value="">{ft('従来の同意ノード', 'Legacy consent node')}</option>
-						<option value="legal_document">{ft('法的文書', 'Legal document')}</option>
-						<option value="oidc_authorization">{ft('OIDC 認可', 'OIDC authorization')}</option>
-						<option value="saml_attribute_release"
-							>{ft('SAML 属性提供', 'SAML attribute release')}</option
-						>
-					</select>
-				</label>
-				{#if draft.consentGateKind}
-					<label class="field field-wide">
-						<span>{ft('ポリシー解決方法', 'Policy resolution')}</span>
-						<select class="admin-input" bind:value={draft.consentPolicyResolution}>
-							<option value="target_binding">{ft('対象への割り当て', 'Target binding')}</option>
-							<option value="fixed">{ft('固定ポリシー', 'Fixed policy')}</option>
-						</select>
-					</label>
-				{/if}
-				<label class="field field-wide">
-					<span>
-						{draft.consentGateKind && draft.consentPolicyResolution === 'target_binding'
-							? ft('フォールバックポリシー', 'Fallback policy')
-							: $LL.admin_flows_consent_policy_label()}
-					</span>
-					{#if draft.consentGateKind && draft.consentPolicyResolution === 'target_binding'}
-						<select class="admin-input" bind:value={draft.consentFallbackPolicy}>
-							<option value="">{ft('なし', 'None')}</option>
-							{#each consentPolicyOptions as option (option.value)}
-								<option value={option.value} disabled={option.disabled}>{option.label}</option>
-							{/each}
-						</select>
-					{:else}
-						<select class="admin-input" bind:value={draft.consentPolicy}>
-							{#each consentPolicyOptions as option (option.value)}
-								<option value={option.value} disabled={option.disabled}>{option.label}</option>
-							{/each}
-						</select>
-					{/if}
-				</label>
-				{#if draft.consentGateKind}
-					<label class="field field-wide checkbox-field">
-						<input type="checkbox" bind:checked={draft.consentPolicyRequired} />
-						<span
-							>{ft(
-								'ポリシーが解決できない場合は停止する',
-								'Fail when no policy can be resolved'
-							)}</span
-						>
-					</label>
-				{/if}
-			{:else if editingNode.data.kind === 'decision'}
-				<label class="field">
-					<span>{$LL.admin_flows_condition_type_label()}</span>
-					<select class="admin-input" bind:value={draft.conditionType}>
-						{#each getConditionTypeOptions() as option (option.value)}
-							<option value={option.value}>{option.label}</option>
+					<span>{$LL.admin_flows_consent_policy_label()}</span>
+					<select class="admin-input" bind:value={draft.consentPolicy}>
+						{#each consentPolicyOptions as option (option.value)}
+							<option value={option.value} disabled={option.disabled}>{option.label}</option>
 						{/each}
 					</select>
 				</label>
-
-				<label class="field">
-					<span>{$LL.admin_flows_condition_value_label()}</span>
-					<input
-						class="admin-input"
-						placeholder={$LL.admin_flows_condition_value_placeholder()}
-						disabled={draft.conditionType === 'always'}
-						bind:value={draft.conditionValue}
-					/>
-				</label>
-
-				<label class="field">
-					<span>{$LL.admin_flows_condition_match_output_label()}</span>
-					<input class="admin-input" bind:value={draft.conditionOutputHandle} />
-				</label>
-
-				<label class="field">
-					<span>{$LL.admin_flows_condition_match_label_label()}</span>
-					<input class="admin-input" bind:value={draft.conditionOutputLabel} />
-				</label>
+			{:else if editingNode.data.kind === 'decision'}
+				<div class="condition-editor field-wide">
+					<div class="condition-editor__header">
+						<strong>{ft('条件分岐', 'Condition branches')}</strong>
+						<button type="button" class="btn btn-secondary btn-compact" onclick={addConditionRow}>
+							<i class="i-ph-plus" aria-hidden="true"></i>
+							{ft('条件を追加', 'Add condition')}
+						</button>
+					</div>
+					{#each draft.conditionRows as row, index (row.id)}
+						<div class="condition-row">
+							<div class="condition-row__header">
+								<strong>{ft(`条件 ${index + 1}`, `Condition ${index + 1}`)}</strong>
+								<button
+									type="button"
+									class="btn btn-secondary btn-icon"
+									onclick={() => removeConditionRow(row.id)}
+									disabled={draft.conditionRows.length <= 1}
+									aria-label={ft(`条件 ${index + 1} を削除`, `Remove condition ${index + 1}`)}
+								>
+									<i class="i-ph-trash" aria-hidden="true"></i>
+								</button>
+							</div>
+							<div class="condition-row__fields">
+								<label class="field">
+									<span>{$LL.admin_flows_condition_type_label()}</span>
+									<select class="admin-input" bind:value={row.type}>
+										{#each getConditionTypeOptions() as option (option.value)}
+											<option value={option.value}>{option.label}</option>
+										{/each}
+									</select>
+								</label>
+								<label class="field">
+									<span>{$LL.admin_flows_condition_value_label()}</span>
+									{#if row.type === 'protocol'}
+										<select class="admin-input" bind:value={row.value}>
+											<option value="saml">SAML</option>
+											<option value="oidc">OIDC</option>
+										</select>
+									{:else}
+										<input
+											class="admin-input"
+											placeholder={$LL.admin_flows_condition_value_placeholder()}
+											disabled={row.type === 'always'}
+											bind:value={row.value}
+										/>
+									{/if}
+								</label>
+								<label class="field">
+									<span>{$LL.admin_flows_condition_match_output_label()}</span>
+									<input class="admin-input" bind:value={row.outputHandle} />
+								</label>
+								<label class="field">
+									<span>{$LL.admin_flows_condition_match_label_label()}</span>
+									<input class="admin-input" bind:value={row.label} />
+								</label>
+							</div>
+						</div>
+					{/each}
+				</div>
 
 				<label class="field">
 					<span>{$LL.admin_flows_condition_otherwise_mode_label()}</span>
@@ -3594,6 +3645,52 @@
 		grid-column: 1 / -1;
 	}
 
+	.condition-editor {
+		display: grid;
+		gap: 10px;
+	}
+
+	.condition-editor__header,
+	.condition-row__header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.condition-editor__header strong,
+	.condition-row__header strong {
+		color: var(--color-text);
+		font-size: 0.84rem;
+	}
+
+	.condition-row {
+		display: grid;
+		gap: 12px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: color-mix(in srgb, var(--color-surface-muted) 52%, transparent);
+	}
+
+	.condition-row__fields {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
+	}
+
+	.btn-compact {
+		min-height: 32px;
+		padding-inline: 10px;
+		font-size: 0.78rem;
+	}
+
+	.btn-icon {
+		width: 32px;
+		min-height: 32px;
+		padding: 0;
+	}
+
 	.admin-input {
 		width: 100%;
 		min-height: 38px;
@@ -3688,6 +3785,7 @@
 	@media (max-width: 980px) {
 		.editor-layout,
 		.config-grid,
+		.condition-row__fields,
 		.flow-metadata {
 			grid-template-columns: 1fr;
 		}

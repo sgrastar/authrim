@@ -118,6 +118,7 @@ function request(): AgentConfigurationOperationRequest {
         canaryTenantIds: ['tenant-1'],
         plan: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-1',

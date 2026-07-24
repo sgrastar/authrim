@@ -14,8 +14,13 @@ import {
 import {
   cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
+  getWorkersSubdomain,
 } from '../packages/setup/src/core/cloudflare.js';
-import { loadLockFileAuto, saveLockFile } from '../packages/setup/src/core/lock.js';
+import {
+  acquireEnvironmentOperationForEnvironment,
+  loadLockFileAuto,
+  saveLockFile,
+} from '../packages/setup/src/core/lock.js';
 import {
   UI_WORKER_COMPONENTS,
   deployUiWorkerBindingTargets,
@@ -25,14 +30,24 @@ import {
 } from '../packages/setup/src/core/deploy.js';
 import { ensureSupplementalKeyFiles } from '../packages/setup/src/core/keys.js';
 import { prepareAdminUiBffDeployment } from '../packages/setup/src/core/admin-ui-bff-deployment.js';
-import { getPackageVersion } from '../packages/setup/src/core/version.js';
+import { getPackageVersion, getRootProductVersion } from '../packages/setup/src/core/version.js';
+import {
+  evaluateReleaseDeploymentGuard,
+  releaseDeploymentGuardMessage,
+} from '../packages/setup/src/core/release-deployment-guard.js';
 import { ensureLoginUiClient } from '../packages/setup/src/core/login-ui-client.js';
 import { resolveUiDeploymentSettings } from '../packages/setup/src/core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../packages/setup/src/core/ui-env.js';
 import {
+  resolveAdminUiEntryUrl,
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
+  resolveLoginUiEntryUrl,
 } from '../packages/setup/src/core/url-config.js';
+import {
+  waitForWorkerDeploymentsReady,
+  waitForWorkerHttpReady,
+} from '../packages/setup/src/core/worker-readiness.js';
 
 interface CliOptions {
   env: string;
@@ -292,6 +307,30 @@ async function deployComponent(
     throw new Error(`${component}: ${result.error || 'Worker deployment failed'}`);
   }
 
+  const visibility = await waitForWorkerDeploymentsReady({
+    targets: [{ workerName: result.projectName, deployedAt: result.deployedAt }],
+    onProgress: console.log,
+  });
+  if (!visibility.ready) {
+    throw new Error(
+      `${component}: deployment did not become visible: ${visibility.error ?? 'unknown error'}`
+    );
+  }
+  const workersSubdomain = await getWorkersSubdomain();
+  const entryUrl =
+    component === 'ar-login-ui'
+      ? resolveLoginUiEntryUrl(config, { env, workersSubdomain })
+      : resolveAdminUiEntryUrl(config, { env, workersSubdomain });
+  const httpReadiness = await waitForWorkerHttpReady({
+    targets: [{ workerName: result.projectName, url: entryUrl }],
+    onProgress: console.log,
+  });
+  if (!httpReadiness.ready) {
+    throw new Error(
+      `${component}: HTTP readiness failed: ${httpReadiness.error ?? 'unknown error'}`
+    );
+  }
+
   console.log(`Deployed ${component} to ${result.projectName}`);
 }
 
@@ -299,6 +338,26 @@ async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const { config, resolved } = await loadConfig(rootDir, options.env);
+  const { lock, path: lockPath } = await loadLockFileAuto(rootDir, options.env);
+  if (!lock) {
+    throw new Error(
+      `Environment ${options.env} has no lock file; run authrim-setup init before deploying.`
+    );
+  }
+  if (!lock.productVersion && Object.keys(lock.workers ?? {}).length === 0) {
+    throw new Error(
+      'Initial deployment must use authrim-setup deploy so the exact release schema is applied first.'
+    );
+  }
+  const targetProductVersion = await getRootProductVersion(rootDir);
+  const deploymentGuard = evaluateReleaseDeploymentGuard(
+    lock,
+    targetProductVersion,
+    'worker_redeploy'
+  );
+  if (!deploymentGuard.allowed) {
+    throw new Error(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion));
+  }
 
   if (options.phase === 'binding-targets-if-missing') {
     const missing = await resolveMissingUiWorkerBindingTargets(
@@ -320,22 +379,41 @@ async function main(): Promise<void> {
       console.log('UI Worker binding targets already exist.');
       return;
     }
-    const summary = await deployUiWorkerBindingTargets(
-      {
-        env: options.env,
-        rootDir,
-        apiBaseUrl: getApiBaseUrl(config),
-        onProgress: console.log,
-      },
-      missing
-    );
-    if (summary.failedCount > 0) {
-      throw new Error(
-        `UI Worker binding-target deployment failed: ${summary.results
-          .filter((result) => !result.success)
-          .map((result) => `${result.component}: ${result.error}`)
-          .join(', ')}`
+    const operationLock = await acquireEnvironmentOperationForEnvironment({
+      baseDir: rootDir,
+      env: options.env,
+      operation: 'deploy-ui:binding-targets',
+      requireExisting: true,
+    });
+    if (JSON.stringify(operationLock.lock) !== JSON.stringify(lock)) {
+      await operationLock.release();
+      throw new Error('environment_changed_while_waiting_for_deploy_ui_lock');
+    }
+    const lockedConfig = await loadConfig(rootDir, options.env);
+    if (JSON.stringify(lockedConfig.config) !== JSON.stringify(config)) {
+      await operationLock.release();
+      throw new Error('config_changed_while_waiting_for_deploy_ui_lock');
+    }
+    try {
+      const summary = await deployUiWorkerBindingTargets(
+        {
+          env: options.env,
+          rootDir,
+          apiBaseUrl: getApiBaseUrl(config),
+          onProgress: console.log,
+        },
+        missing
       );
+      if (summary.failedCount > 0) {
+        throw new Error(
+          `UI Worker binding-target deployment failed: ${summary.results
+            .filter((result) => !result.success)
+            .map((result) => `${result.component}: ${result.error}`)
+            .join(', ')}`
+        );
+      }
+    } finally {
+      await operationLock.release();
     }
     return;
   }
@@ -353,16 +431,35 @@ async function main(): Promise<void> {
     return;
   }
 
-  const keysDir = await resolveKeysDir(rootDir, options.env, config, resolved, options.keysDir);
-  if (!keysDir) {
-    throw new Error(
-      'UI deployment requires the environment key archive. Pass --keys-dir=<path> or restore it.'
-    );
+  const operationLock = await acquireEnvironmentOperationForEnvironment({
+    baseDir: rootDir,
+    env: options.env,
+    operation: 'deploy-ui',
+    requireExisting: true,
+  });
+  if (JSON.stringify(operationLock.lock) !== JSON.stringify(lock)) {
+    await operationLock.release();
+    throw new Error('environment_changed_while_waiting_for_deploy_ui_lock');
   }
-  await ensureSupplementalKeyFiles(keysDir);
+  const lockedConfig = await loadConfig(rootDir, options.env);
+  if (JSON.stringify(lockedConfig.config) !== JSON.stringify(config)) {
+    await operationLock.release();
+    throw new Error('config_changed_while_waiting_for_deploy_ui_lock');
+  }
+  try {
+    const keysDir = await resolveKeysDir(rootDir, options.env, config, resolved, options.keysDir);
+    if (!keysDir) {
+      throw new Error(
+        'UI deployment requires the environment key archive. Pass --keys-dir=<path> or restore it.'
+      );
+    }
+    await ensureSupplementalKeyFiles(keysDir);
 
-  for (const component of components) {
-    await deployComponent(rootDir, options.env, config, resolved, component, keysDir);
+    for (const component of components) {
+      await deployComponent(rootDir, options.env, config, resolved, component, keysDir);
+    }
+  } finally {
+    await operationLock.release();
   }
 }
 

@@ -46,7 +46,7 @@
 		try {
 			if (!state) {
 				errorCode = 'missing_state';
-				errorMessage = 'Handoff state is missing';
+				errorMessage = $LL.error_invalid_request();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -74,7 +74,7 @@
 			if (!finalizeResponse.ok) {
 				const data = await finalizeResponse.json().catch(() => ({}));
 				errorCode = data.error || 'handoff_finalize_failed';
-				errorMessage = data.error_description || 'Handoff session could not be finalized securely';
+				errorMessage = getErrorMessage(errorCode);
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -90,7 +90,7 @@
 				assertNoBrowserTokenMaterial(finalizeData, 'handoff finalize');
 			} catch {
 				errorCode = 'handoff_finalize_invalid_response';
-				errorMessage = 'Handoff finalize returned token material unexpectedly';
+				errorMessage = $LL.error_server_error();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -105,7 +105,7 @@
 
 			if (!auth.checkAuth()) {
 				errorCode = 'handoff_cookie_session_missing';
-				errorMessage = 'Handoff session could not be restored from the secure session cookie';
+				errorMessage = $LL.error_server_error();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -170,7 +170,7 @@
 		} catch (error) {
 			console.error('[Authrim] Handoff error:', error);
 			errorCode = 'network_error';
-			errorMessage = 'An error occurred during handoff authentication';
+			errorMessage = $LL.error_unknown();
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
@@ -187,7 +187,7 @@
 		const error = params.get('error');
 		if (error) {
 			errorCode = error;
-			errorMessage = params.get('error_description') || getErrorMessage(error);
+			errorMessage = getErrorMessage(error);
 			status = 'error';
 			return;
 		}
@@ -219,8 +219,7 @@
 				// Storage cleanup is best-effort after an unsupported callback shape.
 			}
 			errorCode = 'external_handoff_required';
-			errorMessage =
-				'This Login UI requires cookie-session handoff. Enable external IdP SSO/handoff for this provider or use a token-capable SDK client.';
+			errorMessage = $LL.error_server_error();
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',

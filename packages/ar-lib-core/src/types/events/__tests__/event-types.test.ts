@@ -358,11 +358,13 @@ describe('Event Data Types', () => {
           maxRequests: 100,
           windowSeconds: 60,
           retryAfter: 30,
+          endpointClass: 'loginStart',
         },
       };
       expect(data.endpoint).toBe('/token');
       expect(data.clientIpHash).toBe('abc123def456');
       expect(data.rateLimit?.maxRequests).toBe(100);
+      expect(data.rateLimit?.endpointClass).toBe('loginStart');
     });
 
     it('should accept user and client context', () => {

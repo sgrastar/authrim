@@ -29,7 +29,7 @@ describe('messageForApiError', () => {
 		).toBe('login required');
 	});
 
-	it('exposes actionable invalid_request details for direct session and authorization challenge failures', () => {
+	it('does not expose untranslated invalid_request details', () => {
 		expect(
 			messageForApiError(
 				{
@@ -39,7 +39,7 @@ describe('messageForApiError', () => {
 				},
 				messages
 			)
-		).toBe('Missing required fields: direct_auth_artifact');
+		).toBe('invalid request');
 		expect(
 			messageForApiError(
 				{
@@ -48,13 +48,13 @@ describe('messageForApiError', () => {
 				},
 				messages
 			)
-		).toBe('Authorization challenge is invalid or expired');
+		).toBe('invalid request');
 	});
 
-	it('falls back to server description only for unknown errors', () => {
+	it('uses the localized fallback for unknown errors', () => {
 		expect(
 			messageForApiError({ error: 'custom_error', error_description: 'Custom failure' }, messages)
-		).toBe('Custom failure');
+		).toBe('unknown');
 		expect(messageForApiError(undefined, messages)).toBe('unknown');
 	});
 });

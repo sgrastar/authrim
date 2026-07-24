@@ -484,20 +484,20 @@ VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
 
 INSERT INTO admin_agent_grants (
   id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
-  delegation_mode, generation, consent_version, status, active_uniqueness_key,
+  delegation_mode, generation, consent_version, status, expires_at, active_uniqueness_key,
   created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
   scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash
 ) VALUES
   ('grant-builtin-v3', 'tenant-1', 'client-v3', 'admin-1', 'admin-1', '[]', '["agent:read"]',
-   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
    'builtin_agent_task_set_read_only_inspector', 3, 'scope-1', 1,
    '[{"toolId":"admin.read.users.search"}]', '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
   ('grant-builtin-v4', 'tenant-1', 'client-v4', 'admin-1', 'admin-1', '[]', '["agent:read"]',
-   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
    'builtin_agent_task_set_read_only_inspector', 4, 'scope-1', 1,
    '[{"toolId":"admin.read.clients.list"}]', '{}', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
   ('grant-custom', 'tenant-1', 'client-custom', 'admin-1', 'admin-1', '[]', '["agent:read"]',
-   'user_consent', 1, 1, 'active', 'active', 1, 1,
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
    'custom-user-support', 1, 'scope-1', 1,
    '[{"toolId":"admin.read.users.search"}]', '{}', 'ccccccccccccccccccccccccccccccccccccccccccc');
 
@@ -516,9 +516,9 @@ INSERT INTO admin_agent_token_families (
   expires_at, created_at, updated_at
 ) VALUES
   ('family-v3', 'jti-v3', 'tenant-1', 'grant-builtin-v3', 1, 'admin-1',
-   'client-v3', 1, 'active', 'nonce-v3', 1, 1000, 1, 1),
+   'client-v3', 1, 'active', 'nonce-v3', 1, CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1),
   ('family-custom', 'jti-custom', 'tenant-1', 'grant-custom', 1, 'admin-1',
-   'client-custom', 1, 'active', 'nonce-custom', 1, 1000, 1, 1);`
+   'client-custom', 1, 'active', 'nonce-custom', 1, CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1);`
         );
 
         runMigrationFiles(sqlite3Path, dbPath, [splitMigration]);
@@ -563,6 +563,552 @@ INSERT INTO admin_agent_token_families (
               WHERE resource_id = 'grant-builtin-v3'
                 AND action = 'agent.grant.suspended'
                 AND actor_sub = 'migration:019';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'suspends built-in v4 Agent Grants before the Discovery Profile-aware v5 cut-over',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-discovery-profile-upgrade-'));
+      const dbPath = join(tempDir, 'test.db');
+      const discoveryMigration = 'admin/024_agent_discovery_profile_task_set.sql';
+
+      try {
+        runMigrationFiles(
+          sqlite3Path,
+          dbPath,
+          activeAdminMigrationFiles().filter((file) => file !== discoveryMigration)
+        );
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
+
+INSERT INTO admin_agent_grants (
+  id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+  delegation_mode, generation, consent_version, status, expires_at, active_uniqueness_key,
+  created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
+  scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash
+) VALUES
+  ('grant-builtin-v4', 'tenant-1', 'client-v4', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+   'builtin_agent_task_set_user_data_reader', 4, 'scope-1', 1,
+   '[{"toolId":"admin.read.users.search"}]', '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  ('grant-builtin-v5', 'tenant-1', 'client-v5', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+   'builtin_agent_task_set_read_only_inspector', 5, 'scope-1', 1,
+   '[{"toolId":"admin.session.discovery-profiles.select"}]', '{}', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+  ('grant-custom-v4', 'tenant-1', 'client-custom', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 86400000, 'active', CAST(strftime('%s', 'now') AS INTEGER) * 1000, CAST(strftime('%s', 'now') AS INTEGER) * 1000,
+   'custom-agent-task-set', 4, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'ccccccccccccccccccccccccccccccccccccccccccc');
+
+INSERT INTO agent_consents (
+  id, tenant_id, consent_type, grant_id, user_id, client_id, consent_version,
+  scopes, granted_at
+) VALUES
+  ('consent-v4', 'tenant-1', 'delegation', 'grant-builtin-v4', 'admin-1', 'client-v4', 1,
+   '["agent:read"]', 1);
+
+INSERT INTO admin_agent_token_families (
+  family_id, family_jti, tenant_id, grant_id, grant_generation, admin_user_id,
+  client_id, consent_version, status, finalization_nonce, finalized_at,
+  expires_at, created_at, updated_at
+) VALUES
+  ('family-v4', 'jti-v4', 'tenant-1', 'grant-builtin-v4', 1, 'admin-1',
+   'client-v4', 1, 'active', 'nonce-v4', 1, CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1);`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [discoveryMigration]);
+        runMigrationFiles(sqlite3Path, dbPath, [discoveryMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || generation || '|' || consent_version
+               FROM admin_agent_grants WHERE id = 'grant-builtin-v4';`
+          )
+        ).toBe('suspended|2|2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_agent_grants
+              WHERE id IN ('grant-builtin-v5', 'grant-custom-v4') AND status = 'active';`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT (revoked_at IS NOT NULL) || '|' || revoked_reason
+               FROM agent_consents WHERE id = 'consent-v4';`
+          )
+        ).toBe('1|grant_updated');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || revocation_outbox_id
+               FROM admin_agent_token_families WHERE family_id = 'family-v4';`
+          )
+        ).toBe('revocation_pending|migration_024_revoke_grant-builtin-v4');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || json_extract(payload, '$.reason')
+               FROM admin_agent_token_revocation_outbox
+              WHERE id = 'migration_024_revoke_grant-builtin-v4';`
+          )
+        ).toBe('pending|builtin_task_set_discovery_profile_upgrade');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_audit_log
+              WHERE resource_id = 'grant-builtin-v4'
+                AND action = 'agent.grant.suspended'
+                AND actor_sub = 'migration:024';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'requires time-bounded Agent Grants and suspends credentials requiring recertification',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-grant-recertification-'));
+      const dbPath = join(tempDir, 'test.db');
+      const recertificationMigration = 'admin/027_agent_grant_recertification.sql';
+
+      try {
+        runMigrationFiles(
+          sqlite3Path,
+          dbPath,
+          activeAdminMigrationFiles().filter((file) => file !== recertificationMigration)
+        );
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
+
+INSERT INTO admin_agent_grants (
+  id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+  delegation_mode, generation, consent_version, status, expires_at, active_uniqueness_key,
+  created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
+  scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash
+) VALUES
+  ('grant-builtin-v6', 'tenant-1', 'client-v6', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', __AUTHRIM_NOW_EPOCH_MILLISECONDS__ + 2592000000, 'active',
+   __AUTHRIM_NOW_EPOCH_MILLISECONDS__, __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+   'builtin_agent_task_set_read_only_inspector', 6, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  ('grant-permanent', 'tenant-1', 'client-permanent', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', NULL, 'active',
+   __AUTHRIM_NOW_EPOCH_MILLISECONDS__, __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+   'custom-agent-task-set', 1, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+  ('grant-custom-v7', 'tenant-1', 'client-v7', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', __AUTHRIM_NOW_EPOCH_MILLISECONDS__ + 2592000000, 'active',
+   __AUTHRIM_NOW_EPOCH_MILLISECONDS__, __AUTHRIM_NOW_EPOCH_MILLISECONDS__,
+   'custom-agent-task-set', 7, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'ccccccccccccccccccccccccccccccccccccccccccc');
+
+INSERT INTO agent_consents (
+  id, tenant_id, consent_type, grant_id, user_id, client_id, consent_version,
+  scopes, granted_at
+) VALUES
+  ('consent-v6', 'tenant-1', 'delegation', 'grant-builtin-v6', 'admin-1', 'client-v6', 1,
+   '["agent:read"]', 1);
+
+INSERT INTO admin_agent_token_families (
+  family_id, family_jti, tenant_id, grant_id, grant_generation, admin_user_id,
+  client_id, consent_version, status, finalization_nonce, finalized_at,
+  expires_at, created_at, updated_at
+) VALUES
+  ('family-v6', 'jti-v6', 'tenant-1', 'grant-builtin-v6', 1, 'admin-1',
+   'client-v6', 1, 'active', 'nonce-v6', 1,
+   CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1);`.replaceAll(
+            '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
+            "CAST(strftime('%s', 'now') AS INTEGER) * 1000"
+          )
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [recertificationMigration]);
+        runMigrationFiles(sqlite3Path, dbPath, [recertificationMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_agent_grants
+              WHERE id IN ('grant-builtin-v6', 'grant-permanent')
+                AND status = 'suspended' AND generation = 2 AND consent_version = 2;`
+          )
+        ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status FROM admin_agent_grants WHERE id = 'grant-custom-v7';`
+          )
+        ).toBe('active');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT (revoked_at IS NOT NULL) || '|' || revoked_reason
+               FROM agent_consents WHERE id = 'consent-v6';`
+          )
+        ).toBe('1|grant_updated');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || revocation_outbox_id
+               FROM admin_agent_token_families WHERE family_id = 'family-v6';`
+          )
+        ).toBe('revocation_pending|migration_027_revoke_grant-builtin-v6');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_audit_log
+              WHERE resource_id IN ('grant-builtin-v6', 'grant-permanent')
+                AND action = 'agent.grant.suspended'
+                AND actor_sub = 'migration:027';`
+          )
+        ).toBe('2');
+
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            `INSERT INTO admin_agent_grants (
+              id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+              delegation_mode, generation, consent_version, status, expires_at,
+              active_uniqueness_key, created_at, updated_at, task_set_id, task_set_version,
+              scope_policy_id, scope_policy_version, resolved_tools,
+              resolved_scope_constraints, access_snapshot_hash
+            ) VALUES (
+              'grant-invalid-new', 'tenant-1', 'client-invalid', 'admin-1', 'admin-1', '[]',
+              '["agent:read"]', 'user_consent', 1, 1, 'active', NULL, 'active', 1000, 1000,
+              'custom-agent-task-set', 1, 'scope-1', 1,
+              '[{"toolId":"admin.read.clients.list"}]', '{}',
+              'ddddddddddddddddddddddddddddddddddddddddddd'
+            );`
+          )
+        ).toThrow(/active Agent Grant expiry must be between 1 hour and 90 days/u);
+
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `INSERT INTO admin_agent_grants (
+            id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+            delegation_mode, generation, consent_version, status, expires_at,
+            active_uniqueness_key, created_at, updated_at, task_set_id, task_set_version,
+            scope_policy_id, scope_policy_version, resolved_tools,
+            resolved_scope_constraints, access_snapshot_hash
+          ) VALUES (
+            'grant-valid-new', 'tenant-1', 'client-valid', 'admin-1', 'admin-1', '[]',
+            '["agent:read"]', 'user_consent', 1, 1, 'active', 2592001000, 'active', 1000, 1000,
+            'custom-agent-task-set', 1, 'scope-1', 1,
+            '[{"toolId":"admin.read.clients.list"}]', '{}',
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+          );`
+        );
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'suspends built-in v7 Agent Grants before the authority-introspection v8 cut-over',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-authority-upgrade-'));
+      const dbPath = join(tempDir, 'test.db');
+      const authorityMigration = 'admin/028_agent_authority_introspection.sql';
+      const now = "CAST(strftime('%s', 'now') AS INTEGER) * 1000";
+
+      try {
+        runMigrationFiles(
+          sqlite3Path,
+          dbPath,
+          activeAdminMigrationFiles().filter((file) => file !== authorityMigration)
+        );
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
+
+INSERT INTO admin_agent_grants (
+  id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+  delegation_mode, generation, consent_version, status, expires_at, active_uniqueness_key,
+  created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
+  scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash
+) VALUES
+  ('grant-builtin-v7', 'tenant-1', 'client-v7', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', ${now} + 2592000000, 'active', ${now}, ${now},
+   'builtin_agent_task_set_read_only_inspector', 7, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+  ('grant-custom-v7', 'tenant-1', 'client-custom-v7', 'admin-1', 'admin-1', '[]', '["agent:read"]',
+   'user_consent', 1, 1, 'active', ${now} + 2592000000, 'active', ${now}, ${now},
+   'custom-agent-task-set', 7, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{}', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+
+INSERT INTO agent_consents (
+  id, tenant_id, consent_type, grant_id, user_id, client_id, consent_version,
+  scopes, granted_at
+) VALUES
+  ('consent-v7', 'tenant-1', 'delegation', 'grant-builtin-v7', 'admin-1', 'client-v7', 1,
+   '["agent:read"]', 1);
+
+INSERT INTO admin_agent_token_families (
+  family_id, family_jti, tenant_id, grant_id, grant_generation, admin_user_id,
+  client_id, consent_version, status, finalization_nonce, finalized_at,
+  expires_at, created_at, updated_at
+) VALUES
+  ('family-v7', 'jti-v7', 'tenant-1', 'grant-builtin-v7', 1, 'admin-1',
+   'client-v7', 1, 'active', 'nonce-v7', 1,
+   CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1);`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [authorityMigration]);
+        runMigrationFiles(sqlite3Path, dbPath, [authorityMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || generation || '|' || consent_version
+               FROM admin_agent_grants WHERE id = 'grant-builtin-v7';`
+          )
+        ).toBe('suspended|2|2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status FROM admin_agent_grants WHERE id = 'grant-custom-v7';`
+          )
+        ).toBe('active');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT (revoked_at IS NOT NULL) || '|' || revoked_reason
+               FROM agent_consents WHERE id = 'consent-v7';`
+          )
+        ).toBe('1|grant_updated');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || revocation_outbox_id
+               FROM admin_agent_token_families WHERE family_id = 'family-v7';`
+          )
+        ).toBe('revocation_pending|migration_028_revoke_grant-builtin-v7');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || json_extract(payload, '$.reason')
+               FROM admin_agent_token_revocation_outbox
+              WHERE id = 'migration_028_revoke_grant-builtin-v7';`
+          )
+        ).toBe('pending|builtin_task_set_agent_introspection_upgrade');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_audit_log
+              WHERE resource_id = 'grant-builtin-v7'
+                AND action = 'agent.grant.suspended'
+                AND actor_sub = 'migration:028';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
+    'suspends stale system-managed self-service Grants without changing current or managed Grants',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-self-service-catalog-upgrade-'));
+      const dbPath = join(tempDir, 'test.db');
+      const catalogMigration = 'admin/029_stale_self_service_agent_snapshots.sql';
+      const now = "CAST(strftime('%s', 'now') AS INTEGER) * 1000";
+
+      try {
+        runMigrationFiles(
+          sqlite3Path,
+          dbPath,
+          activeAdminMigrationFiles().filter((file) => file !== catalogMigration)
+        );
+        runSqlite(
+          sqlite3Path,
+          dbPath,
+          `PRAGMA foreign_keys = ON;
+INSERT INTO admin_users (id, tenant_id, email, created_at, updated_at)
+VALUES ('admin-1', 'tenant-1', 'admin@example.test', 1, 1);
+
+INSERT INTO agent_task_sets (
+  id, tenant_id, name, kind, status, current_version, management_mode,
+  created_by, created_at, updated_at
+) VALUES
+  ('system-task-stale', 'tenant-1', 'System task stale', 'custom', 'active', 1,
+   'system_managed', 'system', 1, 1),
+  ('system-task-current', 'tenant-1', 'System task current', 'custom', 'active', 1,
+   'system_managed', 'system', 1, 1),
+  ('managed-task-stale', 'tenant-1', 'Managed task stale', 'custom', 'active', 1,
+   'managed', 'admin-1', 1, 1);
+
+INSERT INTO agent_task_set_versions (
+  task_set_id, version, tool_entries_json, resolved_permissions_json,
+  definition_digest, catalog_version, status, created_by, created_at
+) VALUES
+  ('system-task-stale', 1, '[]', '[]', 'digest-stale', 'admin-agent-access-v8',
+   'active', 'system', 1),
+  ('system-task-current', 1, '[]', '[]', 'digest-current', 'admin-agent-access-v9',
+   'active', 'system', 1),
+  ('managed-task-stale', 1, '[]', '[]', 'digest-managed', 'admin-agent-access-v8',
+   'active', 'admin-1', 1);
+
+INSERT INTO admin_agent_grants (
+  id, tenant_id, client_id, grantor_id, delegator_id, permissions, scopes,
+  delegation_mode, generation, consent_version, status, expires_at, active_uniqueness_key,
+  created_at, updated_at, task_set_id, task_set_version, scope_policy_id,
+  scope_policy_version, resolved_tools, resolved_scope_constraints, access_snapshot_hash,
+  purpose, management_mode
+) VALUES
+  ('grant-self-service-stale', 'tenant-1', 'client-stale', 'admin-1', 'admin-1',
+   '["admin:agent_grants:read"]', '["agent:read"]', 'user_consent', 1, 1, 'active',
+   ${now} + 2592000000, 'active', ${now}, ${now}, 'system-task-stale', 1, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{"tenantIds":["tenant-1"]}',
+   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+   'interactive_self_service', 'system_managed'),
+  ('grant-self-service-current', 'tenant-1', 'client-current', 'admin-1', 'admin-1',
+   '["admin:agent_grants:read"]', '["agent:read"]', 'user_consent', 1, 1, 'active',
+   ${now} + 2592000000, 'active', ${now}, ${now}, 'system-task-current', 1, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{"tenantIds":["tenant-1"]}',
+   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+   'interactive_self_service', 'system_managed'),
+  ('grant-managed-stale', 'tenant-1', 'client-managed', 'admin-1', 'admin-1',
+   '["admin:agent_grants:read"]', '["agent:read"]', 'user_consent', 1, 1, 'active',
+   ${now} + 2592000000, 'active', ${now}, ${now}, 'managed-task-stale', 1, 'scope-1', 1,
+   '[{"toolId":"admin.read.clients.list"}]', '{"tenantIds":["tenant-1"]}',
+   'ccccccccccccccccccccccccccccccccccccccccccc',
+   'managed_fixture', 'managed');
+
+INSERT INTO agent_consents (
+  id, tenant_id, consent_type, grant_id, user_id, client_id, consent_version,
+  scopes, granted_at
+) VALUES
+  ('consent-stale', 'tenant-1', 'delegation', 'grant-self-service-stale', 'admin-1',
+   'client-stale', 1, '["agent:read"]', 1);
+
+INSERT INTO admin_agent_token_families (
+  family_id, family_jti, tenant_id, grant_id, grant_generation, admin_user_id,
+  client_id, consent_version, status, finalization_nonce, finalized_at,
+  expires_at, created_at, updated_at
+) VALUES
+  ('family-stale', 'jti-stale', 'tenant-1', 'grant-self-service-stale', 1, 'admin-1',
+   'client-stale', 1, 'active', 'nonce-stale', 1,
+   CAST(strftime('%s', 'now') AS INTEGER) + 86400, 1, 1);`
+        );
+
+        runMigrationFiles(sqlite3Path, dbPath, [catalogMigration]);
+        runMigrationFiles(sqlite3Path, dbPath, [catalogMigration]);
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || generation || '|' || consent_version
+               FROM admin_agent_grants WHERE id = 'grant-self-service-stale';`
+          )
+        ).toBe('suspended|2|2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status FROM admin_agent_grants WHERE id = 'grant-self-service-current';`
+          )
+        ).toBe('active');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status FROM admin_agent_grants WHERE id = 'grant-managed-stale';`
+          )
+        ).toBe('active');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT (revoked_at IS NOT NULL) || '|' || revoked_reason
+               FROM agent_consents WHERE id = 'consent-stale';`
+          )
+        ).toBe('1|grant_updated');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || revocation_outbox_id
+               FROM admin_agent_token_families WHERE family_id = 'family-stale';`
+          )
+        ).toBe('revocation_pending|migration_029_revoke_grant-self-service-stale');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT status || '|' || json_extract(payload, '$.reason')
+               FROM admin_agent_token_revocation_outbox
+              WHERE id = 'migration_029_revoke_grant-self-service-stale';`
+          )
+        ).toBe('pending|stale_self_service_tool_catalog');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*) FROM admin_audit_log
+              WHERE resource_id = 'grant-self-service-stale'
+                AND action = 'agent.grant.suspended'
+                AND actor_sub = 'migration:029';`
           )
         ).toBe('1');
       } finally {

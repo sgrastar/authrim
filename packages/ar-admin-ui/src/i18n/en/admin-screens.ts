@@ -1,8 +1,7 @@
 const adminScreens = {
 	admin_screens_page_title: 'Screens - Authrim Admin',
 	admin_screens_title: 'Screens',
-	admin_screens_description:
-		'Manage reusable screens used by Flow nodes for registration, profile completion, and login.',
+	admin_screens_description: 'Manage reusable screens used by login flows and the account page.',
 	admin_screens_loading: 'Loading screens...',
 	admin_screens_load_failed: 'Failed to load screens.',
 	admin_screens_save_failed: 'Failed to save screen.',

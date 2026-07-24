@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import { normalizeLoginUILocale } from '$lib/i18n/locales';
 	import {
 		passkeyAPI,
 		emailCodeAPI,
@@ -241,6 +242,16 @@
 	const runtimeInitialLoading = $derived(
 		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
 	);
+	let entryMotionEnabled = $state(true);
+
+	$effect(() => {
+		if (methodsLoading || runtimeInitialLoading) return;
+
+		const timeout = window.setTimeout(() => {
+			entryMotionEnabled = false;
+		}, 1600);
+		return () => window.clearTimeout(timeout);
+	});
 	const runtimeAuthFormMissing = $derived(
 		Boolean(
 			runtimeFlowStep &&
@@ -335,9 +346,7 @@
 	}
 
 	function getMissingRequiredRegistrationFieldsMessage(): string {
-		return getLocale() === 'ja'
-			? '必須の登録項目がスクリーンに表示されていません。管理者に問い合わせてください。'
-			: 'A required registration field is not available in this signup form. Contact your administrator.';
+		return $LL.register_requiredFieldsMissing();
 	}
 
 	function getApiErrorMessage(apiError: APIError | null | undefined): string {
@@ -413,6 +422,15 @@
 		tasks.push(runtimeTargetReady.then(() => startRuntimeFlowIfAvailable()));
 		await Promise.all(tasks);
 		await refreshEmailVerificationProtocolChallenge();
+	});
+
+	onMount(() => {
+		const handleLocaleChange = (event: Event) => {
+			const locale = (event as CustomEvent<{ locale?: string }>).detail?.locale;
+			if (locale) void refreshRuntimeLocale(locale);
+		};
+		window.addEventListener('authrim:locale-change', handleLocaleChange);
+		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
 	});
 
 	async function loadAuthenticationMethods() {
@@ -594,7 +612,7 @@
 					signature: storedRuntime.signature
 				});
 				if (apiError) {
-					failRuntimeStart(apiError.error_description || apiError.error);
+					failRuntimeStart(getApiErrorMessage(apiError));
 					return;
 				}
 				if (!data) return;
@@ -624,7 +642,7 @@
 				...getRuntimeTarget()
 			});
 			if (apiError) {
-				failRuntimeStart(apiError.error_description || apiError.error);
+				failRuntimeStart(getApiErrorMessage(apiError));
 				return;
 			}
 			if (!data) return;
@@ -646,6 +664,23 @@
 		}
 	}
 
+	async function refreshRuntimeLocale(locale: string) {
+		const flow = runtimeFlow;
+		if (!flow || flow.interaction.state === 'completed') return;
+		const normalizedLocale = normalizeLoginUILocale(locale);
+		if (!normalizedLocale) return;
+		const { data } = await flowRuntimeAPI.start({
+			resume_interaction_id: flow.interaction.id,
+			contract_hash: flow.contract_hash,
+			signature: flow.signature,
+			locale: normalizedLocale
+		});
+		if (!data) return;
+		runtimeFlow = data;
+		runtimeFlowStep = getRuntimeCurrentStep(data);
+		persistFlowRuntimeState(data, { postAuthRedirect: pendingPostAuthRedirect });
+	}
+
 	async function submitRuntimeStep(selectedHandle?: string, input?: unknown): Promise<boolean> {
 		const flow = runtimeFlow;
 		const step = runtimeFlowStep ?? getRuntimeCurrentStep(flow);
@@ -662,7 +697,7 @@
 			input
 		});
 		if (apiError) {
-			runtimeFlowError = apiError.error_description || apiError.error;
+			runtimeFlowError = getApiErrorMessage(apiError);
 			return false;
 		}
 		if (!data) return false;
@@ -745,9 +780,9 @@
 	function getRuntimeStepTitle(step: FlowRuntimeStep): string {
 		const title = step.content?.title;
 		if (typeof title === 'string' && title.trim()) return title;
-		if (step.component === 'consent_policy') return 'Consent';
-		if (step.component === 'completion') return 'Complete';
-		return 'Continue';
+		if (step.component === 'consent_policy') return $LL.common_consent();
+		if (step.component === 'completion') return $LL.common_complete();
+		return $LL.common_continue();
 	}
 
 	function getRuntimeStepDescription(step: FlowRuntimeStep): string {
@@ -985,7 +1020,7 @@
 						? field.label
 						: typeof field.field === 'string'
 							? field.field
-							: 'Field',
+							: $LL.common_field(),
 				required: field.required === true,
 				block_type: typeof field.block_type === 'string' ? field.block_type : 'identity_field'
 			}))
@@ -1099,16 +1134,13 @@
 	});
 
 	function getPasskeyProgressMessage(phase: PasskeyProgressPhase): string {
-		const isJapanese = getLocale() === 'ja';
 		switch (phase) {
 			case 'preparing':
-				return isJapanese ? 'Passkey登録を準備しています。' : 'Preparing passkey registration.';
+				return $LL.register_passkeyPreparing();
 			case 'waiting':
-				return isJapanese
-					? 'ブラウザまたは端末のPasskey登録を完了してください。'
-					: 'Complete the passkey prompt in your browser or on your device.';
+				return $LL.register_passkeyPrompt();
 			case 'finishing':
-				return isJapanese ? '登録結果を確認しています。' : 'Verifying the registration result.';
+				return $LL.register_passkeyVerifying();
 			default:
 				return '';
 		}
@@ -1138,7 +1170,7 @@
 				throw new Error(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
-				throw new Error('Invalid response from server: missing options');
+				throw new Error($LL.error_server_error());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1150,7 +1182,9 @@
 			const { data: verifyData, error: verifyError } = await passkeyAPI.verifyRegistration({
 				userId: optionsData.userId,
 				credential,
-				deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop',
+				deviceName: navigator.userAgent.includes('Mobile')
+					? $LL.register_mobileDevice()
+					: $LL.register_desktopDevice(),
 				authorizationChallengeId: authorizationChallengeId || undefined
 			});
 
@@ -1202,7 +1236,7 @@
 			}
 			window.location.href = '/';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'An error occurred during passkey registration';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			passkeyLoading = false;
 			passkeyProgress = 'idle';
@@ -1307,8 +1341,7 @@
 			}
 			window.location.href = `/verify-email-code?${verifyQs}`;
 		} catch (err) {
-			error =
-				err instanceof Error ? err.message : 'An error occurred while sending verification code';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 		} finally {
 			emailCodeLoading = false;
 		}
@@ -1460,7 +1493,7 @@
 			);
 
 			if (!isValidRedirectUrl(url)) {
-				throw new Error('Invalid redirect URL from identity provider');
+				throw new Error($LL.error_invalid_request());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1474,7 +1507,7 @@
 			// Redirect to external IdP
 			window.location.href = url;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to start external login';
+			error = err instanceof Error ? err.message : $LL.error_unknown();
 			externalIdpLoading = null;
 		}
 	}
@@ -1547,13 +1580,14 @@
 
 <svelte:head>
 	<title>{$LL.register_title()} - {brandingStore.brandName || $LL.app_title()}</title>
-	<meta
-		name="description"
-		content="Create a new account using passkey or email code authentication."
-	/>
+	<meta name="description" content={$LL.register_metaDescription()} />
 </svelte:head>
 
-<div class="auth-page">
+<div
+	class="auth-page"
+	class:auth-page--entry-motion={entryMotionEnabled}
+	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
+>
 	<div class="auth-main">
 		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card'}
 			<LanguageSwitcher
@@ -1594,7 +1628,7 @@
 					{#if showBrandLogo && brandingStore.logoUrl}
 						<img
 							src={brandingStore.logoUrl}
-							alt={brandingStore.brandName || 'Logo'}
+							alt={brandingStore.brandName || $LL.common_logoAlt()}
 							class="auth-header__logo"
 							onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
 						/>
@@ -1621,18 +1655,12 @@
 
 			<!-- Loading State -->
 			{#if methodsLoading || runtimeInitialLoading}
-				<Card class="mb-6">
-					<div class="flex flex-col items-center justify-center py-8 gap-3">
-						<div
-							class="h-8 w-8 border-3 rounded-full animate-spin"
-							style="border-color: var(--border); border-top-color: var(--primary);"
-						></div>
-						<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
-					</div>
-				</Card>
+				<div class="auth-initial-loading" role="status">
+					<span class="sr-only">{$LL.common_loading()}</span>
+				</div>
 			{:else}
 				<!-- Registration Card -->
-				<form onsubmit={handleEmailVerificationProtocolSubmit}>
+				<form class="auth-entry-form" onsubmit={handleEmailVerificationProtocolSubmit}>
 					{#if emailVerificationChallenge?.nonce}
 						<input
 							type="hidden"
@@ -1649,8 +1677,7 @@
 								</h2>
 								{#if inviteTenantName}
 									<p class="auth-section-subtitle">
-										You've been invited to <strong>{inviteTenantName}</strong>. Create your account
-										to continue.
+										{$LL.register_invitation({ tenant: inviteTenantName })}
 									</p>
 								{:else}
 									<p class="auth-section-subtitle">
@@ -1680,9 +1707,7 @@
 
 						{#if runtimeAuthFormMissing}
 							<Alert variant="error" class="mb-4">
-								{getLocale() === 'ja'
-									? 'このFlowノードにスクリーンが設定されていません。管理者に問い合わせてください。'
-									: 'This Flow node does not have a screen. Contact your administrator.'}
+								{$LL.runtime_screenUnavailable()}
 							</Alert>
 						{/if}
 
@@ -1925,7 +1950,7 @@
 														(e.currentTarget as HTMLSelectElement).value
 													)}
 											>
-												<option value="">{field.placeholder ?? 'Select an option'}</option>
+												<option value="">{field.placeholder ?? $LL.common_selectOption()}</option>
 												{#each getEnumOptions(field) as option (option)}
 													<option value={option}>{option}</option>
 												{/each}
@@ -2148,7 +2173,7 @@
 								<div class="auth-divider__line"></div>
 							</div>
 
-							<div class="space-y-3">
+							<div class="auth-provider-stack space-y-3">
 								{#each visibleExternalProviders as provider (provider.id)}
 									{@const safeColor =
 										isDarkMode && provider.buttonColorDark
@@ -2221,7 +2246,7 @@
 				<p>{loginUIPageStore.footerText}</p>
 			{/if}
 			{#if loginUIPageStore.footerLinks.length > 0}
-				<nav class="auth-footer__links" aria-label="Footer links">
+				<nav class="auth-footer__links" aria-label={$LL.common_footerLinks()}>
 					{#each loginUIPageStore.footerLinks as link (link.url)}
 						<a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
 					{/each}

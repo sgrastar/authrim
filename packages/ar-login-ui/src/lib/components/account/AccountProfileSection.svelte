@@ -8,12 +8,14 @@
 		saving = false,
 		error = '',
 		saved = false,
+		title = '',
 		onSave
 	} = $props<{
 		profile: AccountProfile | null;
 		saving?: boolean;
 		error?: string;
 		saved?: boolean;
+		title?: string;
 		onSave: (name: string) => void;
 	}>();
 	let name = $derived(profile?.name ?? '');
@@ -32,7 +34,7 @@
 		}}
 	>
 		<div class="panel-heading">
-			<h2>{$LL.account_profileTitle()}</h2>
+			<h2>{title || $LL.account_profileTitle()}</h2>
 		</div>
 		<dl class="profile-list">
 			<div>

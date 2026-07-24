@@ -854,6 +854,10 @@ type RootTranslation = {
 	 */
 	admin_nav_login_ui: string;
 	/**
+	 * A​c​c​o​u​n​t​ ​p​a​g​e
+	 */
+	admin_nav_account_page: string;
+	/**
 	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
 	 */
 	admin_nav_tenant_discovery: string;
@@ -18037,7 +18041,7 @@ type RootTranslation = {
 	 */
 	admin_agent_access_connected_title: string;
 	/**
-	 * I​n​t​e​r​a​c​t​i​v​e​ ​a​n​d​ ​a​u​t​o​m​a​t​i​o​n​ ​c​o​n​n​e​c​t​i​o​n​s​ ​a​u​t​h​o​r​i​z​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 * I​n​t​e​r​a​c​t​i​v​e​ ​a​n​d​ ​a​u​t​o​m​a​t​i​o​n​ ​c​o​n​n​e​c​t​i​o​n​s​ ​a​u​t​h​o​r​i​z​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​M​C​P​ ​s​e​s​s​i​o​n​s​ ​l​o​a​d​ ​s​m​a​l​l​ ​T​o​o​l​ ​p​r​o​f​i​l​e​s​ ​o​n​ ​d​e​m​a​n​d​ ​w​i​t​h​i​n​ ​e​a​c​h​ ​c​o​n​n​e​c​t​i​o​n​’​s​ ​a​p​p​r​o​v​e​d​ ​G​r​a​n​t​.
 	 */
 	admin_agent_access_connected_description: string;
 	/**
@@ -18133,7 +18137,7 @@ type RootTranslation = {
 	 */
 	admin_agent_access_scope_unchanged_notice: string;
 	/**
-	 * M​a​n​u​a​l​ ​c​l​i​e​n​t​s​,​ ​G​r​a​n​t​s​,​ ​T​a​s​k​ ​S​e​t​s​,​ ​a​n​d​ ​S​c​o​p​e​ ​P​o​l​i​c​i​e​s​ ​a​r​e​ ​f​o​r​ ​a​u​t​o​m​a​t​i​o​n​,​ ​c​u​s​t​o​m​ ​p​o​l​i​c​y​,​ ​a​n​d​ ​i​n​t​e​r​o​p​e​r​a​b​i​l​i​t​y​ ​t​r​o​u​b​l​e​s​h​o​o​t​i​n​g​.
+	 * M​a​n​u​a​l​ ​c​l​i​e​n​t​s​,​ ​G​r​a​n​t​s​,​ ​T​a​s​k​ ​S​e​t​s​,​ ​a​n​d​ ​S​c​o​p​e​ ​P​o​l​i​c​i​e​s​ ​d​e​f​i​n​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​e​i​l​i​n​g​s​ ​f​o​r​ ​a​u​t​o​m​a​t​i​o​n​,​ ​c​u​s​t​o​m​ ​p​o​l​i​c​y​,​ ​a​n​d​ ​i​n​t​e​r​o​p​e​r​a​b​i​l​i​t​y​ ​t​r​o​u​b​l​e​s​h​o​o​t​i​n​g​.​ ​S​e​s​s​i​o​n​ ​T​o​o​l​ ​p​r​o​f​i​l​e​s​ ​d​o​ ​n​o​t​ ​c​h​a​n​g​e​ ​t​h​e​s​e​ ​c​e​i​l​i​n​g​s​.
 	 */
 	admin_agent_access_advanced_help: string;
 	/**
@@ -18381,7 +18385,7 @@ type RootTranslation = {
 	 */
 	admin_agent_access_purpose_placeholder: string;
 	/**
-	 * E​x​p​i​r​a​t​i​o​n​ ​(​o​p​t​i​o​n​a​l​)
+	 * R​e​c​e​r​t​i​f​i​c​a​t​i​o​n​ ​d​e​a​d​l​i​n​e​ ​(​r​e​q​u​i​r​e​d​,​ ​m​a​x​i​m​u​m​ ​9​0​ ​d​a​y​s​)
 	 */
 	admin_agent_access_expiration: string;
 	/**
@@ -18461,7 +18465,7 @@ type RootTranslation = {
 	 */
 	admin_agent_access_suspend_confirm: string;
 	/**
-	 * R​e​s​u​m​e​ ​t​h​i​s​ ​A​g​e​n​t​ ​G​r​a​n​t​?​ ​T​h​e​ ​d​e​l​e​g​a​t​o​r​ ​m​u​s​t​ ​c​o​n​s​e​n​t​ ​a​g​a​i​n​ ​b​e​f​o​r​e​ ​t​o​k​e​n​ ​i​s​s​u​a​n​c​e​.
+	 * R​e​c​e​r​t​i​f​y​ ​t​h​i​s​ ​A​g​e​n​t​ ​G​r​a​n​t​ ​f​o​r​ ​3​0​ ​d​a​y​s​ ​a​n​d​ ​r​e​s​u​m​e​ ​i​t​?​ ​T​h​e​ ​d​e​l​e​g​a​t​o​r​ ​m​u​s​t​ ​c​o​n​s​e​n​t​ ​a​g​a​i​n​ ​b​e​f​o​r​e​ ​t​o​k​e​n​ ​i​s​s​u​a​n​c​e​.
 	 */
 	admin_agent_access_resume_confirm: string;
 	/**
@@ -18529,7 +18533,31 @@ type RootTranslation = {
 	 */
 	admin_agent_access_setting_elevation_ttl: string;
 	/**
-	 * R​e​q​u​e​s​t​s​ ​p​e​r​ ​m​i​n​u​t​e​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​t​o​o​l
+	 * M​C​P​ ​H​T​T​P​ ​r​e​q​u​e​s​t​s​ ​p​e​r​ ​m​i​n​u​t​e
+	 */
+	admin_agent_access_setting_request_rate_limit: string;
+	/**
+	 * L​i​m​i​t​s​ ​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​M​C​P​ ​t​r​a​f​f​i​c​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​c​o​n​n​e​c​t​i​n​g​ ​c​l​i​e​n​t​,​ ​i​n​c​l​u​d​i​n​g​ ​T​o​o​l​ ​d​i​s​c​o​v​e​r​y​ ​a​n​d​ ​R​e​s​o​u​r​c​e​ ​r​e​a​d​s​.
+	 */
+	admin_agent_access_setting_request_rate_limit_help: string;
+	/**
+	 * N​e​w​ ​M​C​P​ ​s​e​s​s​i​o​n​s​ ​p​e​r​ ​m​i​n​u​t​e
+	 */
+	admin_agent_access_setting_session_initialization_rate_limit: string;
+	/**
+	 * L​i​m​i​t​s​ ​n​e​w​ ​i​n​i​t​i​a​l​i​z​e​ ​r​e​q​u​e​s​t​s​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​c​o​n​n​e​c​t​i​n​g​ ​c​l​i​e​n​t​;​ ​r​e​c​o​n​n​e​c​t​s​ ​d​o​ ​n​o​t​ ​c​o​n​s​u​m​e​ ​t​h​i​s​ ​q​u​o​t​a​.
+	 */
+	admin_agent_access_setting_session_initialization_rate_limit_help: string;
+	/**
+	 * C​o​n​c​u​r​r​e​n​t​ ​M​C​P​ ​s​e​s​s​i​o​n​s
+	 */
+	admin_agent_access_setting_max_concurrent_sessions: string;
+	/**
+	 * M​a​x​i​m​u​m​ ​a​c​t​i​v​e​ ​s​t​a​t​e​f​u​l​ ​s​e​s​s​i​o​n​s​ ​r​e​t​a​i​n​e​d​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​c​o​n​n​e​c​t​i​n​g​ ​c​l​i​e​n​t​.
+	 */
+	admin_agent_access_setting_max_concurrent_sessions_help: string;
+	/**
+	 * T​o​o​l​ ​e​x​e​c​u​t​i​o​n​s​ ​p​e​r​ ​m​i​n​u​t​e​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​t​o​o​l
 	 */
 	admin_agent_access_setting_rate_limit: string;
 	/**
@@ -18537,7 +18565,7 @@ type RootTranslation = {
 	 */
 	admin_agent_access_setting_public_standard_rate_limit: string;
 	/**
-	 * A​p​p​l​i​e​s​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​t​o​o​l​ ​a​n​d​ ​c​a​n​ ​n​e​v​e​r​ ​e​x​c​e​e​d​ ​t​h​e​ ​g​e​n​e​r​a​l​ ​r​e​q​u​e​s​t​ ​l​i​m​i​t​.
+	 * A​p​p​l​i​e​s​ ​p​e​r​ ​g​r​a​n​t​ ​a​n​d​ ​t​o​o​l​ ​a​n​d​ ​c​a​n​ ​n​e​v​e​r​ ​e​x​c​e​e​d​ ​t​h​e​ ​g​e​n​e​r​a​l​ ​T​o​o​l​ ​e​x​e​c​u​t​i​o​n​ ​l​i​m​i​t​.
 	 */
 	admin_agent_access_setting_public_standard_rate_limit_help: string;
 	/**
@@ -29911,7 +29939,7 @@ type RootTranslation = {
 	 */
 	admin_screens_title: string;
 	/**
-	 * M​a​n​a​g​e​ ​r​e​u​s​a​b​l​e​ ​s​c​r​e​e​n​s​ ​u​s​e​d​ ​b​y​ ​F​l​o​w​ ​n​o​d​e​s​ ​f​o​r​ ​r​e​g​i​s​t​r​a​t​i​o​n​,​ ​p​r​o​f​i​l​e​ ​c​o​m​p​l​e​t​i​o​n​,​ ​a​n​d​ ​l​o​g​i​n​.
+	 * M​a​n​a​g​e​ ​r​e​u​s​a​b​l​e​ ​s​c​r​e​e​n​s​ ​u​s​e​d​ ​b​y​ ​l​o​g​i​n​ ​f​l​o​w​s​ ​a​n​d​ ​t​h​e​ ​a​c​c​o​u​n​t​ ​p​a​g​e​.
 	 */
 	admin_screens_description: string;
 	/**
@@ -31053,6 +31081,10 @@ type RootTranslation = {
 	 * C​o​n​s​e​n​t
 	 */
 	admin_theme_preview_surface_consent: string;
+	/**
+	 * A​c​c​o​u​n​t
+	 */
+	admin_theme_preview_surface_account: string;
 	/**
 	 * E​r​r​o​r
 	 */
@@ -33914,6 +33946,10 @@ export type TranslationFunctions = {
 	 * Login UI
 	 */
 	admin_nav_login_ui: () => LocalizedString;
+	/**
+	 * Account page
+	 */
+	admin_nav_account_page: () => LocalizedString;
 	/**
 	 * Tenant Discovery
 	 */
@@ -50911,7 +50947,7 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_connected_title: () => LocalizedString;
 	/**
-	 * Interactive and automation connections authorized for this tenant.
+	 * Interactive and automation connections authorized for this tenant. MCP sessions load small Tool profiles on demand within each connection’s approved Grant.
 	 */
 	admin_agent_access_connected_description: () => LocalizedString;
 	/**
@@ -51007,7 +51043,7 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_scope_unchanged_notice: () => LocalizedString;
 	/**
-	 * Manual clients, Grants, Task Sets, and Scope Policies are for automation, custom policy, and interoperability troubleshooting.
+	 * Manual clients, Grants, Task Sets, and Scope Policies define authorization ceilings for automation, custom policy, and interoperability troubleshooting. Session Tool profiles do not change these ceilings.
 	 */
 	admin_agent_access_advanced_help: () => LocalizedString;
 	/**
@@ -51255,7 +51291,7 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_purpose_placeholder: () => LocalizedString;
 	/**
-	 * Expiration (optional)
+	 * Recertification deadline (required, maximum 90 days)
 	 */
 	admin_agent_access_expiration: () => LocalizedString;
 	/**
@@ -51335,7 +51371,7 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_suspend_confirm: () => LocalizedString;
 	/**
-	 * Resume this Agent Grant? The delegator must consent again before token issuance.
+	 * Recertify this Agent Grant for 30 days and resume it? The delegator must consent again before token issuance.
 	 */
 	admin_agent_access_resume_confirm: () => LocalizedString;
 	/**
@@ -51403,7 +51439,31 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_setting_elevation_ttl: () => LocalizedString;
 	/**
-	 * Requests per minute per grant and tool
+	 * MCP HTTP requests per minute
+	 */
+	admin_agent_access_setting_request_rate_limit: () => LocalizedString;
+	/**
+	 * Limits authenticated MCP traffic per grant and connecting client, including Tool discovery and Resource reads.
+	 */
+	admin_agent_access_setting_request_rate_limit_help: () => LocalizedString;
+	/**
+	 * New MCP sessions per minute
+	 */
+	admin_agent_access_setting_session_initialization_rate_limit: () => LocalizedString;
+	/**
+	 * Limits new initialize requests per grant and connecting client; reconnects do not consume this quota.
+	 */
+	admin_agent_access_setting_session_initialization_rate_limit_help: () => LocalizedString;
+	/**
+	 * Concurrent MCP sessions
+	 */
+	admin_agent_access_setting_max_concurrent_sessions: () => LocalizedString;
+	/**
+	 * Maximum active stateful sessions retained per grant and connecting client.
+	 */
+	admin_agent_access_setting_max_concurrent_sessions_help: () => LocalizedString;
+	/**
+	 * Tool executions per minute per grant and tool
 	 */
 	admin_agent_access_setting_rate_limit: () => LocalizedString;
 	/**
@@ -51411,7 +51471,7 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_setting_public_standard_rate_limit: () => LocalizedString;
 	/**
-	 * Applies per grant and tool and can never exceed the general request limit.
+	 * Applies per grant and tool and can never exceed the general Tool execution limit.
 	 */
 	admin_agent_access_setting_public_standard_rate_limit_help: () => LocalizedString;
 	/**
@@ -62689,7 +62749,7 @@ Remove this role from {email}?
 	 */
 	admin_screens_title: () => LocalizedString;
 	/**
-	 * Manage reusable screens used by Flow nodes for registration, profile completion, and login.
+	 * Manage reusable screens used by login flows and the account page.
 	 */
 	admin_screens_description: () => LocalizedString;
 	/**
@@ -63816,6 +63876,10 @@ Remove this role from {email}?
 	 * Consent
 	 */
 	admin_theme_preview_surface_consent: () => LocalizedString;
+	/**
+	 * Account
+	 */
+	admin_theme_preview_surface_account: () => LocalizedString;
 	/**
 	 * Error
 	 */

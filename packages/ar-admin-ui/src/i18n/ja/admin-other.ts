@@ -256,6 +256,7 @@ const adminOther = {
 	admin_theme_preview_surface_registration: '新規登録',
 	admin_theme_preview_surface_code: 'コード',
 	admin_theme_preview_surface_consent: '同意',
+	admin_theme_preview_surface_account: 'アカウント',
 	admin_theme_preview_surface_error: 'エラー',
 	admin_theme_preview_mode_light: 'Light',
 	admin_theme_preview_mode_dark: 'Dark',

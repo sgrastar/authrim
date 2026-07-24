@@ -124,6 +124,44 @@ Deploy an existing configured environment.
 npx @authrim/setup deploy --env prod --yes
 ```
 
+This command permits an initial deployment or a same-product-version redeploy. If the repository
+product version differs from the deployed lock, it stops and directs the operator to `update`; product
+upgrades cannot bypass the schema-first release state machine through CLI deploy, component upgrade,
+root deployment scripts, configuration-triggered Web redeploys, tenant-pool/R2 deployment helpers, or
+Web Worker update routes. The Web `/deploy` flow is initial-setup-only and applies its D1 schemas before
+publishing any Worker. Manual Web migration routes and tenant D1 provisioning/reset/migrate commands
+also require the checkout product version to match the deployed product; release schema changes go
+through `update`.
+
+External PostgreSQL topology changes use a separate, fail-closed workflow. First apply the migration
+streams for the installed Authrim version to each new database, then pass a candidate environment
+configuration and acknowledge that schema step:
+
+```bash
+npx @authrim/setup external-db-register \
+  --env prod \
+  --config ./authrim-prod-external-db.json \
+  --external-schema-ready \
+  --yes
+```
+
+The command accepts only runtime storage/audit profile and Hyperdrive-reference changes. It records
+versioned schema evidence in the environment lock and deploys the resulting bindings. PostgreSQL core
+and PII streams are supported; a target without a published release stream (including MySQL today) is
+rejected. Use `--dry-run` to validate the candidate without changing local or Cloudflare state.
+
+Topology commands (`tenant-db`, `tenant-db-pool-expand`, `r2-provision`, and
+`external-db-register`) persist a durable preparation/deployment journal in the environment lock before
+publishing Worker bindings. Configuration-changing topology commands also stage the new configuration
+and checksum in that journal before atomically replacing `config.json`; an interrupted replacement is
+completed deterministically on retry. If deployment or readiness verification fails, rerun the same
+dedicated command. The command resumes the recorded target without allocating another tenant slot,
+creating another tenant database generation, or requiring a second external-schema acknowledgement.
+Other configuration, release, and Worker-only operations remain blocked until the pending topology
+deployment succeeds. For pool expansion and external database registration, retry-only arguments may
+be omitted because the target configuration is pinned by the journal. `authrim-setup status --env
+<env>` shows the pending kind, phase, recorded subject, and the command to resume.
+
 Useful options:
 
 | Option               | Description                                      |
@@ -141,12 +179,55 @@ Useful options:
 
 ### `update`
 
-Update Workers for an existing environment.
+Update an existing environment as one release operation. The command resolves the release migration
+manifest, updates every automatic D1 target first, deploys changed API and enabled UI Workers, runs
+health checks, and records the completed product version in the environment lock file only after every
+enabled Worker succeeds. Re-running the command resumes an interrupted update from the recorded phase,
+including partially completed UI deployment.
+
+Legacy locks without `productVersion` are reconciled from recorded Worker versions. If those versions
+are mixed, setup does not guess the database release: it checks cumulative D1 history and converges all
+Workers to the requested release, while refusing any target below the highest recorded Worker version.
 
 ```bash
 npx @authrim/setup update --env prod --dry-run
 npx @authrim/setup update --env prod --all --yes
+# Development checkout only, before the release manifest exists:
+npx @authrim/setup update --env dev --allow-draft-manifest
 ```
+
+The D1 target plan includes the shared core, PII, and Admin databases plus every generated tenant D1
+binding in the lock file. Tenant bindings with shard suffixes such as `_CORE_S1` are migrated as
+independent physical targets using the same logical core schema stream. When multiple schema streams
+map to one physical database, they run sequentially for that database.
+
+External PostgreSQL/MySQL targets are discovered from every seeded deployable runtime profile, not
+only the environment default, so tenant-specific profile selections cannot escape the release plan.
+PostgreSQL core and PII connections use separate logical migration streams. Setup records the applied product version per
+physical target, so an existing target receives a release delta while a newly added target receives the
+cumulative stream. Setup does not have the database credentials behind a Hyperdrive binding, so
+external migrations currently fail closed. Apply the listed files using operator-managed database
+tooling, then acknowledge that step with `--external-schema-ready`. The acknowledgement is preserved
+when an interrupted update resumes. Per-target stream paths and checksums are stored as well, so a
+database that applied development draft files is recognized as equivalent when the same-version
+published bundle later supersedes those exact files. MySQL and external audit targets remain
+hard-blocked until their own release migration streams are provided. Legacy D1 rows with blank
+checksums are upgraded only from a checksum-verified published manifest, including the manifest's
+superseded-file evidence; development drafts never authorize that backfill.
+
+The normative lifecycle, operation, topology, readiness, and test rules are documented in
+[`docs/specification/release-lifecycle.md`](../../docs/specification/release-lifecycle.md).
+
+Useful options:
+
+| Option                    | Description                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| `--dry-run`               | Show Worker, D1, tenant/shard, and external database changes without applying them.    |
+| `--all`                   | Redeploy every Worker even if its package version is unchanged.                        |
+| `--allow-draft-manifest`  | Explicitly allow a development manifest. Published updates require a release manifest. |
+| `--external-schema-ready` | Confirm required external schema files were applied separately.                        |
+| `--skip-build`            | Skip package builds.                                                                   |
+| `-y, --yes`               | Accept the displayed release plan without an interactive prompt.                       |
 
 ### `delete`
 
@@ -179,20 +260,21 @@ npx @authrim/setup config --config .authrim/prod/config.json --validate
 
 ### Other Maintenance Commands
 
-| Command                 | Purpose                                                  |
-| ----------------------- | -------------------------------------------------------- |
-| `download`              | Download Authrim source code.                            |
-| `status`                | Show deployment status.                                  |
-| `secrets`               | Upload secrets to Cloudflare.                            |
-| `r2-provision`          | Create dedicated R2 buckets for an existing environment. |
-| `upgrade`               | Upgrade a single Worker or UI component.                 |
-| `tenant-db`             | Create tenant-specific D1 databases for one tenant.      |
-| `tenant-db-migrate-all` | Run migrations for generated tenant D1 databases.        |
-| `tenant-db-pool-expand` | Add preallocated tenant D1 slots.                        |
-| `tenant-db-pool-status` | Show tenant D1 pool capacity.                            |
-| `tenant-db-slot-reset`  | Reset a failed tenant D1 slot.                           |
-| `migrate`               | Migrate legacy files into `.authrim/{env}/`.             |
-| `migrate-status`        | Show migration status and recommendation.                |
+| Command                 | Purpose                                                   |
+| ----------------------- | --------------------------------------------------------- |
+| `download`              | Download Authrim source code.                             |
+| `status`                | Show deployment status.                                   |
+| `secrets`               | Upload secrets to Cloudflare.                             |
+| `r2-provision`          | Create R2 buckets and immediately deploy their bindings.  |
+| `external-db-register`  | Register migrated external DBs and deploy their bindings. |
+| `upgrade`               | Upgrade a single Worker or UI component.                  |
+| `tenant-db`             | Create tenant-specific D1 databases for one tenant.       |
+| `tenant-db-migrate-all` | Run migrations for generated tenant D1 databases.         |
+| `tenant-db-pool-expand` | Add preallocated tenant D1 slots.                         |
+| `tenant-db-pool-status` | Show tenant D1 pool capacity.                             |
+| `tenant-db-slot-reset`  | Reset a failed tenant D1 slot.                            |
+| `migrate`               | Migrate legacy files into `.authrim/{env}/`.              |
+| `migrate-status`        | Show migration status and recommendation.                 |
 
 ## Supported Languages
 

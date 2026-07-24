@@ -11166,11 +11166,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
         }, 1000);
 
-        const deployResult = await api('/deploy', {
+        const deployResult = await api('/update/workers', {
           method: 'POST',
           body: {
             env: envName,
-            dryRun: false,
+            onlyChanged: false,
+            topologyDeploymentToken: expansion.topologyDeploymentToken,
           },
         });
 
@@ -11280,11 +11281,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
         }, 1000);
 
-        const deployResult = await api('/deploy', {
+        const deployResult = await api('/update/workers', {
           method: 'POST',
           body: {
             env: envName,
-            dryRun: false,
+            onlyChanged: false,
+            topologyDeploymentToken: provisionResult.topologyDeploymentToken,
           },
         });
 

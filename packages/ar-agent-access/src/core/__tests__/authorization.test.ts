@@ -37,6 +37,7 @@ const base: AgentAuthorizationInput = {
     generation: 1,
     status: 'active',
     delegationMode: 'user_consent',
+    expiresAt: 1_000,
     taskSetId: 'ats_read-only',
     taskSetVersion: 1,
     scopePolicyId: 'asp_tenant-1',
@@ -73,6 +74,19 @@ const base: AgentAuthorizationInput = {
 describe('evaluateAgentAuthorization', () => {
   it('allows only when each independent authorization axis passes', () => {
     expect(evaluateAgentAuthorization(base)).toEqual({ allowed: true, requiresElevation: false });
+  });
+
+  it('fails closed when an active Grant has no recertification deadline', () => {
+    expect(
+      evaluateAgentAuthorization({
+        ...base,
+        grant: { ...base.grant, expiresAt: undefined },
+      })
+    ).toMatchObject({
+      allowed: false,
+      deniedAxis: 'grant',
+      code: 'AGENT_GRANT_INACTIVE',
+    });
   });
 
   it.each([

@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { canonicalizeJson, resolveAgentConfigurationPlan } from '../../../core';
+import { computeAgentToolContractDigest, resolveAgentConfigurationPlan } from '../../../core';
 import {
   ADMIN_CONFIGURATION_PROMPTS,
   ADMIN_CONFIGURATION_RESOURCES,
@@ -19,6 +18,7 @@ describe('Configuration Copilot MCP contracts', () => {
         schemaValidator: new McpSdkJsonSchemaValidator(),
         definition: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-1',
@@ -39,7 +39,7 @@ describe('Configuration Copilot MCP contracts', () => {
     ).toEqual(
       ADMIN_CONFIGURATION_TOOL_DEFINITIONS.map((tool) => [
         tool.name,
-        `sha256:${createHash('sha256').update(canonicalizeJson(tool.inputSchema)).digest('hex')}`,
+        computeAgentToolContractDigest(tool),
       ])
     );
     expect(

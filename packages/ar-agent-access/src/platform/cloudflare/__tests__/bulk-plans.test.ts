@@ -8,6 +8,7 @@ const definition = {
   canaryTenantIds: ['tenant-a'],
   plan: {
     schemaVersion: 'authrim-agent-plan-v1' as const,
+    goal: 'Apply an approved Authrim configuration change',
     steps: [
       {
         id: 'step-1',
@@ -207,6 +208,7 @@ describe('CloudflareAgentBulkCoordinator', () => {
       canaryTenantIds: ['tenant-a'],
       plan: {
         schemaVersion: 'authrim-agent-plan-v1' as const,
+        goal: 'Apply an approved Authrim configuration change',
         steps: [
           {
             id: 'step-brand',

@@ -1,4 +1,9 @@
-import type { AgentAuditEvent, JsonObject } from '../../core';
+import {
+  canonicalizeJson,
+  sha256Base64Url,
+  type AgentAuditEvent,
+  type JsonObject,
+} from '../../core';
 import type { AgentAuditPort } from '../ports';
 
 export interface CloudflareAdminAgentAuditRepository {
@@ -39,6 +44,31 @@ export class CloudflareAdminAgentAuditAdapter implements AgentAuditPort {
   ) {}
 
   async write(event: AgentAuditEvent): Promise<void> {
+    // Mode A has no Machine Principal. Preserve the established digest shape for callers that
+    // omit the optional field, while treating an explicitly undefined principalId identically.
+    // RFC 8785 accepts JSON values only and must never receive `undefined`.
+    const canonicalActor = {
+      actorSub: event.actor.actorSub,
+      actorMode: event.actor.actorMode,
+      actorAssurance: event.actor.actorAssurance,
+      tokenBinding: event.actor.tokenBinding,
+      clientId: event.actor.clientId,
+      ...(event.actor.principalId === undefined ? {} : { principalId: event.actor.principalId }),
+      delegatorId: event.actor.delegatorId,
+      grantId: event.actor.grantId,
+    };
+    const eventDigest = await sha256Base64Url(
+      canonicalizeJson({
+        purpose: 'authrim-agent-audit-event-v1',
+        event_type: event.eventType,
+        tenant_id: event.tenantId,
+        occurred_at: event.occurredAt,
+        correlation_id: event.correlationId,
+        actor: canonicalActor,
+        outcome: event.outcome,
+        details: event.details,
+      } as never)
+    );
     await this.repository.writeAudit({
       id: this.createId(),
       tenantId: event.tenantId,
@@ -63,6 +93,8 @@ export class CloudflareAdminAgentAuditAdapter implements AgentAuditPort {
         ...event.details,
         correlation_id: event.correlationId,
         outcome: event.outcome,
+        event_digest: eventDigest,
+        integrity_profile: 'authrim-agent-audit-event-v1',
       },
       createdAt: event.occurredAt,
     });

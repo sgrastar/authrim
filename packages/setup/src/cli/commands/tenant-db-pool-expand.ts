@@ -1,10 +1,26 @@
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
+import {
+  acquireEnvironmentOperationLock,
+  loadLockFileAuto,
+  saveLockFile,
+} from '../../core/lock.js';
 import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
+import { getRootProductVersion } from '../../core/version.js';
+import {
+  evaluateReleaseDeploymentGuard,
+  releaseDeploymentGuardMessage,
+} from '../../core/release-deployment-guard.js';
 import { deployCommand } from './deploy.js';
+import { assertPendingTopologyUpdate, prepareTopologyUpdate } from '../../core/topology-update.js';
+import {
+  commitTopologyConfigTransaction,
+  readEffectiveTopologyConfig,
+  recoverTopologyConfigTransaction,
+} from '../../core/topology-config-transaction.js';
 
 interface TenantDatabasePoolExpandOptions {
   env?: string;
@@ -19,11 +35,7 @@ export async function tenantDatabasePoolExpandCommand(
   options: TenantDatabasePoolExpandOptions
 ): Promise<void> {
   const env = options.env ?? 'prod';
-  const addSlots = Number.parseInt(options.addSlots ?? '0', 10);
-  if (!Number.isInteger(addSlots) || addSlots < 1) {
-    console.error(chalk.red('Missing or invalid required option: --add-slots <n>'));
-    process.exit(1);
-  }
+  const requestedAddSlots = Number.parseInt(options.addSlots ?? '0', 10);
 
   const baseDir = findAuthrimBaseDir(process.cwd());
   const envPaths = getEnvironmentPaths({ baseDir, env });
@@ -32,9 +44,25 @@ export async function tenantDatabasePoolExpandCommand(
     process.exit(1);
   }
 
-  const config = AuthrimConfigSchema.parse(
-    JSON.parse(await readFile(envPaths.config, 'utf-8'))
-  ) as AuthrimConfig;
+  const configText = await readFile(envPaths.config, 'utf-8');
+  const diskConfig = AuthrimConfigSchema.parse(JSON.parse(configText)) as AuthrimConfig;
+  const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
+  if (!lock) {
+    console.error(chalk.red(`Lock file not found for environment "${env}".`));
+    process.exit(1);
+  }
+  const config = await readEffectiveTopologyConfig(lock, envPaths.config);
+  const targetProductVersion = await getRootProductVersion(baseDir);
+  const deploymentGuard = evaluateReleaseDeploymentGuard(
+    lock,
+    targetProductVersion,
+    'topology_change'
+  );
+  if (!deploymentGuard.allowed) {
+    console.error(chalk.red(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion)));
+    console.log(chalk.yellow(`Run authrim-setup update --env ${env} before expanding the pool.`));
+    process.exit(1);
+  }
   if (config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
     console.error(
       chalk.red(
@@ -47,7 +75,20 @@ export async function tenantDatabasePoolExpandCommand(
   }
 
   const currentSlots = config.tenantD1?.preallocatedSlots ?? 3;
-  const nextSlots = currentSlots + addSlots;
+  const resuming = lock.topologyUpdate !== undefined;
+  if (resuming) {
+    assertPendingTopologyUpdate(lock, {
+      kind: 'tenant_d1_pool',
+      targetProductVersion,
+      config,
+    });
+  }
+  if (!resuming && (!Number.isInteger(requestedAddSlots) || requestedAddSlots < 1)) {
+    console.error(chalk.red('Missing or invalid required option: --add-slots <n>'));
+    process.exit(1);
+  }
+  const addSlots = resuming ? 0 : requestedAddSlots;
+  const nextSlots = resuming ? currentSlots : currentSlots + addSlots;
   if (nextSlots > MAX_TENANT_D1_SLOTS) {
     console.error(
       chalk.red(
@@ -63,6 +104,7 @@ export async function tenantDatabasePoolExpandCommand(
   console.log(`Current slots: ${chalk.cyan(currentSlots)}`);
   console.log(`Add slots:     ${chalk.cyan(addSlots)}`);
   console.log(`Next slots:    ${chalk.cyan(nextSlots)}`);
+  if (resuming) console.log(chalk.yellow('Resuming the pending Worker binding deployment.'));
 
   if (options.dryRun) {
     console.log(
@@ -83,21 +125,64 @@ export async function tenantDatabasePoolExpandCommand(
     }
   }
 
-  const updatedConfig: AuthrimConfig = {
-    ...config,
-    tenantD1: {
-      ...(config.tenantD1 ?? { preallocatedSlots: currentSlots }),
-      preallocatedSlots: nextSlots,
-    },
-    updatedAt: new Date().toISOString(),
-  };
-  await writeFile(envPaths.config, `${JSON.stringify(updatedConfig, null, 2)}\n`, 'utf-8');
-  console.log(chalk.green(`✓ Updated preallocated tenant slots: ${currentSlots} -> ${nextSlots}`));
+  const operationLock = await acquireEnvironmentOperationLock(lockPath, 'tenant-db-pool-expand');
+  try {
+    const lockedEnvironment = await loadLockFileAuto(baseDir, env);
+    const lockedConfig = AuthrimConfigSchema.parse(
+      JSON.parse(await readFile(envPaths.config, 'utf-8'))
+    );
+    if (
+      !lockedEnvironment.lock ||
+      JSON.stringify(lockedEnvironment.lock) !== JSON.stringify(lock) ||
+      JSON.stringify(lockedConfig) !== JSON.stringify(diskConfig)
+    ) {
+      throw new Error('environment_changed_while_waiting_for_tenant_pool_lock');
+    }
+    if (!resuming) {
+      const updatedConfig: AuthrimConfig = {
+        ...config,
+        tenantD1: {
+          ...(config.tenantD1 ?? { preallocatedSlots: currentSlots }),
+          preallocatedSlots: nextSlots,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+      await commitTopologyConfigTransaction({
+        lock,
+        lockPath,
+        configPath: envPaths.config,
+        kind: 'tenant_d1_pool',
+        targetProductVersion,
+        config: updatedConfig,
+      });
+      console.log(
+        chalk.green(`✓ Updated preallocated tenant slots: ${currentSlots} -> ${nextSlots}`)
+      );
+    } else if (lockedEnvironment.lock.topologyUpdate?.phase === 'config_staged') {
+      await recoverTopologyConfigTransaction({
+        lock: lockedEnvironment.lock,
+        lockPath,
+        configPath: envPaths.config,
+        kind: 'tenant_d1_pool',
+        targetProductVersion,
+      });
+    } else {
+      const pending = prepareTopologyUpdate(lockedEnvironment.lock, {
+        kind: 'tenant_d1_pool',
+        targetProductVersion,
+        config,
+      });
+      await saveLockFile(pending.lock, lockPath);
+    }
+  } finally {
+    await operationLock.release();
+  }
 
   await deployCommand({
     env,
     config: envPaths.config,
     source: baseDir,
     yes: true,
+    operationKind: 'topology_change',
   });
 }

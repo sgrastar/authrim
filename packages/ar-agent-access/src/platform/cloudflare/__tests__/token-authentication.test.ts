@@ -15,6 +15,7 @@ const grant: AgentGrantContract = {
   generation: 3,
   status: 'active',
   delegationMode: 'user_consent',
+  expiresAt: 1_000,
 };
 
 function claims(overrides: Record<string, unknown> = {}) {

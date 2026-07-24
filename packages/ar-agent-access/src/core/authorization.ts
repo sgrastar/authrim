@@ -242,7 +242,8 @@ export function evaluateAgentAuthorization(
   }
   if (
     input.grant.status !== 'active' ||
-    (input.grant.expiresAt !== undefined && input.grant.expiresAt <= input.now)
+    input.grant.expiresAt === undefined ||
+    input.grant.expiresAt <= input.now
   ) {
     return {
       allowed: false,

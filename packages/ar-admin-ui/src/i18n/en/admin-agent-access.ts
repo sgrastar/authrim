@@ -17,12 +17,12 @@ export default {
 	admin_agent_access_tab_advanced: 'Advanced',
 	admin_agent_access_connected_title: 'Connected Agents',
 	admin_agent_access_connected_description:
-		'Interactive and automation connections authorized for this tenant.',
+		'Interactive and automation connections authorized for this tenant. MCP sessions load small Tool profiles on demand within each connection’s approved Grant.',
 	admin_agent_access_connected_empty:
 		'No Agent is connected yet. Enable Agent Access, then add the URL below to your MCP host.',
 	admin_agent_access_connection_url: 'MCP connection URL',
 	admin_agent_access_connection_url_help:
-		'Use this URL in Codex, Claude Code, or another standards-compatible MCP host. Client registration and permissions are confirmed during sign-in.',
+		'Use this URL in Codex, Claude Code, or another standards-compatible MCP host. We recommend the connection name "authrim" for production and "authrim-<environment>" elsewhere. The server advertises the display name "Authrim (<environment>)" to MCP hosts that support it. Client registration and permissions are confirmed during sign-in.',
 	admin_agent_access_copy_url: 'Copy URL',
 	admin_agent_access_copied: 'Copied',
 	admin_agent_access_interactive_connection: 'Interactive connection',
@@ -50,7 +50,7 @@ export default {
 		'Connection permissions updated. The MCP host may need to authenticate again.',
 	admin_agent_access_scope_unchanged_notice: 'Connection permissions are unchanged.',
 	admin_agent_access_advanced_help:
-		'Manual clients, Grants, Task Sets, and Scope Policies are for automation, custom policy, and interoperability troubleshooting.',
+		'Manual clients, Grants, Task Sets, and Scope Policies define authorization ceilings for automation, custom policy, and interoperability troubleshooting. Session Tool profiles do not change these ceilings.',
 	admin_agent_access_loading: 'Loading Agent Access…',
 	admin_agent_access_load_error: 'Failed to load Agent Access.',
 	admin_agent_access_enabled: 'Enabled',
@@ -126,7 +126,7 @@ export default {
 	admin_agent_access_permission_settings: 'Read Agent Access settings',
 	admin_agent_access_purpose: 'Purpose',
 	admin_agent_access_purpose_placeholder: 'Describe why this client needs delegated access.',
-	admin_agent_access_expiration: 'Expiration (optional)',
+	admin_agent_access_expiration: 'Recertification deadline (required, maximum 90 days)',
 	admin_agent_access_create: 'Create grant',
 	admin_agent_access_cancel: 'Cancel',
 	admin_agent_access_save: 'Save changes',
@@ -150,7 +150,7 @@ export default {
 	admin_agent_access_suspend_confirm:
 		'Suspend this Agent Grant? Existing token families will be queued for revocation.',
 	admin_agent_access_resume_confirm:
-		'Resume this Agent Grant? The delegator must consent again before token issuance.',
+		'Recertify this Agent Grant for 30 days and resume it? The delegator must consent again before token issuance.',
 	admin_agent_access_updated_notice: 'Agent Grant updated. Re-consent is required.',
 	admin_agent_access_transition_notice: 'Agent Grant status updated.',
 	admin_agent_access_audit_title: 'Grant history',
@@ -170,10 +170,19 @@ export default {
 	admin_agent_access_elevation_approval: 'Approval workflow',
 	admin_agent_access_elevation_both: 'Reauthentication or approval',
 	admin_agent_access_setting_elevation_ttl: 'Elevation capability lifetime (seconds)',
-	admin_agent_access_setting_rate_limit: 'Requests per minute per grant and tool',
+	admin_agent_access_setting_request_rate_limit: 'MCP HTTP requests per minute',
+	admin_agent_access_setting_request_rate_limit_help:
+		'Limits authenticated MCP traffic per grant and connecting client, including Tool discovery and Resource reads.',
+	admin_agent_access_setting_session_initialization_rate_limit: 'New MCP sessions per minute',
+	admin_agent_access_setting_session_initialization_rate_limit_help:
+		'Limits new initialize requests per grant and connecting client; reconnects do not consume this quota.',
+	admin_agent_access_setting_max_concurrent_sessions: 'Concurrent MCP sessions',
+	admin_agent_access_setting_max_concurrent_sessions_help:
+		'Maximum active stateful sessions retained per grant and connecting client.',
+	admin_agent_access_setting_rate_limit: 'Tool executions per minute per grant and tool',
 	admin_agent_access_setting_public_standard_rate_limit: 'Public Mode A standard writes per minute',
 	admin_agent_access_setting_public_standard_rate_limit_help:
-		'Applies per grant and tool and can never exceed the general request limit.',
+		'Applies per grant and tool and can never exceed the general Tool execution limit.',
 	admin_agent_access_setting_high_risk: 'Additional high-risk permissions',
 	admin_agent_access_setting_high_risk_help:
 		'Enter one known Admin permission per line. These permissions always require elevation.',

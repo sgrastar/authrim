@@ -75,6 +75,11 @@ export interface LoginUISettings {
   'login-ui.footer_links': string;
   'login-ui.custom_blocks': string;
   'login-ui.custom_themes': string;
+  'login-ui.account_pages': string;
+  'login-ui.account_page_draft': string;
+  'login-ui.account_page_published': string;
+  'login-ui.account_page_published_version': number;
+  'login-ui.account_page_published_at': string;
 }
 
 /**
@@ -269,10 +274,10 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
   'login-ui.supported_locales': {
     key: 'login-ui.supported_locales',
     type: 'string',
-    default: 'en,ja',
+    default: 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
     envKey: 'LOGIN_UI_SUPPORTED_LOCALES',
     label: 'Supported Locales',
-    description: 'Comma-separated list of supported UI locales (e.g., en,ja)',
+    description: 'Comma-separated list of supported LoginUI locales',
     visibility: 'public',
   },
   'login-ui.favicon_url': {
@@ -589,6 +594,57 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'JSON document holding duplicated Login UI themes managed from the Themes admin page',
     visibility: 'public',
   },
+  'login-ui.account_pages': {
+    key: 'login-ui.account_pages',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGES',
+    label: 'Account Pages',
+    description: 'Versioned custom account pages with resolved published screen snapshots',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_draft': {
+    key: 'login-ui.account_page_draft',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_DRAFT',
+    label: 'Account Page Draft',
+    description: 'Serialized draft account page composition managed from Admin UI',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published': {
+    key: 'login-ui.account_page_published',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED',
+    label: 'Published Account Page',
+    description: 'Serialized published account page composition used by Login UI',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published_version': {
+    key: 'login-ui.account_page_published_version',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED_VERSION',
+    label: 'Published Account Page Version',
+    description: 'Monotonic version of the published account page composition',
+    min: 0,
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published_at': {
+    key: 'login-ui.account_page_published_at',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED_AT',
+    label: 'Published Account Page At',
+    description: 'ISO timestamp of the latest account page publication',
+    visibility: 'internal',
+    status: 'in_development',
+  },
 };
 
 /**
@@ -627,7 +683,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.logo_layout': 'stack',
   'login-ui.brand_panel_title': '',
   'login-ui.brand_panel_text': '',
-  'login-ui.supported_locales': 'en,ja',
+  'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
   'login-ui.background_image_url': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.custom_css': '',
@@ -657,4 +713,9 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.footer_links': '',
   'login-ui.custom_blocks': '',
   'login-ui.custom_themes': '',
+  'login-ui.account_pages': '',
+  'login-ui.account_page_draft': '',
+  'login-ui.account_page_published': '',
+  'login-ui.account_page_published_version': 0,
+  'login-ui.account_page_published_at': '',
 };

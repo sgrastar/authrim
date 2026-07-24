@@ -9,6 +9,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  readAuthenticationMethodsCacheRevision,
   SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
@@ -44,6 +45,7 @@ interface Env {
   BASE_DOMAIN?: string;
   PRIMARY_TENANT_ID?: string;
   DEFAULT_TENANT_ID?: string;
+  NAKED_DOMAIN_AS_ISSUER?: string;
 
   // UI Proxy configuration (optional)
   // When enabled, routes UI paths through the router for same-domain deployment
@@ -71,6 +73,12 @@ interface Env {
   ENABLE_LOGIN_UI_PATH_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
   ENABLE_ADMIN_UI_PROXY?: string;
+  /** Allow header-gated Server-Timing diagnostics */
+  AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?: string;
+  /** Router-side Cache API TTL for public authentication methods (seconds) */
+  AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string;
+  /** Shared edge Cache API TTL for public authentication methods (seconds) */
+  AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string;
 }
 
 const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
@@ -78,6 +86,24 @@ const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
 const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
 const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
 const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN = 'https://authrim-router.internal';
+const DEFAULT_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL = 24 * 60 * 60;
+const MAX_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL = 7 * 24 * 60 * 60;
+const AUTHENTICATION_METHODS_ROUTER_CACHE_STATUS_HEADER =
+  'X-Authrim-Router-Authentication-Methods-Cache';
+const DOWNSTREAM_AUTHENTICATION_METHODS_CACHE_STATUS_HEADER =
+  'X-Authrim-Authentication-Methods-Cache';
+const DIAGNOSTIC_RESPONSE_SESSION_ID_HEADER = 'X-Authrim-Diagnostic-Session-Id';
+type AuthenticationMethodsRouterCacheStatus = 'hit' | 'miss' | 'bypass';
+type AuthenticationMethodsRouterCache = {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+};
+type WaitUntilExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
 
 // Login UI paths that should be proxied when the Login UI path proxy is enabled.
 const LOGIN_UI_PATHS = [
@@ -218,6 +244,369 @@ function createServiceBindingRequest(request: Request): Request {
   headers.set('Host', forwardedHost);
 
   return new Request(new Request(targetUrl.toString(), forwarded), { headers });
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function appendServerTimingHeader(headers: Headers, spans: Record<string, number>): void {
+  const value = Object.entries(spans)
+    .map(([name, durationMs]) => `${name};dur=${durationMs.toFixed(1)}`)
+    .join(', ');
+  if (!value) return;
+  const existing = headers.get('Server-Timing');
+  headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+async function fetchServiceBindingWithDiagnostics(
+  c: Context<{ Bindings: Env }>,
+  target: 'OP_AUTH' | 'OP_MANAGEMENT',
+  fetcher: Fetcher
+): Promise<Response> {
+  const diagnosticSessionId = sanitizeDiagnosticSessionId(
+    c.req.header(DIAGNOSTIC_SESSION_ID_HEADER)
+  );
+  const totalStartedAt = performance.now();
+  const prepareStartedAt = performance.now();
+  const request = createServiceBindingRequest(c.req.raw);
+  const prepareDurationMs = roundDiagnosticDurationMs(performance.now() - prepareStartedAt);
+  const fetchStartedAt = performance.now();
+  const response = await fetcher.fetch(request);
+  const fetchDurationMs = roundDiagnosticDurationMs(performance.now() - fetchStartedAt);
+
+  if (!diagnosticSessionId || !isDiagnosticTimingEnabled(c.env)) {
+    return response;
+  }
+
+  const totalDurationMs = roundDiagnosticDurationMs(performance.now() - totalStartedAt);
+  const spans = {
+    router_prepare_request: prepareDurationMs,
+    router_service_fetch: fetchDurationMs,
+    router_total: totalDurationMs,
+  };
+  const headers = new Headers(response.headers);
+  appendServerTimingHeader(headers, spans);
+  headers.set('X-Authrim-Diagnostic-Session-Id', diagnosticSessionId);
+
+  log.info('Router service binding diagnostics', {
+    diagnosticSessionId,
+    target,
+    method: c.req.method,
+    path: c.req.path,
+    status: response.status,
+    timingMs: spans,
+  });
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function readBoundedIntegerEnvValue(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
+}
+
+function resolveAuthenticationMethodsRouterCacheTTL(env: Env): number {
+  return readBoundedIntegerEnvValue(
+    env.AUTHENTICATION_METHODS_ROUTER_CACHE_TTL ?? env.AUTHENTICATION_METHODS_EDGE_CACHE_TTL,
+    DEFAULT_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL,
+    0,
+    MAX_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL
+  );
+}
+
+function getDefaultRouterCache(): AuthenticationMethodsRouterCache | null {
+  const candidate = (
+    globalThis as unknown as {
+      caches?: { default?: AuthenticationMethodsRouterCache };
+    }
+  ).caches?.default;
+  return candidate ?? null;
+}
+
+function getWaitUntilExecutionContext(
+  c: Context<{ Bindings: Env }>
+): WaitUntilExecutionContext | null {
+  try {
+    return (c as unknown as { executionCtx?: WaitUntilExecutionContext }).executionCtx ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRouterCacheKeyPart(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function resolveAuthenticationMethodsRouterTenantId(
+  c: Context<{ Bindings: Env }>,
+  serviceRequest: Request
+): string | null {
+  const serviceHost = serviceRequest.headers.get('Host') ?? new URL(serviceRequest.url).host;
+  const hostResult = validateHostHeader(serviceHost, c.env);
+  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : null;
+}
+
+function buildAuthenticationMethodsRouterCacheRequest(input: {
+  tenantId: string;
+  serviceRequest: Request;
+  revision: string;
+}): Request {
+  const serviceUrl = new URL(input.serviceRequest.url);
+  const url = new URL(
+    '/cache/authentication-methods/v2',
+    AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN
+  );
+  url.searchParams.set('tenant', input.tenantId);
+  url.searchParams.set('host', normalizeRouterCacheKeyPart(serviceUrl.host, '__unknown_host__'));
+  url.searchParams.set('path', serviceUrl.pathname);
+  url.searchParams.set('query', serviceUrl.search);
+  url.searchParams.set('revision', input.revision);
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+function hasExplicitCacheBypassHeader(request: Request): boolean {
+  const cacheControl = request.headers.get('Cache-Control')?.toLowerCase() ?? '';
+  const pragma = request.headers.get('Pragma')?.toLowerCase() ?? '';
+  return (
+    cacheControl.includes('no-cache') ||
+    cacheControl.includes('no-store') ||
+    pragma.includes('no-cache')
+  );
+}
+
+function isAuthenticationMethodsRouterCacheEligible(request: Request): boolean {
+  return (
+    request.method === 'GET' &&
+    !request.headers.has('Authorization') &&
+    !hasExplicitCacheBypassHeader(request)
+  );
+}
+
+function isCacheableAuthenticationMethodsResponse(response: Response): boolean {
+  const contentType = response.headers.get('Content-Type')?.toLowerCase() ?? '';
+  const cacheControl = response.headers.get('Cache-Control')?.toLowerCase() ?? '';
+  return (
+    response.status === 200 &&
+    contentType.includes('application/json') &&
+    !response.headers.has('Set-Cookie') &&
+    !cacheControl.includes('no-store') &&
+    !cacheControl.includes('private')
+  );
+}
+
+function stripRequestScopedCacheHeaders(headers: Headers): void {
+  headers.delete('Access-Control-Allow-Origin');
+  headers.delete('Access-Control-Allow-Credentials');
+  headers.delete('Access-Control-Expose-Headers');
+  headers.delete('Access-Control-Allow-Methods');
+  headers.delete('Access-Control-Allow-Headers');
+  headers.delete('Access-Control-Max-Age');
+  headers.delete('Vary');
+  headers.delete('Server-Timing');
+  headers.delete(DIAGNOSTIC_RESPONSE_SESSION_ID_HEADER);
+  headers.delete(DOWNSTREAM_AUTHENTICATION_METHODS_CACHE_STATUS_HEADER);
+}
+
+function withAuthenticationMethodsRouterCacheStatus(
+  response: Response,
+  status: AuthenticationMethodsRouterCacheStatus
+): Response {
+  const headers = new Headers(response.headers);
+  headers.set(AUTHENTICATION_METHODS_ROUTER_CACHE_STATUS_HEADER, status);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function finalizeAuthenticationMethodsRouterResponse(input: {
+  c: Context<{ Bindings: Env }>;
+  response: Response;
+  diagnosticSessionId: string | null;
+  totalStartedAt: number;
+  spans: Record<string, number>;
+  cacheStatus: AuthenticationMethodsRouterCacheStatus;
+  tenantId: string | null;
+  cacheEnabled: boolean;
+}): Response {
+  if (!input.diagnosticSessionId || !isDiagnosticTimingEnabled(input.c.env)) {
+    return input.response;
+  }
+
+  input.spans.router_total = roundDiagnosticDurationMs(performance.now() - input.totalStartedAt);
+  const headers = new Headers(input.response.headers);
+  appendServerTimingHeader(headers, input.spans);
+  headers.set('X-Authrim-Diagnostic-Session-Id', input.diagnosticSessionId);
+
+  log.info('Router authentication methods diagnostics', {
+    diagnosticSessionId: input.diagnosticSessionId,
+    method: input.c.req.method,
+    path: input.c.req.path,
+    status: input.response.status,
+    tenantId: input.tenantId ?? undefined,
+    cacheStatus: input.cacheStatus,
+    cacheEnabled: input.cacheEnabled,
+    timingMs: input.spans,
+  });
+
+  return new Response(input.response.body, {
+    status: input.response.status,
+    statusText: input.response.statusText,
+    headers,
+  });
+}
+
+async function putAuthenticationMethodsRouterCache(
+  c: Context<{ Bindings: Env }>,
+  cache: AuthenticationMethodsRouterCache,
+  request: Request,
+  response: Response,
+  cacheTTL: number
+): Promise<void> {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', `public, max-age=${cacheTTL}`);
+  headers.delete('Set-Cookie');
+  stripRequestScopedCacheHeaders(headers);
+  const cacheable = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+
+  const put = cache.put(request, cacheable).catch((error) => {
+    log.warn('Failed to store authentication methods router cache', {
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  });
+  const executionCtx = getWaitUntilExecutionContext(c);
+  if (executionCtx) {
+    executionCtx.waitUntil(put);
+    return;
+  }
+  await put;
+}
+
+async function fetchAuthenticationMethodsWithRouterCache(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  const diagnosticSessionId = sanitizeDiagnosticSessionId(
+    c.req.header(DIAGNOSTIC_SESSION_ID_HEADER)
+  );
+  const totalStartedAt = performance.now();
+  const spans: Record<string, number> = {};
+
+  const prepareStartedAt = performance.now();
+  const serviceRequest = createServiceBindingRequest(c.req.raw);
+  spans.router_prepare_request = roundDiagnosticDurationMs(performance.now() - prepareStartedAt);
+
+  const cacheTTL = resolveAuthenticationMethodsRouterCacheTTL(c.env);
+  const cache = cacheTTL > 0 ? getDefaultRouterCache() : null;
+  const tenantId = resolveAuthenticationMethodsRouterTenantId(c, serviceRequest);
+  const cacheEnabled =
+    Boolean(cache) &&
+    Boolean(c.env.SETTINGS) &&
+    Boolean(tenantId) &&
+    cacheTTL > 0 &&
+    isAuthenticationMethodsRouterCacheEligible(c.req.raw);
+  let cacheStatus: AuthenticationMethodsRouterCacheStatus = 'bypass';
+  let cacheRequest: Request | null = null;
+
+  if (cacheEnabled && cache && tenantId) {
+    try {
+      const revisionStartedAt = performance.now();
+      const revision = await readAuthenticationMethodsCacheRevision(c.env, tenantId);
+      spans.router_revision_read = roundDiagnosticDurationMs(performance.now() - revisionStartedAt);
+
+      cacheRequest = buildAuthenticationMethodsRouterCacheRequest({
+        tenantId,
+        serviceRequest,
+        revision,
+      });
+
+      const cacheStartedAt = performance.now();
+      const cached = await cache.match(cacheRequest);
+      spans.router_cache_match = roundDiagnosticDurationMs(performance.now() - cacheStartedAt);
+
+      if (cached) {
+        cacheStatus = 'hit';
+        const response = withAuthenticationMethodsRouterCacheStatus(cached, cacheStatus);
+        return finalizeAuthenticationMethodsRouterResponse({
+          c,
+          response,
+          diagnosticSessionId,
+          totalStartedAt,
+          spans,
+          cacheStatus,
+          tenantId,
+          cacheEnabled: true,
+        });
+      }
+
+      cacheStatus = 'miss';
+    } catch (error) {
+      cacheRequest = null;
+      cacheStatus = 'bypass';
+      log.warn('Authentication methods router cache lookup failed', {
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+    }
+  }
+
+  const fetchStartedAt = performance.now();
+  const upstreamResponse = await c.env.OP_MANAGEMENT.fetch(serviceRequest);
+  spans.router_service_fetch = roundDiagnosticDurationMs(performance.now() - fetchStartedAt);
+
+  if (cache && cacheRequest && cacheStatus === 'miss') {
+    if (isCacheableAuthenticationMethodsResponse(upstreamResponse)) {
+      const putStartedAt = performance.now();
+      await putAuthenticationMethodsRouterCache(
+        c,
+        cache,
+        cacheRequest,
+        upstreamResponse.clone(),
+        cacheTTL
+      );
+      spans.router_cache_put = roundDiagnosticDurationMs(performance.now() - putStartedAt);
+    } else {
+      cacheStatus = 'bypass';
+    }
+  }
+
+  const response = withAuthenticationMethodsRouterCacheStatus(upstreamResponse, cacheStatus);
+  return finalizeAuthenticationMethodsRouterResponse({
+    c,
+    response,
+    diagnosticSessionId,
+    totalStartedAt,
+    spans,
+    cacheStatus,
+    tenantId,
+    cacheEnabled,
+  });
 }
 
 async function requestHasFormBearerToken(request: Request): Promise<boolean> {
@@ -484,6 +873,7 @@ app.use('*', async (c, next) => {
   if (
     path === '/authorize' ||
     path.startsWith('/authorize/') ||
+    path === '/oauth/admin-agent/authorize' ||
     path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
@@ -932,8 +1322,7 @@ app.all('/api/v1/auth/direct/*', async (c) => {
 });
 
 app.all('/api/v1/login/interactions/*', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
+  return fetchServiceBindingWithDiagnostics(c, 'OP_AUTH', c.env.OP_AUTH);
 });
 
 app.get('/api/v1/registration-fields', async (c) => {
@@ -956,8 +1345,7 @@ app.all('/api/v1/diagnostic-logs/*', async (c) => {
  * - /api/auth/authentication-methods - Public endpoint for available authentication methods + UI config
  */
 app.get('/api/auth/authentication-methods', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_MANAGEMENT.fetch(request);
+  return fetchAuthenticationMethodsWithRouterCache(c);
 });
 app.all('/api/auth/discovery', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);

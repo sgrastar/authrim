@@ -30,12 +30,12 @@ describe('built-in Agent Task Sets', () => {
       )
     );
     expect(resolved.map((item) => item.digest)).toEqual([
-      '_e6Y6YcUQviBgNcpT1ppMCfCNvQyQl45DGcpemKLX7I',
-      'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k',
-      'Ij3ISoppD4aP8M1PK0VoI4U2ViMXhwCUk8q8XRVipi8',
-      '8yAjD04TtXK-8yxYvb5hbgUKrUapSbd3b9KqxZmKP8k',
-      '02Rg4I8B6DhjhRDOgDr9NTESVDIQY7NC9jT3GG5WKSE',
-      'w1IpPDBANiGKKbpd_a2_-yv3GZ1XBpnuk0N3hYDRCug',
+      'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc',
+      'JET784ODvcv_ZBZO7Yfb59-NqSslyqqgEbfHiTCyoSo',
+      'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc',
+      'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ',
+      'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4',
+      'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U',
     ]);
     const items = await listAgentTaskSetsWithBuiltins({
       repository: repository(),
@@ -51,14 +51,14 @@ describe('built-in Agent Task Sets', () => {
       'configuration_operator',
       'bulk_configuration_operator',
     ]);
-    expect(items.every((item) => item.kind === 'builtin' && item.currentVersion === 4)).toBe(true);
+    expect(items.every((item) => item.kind === 'builtin' && item.currentVersion === 8)).toBe(true);
     expect(items.map((item) => item.version.digest)).toEqual([
-      '_e6Y6YcUQviBgNcpT1ppMCfCNvQyQl45DGcpemKLX7I',
-      'onKFOlvthyskYe6Crii2rqGC_S8dtxa2J7F_h1ssO7k',
-      'Ij3ISoppD4aP8M1PK0VoI4U2ViMXhwCUk8q8XRVipi8',
-      '8yAjD04TtXK-8yxYvb5hbgUKrUapSbd3b9KqxZmKP8k',
-      '02Rg4I8B6DhjhRDOgDr9NTESVDIQY7NC9jT3GG5WKSE',
-      'w1IpPDBANiGKKbpd_a2_-yv3GZ1XBpnuk0N3hYDRCug',
+      'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc',
+      'JET784ODvcv_ZBZO7Yfb59-NqSslyqqgEbfHiTCyoSo',
+      'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc',
+      'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ',
+      'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4',
+      'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U',
     ]);
     expect(items.at(-1)?.version.tools.map((tool) => tool.toolId)).toContain(
       'admin.write.bulk.plan.create'
@@ -78,7 +78,11 @@ describe('built-in Agent Task Sets', () => {
       items
         .find((item) => item.name === 'user_data_reader')
         ?.version.tools.map((tool) => tool.toolId)
-    ).toEqual(['admin.read.users.get', 'admin.read.users.search']);
+    ).toEqual([
+      'admin.read.users.get',
+      'admin.read.users.search',
+      'admin.session.discovery-profiles.select',
+    ]);
   });
 
   it('does not resolve unknown versions or silently fall through to tenant storage', async () => {
@@ -99,11 +103,11 @@ describe('built-in Agent Task Sets', () => {
     await expect(
       getAgentTaskSetWithBuiltins({
         repository: repository(),
-        catalog: createAgentToolCatalog('admin-agent-access-v6', []),
+        catalog: createAgentToolCatalog('admin-agent-access-v10', []),
         tenantId: 'tenant-1',
         id: BUILTIN_AGENT_TASK_SET_PRESETS[0]!.id,
-        version: 4,
+        version: 8,
       })
-    ).rejects.toThrow('requires catalog admin-agent-access-v5');
+    ).rejects.toThrow('requires catalog admin-agent-access-v9');
   });
 });

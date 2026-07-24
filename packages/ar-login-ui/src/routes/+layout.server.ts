@@ -1,9 +1,24 @@
 import type { LayoutServerLoad } from './$types';
 import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
+import { normalizeLoginUILocale } from '$lib/i18n/locales';
 
 export const load: LayoutServerLoad = async (event) => {
 	// Get language preference from cookie
-	const preferredLanguage = event.cookies.get('preferredLanguage') || 'en';
+	const requestedLanguage = normalizeLoginUILocale(event.url?.searchParams.get('lang'));
+	const preferredLanguage =
+		requestedLanguage ??
+		normalizeLoginUILocale(event.cookies.get('preferredLanguage')) ??
+		event.locals.locale ??
+		'en';
+	if (requestedLanguage) {
+		event.cookies.set('preferredLanguage', preferredLanguage, {
+			path: '/',
+			maxAge: 60 * 60 * 24 * 365,
+			httpOnly: false,
+			sameSite: 'lax',
+			secure: event.url?.protocol === 'https:'
+		});
+	}
 	const emailVerificationProtocolEnabled = event.locals.emailVerificationProtocolEnabled === true;
 	if (
 		event.route.id === '/login' ||

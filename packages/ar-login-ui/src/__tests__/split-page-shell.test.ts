@@ -25,6 +25,23 @@ describe('split page shell', () => {
 		expectPageShellOrder(source('routes/signup/+page.svelte'));
 	});
 
+	it('anchors bottom theme and language controls above an enabled footer', () => {
+		const css = source('app.css');
+
+		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+			expect(source(page)).toContain(
+				'class:auth-page--has-footer={loginUIPageStore.footerEnabled}'
+			);
+		}
+		expect(css).toContain('.auth-page--has-footer .auth-main');
+		expect(css).toContain(
+			"[data-topbar-position='bottom_right'] .auth-page--has-footer .auth-main > .auth-topbar"
+		);
+		expect(css).toMatch(
+			/\[data-topbar-position='bottom_right'\] \.auth-page--has-footer[\s\S]*?position: absolute;/
+		);
+	});
+
 	it('uses viewport rows without reserving hidden footer space', () => {
 		const css = source('app.css');
 
@@ -34,6 +51,20 @@ describe('split page shell', () => {
 		expect(css).not.toContain("[data-page-layout='split_panel'] .auth-page-header");
 		expect(css).toContain("[data-page-layout='split_panel'] .auth-page-footer");
 		expect(css).toContain('grid-row: 2;');
+	});
+
+	it('extends the split panel surface across the full mobile main region', () => {
+		const css = source('app.css');
+
+		expect(css).toMatch(
+			/@media \(max-width: 640px\)[\s\S]*?\[data-split-background-mode='shared'\] \.auth-main,[\s\S]*?backdrop-filter: blur\(32px\) saturate\(160%\);/
+		);
+		expect(css).toMatch(
+			/@media \(max-width: 640px\)[\s\S]*?\[data-split-background-mode='shared'\] \.auth-container,[\s\S]*?background: transparent;[\s\S]*?backdrop-filter: none;/
+		);
+		expect(css).toContain(
+			"[data-split-background-mode='panel'][data-has-login-panel-background-image='true']"
+		);
 	});
 
 	it('removes the card surface for forms in the split auth panel', () => {

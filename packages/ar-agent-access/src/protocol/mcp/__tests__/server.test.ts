@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAgentToolCatalog, type AgentGrantContract } from '../../../core';
+import {
+  createAgentToolCatalog,
+  sealAgentToolDefinitions,
+  type AgentGrantContract,
+  type AgentToolDefinitionSource,
+} from '../../../core';
 import type { ManagementOperationRequest } from '../../../platform/ports';
 import { McpSdkJsonSchemaValidator } from '../json-schema-validator';
 import { createAgentAccessMcpServer } from '../server';
@@ -46,7 +51,11 @@ const requestContext = {
   correlationId: 'correlation-1',
 };
 
-const catalog = createAgentToolCatalog('1', [
+function createTestCatalog(version: string, definitions: readonly AgentToolDefinitionSource[]) {
+  return createAgentToolCatalog(version, sealAgentToolDefinitions(definitions));
+}
+
+const catalog = createTestCatalog('1', [
   {
     id: 'users.get',
     name: 'get_user',
@@ -56,7 +65,6 @@ const catalog = createAgentToolCatalog('1', [
     requiredPermissions: ['admin:users:read'],
     riskLevel: 'low',
     requiredScope: 'agent:read',
-    schemaDigest: 'sha256:test',
     inputSchema: { type: 'object' },
   },
 ]);
@@ -68,7 +76,7 @@ describe('createAgentAccessMcpServer', () => {
       body: { client: { id: 'client-target' } },
     }));
     const consume = vi.fn(async () => ({ allowed: true, remaining: 4, resetAt: 160 }));
-    const standardCatalog = createAgentToolCatalog('1', [
+    const standardCatalog = createTestCatalog('1', [
       {
         id: 'admin.write.clients.metadata',
         name: 'update_client_metadata',
@@ -78,7 +86,6 @@ describe('createAgentAccessMcpServer', () => {
         requiredPermissions: ['admin:clients:write'],
         riskLevel: 'standard',
         requiredScope: 'agent:write',
-        schemaDigest: 'sha256:standard',
         inputSchema: { type: 'object' },
         publicClientStandardOptInEligible: true,
       },
@@ -242,7 +249,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('derives the server-owned Tool domain before filtering tools/list', async () => {
-    const constrainedCatalog = createAgentToolCatalog('domain-constrained', [
+    const constrainedCatalog = createTestCatalog('domain-constrained', [
       {
         ...catalog.list()[0],
         id: 'admin.read.clients.list',
@@ -285,7 +292,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('dispatches Bulk tools through the platform Bulk port instead of Management API', async () => {
-    const bulkCatalog = createAgentToolCatalog('bulk-1', [
+    const bulkCatalog = createTestCatalog('bulk-1', [
       {
         ...catalog.list()[0],
         id: 'admin.read.bulk.plan.get',
@@ -389,7 +396,7 @@ describe('createAgentAccessMcpServer', () => {
     const authorize = vi.fn(async () => ({ allowed: true, requiresElevation: false }));
     const execute = vi.fn(async () => ({ status: 200, body: { id: 'user-1' } }));
     const write = vi.fn(async () => undefined);
-    const strictCatalog = createAgentToolCatalog('1', [
+    const strictCatalog = createTestCatalog('1', [
       {
         ...catalog.list()[0],
         inputSchema: {
@@ -450,6 +457,119 @@ describe('createAgentAccessMcpServer', () => {
     );
   });
 
+  it('explains the current session authority without treating OAuth client scopes as a Grant', async () => {
+    const introspectionCatalog = createTestCatalog('1', [
+      {
+        id: 'admin.read.agent-access.explain',
+        name: 'explain_agent_access',
+        title: 'Explain Agent access',
+        description: 'Explain current access.',
+        contractVersion: '1',
+        requiredPermissions: ['admin:agent_grants:read'],
+        riskLevel: 'low',
+        requiredScope: 'agent:read',
+        inputSchema: {
+          type: 'object',
+          properties: { include_denied: { type: 'boolean' } },
+          additionalProperties: false,
+        },
+        executionTarget: 'access_introspection',
+      },
+      {
+        id: 'admin.read.clients.list',
+        name: 'list_clients',
+        title: 'List clients',
+        description: 'List clients.',
+        contractVersion: '1',
+        requiredPermissions: ['admin:clients:read'],
+        riskLevel: 'low',
+        requiredScope: 'agent:read',
+        inputSchema: { type: 'object' },
+      },
+      {
+        id: 'admin.write.users.suspend',
+        name: 'suspend_user',
+        title: 'Suspend user',
+        description: 'Suspend one user.',
+        contractVersion: '1',
+        requiredPermissions: ['admin:users:suspend'],
+        riskLevel: 'high',
+        requiredScope: 'agent:write',
+        inputSchema: { type: 'object' },
+      },
+    ]);
+    const execute = vi.fn(async () => ({ status: 500, body: null }));
+    const server = createAgentAccessMcpServer({
+      toolCatalog: introspectionCatalog,
+      authorization: {
+        authorize: async ({ tool }) =>
+          tool.id === 'admin.write.users.suspend'
+            ? {
+                allowed: false,
+                requiresElevation: true,
+                deniedAxis: 'risk',
+                code: 'AGENT_ELEVATION_REQUIRED',
+              }
+            : tool.id === 'admin.read.clients.list'
+              ? {
+                  allowed: false,
+                  requiresElevation: false,
+                  deniedAxis: 'permission',
+                  code: 'AGENT_INSUFFICIENT_PERMISSION',
+                }
+              : { allowed: true, requiresElevation: false },
+      },
+      managementApi: { execute },
+      rateLimiter: { consume: async () => ({ allowed: true, remaining: 1, resetAt: 1 }) },
+      settings: enabledSettings,
+      audit: { write: async () => undefined },
+      clock: { now: () => 100 },
+      schemaValidator,
+    });
+    const result = await server.callTool(
+      {
+        ...requestContext,
+        grant: {
+          ...grant,
+          permissions: ['admin:agent_grants:read'],
+          expiresAt: 10_000,
+          resolvedTools: introspectionCatalog.list().map((tool) => ({
+            toolId: tool.id,
+            toolName: tool.name,
+            contractVersion: tool.contractVersion,
+            schemaDigest: tool.schemaDigest,
+            permissions: [...tool.requiredPermissions],
+            requiredScope: tool.requiredScope,
+            riskLevel: tool.riskLevel,
+            requiresElevation: tool.riskLevel === 'high',
+          })),
+        },
+      },
+      'explain_agent_access',
+      { include_denied: true }
+    );
+
+    expect(result.structuredContent).toMatchObject({
+      subject: {
+        current_agent_only: true,
+        grant_id: 'grant-1',
+        client_id: 'client-1',
+      },
+      summary: {
+        authority_source: 'live_agent_grant_evaluation',
+        oauth_client_scope_is_not_effective_authority: true,
+        allowed_tool_count: 1,
+        elevation_required_tool_count: 1,
+        denied_tool_count: 1,
+      },
+      allowed_tools: [{ name: 'explain_agent_access' }],
+      elevation_required_tools: [{ name: 'suspend_user', code: 'AGENT_ELEVATION_REQUIRED' }],
+      denied_by_axis: { permission: 1 },
+      denied_tools: [{ name: 'list_clients', code: 'AGENT_INSUFFICIENT_PERMISSION' }],
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('fails closed and audits rate limiter and Management API transport failures', async () => {
     const context = {
       actor: {
@@ -500,7 +620,11 @@ describe('createAgentAccessMcpServer', () => {
     expect(rateAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'agent.mcp.tool.failed',
-        details: { tool_id: 'users.get', code: 'AGENT_RATE_LIMIT_UNAVAILABLE' },
+        details: expect.objectContaining({
+          tool_id: 'users.get',
+          code: 'AGENT_RATE_LIMIT_UNAVAILABLE',
+          tool_contract_digest: expect.stringMatching(/^sha256:/u),
+        }),
       })
     );
 
@@ -526,7 +650,11 @@ describe('createAgentAccessMcpServer', () => {
     expect(managementAudit).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'agent.mcp.tool.failed',
-        details: { tool_id: 'users.get', code: 'AGENT_MANAGEMENT_API_UNAVAILABLE' },
+        details: expect.objectContaining({
+          tool_id: 'users.get',
+          code: 'AGENT_MANAGEMENT_API_UNAVAILABLE',
+          tool_contract_digest: expect.stringMatching(/^sha256:/u),
+        }),
       })
     );
     expect(JSON.stringify(managementAudit.mock.calls)).not.toContain(
@@ -535,7 +663,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('executes an approved high-risk operation with the server-issued idempotency fence', async () => {
-    const highRiskCatalog = createAgentToolCatalog('1', [
+    const highRiskCatalog = createTestCatalog('1', [
       {
         ...catalog.list()[0],
         id: 'admin.write.users.suspend',
@@ -623,7 +751,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('fails closed and audits without leaking an elevation store exception', async () => {
-    const highRiskCatalog = createAgentToolCatalog('1', [
+    const highRiskCatalog = createTestCatalog('1', [
       {
         ...catalog.list()[0],
         id: 'admin.write.users.suspend',
@@ -672,7 +800,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('returns indeterminate when terminal elevation persistence throws', async () => {
-    const highRiskCatalog = createAgentToolCatalog('1', [
+    const highRiskCatalog = createTestCatalog('1', [
       {
         ...catalog.list()[0],
         id: 'admin.write.users.suspend',
@@ -724,7 +852,7 @@ describe('createAgentAccessMcpServer', () => {
   });
 
   it('returns indeterminate when an elevated owner call has an unknown transport outcome', async () => {
-    const highRiskCatalog = createAgentToolCatalog('1', [
+    const highRiskCatalog = createTestCatalog('1', [
       {
         ...catalog.list()[0],
         id: 'admin.write.users.suspend',

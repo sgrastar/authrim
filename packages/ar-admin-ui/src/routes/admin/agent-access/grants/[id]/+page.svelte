@@ -28,6 +28,9 @@
 	let loadGeneration = 0;
 	const canWrite = $derived(adminAuth.hasPermission('admin:agent_grants:write'));
 	const canRevoke = $derived(adminAuth.hasPermission('admin:agent_grants:revoke'));
+	const grantExpiryMaximum = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+		.toISOString()
+		.slice(0, 10);
 
 	function statusLabel(value: AgentGrantStatus): string {
 		if (value === 'active') return $LL.admin_agent_access_status_active();
@@ -85,7 +88,7 @@
 	}
 
 	async function save() {
-		if (!grant) return;
+		if (!grant || !expiresOn) return;
 		const tenantId = mutationTenantId();
 		if (!tenantId) return;
 		const generation = loadGeneration;
@@ -96,7 +99,7 @@
 				grant.id,
 				{
 					purpose: purpose.trim() || null,
-					expires_at: expiresOn ? new Date(`${expiresOn}T23:59:59.999`).getTime() : null
+					expires_at: new Date(`${expiresOn}T23:59:59.999`).getTime()
 				},
 				tenantId
 			);
@@ -270,7 +273,13 @@
 					</label>
 					<label class="field">
 						<span>{$LL.admin_agent_access_expiration()}</span>
-						<input type="date" bind:value={expiresOn} />
+						<input
+							type="date"
+							bind:value={expiresOn}
+							min={new Date().toISOString().slice(0, 10)}
+							max={grantExpiryMaximum}
+							required
+						/>
 					</label>
 				</fieldset>
 				{#if canWrite && grant.status === 'active'}

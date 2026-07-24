@@ -14,23 +14,25 @@
 	import { get } from 'svelte/store';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
+	import { isLoginUILocale, toDocumentLanguage } from '$lib/i18n/locales';
 
 	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
+	const initialPreferredLanguage = untrack(() => data.preferredLanguage);
+	if (initialPreferredLanguage && isLoginUILocale(initialPreferredLanguage)) {
+		setLocale(initialPreferredLanguage);
+	}
 	const { brandingStore, loginUIPageStore, themeStore } = initializeLoginUIStores();
 	const initialAuthenticationMethods = untrack(() => data.authenticationMethods);
 
 	// Set language from server-provided data (from cookie)
 	$effect.pre(() => {
-		if (
-			data.preferredLanguage &&
-			(data.preferredLanguage === 'en' || data.preferredLanguage === 'ja')
-		) {
+		if (data.preferredLanguage && isLoginUILocale(data.preferredLanguage)) {
 			setLocale(data.preferredLanguage);
 		}
 
 		// Sync html lang attribute with current locale
 		if (typeof document !== 'undefined') {
-			document.documentElement.lang = getLocale();
+			document.documentElement.lang = toDocumentLanguage(getLocale());
 		}
 	});
 
@@ -57,6 +59,14 @@
 	if (initialAuthenticationMethods) {
 		applyTenantBranding(initialAuthenticationMethods);
 	}
+
+	// Root layouts persist during client-side navigation. Apply newly embedded route data before
+	// Svelte updates the page so login/signup transitions never retain the previous/default theme.
+	$effect.pre(() => {
+		if (data.authenticationMethods) {
+			applyTenantBranding(data.authenticationMethods);
+		}
+	});
 
 	function getEmbeddedAuthenticationMethods(): AuthenticationMethodsResponse | null {
 		const authenticationMethods = (

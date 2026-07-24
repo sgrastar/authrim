@@ -8,24 +8,28 @@ import {
 } from '../bulk';
 import { resolveAgentConfigurationPlan } from '../configuration';
 import { createAgentToolCatalog } from '../tool-catalog';
+import { sealAgentToolDefinitions } from '../tool-contract';
 
-const catalog = createAgentToolCatalog('test', [
-  {
-    id: 'admin.write.clients.metadata',
-    name: 'update_client_metadata',
-    title: 'Update client metadata',
-    description: 'Test contract',
-    contractVersion: '1',
-    requiredPermissions: ['admin:clients:write'],
-    requiredScope: 'agent:write',
-    riskLevel: 'standard',
-    schemaDigest: 'sha256:test',
-    inputSchema: { type: 'object' },
-  },
-]);
+const catalog = createAgentToolCatalog(
+  'test',
+  sealAgentToolDefinitions([
+    {
+      id: 'admin.write.clients.metadata',
+      name: 'update_client_metadata',
+      title: 'Update client metadata',
+      description: 'Test contract',
+      contractVersion: '1',
+      requiredPermissions: ['admin:clients:write'],
+      requiredScope: 'agent:write',
+      riskLevel: 'standard',
+      inputSchema: { type: 'object' },
+    },
+  ])
+);
 
 const plan = {
   schemaVersion: 'authrim-agent-plan-v1' as const,
+  goal: 'Apply an approved Authrim configuration change',
   steps: [
     {
       id: 'step-1',
@@ -112,6 +116,7 @@ describe('Agent Bulk Plan policy', () => {
         canaryTenantIds: ['tenant-1'],
         plan: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-brand',
@@ -132,6 +137,7 @@ describe('Agent Bulk Plan policy', () => {
         canaryTenantIds: ['tenant-1'],
         plan: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-session',
@@ -152,6 +158,7 @@ describe('Agent Bulk Plan policy', () => {
         canaryTenantIds: ['tenant-1'],
         plan: {
           schemaVersion: 'authrim-agent-plan-v1',
+          goal: 'Apply an approved Authrim configuration change',
           steps: [
             {
               id: 'step-client',

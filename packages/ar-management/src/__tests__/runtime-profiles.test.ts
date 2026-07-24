@@ -536,6 +536,96 @@ describe('runtime profile admin handlers', () => {
     expect(missingRes.status).toBe(404);
   });
 
+  it('fails closed until a custom database profile has a setup-registered release stream', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:storage:custom-d1': JSON.stringify({
+        id: 'custom-d1',
+        kind: 'storage',
+        label: 'Custom D1',
+        builtin: false,
+        slices: {
+          identity_core: { driver: 'd1', bindingRef: 'DB', role: 'core' },
+        },
+      }),
+    });
+
+    const updateDefault = () =>
+      app.request(
+        '/api/admin/runtime-profiles/defaults',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ storageProfileId: 'custom-d1' }),
+        },
+        env
+      );
+
+    const blocked = await updateDefault();
+    expect(blocked.status).toBe(400);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+    });
+
+    env.AUTHRIM_REGISTERED_SCHEMA_REFS = JSON.stringify(['binding:DB:d1-core']);
+    const activated = await updateDefault();
+    expect(activated.status).toBe(200);
+  });
+
+  it('uses the matching PII and admin release streams for custom D1 audit targets', async () => {
+    const app = createTestApp();
+    const env = createEnv({
+      'profile-registry:audit:pii-d1-audit': JSON.stringify({
+        id: 'pii-d1-audit',
+        kind: 'audit',
+        label: 'PII D1 Audit',
+        builtin: false,
+        primary: { type: 'd1', bindingRef: 'DB_PII', dataset: 'pii_log' },
+        archive: null,
+        sinks: [],
+      }),
+      'profile-registry:audit:admin-d1-audit': JSON.stringify({
+        id: 'admin-d1-audit',
+        kind: 'audit',
+        label: 'Admin D1 Audit',
+        builtin: false,
+        primary: { type: 'd1', bindingRef: 'DB_ADMIN', dataset: 'admin_audit_log' },
+        archive: null,
+        sinks: [],
+      }),
+    });
+    env.DB_PII = {} as D1Database;
+    env.DB_ADMIN = {} as D1Database;
+    env.AUTHRIM_REGISTERED_SCHEMA_REFS = JSON.stringify([
+      'binding:DB_PII:d1-pii',
+      'binding:DB_ADMIN:d1-admin',
+    ]);
+
+    for (const profileId of ['pii-d1-audit', 'admin-d1-audit']) {
+      const getRes = await app.request(
+        `/api/admin/runtime-profiles/audit/${profileId}`,
+        undefined,
+        env
+      );
+      expect(getRes.status).toBe(200);
+      await expect(getRes.json()).resolves.toMatchObject({
+        reference_status: [expect.objectContaining({ path: 'primary', activation: 'ready' })],
+        activation_status: expect.objectContaining({ activatable: true, state: 'ready' }),
+      });
+
+      const defaultsRes = await app.request(
+        '/api/admin/runtime-profiles/defaults',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auditProfileId: profileId }),
+        },
+        env
+      );
+      expect(defaultsRes.status).toBe(200);
+    }
+  });
+
   it('persists audit profiles with primary=null and failure modes', async () => {
     const app = createTestApp();
     const env = createEnv();
@@ -849,7 +939,7 @@ describe('runtime profile admin handlers', () => {
     expect(updateDefaultsRes.status).toBe(400);
   });
 
-  it('allows activating an audit profile when connectionRef resolves through a Hyperdrive binding', async () => {
+  it('blocks external audit database activation until an audit release stream exists', async () => {
     const app = createTestApp();
     const env = createEnv({
       'profile-registry:audit:external-audit': JSON.stringify({
@@ -890,15 +980,15 @@ describe('runtime profile admin handlers', () => {
         expect.objectContaining({
           path: 'primary',
           resolution: 'configured',
-          severity: 'info',
-          activation: 'ready',
+          severity: 'error',
+          activation: 'blocked',
         }),
       ])
     );
     expect(getBody.activation_status).toEqual(
       expect.objectContaining({
-        activatable: true,
-        state: 'ready',
+        activatable: false,
+        state: 'blocked',
       })
     );
 
@@ -913,7 +1003,7 @@ describe('runtime profile admin handlers', () => {
       },
       env
     );
-    expect(defaultsRes.status).toBe(200);
+    expect(defaultsRes.status).toBe(400);
   });
 
   it('allows activating a storage profile when connectionRef resolves through Hyperdrive bindings', async () => {
@@ -938,6 +1028,10 @@ describe('runtime profile admin handlers', () => {
         },
       }),
     });
+    env.AUTHRIM_REGISTERED_SCHEMA_REFS = JSON.stringify([
+      'connection:core-primary:external-postgres-core',
+      'connection:pii-primary:external-postgres-pii',
+    ]);
     (env as unknown as Record<string, unknown>).HYPERDRIVE_CORE_PRIMARY = {
       connectionString: 'postgres://core-primary',
     };

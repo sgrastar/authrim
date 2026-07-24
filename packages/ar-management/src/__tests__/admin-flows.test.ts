@@ -527,7 +527,7 @@ describe('admin Flow management handlers', () => {
     ]);
   });
 
-  it('rejects missing consent policy references in multi-protocol completion branches', async () => {
+  it('treats missing consent policy references in multi-protocol completion branches as warnings', async () => {
     const editor = {
       nodes: [
         { id: 'entry', type: 'entry' },
@@ -613,20 +613,20 @@ describe('admin Flow management handlers', () => {
     const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
     const body = await readJson(response);
 
-    expect(body.valid).toBe(false);
-    expect(body.errors).toMatchObject([
+    expect(body.valid).toBe(true);
+    expect(body.errors).toEqual([]);
+    expect(body.warnings).toMatchObject([
       {
-        level: 'error',
+        level: 'warning',
         code: 'missing_consent_policy',
         node_id: 'saml-consent',
       },
       {
-        level: 'error',
+        level: 'warning',
         code: 'missing_consent_policy',
         node_id: 'oidc-consent',
       },
     ]);
-    expect(body.warnings).toEqual([]);
   });
 
   it('accepts session check continue and authenticate output handles', async () => {

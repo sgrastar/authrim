@@ -28,6 +28,9 @@ interface AgentSettingsBody {
   maxTokenTtlSeconds?: unknown;
   elevationMode?: unknown;
   elevationTtlSeconds?: unknown;
+  requestRateLimitPerMinute?: unknown;
+  sessionInitializationRateLimitPerMinute?: unknown;
+  maxConcurrentSessions?: unknown;
   rateLimitPerMinute?: unknown;
   publicClientStandardRateLimitPerMinute?: unknown;
   highRiskPermissionsAdditional?: unknown;
@@ -40,6 +43,9 @@ const SETTINGS_FIELDS = new Set([
   'maxTokenTtlSeconds',
   'elevationMode',
   'elevationTtlSeconds',
+  'requestRateLimitPerMinute',
+  'sessionInitializationRateLimitPerMinute',
+  'maxConcurrentSessions',
   'rateLimitPerMinute',
   'publicClientStandardRateLimitPerMinute',
   'highRiskPermissionsAdditional',
@@ -93,6 +99,13 @@ function parseBody(value: unknown): AgentAccessSettings | null {
   const body = value as AgentSettingsBody;
   const maxTokenTtlSeconds = integer(body.maxTokenTtlSeconds, 60, 900);
   const elevationTtlSeconds = integer(body.elevationTtlSeconds, 60, 300);
+  const requestRateLimitPerMinute = integer(body.requestRateLimitPerMinute, 10, 10_000);
+  const sessionInitializationRateLimitPerMinute = integer(
+    body.sessionInitializationRateLimitPerMinute,
+    1,
+    1_000
+  );
+  const maxConcurrentSessions = integer(body.maxConcurrentSessions, 1, 1_000);
   const rateLimitPerMinute = integer(body.rateLimitPerMinute, 1, 1_000);
   const publicClientStandardRateLimitPerMinute = integer(
     body.publicClientStandardRateLimitPerMinute,
@@ -105,6 +118,10 @@ function parseBody(value: unknown): AgentAccessSettings | null {
     !ELEVATION_MODES.has(body.elevationMode as AgentElevationMode) ||
     maxTokenTtlSeconds === null ||
     elevationTtlSeconds === null ||
+    requestRateLimitPerMinute === null ||
+    sessionInitializationRateLimitPerMinute === null ||
+    sessionInitializationRateLimitPerMinute > requestRateLimitPerMinute ||
+    maxConcurrentSessions === null ||
     rateLimitPerMinute === null ||
     publicClientStandardRateLimitPerMinute === null ||
     publicClientStandardRateLimitPerMinute > rateLimitPerMinute ||
@@ -140,6 +157,9 @@ function parseBody(value: unknown): AgentAccessSettings | null {
     maxTokenTtlSeconds,
     elevationMode: body.elevationMode as AgentElevationMode,
     elevationTtlSeconds,
+    requestRateLimitPerMinute,
+    sessionInitializationRateLimitPerMinute,
+    maxConcurrentSessions,
     rateLimitPerMinute,
     publicClientStandardRateLimitPerMinute,
     highRiskPermissionsAdditional: [...new Set(additional as string[])].sort(),
@@ -214,6 +234,10 @@ agentSettingsRouter.put('/', async (c) => {
       [AGENT_ACCESS_SETTING_KEYS.maxTokenTtlSeconds]: requested.maxTokenTtlSeconds,
       [AGENT_ACCESS_SETTING_KEYS.elevationMode]: requested.elevationMode,
       [AGENT_ACCESS_SETTING_KEYS.elevationTtlSeconds]: requested.elevationTtlSeconds,
+      [AGENT_ACCESS_SETTING_KEYS.requestRateLimitPerMinute]: requested.requestRateLimitPerMinute,
+      [AGENT_ACCESS_SETTING_KEYS.sessionInitializationRateLimitPerMinute]:
+        requested.sessionInitializationRateLimitPerMinute,
+      [AGENT_ACCESS_SETTING_KEYS.maxConcurrentSessions]: requested.maxConcurrentSessions,
       [AGENT_ACCESS_SETTING_KEYS.rateLimitPerMinute]: requested.rateLimitPerMinute,
       [AGENT_ACCESS_SETTING_KEYS.publicClientStandardRateLimitPerMinute]:
         requested.publicClientStandardRateLimitPerMinute,

@@ -5,12 +5,30 @@ import { derived, writable, type Readable } from 'svelte/store';
 import type { Formatters, Locales, TranslationFunctions, Translations } from './i18n-types';
 import { i18nObject, loadedFormatters, loadedLocales, locales } from './i18n-util';
 import en from './en';
+import de from './de';
+import es from './es';
+import fr from './fr';
+import id from './id';
 import ja from './ja';
+import ko from './ko';
+import pt from './pt';
+import ru from './ru';
+import zhCN from './zh-CN';
+import zhTW from './zh-TW';
 
 // Load all locales
 // Type assertions needed due to typesafe-i18n template literal type constraints
 loadedLocales['en'] = en as Translations;
+loadedLocales['de'] = de as Translations;
+loadedLocales['es'] = es as Translations;
+loadedLocales['fr'] = fr as Translations;
+loadedLocales['id'] = id as Translations;
 loadedLocales['ja'] = ja as Translations;
+loadedLocales['ko'] = ko as Translations;
+loadedLocales['pt'] = pt as Translations;
+loadedLocales['ru'] = ru as Translations;
+loadedLocales['zh-CN'] = zhCN as Translations;
+loadedLocales['zh-TW'] = zhTW as Translations;
 
 const locale = writable<Locales>('en');
 

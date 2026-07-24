@@ -738,77 +738,11 @@ export function validateFlowEditorState(
       if (completionBlock) {
         completionBlocks.set(id, completionBlock);
       }
-      if (type === 'consent' && config.consent_gate_kind !== undefined) {
-        if (!isConsentGateKind(config.consent_gate_kind)) {
-          issues.push({
-            level: options.for_publish ? 'error' : 'warning',
-            code: 'invalid_consent_gate_kind',
-            message:
-              'Consent Gate kind must be legal_document, oidc_authorization, or saml_attribute_release.',
-            path: `${path}.config.consent_gate_kind`,
-            node_id: id,
-            ref: { type: 'config', key: 'consent_gate_kind' },
-          });
-        } else {
-          const requiredProtocol =
-            config.consent_gate_kind === 'oidc_authorization'
-              ? 'oidc'
-              : config.consent_gate_kind === 'saml_attribute_release'
-                ? 'saml'
-                : null;
-          if (
-            requiredProtocol &&
-            completionBlock?.protocol &&
-            completionBlock.protocol !== requiredProtocol
-          ) {
-            issues.push({
-              level: 'error',
-              code: 'consent_gate_protocol_mismatch',
-              message: `Consent Gate ${config.consent_gate_kind} cannot be used in a ${completionBlock.protocol} completion block.`,
-              path: `${path}.config.consent_gate_kind`,
-              node_id: id,
-              ref: { type: 'config', key: 'consent_gate_kind' },
-            });
-          }
-        }
-        if (
-          config.policy_resolution !== undefined &&
-          config.policy_resolution !== 'fixed' &&
-          config.policy_resolution !== 'target_binding'
-        ) {
-          issues.push({
-            level: options.for_publish ? 'error' : 'warning',
-            code: 'invalid_consent_policy_resolution',
-            message: 'Consent Gate policy resolution must be fixed or target_binding.',
-            path: `${path}.config.policy_resolution`,
-            node_id: id,
-            ref: { type: 'config', key: 'policy_resolution' },
-          });
-        }
-        if (config.policy_required !== undefined && typeof config.policy_required !== 'boolean') {
-          issues.push({
-            level: options.for_publish ? 'error' : 'warning',
-            code: 'invalid_consent_policy_required',
-            message: 'Consent Gate policy_required must be a boolean.',
-            path: `${path}.config.policy_required`,
-            node_id: id,
-            ref: { type: 'config', key: 'policy_required' },
-          });
-        }
-      }
     }
 
     const definition = isStandardFlowNodeType(type) ? getFlowNodeDefinition(type) : undefined;
     const config = isRecord(nodeValue.config) ? nodeValue.config : undefined;
     for (const key of definition?.required_config_keys ?? []) {
-      if (
-        type === 'consent' &&
-        key === 'consent_policy_ref' &&
-        config?.policy_resolution === 'target_binding' &&
-        isConsentGateKind(config.consent_gate_kind)
-      ) {
-        continue;
-      }
       if (!config || config[key] === undefined || config[key] === null || config[key] === '') {
         issues.push({
           level: options.for_publish ? 'error' : 'warning',
@@ -1239,14 +1173,13 @@ function validateConditionNodeConfig(
       });
     } else if (
       condition.type === 'protocol' &&
-      condition.value !== 'direct' &&
       condition.value !== 'oidc' &&
       condition.value !== 'saml'
     ) {
       issues.push({
         level,
         code: 'invalid_protocol_condition_value',
-        message: 'Protocol condition value must be direct, oidc, or saml.',
+        message: 'Protocol condition value must be oidc or saml.',
         path: `${rowPath}.condition.value`,
         node_id: nodeId,
         ref: { type: 'config', key: 'condition.value' },
@@ -1265,18 +1198,6 @@ function validateConditionNodeConfig(
         return typeof condition.value === 'string' ? [condition.value] : [];
       })
     );
-    for (const protocol of ['direct', 'oidc', 'saml']) {
-      if (!configuredProtocols.has(protocol)) {
-        issues.push({
-          level,
-          code: 'missing_protocol_condition_branch',
-          message: `Protocol condition must define an explicit ${protocol} branch.`,
-          path: `${nodePath}.config.conditions.rows`,
-          node_id: nodeId,
-          ref: { type: 'config', key: 'conditions.rows' },
-        });
-      }
-    }
     if (configuredProtocols.size !== protocolRows.length) {
       issues.push({
         level,
@@ -1337,14 +1258,6 @@ const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
   'policy_evaluation',
   'organization_membership',
 ]);
-
-function isConsentGateKind(value: unknown): boolean {
-  return (
-    value === 'legal_document' ||
-    value === 'oidc_authorization' ||
-    value === 'saml_attribute_release'
-  );
-}
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
   const issues: FlowValidationIssue[] = [];

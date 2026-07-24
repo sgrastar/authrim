@@ -7,6 +7,7 @@ import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
 const buildApiPackagesMock = vi.hoisted(() => vi.fn());
 const deployAllMock = vi.hoisted(() => vi.fn());
+const deployAllUiWorkersMock = vi.hoisted(() => vi.fn());
 const deployWorkerMock = vi.hoisted(() => vi.fn());
 const deployUiWorkerBindingTargetsMock = vi.hoisted(() => vi.fn());
 const resolveExistingWorkerComponentsMock = vi.hoisted(() => vi.fn());
@@ -20,6 +21,18 @@ const waitForRouterWorkerReadyMock = vi.hoisted(() => vi.fn());
 const waitForWorkerDeploymentsReadyMock = vi.hoisted(() => vi.fn());
 const waitForWorkerHttpReadyMock = vi.hoisted(() => vi.fn());
 const configureDownstreamIntrospectionDeploymentMock = vi.hoisted(() => vi.fn());
+const ensureInitialTenantD1ResourcesMock = vi.hoisted(() => vi.fn());
+const publishInitialTenantD1RuntimeSnapshotMock = vi.hoisted(() => vi.fn());
+const runMigrationsForEnvironmentMock = vi.hoisted(() => vi.fn());
+const ensureInitialTenantInD1Mock = vi.hoisted(() => vi.fn());
+const ensureInitialAdminRolesInD1Mock = vi.hoisted(() => vi.fn());
+const ensureSetupMachineAccessInD1Mock = vi.hoisted(() => vi.fn());
+const ensureAdminUiBffMachineAccessInD1Mock = vi.hoisted(() => vi.fn());
+const cleanupSetupMachineAccessInD1Mock = vi.hoisted(() => vi.fn());
+const seedDefaultCanonicalCatalogMock = vi.hoisted(() => vi.fn());
+const seedRuntimeProfilesMock = vi.hoisted(() => vi.fn());
+const ensureWildcardDnsForMultiTenantMock = vi.hoisted(() => vi.fn());
+const prepareAdminUiBffDeploymentMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../core/deploy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/deploy.js')>();
@@ -27,6 +40,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     ...actual,
     buildApiPackages: buildApiPackagesMock,
     deployAll: deployAllMock,
+    deployAllUiWorkers: deployAllUiWorkersMock,
     deployWorker: deployWorkerMock,
     deployUiWorkerBindingTargets: deployUiWorkerBindingTargetsMock,
     resolveExistingWorkerComponents: resolveExistingWorkerComponentsMock,
@@ -40,6 +54,15 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   return {
     ...actual,
     getWorkersSubdomain: getWorkersSubdomainMock,
+    runMigrationsForEnvironment: runMigrationsForEnvironmentMock,
+    ensureInitialTenantInD1: ensureInitialTenantInD1Mock,
+    ensureInitialAdminRolesInD1: ensureInitialAdminRolesInD1Mock,
+    ensureSetupMachineAccessInD1: ensureSetupMachineAccessInD1Mock,
+    ensureAdminUiBffMachineAccessInD1: ensureAdminUiBffMachineAccessInD1Mock,
+    cleanupSetupMachineAccessInD1: cleanupSetupMachineAccessInD1Mock,
+    seedDefaultCanonicalCatalog: seedDefaultCanonicalCatalogMock,
+    seedRuntimeProfiles: seedRuntimeProfilesMock,
+    ensureWildcardDnsForMultiTenant: ensureWildcardDnsForMultiTenantMock,
   };
 });
 
@@ -72,6 +95,19 @@ vi.mock('../core/downstream-introspection-deploy.js', async (importOriginal) => 
   };
 });
 
+vi.mock('../core/tenant-d1-bootstrap.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/tenant-d1-bootstrap.js')>();
+  return {
+    ...actual,
+    ensureInitialTenantD1Resources: ensureInitialTenantD1ResourcesMock,
+    publishInitialTenantD1RuntimeSnapshot: publishInitialTenantD1RuntimeSnapshotMock,
+  };
+});
+
+vi.mock('../core/admin-ui-bff-deployment.js', () => ({
+  prepareAdminUiBffDeployment: prepareAdminUiBffDeploymentMock,
+}));
+
 import { createApiRoutes, generateSessionToken } from '../web/api.js';
 
 const originalCwd = process.cwd();
@@ -96,6 +132,7 @@ async function writeEnvironment(env: string) {
     `${JSON.stringify(
       {
         version: '1.0.0',
+        productVersion: '0.2.0',
         env,
         createdAt: '2026-05-18T00:00:00.000Z',
         updatedAt: '2026-05-18T00:00:00.000Z',
@@ -112,6 +149,11 @@ async function writeEnvironment(env: string) {
       null,
       2
     )}\n`
+  );
+
+  await writeFile(
+    join(tempDir!, 'package.json'),
+    `${JSON.stringify({ name: 'authrim-test', version: '0.2.0' }, null, 2)}\n`
   );
 
   const packageDir = join(tempDir!, 'packages', 'ar-auth');
@@ -152,6 +194,61 @@ async function addVersionedWorkerPackage(
   );
 }
 
+async function markEnvironmentProvisioned(env: string): Promise<void> {
+  const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+  const value = JSON.parse(await readFile(lockPath, 'utf-8'));
+  delete value.productVersion;
+  value.workers = {};
+  await writeFile(lockPath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeDraftManifest(version: string): Promise<void> {
+  const migrationsDir = join(tempDir!, 'migrations');
+  await mkdir(migrationsDir, { recursive: true });
+  await writeFile(
+    join(migrationsDir, 'release-manifest.draft.json'),
+    `${JSON.stringify(
+      {
+        formatVersion: 1,
+        productVersion: version,
+        streams: [
+          { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+          { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+          { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+        ],
+      },
+      null,
+      2
+    )}\n`
+  );
+}
+
+async function enableTenantD1WithoutSlots(env: string): Promise<void> {
+  const configPath = join(tempDir!, '.authrim', env, 'config.json');
+  const config = JSON.parse(await readFile(configPath, 'utf-8'));
+  config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
+  config.tenantD1 = { preallocatedSlots: 1 };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  const releasesDir = join(tempDir!, 'migrations', 'releases');
+  await mkdir(releasesDir, { recursive: true });
+  await writeFile(
+    join(releasesDir, '0.2.0.json'),
+    `${JSON.stringify(
+      {
+        formatVersion: 1,
+        productVersion: '0.2.0',
+        streams: [
+          { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+          { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+        ],
+      },
+      null,
+      2
+    )}\n`
+  );
+}
+
 describe('setup web worker update API', () => {
   beforeEach(async () => {
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-worker-update-api-')));
@@ -159,6 +256,7 @@ describe('setup web worker update API', () => {
 
     buildApiPackagesMock.mockReset();
     deployAllMock.mockReset();
+    deployAllUiWorkersMock.mockReset();
     deployWorkerMock.mockReset();
     deployUiWorkerBindingTargetsMock.mockReset();
     resolveExistingWorkerComponentsMock.mockReset();
@@ -172,8 +270,25 @@ describe('setup web worker update API', () => {
     waitForWorkerDeploymentsReadyMock.mockReset();
     waitForWorkerHttpReadyMock.mockReset();
     configureDownstreamIntrospectionDeploymentMock.mockReset();
+    ensureInitialTenantD1ResourcesMock.mockReset();
+    publishInitialTenantD1RuntimeSnapshotMock.mockReset();
+    runMigrationsForEnvironmentMock.mockReset();
+    ensureInitialTenantInD1Mock.mockReset();
+    ensureInitialAdminRolesInD1Mock.mockReset();
+    ensureSetupMachineAccessInD1Mock.mockReset();
+    ensureAdminUiBffMachineAccessInD1Mock.mockReset();
+    cleanupSetupMachineAccessInD1Mock.mockReset();
+    seedDefaultCanonicalCatalogMock.mockReset();
+    seedRuntimeProfilesMock.mockReset();
+    ensureWildcardDnsForMultiTenantMock.mockReset();
+    prepareAdminUiBffDeploymentMock.mockReset();
 
     buildApiPackagesMock.mockResolvedValue({ success: true });
+    deployAllUiWorkersMock.mockResolvedValue({
+      successCount: 0,
+      failedCount: 0,
+      results: [],
+    });
     deployWorkerMock.mockResolvedValue({
       success: true,
       workerName: 'test-ar-router',
@@ -189,6 +304,9 @@ describe('setup web worker update API', () => {
       async (_options, components: string[]) => [...components]
     );
     resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({ loginUi: true, adminUi: true });
+    resolveExistingWorkerComponentsMock.mockImplementation(
+      async (options) => options.existingComponents ?? []
+    );
     loadDeploySecretsFromKeysMock.mockResolvedValue({
       FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
       PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
@@ -201,6 +319,26 @@ describe('setup web worker update API', () => {
     waitForWorkerDeploymentsReadyMock.mockResolvedValue({ ready: true });
     waitForWorkerHttpReadyMock.mockResolvedValue({ ready: true });
     configureDownstreamIntrospectionDeploymentMock.mockResolvedValue({ success: true });
+    ensureInitialTenantD1ResourcesMock.mockResolvedValue({ success: true, skipped: true });
+    publishInitialTenantD1RuntimeSnapshotMock.mockResolvedValue({ success: true, skipped: true });
+    runMigrationsForEnvironmentMock.mockResolvedValue({
+      success: true,
+      core: { success: true, appliedCount: 0, skippedCount: 0 },
+      pii: { success: true, appliedCount: 0, skippedCount: 0 },
+      admin: { success: true, appliedCount: 0, skippedCount: 0 },
+    });
+    ensureInitialTenantInD1Mock.mockResolvedValue({ success: true });
+    ensureInitialAdminRolesInD1Mock.mockResolvedValue({ success: true });
+    ensureSetupMachineAccessInD1Mock.mockResolvedValue({ success: true });
+    ensureAdminUiBffMachineAccessInD1Mock.mockResolvedValue({ success: true });
+    cleanupSetupMachineAccessInD1Mock.mockResolvedValue({ success: true });
+    seedDefaultCanonicalCatalogMock.mockResolvedValue({ success: true, seededCount: 0 });
+    seedRuntimeProfilesMock.mockResolvedValue({
+      success: true,
+      seededCount: 0,
+      backend: 'D1',
+    });
+    ensureWildcardDnsForMultiTenantMock.mockResolvedValue(undefined);
   });
 
   afterEach(async () => {
@@ -272,6 +410,455 @@ describe('setup web worker update API', () => {
     expect(updateResponse.status).toBe(200);
     expect(updateBody.success).toBe(true);
     expect(updateBody.progress).toContain('✓ test-ar-auth deployed');
+  });
+
+  it('requires the schema-first update route when the product version changes', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await writeFile(
+      join(tempDir!, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.3.0' }, null, 2)}\n`
+    );
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: true }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      requiredCommand: 'authrim-setup update --env test',
+    });
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('does not create missing tenant databases during a Worker-only redeploy', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await enableTenantD1WithoutSlots(env);
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: false }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      topologyIssues: [
+        { binding: 'TDB_SLOT_0001_CORE', reason: 'missing_binding' },
+        { binding: 'TDB_SLOT_0001_PII', reason: 'missing_binding' },
+      ],
+    });
+    expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('allows tenant database reconciliation only with a server-issued topology token', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await enableTenantD1WithoutSlots(env);
+    deployAllMock.mockResolvedValue({
+      totalComponents: 0,
+      successCount: 0,
+      failedCount: 0,
+      results: [],
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const spoofed = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: false, operationKind: 'topology_change' }),
+    });
+    expect(spoofed.status).toBe(409);
+    expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
+
+    const expanded = await app.request(`/tenant-d1/pool/${env}/expand`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ addSlots: 1 }),
+    });
+    expect(expanded.status).toBe(200);
+    const { topologyDeploymentToken } = (await expanded.json()) as {
+      topologyDeploymentToken: string;
+    };
+    const restartedSessionToken = generateSessionToken();
+
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': restartedSessionToken,
+      },
+      body: JSON.stringify({ env, onlyChanged: true, topologyDeploymentToken }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(ensureInitialTenantD1ResourcesMock).toHaveBeenCalledOnce();
+    expect(deployAllMock).toHaveBeenCalledOnce();
+    const completedLock = JSON.parse(
+      await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8')
+    );
+    expect(completedLock.topologyUpdate).toBeUndefined();
+  });
+
+  it('keeps the initial Web deploy route from redeploying an existing environment', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, skipBuild: true }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      requiredCommand: 'authrim-setup update --env test',
+    });
+    expect(buildApiPackagesMock).not.toHaveBeenCalled();
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('acquires the environment lock before initial deployment build work begins', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    const buildStarted = deferred<void>();
+    const finishBuild = deferred<void>();
+    buildApiPackagesMock.mockImplementation(async () => {
+      buildStarted.resolve();
+      await finishBuild.promise;
+      return { success: false, error: 'intentional test stop' };
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const deployment = app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, rootDir: tempDir }),
+    });
+
+    await buildStarted.promise;
+    const operationLockPath = join(tempDir!, '.authrim', env, 'lock.json.operation-lock');
+    await expect(readFile(operationLockPath, 'utf-8')).resolves.toContain('web-initial-deploy');
+
+    finishBuild.resolve();
+    expect((await deployment).status).toBe(500);
+    await expect(readFile(operationLockPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('completes a schema-first initial Web deployment without Login UI or Admin UI', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    await writeDraftManifest('0.2.0');
+    await rm(join(tempDir!, 'packages'), { recursive: true, force: true });
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.components.loginUi = false;
+    config.components.adminUi = false;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const events: string[] = [];
+    runMigrationsForEnvironmentMock.mockImplementation(async () => {
+      events.push('schema');
+      return {
+        success: true,
+        core: { success: true, appliedCount: 0, skippedCount: 0 },
+        pii: { success: true, appliedCount: 0, skippedCount: 0 },
+        admin: { success: true, appliedCount: 0, skippedCount: 0 },
+      };
+    });
+    resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({
+      loginUi: false,
+      adminUi: false,
+    });
+    deployAllMock.mockImplementation(async (_options, components) => {
+      events.push('workers');
+      const results = components.map((component) => ({
+        component,
+        workerName: `${env}-${component}`,
+        version: '0.2.0',
+        deployedAt: '2026-07-22T01:00:00.000Z',
+        success: true,
+      }));
+      return {
+        totalComponents: results.length,
+        successCount: results.length,
+        failedCount: 0,
+        results,
+      };
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({
+        env,
+        rootDir: tempDir,
+        skipBuild: true,
+        runMigrations: true,
+      }),
+    });
+
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({ success: true });
+    expect(events).toEqual(['schema', 'workers']);
+    expect(runMigrationsForEnvironmentMock).toHaveBeenCalledOnce();
+    expect(resolveMissingUiWorkerBindingTargetsMock).toHaveBeenCalledWith(expect.any(Object), {
+      loginUi: false,
+      adminUi: false,
+    });
+    expect(deployUiWorkerBindingTargetsMock).not.toHaveBeenCalled();
+    expect(deployAllUiWorkersMock).not.toHaveBeenCalled();
+    expect(ensureAdminUiBffMachineAccessInD1Mock).not.toHaveBeenCalled();
+    expect(prepareAdminUiBffDeploymentMock).not.toHaveBeenCalled();
+
+    const lock = JSON.parse(await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8'));
+    expect(lock.productVersion).toBe('0.2.0');
+    expect(lock.releaseUpdate?.phase).toBe('verified');
+    expect(lock.workers['ar-login-ui']).toBeUndefined();
+    expect(lock.workers['ar-admin-ui']).toBeUndefined();
+  });
+
+  it('rejects a caller-selected subset before initial deployment build work', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const cachedConfig = createDefaultConfig(env);
+    cachedConfig.components.saml = false;
+    const cached = await app.request('/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify(cachedConfig),
+    });
+    expect(cached.status).toBe(200);
+    const diskConfig = { ...cachedConfig, components: { ...cachedConfig.components, saml: true } };
+    await writeFile(
+      join(tempDir!, '.authrim', env, 'config.json'),
+      `${JSON.stringify(diskConfig, null, 2)}\n`
+    );
+
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, rootDir: tempDir, components: ['ar-auth'] }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Initial deployment must include every enabled Worker component.',
+      requiredComponents: expect.arrayContaining([
+        'ar-auth',
+        'ar-management',
+        'ar-router',
+        'ar-saml',
+      ]),
+    });
+    expect(buildApiPackagesMock).not.toHaveBeenCalled();
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects every Worker-only Web path before the complete initial deployment', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const requests: Array<[string, Record<string, unknown>]> = [
+      ['/update/workers', { env, onlyChanged: false }],
+      ['/deploy/component/ar-auth', { env, skipBuild: true }],
+      [
+        '/service-site/configure',
+        {
+          env,
+          enabled: true,
+          binding: 'SERVICE_SITE',
+          workerName: 'customer-service-site',
+          deployRouter: true,
+        },
+      ],
+      [
+        '/env/email/cloudflare/enable',
+        { env, fromAddress: 'auth@example.com', fromName: 'Authrim' },
+      ],
+    ];
+
+    for (const [path, body] of requests) {
+      const response = await app.request(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token },
+        body: JSON.stringify(body),
+      });
+      expect(response.status, path).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        requiredCommand: `authrim-setup update --env ${env}`,
+      });
+    }
+    expect(deployAllMock).not.toHaveBeenCalled();
+    expect(deployWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it('guards individual Web component deployment from product upgrades', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await writeFile(
+      join(tempDir!, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.3.0' }, null, 2)}\n`
+    );
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, skipBuild: true }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      requiredCommand: 'authrim-setup update --env test',
+    });
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('guards Service Site redeployment before changing configuration', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await writeFile(
+      join(tempDir!, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.3.0' }, null, 2)}\n`
+    );
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const originalConfig = await readFile(configPath, 'utf-8');
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/service-site/configure', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({
+        env,
+        enabled: true,
+        binding: 'SERVICE_SITE',
+        workerName: 'customer-service-site',
+        deployRouter: true,
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      requiredCommand: 'authrim-setup update --env test',
+    });
+    expect(await readFile(configPath, 'utf-8')).toBe(originalConfig);
+    expect(deployWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it('guards Cloudflare Email redeployment before changing configuration', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await writeFile(
+      join(tempDir!, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.3.0' }, null, 2)}\n`
+    );
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const originalConfig = await readFile(configPath, 'utf-8');
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/env/email/cloudflare/enable', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, fromAddress: 'auth@example.com', fromName: 'Authrim' }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      requiredCommand: 'authrim-setup update --env test',
+    });
+    expect(await readFile(configPath, 'utf-8')).toBe(originalConfig);
+    expect(deployAllMock).not.toHaveBeenCalled();
+  });
+
+  it('guards manual Web migration routes from applying a different product release', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await writeFile(
+      join(tempDir!, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.3.0' }, null, 2)}\n`
+    );
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    for (const [path, body] of [
+      ['/migrations/apply', { env, role: 'core' }],
+      ['/migrations/run', { env, rootDir: tempDir }],
+    ] as const) {
+      const response = await app.request(path, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': token,
+        },
+        body: JSON.stringify(body),
+      });
+      expect(response.status, path).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        requiredCommand: 'authrim-setup update --env test',
+      });
+    }
   });
 
   it('configures Service Site fallback and deploys ar-router', async () => {
@@ -647,6 +1234,46 @@ describe('setup web worker update API', () => {
       }),
       ['ar-auth']
     );
+  });
+
+  it('returns failure when an individual Worker deployment never becomes visible', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 1,
+      failedCount: 0,
+      results: [
+        {
+          success: true,
+          component: 'ar-auth',
+          workerName: 'test-ar-auth',
+          version: '0.2.0',
+          deployedAt: '2026-06-18T00:00:00.000Z',
+        },
+      ],
+    });
+    waitForWorkerDeploymentsReadyMock.mockResolvedValue({
+      ready: false,
+      error: 'deployment visibility timeout',
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, skipBuild: true }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('deployment visibility timeout'),
+    });
   });
 
   it('skips UI worker pre-deploys when bulk update excludes Admin UI and Login UI', async () => {

@@ -6026,6 +6026,153 @@ tr.expired {
 	z-index: 1;
 }
 
+/* Reserve the form area while the runtime contract is resolved without flashing the generic Card. */
+.auth-initial-loading {
+	min-height: 12rem;
+}
+
+/* --- Login and signup entry motion ---
+   Reveal the authentication choices in reading order once their async data is ready. */
+@keyframes auth-entry-reveal {
+	from {
+		opacity: 0;
+		transform: translate3d(0, 12px, 0);
+	}
+
+	to {
+		opacity: 1;
+		transform: translate3d(0, 0, 0);
+	}
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.auth-page--entry-motion .auth-brand-panel__content,
+	.auth-page--entry-motion .auth-header,
+	.auth-page--entry-motion .auth-topbar,
+	.auth-page--entry-motion .auth-client-card,
+	.auth-page--entry-motion .auth-entry-form > .card,
+	.auth-page--entry-motion .auth-bottom-link {
+		animation: auth-entry-reveal 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.auth-page--entry-motion .auth-brand-panel__content,
+	.auth-page--entry-motion .auth-topbar {
+		animation-delay: 30ms;
+	}
+
+	.auth-page--entry-motion .auth-header {
+		animation-delay: 70ms;
+	}
+
+	.auth-page--entry-motion .auth-client-card {
+		animation-delay: 125ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card {
+		animation-delay: 180ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > *,
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell,
+	.auth-page--entry-motion .auth-provider-stack > * {
+		--auth-entry-delay: 0ms;
+		animation: auth-entry-reveal 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation-delay: calc(220ms + var(--auth-entry-section-delay, 0ms) + var(--auth-entry-delay));
+	}
+
+	.auth-page--entry-motion .runtime-layout-section:nth-child(2) {
+		--auth-entry-section-delay: 110ms;
+	}
+
+	.auth-page--entry-motion .runtime-layout-section:nth-child(3) {
+		--auth-entry-section-delay: 220ms;
+	}
+
+	.auth-page--entry-motion .runtime-layout-section:nth-child(4) {
+		--auth-entry-section-delay: 330ms;
+	}
+
+	.auth-page--entry-motion .runtime-layout-section:nth-child(n + 5) {
+		--auth-entry-section-delay: 440ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(2),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(2),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(2) {
+		--auth-entry-delay: 55ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(3),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(3),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(3) {
+		--auth-entry-delay: 110ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(4),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(4),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(4) {
+		--auth-entry-delay: 165ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(5),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(5),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(5) {
+		--auth-entry-delay: 220ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(6),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(6),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(6) {
+		--auth-entry-delay: 275ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(7),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(7),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(7) {
+		--auth-entry-delay: 330ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(8),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(8),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(8) {
+		--auth-entry-delay: 385ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(9),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(9),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(9) {
+		--auth-entry-delay: 440ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(10),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(10),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(10) {
+		--auth-entry-delay: 495ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(11),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(11),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(11) {
+		--auth-entry-delay: 550ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(12),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(12),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(12) {
+		--auth-entry-delay: 605ms;
+	}
+
+	.auth-page--entry-motion .auth-entry-form > .card > .card-body > :nth-child(n + 13),
+	.auth-page--entry-motion .runtime-layout-section > .runtime-layout-cell:nth-child(n + 13),
+	.auth-page--entry-motion .auth-provider-stack > :nth-child(n + 13) {
+		--auth-entry-delay: 660ms;
+	}
+
+	.auth-page--entry-motion .auth-bottom-link {
+		animation-delay: 1000ms;
+	}
+}
+
 /* --- Built-in Login UI theme templates --- */
 /* Classic: explicit legacy Authrim preset. Colors continue to come from the
    selected light/dark variant, while component geometry is fixed here. */
@@ -6255,6 +6402,19 @@ tr.expired {
 
 .auth-main {
 	display: contents;
+}
+
+/* Give footer-enabled login and signup pages a real main region. Bottom controls
+   can then sit above the footer instead of using the viewport as their anchor. */
+.auth-page--has-footer .auth-main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	min-height: 0;
+	position: relative;
 }
 
 .auth-brand-panel {
@@ -6889,6 +7049,12 @@ tr.expired {
 	right: 20px;
 }
 
+[data-topbar-position='bottom_left'] .auth-page--has-footer .auth-main > .auth-topbar,
+[data-topbar-position='bottom_center'] .auth-page--has-footer .auth-main > .auth-topbar,
+[data-topbar-position='bottom_right'] .auth-page--has-footer .auth-main > .auth-topbar {
+	position: absolute;
+}
+
 [data-page-layout='split_panel'][data-topbar-position='below_card'] .auth-main > .auth-topbar {
 	grid-row: 1;
 	grid-column: 2;
@@ -7433,19 +7599,64 @@ tr.expired {
 		flex-direction: column;
 		width: 100%;
 		min-height: 0;
+		position: relative;
+		isolation: isolate;
 		overflow: hidden;
+	}
+
+	/* On mobile the auth panel shrinks to its content, so keep the visual surface on
+	   the full main region instead. This prevents the page image from becoming clear
+	   below the form while preserving space for the controls above the footer. */
+	[data-page-layout='split_panel'][data-split-background-mode='shared'] .auth-main,
+	[data-page-layout='split_panel'][data-split-background-mode='panel'] .auth-main {
+		background: var(--panel-glass-bg, color-mix(in srgb, var(--bg-glass) 72%, transparent));
+		backdrop-filter: blur(32px) saturate(160%);
+		-webkit-backdrop-filter: blur(32px) saturate(160%);
+	}
+
+	[data-page-layout='split_panel'][data-split-background-mode='brand'] .auth-main {
+		background: var(--login-panel-background-fill, var(--bg-card));
+	}
+
+	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+		.auth-main::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		pointer-events: none;
+		background-image: var(--login-panel-background-layer, none);
+		background-position: center;
+		background-size: cover;
+		background-repeat: no-repeat;
+		opacity: var(--login-panel-background-opacity, 0.7);
+	}
+
+	[data-page-layout='split_panel'] .auth-main > * {
+		position: relative;
+		z-index: 1;
 	}
 
 	[data-page-layout='split_panel'] .auth-brand-panel {
 		display: none;
 	}
 
-	[data-page-layout='split_panel'] .auth-container {
+	[data-page-layout='split_panel'][data-split-background-mode='shared'] .auth-container,
+	[data-page-layout='split_panel'][data-split-background-mode='panel'] .auth-container,
+	[data-page-layout='split_panel'][data-split-background-mode='brand'] .auth-container {
 		height: auto;
 		min-height: 0;
 		padding: 24px 16px;
 		border-right: 0;
 		border-left: 0;
+		background: transparent;
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+
+	[data-page-layout='split_panel'][data-split-background-mode='panel'][data-has-login-panel-background-image='true']
+		.auth-container::before {
+		display: none;
 	}
 
 	[data-page-layout='split_panel'] .auth-page-footer {
@@ -7482,12 +7693,29 @@ tr.expired {
 		transform: none;
 	}
 
+	[data-topbar-position='bottom_left'] .auth-page--has-footer .auth-main > .auth-topbar,
+	[data-topbar-position='bottom_center'] .auth-page--has-footer .auth-main > .auth-topbar,
+	[data-topbar-position='bottom_right'] .auth-page--has-footer .auth-main > .auth-topbar {
+		position: static;
+		align-self: flex-end;
+		transform: none;
+	}
+
 	.auth-header__title {
 		font-size: 1.75rem;
 	}
 
 	.auth-section-title {
 		font-size: 1.25rem;
+	}
+}
+
+@media (max-width: 640px) and (prefers-reduced-transparency: reduce) {
+	[data-page-layout='split_panel'][data-split-background-mode='shared'] .auth-main,
+	[data-page-layout='split_panel'][data-split-background-mode='panel'] .auth-main {
+		background: var(--bg-card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
 	}
 }
 

@@ -12,7 +12,11 @@ import {
   type DeployOptions,
   type DeploymentSummary,
 } from '../packages/setup/src/core/deploy.js';
-import { loadLockFileAuto, saveLockFile } from '../packages/setup/src/core/lock.js';
+import {
+  acquireEnvironmentOperationForEnvironment,
+  loadLockFileAuto,
+  saveLockFile,
+} from '../packages/setup/src/core/lock.js';
 import {
   CORE_WORKER_COMPONENTS,
   WORKER_DEPLOYMENT_DEPENDENCIES,
@@ -21,6 +25,11 @@ import {
 import { findKeysDirectory } from '../packages/setup/src/core/paths.js';
 import { ensureSupplementalKeyFiles } from '../packages/setup/src/core/keys.js';
 import { getMissingRequiredDeploySecrets } from '../packages/setup/src/core/secrets.js';
+import { getRootProductVersion } from '../packages/setup/src/core/version.js';
+import {
+  evaluateReleaseDeploymentGuard,
+  releaseDeploymentGuardMessage,
+} from '../packages/setup/src/core/release-deployment-guard.js';
 
 interface CliOptions {
   env: string;
@@ -233,37 +242,70 @@ async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const rootDir = resolve(process.cwd());
   const { lock, path: lockPath } = await loadLockFileAuto(rootDir, options.env);
-  if (options.finalizeLegacyStaticSecretCleanup) {
-    const cleanupResult = await cleanupLegacyStaticSecrets(
-      {
-        env: options.env,
-        rootDir,
-        concurrency: options.concurrency,
-        maxRetries: 4,
-        retryDelayMs: 1000,
-        onProgress: console.log,
-      },
-      ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management']
+  if (!lock) {
+    throw new Error(
+      `Environment ${options.env} has no lock file; run authrim-setup init before deploying.`
     );
-    if (cleanupResult.failures.length > 0) {
-      for (const failure of cleanupResult.failures) {
-        console.error(`${failure.component}: ${failure.error}`);
-      }
-      process.exitCode = 1;
-      return;
+  }
+  if (!lock.productVersion && Object.keys(lock.workers ?? {}).length === 0) {
+    throw new Error(
+      'Initial deployment must use authrim-setup deploy so the exact release schema is applied first.'
+    );
+  }
+  const targetProductVersion = await getRootProductVersion(rootDir);
+  const deploymentGuard = evaluateReleaseDeploymentGuard(
+    lock,
+    targetProductVersion,
+    'worker_redeploy'
+  );
+  if (!deploymentGuard.allowed) {
+    throw new Error(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion));
+  }
+  if (options.finalizeLegacyStaticSecretCleanup) {
+    const cleanupOperationLock = await acquireEnvironmentOperationForEnvironment({
+      baseDir: rootDir,
+      env: options.env,
+      operation: 'deploy-api:legacy-secret-cleanup',
+      requireExisting: true,
+    });
+    if (JSON.stringify(cleanupOperationLock.lock) !== JSON.stringify(lock)) {
+      await cleanupOperationLock.release();
+      throw new Error('environment_changed_while_waiting_for_deploy_api_cleanup_lock');
     }
-    if (options.healthUrl) {
-      const health = await checkOidcHealth(options.healthUrl);
-      if (!health.success) {
-        console.error(`Post-cleanup health check failed: ${health.error || 'unknown error'}`);
+    try {
+      const cleanupResult = await cleanupLegacyStaticSecrets(
+        {
+          env: options.env,
+          rootDir,
+          concurrency: options.concurrency,
+          maxRetries: 4,
+          retryDelayMs: 1000,
+          onProgress: console.log,
+        },
+        ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management']
+      );
+      if (cleanupResult.failures.length > 0) {
+        for (const failure of cleanupResult.failures) {
+          console.error(`${failure.component}: ${failure.error}`);
+        }
         process.exitCode = 1;
         return;
       }
+      if (options.healthUrl) {
+        const health = await checkOidcHealth(options.healthUrl);
+        if (!health.success) {
+          console.error(`Post-cleanup health check failed: ${health.error || 'unknown error'}`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+      for (const [component, versionId] of Object.entries(cleanupResult.activeVersionIds)) {
+        console.log(`  ✓ ${component}: cleanup version ${versionId}`);
+      }
+      console.log('Legacy static secret cleanup finalized.');
+    } finally {
+      await cleanupOperationLock.release();
     }
-    for (const [component, versionId] of Object.entries(cleanupResult.activeVersionIds)) {
-      console.log(`  ✓ ${component}: cleanup version ${versionId}`);
-    }
-    console.log('Legacy static secret cleanup finalized.');
     return;
   }
   const selected = options.component ? [options.component] : [...CORE_WORKER_COMPONENTS];
@@ -285,11 +327,6 @@ async function main(): Promise<void> {
       keysBaseDir: process.cwd(),
     })?.path;
   }
-  if (keysPath) {
-    await ensureSupplementalKeyFiles(keysPath);
-  }
-  const secrets = keysPath ? await loadDeploySecretsFromKeys(keysPath, deploymentScope) : {};
-
   const controller = new AbortController();
   let interruptCount = 0;
   const handleInterrupt = (): void => {
@@ -303,8 +340,28 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', handleInterrupt);
   process.on('SIGTERM', handleInterrupt);
+  let operationLock:
+    | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+    | undefined;
 
   try {
+    operationLock =
+      options.dryRun || options.preflight
+        ? undefined
+        : await acquireEnvironmentOperationForEnvironment({
+            baseDir: rootDir,
+            env: options.env,
+            operation: 'deploy-api',
+            requireExisting: true,
+          });
+    if (operationLock && JSON.stringify(operationLock.lock) !== JSON.stringify(lock)) {
+      throw new Error('environment_changed_while_waiting_for_deploy_api_lock');
+    }
+    if (keysPath && !options.dryRun && !options.preflight) {
+      await ensureSupplementalKeyFiles(keysPath);
+    }
+    const secrets = keysPath ? await loadDeploySecretsFromKeys(keysPath, deploymentScope) : {};
+
     if (!process.env.CLOUDFLARE_API_TOKEN && options.concurrency > 1) {
       console.warn(
         'Tip: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are recommended for parallel CI deploys.'
@@ -408,6 +465,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
+    await operationLock?.release();
     process.off('SIGINT', handleInterrupt);
     process.off('SIGTERM', handleInterrupt);
   }

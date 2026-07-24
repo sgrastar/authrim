@@ -18,7 +18,11 @@ import {
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
-import { loadLockFileAuto } from '../../core/lock.js';
+import { acquireEnvironmentOperationForEnvironment } from '../../core/lock.js';
+import {
+  environmentOperationBlockMessage,
+  evaluateEnvironmentOperation,
+} from '../../core/environment-operation-policy.js';
 
 // =============================================================================
 // Types
@@ -134,34 +138,50 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   console.log('');
 
   const baseDir = findAuthrimBaseDir(process.cwd());
-  const { lock } = await loadLockFileAuto(baseDir, env);
-  const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
-  const knownQueueNames = lock?.queues ? Object.values(lock.queues).map((entry) => entry.name) : [];
-
-  // Delete environment
-  const result = await deleteEnvironment({
-    env,
-    deleteWorkers,
-    deleteD1,
-    deleteKV,
-    deleteQueues,
-    deleteR2,
-    knownD1Names,
-    knownQueueNames,
-    onProgress: (msg) => console.log(msg),
-  });
-
-  const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+  const operationLock = await acquireEnvironmentOperationForEnvironment({
     baseDir,
     env,
-    packagesDir: join(baseDir, 'packages'),
-    keysBaseDir: process.cwd(),
-    onProgress: (msg) => console.log(msg),
+    operation: 'delete',
+    requireExisting: true,
   });
-  if (cleanupResult.errors.length > 0) {
-    result.errors.push(...cleanupResult.errors);
+  let result: Awaited<ReturnType<typeof deleteEnvironment>>;
+  try {
+    const lock = operationLock.lock;
+    const decision = evaluateEnvironmentOperation({ operation: 'delete', lock });
+    if (!decision.allowed) {
+      throw new Error(environmentOperationBlockMessage(decision));
+    }
+    const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
+    const knownQueueNames = lock?.queues
+      ? Object.values(lock.queues).map((entry) => entry.name)
+      : [];
+
+    result = await deleteEnvironment({
+      env,
+      deleteWorkers,
+      deleteD1,
+      deleteKV,
+      deleteQueues,
+      deleteR2,
+      knownD1Names,
+      knownQueueNames,
+      onProgress: (msg) => console.log(msg),
+    });
+
+    const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env,
+      packagesDir: join(baseDir, 'packages'),
+      keysBaseDir: process.cwd(),
+      onProgress: (msg) => console.log(msg),
+    });
+    if (cleanupResult.errors.length > 0) {
+      result.errors.push(...cleanupResult.errors);
+    }
+    result.success = result.errors.length === 0;
+  } finally {
+    await operationLock.release();
   }
-  result.success = result.errors.length === 0;
 
   // Summary
   console.log(chalk.bold('\n━━━ Deletion Summary ━━━\n'));

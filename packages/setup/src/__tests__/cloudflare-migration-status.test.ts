@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type D1MigrationFileState, getBlockingChangedMigrationFiles } from '../core/cloudflare.js';
+import {
+  type D1MigrationFileState,
+  evaluateSupersededMigrationState,
+  getBlockingChangedMigrationFiles,
+} from '../core/cloudflare.js';
 
 describe('getBlockingChangedMigrationFiles', () => {
   const migrations: D1MigrationFileState[] = [
@@ -38,5 +42,55 @@ describe('getBlockingChangedMigrationFiles', () => {
     expect(
       getBlockingChangedMigrationFiles(migrations, new Set(['002_core_protocol_and_consent.sql']))
     ).toEqual(['002_core_protocol_and_consent.sql']);
+  });
+});
+
+describe('evaluateSupersededMigrationState', () => {
+  const supersedes = [
+    { path: '019_draft_a.sql', checksum: 'a'.repeat(64) },
+    { path: '020_draft_b.sql', checksum: 'b'.repeat(64) },
+  ];
+
+  it('recognizes a fully applied unpublished migration set', () => {
+    expect(
+      evaluateSupersededMigrationState(supersedes, [
+        {
+          filename: '019_draft_a.sql',
+          status: 'orphaned',
+          appliedChecksum: 'a'.repeat(64),
+        },
+        {
+          filename: '020_draft_b.sql',
+          status: 'orphaned',
+          appliedChecksum: 'b'.repeat(64),
+        },
+      ])
+    ).toEqual({ state: 'fully_applied' });
+  });
+
+  it('fails closed for partial application or a checksum mismatch', () => {
+    expect(
+      evaluateSupersededMigrationState(supersedes, [
+        {
+          filename: '019_draft_a.sql',
+          status: 'orphaned',
+          appliedChecksum: 'a'.repeat(64),
+        },
+      ]).state
+    ).toBe('partially_applied');
+    expect(
+      evaluateSupersededMigrationState(supersedes, [
+        {
+          filename: '019_draft_a.sql',
+          status: 'orphaned',
+          appliedChecksum: 'wrong',
+        },
+        {
+          filename: '020_draft_b.sql',
+          status: 'orphaned',
+          appliedChecksum: 'b'.repeat(64),
+        },
+      ]).error
+    ).toContain('checksum mismatch');
   });
 });

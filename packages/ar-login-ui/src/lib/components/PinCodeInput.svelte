@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { normalizePinCode, normalizePinCodeLength } from '$lib/utils/pin-code';
+	import { LL } from '$i18n/i18n-svelte';
 
 	type Props = {
 		value?: string;
@@ -48,7 +49,7 @@
 		class="pin-code-input__native"
 		value={inputValue}
 		{name}
-		aria-label={label ?? digitLabel?.(1) ?? 'Verification code'}
+		aria-label={label ?? digitLabel?.(1) ?? $LL.emailCode_codeLabel()}
 		autocomplete="one-time-code"
 		inputmode="numeric"
 		enterkeyhint="done"

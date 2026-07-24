@@ -1103,6 +1103,51 @@ describe('deployAll', () => {
     expect(started.at(-1)).toBe('ar-router');
   });
 
+  it('waits for the VC service-binding target before deploying management', async () => {
+    const rootDir = createTempRoot();
+    const selected = ['ar-lib-core', 'ar-bridge', 'ar-auth', 'ar-vc', 'ar-management'] as const;
+    for (const component of selected) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+
+    const releases = new Map(
+      selected.map((component) => [component, createDeferred<Awaited<ReturnType<typeof execa>>>()])
+    );
+    const started: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, _args, options) => {
+      const component = basename(String(options?.cwd));
+      started.push(component);
+      return releases.get(component as (typeof selected)[number])!.promise;
+    });
+
+    const deployment = deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 2,
+      },
+      [...selected]
+    );
+
+    await vi.waitFor(() => expect(started).toEqual(['ar-lib-core']));
+    releases.get('ar-lib-core')!.resolve(successfulCommandResult());
+    await vi.waitFor(() => expect(started).toEqual(['ar-lib-core', 'ar-bridge', 'ar-vc']));
+
+    releases.get('ar-bridge')!.resolve(successfulCommandResult());
+    await vi.waitFor(() => expect(started).toContain('ar-auth'));
+    releases.get('ar-auth')!.resolve(successfulCommandResult());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).not.toContain('ar-management');
+
+    releases.get('ar-vc')!.resolve(successfulCommandResult());
+    await vi.waitFor(() => expect(started.at(-1)).toBe('ar-management'));
+    releases.get('ar-management')!.resolve(successfulCommandResult());
+
+    const summary = await deployment;
+    expect(summary.failedCount).toBe(0);
+  });
+
   it('uploads every staged version before promoting in dependency order and applying triggers', async () => {
     const rootDir = createTempRoot();
     const selected = ['ar-lib-core', 'ar-bridge', 'ar-auth', 'ar-management', 'ar-router'] as const;

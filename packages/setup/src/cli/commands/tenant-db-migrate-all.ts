@@ -3,8 +3,24 @@ import { confirm } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import { findMigrationsRoot, runD1Migrations } from '../../core/cloudflare.js';
-import { loadLockFileAuto } from '../../core/lock.js';
+import {
+  acquireEnvironmentOperationLock,
+  loadLockFileAuto,
+  saveLockFile,
+} from '../../core/lock.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
+import { getRootProductVersion } from '../../core/version.js';
+import {
+  evaluateReleaseDeploymentGuard,
+  releaseDeploymentGuardMessage,
+} from '../../core/release-deployment-guard.js';
+import {
+  buildTenantD1ReleaseMigrationTarget,
+  calculateReleaseManifestChecksum,
+  loadInstalledReleaseMigrationManifest,
+  type ReleaseMigrationManifest,
+} from '../../core/release-migrations.js';
+import { withRecordedReleaseSchemaTargets } from '../../core/release-state.js';
 import {
   buildTenantDatabaseMigrationPlan,
   listTenantDatabaseMigrationTargets,
@@ -94,15 +110,26 @@ async function migrateTargets(
     migrationsRoot: string;
     concurrency: number;
     skipFailed: boolean;
+    manifest: ReleaseMigrationManifest;
+    productVersion: string;
   }
 ): Promise<MigrationTargetResult[]> {
   const results: MigrationTargetResult[] = [];
   const failures: string[] = [];
 
   await runWithConcurrency(targets, options.concurrency, async (target) => {
+    const streamId = target.role === 'tenant_pii' ? 'd1-pii' : 'd1-core';
+    const stream = options.manifest.streams.find((candidate) => candidate.id === streamId);
+    if (!stream) throw new Error(`release_migration_stream_not_found:${streamId}`);
     const result = await runD1Migrations(
       target.databaseName,
-      migrationDirectoryForTarget(options.migrationsRoot, target)
+      migrationDirectoryForTarget(options.migrationsRoot, target),
+      undefined,
+      {
+        manifestFiles: stream.files,
+        releaseVersion: options.productVersion,
+        backfillLegacyChecksums: true,
+      }
     );
     const targetResult: MigrationTargetResult = {
       target,
@@ -140,9 +167,20 @@ export async function tenantDatabaseMigrateAllCommand(
 ): Promise<void> {
   const env = options.env ?? 'prod';
   const baseDir = findAuthrimBaseDir(process.cwd());
-  const { lock } = await loadLockFileAuto(baseDir, env);
+  const { lock, path: lockPath } = await loadLockFileAuto(baseDir, env);
   if (!lock) {
     console.error(chalk.red(`No Authrim lock file found for environment "${env}".`));
+    process.exit(1);
+  }
+  const targetProductVersion = await getRootProductVersion(baseDir);
+  const deploymentGuard = evaluateReleaseDeploymentGuard(
+    lock,
+    targetProductVersion,
+    'manual_migration'
+  );
+  if (!deploymentGuard.allowed) {
+    console.error(chalk.red(releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion)));
+    console.log(chalk.yellow(`Run authrim-setup update --env ${env} for release migrations.`));
     process.exit(1);
   }
 
@@ -152,6 +190,11 @@ export async function tenantDatabaseMigrateAllCommand(
       `Migrations directory not found. Searched: ${migrationsRoot.searchPaths.join(', ')}`
     );
   }
+  const release = loadInstalledReleaseMigrationManifest({
+    migrationsRoot: migrationsRoot.path,
+    productVersion: targetProductVersion,
+    lock,
+  });
 
   const targets = listTenantDatabaseMigrationTargets(lock, {
     roles: parseRoles(options.role),
@@ -193,15 +236,37 @@ export async function tenantDatabaseMigrateAllCommand(
     }
   }
 
+  const operationLock = await acquireEnvironmentOperationLock(lockPath, 'tenant-db-migrate-all');
+
   const spinner = ora('Running tenant D1 migrations...').start();
   const allResults: MigrationTargetResult[] = [];
   try {
+    const lockedEnvironment = await loadLockFileAuto(baseDir, env);
+    if (
+      !lockedEnvironment.lock ||
+      JSON.stringify(lockedEnvironment.lock) !== JSON.stringify(lock)
+    ) {
+      throw new Error('environment_changed_while_waiting_for_tenant_migration_lock');
+    }
+    const lockedRelease = loadInstalledReleaseMigrationManifest({
+      migrationsRoot: migrationsRoot.path,
+      productVersion: targetProductVersion,
+      lock: lockedEnvironment.lock,
+    });
+    if (
+      calculateReleaseManifestChecksum(lockedRelease.manifest) !==
+      calculateReleaseManifestChecksum(release.manifest)
+    ) {
+      throw new Error('release_manifest_changed_while_waiting_for_tenant_migration_lock');
+    }
     if (plan.canaryTargets.length > 0) {
       spinner.text = 'Running tenant D1 canary migrations...';
       const canaryResults = await migrateTargets(plan.canaryTargets, {
         migrationsRoot: migrationsRoot.path,
         concurrency: 1,
         skipFailed: options.skipFailed ?? false,
+        manifest: lockedRelease.manifest,
+        productVersion: targetProductVersion,
       });
       allResults.push(...canaryResults);
       if (canaryResults.some((result) => !result.success) && !options.skipFailed) {
@@ -215,13 +280,26 @@ export async function tenantDatabaseMigrateAllCommand(
         migrationsRoot: migrationsRoot.path,
         concurrency: plan.concurrency,
         skipFailed: options.skipFailed ?? false,
+        manifest: lockedRelease.manifest,
+        productVersion: targetProductVersion,
       }))
     );
-    spinner.succeed('Tenant D1 migrations completed.');
+    const successfulTargets = allResults
+      .filter((result) => result.success)
+      .map((result) => result.target);
+    const recordedLock = withRecordedReleaseSchemaTargets(lock, {
+      productVersion: targetProductVersion,
+      manifest: lockedRelease.manifest,
+      targets: successfulTargets.map((target) => buildTenantD1ReleaseMigrationTarget(target)),
+    });
+    await saveLockFile(recordedLock, { path: lockPath });
+    spinner.succeed('Tenant D1 migrations completed and schema target state recorded.');
   } catch (error) {
     spinner.fail('Tenant D1 migrations failed.');
     printResults(allResults);
     throw error;
+  } finally {
+    await operationLock.release();
   }
 
   printResults(allResults);

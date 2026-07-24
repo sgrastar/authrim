@@ -74,6 +74,7 @@ function request(path: string, method = 'GET', value?: unknown) {
 function configurationProfile() {
   return {
     schemaVersion: 'authrim-agent-plan-v1',
+    goal: 'Apply an approved Authrim configuration change',
     steps: [
       {
         id: 'client-metadata',

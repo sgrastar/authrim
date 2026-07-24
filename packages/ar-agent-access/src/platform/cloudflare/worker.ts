@@ -26,6 +26,7 @@ import {
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { CloudflareAdminAgentAuditAdapter } from './admin-agent-audit';
+import { CloudflareAgentMcpAdmissionAuditAdapter } from './mcp-admission-audit';
 import { CloudflareAgentConfigurationPlanAdapter } from './configuration-plans';
 import { CloudflareAgentConfigurationResourceReader } from './configuration-resources';
 import { CloudflareAgentBulkCoordinator } from './bulk-plans';
@@ -33,14 +34,19 @@ import { CloudflareAgentBaselineRemediationCoordinator } from './baseline-remedi
 import { CloudflareAgentBulkPlanAdapter } from './bulk-plan-adapter';
 import { CloudflareAgentElevationAdapter } from './elevation';
 import { CloudflareDurableObjectRateLimiter } from './durable-object-rate-limiter';
+import { CloudflareAgentMcpSessionRegistry } from './mcp-session-registry';
 import { CloudflareAgentSettingsProvider } from './tenant-settings';
 import { CloudflareTenantConfigurationReader } from './tenant-configuration-reader';
 import { CloudflareAgentRuntimeDiagnostics } from './runtime-diagnostics';
 import { CLOUDFLARE_ADMIN_READ_ROUTES } from './admin-read-routes';
 import { CLOUDFLARE_ADMIN_WRITE_ROUTES } from './admin-write-routes';
-import { createCloudflareAgentAccessMcpWorker } from './mcp-admission';
+import {
+  AGENT_ACCESS_MCP_DEFAULT_PREAUTH_RATE_LIMIT_PER_MINUTE,
+  createCloudflareAgentAccessMcpWorker,
+} from './mcp-admission';
 import {
   createCloudflareAgentAccessMcpAgent,
+  destroyCloudflareAgentAccessMcpSession,
   validateCloudflareAgentAccessMcpSession,
 } from './mcp-agent';
 import {
@@ -62,8 +68,10 @@ export interface CloudflareAgentAccessWorkerEnv extends CoreEnv {
   AGENT_DOWNSCOPE: CloudflareAgentDownscopeExchangeBinding;
   AGENT_ACCESS_MCP: DurableObjectNamespace;
   ENABLE_AGENT_MCP?: string;
+  AGENT_MCP_PREAUTH_RATE_LIMIT_PER_MINUTE?: string;
   AGENT_ELEVATION_ENCRYPTION_KEY?: string;
   AGENT_ELEVATION_KEY_VERSION?: string;
+  AUTHRIM_ENVIRONMENT_NAME?: string;
 }
 
 const ADMIN_TOOL_CATALOG = createAdminToolCatalog();
@@ -88,7 +96,8 @@ const BASE_RISK_POLICY: Omit<AgentRiskPolicy, 'highRiskPermissionsAdditional'> =
 
 const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAgentAccessWorkerEnv>(
   {
-    createDependencies(env) {
+    getEnvironmentName: (env) => env.AUTHRIM_ENVIRONMENT_NAME,
+    createDependencies(env, _getCurrentRequest, discoveryProfiles) {
       const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-worker');
       const repository = new AdminAgentAccessRepository(database);
       const configurationRepository = new AgentConfigurationRepository(database);
@@ -217,6 +226,7 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
           env.OP_DISCOVERY,
           env.OP_MANAGEMENT
         ),
+        discoveryProfiles,
       };
     },
   }
@@ -236,6 +246,38 @@ const mcp = createCloudflareAgentAccessMcpWorker<CloudflareAgentAccessWorkerEnv>
         sessionId,
         context: verifiedProps.context,
       });
+    },
+    controls: {
+      getSettings(env, verifiedProps) {
+        return new CloudflareAgentSettingsProvider(env).get(verifiedProps.context.grant.tenantId);
+      },
+      getRateLimiter(env) {
+        return new CloudflareDurableObjectRateLimiter(env.RATE_LIMITER);
+      },
+      getAdmissionAudit(env) {
+        return new CloudflareAgentMcpAdmissionAuditAdapter(
+          new AdminAgentAccessRepository(
+            requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-admission-audit')
+          )
+        );
+      },
+      getPreAuthRateLimitPerMinute(env) {
+        const configured = Number(env.AGENT_MCP_PREAUTH_RATE_LIMIT_PER_MINUTE);
+        return Number.isSafeInteger(configured) && configured >= 60 && configured <= 60_000
+          ? configured
+          : AGENT_ACCESS_MCP_DEFAULT_PREAUTH_RATE_LIMIT_PER_MINUTE;
+      },
+      getSessionRegistry(env) {
+        return new CloudflareAgentMcpSessionRegistry(
+          requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-session-registry')
+        );
+      },
+      destroySession(sessionId, env) {
+        return destroyCloudflareAgentAccessMcpSession({
+          namespace: env.AGENT_ACCESS_MCP,
+          sessionId,
+        });
+      },
     },
     resolveAllowedOrigin(request, env) {
       const origin = request.headers.get('origin');
@@ -282,9 +324,15 @@ export async function runAgentAccessScheduledTasks(input: {
   evaluateBaselines(): Promise<unknown>;
   runBaselineRemediation(): Promise<unknown>;
   runBulkPlans(): Promise<unknown>;
+  cleanupMcpSessions(): Promise<unknown>;
 }): Promise<void> {
   const failures: unknown[] = [];
-  for (const task of [input.evaluateBaselines, input.runBaselineRemediation, input.runBulkPlans]) {
+  for (const task of [
+    input.evaluateBaselines,
+    input.runBaselineRemediation,
+    input.runBulkPlans,
+    input.cleanupMcpSessions,
+  ]) {
     try {
       await task();
     } catch (error) {
@@ -296,11 +344,109 @@ export async function runAgentAccessScheduledTasks(input: {
   }
 }
 
+export async function cleanupExpiredAgentAccessMcpSessions(
+  env: CloudflareAgentAccessWorkerEnv,
+  now: number = Date.now()
+): Promise<number> {
+  const registry = new CloudflareAgentMcpSessionRegistry(
+    requireDedicatedAdminDatabaseAdapter(env, 'agent-access-mcp-session-cleanup')
+  );
+  const expired = await registry.listExpired(now, 500);
+  let cleaned = 0;
+  for (const session of expired) {
+    await destroyCloudflareAgentAccessMcpSession({
+      namespace: env.AGENT_ACCESS_MCP,
+      sessionId: session.sessionId,
+    });
+    await registry.delete(session);
+    cleaned += 1;
+  }
+  return cleaned;
+}
+
+interface AgentAccessReadinessResult {
+  status: 'ok' | 'unavailable';
+  service: 'ar-agent-access';
+  checks: Record<string, 'ok' | 'unavailable'>;
+}
+
+function hasMethod(value: unknown, method: string): boolean {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as Record<string, unknown>)[method] === 'function'
+  );
+}
+
+export async function checkAgentAccessReadiness(
+  env: CloudflareAgentAccessWorkerEnv
+): Promise<AgentAccessReadinessResult> {
+  const checks: AgentAccessReadinessResult['checks'] = {};
+  try {
+    const database = requireDedicatedAdminDatabaseAdapter(env, 'agent-access-readiness');
+    checks.database = (await database.isHealthy()).healthy ? 'ok' : 'unavailable';
+  } catch {
+    checks.database = 'unavailable';
+  }
+
+  const settings = env.SETTINGS ?? env.AUTHRIM_CONFIG;
+  try {
+    if (!settings) throw new Error('settings binding is unavailable');
+    await settings.get('__authrim_agent_access_readiness__');
+    checks.settings = 'ok';
+  } catch {
+    checks.settings = 'unavailable';
+  }
+
+  checks.rateLimiter = hasMethod(env.RATE_LIMITER, 'idFromName') ? 'ok' : 'unavailable';
+  checks.mcpSessions = hasMethod(env.AGENT_ACCESS_MCP, 'idFromName') ? 'ok' : 'unavailable';
+  checks.keyManager = hasMethod(env.KEY_MANAGER, 'idFromName') ? 'ok' : 'unavailable';
+  checks.dpopReplayStore = hasMethod(env.DPOP_JTI_STORE, 'idFromName') ? 'ok' : 'unavailable';
+  checks.downscope = hasMethod(env.AGENT_DOWNSCOPE, 'exchangeAgentAccessToken')
+    ? 'ok'
+    : 'unavailable';
+  try {
+    const keyVersion = env.AGENT_ELEVATION_KEY_VERSION ?? 'v1';
+    await new CloudflareSecretTextKeyProvider({
+      [keyVersion]: env.AGENT_ELEVATION_ENCRYPTION_KEY,
+    }).getEncryptionKey(keyVersion);
+    checks.elevationKey = 'ok';
+  } catch {
+    checks.elevationKey = 'unavailable';
+  }
+
+  for (const [name, binding] of [
+    ['management', env.OP_MANAGEMENT],
+    ['discovery', env.OP_DISCOVERY],
+  ] as const) {
+    try {
+      if (!hasMethod(binding, 'fetch')) throw new Error(`${name} binding is unavailable`);
+      const response = await binding.fetch(new Request(`https://${name}.internal/health/ready`));
+      checks[name] = response.ok ? 'ok' : 'unavailable';
+    } catch {
+      checks[name] = 'unavailable';
+    }
+  }
+
+  return {
+    status: Object.values(checks).every((value) => value === 'ok') ? 'ok' : 'unavailable',
+    service: 'ar-agent-access',
+    checks,
+  };
+}
+
 const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
   async fetch(request, env, context) {
     const path = new URL(request.url).pathname;
-    if (path === '/health/live' || path === '/health/ready' || path === '/api/health') {
+    if (path === '/health/live' || path === '/api/health') {
       return Response.json({ status: 'ok', service: 'ar-agent-access' });
+    }
+    if (path === '/health/ready') {
+      const readiness = await checkAgentAccessReadiness(env);
+      return Response.json(readiness, {
+        status: readiness.status === 'ok' ? 200 : 503,
+        headers: { 'cache-control': 'no-store' },
+      });
     }
     if (path !== '/mcp') return new Response(null, { status: 404 });
     return mcp.fetch!(request, env, context);
@@ -312,6 +458,7 @@ const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
       evaluateBaselines: () => baseline.evaluateScheduled(),
       runBaselineRemediation: () => baseline.runScheduled(),
       runBulkPlans: () => bulk.runScheduled(),
+      cleanupMcpSessions: () => cleanupExpiredAgentAccessMcpSessions(env),
     });
   },
 };

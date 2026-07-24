@@ -38,6 +38,9 @@ jobs:
       - name: Audit dependencies
         run: pnpm run security:audit
 
+      - name: Verify MCP server ownership registry
+        run: pnpm run security:mcp-registry
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

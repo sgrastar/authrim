@@ -21,6 +21,7 @@ import {
   readRequestTextWithLimit,
   readResponseTextWithLimit,
   safeFetch,
+  bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -166,6 +167,37 @@ async function proxyToExternalIdp(
   }
 }
 
+async function invalidateAuthenticationMethodsCacheForExternalProviders(
+  c: Context<{ Bindings: Env }>,
+  reason: string
+): Promise<void> {
+  const log = getLogger(c).module('EXTERNAL-PROVIDERS');
+  const tenantId = getTenantIdFromContext(c);
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    log.warn('Failed to bump authentication methods cache revision', {
+      tenantId,
+      reason,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
+}
+
+async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
+  c: Context<{ Bindings: Env }>,
+  path: string,
+  method: string,
+  reason: string,
+  body?: string
+): Promise<Response> {
+  const response = await proxyToExternalIdp(c, path, method, body);
+  if (response.ok) {
+    await invalidateAuthenticationMethodsCacheForExternalProviders(c, reason);
+  }
+  return response;
+}
+
 /**
  * GET /api/admin/external-providers - List all external IdP providers
  */
@@ -195,7 +227,13 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
-  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body.body);
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
+    c,
+    EXTERNAL_IDP_ADMIN_PATH,
+    'POST',
+    'external-provider:create',
+    body.body
+  );
 }
 
 /**
@@ -225,10 +263,11 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
-  return proxyToExternalIdp(
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
     'PUT',
+    'external-provider:update',
     body.body
   );
 }
@@ -245,10 +284,11 @@ export async function adminExternalProvidersRegisterHandler(c: Context<{ Binding
   }
   const body = await readExternalIdpAdminBody(c);
   if (!body.ok) return body.response;
-  return proxyToExternalIdp(
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}/register`,
     'POST',
+    'external-provider:register',
     body.body || '{}'
   );
 }
@@ -263,7 +303,12 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
-  return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'DELETE');
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
+    c,
+    `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
+    'DELETE',
+    'external-provider:delete'
+  );
 }
 
 /**

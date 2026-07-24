@@ -1,30 +1,18 @@
 <script lang="ts">
 	interface Props {
 		status: 'active' | 'inactive' | 'success' | 'warning' | 'danger' | 'info' | 'neutral';
-		label?: string;
+		label: string;
 		showDot?: boolean;
 	}
 
 	let { status, label, showDot = true }: Props = $props();
-
-	const statusLabels: Record<string, string> = {
-		active: 'Active',
-		inactive: 'Inactive',
-		success: 'Success',
-		warning: 'Warning',
-		danger: 'Error',
-		info: 'Info',
-		neutral: 'Neutral'
-	};
-
-	const displayLabel = $derived(label || statusLabels[status]);
 </script>
 
 <span class="status-badge {status}" class:no-dot={!showDot}>
 	{#if showDot}
 		<span class="status-dot"></span>
 	{/if}
-	{displayLabel}
+	{label}
 </span>
 
 <style>

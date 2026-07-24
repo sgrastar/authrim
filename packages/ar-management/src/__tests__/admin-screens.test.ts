@@ -25,7 +25,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { adminScreensListHandler } from '../admin-screens';
+import {
+  adminScreenCreateHandler,
+  adminScreenUpdateHandler,
+  adminScreensListHandler,
+} from '../admin-screens';
 
 type ScreenRow = Record<string, unknown> & {
   id: string;
@@ -48,8 +52,8 @@ const expectedLocalizationLanguages = [
   'ko',
   'pt',
   'ru',
-  'zh_CN',
-  'zh_TW',
+  'zh-CN',
+  'zh-TW',
 ];
 
 function createContext() {
@@ -61,6 +65,22 @@ function createContext() {
         headers: { 'content-type': 'application/json' },
       });
     }),
+  } as never;
+}
+
+function createMutationContext(body: Record<string, unknown>, id = 'screen-custom') {
+  return {
+    req: {
+      json: vi.fn().mockResolvedValue(body),
+      param: vi.fn().mockReturnValue(id),
+    },
+    json: vi.fn(
+      (payload: unknown, status?: number) =>
+        new Response(JSON.stringify(payload), {
+          status: status ?? 200,
+          headers: { 'content-type': 'application/json' },
+        })
+    ),
   } as never;
 }
 
@@ -83,6 +103,11 @@ beforeEach(() => {
       const tenantId = String(params[0]);
       const screenKey = String(params[1]);
       return rows.find((row) => row.tenant_id === tenantId && row.screen_key === screenKey) ?? null;
+    }
+    if (sql.includes('FROM screens') && sql.includes('id = ?')) {
+      const tenantId = String(params[0]);
+      const id = String(params[1]);
+      return rows.find((row) => row.tenant_id === tenantId && row.id === id) ?? null;
     }
     return null;
   });
@@ -139,6 +164,88 @@ beforeEach(() => {
 });
 
 describe('admin screens', () => {
+  it('rejects unsupported blocks in Account screens', async () => {
+    const response = await adminScreenCreateHandler(
+      createMutationContext({
+        screen_key: 'unsafe_account',
+        display_name: 'Unsafe account',
+        screen_kind: 'account',
+        fields: [
+          {
+            field: 'auth.passkey',
+            label: 'Unexpected auth action',
+            required: false,
+            block_type: 'auth_widget',
+          },
+        ],
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await readJson(response)).toMatchObject({ error: 'invalid_request' });
+    expect(mocks.db.execute).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes localization fields so they cannot replace widget behavior', async () => {
+    const response = await adminScreenCreateHandler(
+      createMutationContext({
+        screen_key: 'localized_account',
+        display_name: 'Localized account',
+        screen_kind: 'account',
+        fields: [
+          {
+            field: 'account.profile',
+            label: 'Profile',
+            required: false,
+            block_type: 'account_profile_widget',
+            block_id: 'profile-widget',
+          },
+        ],
+        localizations: {
+          ja: {
+            fields: {
+              'profile-widget': {
+                label: 'プロフィール',
+                block_type: 'account_totp_widget',
+                href: 'javascript:alert(1)',
+              },
+            },
+          },
+          unsupported: { display_name: 'Ignored' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const inserted = rows.find((row) => row.screen_key === 'localized_account');
+    const localizations = JSON.parse(String(inserted?.localizations_json)) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(localizations).toEqual({
+      ja: { fields: { 'profile-widget': { label: 'プロフィール' } } },
+    });
+  });
+
+  it('prevents updates to built-in screens', async () => {
+    rows.push({
+      id: 'screen-system',
+      tenant_id: 'tenant-1',
+      screen_key: 'account_profile',
+      display_name: 'Profile',
+      screen_kind: 'account',
+      fields_json: '[]',
+      settings_json: '{}',
+      is_system: 1,
+    });
+    const response = await adminScreenUpdateHandler(
+      createMutationContext({ display_name: 'Changed' }, 'screen-system')
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.db.execute).not.toHaveBeenCalled();
+  });
+
   it('backfills localized system screens when listing screens', async () => {
     const response = await adminScreensListHandler(createContext());
     expect(response.status).toBe(200);
@@ -190,20 +297,30 @@ describe('admin screens', () => {
     expect(loginJaFields?.['auth.passkey-1']?.label).toBe('Passkeyでサインイン');
     const loginZhCn = (
       screensByKey.get('login')?.localizations as Record<string, Record<string, unknown>>
-    ).zh_CN?.fields as Record<string, Record<string, unknown>>;
+    )['zh-CN']?.fields as Record<string, Record<string, unknown>>;
     expect(loginZhCn?.['auth.mail_otp-3']?.label).toBe('通过电子邮件发送验证码');
     expect(loginZhCn?.['auth.totp-4']?.label).toBe('使用身份验证器应用登录');
     expect(loginZhCn?.['auth.external_idp-6']?.label).toBe('Ext. IdP');
     expect(loginZhCn?.['divider.directory_password-7']?.label).toBe('或');
     const codeInputZhCn = (
       screensByKey.get('code_input')?.localizations as Record<string, Record<string, unknown>>
-    ).zh_CN?.fields as Record<string, Record<string, unknown>>;
+    )['zh-CN']?.fields as Record<string, Record<string, unknown>>;
     expect(codeInputZhCn?.['heading.code_input-0']?.label).toBe('输入验证码');
     expect(codeInputZhCn?.['auth.code_input-1']?.label).toBe('验证码');
     expect(codeInputZhCn?.['auth.code_input-1']?.text).toBe(
       '请输入电子邮件或身份验证器应用中的验证码。'
     );
     expect(rows.map((row) => row.screen_key).sort()).toEqual([
+      'account_activity',
+      'account_consents',
+      'account_custom',
+      'account_devices',
+      'account_overview',
+      'account_passkeys',
+      'account_profile',
+      'account_sessions',
+      'account_social_accounts',
+      'account_totp',
       'code_input',
       'consent',
       'login',
@@ -462,7 +579,7 @@ describe('admin screens', () => {
             },
           },
         },
-        zh_CN: {
+        'zh-CN': {
           display_name: 'Login',
           fields: {
             'auth.passkey-0': {
@@ -489,7 +606,7 @@ describe('admin screens', () => {
     expect((ja.fields as Record<string, Record<string, unknown>>)['auth.passkey-1'].label).toBe(
       'Passkeyでサインイン'
     );
-    const zhCn = (login?.localizations as Record<string, Record<string, unknown>>).zh_CN;
+    const zhCn = (login?.localizations as Record<string, Record<string, unknown>>)['zh-CN'];
     expect(zhCn.display_name).toBe('登录');
     expect((zhCn.fields as Record<string, Record<string, unknown>>)['auth.passkey-1'].label).toBe(
       '使用 Passkey 登录'

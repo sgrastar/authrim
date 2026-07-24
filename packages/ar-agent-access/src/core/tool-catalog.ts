@@ -1,4 +1,5 @@
 import { canonicalizeJson } from './canonical-json';
+import { computeAgentToolContractDigest } from './tool-contract';
 import type { AgentToolDefinition, JsonObject, JsonValue } from './types';
 
 export interface AgentToolCatalog {
@@ -13,6 +14,7 @@ export const PHASE_ONE_ADMIN_READ_PERMISSIONS = Object.freeze({
   clients: 'admin:clients:read',
   audit: 'admin:admin_audit:read',
   settings: 'admin:agent_settings:read',
+  grants: 'admin:agent_grants:read',
 } as const);
 
 function freezeJson(value: JsonValue): JsonValue {
@@ -39,6 +41,9 @@ export function createAgentToolCatalog(
   const byName = new Map<string, AgentToolDefinition>();
   for (const tool of tools) {
     if (byName.has(tool.name)) throw new TypeError(`Duplicate Agent tool name: ${tool.name}`);
+    if (tool.schemaDigest !== computeAgentToolContractDigest(tool)) {
+      throw new TypeError(`Agent tool contract digest mismatch: ${tool.id}`);
+    }
     byName.set(
       tool.name,
       Object.freeze({

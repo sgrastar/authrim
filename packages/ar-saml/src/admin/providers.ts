@@ -46,8 +46,10 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  createLogger,
   createAuditLog,
   hasAdminPermission,
+  bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -124,6 +126,24 @@ type AdminSAMLAuthContext = Context<{
   Bindings: Env;
   Variables: { adminAuth?: AdminAuthContext };
 }>;
+
+async function invalidateAuthenticationMethodsCacheForSAML(
+  env: Env,
+  tenantId: string,
+  reason: string,
+  c?: AdminSAMLContext
+): Promise<void> {
+  const log = c ? getLogger(c).module('SAML') : createLogger().module('SAML');
+  try {
+    await bumpAuthenticationMethodsCacheRevision(env, tenantId);
+  } catch (error) {
+    log.warn('Failed to bump authentication methods cache revision', {
+      tenantId,
+      reason,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
+}
 
 function buildSAMLMetadataPublicationSettings(env: Env): {
   signingMode: 'disabled' | 'enabled';
@@ -1458,6 +1478,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
           body.enabled !== false && !providerEnabled ? true : undefined,
       },
     });
+    await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.created', c);
 
     return c.json(
       {
@@ -1626,6 +1647,7 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         disabled_due_to_expired_certificate: requestedEnabled && !nextEnabled ? true : undefined,
       },
     });
+    await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.updated', c);
 
     return c.json({
       id,
@@ -1678,6 +1700,7 @@ export async function handleDeleteProvider(c: AdminSAMLContext): Promise<Respons
       resourceId: id ?? 'unknown',
       severity: 'warning',
     });
+    await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.deleted', c);
 
     return c.json({ success: true });
   } catch (error) {
@@ -1800,6 +1823,12 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
           existing.enabled === 1 && !nextEnabled ? true : undefined,
       },
     });
+    await invalidateAuthenticationMethodsCacheForSAML(
+      c.env,
+      tenantId,
+      'saml.provider.metadata_imported',
+      c
+    );
 
     return c.json({
       success: true,
@@ -1962,6 +1991,12 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         providerType: existing.provider_type,
         refreshStatus,
       });
+      await invalidateAuthenticationMethodsCacheForSAML(
+        c.env,
+        tenantId,
+        'saml.provider.metadata_refreshed',
+        c
+      );
 
       return c.json({
         success: true,
@@ -2003,6 +2038,12 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       providerType: existing.provider_type,
       refreshStatus,
     });
+    await invalidateAuthenticationMethodsCacheForSAML(
+      c.env,
+      tenantId,
+      'saml.provider.metadata_refreshed',
+      c
+    );
 
     return c.json({
       success: true,
@@ -2853,6 +2894,7 @@ async function processAggregateBatchCreate(
         .filter((key): key is string => Boolean(key))
     );
 
+    let successfulImports = 0;
     for (const entityId of input.entityIds) {
       try {
         const metadataXml = extractEntityDescriptorXml(preview.metadataXml, entityId);
@@ -2923,6 +2965,7 @@ async function processAggregateBatchCreate(
           reasonCodes: ['federation.selected_entity.imported'],
         });
         existingEntityKeys.add(entityKey);
+        successfulImports += 1;
       } catch (error) {
         await recordAggregateBatchResult(env, input.batchId, {
           entityId,
@@ -2939,6 +2982,13 @@ async function processAggregateBatchCreate(
       }
     }
 
+    if (successfulImports > 0) {
+      await invalidateAuthenticationMethodsCacheForSAML(
+        env,
+        input.tenantId,
+        'saml.provider.aggregate_batch_created'
+      );
+    }
     await completeAggregateBatch(env, input.batchId);
   } catch (error) {
     await failAggregateBatch(

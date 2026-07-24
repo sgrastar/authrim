@@ -8,15 +8,12 @@
 	const { brandingStore } = useLoginUIStores();
 
 	let errorCode = $state('');
-	let errorDescription = $state('');
 	let errorMessage = $state('');
 
 	onMount(() => {
 		// Get error parameters from URL
 		const urlParams = new URLSearchParams(window.location.search);
 		errorCode = urlParams.get('error') || 'unknown';
-		errorDescription = urlParams.get('error_description') || '';
-
 		// Get user-friendly error message
 		errorMessage = getErrorMessage(errorCode);
 	});
@@ -48,7 +45,7 @@
 
 <svelte:head>
 	<title>{$LL.error_title()} - {brandingStore.brandName || $LL.app_title()}</title>
-	<meta name="description" content="An error occurred. Please try again or contact support." />
+	<meta name="description" content={$LL.error_subtitle()} />
 </svelte:head>
 
 <div class="auth-page">
@@ -87,9 +84,6 @@
 			<!-- Error Message -->
 			<Alert variant="error" class="mb-4 text-left">
 				<p class="font-medium mb-1">{errorMessage}</p>
-				{#if errorDescription}
-					<p class="text-sm opacity-90">{errorDescription}</p>
-				{/if}
 			</Alert>
 
 			<!-- Error Code -->

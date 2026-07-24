@@ -255,6 +255,7 @@ const adminOther = {
 	admin_theme_preview_surface_registration: 'Registration',
 	admin_theme_preview_surface_code: 'Code',
 	admin_theme_preview_surface_consent: 'Consent',
+	admin_theme_preview_surface_account: 'Account',
 	admin_theme_preview_surface_error: 'Error',
 	admin_theme_preview_mode_light: 'Light',
 	admin_theme_preview_mode_dark: 'Dark',

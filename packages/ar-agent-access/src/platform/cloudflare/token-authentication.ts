@@ -94,6 +94,14 @@ function temporarilyUnavailable(): Response {
   );
 }
 
+function authenticationFailure(
+  response: Response,
+  code: string,
+  tenantId?: string
+): CloudflareAgentAccessAdmissionResult {
+  return { allowed: false, response, auditContext: { code, tenantId } };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -187,12 +195,24 @@ export function createCloudflareAgentAccessTokenAuthenticator<
 
   return async (request, env): Promise<CloudflareAgentAccessAdmissionResult> => {
     const tenant = resolveTenantFromRequest(request, env);
-    if (!tenant.success) return { allowed: false, response: invalidToken(request) };
+    if (!tenant.success) {
+      return authenticationFailure(invalidToken(request), 'AGENT_MCP_TENANT_RESOLUTION_FAILED');
+    }
     if (!(await isCloudflareAgentAccessMcpEnabled(env, tenant.tenantId))) {
-      return { allowed: false, response: new Response(null, { status: 404 }) };
+      return authenticationFailure(
+        new Response(null, { status: 404 }),
+        'AGENT_MCP_DISABLED',
+        tenant.tenantId
+      );
     }
     const authorization = parseAuthorization(request);
-    if (!authorization) return { allowed: false, response: invalidToken(request) };
+    if (!authorization) {
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_AUTHORIZATION_HEADER_INVALID',
+        tenant.tenantId
+      );
+    }
 
     const origin = new URL(request.url).origin;
     const issuer = `${origin}/oauth/admin-agent`;
@@ -212,7 +232,11 @@ export function createCloudflareAgentAccessTokenAuthenticator<
       // Keep verification details out of the public error.
     }
     if (!claims || claims.tenant_id !== tenant.tenantId) {
-      return { allowed: false, response: invalidToken(request) };
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_TOKEN_INVALID',
+        tenant.tenantId
+      );
     }
     if (
       !claims.sub.startsWith('admin_user:') ||
@@ -221,7 +245,11 @@ export function createCloudflareAgentAccessTokenAuthenticator<
         ? claims.act.sub !== `client:${claims.client_id}`
         : claims.act.sub !== `machine:${claims.act_principal_id}`)
     ) {
-      return { allowed: false, response: invalidToken(request) };
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_ACTOR_CLAIMS_INVALID',
+        tenant.tenantId
+      );
     }
     if (
       (claims.token_binding === 'bearer' &&
@@ -229,11 +257,21 @@ export function createCloudflareAgentAccessTokenAuthenticator<
       (claims.token_binding === 'dpop' &&
         (authorization.scheme !== 'dpop' || typeof claims.cnf?.jkt !== 'string'))
     ) {
-      return { allowed: false, response: invalidToken(request) };
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_TOKEN_BINDING_INVALID',
+        tenant.tenantId
+      );
     }
     if (claims.token_binding === 'dpop') {
       const proof = request.headers.get('dpop');
-      if (!proof) return { allowed: false, response: invalidToken(request) };
+      if (!proof) {
+        return authenticationFailure(
+          invalidToken(request),
+          'AGENT_MCP_DPOP_PROOF_REQUIRED',
+          tenant.tenantId
+        );
+      }
       let dpop: { valid: boolean; jkt?: string };
       try {
         dpop = await dependencies.validateDpop({
@@ -245,10 +283,18 @@ export function createCloudflareAgentAccessTokenAuthenticator<
           env,
         });
       } catch {
-        return { allowed: false, response: temporarilyUnavailable() };
+        return authenticationFailure(
+          temporarilyUnavailable(),
+          'AGENT_MCP_DPOP_VALIDATION_UNAVAILABLE',
+          tenant.tenantId
+        );
       }
       if (!dpop.valid || dpop.jkt !== claims.cnf?.jkt) {
-        return { allowed: false, response: invalidToken(request) };
+        return authenticationFailure(
+          invalidToken(request),
+          'AGENT_MCP_DPOP_PROOF_INVALID',
+          tenant.tenantId
+        );
       }
     }
 
@@ -270,7 +316,11 @@ export function createCloudflareAgentAccessTokenAuthenticator<
         ),
       ]);
     } catch {
-      return { allowed: false, response: temporarilyUnavailable() };
+      return authenticationFailure(
+        temporarilyUnavailable(),
+        'AGENT_MCP_AUTHORIZATION_STATE_UNAVAILABLE',
+        tenant.tenantId
+      );
     }
     const tokenScopes = claims.scope.split(/\s+/u).filter(Boolean);
     if (
@@ -280,7 +330,8 @@ export function createCloudflareAgentAccessTokenAuthenticator<
       grant.delegatorId !== delegatorId ||
       grant.generation !== claims.grant_generation ||
       grant.consentVersion !== claims.consent_version ||
-      (grant.expiresAt !== undefined && grant.expiresAt <= dependencies.now()) ||
+      grant.expiresAt === undefined ||
+      grant.expiresAt <= dependencies.now() ||
       !permissions ||
       grant.permissions.some((permission) => !hasAdminPermission(permissions, permission)) ||
       !consent ||
@@ -290,7 +341,11 @@ export function createCloudflareAgentAccessTokenAuthenticator<
           !AGENT_SCOPES.has(scope as AgentScope) || !grant.scopes.includes(scope as AgentScope)
       )
     ) {
-      return { allowed: false, response: invalidToken(request) };
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_GRANT_OR_CONSENT_INVALID',
+        tenant.tenantId
+      );
     }
 
     const tokenMaximum = claims.authorization_details

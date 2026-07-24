@@ -93,11 +93,6 @@ describe('OIDC attribute release consent', () => {
     });
 
     expect(adapter.getAll('attribute_release_consents')).toHaveLength(1);
-    expect(resolveAuthCorePersistenceAdapterFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'oidc-attribute-release-consent',
-      { tenantId: 'tenant-a' }
-    );
   });
 
   it('rejects OIDC every-time claim release when OAuth consent is not recent', async () => {

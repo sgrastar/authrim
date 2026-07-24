@@ -8,6 +8,11 @@ const mocks = vi.hoisted(() => ({
   queryD1Rows: vi.fn(),
   runD1Migrations: vi.fn(),
   loadLock: vi.fn(),
+  acquireLock: vi.fn(),
+  releaseLock: vi.fn(),
+  loadRelease: vi.fn(),
+  saveLock: vi.fn(),
+  recordTargets: vi.fn(),
   spinner: {
     text: '',
     start: vi.fn(),
@@ -25,7 +30,19 @@ vi.mock('../core/cloudflare.js', () => ({
   queryD1Rows: mocks.queryD1Rows,
   runD1Migrations: mocks.runD1Migrations,
 }));
-vi.mock('../core/lock.js', () => ({ loadLockFileAuto: mocks.loadLock }));
+vi.mock('../core/lock.js', () => ({
+  loadLockFileAuto: mocks.loadLock,
+  acquireEnvironmentOperationLock: mocks.acquireLock,
+  saveLockFile: mocks.saveLock,
+}));
+vi.mock('../core/release-migrations.js', () => ({
+  loadInstalledReleaseMigrationManifest: mocks.loadRelease,
+  buildTenantD1ReleaseMigrationTarget: vi.fn((target) => target),
+  calculateReleaseManifestChecksum: vi.fn(() => 'manifest-checksum'),
+}));
+vi.mock('../core/release-state.js', () => ({
+  withRecordedReleaseSchemaTargets: mocks.recordTargets,
+}));
 
 import { tenantDatabaseSlotResetCommand } from '../cli/commands/tenant-db-slot-reset.js';
 
@@ -48,6 +65,11 @@ describe('tenantDatabaseSlotResetCommand', () => {
       type: 'new',
       path: '/tmp/lock.json',
       lock: {
+        version: '1.0.0',
+        env: 'prod',
+        createdAt: '2026-07-21T00:00:00.000Z',
+        productVersion: '0.4.0',
+        kv: {},
         d1: {
           TDB_SLOT_0001_CORE: { id: 'core-id', name: 'tenant-core' },
           TDB_SLOT_0001_PII: { id: 'pii-id', name: 'tenant-pii' },
@@ -55,6 +77,18 @@ describe('tenantDatabaseSlotResetCommand', () => {
       },
     });
     mocks.findMigrationsRoot.mockResolvedValue({ path: '/repo/migrations', searchPaths: [] });
+    mocks.acquireLock.mockResolvedValue({ release: mocks.releaseLock });
+    mocks.recordTargets.mockImplementation((value) => value);
+    mocks.loadRelease.mockReturnValue({
+      draft: false,
+      manifest: {
+        productVersion: '0.4.0',
+        streams: [
+          { id: 'd1-core', files: [{ path: '001.sql', checksum: 'a'.repeat(64) }] },
+          { id: 'd1-pii', files: [{ path: '001.sql', checksum: 'b'.repeat(64) }] },
+        ],
+      },
+    });
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('FROM tenant_database_slots')) return [slot];
       if (sql.includes('sqlite_master')) {
@@ -92,6 +126,44 @@ describe('tenantDatabaseSlotResetCommand', () => {
     expect(mocks.executeD1Command).not.toHaveBeenCalled();
   });
 
+  it('rejects a slot reset while another topology update is waiting for deployment', async () => {
+    mocks.loadLock.mockResolvedValueOnce({
+      type: 'new',
+      path: '/tmp/lock.json',
+      lock: {
+        version: '1.0.0',
+        env: 'prod',
+        createdAt: '2026-07-21T00:00:00.000Z',
+        productVersion: '0.4.0',
+        kv: {},
+        d1: {
+          TDB_SLOT_0001_CORE: { id: 'core-id', name: 'tenant-core' },
+          TDB_SLOT_0001_PII: { id: 'pii-id', name: 'tenant-pii' },
+        },
+        topologyUpdate: {
+          kind: 'r2',
+          phase: 'pending_deploy',
+          targetProductVersion: '0.4.0',
+          configChecksum: 'a'.repeat(64),
+          authorizationTokenHash: 'b'.repeat(64),
+          startedAt: '2026-07-21T00:00:00.000Z',
+          updatedAt: '2026-07-21T00:00:00.000Z',
+        },
+      },
+    });
+    const exit = vi.spyOn(process, 'exit').mockImplementationOnce(() => {
+      throw new Error('process.exit:1');
+    });
+
+    await expect(
+      tenantDatabaseSlotResetCommand({ env: 'prod', slot: '1', yes: true })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(mocks.queryD1Rows).not.toHaveBeenCalled();
+    expect(mocks.executeD1Migration).not.toHaveBeenCalled();
+  });
+
   it('honors an interactive cancellation before destructive work', async () => {
     mocks.confirm.mockResolvedValue(false);
 
@@ -114,8 +186,20 @@ describe('tenantDatabaseSlotResetCommand', () => {
     );
     // Temporary SQL files are removed after execution; the calls still prove both reset operations ran.
     expect(resetSql).toEqual(['', '']);
-    expect(mocks.runD1Migrations).toHaveBeenNthCalledWith(1, 'tenant-core', '/repo/migrations');
-    expect(mocks.runD1Migrations).toHaveBeenNthCalledWith(2, 'tenant-pii', '/repo/migrations/pii');
+    expect(mocks.runD1Migrations).toHaveBeenNthCalledWith(
+      1,
+      'tenant-core',
+      '/repo/migrations',
+      undefined,
+      expect.objectContaining({ releaseVersion: '0.4.0' })
+    );
+    expect(mocks.runD1Migrations).toHaveBeenNthCalledWith(
+      2,
+      'tenant-pii',
+      '/repo/migrations/pii',
+      undefined,
+      expect.objectContaining({ releaseVersion: '0.4.0' })
+    );
     expect(mocks.executeD1Command).toHaveBeenCalledWith(
       'prod-authrim-admin-db',
       expect.stringContaining("SET state = 'available'")

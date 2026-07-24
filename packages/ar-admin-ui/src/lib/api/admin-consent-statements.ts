@@ -105,24 +105,6 @@ export interface UserConsentRecord {
 	updated_at: number;
 }
 
-export interface ConsentGateEvidenceRecord {
-	id: string;
-	gate_kind: 'legal_document' | 'oidc_authorization' | 'saml_attribute_release';
-	protocol: string;
-	consent_kind: string;
-	target_type?: string | null;
-	target_id?: string | null;
-	statement_id: string;
-	statement_version: string;
-	policy_id?: string | null;
-	flow_id?: string | null;
-	flow_version_id?: string | null;
-	flow_node_id?: string | null;
-	receipt_id?: string | null;
-	status: string;
-	created_at: number;
-}
-
 export interface ConsentItemHistory {
 	id: string;
 	tenant_id: string;
@@ -447,9 +429,7 @@ export const adminConsentStatementsAPI = {
 
 	// === User Consent Records ===
 
-	async listUserConsentRecords(
-		userId: string
-	): Promise<{ records: UserConsentRecord[]; evidence: ConsentGateEvidenceRecord[] }> {
+	async listUserConsentRecords(userId: string): Promise<{ records: UserConsentRecord[] }> {
 		return apiRequest(`/api/admin/users/${encodeURIComponent(userId)}/consent-records`);
 	},
 

@@ -10,6 +10,7 @@ const digest = 'x'.repeat(32);
 function profile(extra: Record<string, unknown> = {}) {
   return {
     schemaVersion: 'authrim-agent-plan-v1' as const,
+    goal: 'Apply an approved Authrim configuration change',
     steps: [
       {
         id: 'client-metadata',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CLOUDFLARE_ADMIN_READ_ROUTES,
+  projectAgentGrantListResponse,
   projectAgentSessionPostureResponse,
   projectAgentSettingsResponse,
 } from '../admin-read-routes';
@@ -24,6 +25,7 @@ describe('Cloudflare Admin read route allowlist', () => {
       'admin.read.users.get',
       'admin.read.clients.list',
       'admin.read.clients.get',
+      'admin.read.agent-grants.list',
       'admin.read.audit.search',
       'admin.read.agent-settings.get',
       'admin.read.identity-providers.inspect',
@@ -192,9 +194,73 @@ describe('Cloudflare Admin read route allowlist', () => {
     );
     expect(() => path('admin.read.users.get', { user_id: '../admin-audit-log' })).toThrow();
     expect(() => path('admin.read.users.search', { cursor: 'not-a-cursor' })).toThrow();
+    expect(
+      path('admin.read.clients.get', {
+        client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
+      })
+    ).toBe(
+      '/api/admin/agent-read/clients/https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata'
+    );
+    expect(() =>
+      path('admin.read.clients.get', { client_id: 'http://metadata.example/client' })
+    ).toThrow('Invalid client_id');
+    expect(() =>
+      path('admin.read.clients.get', { client_id: 'https://metadata.example/client#fragment' })
+    ).toThrow('Invalid client_id');
+    expect(
+      path('admin.read.agent-grants.list', {
+        status: 'active',
+        delegator_id: 'admin-1',
+        page_size: 25,
+        offset: 50,
+      })
+    ).toBe('/api/admin/agent-grants?limit=25&offset=50&status=active&delegator_id=admin-1');
     expect(CLOUDFLARE_ADMIN_READ_ROUTES['admin.read.sessions.inspect']?.path).toBe(
       '/api/admin/agent-read/session-posture'
     );
+  });
+
+  it('projects Agent Grant lists without authorization details or internal snapshot hashes', () => {
+    const projected = projectAgentGrantListResponse({
+      grants: [
+        {
+          id: 'grant-1',
+          client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
+          machine_principal_id: null,
+          purpose: 'Test tenant configuration',
+          status: 'active',
+          delegation_mode: 'user_consent',
+          permissions: ['admin:agent_grants:read'],
+          scopes: ['agent:read'],
+          task_set_id: 'builtin_agent_task_set_read_only_inspector',
+          task_set_version: 8,
+          scope_policy_id: 'scope-policy-1',
+          scope_policy_version: 1,
+          expires_at: 2_000,
+          last_used_at: 1_500,
+          created_at: 1_000,
+          updated_at: 1_500,
+          authorization_details: [{ type: 'authrim_agent_access' }],
+          resolved_tools: [{ tool_name: 'secret-in-list' }],
+          access_snapshot_hash: 'never-return',
+        },
+      ],
+      pagination: { total: 1, limit: 25, offset: 0 },
+    });
+    expect(projected).toMatchObject({
+      grants: [
+        {
+          id: 'grant-1',
+          client_id: 'https://claude.ai/oauth/claude-code-client-metadata',
+          permissions: ['admin:agent_grants:read'],
+          scopes: ['agent:read'],
+        },
+      ],
+      pagination: { total: 1, limit: 25, offset: 0 },
+    });
+    expect(JSON.stringify(projected)).not.toContain('authorization_details');
+    expect(JSON.stringify(projected)).not.toContain('access_snapshot_hash');
+    expect(JSON.stringify(projected)).not.toContain('secret-in-list');
   });
 
   it('derives tenant settings paths from verified authorization context', () => {
