@@ -1,36 +1,14 @@
-import type { FlowRuntimeStartResponse } from '../api/flow-runtime';
+import {
+	readStoredFlowRuntimeState,
+	type FlowRuntimeStartResponse,
+	type StoredFlowRuntimeState
+} from '@authrim/core';
 import { LOGIN_UI_SESSION_STORAGE_KEYS } from './storage-keys';
 
-export interface StoredFlowRuntimeState {
-	interaction_id: string;
-	contract_hash: string;
-	signature: string;
-	post_auth_redirect?: string;
-}
+export type { StoredFlowRuntimeState };
 
 function getFlowRuntimeStateKey(interactionId: string): string {
 	return `${LOGIN_UI_SESSION_STORAGE_KEYS.flowRuntimeStatePrefix}${interactionId}`;
-}
-
-function readStoredFlowRuntimeState(value: string | null): StoredFlowRuntimeState | null {
-	if (!value) return null;
-	try {
-		const parsed = JSON.parse(value) as StoredFlowRuntimeState;
-		if (!parsed || typeof parsed !== 'object') return null;
-		if (
-			typeof parsed.interaction_id !== 'string' ||
-			typeof parsed.contract_hash !== 'string' ||
-			typeof parsed.signature !== 'string'
-		) {
-			return null;
-		}
-		if (parsed.post_auth_redirect !== undefined && typeof parsed.post_auth_redirect !== 'string') {
-			return null;
-		}
-		return parsed;
-	} catch {
-		return null;
-	}
 }
 
 export function persistFlowRuntimeState(

@@ -556,8 +556,8 @@ importers:
   packages/ar-login-ui:
     dependencies:
       '@authrim/core':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.2.1
+        version: 0.2.1
       '@simplewebauthn/browser':
         specifier: ^13.2.2
         version: 13.2.2
@@ -993,8 +993,8 @@ packages:
   '@asamuzakjp/nwsapi@2.3.9':
     resolution: {integrity: sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==}
 
-  '@authrim/core@0.2.0':
-    resolution: {integrity: sha512-dUY1V3lO0X8p8GWiUWfoGT6e/ygday90hcFMwNrh0ATVLAx4YoGllQ5CZs2yHYLpd8Mpfb5MUmexZiuqI8cxcg==}
+  '@authrim/core@0.2.1':
+    resolution: {integrity: sha512-R9BUp/UlIc+62IZqcxko5XAzO7Gjk7FR4h073XzeReQq/FVD9lBouhj7mtTJoZkBpEkQMZ3M+ea0Ci3aelTl6Q==}
     engines: {node: '>=18'}
 
   '@axe-core/playwright@4.11.0':
@@ -6417,7 +6417,7 @@ snapshots:
 
   '@asamuzakjp/nwsapi@2.3.9': {}
 
-  '@authrim/core@0.2.0': {}
+  '@authrim/core@0.2.1': {}
 
   '@axe-core/playwright@4.11.0(playwright-core@1.57.0)':
     dependencies:
