@@ -4473,9 +4473,9 @@ const defaultUiPaths = {
 	error: '/error',
 	device: '/device',
 	deviceAuthorize: '/device/authorize',
-	logoutComplete: '/logout/complete',
+	logoutComplete: '/logout-complete',
 	loggedOut: '/logged-out',
-	register: '/register'
+	register: '/signup'
 };
 
 let devUiConfig: { baseUrl: string | null; paths: typeof defaultUiPaths } = {

@@ -378,6 +378,57 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
   message?: string;
   details?: Record<string, unknown>;
 } {
+  const supportedLoginUILocales = [
+    'en',
+    'ja',
+    'zh-CN',
+    'zh-TW',
+    'es',
+    'pt',
+    'fr',
+    'de',
+    'ko',
+    'ru',
+    'id',
+  ];
+  const supportedLocales = body.set?.['login-ui.supported_locales'];
+  const defaultLocale = body.set?.['login-ui.default_locale'];
+  let parsedSupportedLocales: string[] | undefined;
+
+  if (supportedLocales !== undefined) {
+    if (typeof supportedLocales !== 'string') {
+      return { ok: false, message: 'login-ui.supported_locales must be a comma-separated string' };
+    }
+    parsedSupportedLocales = supportedLocales
+      .split(',')
+      .map((locale) => locale.trim())
+      .filter(Boolean);
+    if (
+      parsedSupportedLocales.length === 0 ||
+      new Set(parsedSupportedLocales).size !== parsedSupportedLocales.length ||
+      parsedSupportedLocales.some((locale) => !supportedLoginUILocales.includes(locale))
+    ) {
+      return {
+        ok: false,
+        message: 'login-ui.supported_locales must contain one or more unique supported locales',
+      };
+    }
+  }
+
+  if (
+    defaultLocale !== undefined &&
+    (typeof defaultLocale !== 'string' || !supportedLoginUILocales.includes(defaultLocale))
+  ) {
+    return { ok: false, message: 'login-ui.default_locale must be a supported locale' };
+  }
+  if (
+    typeof defaultLocale === 'string' &&
+    parsedSupportedLocales &&
+    !parsedSupportedLocales.includes(defaultLocale)
+  ) {
+    return { ok: false, message: 'login-ui.default_locale must be enabled in supported_locales' };
+  }
+
   const customCss = body.set?.['login-ui.custom_css'];
   if (customCss !== undefined) {
     const validation = validateLoginUICustomCss(customCss);

@@ -55,6 +55,16 @@ const expectedLocalizationLanguages = [
   'zh-CN',
   'zh-TW',
 ];
+const expectedDefaultAuthFieldNames = [
+  'auth.passkey',
+  'divider.or',
+  'auth.mail_otp',
+  'auth.totp',
+  'divider.other_accounts',
+  'auth.external_idp',
+  'divider.directory_password',
+  'auth.directory_password',
+];
 
 function createContext() {
   return {
@@ -283,13 +293,32 @@ describe('admin screens', () => {
     const registrationFields = registration?.fields as Array<Record<string, unknown>>;
     expect(registrationFields.map((field) => field.field)).toEqual([
       'heading.registration',
-      'auth.passkey',
+      ...expectedDefaultAuthFieldNames,
     ]);
+    const loginFields = screensByKey.get('login')?.fields as Array<Record<string, unknown>>;
+    expect(registrationFields.slice(1).map((field) => field.field)).toEqual(
+      loginFields.slice(1).map((field) => field.field)
+    );
+    expect(registrationFields.find((field) => field.field === 'divider.or')).toMatchObject({
+      display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+    });
+    expect(
+      registrationFields.find((field) => field.field === 'divider.other_accounts')
+    ).toMatchObject({
+      display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
+    });
+    expect(
+      registrationFields.find((field) => field.field === 'divider.directory_password')
+    ).toMatchObject({
+      display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
+    });
     const registrationJaFields = (
       registration?.localizations as Record<string, Record<string, unknown>>
     ).ja?.fields as Record<string, Record<string, unknown>>;
     expect(registrationJaFields?.['heading.registration-0']?.label).toBe('アカウントを作成');
     expect(registrationJaFields?.['auth.passkey-1']?.label).toBe('Passkeyでアカウント作成');
+    expect(registrationJaFields?.['auth.mail_otp-3']?.label).toBe('認証コードをメール送信');
+    expect(registrationJaFields?.['auth.totp-4']?.label).toBe('認証アプリで新規登録');
     const loginJaFields = (
       screensByKey.get('login')?.localizations as Record<string, Record<string, unknown>>
     ).ja?.fields as Record<string, Record<string, unknown>>;
@@ -392,7 +421,14 @@ describe('admin screens', () => {
       'heading.registration',
       'email',
       'name',
+      'divider.or',
       'auth.passkey',
+      'auth.mail_otp',
+      'auth.totp',
+      'divider.other_accounts',
+      'auth.external_idp',
+      'divider.directory_password',
+      'auth.directory_password',
     ]);
   });
 
@@ -452,7 +488,10 @@ describe('admin screens', () => {
       (screen) => screen.screen_key === 'registration'
     );
     const fields = registration?.fields as Array<Record<string, unknown>>;
-    expect(fields.map((field) => field.field)).toEqual(['heading.registration', 'auth.passkey']);
+    expect(fields.map((field) => field.field)).toEqual([
+      'heading.registration',
+      ...expectedDefaultAuthFieldNames,
+    ]);
   });
 
   it('migrates the code input system screen to the dedicated screen kind', async () => {

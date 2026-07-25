@@ -176,6 +176,7 @@ export interface LoginUIConfig {
 		}>;
 	};
 	supportedLocales: string[];
+	defaultLocale: string;
 	selfService?: {
 		accountPageEnabled: boolean;
 		accountPagePath: string;

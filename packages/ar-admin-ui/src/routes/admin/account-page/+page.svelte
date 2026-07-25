@@ -154,8 +154,6 @@
 	let selectedPageId = $state('');
 	let editorLocale = $state(getLocale());
 	let previewViewport = $state<'desktop' | 'mobile'>('desktop');
-	let previewMode = $state<'light' | 'dark'>('light');
-	let previewState = $state<'normal' | 'empty' | 'loading' | 'success' | 'error'>('normal');
 	let draggedIndex = $state<number | null>(null);
 
 	let accountScreens = $derived(screens.filter((screen) => screen.screen_kind === 'account'));
@@ -996,20 +994,8 @@
 					<select bind:value={previewViewport}
 						><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select
 					>
-					<select bind:value={previewMode}
-						><option value="light">Light</option><option value="dark">Dark</option></select
-					>
-					<select bind:value={previewState}
-						><option value="normal">Normal</option><option value="empty">Empty</option><option
-							value="loading">Loading</option
-						><option value="success">Success</option><option value="error">Error</option></select
-					>
 				</div>
-				<div
-					class="account-preview"
-					class:mobile={previewViewport === 'mobile'}
-					class:dark={previewMode === 'dark'}
-				>
+				<div class="account-preview" class:mobile={previewViewport === 'mobile'}>
 					<header>
 						<h3>
 							{editorLocale === 'en'
@@ -1041,10 +1027,7 @@
 											>
 										{:else if field.block_type === 'divider'}<hr />
 										{:else if field.block_type === 'layout_row'}{:else}<div class="widget-preview">
-												<span class="i-ph-squares-four"></span><strong>{widgetLabel(field)}</strong
-												><small
-													>{t('操作と状態表示を含むWidget', `Widget state: ${previewState}`)}</small
-												>
+												<span class="i-ph-squares-four"></span><strong>{widgetLabel(field)}</strong>
 											</div>
 										{/if}
 									{/each}
@@ -1322,14 +1305,6 @@
 	.account-preview.mobile .preview-grid {
 		grid-template-columns: 1fr;
 	}
-	.account-preview.dark {
-		--color-surface: #172033;
-		--color-surface-muted: #0f172a;
-		--color-text: #f8fafc;
-		--color-text-muted: #aab5c5;
-		--color-border: #334155;
-		color: var(--color-text);
-	}
 	.account-preview header {
 		margin-bottom: 0.75rem;
 	}
@@ -1370,13 +1345,8 @@
 		align-items: center;
 	}
 	.widget-preview > span {
-		grid-row: 1 / span 2;
 		color: var(--color-primary);
 		font-size: 1.1rem;
-	}
-	.widget-preview small {
-		color: var(--color-text-muted);
-		font-size: 0.68rem;
 	}
 	@media (max-width: 1180px) {
 		.editor-grid {

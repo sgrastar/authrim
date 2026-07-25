@@ -682,7 +682,7 @@ describe('UI Configuration Manager', () => {
         deviceAuthorize: '/device/authorize',
         logoutComplete: '/logout-complete',
         loggedOut: '/logged-out',
-        register: '/register',
+        register: '/signup',
       });
     });
   });

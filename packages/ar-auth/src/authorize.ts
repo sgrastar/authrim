@@ -369,7 +369,7 @@ async function getUIRedirectTarget(
       deviceAuthorize: '/device/authorize',
       logoutComplete: '/logout-complete',
       loggedOut: '/logged-out',
-      register: '/register',
+      register: '/signup',
     };
     return { type: 'builtin', fallbackPath: fallbackPaths[path] || '/error' };
   }

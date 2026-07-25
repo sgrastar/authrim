@@ -9,10 +9,60 @@
 	} from '$lib/admin/admin-login-return';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { themeStore, type ThemeMode } from '$lib/stores/theme.svelte';
+	import { LL, getLocale, setLocale } from '$i18n/i18n-svelte';
+	import { LOCALE_LABELS, SUPPORTED_LOCALES, isSupportedLocale } from '$i18n/locales';
+	import type { Locales } from '$i18n/i18n-types';
 
 	let error = $state('');
 	let loading = $state(false);
+	let selectedLanguage = $state<Locales>(getLocale());
+	let languageSaving = $state(false);
+	let languageError = $state('');
+
+	function getLanguageName(language: Locales): string {
+		const localizedName = language === 'en' ? $LL.language_english() : $LL.language_japanese();
+		const nativeName = LOCALE_LABELS[language].nativeName;
+		return nativeName === localizedName ? localizedName : `${localizedName} (${nativeName})`;
+	}
+
+	function handleThemeChange(mode: ThemeMode): void {
+		themeStore.setMode(mode);
+	}
+
+	async function handleLanguageChange(event: Event): Promise<void> {
+		const target = event.currentTarget as HTMLSelectElement;
+		const nextLanguage = target.value;
+		const previousLanguage = selectedLanguage;
+		if (!isSupportedLocale(nextLanguage)) {
+			target.value = previousLanguage;
+			return;
+		}
+		if (nextLanguage === previousLanguage) return;
+
+		selectedLanguage = nextLanguage;
+		languageSaving = true;
+		languageError = '';
+		setLocale(nextLanguage);
+		document.documentElement.lang = nextLanguage;
+
+		try {
+			const response = await fetch('/api/set-language', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ language: nextLanguage })
+			});
+			if (!response.ok) throw new Error('Failed to update language');
+		} catch {
+			selectedLanguage = previousLanguage;
+			target.value = previousLanguage;
+			setLocale(previousLanguage);
+			document.documentElement.lang = previousLanguage;
+			languageError = $LL.language_switch_error();
+		} finally {
+			languageSaving = false;
+		}
+	}
 
 	function safeReturnTo(): string {
 		return resolveAdminLoginReturnTo(window.location.search, window.location.origin);
@@ -118,6 +168,51 @@
 			</button>
 
 			<p class="login-hint">{$LL.admin_login_hint()}</p>
+
+			<div class="login-preferences">
+				<div class="theme-mode-control" role="group" aria-label={$LL.admin_login_theme_label()}>
+					<button
+						type="button"
+						class="preference-btn"
+						class:active={themeStore.isLight}
+						aria-pressed={themeStore.isLight}
+						onclick={() => handleThemeChange('light')}
+					>
+						<i class="i-ph-sun w-4 h-4" aria-hidden="true"></i>
+						<span>{$LL.admin_login_theme_light()}</span>
+					</button>
+					<button
+						type="button"
+						class="preference-btn"
+						class:active={themeStore.isDark}
+						aria-pressed={themeStore.isDark}
+						onclick={() => handleThemeChange('dark')}
+					>
+						<i class="i-ph-moon w-4 h-4" aria-hidden="true"></i>
+						<span>{$LL.admin_login_theme_dark()}</span>
+					</button>
+				</div>
+
+				<label class="language-control">
+					<span class="sr-only">{$LL.language_select_label()}</span>
+					<i class="i-ph-translate w-4 h-4" aria-hidden="true"></i>
+					<select
+						class="language-select"
+						value={selectedLanguage}
+						disabled={languageSaving}
+						aria-label={$LL.language_select_label()}
+						onchange={handleLanguageChange}
+					>
+						{#each SUPPORTED_LOCALES as locale (locale)}
+							<option value={locale}>{getLanguageName(locale)}</option>
+						{/each}
+					</select>
+				</label>
+			</div>
+
+			{#if languageError}
+				<p class="language-error" role="alert">{languageError}</p>
+			{/if}
 		</div>
 	</div>
 </div>
@@ -143,7 +238,7 @@
 		font-weight: var(--brand-weight, 300);
 		color: var(--color-text);
 		opacity: var(--login-watermark-opacity, 0.04);
-		letter-spacing: var(--login-watermark-letter-spacing, var(--brand-letter-spacing, 0.1em));
+		letter-spacing: 0;
 		white-space: nowrap;
 		pointer-events: none;
 		z-index: 0;
@@ -267,6 +362,100 @@
 		line-height: 1.6;
 	}
 
+	.login-preferences {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+		gap: 10px;
+		margin-top: 20px;
+		padding-top: 20px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.theme-mode-control {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 3px;
+		padding: 3px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-md));
+		background: var(--color-bg-subtle, var(--color-bg-page));
+	}
+
+	.preference-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 3px;
+		min-width: 0;
+		padding: 8px 3px;
+		border: 0;
+		border-radius: calc(var(--radius-control, var(--radius-md)) - 4px);
+		background: transparent;
+		color: var(--color-text-muted);
+		font: inherit;
+		font-size: 0.6875rem;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+		transition:
+			background var(--transition-fast),
+			color var(--transition-fast),
+			box-shadow var(--transition-fast);
+	}
+
+	.preference-btn:hover {
+		color: var(--color-text);
+	}
+
+	.preference-btn.active {
+		background: var(--color-surface);
+		color: var(--color-text);
+		box-shadow: var(--shadow-sm);
+	}
+
+	.language-control {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		padding: 0 10px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, var(--radius-md));
+		background: var(--color-bg-subtle, var(--color-bg-page));
+		color: var(--color-text-muted);
+	}
+
+	.language-select {
+		min-width: 0;
+		width: 100%;
+		padding: 9px 0;
+		border: 0;
+		outline: 0;
+		background: transparent;
+		color: var(--color-text);
+		font: inherit;
+		font-size: 0.75rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.language-select:disabled {
+		cursor: wait;
+		opacity: 0.65;
+	}
+
+	.language-error {
+		margin: 10px 0 0;
+		color: var(--color-danger);
+		font-size: 0.75rem;
+		line-height: 1.5;
+	}
+
+	.preference-btn:focus-visible,
+	.language-control:focus-within {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+
 	@media (max-width: 520px) {
 		.login-container {
 			padding: 16px;
@@ -279,6 +468,10 @@
 		.login-title {
 			font-size: var(--login-brand-mobile-size, 1.85rem);
 			overflow-wrap: anywhere;
+		}
+
+		.login-preferences {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

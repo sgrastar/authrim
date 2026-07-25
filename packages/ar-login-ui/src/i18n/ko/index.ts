@@ -168,6 +168,8 @@ const ko = createTranslation({
 	header_signUp: '가입',
 	header_login: '로그인',
 	header_logout: '로그아웃',
+	logout_completeTitle: '로그아웃되었습니다',
+	logout_completeDescription: '세션이 안전하게 종료되었습니다.',
 	landing_metaDescription: 'Authrim - Cloudflare Workers로 구축한 최신 OpenID Connect 제공자.',
 	landing_providerBadge: 'OpenID Connect 제공자',
 	register_title: '계정 만들기',

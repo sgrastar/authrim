@@ -99,6 +99,17 @@ describe('split page shell', () => {
 		expect(css).not.toContain("[data-page-layout='split_panel'] .runtime-auth-button {");
 	});
 
+	it('keeps fullbleed glass translucent while protecting text placed over imagery', () => {
+		const css = source('app.css');
+
+		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
+		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
+		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
+		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
+		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
+		expect(css).toContain('rgba(10, 7, 6, 0.58)');
+	});
+
 	it('keeps authentication actions on one line at narrow mobile widths', () => {
 		const appCss = source('app.css');
 		const runtimeScreen = source('lib/components/RuntimeScreen.svelte');

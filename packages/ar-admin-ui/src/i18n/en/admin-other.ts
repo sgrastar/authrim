@@ -465,6 +465,20 @@ const adminOther = {
 	admin_login_ui_saving: 'Saving...',
 	admin_login_ui_cache_notice: 'Changes may take up to 60 seconds to appear in Login UI.',
 	admin_login_ui_save_global_config: 'Save Global UI Configuration',
+	admin_login_ui_language_title: 'Language Settings',
+	admin_login_ui_language_description:
+		'Choose which languages are available throughout Login UI and set the fallback language.',
+	admin_login_ui_language_enabled_count: '{count:number} enabled',
+	admin_login_ui_language_list_label: 'Available Login UI languages',
+	admin_login_ui_language_enable: 'Enable {language:string}',
+	admin_login_ui_language_make_default: 'Set {language:string} as the default language',
+	admin_login_ui_language_default_label: 'Default language',
+	admin_login_ui_language_help:
+		'Checked languages appear in the language selector on login, registration, account, and all other Login UI pages.',
+	admin_login_ui_language_save: 'Save Language Settings',
+	admin_login_ui_language_updated: 'Language settings updated.',
+	admin_login_ui_language_error_save: 'Failed to save language settings.',
+	admin_login_ui_language_at_least_one: 'At least one language must remain enabled.',
 	admin_login_ui_trusted_origins_title: 'Trusted Origins',
 	admin_login_ui_trusted_origins_description:
 		'Tenant-wide origins allowed to call browser-based auth endpoints such as passkey registration and direct auth. Enter one origin or wildcard pattern per line.',

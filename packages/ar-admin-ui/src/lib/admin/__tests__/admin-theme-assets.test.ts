@@ -160,6 +160,11 @@ describe('Admin UI theme assets', () => {
 	it('keeps the setup sky transition available for light and dark mode switches', () => {
 		const themesCss = readSource('lib/styles/themes.css');
 
+		expect(themesCss).toContain('background-color: var(--color-bg-page, var(--bg-page))');
+		expect(themesCss).toContain('html.theme-transitioning {');
+		expect(themesCss).toContain(
+			'transition: background-color 1800ms cubic-bezier(0.22, 1, 0.36, 1) !important'
+		);
 		expect(themesCss).toContain('html.theme-transitioning::after');
 		expect(themesCss).toContain('html.theme-transitioning.theme-transition-to-light::after');
 		expect(themesCss).toContain('@keyframes authrim-dusk');

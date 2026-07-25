@@ -67,7 +67,8 @@ describe('loginUIPageStore', () => {
 				footerLinks: [{ label: 'Privacy', url: 'https://example.com/privacy' }],
 				customBlocks: []
 			},
-			supportedLocales: ['en', 'ja']
+			supportedLocales: ['en', 'ja'],
+			defaultLocale: 'en'
 		};
 
 		loginUIPageStore.setFromUIConfig(config);

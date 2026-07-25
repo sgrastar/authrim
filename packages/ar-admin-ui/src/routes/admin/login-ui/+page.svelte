@@ -11,7 +11,6 @@
 		type CategorySettings,
 		type CategoryMetaFull,
 		type SettingsPatchRequest,
-		type UIConfigResponse,
 		type ScopeContext
 	} from '$lib/api/admin-settings';
 	import { ToggleSwitch } from '$lib/components';
@@ -21,6 +20,21 @@
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY = 'login-ui';
+	const LOGIN_UI_LOCALE_OPTIONS = [
+		{ code: 'en', label: 'English' },
+		{ code: 'ja', label: '日本語' },
+		{ code: 'zh-CN', label: '简体中文' },
+		{ code: 'zh-TW', label: '繁體中文' },
+		{ code: 'es', label: 'Español' },
+		{ code: 'pt', label: 'Português' },
+		{ code: 'fr', label: 'Français' },
+		{ code: 'de', label: 'Deutsch' },
+		{ code: 'ko', label: '한국어' },
+		{ code: 'ru', label: 'Русский' },
+		{ code: 'id', label: 'Bahasa Indonesia' }
+	] as const;
+	type LoginUILocale = (typeof LOGIN_UI_LOCALE_OPTIONS)[number]['code'];
+	const ALL_LOGIN_UI_LOCALES = LOGIN_UI_LOCALE_OPTIONS.map((locale) => locale.code);
 
 	// State
 	let meta = $state<CategoryMetaFull | null>(null);
@@ -28,6 +42,13 @@
 	let loading = $state(true);
 	let error = $state('');
 	let successMessage = $state('');
+	let languageError = $state('');
+	let languageSuccessMessage = $state('');
+	let languageSaving = $state(false);
+	let enabledLocales = $state<LoginUILocale[]>([...ALL_LOGIN_UI_LOCALES]);
+	let initialEnabledLocales = $state<LoginUILocale[]>([...ALL_LOGIN_UI_LOCALES]);
+	let defaultLocale = $state<LoginUILocale>('en');
+	let initialDefaultLocale = $state<LoginUILocale>('en');
 	let tenantSettings = $state<CategorySettings | null>(null);
 	let postLoginSettings = $state<CategorySettings | null>(null);
 	let selfServiceSettings = $state<CategorySettings | null>(null);
@@ -71,49 +92,19 @@
 		accountPageEnabled: boolean;
 		accountPagePath: string;
 	} | null>(null);
-	let uiConfigError = $state('');
-	let uiConfigSuccessMessage = $state('');
-	let uiConfigSaving = $state(false);
 	let loginUiAvailable = $state(true);
 	let loginUiConfigured = $state(false);
 	let loginUiStatusMessage = $state('');
-	let uiConfig = $state<UIConfigResponse | null>(null);
-	type UIPathKey = keyof UIConfigResponse['config']['paths'];
-	type UIConfigForm = {
-		baseUrl: string;
-		paths: Record<UIPathKey, string>;
-	};
-	let uiConfigForm = $state<UIConfigForm>({
-		baseUrl: '',
-		paths: {
-			login: '',
-			consent: '',
-			reauth: '',
-			error: '',
-			device: '',
-			deviceAuthorize: '',
-			logoutComplete: '',
-			loggedOut: '',
-			register: ''
-		}
-	});
-	let initialUiConfigForm = $state<UIConfigForm | null>(null);
 
 	// Track pending changes
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let canEdit = $derived(settingsContext.canEditAtCurrentScope());
-	let canEditGlobalUiConfig = $derived(canEdit);
 	let canEditLoginUiSettings = $derived(canEdit);
 	let canEditTrustedOrigins = $derived(canEdit);
 	let currentLevel = $derived(settingsContext.currentLevel);
 
 	// Derived: Check if there are unsaved changes
 	const hasTrustedOriginsChanges = $derived(trustedOriginsInput !== initialTrustedOriginsInput);
-	const hasUiConfigChanges = $derived(
-		initialUiConfigForm
-			? JSON.stringify(uiConfigForm) !== JSON.stringify(initialUiConfigForm)
-			: false
-	);
 	const hasPostLoginChanges = $derived(
 		initialPostLoginForm
 			? postLoginBehavior !== initialPostLoginForm.behavior ||
@@ -128,6 +119,10 @@
 	);
 	const hasServiceSiteChanges = $derived(
 		serviceSiteFallbackEnabled !== initialServiceSiteFallbackEnabled
+	);
+	const hasLanguageChanges = $derived(
+		enabledLocales.join(',') !== initialEnabledLocales.join(',') ||
+			defaultLocale !== initialDefaultLocale
 	);
 	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
 	const selectedAppLoginRedirectUris = $derived(
@@ -157,7 +152,7 @@
 		postLoginError = '';
 		appLoginClientOptionsError = '';
 		serviceSiteError = '';
-		uiConfigError = '';
+		languageError = '';
 
 		try {
 			const selectedTenantId = resolveSelectedTenantId();
@@ -176,11 +171,6 @@
 				'service-site',
 				selectedTenantId
 			);
-			const nextUiConfigForm: UIConfigForm = {
-				baseUrl: uiConfigResult.config.baseUrl ?? '',
-				paths: { ...uiConfigResult.config.paths }
-			};
-			uiConfig = uiConfigResult;
 			tenantSettings = tenantSettingsResult;
 			postLoginSettings = postLoginSettingsResult;
 			selfServiceSettings = selfServiceSettingsResult;
@@ -231,11 +221,6 @@
 				tenantSettingsResult.values['tenant.allowed_origins']
 			);
 			initialTrustedOriginsInput = trustedOriginsInput;
-			uiConfigForm = nextUiConfigForm;
-			initialUiConfigForm = {
-				baseUrl: nextUiConfigForm.baseUrl,
-				paths: { ...nextUiConfigForm.paths }
-			};
 			loginUiAvailable = tenantInfo.components.login_ui;
 			loginUiConfigured = !!uiConfigResult.config.baseUrl;
 			loginUiStatusMessage = !loginUiAvailable
@@ -259,10 +244,97 @@
 			}
 
 			settings = settingsResult;
+			initializeLanguageSettings(settingsResult);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_login_ui_error_load();
 		} finally {
 			loading = false;
+		}
+	}
+
+	function isLoginUILocale(value: unknown): value is LoginUILocale {
+		return typeof value === 'string' && ALL_LOGIN_UI_LOCALES.includes(value as LoginUILocale);
+	}
+
+	function initializeLanguageSettings(settingsResult: CategorySettings) {
+		const storedLocales = settingsResult.values['login-ui.supported_locales'];
+		const parsedLocales =
+			typeof storedLocales === 'string'
+				? storedLocales
+						.split(',')
+						.map((locale) => locale.trim())
+						.filter(isLoginUILocale)
+				: [];
+		enabledLocales =
+			parsedLocales.length > 0 ? [...new Set(parsedLocales)] : [...ALL_LOGIN_UI_LOCALES];
+		const storedDefault = settingsResult.values['login-ui.default_locale'];
+		defaultLocale =
+			isLoginUILocale(storedDefault) && enabledLocales.includes(storedDefault)
+				? storedDefault
+				: (enabledLocales[0] ?? 'en');
+		initialEnabledLocales = [...enabledLocales];
+		initialDefaultLocale = defaultLocale;
+	}
+
+	function toggleLocale(locale: LoginUILocale, enabled: boolean) {
+		if (enabled) {
+			enabledLocales = ALL_LOGIN_UI_LOCALES.filter(
+				(candidate) => candidate === locale || enabledLocales.includes(candidate)
+			);
+			return;
+		}
+		if (enabledLocales.length === 1) {
+			languageError = $LL.admin_login_ui_language_at_least_one();
+			return;
+		}
+		enabledLocales = enabledLocales.filter((candidate) => candidate !== locale);
+		if (defaultLocale === locale) {
+			defaultLocale = enabledLocales[0] ?? 'en';
+		}
+		languageError = '';
+	}
+
+	function selectDefaultLocale(locale: LoginUILocale) {
+		if (!enabledLocales.includes(locale)) {
+			toggleLocale(locale, true);
+		}
+		defaultLocale = locale;
+		languageError = '';
+	}
+
+	function discardLanguageChanges() {
+		enabledLocales = [...initialEnabledLocales];
+		defaultLocale = initialDefaultLocale;
+		languageError = '';
+	}
+
+	async function saveLanguageSettings() {
+		if (!settings || !canEditLoginUiSettings) return;
+		languageSaving = true;
+		languageError = '';
+		languageSuccessMessage = '';
+		try {
+			await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
+				ifMatch: settings.version,
+				set: {
+					'login-ui.supported_locales': enabledLocales.join(','),
+					'login-ui.default_locale': defaultLocale
+				}
+			});
+			languageSuccessMessage = $LL.admin_login_ui_language_updated();
+			await loadData();
+			setTimeout(() => {
+				languageSuccessMessage = '';
+			}, 3000);
+		} catch (err) {
+			languageError =
+				err instanceof SettingsConflictError
+					? $LL.admin_login_ui_settings_conflict()
+					: err instanceof Error
+						? err.message
+						: $LL.admin_login_ui_language_error_save();
+		} finally {
+			languageSaving = false;
 		}
 	}
 
@@ -321,16 +393,6 @@
 			appLoginClientOptionsError =
 				err instanceof Error ? err.message : $LL.admin_login_ui_app_login_clients_error();
 		}
-	}
-
-	// Get current value (considering pending patches)
-	function discardUiConfigChanges() {
-		if (!initialUiConfigForm) return;
-		uiConfigForm = {
-			baseUrl: initialUiConfigForm.baseUrl,
-			paths: { ...initialUiConfigForm.paths }
-		};
-		uiConfigError = '';
 	}
 
 	function formatOriginsForEditor(value: unknown): string {
@@ -658,33 +720,6 @@
 		}
 	}
 
-	async function saveUiConfig() {
-		if (!canEditGlobalUiConfig) {
-			uiConfigError = $LL.admin_login_ui_error_no_config_permission();
-			return;
-		}
-
-		uiConfigSaving = true;
-		uiConfigError = '';
-		uiConfigSuccessMessage = '';
-
-		try {
-			await adminUiConfigAPI.update({
-				baseUrl: uiConfigForm.baseUrl.trim() || null,
-				paths: { ...uiConfigForm.paths }
-			});
-			uiConfigSuccessMessage = $LL.admin_login_ui_config_updated();
-			await loadData();
-			setTimeout(() => {
-				uiConfigSuccessMessage = '';
-			}, 3000);
-		} catch (err) {
-			uiConfigError = err instanceof Error ? err.message : $LL.admin_login_ui_error_update_config();
-		} finally {
-			uiConfigSaving = false;
-		}
-	}
-
 	// Save changes
 </script>
 
@@ -700,7 +735,7 @@
 				? $LL.admin_login_ui_scope_tenant()
 				: $LL.admin_login_ui_scope_client()}
 	</span>
-	{#if !canEditGlobalUiConfig && !canEditLoginUiSettings}
+	{#if !canEditLoginUiSettings}
 		<span class="readonly-badge">{$LL.admin_login_ui_readonly()}</span>
 	{/if}
 {/snippet}
@@ -721,14 +756,6 @@
 			<div class="alert alert-warning">
 				{loginUiStatusMessage}
 			</div>
-		{/if}
-
-		{#if uiConfigError}
-			<div class="alert alert-error">{uiConfigError}</div>
-		{/if}
-
-		{#if uiConfigSuccessMessage}
-			<div class="alert alert-success">{uiConfigSuccessMessage}</div>
 		{/if}
 
 		{#if trustedOriginsError}
@@ -760,102 +787,89 @@
 			<div class="alert alert-success">{serviceSiteSuccessMessage}</div>
 		{/if}
 
-		{#if !loading && uiConfig}
-			<section class="panel">
+		{#if languageError}
+			<div class="alert alert-error">{languageError}</div>
+		{/if}
+
+		{#if languageSuccessMessage}
+			<div class="alert alert-success">{languageSuccessMessage}</div>
+		{/if}
+
+		{#if !loading && settings}
+			<section class="panel language-settings-panel">
 				<div class="section-header">
 					<div>
-						<h2 class="section-title">{$LL.admin_login_ui_global_config_title()}</h2>
+						<h2 class="section-title">{$LL.admin_login_ui_language_title()}</h2>
 						<p class="section-description">
-							{$LL.admin_login_ui_global_config_description()}
+							{$LL.admin_login_ui_language_description()}
 						</p>
 					</div>
-					<span class="config-source-badge"
-						>{$LL.admin_login_ui_source({ source: uiConfig.source })}</span
-					>
+					<span class="config-source-badge">
+						{$LL.admin_login_ui_language_enabled_count({ count: enabledLocales.length })}
+					</span>
 				</div>
 
-				<div class="settings-form-card">
-					<div class="setting-item" class:modified={hasUiConfigChanges}>
-						<div class="setting-item-content">
-							<div class="setting-info">
-								<div class="setting-label-row">
-									<label for="ui-config-base-url" class="setting-label"
-										>{$LL.admin_login_ui_global_base_url()}</label
-									>
-									{#if hasUiConfigChanges}
-										<span class="setting-modified">{$LL.admin_login_ui_modified()}</span>
-									{/if}
-								</div>
-								<p class="setting-description">
-									{$LL.admin_login_ui_global_base_url_description()}
-								</p>
-							</div>
-
-							<div class="setting-control">
+				<div class="language-grid" aria-label={$LL.admin_login_ui_language_list_label()}>
+					{#each LOGIN_UI_LOCALE_OPTIONS as locale (locale.code)}
+						<div class="language-option" class:default={defaultLocale === locale.code}>
+							<label
+								class="language-control"
+								title={$LL.admin_login_ui_language_enable({ language: locale.label })}
+							>
 								<input
-									type="url"
-									id="ui-config-base-url"
-									value={uiConfigForm.baseUrl}
-									disabled={!canEditGlobalUiConfig}
-									placeholder="https://single-ar-login-ui.pages.dev"
-									oninput={(e) => {
-										uiConfigForm = {
-											...uiConfigForm,
-											baseUrl: e.currentTarget.value
-										};
-									}}
-									class="settings-input"
+									type="checkbox"
+									checked={enabledLocales.includes(locale.code)}
+									disabled={!canEditLoginUiSettings}
+									onchange={(event) => toggleLocale(locale.code, event.currentTarget.checked)}
 								/>
-							</div>
-						</div>
-					</div>
-
-					{#each Object.entries(uiConfig.metadata) as [key, metaItem] (key)}
-						<div class="setting-item" class:modified={hasUiConfigChanges}>
-							<div class="setting-item-content">
-								<div class="setting-info">
-									<label for={`ui-path-${key}`} class="setting-label">{metaItem.label}</label>
-									<p class="setting-description">{metaItem.description}</p>
-								</div>
-
-								<div class="setting-control">
-									<input
-										type="text"
-										id={`ui-path-${key}`}
-										value={uiConfigForm.paths[key as UIPathKey]}
-										disabled={!canEditGlobalUiConfig}
-										oninput={(e) => {
-											uiConfigForm = {
-												...uiConfigForm,
-												paths: {
-													...uiConfigForm.paths,
-													[key]: e.currentTarget.value
-												}
-											};
-										}}
-										class="settings-input"
-									/>
-								</div>
-							</div>
+								<span class="sr-only">
+									{$LL.admin_login_ui_language_enable({ language: locale.label })}
+								</span>
+							</label>
+							<label
+								class="language-control"
+								title={$LL.admin_login_ui_language_make_default({ language: locale.label })}
+							>
+								<input
+									type="radio"
+									name="login-ui-default-locale"
+									checked={defaultLocale === locale.code}
+									disabled={!canEditLoginUiSettings || !enabledLocales.includes(locale.code)}
+									onchange={() => selectDefaultLocale(locale.code)}
+								/>
+								<span class="sr-only">
+									{$LL.admin_login_ui_language_make_default({ language: locale.label })}
+								</span>
+							</label>
+							<span class="language-name">{locale.label}</span>
+							{#if defaultLocale === locale.code}
+								<span class="default-language-label">
+									{$LL.admin_login_ui_language_default_label()}
+								</span>
+							{/if}
 						</div>
 					{/each}
 				</div>
 
+				<p class="language-help">{$LL.admin_login_ui_language_help()}</p>
+
 				<div class="form-actions">
 					<span class="cache-notice">{$LL.admin_login_ui_cache_notice()}</span>
 					<button
-						onclick={discardUiConfigChanges}
-						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						type="button"
+						onclick={discardLanguageChanges}
+						disabled={!hasLanguageChanges || languageSaving || !canEditLoginUiSettings}
 						class="btn btn-secondary"
 					>
 						{$LL.admin_login_ui_discard_changes()}
 					</button>
 					<button
-						onclick={saveUiConfig}
-						disabled={!hasUiConfigChanges || uiConfigSaving || !canEditGlobalUiConfig}
+						type="button"
+						onclick={saveLanguageSettings}
+						disabled={!hasLanguageChanges || languageSaving || !canEditLoginUiSettings}
 						class="btn btn-primary"
 					>
-						{uiConfigSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_save_global_config()}
+						{languageSaving ? $LL.admin_login_ui_saving() : $LL.admin_login_ui_language_save()}
 					</button>
 				</div>
 			</section>
@@ -1439,6 +1453,111 @@
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		white-space: nowrap;
+	}
+
+	.language-settings-panel {
+		margin-bottom: 16px;
+	}
+
+	.language-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0;
+		margin-top: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		overflow: hidden;
+	}
+
+	.language-option {
+		display: grid;
+		grid-template-columns: auto auto minmax(0, 1fr);
+		align-items: center;
+		gap: 9px;
+		min-height: 48px;
+		padding: 10px 12px;
+		border-right: 1px solid var(--color-border);
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-surface);
+	}
+
+	.language-option:nth-child(3n) {
+		border-right: 0;
+	}
+
+	.language-option:nth-last-child(-n + 2) {
+		border-bottom: 0;
+	}
+
+	.language-option.default {
+		background: var(--color-accent-muted);
+	}
+
+	.language-control {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+
+	.language-control:has(input:disabled) {
+		cursor: not-allowed;
+		opacity: 0.55;
+	}
+
+	.language-control input {
+		margin: 0;
+	}
+
+	.language-name {
+		min-width: 0;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--color-text);
+	}
+
+	.default-language-label {
+		grid-column: 3;
+		margin-top: -5px;
+		font-size: 11px;
+		line-height: 1.2;
+		color: var(--color-accent);
+	}
+
+	.language-help {
+		margin: 12px 0 0;
+		font-size: 12px;
+		line-height: 1.5;
+		color: var(--color-text-muted);
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	@media (max-width: 760px) {
+		.language-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.language-option,
+		.language-option:nth-child(3n),
+		.language-option:nth-last-child(-n + 2) {
+			border-right: 0;
+			border-bottom: 1px solid var(--color-border);
+		}
+
+		.language-option:last-child {
+			border-bottom: 0;
+		}
 	}
 
 	.alert-link {

@@ -247,6 +247,56 @@ const adminFlows = {
 		'Sign in with an existing account and review scope/claim sharing when needed',
 	admin_flows_template_oidc_login_recorded_state:
 		'tenant + user + OIDC Client + session/authentication event + User Decision',
+	admin_flows_template_oidc_registration_no_consent_title: 'Registration (No consent)',
+	admin_flows_template_oidc_registration_no_consent_subtitle:
+		'Account creation without profile input or registration consent',
+	admin_flows_template_oidc_registration_no_consent_description:
+		'Review the path from registration request, registration method selection, account creation, and application continuation.',
+	admin_flows_template_oidc_registration_no_consent_primary_entry:
+		'Registration Request / Sign-up entry',
+	admin_flows_template_oidc_registration_no_consent_primary_output:
+		'Application continuation / New account session',
+	admin_flows_template_oidc_registration_no_consent_mapping_set: 'OIDC registration profile fields',
+	admin_flows_template_oidc_registration_no_consent_user_action:
+		'Choose a registration method and create an account without profile input or registration consent',
+	admin_flows_template_oidc_registration_no_consent_recorded_state:
+		'tenant + user + OIDC Client + credential binding + audit event',
+	admin_flows_template_academic_saml_login_title: 'Academic SAML Login',
+	admin_flows_template_academic_saml_login_subtitle: 'Login for academic publisher and library SPs',
+	admin_flows_template_academic_saml_login_description:
+		'Review the path from SAML AuthnRequest, session check, authentication method selection, attribute release confirmation, and SAML Response.',
+	admin_flows_template_academic_saml_login_primary_entry: 'SAML AuthnRequest',
+	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
+	admin_flows_template_academic_saml_login_mapping_set:
+		'GakuNin application standard Field Mapping Set',
+	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
+	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
+	admin_flows_template_academic_saml_login_user_action:
+		'Sign in with an existing account, review the attributes released to the SP, and allow the release',
+	admin_flows_template_academic_saml_login_recorded_state:
+		'tenant + user + SAML SP + statement/version + User Decision',
+	admin_flows_template_oidc_login_no_consent_title: 'Login (No consent)',
+	admin_flows_template_oidc_login_no_consent_subtitle: 'Sign-in without consent confirmation',
+	admin_flows_template_oidc_login_no_consent_description:
+		'Review the path from login request, session check, authentication method selection, sign-in, and application continuation.',
+	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
+	admin_flows_template_oidc_login_no_consent_primary_output:
+		'Application continuation / Existing account session',
+	admin_flows_template_oidc_login_no_consent_mapping_set: 'OIDC login/session claims',
+	admin_flows_template_oidc_login_no_consent_user_action: 'Sign in with an existing account',
+	admin_flows_template_oidc_login_no_consent_recorded_state:
+		'tenant + user + OIDC Client + session/authentication event + audit event',
+	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
+	admin_flows_template_saml_sp_oidc_rp_subtitle: 'Sign-in for SAML SPs and OIDC RPs',
+	admin_flows_template_saml_sp_oidc_rp_description:
+		'Use the same sign-in steps as Login (No consent), then route to a SAML Response or OIDC authorization response based on the request protocol.',
+	admin_flows_template_saml_sp_oidc_rp_primary_entry:
+		'SAML AuthnRequest / OIDC Authorization Request',
+	admin_flows_template_saml_sp_oidc_rp_primary_output:
+		'SAML Response / OIDC Authorization Response',
+	admin_flows_template_saml_sp_oidc_rp_user_action: 'Sign in with an existing account',
+	admin_flows_template_saml_sp_oidc_rp_recorded_state:
+		'tenant + user + protocol target + session/authentication event + audit event',
 	admin_flows_kind_release_confirmation: 'Release confirmation',
 	admin_flows_kind_authorization: 'Authorization',
 	admin_flows_kind_registration: 'Registration',

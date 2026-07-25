@@ -6288,7 +6288,7 @@ tr.expired {
 	--primary-light: rgba(232, 98, 63, 0.16);
 	--gradient-primary: linear-gradient(135deg, #e8623f 0%, #c94b2c 100%);
 	--bg-page: #0d0908;
-	--bg-card: rgba(14, 10, 9, 0.55);
+	--bg-card: rgba(14, 10, 9, 0.45);
 	--bg-glass: rgba(14, 10, 9, 0.45);
 	--bg-input: rgba(255, 255, 255, 0.08);
 	--bg-subtle: rgba(255, 255, 255, 0.06);
@@ -6331,7 +6331,7 @@ tr.expired {
 	--primary-light: rgba(201, 58, 34, 0.12);
 	--gradient-primary: linear-gradient(135deg, #c93a22 0%, #a72e19 100%);
 	--bg-page: #17110d;
-	--bg-card: rgba(255, 253, 250, 0.6);
+	--bg-card: rgba(255, 253, 250, 0.5);
 	--bg-glass: rgba(255, 253, 250, 0.5);
 	--bg-input: rgba(255, 255, 255, 0.65);
 	--bg-subtle: rgba(34, 27, 23, 0.06);
@@ -6786,13 +6786,13 @@ tr.expired {
 [data-theme='light'][data-login-theme='fullbleed-glass'] .auth-page {
 	--login-page-overlay:
 		linear-gradient(to top, rgba(10, 7, 6, 0.55), rgba(10, 7, 6, 0.1) 26%, transparent 45%),
-		linear-gradient(to bottom, rgba(10, 7, 6, 0.4), transparent 32%),
+		linear-gradient(to bottom, rgba(10, 7, 6, 0.58), rgba(10, 7, 6, 0.32) 18%, transparent 38%),
 		linear-gradient(rgba(20, 12, 8, 0.12), rgba(20, 12, 8, 0.12));
 }
 
 /* Vermilion bold typography and on-image readability (mock parity) */
-[data-login-theme='fullbleed-glass'] .auth-header__title {
-	color: #ffffff;
+[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title {
+	color: #fffaf6;
 	font-size: var(--auth-header-title-size);
 	font-weight: 800;
 	letter-spacing: 0.06em;
@@ -6801,24 +6801,24 @@ tr.expired {
 	text-shadow: 0 2px 28px rgba(0, 0, 0, 0.5);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-header__subtitle {
+[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle {
 	color: rgba(255, 255, 255, 0.88);
 	letter-spacing: 0.12em;
 	text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-footer {
+[data-login-theme='fullbleed-glass'] .auth-page .auth-footer {
 	color: rgba(255, 255, 255, 0.72);
 	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-bottom-link {
+[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link {
 	color: rgba(255, 255, 255, 0.85);
 	text-shadow: 0 1px 12px rgba(0, 0, 0, 0.5);
 }
 
-[data-login-theme='fullbleed-glass'] .auth-bottom-link a {
-	color: #ffffff;
+[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link a {
+	color: #fffaf6;
 	text-decoration: underline;
 	text-underline-offset: 3px;
 }
