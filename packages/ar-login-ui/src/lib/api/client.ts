@@ -478,7 +478,9 @@ function readLegacyDirectEmailCodeState(coreKey: string): string | null {
 	if (!email) return null;
 	return (
 		sessionStorage.getItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`) ??
-		sessionStorage.getItem(`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`)
+		sessionStorage.getItem(
+			`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`
+		)
 	);
 }
 
@@ -486,7 +488,9 @@ function removeLegacyDirectEmailCodeState(coreKey: string): void {
 	const email = parseCoreDirectEmailCodeKey(coreKey);
 	if (!email) return;
 	sessionStorage.removeItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`);
-	sessionStorage.removeItem(`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`);
+	sessionStorage.removeItem(
+		`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`
+	);
 }
 
 function parseCoreDirectEmailCodeKey(key: string): string | null {

@@ -89,7 +89,9 @@ function createFlowRuntimeClient(): FlowRuntimeClient {
 	});
 }
 
-async function withFlowRuntimeResult<T>(operation: () => Promise<T>): Promise<FlowRuntimeApiResult<T>> {
+async function withFlowRuntimeResult<T>(
+	operation: () => Promise<T>
+): Promise<FlowRuntimeApiResult<T>> {
 	try {
 		return { data: await operation() };
 	} catch (error) {
@@ -102,8 +104,7 @@ async function withFlowRuntimeResult<T>(operation: () => Promise<T>): Promise<Fl
 				error: {
 					error: error.code,
 					error_description: error.message,
-					category:
-						typeof errorDetails.category === 'string' ? errorDetails.category : undefined,
+					category: typeof errorDetails.category === 'string' ? errorDetails.category : undefined,
 					action: typeof errorDetails.action === 'string' ? errorDetails.action : undefined,
 					interaction_id:
 						typeof errorDetails.interaction_id === 'string'
