@@ -803,6 +803,82 @@ const SCREEN_TEXT_LOCALIZATION_ALIASES: Partial<
   'Security verification': ['Security check'],
 };
 
+function defaultAuthenticationFields(screenKind: 'registration' | 'login'): ScreenField[] {
+  const isRegistration = screenKind === 'registration';
+  return [
+    {
+      field: 'auth.passkey',
+      label: isRegistration ? 'Create Account with Passkey' : 'Sign in with Passkey',
+      required: false,
+      block_type: 'auth_widget',
+      auth_method: 'passkey',
+      order: 10,
+    },
+    {
+      field: 'divider.or',
+      label: 'or',
+      required: false,
+      block_type: 'divider',
+      text: 'or',
+      display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+      order: 20,
+    },
+    {
+      field: 'auth.mail_otp',
+      label: 'Send code by email',
+      required: false,
+      block_type: 'auth_widget',
+      auth_method: 'mail_otp',
+      order: 30,
+    },
+    {
+      field: 'auth.totp',
+      label: isRegistration
+        ? 'Create account with authenticator app'
+        : 'Sign in with authenticator app',
+      required: false,
+      block_type: 'auth_widget',
+      auth_method: 'totp',
+      order: 35,
+    },
+    {
+      field: 'divider.other_accounts',
+      label: 'Continue with another account',
+      required: false,
+      block_type: 'divider',
+      text: 'Continue with another account',
+      display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
+      order: 40,
+    },
+    {
+      field: 'auth.external_idp',
+      label: 'Ext. IdP',
+      required: false,
+      block_type: 'auth_widget',
+      auth_method: 'external_idp',
+      external_idp_show_action_text: false,
+      order: 50,
+    },
+    {
+      field: 'divider.directory_password',
+      label: 'or',
+      required: false,
+      block_type: 'divider',
+      text: 'or',
+      display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
+      order: 55,
+    },
+    {
+      field: 'auth.directory_password',
+      label: 'Sign in with directory password',
+      required: false,
+      block_type: 'auth_widget',
+      auth_method: 'directory_password',
+      order: 60,
+    },
+  ];
+}
+
 const DEFAULT_SCREENS: Array<{
   screen_key: string;
   display_name: string;
@@ -825,14 +901,7 @@ const DEFAULT_SCREENS: Array<{
         block_type: 'heading',
         order: 0,
       },
-      {
-        field: 'auth.passkey',
-        label: 'Create Account with Passkey',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'passkey',
-        order: 10,
-      },
+      ...defaultAuthenticationFields('registration'),
     ],
   },
   {
@@ -865,74 +934,7 @@ const DEFAULT_SCREENS: Array<{
         block_type: 'heading',
         order: 0,
       },
-      {
-        field: 'auth.passkey',
-        label: 'Sign in with Passkey',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'passkey',
-        order: 10,
-      },
-      {
-        field: 'divider.or',
-        label: 'or',
-        required: false,
-        block_type: 'divider',
-        text: 'or',
-        display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
-        order: 20,
-      },
-      {
-        field: 'auth.mail_otp',
-        label: 'Send code by email',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'mail_otp',
-        order: 30,
-      },
-      {
-        field: 'auth.totp',
-        label: 'Sign in with authenticator app',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'totp',
-        order: 35,
-      },
-      {
-        field: 'divider.other_accounts',
-        label: 'Continue with another account',
-        required: false,
-        block_type: 'divider',
-        text: 'Continue with another account',
-        display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
-        order: 40,
-      },
-      {
-        field: 'auth.external_idp',
-        label: 'Ext. IdP',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'external_idp',
-        external_idp_show_action_text: false,
-        order: 50,
-      },
-      {
-        field: 'divider.directory_password',
-        label: 'or',
-        required: false,
-        block_type: 'divider',
-        text: 'or',
-        display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
-        order: 55,
-      },
-      {
-        field: 'auth.directory_password',
-        label: 'Sign in with directory password',
-        required: false,
-        block_type: 'auth_widget',
-        auth_method: 'directory_password',
-        order: 60,
-      },
+      ...defaultAuthenticationFields('login'),
     ],
   },
   {
@@ -1573,7 +1575,17 @@ function mergeDefaultScreenFieldMetadata(
       working = fields.filter((field) => !isRemovedRegistrationDefaultField(field));
       if (working.length !== fields.length) changed = true;
     }
-    for (const fieldName of ['heading.registration', 'auth.passkey']) {
+    for (const fieldName of [
+      'heading.registration',
+      'auth.passkey',
+      'divider.or',
+      'auth.mail_otp',
+      'auth.totp',
+      'divider.other_accounts',
+      'auth.external_idp',
+      'divider.directory_password',
+      'auth.directory_password',
+    ]) {
       const defaultField = defaultScreenField(screen, fieldName);
       if (defaultField && !hasScreenField(working, defaultField)) {
         working = [...working, defaultField];

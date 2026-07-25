@@ -787,6 +787,14 @@ type RootTranslation = {
 	 */
 	header_logout: string;
 	/**
+	 * Y​o​u​'​r​e​ ​s​i​g​n​e​d​ ​o​u​t
+	 */
+	logout_completeTitle: string;
+	/**
+	 * Y​o​u​r​ ​s​e​s​s​i​o​n​ ​h​a​s​ ​e​n​d​e​d​ ​s​a​f​e​l​y​.
+	 */
+	logout_completeDescription: string;
+	/**
 	 * A​u​t​h​r​i​m​ ​-​ ​A​ ​m​o​d​e​r​n​ ​O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r​ ​b​u​i​l​t​ ​w​i​t​h​ ​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s​.
 	 */
 	landing_metaDescription: string;
@@ -2137,6 +2145,14 @@ export type TranslationFunctions = {
 	 * Sign out
 	 */
 	header_logout: () => LocalizedString;
+	/**
+	 * You're signed out
+	 */
+	logout_completeTitle: () => LocalizedString;
+	/**
+	 * Your session has ended safely.
+	 */
+	logout_completeDescription: () => LocalizedString;
 	/**
 	 * Authrim - A modern OpenID Connect Provider built with Cloudflare Workers.
 	 */

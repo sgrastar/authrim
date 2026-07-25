@@ -1424,13 +1424,21 @@ describe('Router Worker', () => {
       expect(loginResponse.status).toBe(200);
       expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
 
+      const loggedOutResponse = await app.fetch(
+        new Request('https://test.example.com/logged-out'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(loggedOutResponse.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
+      expect(new URL(loginUiWorker.fetch.mock.calls[1][0].url).pathname).toBe('/logged-out');
+
       const rootResponse = await app.fetch(
         new Request('https://test.example.com/'),
         envWithIssuerLoginUiPaths
       );
       expect(rootResponse.status).toBe(200);
       expect(await rootResponse.json()).toMatchObject({ name: 'Authrim OIDC Provider' });
-      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('should proxy browser requests on the configured Login UI host to Login UI before API routing', async () => {
@@ -1454,6 +1462,31 @@ describe('Router Worker', () => {
       expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('login.example.com');
     });
+
+    it.each(['/logged-out', '/logout-complete'])(
+      'should proxy the %s completion page on the configured Login UI host',
+      async (path) => {
+        const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+        const envWithSeparateLoginUiHost = {
+          ...mockEnv,
+          LOGIN_UI_URL: 'https://login.example.com',
+          LOGIN_UI_HOST_MODE: 'dedicated' as const,
+          ENABLE_LOGIN_UI_PROXY: 'true',
+          AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+          LOGIN_UI_WORKER: loginUiWorker,
+        };
+
+        const response = await app.fetch(
+          new Request(`https://login.example.com${path}`),
+          envWithSeparateLoginUiHost
+        );
+
+        expect(response.status).toBe(200);
+        expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+        expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(path);
+      }
+    );
 
     it('should reject protocol-relative Login UI paths before proxying', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');

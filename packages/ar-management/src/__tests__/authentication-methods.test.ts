@@ -1142,6 +1142,23 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
 
   describe('UI config from settings-v2', () => {
+    it('inherits platform language settings when tenant settings are absent', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,de',
+          'login-ui.default_locale': 'de',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.supportedLocales).toEqual(['en', 'de']);
+      expect(body.ui.defaultLocale).toBe('de');
+    });
+
     it('applies client Login UI overrides for DCR-generated client identifiers', async () => {
       const clientId = `client_${'a'.repeat(128)}`;
       const settingsKV = createMockKV({
@@ -1208,6 +1225,7 @@ describe('Authentication Methods API', () => {
           'login-ui.favicon_url': 'https://example.com/favicon.ico',
           'login-ui.thumbnail_url': 'https://example.com/thumb.webp',
           'login-ui.supported_locales': 'en,ja,fr',
+          'login-ui.default_locale': 'fr',
           'login-ui.background_image_url': 'https://example.com/bg.jpg',
           'login-ui.login_panel_background_image_url': 'https://example.com/panel.jpg',
           'login-ui.custom_css': '.auth-page { background: #fff; }',
@@ -1267,6 +1285,7 @@ describe('Authentication Methods API', () => {
         brandAlign: 'center',
       });
       expect(body.ui.supportedLocales).toEqual(['en', 'ja', 'fr']);
+      expect(body.ui.defaultLocale).toBe('fr');
       expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/bg.jpg');
       expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBe('https://example.com/panel.jpg');
       expect(body.ui.appearance.thumbnailUrl).toBe('https://example.com/thumb.webp');

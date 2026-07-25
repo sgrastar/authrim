@@ -58,7 +58,7 @@
 		"yaml": "2.8.3"
 	},
 	"dependencies": {
-		"@authrim/core": "^0.1.18",
+		"@authrim/core": "^0.2.0",
 		"@simplewebauthn/browser": "^13.2.2",
 		"qrcode": "^1.5.4"
 	}

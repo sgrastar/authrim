@@ -403,6 +403,10 @@ components:
             ui:
               theme: light
               variant: beige
+              supportedLocales:
+                - en
+                - ja
+              defaultLocale: en
               branding:
                 brandName: Authrim
             meta:
@@ -1114,6 +1118,43 @@ components:
         ui:
           type: object
           additionalProperties: true
+          required:
+            - supportedLocales
+            - defaultLocale
+          properties:
+            supportedLocales:
+              type: array
+              minItems: 1
+              uniqueItems: true
+              items:
+                type: string
+                enum:
+                  - en
+                  - ja
+                  - zh-CN
+                  - zh-TW
+                  - es
+                  - pt
+                  - fr
+                  - de
+                  - ko
+                  - ru
+                  - id
+            defaultLocale:
+              type: string
+              description: Fallback locale. The value is always included in supportedLocales.
+              enum:
+                - en
+                - ja
+                - zh-CN
+                - zh-TW
+                - es
+                - pt
+                - fr
+                - de
+                - ko
+                - ru
+                - id
         meta:
           type: object
           required:

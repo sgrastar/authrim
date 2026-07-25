@@ -172,6 +172,8 @@ const id = createTranslation({
 	header_signUp: 'Daftar',
 	header_login: 'Masuk',
 	header_logout: 'Keluar',
+	logout_completeTitle: 'Anda telah keluar',
+	logout_completeDescription: 'Sesi Anda telah berakhir dengan aman.',
 	landing_metaDescription:
 		'Authrim — penyedia OpenID Connect modern yang dibangun dengan Cloudflare Workers.',
 	landing_providerBadge: 'Penyedia OpenID Connect',

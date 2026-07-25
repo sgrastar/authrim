@@ -26,7 +26,8 @@ import {
 	type HumanVerificationProvider
 } from '$lib/server/authentication-methods-cache';
 import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
-import { normalizeLoginUILocale, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+import { toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
 import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
 import { sanitizeColor } from '$lib/utils/url-validation';
 import {
@@ -1118,6 +1119,7 @@ export const emailVerificationOriginTrialHandle: Handle = async ({ event, resolv
 };
 
 export const localeHandle: Handle = async ({ event, resolve }) => {
+	const languageConfig = getLoginUILanguageConfig(event.locals.authenticationMethods?.ui);
 	const resolveWithLocale = (locale: LoginUILocale) => {
 		event.locals.locale = locale;
 		const initialAppearance = resolveInitialLoginUIAppearance(
@@ -1134,8 +1136,17 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 		});
 	};
 
-	const cookieLocale = normalizeLoginUILocale(
-		event.cookies.get('preferredLanguage') ?? event.cookies.get('lang')
+	const requestedLocale = resolveEnabledLoginUILocale(
+		event.url.searchParams.get('lang'),
+		languageConfig
+	);
+	if (requestedLocale) {
+		return resolveWithLocale(requestedLocale);
+	}
+
+	const cookieLocale = resolveEnabledLoginUILocale(
+		event.cookies.get('preferredLanguage') ?? event.cookies.get('lang'),
+		languageConfig
 	);
 	if (cookieLocale) {
 		return resolveWithLocale(cookieLocale);
@@ -1165,13 +1176,13 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 		.map((candidate) => candidate.language);
 
 	for (const candidate of candidates) {
-		const locale = normalizeLoginUILocale(candidate);
+		const locale = resolveEnabledLoginUILocale(candidate, languageConfig);
 		if (locale) {
 			return resolveWithLocale(locale);
 		}
 	}
 
-	return resolveWithLocale('en');
+	return resolveWithLocale(languageConfig.defaultLocale);
 };
 
 export const handle = sequence(

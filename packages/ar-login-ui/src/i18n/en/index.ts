@@ -205,6 +205,8 @@ const en = {
 	header_signUp: 'Sign up',
 	header_login: 'Sign in',
 	header_logout: 'Sign out',
+	logout_completeTitle: "You're signed out",
+	logout_completeDescription: 'Your session has ended safely.',
 
 	landing_metaDescription:
 		'Authrim - A modern OpenID Connect Provider built with Cloudflare Workers.',

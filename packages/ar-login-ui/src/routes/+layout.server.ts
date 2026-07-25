@@ -1,15 +1,19 @@
 import type { LayoutServerLoad } from './$types';
 import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
-import { normalizeLoginUILocale } from '$lib/i18n/locales';
+import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
 
 export const load: LayoutServerLoad = async (event) => {
 	// Get language preference from cookie
-	const requestedLanguage = normalizeLoginUILocale(event.url?.searchParams.get('lang'));
+	const languageConfig = getLoginUILanguageConfig(event.locals.authenticationMethods?.ui);
+	const requestedLanguage = resolveEnabledLoginUILocale(
+		event.url?.searchParams.get('lang'),
+		languageConfig
+	);
 	const preferredLanguage =
 		requestedLanguage ??
-		normalizeLoginUILocale(event.cookies.get('preferredLanguage')) ??
-		event.locals.locale ??
-		'en';
+		resolveEnabledLoginUILocale(event.cookies.get('preferredLanguage'), languageConfig) ??
+		resolveEnabledLoginUILocale(event.locals.locale, languageConfig) ??
+		languageConfig.defaultLocale;
 	if (requestedLanguage) {
 		event.cookies.set('preferredLanguage', preferredLanguage, {
 			path: '/',

@@ -60,7 +60,8 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 				footerLinks: [],
 				customBlocks: []
 			},
-			supportedLocales: ['en', 'ja']
+			supportedLocales: ['en', 'ja'],
+			defaultLocale: 'en'
 		},
 		meta: { cacheTTL: 60, revision: 'theme-revision' }
 	};

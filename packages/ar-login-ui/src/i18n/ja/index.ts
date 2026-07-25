@@ -210,6 +210,8 @@ const ja = {
 	header_signUp: '新規登録',
 	header_login: 'ログイン',
 	header_logout: 'ログアウト',
+	logout_completeTitle: 'ログアウトしました',
+	logout_completeDescription: 'セッションは安全に終了しました。',
 
 	landing_metaDescription:
 		'Authrim - Cloudflare Workersで構築されたモダンなOpenID Connectプロバイダー。',

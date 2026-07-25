@@ -33,7 +33,10 @@ const adminDashboard = {
 	admin_login_panel: '管理パネル',
 	admin_login_authenticating: '認証中...',
 	admin_login_with_passkey: 'パスキーでログイン',
-	admin_login_hint: '登録済みパスキーを持つ管理者のみ、この領域にアクセスできます。'
+	admin_login_hint: '登録済みパスキーを持つ管理者のみ、この領域にアクセスできます。',
+	admin_login_theme_label: 'テーマ',
+	admin_login_theme_light: 'ライト',
+	admin_login_theme_dark: 'ダーク'
 } as const;
 
 export default adminDashboard;

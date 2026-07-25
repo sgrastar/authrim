@@ -210,6 +210,7 @@ interface UIConfig {
     }>;
   };
   supportedLocales: string[];
+  defaultLocale: string;
   selfService: {
     accountPageEnabled: boolean;
     accountPagePath: string;
@@ -269,6 +270,19 @@ interface AuthenticationMethodsDiagnosticTiming {
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
+const LOGIN_UI_LOCALES = [
+  'en',
+  'ja',
+  'zh-CN',
+  'zh-TW',
+  'es',
+  'pt',
+  'fr',
+  'de',
+  'ko',
+  'ru',
+  'id',
+] as const;
 
 const LOGIN_PROVIDER_ICON_NAMES = new Set([
   'buildings',
@@ -362,6 +376,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     customBlocks: [],
   },
   supportedLocales: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
+  defaultLocale: 'en',
   selfService: {
     accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
     accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
@@ -433,6 +448,7 @@ interface LoginUIKVSettings {
   'login-ui.brand_panel_title'?: string;
   'login-ui.brand_panel_text'?: string;
   'login-ui.supported_locales'?: string;
+  'login-ui.default_locale'?: string;
   'login-ui.background_image_url'?: string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.custom_css'?: string;
@@ -549,6 +565,7 @@ interface LoginUIResolved {
   brandPanelTitle: string | null;
   brandPanelText: string | null;
   supportedLocales: string[];
+  defaultLocale: string;
   backgroundImageUrl: string | null;
   loginPanelBackgroundImageUrl: string | null;
   customCss: string | null;
@@ -897,6 +914,17 @@ function resolveLoginUIFromKVSettings(
   kvSettings: LoginUIKVSettings,
   defaults: LoginUIResolved
 ): LoginUIResolved {
+  const supportedLocales = kvSettings['login-ui.supported_locales']
+    ? kvSettings['login-ui.supported_locales']
+        .split(',')
+        .map((locale) => locale.trim())
+        .filter((locale) => LOGIN_UI_LOCALES.includes(locale as (typeof LOGIN_UI_LOCALES)[number]))
+        .filter((locale, index, locales) => locales.indexOf(locale) === index)
+    : defaults.supportedLocales;
+  const safeSupportedLocales =
+    supportedLocales.length > 0 ? supportedLocales : defaults.supportedLocales;
+  const configuredDefaultLocale = kvSettings['login-ui.default_locale'];
+
   return {
     theme: kvSettings['login-ui.theme'] || defaults.theme,
     variant: kvSettings['login-ui.variant'] || defaults.variant,
@@ -951,13 +979,14 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.brand_panel_text'],
       defaults.brandPanelText
     ),
-    supportedLocales: kvSettings['login-ui.supported_locales']
-      ? kvSettings['login-ui.supported_locales']
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && s.length <= 10 && /^[a-z]{2}(-[A-Z]{2})?$/.test(s))
-          .slice(0, 20)
-      : defaults.supportedLocales,
+    supportedLocales: safeSupportedLocales,
+    defaultLocale:
+      typeof configuredDefaultLocale === 'string' &&
+      safeSupportedLocales.includes(configuredDefaultLocale)
+        ? configuredDefaultLocale
+        : safeSupportedLocales.includes(defaults.defaultLocale)
+          ? defaults.defaultLocale
+          : (safeSupportedLocales[0] ?? DEFAULT_UI_CONFIG.defaultLocale),
     backgroundImageUrl: isValidLoginUIImageUrl(kvSettings['login-ui.background_image_url'])
       ? kvSettings['login-ui.background_image_url']!
       : defaults.backgroundImageUrl,
@@ -1134,6 +1163,7 @@ async function getLoginUISettings(
     brandPanelTitle: DEFAULT_UI_CONFIG.pageTemplate.brandPanelTitle,
     brandPanelText: DEFAULT_UI_CONFIG.pageTemplate.brandPanelText,
     supportedLocales: [...DEFAULT_UI_CONFIG.supportedLocales],
+    defaultLocale: DEFAULT_UI_CONFIG.defaultLocale,
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     customCss: DEFAULT_UI_CONFIG.appearance.customCss,
@@ -1165,7 +1195,23 @@ async function getLoginUISettings(
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
   };
 
-  // Try settings-v2 (SETTINGS KV) first — tenant-aware
+  // Resolve settings-v2 from platform to tenant to client so the Admin UI scope
+  // hierarchy is reflected by the public Login UI configuration.
+  let inheritedDefaults = defaults;
+  let hasPlatformSettings = false;
+  try {
+    const platformJson = await env.SETTINGS?.get('settings:platform:login-ui');
+    if (platformJson) {
+      inheritedDefaults = resolveLoginUIFromKVSettings(
+        JSON.parse(platformJson) as LoginUIKVSettings,
+        defaults
+      );
+      hasPlatformSettings = true;
+    }
+  } catch {
+    // Invalid platform settings do not prevent tenant or legacy settings from loading.
+  }
+
   try {
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
     if (kvJson) {
@@ -1174,11 +1220,15 @@ async function getLoginUISettings(
         env,
         tenantId,
         clientId,
-        resolveLoginUIFromKVSettings(kvSettings, defaults)
+        resolveLoginUIFromKVSettings(kvSettings, inheritedDefaults)
       );
     }
   } catch {
     // Invalid JSON — fall through to legacy
+  }
+
+  if (hasPlatformSettings) {
+    return applyClientLoginUIOverride(env, tenantId, clientId, inheritedDefaults);
   }
 
   // Fallback to legacy system_settings.loginUI
@@ -1204,6 +1254,7 @@ async function getLoginUISettings(
     brandPanelTitle: defaults.brandPanelTitle,
     brandPanelText: defaults.brandPanelText,
     supportedLocales: systemSettings.loginUI?.supportedLocales || defaults.supportedLocales,
+    defaultLocale: defaults.defaultLocale,
     backgroundImageUrl: defaults.backgroundImageUrl,
     loginPanelBackgroundImageUrl: defaults.loginPanelBackgroundImageUrl,
     customCss: defaults.customCss,
@@ -2109,6 +2160,9 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       customBlocks: loginUI.customBlocks,
     },
     supportedLocales: loginUI.supportedLocales,
+    defaultLocale: loginUI.supportedLocales.includes(loginUI.defaultLocale)
+      ? loginUI.defaultLocale
+      : (loginUI.supportedLocales[0] ?? DEFAULT_UI_CONFIG.defaultLocale),
     selfService: {
       accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
       accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],

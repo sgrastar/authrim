@@ -171,6 +171,8 @@ const ru = createTranslation({
 	header_signUp: 'Регистрация',
 	header_login: 'Войти',
 	header_logout: 'Выйти',
+	logout_completeTitle: 'Вы вышли из системы',
+	logout_completeDescription: 'Ваш сеанс был безопасно завершён.',
 	landing_metaDescription: 'Authrim — современный провайдер OpenID Connect на Cloudflare Workers.',
 	landing_providerBadge: 'Провайдер OpenID Connect',
 	register_title: 'Создайте учётную запись',
