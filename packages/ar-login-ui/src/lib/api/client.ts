@@ -5,13 +5,24 @@
 
 import { browser } from '$app/environment';
 import { getAuthConfig } from '$lib/auth';
-import { generateLoginUiPKCE } from '$lib/authrim/pkce';
 import { getDiagnosticSessionId as getLoggerSessionId } from '$lib/stores/diagnostic';
 import { authrimFetch } from '$lib/authrim/fetch';
 import {
 	LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 	LOGIN_UI_SESSION_STORAGE_KEYS
 } from '$lib/authrim/storage-keys';
+import {
+	AuthrimError,
+	base64urlEncode,
+	DirectAuthBrowserSessionClient,
+	PKCEHelper,
+	type AuthrimStorage,
+	type CryptoProvider,
+	type DirectAuthManagedSessionResponse,
+	type HttpClient,
+	type HttpOptions,
+	type HttpResponse
+} from '@authrim/core';
 import type {
 	PublicKeyCredentialCreationOptionsJSON,
 	PublicKeyCredentialRequestOptionsJSON
@@ -113,15 +124,10 @@ export interface APIError {
 	extensions?: Record<string, unknown>;
 }
 
-interface DirectAuthPkceState {
-	codeVerifier: string;
-}
-
-interface DirectEmailCodeState extends DirectAuthPkceState {
-	attemptId: string;
-}
-
-interface ManagedDirectSessionResponse {
+type ManagedDirectSessionResponse = Omit<
+	DirectAuthManagedSessionResponse,
+	'authorization' | 'migration'
+> & {
 	ok: boolean;
 	session: {
 		userId: string;
@@ -139,10 +145,10 @@ interface ManagedDirectSessionResponse {
 	redirect_url?: string;
 	authorization?: {
 		challenge_id: string;
-		type: 'login' | 'reauth';
+		type: string;
 	};
 	migration?: DirectoryPasswordMigrationResponse['migration'];
-}
+};
 
 interface DirectoryPasswordMigrationResponse {
 	ok: false;
@@ -189,9 +195,7 @@ interface DirectoryPasswordRecoveryResponse {
 	};
 }
 
-const directPasskeyLoginPkce = new Map<string, DirectAuthPkceState>();
-const directPasskeySignupPkce = new Map<string, DirectAuthPkceState>();
-const directEmailCodePkce = new Map<string, DirectEmailCodeState>();
+const directAuthMemoryStorage = new Map<string, string>();
 
 // Get API base URL from the current browser origin or use the configured backend fallback.
 // The Login UI worker proxies same-origin /api/* requests to PUBLIC_API_BASE_URL server-side,
@@ -333,101 +337,166 @@ async function apiFetch<T>(
 	}
 }
 
-async function createDirectAuthPkce() {
-	const pkce = await generateLoginUiPKCE();
+const loginUiCryptoProvider: CryptoProvider = {
+	async randomBytes(length: number): Promise<Uint8Array> {
+		const bytes = new Uint8Array(length);
+		requireBrowserCrypto().getRandomValues(bytes);
+		return bytes;
+	},
+
+	async sha256(data: string): Promise<Uint8Array> {
+		const encoded = new TextEncoder().encode(data);
+		const hash = await requireBrowserCrypto().subtle.digest('SHA-256', encoded);
+		return new Uint8Array(hash);
+	},
+
+	async generateCodeVerifier(): Promise<string> {
+		return base64urlEncode(await this.randomBytes(32));
+	},
+
+	async generateCodeChallenge(verifier: string): Promise<string> {
+		return base64urlEncode(await this.sha256(verifier));
+	}
+};
+
+const loginUiPkceHelper = new PKCEHelper(loginUiCryptoProvider);
+
+const loginUiDirectAuthStorage: AuthrimStorage = {
+	async get(key: string): Promise<string | null> {
+		if (!browser) return directAuthMemoryStorage.get(key) ?? null;
+		return sessionStorage.getItem(key) ?? readLegacyDirectEmailCodeState(key);
+	},
+
+	async set(key: string, value: string): Promise<void> {
+		directAuthMemoryStorage.set(key, value);
+		if (browser) {
+			sessionStorage.setItem(key, value);
+		}
+	},
+
+	async remove(key: string): Promise<void> {
+		directAuthMemoryStorage.delete(key);
+		if (browser) {
+			sessionStorage.removeItem(key);
+			removeLegacyDirectEmailCodeState(key);
+		}
+	}
+};
+
+const loginUiDirectAuthHttp: HttpClient = {
+	async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
+		const controller = new AbortController();
+		const timeoutId =
+			options.timeout && options.timeout > 0
+				? globalThis.setTimeout(() => controller.abort(), options.timeout)
+				: null;
+		const abortFromCaller = () => controller.abort();
+		options.signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+		try {
+			const response = await authrimFetch(url, {
+				method: options.method,
+				headers: options.headers,
+				body: options.body,
+				signal: controller.signal
+			});
+			const payload = (await response.json().catch(() => ({}))) as T;
+			return {
+				status: response.status,
+				statusText: response.statusText,
+				headers: Object.fromEntries(response.headers.entries()),
+				data: payload,
+				ok: response.ok
+			};
+		} finally {
+			if (timeoutId !== null) {
+				globalThis.clearTimeout(timeoutId);
+			}
+			options.signal?.removeEventListener('abort', abortFromCaller);
+		}
+	}
+};
+
+function createDirectAuthClient(): DirectAuthBrowserSessionClient {
+	const baseUrl = resolveApiBaseUrl();
+	return new DirectAuthBrowserSessionClient({
+		issuer: baseUrl,
+		baseUrl,
+		clientId: getAuthConfig().clientId,
+		http: loginUiDirectAuthHttp,
+		crypto: loginUiCryptoProvider,
+		storage: loginUiDirectAuthStorage,
+		storageKeyPrefix: 'authrim:loginui:direct'
+	});
+}
+
+function directAuthRequestOptions() {
 	return {
-		codeVerifier: pkce.codeVerifier,
-		codeChallenge: pkce.codeChallenge,
-		codeChallengeMethod: pkce.codeChallengeMethod
+		headers: Object.fromEntries(buildDiagnosticHeaders().entries()),
+		timeout: DEFAULT_API_TIMEOUT
 	};
 }
 
-function normalizeDirectEmail(value: string): string {
-	return value.trim().toLowerCase();
-}
-
-function getDirectEmailCodeStateKey(email: string): string {
-	return `${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${normalizeDirectEmail(email)}`;
-}
-
-function getLegacyDirectEmailCodeStateKey(email: string): string {
-	return `${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${normalizeDirectEmail(email)}`;
-}
-
-function persistDirectEmailCodeState(email: string, state: DirectEmailCodeState): void {
-	const normalizedEmail = normalizeDirectEmail(email);
-	directEmailCodePkce.set(normalizedEmail, state);
-	if (!browser) {
-		return;
-	}
-
+async function withDirectAuthResult<T>(
+	operation: () => Promise<T>
+): Promise<{ data?: T; error?: APIError }> {
 	try {
-		sessionStorage.setItem(getDirectEmailCodeStateKey(normalizedEmail), JSON.stringify(state));
-	} catch {
-		// Session storage is a convenience for page navigation; API errors remain fail-closed.
+		return { data: await operation(), error: undefined };
+	} catch (error) {
+		return { error: apiErrorFromDirectAuthError(error) };
 	}
 }
 
-function readDirectEmailCodeState(email: string): DirectEmailCodeState | null {
-	const normalizedEmail = normalizeDirectEmail(email);
-	const memoryState = directEmailCodePkce.get(normalizedEmail);
-
-	if (!browser) {
-		return memoryState ?? null;
+function apiErrorFromDirectAuthError(error: unknown): APIError {
+	if (error instanceof AuthrimError) {
+		const originalError =
+			typeof error.details?.originalError === 'string' ? error.details.originalError : null;
+		const code =
+			error.code === 'invalid_state' && /state is missing or expired/i.test(error.message)
+				? 'missing_pkce_state'
+				: (originalError ?? error.code);
+		return {
+			error: code,
+			error_description: error.message
+		};
 	}
+	return {
+		error: 'network_error',
+		error_description: 'Network error occurred'
+	};
+}
 
+function requireBrowserCrypto(): Crypto {
+	if (typeof crypto === 'undefined' || !crypto.getRandomValues || !crypto.subtle) {
+		throw new Error('Web Crypto API is not available');
+	}
+	return crypto;
+}
+
+function readLegacyDirectEmailCodeState(coreKey: string): string | null {
+	const email = parseCoreDirectEmailCodeKey(coreKey);
+	if (!email) return null;
+	return (
+		sessionStorage.getItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`) ??
+		sessionStorage.getItem(`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`)
+	);
+}
+
+function removeLegacyDirectEmailCodeState(coreKey: string): void {
+	const email = parseCoreDirectEmailCodeKey(coreKey);
+	if (!email) return;
+	sessionStorage.removeItem(`${LOGIN_UI_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`);
+	sessionStorage.removeItem(`${LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS.directEmailCodeStatePrefix}${email}`);
+}
+
+function parseCoreDirectEmailCodeKey(key: string): string | null {
+	const prefix = 'authrim:loginui:direct:email-code:';
+	if (!key.startsWith(prefix)) return null;
 	try {
-		const key = getDirectEmailCodeStateKey(normalizedEmail);
-		const legacyKey = getLegacyDirectEmailCodeStateKey(normalizedEmail);
-		const raw = sessionStorage.getItem(key) ?? sessionStorage.getItem(legacyKey);
-		if (!raw) {
-			return memoryState ?? null;
-		}
-
-		const parsed = JSON.parse(raw) as Partial<DirectEmailCodeState>;
-		if (typeof parsed.attemptId === 'string' && typeof parsed.codeVerifier === 'string') {
-			return {
-				attemptId: parsed.attemptId,
-				codeVerifier: parsed.codeVerifier
-			};
-		}
+		return decodeURIComponent(key.slice(prefix.length));
 	} catch {
-		return memoryState ?? null;
+		return null;
 	}
-
-	return memoryState ?? null;
-}
-
-function clearDirectEmailCodeState(email: string): void {
-	const normalizedEmail = normalizeDirectEmail(email);
-	directEmailCodePkce.delete(normalizedEmail);
-	if (!browser) return;
-
-	try {
-		sessionStorage.removeItem(getDirectEmailCodeStateKey(normalizedEmail));
-		sessionStorage.removeItem(getLegacyDirectEmailCodeStateKey(normalizedEmail));
-	} catch {
-		// State also lives in memory for the current page lifecycle.
-	}
-}
-
-async function finalizeManagedDirectAuthSession(
-	directAuthArtifact: string,
-	codeVerifier: string,
-	authorizationChallengeId?: string,
-	deferAuthorizationContinuation = false
-): Promise<{ data?: ManagedDirectSessionResponse; error?: APIError }> {
-	return apiFetch<ManagedDirectSessionResponse>('/api/v1/auth/direct/session', {
-		method: 'POST',
-		body: JSON.stringify({
-			direct_auth_artifact: directAuthArtifact,
-			client_id: getAuthConfig().clientId,
-			code_verifier: codeVerifier,
-			channel: 'browser',
-			authorization_challenge_id: authorizationChallengeId,
-			defer_authorization_continuation: deferAuthorizationContinuation
-		})
-	});
 }
 
 function directSessionToLegacyAuthResponse(data: ManagedDirectSessionResponse): {
@@ -776,28 +845,19 @@ export const passkeyAPI = {
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
 	}) {
-		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{
-			options: PublicKeyCredentialCreationOptionsJSON;
-			challenge_id: string;
-		}>('/api/v1/auth/direct/passkey/signup/start', {
-			method: 'POST',
-			body: JSON.stringify({
-				client_id: getAuthConfig().clientId,
-				code_challenge: pkce.codeChallenge,
-				code_challenge_method: pkce.codeChallengeMethod,
-				channel: 'browser',
-				email: data.email || undefined,
-				display_name: data.name,
-				custom_fields: data.custom_fields,
-				authorization_challenge_id: data.authorizationChallengeId,
-				human_verification_response: data.human_verification_response
-			})
-		});
+		const response = await withDirectAuthResult(() =>
+			createDirectAuthClient().startPasskeySignup(
+				{
+					email: data.email || undefined,
+					displayName: data.name,
+					customFields: data.custom_fields,
+					authorizationChallengeId: data.authorizationChallengeId,
+					humanVerificationResponse: data.human_verification_response
+				},
+				directAuthRequestOptions()
+			)
+		);
 		if (response.data) {
-			directPasskeySignupPkce.set(response.data.challenge_id, {
-				codeVerifier: pkce.codeVerifier
-			});
 			return {
 				data: {
 					options: response.data.options,
@@ -823,47 +883,18 @@ export const passkeyAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		const pkce = directPasskeySignupPkce.get(data.userId);
-		if (!pkce) {
-			return {
-				error: {
-					error: 'missing_pkce_state',
-					error_description: 'Passkey registration state is missing or expired'
-				}
-			};
-		}
-		directPasskeySignupPkce.delete(data.userId);
-
-		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
-			'/api/v1/auth/direct/passkey/signup/finish',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					challenge_id: data.userId,
-					credential: data.credential,
-					code_verifier: pkce.codeVerifier,
-					channel: 'browser'
-				})
-			}
-		);
-		if (finish.error || !finish.data) {
-			return finish as {
-				data?: {
-					verified: boolean;
-					passkeyId: string;
-					message: string;
-					userId: string;
-					user: User;
-				};
-				error?: APIError;
-			};
-		}
-
-		const session = await finalizeManagedDirectAuthSession(
-			finish.data.direct_auth_artifact,
-			pkce.codeVerifier,
-			data.authorizationChallengeId,
-			data.deferAuthorizationContinuation === true
+		const session = await withDirectAuthResult(() =>
+			createDirectAuthClient().finishPasskeySignupWithManagedSession(
+				{
+					challengeId: data.userId,
+					credential: data.credential
+				},
+				{
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
+				},
+				directAuthRequestOptions()
+			)
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -880,7 +911,7 @@ export const passkeyAPI = {
 
 		return {
 			data: {
-				...directSessionToLegacyAuthResponse(session.data),
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse),
 				passkeyId: '',
 				message: 'Passkey registration successful'
 			},
@@ -896,26 +927,17 @@ export const passkeyAPI = {
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
 	}) {
-		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{
-			options: PublicKeyCredentialRequestOptionsJSON;
-			challenge_id: string;
-		}>('/api/v1/auth/direct/passkey/login/start', {
-			method: 'POST',
-			body: JSON.stringify({
-				client_id: getAuthConfig().clientId,
-				code_challenge: pkce.codeChallenge,
-				code_challenge_method: pkce.codeChallengeMethod,
-				channel: 'browser',
-				email: data.email,
-				authorization_challenge_id: data.authorizationChallengeId,
-				human_verification_response: data.human_verification_response
-			})
-		});
+		const response = await withDirectAuthResult(() =>
+			createDirectAuthClient().startPasskeyLogin(
+				{
+					email: data.email,
+					authorizationChallengeId: data.authorizationChallengeId,
+					humanVerificationResponse: data.human_verification_response
+				},
+				directAuthRequestOptions()
+			)
+		);
 		if (response.data) {
-			directPasskeyLoginPkce.set(response.data.challenge_id, {
-				codeVerifier: pkce.codeVerifier
-			});
 			return {
 				data: {
 					options: response.data.options,
@@ -939,46 +961,18 @@ export const passkeyAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		const pkce = directPasskeyLoginPkce.get(data.challengeId);
-		if (!pkce) {
-			return {
-				error: {
-					error: 'missing_pkce_state',
-					error_description: 'Passkey login state is missing or expired'
-				}
-			};
-		}
-		directPasskeyLoginPkce.delete(data.challengeId);
-
-		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
-			'/api/v1/auth/direct/passkey/login/finish',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					challenge_id: data.challengeId,
-					credential: data.credential,
-					code_verifier: pkce.codeVerifier,
-					channel: 'browser'
-				})
-			}
-		);
-		if (finish.error || !finish.data) {
-			return finish as {
-				data?: {
-					verified: boolean;
-					userId: string;
-					user: User;
-					redirect_url?: string;
-				};
-				error?: APIError;
-			};
-		}
-
-		const session = await finalizeManagedDirectAuthSession(
-			finish.data.direct_auth_artifact,
-			pkce.codeVerifier,
-			data.authorizationChallengeId,
-			data.deferAuthorizationContinuation === true
+		const session = await withDirectAuthResult(() =>
+			createDirectAuthClient().finishPasskeyLoginWithManagedSession(
+				{
+					challengeId: data.challengeId,
+					credential: data.credential
+				},
+				{
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
+				},
+				directAuthRequestOptions()
+			)
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -993,7 +987,7 @@ export const passkeyAPI = {
 		}
 
 		return {
-			data: directSessionToLegacyAuthResponse(session.data),
+			data: directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse),
 			error: undefined
 		};
 	}
@@ -1021,32 +1015,26 @@ export const emailCodeAPI = {
 			interactionId: string;
 		};
 	}) {
-		const pkce = await createDirectAuthPkce();
-		const response = await apiFetch<{
-			attempt_id?: string;
-			expires_in: number;
-			masked_email?: string;
-			_dev_code?: string;
-			direct_auth_artifact?: string;
-			is_new_user?: boolean;
-		}>('/api/v1/auth/direct/email-code/send', {
-			method: 'POST',
-			body: JSON.stringify({
-				client_id: getAuthConfig().clientId,
-				email: data.email,
-				display_name: data.name,
-				code_challenge: pkce.codeChallenge,
-				code_challenge_method: pkce.codeChallengeMethod,
-				channel: 'browser',
-				invite_token: data.invite_token,
-				authorization_challenge_id: data.authorizationChallengeId,
-				custom_fields: data.custom_fields,
-				human_verification_response: data.human_verification_response,
-				email_verification_token: data.emailVerification?.token,
-				email_verification_challenge_id: data.emailVerification?.challengeId,
-				runtime_interaction_id: data.runtimeInteractionId ?? data.emailVerification?.interactionId
-			})
-		});
+		const response = await withDirectAuthResult(() =>
+			createDirectAuthClient().sendEmailCodeWithManagedSession(
+				{
+					email: data.email,
+					displayName: data.name,
+					inviteToken: data.invite_token,
+					authorizationChallengeId: data.authorizationChallengeId,
+					customFields: data.custom_fields,
+					humanVerificationResponse: data.human_verification_response,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation,
+					runtimeInteractionId: data.runtimeInteractionId,
+					emailVerification: data.emailVerification
+				},
+				{
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
+				},
+				directAuthRequestOptions()
+			)
+		);
 
 		if (response.error || !response.data) {
 			return response as {
@@ -1054,35 +1042,19 @@ export const emailCodeAPI = {
 				error?: APIError;
 			};
 		}
-		if (response.data.direct_auth_artifact) {
-			const session = await finalizeManagedDirectAuthSession(
-				response.data.direct_auth_artifact,
-				pkce.codeVerifier,
-				data.authorizationChallengeId,
-				data.deferAuthorizationContinuation === true
-			);
-			if (session.error || !session.data) {
-				return session as {
-					data?: {
-						success: boolean;
-						verified: boolean;
-						userId: string;
-						user: User;
-						redirect_url?: string;
-					};
-					error?: APIError;
-				};
-			}
+		if (response.data.status === 'completed') {
 			return {
 				data: {
 					success: true,
 					message: 'Email verified by provider',
-					...directSessionToLegacyAuthResponse(session.data)
+					...directSessionToLegacyAuthResponse(
+						response.data.session as ManagedDirectSessionResponse
+					)
 				},
 				error: undefined
 			};
 		}
-		if (!response.data.attempt_id) {
+		if (!response.data.response.attempt_id) {
 			return {
 				error: {
 					error: 'invalid_response',
@@ -1091,18 +1063,13 @@ export const emailCodeAPI = {
 			};
 		}
 
-		persistDirectEmailCodeState(data.email, {
-			attemptId: response.data.attempt_id,
-			codeVerifier: pkce.codeVerifier
-		});
-
 		return {
 			data: {
 				success: true,
 				verified: false,
 				message: 'Verification code sent',
-				messageId: response.data.attempt_id,
-				code: response.data._dev_code
+				messageId: response.data.response.attempt_id,
+				code: response.data.response._dev_code
 			},
 			error: undefined
 		};
@@ -1117,46 +1084,18 @@ export const emailCodeAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		const state = readDirectEmailCodeState(data.email);
-		if (!state) {
-			return {
-				error: {
-					error: 'missing_pkce_state',
-					error_description: 'Email code state is missing or expired'
-				}
-			};
-		}
-
-		const finish = await apiFetch<{ direct_auth_artifact: string; expires_in: number }>(
-			'/api/v1/auth/direct/email-code/verify',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					attempt_id: state.attemptId,
-					code: data.code,
-					code_verifier: state.codeVerifier,
-					channel: 'browser'
-				})
-			}
-		);
-		if (finish.error || !finish.data) {
-			return finish as {
-				data?: {
-					success: boolean;
-					userId: string;
-					user: User;
-					redirect_url?: string;
-				};
-				error?: APIError;
-			};
-		}
-		clearDirectEmailCodeState(data.email);
-
-		const session = await finalizeManagedDirectAuthSession(
-			finish.data.direct_auth_artifact,
-			state.codeVerifier,
-			data.authorizationChallengeId,
-			data.deferAuthorizationContinuation === true
+		const session = await withDirectAuthResult(() =>
+			createDirectAuthClient().verifyEmailCodeWithManagedSession(
+				{
+					email: data.email,
+					code: data.code
+				},
+				{
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation === true
+				},
+				directAuthRequestOptions()
+			)
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1173,7 +1112,7 @@ export const emailCodeAPI = {
 		return {
 			data: {
 				success: true,
-				...directSessionToLegacyAuthResponse(session.data)
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse)
 			},
 			error: undefined
 		};
@@ -1185,13 +1124,15 @@ export const emailCodeAPI = {
  */
 export const totpAPI = {
 	async startLogin(data: { identifier?: string; authorizationChallengeId?: string }) {
-		return apiFetch<{ challenge_id: string; expires_in: number }>('/api/auth/totp/login/start', {
-			method: 'POST',
-			body: JSON.stringify({
-				identifier: data.identifier,
-				authorization_challenge_id: data.authorizationChallengeId
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().startTotpLogin(
+				{
+					identifier: data.identifier,
+					authorizationChallengeId: data.authorizationChallengeId
+				},
+				directAuthRequestOptions()
+			)
+		);
 	},
 
 	async verifyLogin(data: {
@@ -1200,36 +1141,17 @@ export const totpAPI = {
 		authorizationChallengeId?: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		return apiFetch<{
-			success: boolean;
-			sessionId: string;
-			redirect_url?: string;
-			authorization?: {
-				challenge_id?: string;
-				type?: string;
-			};
-			session?: {
-				userId: string;
-				createdAt: number;
-				expiresAt: number;
-				authTime: number;
-				acr?: string;
-				amr?: string[];
-			};
-			user: {
-				id: string;
-				email: string;
-				name?: string | null;
-			};
-		}>('/api/auth/totp/login/verify', {
-			method: 'POST',
-			body: JSON.stringify({
-				challenge_id: data.challengeId,
-				code: data.code,
-				authorization_challenge_id: data.authorizationChallengeId,
-				defer_authorization_continuation: data.deferAuthorizationContinuation === true
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().verifyTotpLogin(
+				{
+					challengeId: data.challengeId,
+					code: data.code,
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation
+				},
+				directAuthRequestOptions()
+			)
+		);
 	},
 
 	async createSignupOptions(data: {
@@ -1240,40 +1162,19 @@ export const totpAPI = {
 		authorizationChallengeId?: string;
 		human_verification_response?: string;
 	}) {
-		return apiFetch<{
-			challenge_id: string;
-			expires_in: number;
-			credential: {
-				id: string;
-				label: string | null;
-				algorithm: 'SHA1' | 'SHA256';
-				digits: number;
-				period: number;
-				window: number;
-				status: 'pending' | 'active' | 'disabled';
-				created_at: number;
-				activated_at: number | null;
-				last_used_at: number | null;
-			};
-			secret: string;
-			otpauth_uri: string;
-			profile: {
-				algorithm: 'SHA1' | 'SHA256';
-				digits: number;
-				period: number;
-				window: number;
-			};
-		}>('/api/auth/totp/signup/options', {
-			method: 'POST',
-			body: JSON.stringify({
-				email: data.email,
-				name: data.name,
-				label: data.label,
-				custom_fields: data.custom_fields,
-				authorization_challenge_id: data.authorizationChallengeId,
-				human_verification_response: data.human_verification_response
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().createTotpSignupOptions(
+				{
+					email: data.email,
+					name: data.name,
+					label: data.label,
+					customFields: data.custom_fields,
+					authorizationChallengeId: data.authorizationChallengeId,
+					humanVerificationResponse: data.human_verification_response
+				},
+				directAuthRequestOptions()
+			)
+		);
 	},
 
 	async activateSignup(data: {
@@ -1281,37 +1182,16 @@ export const totpAPI = {
 		code: string;
 		deferAuthorizationContinuation?: boolean;
 	}) {
-		return apiFetch<{
-			ok: boolean;
-			success: boolean;
-			backup_codes: string[];
-			sessionId: string;
-			redirect_url?: string;
-			authorization?: {
-				challenge_id?: string;
-				type?: string;
-			};
-			session: {
-				userId: string;
-				createdAt: number;
-				expiresAt: number;
-				authTime: number;
-				acr?: string;
-				amr?: string[];
-			};
-			user: {
-				id: string;
-				email: string;
-				name?: string | null;
-			};
-		}>('/api/auth/totp/signup/activate', {
-			method: 'POST',
-			body: JSON.stringify({
-				challenge_id: data.challengeId,
-				code: data.code,
-				defer_authorization_continuation: data.deferAuthorizationContinuation === true
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().activateTotpSignup(
+				{
+					challengeId: data.challengeId,
+					code: data.code,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation
+				},
+				directAuthRequestOptions()
+			)
+		);
 	}
 };
 
@@ -1327,21 +1207,25 @@ export const directoryPasswordAPI = {
 		deferAuthorizationContinuation?: boolean;
 		human_verification_response?: string;
 	}) {
-		const session = await apiFetch<
-			| ManagedDirectSessionResponse
-			| DirectoryPasswordMigrationResponse
-			| DirectoryPasswordRecoveryResponse
-		>('/api/auth/directory-password/login', {
-			method: 'POST',
-			body: JSON.stringify({
-				username: data.username,
-				password: data.password,
-				invite_token: data.inviteToken,
-				authorization_challenge_id: data.authorizationChallengeId,
-				defer_authorization_continuation: data.deferAuthorizationContinuation === true,
-				human_verification_response: data.human_verification_response
-			})
-		});
+		const session = (await withDirectAuthResult(() =>
+			createDirectAuthClient().loginWithDirectoryPassword(
+				{
+					username: data.username,
+					password: data.password,
+					inviteToken: data.inviteToken,
+					authorizationChallengeId: data.authorizationChallengeId,
+					deferAuthorizationContinuation: data.deferAuthorizationContinuation,
+					humanVerificationResponse: data.human_verification_response
+				},
+				directAuthRequestOptions()
+			)
+		)) as {
+			data?:
+				| ManagedDirectSessionResponse
+				| DirectoryPasswordMigrationResponse
+				| DirectoryPasswordRecoveryResponse;
+			error?: APIError;
+		};
 		if (session.error || !session.data) {
 			return session as {
 				data?: {
@@ -1391,17 +1275,22 @@ export const directoryPasswordAPI = {
 		transactionToken: string;
 		displayName?: string;
 	}) {
-		return apiFetch<{
-			challenge_id: string;
-			options: PublicKeyCredentialCreationOptionsJSON;
-		}>('/api/auth/directory-password/migration/passkey/options', {
-			method: 'POST',
-			body: JSON.stringify({
-				transaction_id: data.transactionId,
-				transaction_token: data.transactionToken,
-				display_name: data.displayName
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().createDirectoryPasswordMigrationPasskeyOptions(
+				{
+					transactionId: data.transactionId,
+					transactionToken: data.transactionToken,
+					displayName: data.displayName
+				},
+				directAuthRequestOptions()
+			)
+		) as Promise<{
+			data?: {
+				challenge_id: string;
+				options: PublicKeyCredentialCreationOptionsJSON;
+			};
+			error?: APIError;
+		}>;
 	},
 
 	async migrationPasskeyVerify(data: {
@@ -1411,18 +1300,17 @@ export const directoryPasswordAPI = {
 		credential: unknown;
 		deviceName?: string;
 	}) {
-		const session = await apiFetch<ManagedDirectSessionResponse>(
-			'/api/auth/directory-password/migration/passkey/verify',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					transaction_id: data.transactionId,
-					transaction_token: data.transactionToken,
-					challenge_id: data.challengeId,
+		const session = await withDirectAuthResult(() =>
+			createDirectAuthClient().verifyDirectoryPasswordMigrationPasskey(
+				{
+					transactionId: data.transactionId,
+					transactionToken: data.transactionToken,
+					challengeId: data.challengeId,
 					credential: data.credential,
-					device_name: data.deviceName
-				})
-			}
+					deviceName: data.deviceName
+				},
+				directAuthRequestOptions()
+			)
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1438,25 +1326,22 @@ export const directoryPasswordAPI = {
 		return {
 			data: {
 				success: true,
-				...directSessionToLegacyAuthResponse(session.data)
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse)
 			},
 			error: undefined
 		};
 	},
 
 	async migrationEmailCodeSend(data: { transactionId: string; transactionToken: string }) {
-		return apiFetch<{
-			success: boolean;
-			challenge_id: string;
-			expires_in: number;
-			masked_email: string;
-		}>('/api/auth/directory-password/migration/email-code/send', {
-			method: 'POST',
-			body: JSON.stringify({
-				transaction_id: data.transactionId,
-				transaction_token: data.transactionToken
-			})
-		});
+		return withDirectAuthResult(() =>
+			createDirectAuthClient().sendDirectoryPasswordMigrationEmailCode(
+				{
+					transactionId: data.transactionId,
+					transactionToken: data.transactionToken
+				},
+				directAuthRequestOptions()
+			)
+		);
 	},
 
 	async migrationEmailCodeVerify(data: {
@@ -1465,17 +1350,16 @@ export const directoryPasswordAPI = {
 		challengeId: string;
 		code: string;
 	}) {
-		const session = await apiFetch<ManagedDirectSessionResponse>(
-			'/api/auth/directory-password/migration/email-code/verify',
-			{
-				method: 'POST',
-				body: JSON.stringify({
-					transaction_id: data.transactionId,
-					transaction_token: data.transactionToken,
-					challenge_id: data.challengeId,
+		const session = await withDirectAuthResult(() =>
+			createDirectAuthClient().verifyDirectoryPasswordMigrationEmailCode(
+				{
+					transactionId: data.transactionId,
+					transactionToken: data.transactionToken,
+					challengeId: data.challengeId,
 					code: data.code
-				})
-			}
+				},
+				directAuthRequestOptions()
+			)
 		);
 		if (session.error || !session.data) {
 			return session as {
@@ -1491,7 +1375,7 @@ export const directoryPasswordAPI = {
 		return {
 			data: {
 				success: true,
-				...directSessionToLegacyAuthResponse(session.data)
+				...directSessionToLegacyAuthResponse(session.data as ManagedDirectSessionResponse)
 			},
 			error: undefined
 		};
@@ -2034,7 +1918,7 @@ export const externalIdpAPI = {
 		// Generate PKCE parameters (using static import)
 		let pkceParams;
 		try {
-			pkceParams = await generateLoginUiPKCE();
+			pkceParams = await loginUiPkceHelper.generatePKCE();
 		} catch (error) {
 			console.error('Failed to generate PKCE parameters:', error);
 			throw new Error(
