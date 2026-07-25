@@ -1,6 +1,7 @@
 import { getContext, setContext } from 'svelte';
 import { createBrandingStore } from './branding.svelte';
 import { createLoginUIPageStore } from './login-ui-page.svelte';
+import { createLanguageStore } from './language.svelte';
 import { createThemeStore } from './theme.svelte';
 
 const LOGIN_UI_CONTEXT = Symbol('authrim-login-ui-context');
@@ -8,6 +9,7 @@ const LOGIN_UI_CONTEXT = Symbol('authrim-login-ui-context');
 export function initializeLoginUIStores() {
 	const stores = {
 		brandingStore: createBrandingStore(),
+		languageStore: createLanguageStore(),
 		loginUIPageStore: createLoginUIPageStore(),
 		themeStore: createThemeStore()
 	};

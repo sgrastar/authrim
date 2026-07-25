@@ -33,7 +33,10 @@ const adminDashboard = {
 	admin_login_panel: 'Admin Panel',
 	admin_login_authenticating: 'Authenticating...',
 	admin_login_with_passkey: 'Login with Passkey',
-	admin_login_hint: 'Only administrators with registered Passkeys can access this area.'
+	admin_login_hint: 'Only administrators with registered Passkeys can access this area.',
+	admin_login_theme_label: 'Theme',
+	admin_login_theme_light: 'Light',
+	admin_login_theme_dark: 'Dark'
 } as const;
 
 export default adminDashboard;

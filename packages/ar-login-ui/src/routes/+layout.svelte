@@ -21,7 +21,7 @@
 	if (initialPreferredLanguage && isLoginUILocale(initialPreferredLanguage)) {
 		setLocale(initialPreferredLanguage);
 	}
-	const { brandingStore, loginUIPageStore, themeStore } = initializeLoginUIStores();
+	const { brandingStore, languageStore, loginUIPageStore, themeStore } = initializeLoginUIStores();
 	const initialAuthenticationMethods = untrack(() => data.authenticationMethods);
 
 	// Set language from server-provided data (from cookie)
@@ -38,6 +38,16 @@
 
 	function applyTenantBranding(authenticationMethods: AuthenticationMethodsResponse) {
 		if (!authenticationMethods.ui) return;
+		languageStore.setConfig(
+			authenticationMethods.ui.supportedLocales,
+			authenticationMethods.ui.defaultLocale
+		);
+		if (!languageStore.isEnabled(getLocale())) {
+			setLocale(languageStore.defaultLocale);
+			if (typeof document !== 'undefined') {
+				document.documentElement.lang = toDocumentLanguage(languageStore.defaultLocale);
+			}
+		}
 		themeStore.setTenantDefaults(authenticationMethods.ui.theme, authenticationMethods.ui.variant);
 		loginUIPageStore.setFromUIConfig(authenticationMethods.ui);
 		brandingStore.set(

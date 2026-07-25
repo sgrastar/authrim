@@ -330,8 +330,6 @@
 	let error = $state('');
 	let message = $state('');
 	let screenPreviewViewport = $state<'desktop' | 'mobile'>('desktop');
-	let screenPreviewMode = $state<'light' | 'dark'>('light');
-	let screenPreviewState = $state<'normal' | 'empty' | 'loading' | 'success' | 'error'>('normal');
 
 	const selectedScreen = $derived(screens.find((screen) => screen.id === selectedId) ?? null);
 	const previewFields = $derived(
@@ -387,8 +385,54 @@
 			description: '',
 			screen_kind: 'registration',
 			fields: [
-				createBlock('auth_widget', 10),
-				createBlock('identity_field', 20, { field: 'email', label: 'Email', required: true })
+				createBlock('heading', 0, {
+					field: 'heading.registration',
+					label: t('アカウントを作成', 'Create your account')
+				}),
+				createBlock('auth_widget', 10, {
+					field: 'auth.passkey',
+					label: t('Passkeyでアカウント作成', 'Create Account with Passkey'),
+					auth_method: 'passkey'
+				}),
+				createBlock('divider', 20, {
+					field: 'divider.or',
+					label: t('または', 'or'),
+					text: t('または', 'or'),
+					display_condition: { mode: 'feature_enabled', feature: 'mail_otp' }
+				}),
+				createBlock('auth_widget', 30, {
+					field: 'auth.mail_otp',
+					label: t('認証コードをメール送信', 'Send code by email'),
+					auth_method: 'mail_otp'
+				}),
+				createBlock('auth_widget', 35, {
+					field: 'auth.totp',
+					label: t('認証アプリで新規登録', 'Create account with authenticator app'),
+					auth_method: 'totp'
+				}),
+				createBlock('divider', 40, {
+					field: 'divider.other_accounts',
+					label: t('他のアカウントで続行', 'Continue with another account'),
+					text: t('他のアカウントで続行', 'Continue with another account'),
+					display_condition: { mode: 'feature_enabled', feature: 'external_idp' }
+				}),
+				createBlock('auth_widget', 50, {
+					field: 'auth.external_idp',
+					label: 'Ext. IdP',
+					auth_method: 'external_idp',
+					external_idp_show_action_text: false
+				}),
+				createBlock('divider', 55, {
+					field: 'divider.directory_password',
+					label: t('または', 'or'),
+					text: t('または', 'or'),
+					display_condition: { mode: 'feature_enabled', feature: 'directory_password' }
+				}),
+				createBlock('auth_widget', 60, {
+					field: 'auth.directory_password',
+					label: t('ディレクトリパスワードでサインイン', 'Sign in with directory password'),
+					auth_method: 'directory_password'
+				})
 			],
 			localizations: {},
 			settings: { canvas_layout: 'narrow' },
@@ -476,17 +520,6 @@
 		} catch {
 			return '#';
 		}
-	}
-
-	function accountWidgetPreviewState(): string {
-		const labels = {
-			normal: t('通常状態: 操作フォームと現在の情報', 'Normal: actions and current information'),
-			empty: t('空状態: 登録情報がない場合の案内', 'Empty: guidance when no records exist'),
-			loading: t('読み込み状態: 操作を一時的に無効化', 'Loading: actions temporarily disabled'),
-			success: t('成功状態: 完了メッセージを通知', 'Success: completion message announced'),
-			error: t('エラー状態: 復旧可能なエラーを表示', 'Error: recoverable error shown')
-		};
-		return labels[screenPreviewState];
 	}
 
 	function normalizeAuthMethod(value: unknown): string {
@@ -1774,7 +1807,6 @@
 																		>{field.label ||
 																			(part ? t(part.labelJa, part.labelEn) : '')}</strong
 																	>
-																	<small>{accountWidgetPreviewState()}</small>
 																</div>
 															</div>
 														{:else if blockType === 'heading'}
@@ -2318,26 +2350,14 @@
 										><option value="desktop">Desktop</option><option value="mobile">Mobile</option
 										></select
 									>
-									<select bind:value={screenPreviewMode}
-										><option value="light">Light</option><option value="dark">Dark</option></select
-									>
-									<select bind:value={screenPreviewState}
-										><option value="normal">Normal</option><option value="empty">Empty</option
-										><option value="loading">Loading</option><option value="success">Success</option
-										><option value="error">Error</option></select
-									>
 								</div>
 								<div
 									class:wide-canvas={normalizeSettings(draft.settings).canvas_layout === 'wide'}
 									class:mobile-preview={screenPreviewViewport === 'mobile'}
-									class:dark-preview={screenPreviewMode === 'dark'}
 									class="screen-preview draft-preview"
 									id="screen-editor-preview"
 									aria-label={$LL.admin_screens_preview()}
 								>
-									<p class="preview-state-label">
-										{t('Widget状態', 'Widget state')}: {screenPreviewState}
-									</p>
 									{#if draftLayoutSections.every((section) => section.items.length === 0)}
 										<p class="muted">{$LL.admin_screens_no_fields()}</p>
 									{:else}
@@ -2515,7 +2535,6 @@
 																			>{field.label ||
 																				(part ? t(part.labelJa, part.labelEn) : '')}</strong
 																		>
-																		<small>{accountWidgetPreviewState()}</small>
 																	</div>
 																</div>
 															{:else if blockType === 'heading'}
@@ -2830,9 +2849,6 @@
 		display: grid;
 		gap: 0.25rem;
 	}
-	.preview-account-widget small {
-		color: var(--color-text-muted);
-	}
 	.screen-preview-toolbar {
 		display: flex;
 		gap: 0.5rem;
@@ -2847,19 +2863,6 @@
 	}
 	.screen-preview.mobile-preview .preview-layout-row {
 		grid-template-columns: 1fr !important;
-	}
-	.screen-preview.dark-preview {
-		--color-surface: #172033;
-		--color-surface-muted: #0f172a;
-		--color-text: #f8fafc;
-		--color-text-muted: #aab5c5;
-		--color-border: #334155;
-		color: var(--color-text);
-	}
-	.preview-state-label {
-		margin: 0 0 0.75rem;
-		color: var(--color-text-muted);
-		font-size: 0.75rem;
 	}
 	.preview-code-input-widget {
 		display: grid;

@@ -175,6 +175,8 @@ const de = createTranslation({
 	header_signUp: 'Registrieren',
 	header_login: 'Anmelden',
 	header_logout: 'Abmelden',
+	logout_completeTitle: 'Sie sind abgemeldet',
+	logout_completeDescription: 'Ihre Sitzung wurde sicher beendet.',
 	landing_metaDescription: 'Authrim – ein moderner OpenID-Connect-Anbieter auf Cloudflare Workers.',
 	landing_providerBadge: 'OpenID-Connect-Anbieter',
 	register_title: 'Konto erstellen',

@@ -1274,6 +1274,15 @@ textarea.admin-input:disabled {
 	display: none;
 }
 
+html {
+	background-color: var(--color-bg-page, var(--bg-page));
+}
+
+html.theme-transitioning {
+	background-color: var(--color-bg-page, var(--bg-page));
+	transition: background-color 1800ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+}
+
 html.theme-transitioning * {
 	transition-duration: 1800ms !important;
 	transition-property: background-color, border-color, box-shadow, color, fill, stroke;

@@ -117,6 +117,8 @@ const LOGIN_UI_PATHS = [
   '/reauth',
   '/verify-email-code',
   '/error',
+  '/logged-out',
+  '/logout-complete',
   '/api/set-language',
   '/callback',
 ];
@@ -1422,6 +1424,9 @@ app.post('/logout/backchannel', async (c) => {
 });
 
 app.get('/logged-out', async (c) => {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+  }
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });

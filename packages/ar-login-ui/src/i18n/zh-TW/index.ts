@@ -164,6 +164,8 @@ const zhTW = createTranslation({
 	header_signUp: '註冊',
 	header_login: '登入',
 	header_logout: '登出',
+	logout_completeTitle: '您已登出',
+	logout_completeDescription: '您的工作階段已安全結束。',
 	landing_metaDescription: 'Authrim - 建置於 Cloudflare Workers 的現代 OpenID Connect 提供者。',
 	landing_providerBadge: 'OpenID Connect 提供者',
 	register_title: '建立帳戶',

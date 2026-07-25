@@ -241,6 +241,56 @@ const adminFlows = {
 		'既存アカウントでログインし、必要に応じてscope/claim提供を確認',
 	admin_flows_template_oidc_login_recorded_state:
 		'tenant + user + OIDC Client + session/authentication event + User Decision',
+	admin_flows_template_oidc_registration_no_consent_title: 'Registration (No consent)',
+	admin_flows_template_oidc_registration_no_consent_subtitle:
+		'プロフィール入力と登録同意なしの新規登録',
+	admin_flows_template_oidc_registration_no_consent_description:
+		'登録リクエストから登録方法の選択、アカウント作成、アプリケーションへの継続までを確認します。',
+	admin_flows_template_oidc_registration_no_consent_primary_entry:
+		'Registration Request / Sign-up entry',
+	admin_flows_template_oidc_registration_no_consent_primary_output:
+		'Application continuation / New account session',
+	admin_flows_template_oidc_registration_no_consent_mapping_set: 'OIDC registration profile fields',
+	admin_flows_template_oidc_registration_no_consent_user_action:
+		'登録方法を選び、プロフィール入力と登録同意なしでアカウントを作成',
+	admin_flows_template_oidc_registration_no_consent_recorded_state:
+		'tenant + user + OIDC Client + credential binding + audit event',
+	admin_flows_template_academic_saml_login_title: 'Academic SAML Login',
+	admin_flows_template_academic_saml_login_subtitle: '学術出版社・図書館系SP向けログイン',
+	admin_flows_template_academic_saml_login_description:
+		'SAML AuthnRequestからセッション確認、認証方式選択、属性送信確認、SAML Responseまでを確認します。',
+	admin_flows_template_academic_saml_login_primary_entry: 'SAML AuthnRequest',
+	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
+	admin_flows_template_academic_saml_login_mapping_set:
+		'GakuNin application standard Field Mapping Set',
+	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
+	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
+	admin_flows_template_academic_saml_login_user_action:
+		'既存アカウントでログインし、SPへ送信する属性を確認して許可',
+	admin_flows_template_academic_saml_login_recorded_state:
+		'tenant + user + SAML SP + statement/version + User Decision',
+	admin_flows_template_oidc_login_no_consent_title: 'Login (No consent)',
+	admin_flows_template_oidc_login_no_consent_subtitle: '同意確認なしのログイン',
+	admin_flows_template_oidc_login_no_consent_description:
+		'ログインリクエストからセッション確認、認証方式選択、ログイン、アプリケーションへの継続までを確認します。',
+	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
+	admin_flows_template_oidc_login_no_consent_primary_output:
+		'Application continuation / Existing account session',
+	admin_flows_template_oidc_login_no_consent_mapping_set: 'OIDC login/session claims',
+	admin_flows_template_oidc_login_no_consent_user_action: '既存アカウントでログイン',
+	admin_flows_template_oidc_login_no_consent_recorded_state:
+		'tenant + user + OIDC Client + session/authentication event + audit event',
+	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
+	admin_flows_template_saml_sp_oidc_rp_subtitle: 'SAML SP・OIDC RP向けログイン',
+	admin_flows_template_saml_sp_oidc_rp_description:
+		'Login (No consent) と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
+	admin_flows_template_saml_sp_oidc_rp_primary_entry:
+		'SAML AuthnRequest / OIDC Authorization Request',
+	admin_flows_template_saml_sp_oidc_rp_primary_output:
+		'SAML Response / OIDC Authorization Response',
+	admin_flows_template_saml_sp_oidc_rp_user_action: '既存アカウントでログイン',
+	admin_flows_template_saml_sp_oidc_rp_recorded_state:
+		'tenant + user + protocol target + session/authentication event + audit event',
 	admin_flows_kind_release_confirmation: '属性送信確認',
 	admin_flows_kind_authorization: '認可',
 	admin_flows_kind_registration: '新規登録',

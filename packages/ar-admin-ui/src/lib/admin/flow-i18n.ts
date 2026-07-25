@@ -51,53 +51,6 @@ export interface FlowNodePaletteItem {
 	description: string;
 }
 
-function getAcademicSamlLoginText(LL: TranslationFunctions): LocalizedFlowTemplateText {
-	if (LL.admin_flows_locale_marker() === 'ja') {
-		return {
-			title: 'Academic SAML Login',
-			subtitle: '学術出版社・図書館系SP向けログイン',
-			description:
-				'SAML AuthnRequestからセッション確認、認証方式選択、属性送信確認、SAML Responseまでを確認します。',
-			primaryEntry: 'SAML AuthnRequest',
-			primaryOutput: 'SAML Response / Assertion',
-			mappingSet: 'GakuNin application standard Field Mapping Set',
-			consentPolicy: 'SAML attribute release policy',
-			consentStatement: 'saml_attribute_release_uapprove',
-			userAction: '既存アカウントでログインし、SPへ送信する属性を確認して許可',
-			recordedState: 'tenant + user + SAML SP + statement/version + User Decision'
-		};
-	}
-	return {
-		title: 'Academic SAML Login',
-		subtitle: 'Login for academic publisher and library SPs',
-		description:
-			'Review the path from SAML AuthnRequest, session check, authentication method selection, attribute release confirmation, and SAML Response.',
-		primaryEntry: 'SAML AuthnRequest',
-		primaryOutput: 'SAML Response / Assertion',
-		mappingSet: 'GakuNin application standard Field Mapping Set',
-		consentPolicy: 'SAML attribute release policy',
-		consentStatement: 'saml_attribute_release_uapprove',
-		userAction:
-			'Sign in with an existing account, review the attributes released to the SP, and allow the release',
-		recordedState: 'tenant + user + SAML SP + statement/version + User Decision'
-	};
-}
-
-function getTemplateDefaultText(flow: NewFlowTemplate): LocalizedFlowTemplateText {
-	return {
-		title: flow.title,
-		subtitle: flow.subtitle,
-		description: flow.description,
-		primaryEntry: flow.primaryEntry,
-		primaryOutput: flow.primaryOutput,
-		mappingSet: flow.mappingSet,
-		consentPolicy: flow.consentPolicy,
-		consentStatement: flow.consentStatement,
-		userAction: flow.userAction,
-		recordedState: flow.recordedState
-	};
-}
-
 export function getFlowTemplateText(
 	LL: TranslationFunctions,
 	flow: NewFlowTemplate
@@ -143,9 +96,31 @@ export function getFlowTemplateText(
 				recordedState: LL.admin_flows_template_oidc_registration_recorded_state()
 			};
 		case 'default-registration-no-consent':
-			return getTemplateDefaultText(flow);
+			return {
+				title: LL.admin_flows_template_oidc_registration_no_consent_title(),
+				subtitle: LL.admin_flows_template_oidc_registration_no_consent_subtitle(),
+				description: LL.admin_flows_template_oidc_registration_no_consent_description(),
+				primaryEntry: LL.admin_flows_template_oidc_registration_no_consent_primary_entry(),
+				primaryOutput: LL.admin_flows_template_oidc_registration_no_consent_primary_output(),
+				mappingSet: LL.admin_flows_template_oidc_registration_no_consent_mapping_set(),
+				consentPolicy: flow.consentPolicy,
+				consentStatement: flow.consentStatement,
+				userAction: LL.admin_flows_template_oidc_registration_no_consent_user_action(),
+				recordedState: LL.admin_flows_template_oidc_registration_no_consent_recorded_state()
+			};
 		case 'academic-saml-login':
-			return getAcademicSamlLoginText(LL);
+			return {
+				title: LL.admin_flows_template_academic_saml_login_title(),
+				subtitle: LL.admin_flows_template_academic_saml_login_subtitle(),
+				description: LL.admin_flows_template_academic_saml_login_description(),
+				primaryEntry: LL.admin_flows_template_academic_saml_login_primary_entry(),
+				primaryOutput: LL.admin_flows_template_academic_saml_login_primary_output(),
+				mappingSet: LL.admin_flows_template_academic_saml_login_mapping_set(),
+				consentPolicy: LL.admin_flows_template_academic_saml_login_consent_policy(),
+				consentStatement: LL.admin_flows_template_academic_saml_login_consent_statement(),
+				userAction: LL.admin_flows_template_academic_saml_login_user_action(),
+				recordedState: LL.admin_flows_template_academic_saml_login_recorded_state()
+			};
 		case 'default-login':
 			return {
 				title: LL.admin_flows_template_oidc_login_title(),
@@ -160,8 +135,31 @@ export function getFlowTemplateText(
 				recordedState: LL.admin_flows_template_oidc_login_recorded_state()
 			};
 		case 'default-login-no-consent':
+			return {
+				title: LL.admin_flows_template_oidc_login_no_consent_title(),
+				subtitle: LL.admin_flows_template_oidc_login_no_consent_subtitle(),
+				description: LL.admin_flows_template_oidc_login_no_consent_description(),
+				primaryEntry: LL.admin_flows_template_oidc_login_no_consent_primary_entry(),
+				primaryOutput: LL.admin_flows_template_oidc_login_no_consent_primary_output(),
+				mappingSet: LL.admin_flows_template_oidc_login_no_consent_mapping_set(),
+				consentPolicy: flow.consentPolicy,
+				consentStatement: flow.consentStatement,
+				userAction: LL.admin_flows_template_oidc_login_no_consent_user_action(),
+				recordedState: LL.admin_flows_template_oidc_login_no_consent_recorded_state()
+			};
 		case 'saml-sp-oidc-rp':
-			return getTemplateDefaultText(flow);
+			return {
+				title: LL.admin_flows_template_saml_sp_oidc_rp_title(),
+				subtitle: LL.admin_flows_template_saml_sp_oidc_rp_subtitle(),
+				description: LL.admin_flows_template_saml_sp_oidc_rp_description(),
+				primaryEntry: LL.admin_flows_template_saml_sp_oidc_rp_primary_entry(),
+				primaryOutput: LL.admin_flows_template_saml_sp_oidc_rp_primary_output(),
+				mappingSet: flow.mappingSet,
+				consentPolicy: flow.consentPolicy,
+				consentStatement: flow.consentStatement,
+				userAction: LL.admin_flows_template_saml_sp_oidc_rp_user_action(),
+				recordedState: LL.admin_flows_template_saml_sp_oidc_rp_recorded_state()
+			};
 	}
 }
 

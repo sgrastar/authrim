@@ -460,6 +460,20 @@ const adminOther = {
 	admin_login_ui_saving: '保存中...',
 	admin_login_ui_cache_notice: 'Login UIへの反映には最大60秒かかります。',
 	admin_login_ui_save_global_config: 'グローバルUI設定を保存',
+	admin_login_ui_language_title: '言語設定',
+	admin_login_ui_language_description:
+		'Login UI全体で選択できる言語と、フォールバックに使用するデフォルト言語を設定します。',
+	admin_login_ui_language_enabled_count: '{count}言語を有効化',
+	admin_login_ui_language_list_label: 'Login UIで利用できる言語',
+	admin_login_ui_language_enable: '{language}を有効にする',
+	admin_login_ui_language_make_default: '{language}をデフォルト言語に設定する',
+	admin_login_ui_language_default_label: 'デフォルト言語',
+	admin_login_ui_language_help:
+		'チェックした言語は、ログイン、新規登録、アカウントページを含むすべてのLogin UI画面の言語選択に表示されます。',
+	admin_login_ui_language_save: '言語設定を保存',
+	admin_login_ui_language_updated: '言語設定を更新しました。',
+	admin_login_ui_language_error_save: '言語設定を保存できませんでした。',
+	admin_login_ui_language_at_least_one: '少なくとも1つの言語を有効にしてください。',
 	admin_login_ui_trusted_origins_title: '信頼済みorigin',
 	admin_login_ui_trusted_origins_description:
 		'パスキー登録や直接認証など、ブラウザベースの認証エンドポイント呼び出しを許可するテナント全体のoriginです。1行に1つのoriginまたはワイルドカードパターンを入力します。',

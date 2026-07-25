@@ -44,6 +44,7 @@ export interface LoginUISettings {
 
   // Locales
   'login-ui.supported_locales': string;
+  'login-ui.default_locale': string;
 
   // Appearance
   'login-ui.background_image_url': string;
@@ -278,6 +279,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_SUPPORTED_LOCALES',
     label: 'Supported Locales',
     description: 'Comma-separated list of supported LoginUI locales',
+    visibility: 'public',
+  },
+  'login-ui.default_locale': {
+    key: 'login-ui.default_locale',
+    type: 'enum',
+    default: 'en',
+    envKey: 'LOGIN_UI_DEFAULT_LOCALE',
+    label: 'Default Locale',
+    description: 'Fallback locale used when no enabled browser or saved locale matches',
+    enum: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
     visibility: 'public',
   },
   'login-ui.favicon_url': {
@@ -684,6 +695,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.brand_panel_title': '',
   'login-ui.brand_panel_text': '',
   'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
+  'login-ui.default_locale': 'en',
   'login-ui.background_image_url': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.custom_css': '',

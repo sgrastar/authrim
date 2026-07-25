@@ -3,25 +3,27 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
-	import {
-		LOGIN_UI_LOCALES,
-		LOGIN_UI_LOCALE_LABELS,
-		isLoginUILocale,
-		toDocumentLanguage
-	} from '$lib/i18n/locales';
+	import { LOGIN_UI_LOCALE_LABELS, isLoginUILocale, toDocumentLanguage } from '$lib/i18n/locales';
 
-	const { themeStore } = useLoginUIStores();
+	const { languageStore, themeStore } = useLoginUIStores();
 
 	let {
 		showThemeToggle = true,
 		showLanguageSelect = true
 	}: { showThemeToggle?: boolean; showLanguageSelect?: boolean } = $props();
 
-	const availableLocales: Locales[] = [...LOGIN_UI_LOCALES];
+	const availableLocales = $derived(languageStore.supportedLocales as Locales[]);
 	let currentLang = $state<Locales>(getLocale());
 
+	$effect(() => {
+		if (!languageStore.isEnabled(currentLang)) {
+			currentLang = languageStore.defaultLocale;
+			setLocale(currentLang);
+		}
+	});
+
 	async function switchLanguage(lang: string) {
-		if (!isLoginUILocale(lang)) return;
+		if (!isLoginUILocale(lang) || !languageStore.isEnabled(lang)) return;
 
 		setLocale(lang);
 		currentLang = lang;
