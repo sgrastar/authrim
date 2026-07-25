@@ -203,7 +203,7 @@
 						aria-label={$LL.language_select_label()}
 						onchange={handleLanguageChange}
 					>
-						{#each SUPPORTED_LOCALES as locale}
+						{#each SUPPORTED_LOCALES as locale (locale)}
 							<option value={locale}>{getLanguageName(locale)}</option>
 						{/each}
 					</select>
