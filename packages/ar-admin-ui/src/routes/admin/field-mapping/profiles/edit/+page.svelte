@@ -34,6 +34,7 @@
 		valueType: string;
 		allowedValues: string;
 		valueMultiplicity: 'single' | 'multi';
+		required: boolean;
 		nullable: boolean;
 		classification: string;
 		surfaces: IdentityMappingOidcSurface[];
@@ -805,7 +806,13 @@
 
 	function updateOidcClaim(index: number, field: keyof OidcClaimDraft, value: string | boolean) {
 		oidcClaims = oidcClaims.map((claim, claimIndex) =>
-			claimIndex === index ? { ...claim, [field]: value } : claim
+			claimIndex === index
+				? {
+						...claim,
+						[field]: value,
+						...(field === 'claimName' && value === 'sub' ? { required: true } : {})
+					}
+				: claim
 		);
 	}
 
@@ -1101,6 +1108,7 @@
 			valueType,
 			allowedValues: '',
 			valueMultiplicity: 'single',
+			required: claimName === 'sub',
 			nullable: false,
 			classification,
 			surfaces,
@@ -1191,6 +1199,7 @@
 				valueType: claim.valueType,
 				allowedValues: splitCsv(claim.allowedValues),
 				valueMultiplicity: claim.valueMultiplicity,
+				required: claim.required,
 				nullable: claim.nullable,
 				classification: claim.classification,
 				surfaces: claim.surfaces,
@@ -1260,7 +1269,6 @@
 				valueMultiplicity: attribute.valueMultiplicity,
 				nullable: attribute.nullable,
 				classification: attribute.classification,
-				required: attribute.required,
 				releaseCondition: attribute.releaseCondition.trim() || undefined,
 				formatter: attribute.formatter.trim()
 					? { operation: attribute.formatter.trim() }
@@ -1374,6 +1382,7 @@
 							? claim.allowedValues.map(String).join(',')
 							: '',
 						valueMultiplicity: claim.valueMultiplicity === 'multi' ? 'multi' : 'single',
+						required: claim.required === true || claim.claimName === 'sub',
 						nullable: Boolean(claim.nullable),
 						releaseCondition: String(claim.releaseCondition ?? ''),
 						legalBasis: String(
@@ -2187,10 +2196,11 @@
 							><span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
 								>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
 							><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_surfaces()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_scopes()}</span
+								>{$LL.admin_identity_mapping_profile_edit_required()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_nullable()}</span><span
+								>{$LL.admin_identity_mapping_profile_edit_class()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_surfaces()}</span><span
+								>{$LL.admin_identity_mapping_profile_edit_scopes()}</span
 							>{#if destinationAdvancedSettings}<span
 									>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
 								>{/if}<span>{$LL.admin_audit_action()}</span>
@@ -2228,6 +2238,15 @@
 										<option value={option}>{option}</option>
 									{/each}
 								</select>
+								<label class="mini-check">
+									<input
+										type="checkbox"
+										checked={claim.required}
+										disabled={claim.claimName === 'sub'}
+										onchange={(event) =>
+											updateOidcClaim(index, 'required', getCheckboxValue(event))}
+									/>
+								</label>
 								<label class="mini-check">
 									<input
 										type="checkbox"
@@ -2414,8 +2433,7 @@
 								>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
 							><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
 								>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_required()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span
 							>{#if destinationAdvancedSettings}<span
 									>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
 								>{/if}<span>{$LL.admin_audit_action()}</span>
@@ -2629,14 +2647,6 @@
 											>{option}</option
 										>{/each}
 								</select>
-								<label class="mini-check"
-									><input
-										type="checkbox"
-										checked={attribute.required}
-										onchange={(event) =>
-											updateSamlAttribute(index, 'required', getCheckboxValue(event))}
-									/></label
-								>
 								{#if destinationAdvancedSettings}
 									<input
 										value={attribute.legalBasis}
@@ -3436,14 +3446,14 @@
 
 	.claim-header,
 	.claim-row {
-		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 90px 0.78fr 1.15fr 0.95fr 90px;
-		min-width: 1400px;
+		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 76px 90px 0.78fr 1.15fr 0.95fr 90px;
+		min-width: 1476px;
 	}
 
 	.claim-header.advanced,
 	.claim-row.advanced {
-		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 90px 0.78fr 1.15fr 0.95fr 1fr 90px;
-		min-width: 1520px;
+		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 76px 90px 0.78fr 1.15fr 0.95fr 1fr 90px;
+		min-width: 1596px;
 	}
 
 	.destination-column-header,
@@ -3460,14 +3470,14 @@
 
 	.saml-attribute-header,
 	.saml-attribute-row {
-		grid-template-columns: 1.25fr 1fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 80px 90px;
-		min-width: 1160px;
+		grid-template-columns: 1.25fr 1fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 90px;
+		min-width: 1080px;
 	}
 
 	.saml-attribute-header.advanced,
 	.saml-attribute-row.advanced {
-		grid-template-columns: 1.25fr 1fr 1.25fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 80px 1fr 90px;
-		min-width: 1440px;
+		grid-template-columns: 1.25fr 1fr 1.25fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 1fr 90px;
+		min-width: 1360px;
 	}
 
 	.column-header,

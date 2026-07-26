@@ -1,5 +1,9 @@
 import { browser } from '$app/environment';
-import type { LoginUIConfig } from '$lib/api/authentication-methods';
+import type {
+	LoginUIConfig,
+	LoginUITextField,
+	LoginUITextLocalizations
+} from '$lib/api/authentication-methods';
 import { isValidImageUrl, isValidLinkUrl, sanitizeColor } from '$lib/utils/url-validation';
 
 type ThemeTemplate = 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
@@ -144,6 +148,34 @@ function readOptionalText(value: unknown): string | null {
 	return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+const LOGIN_UI_TEXT_FIELDS = new Set<LoginUITextField>([
+	'tagline',
+	'brandPanelTitle',
+	'brandPanelText',
+	'footerText',
+	'loginTitle',
+	'registrationTitle',
+	'accountTitle'
+]);
+
+function readTextLocalizations(value: unknown): LoginUITextLocalizations {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+	return Object.fromEntries(
+		Object.entries(value).flatMap(([locale, localized]) => {
+			if (!localized || typeof localized !== 'object' || Array.isArray(localized)) return [];
+			const fields = Object.fromEntries(
+				Object.entries(localized)
+					.filter(
+						(entry): entry is [LoginUITextField, string] =>
+							LOGIN_UI_TEXT_FIELDS.has(entry[0] as LoginUITextField) && typeof entry[1] === 'string'
+					)
+					.map(([field, text]) => [field, text.trim()])
+			);
+			return Object.keys(fields).length > 0 ? [[locale, fields]] : [];
+		})
+	);
+}
+
 function safeFooterLinks(value: unknown): FooterLink[] {
 	if (!Array.isArray(value)) return [];
 	return value
@@ -190,6 +222,7 @@ export function createLoginUIPageStore() {
 	let fontFamily = $state<FontFamily>('system');
 	let fontScale = $state<FontScale>('comfortable');
 	let backgroundColor = $state('');
+	let accentColor = $state('');
 	let titleColor = $state('');
 	let textColor = $state('');
 	let copyColor = $state('');
@@ -219,6 +252,7 @@ export function createLoginUIPageStore() {
 	let brandAlign = $state<BrandAlign>('left');
 	let logoDisplay = $state<LogoDisplay>('auto');
 	let headerText = $state<string | null>(null);
+	let textLocalizations = $state<LoginUITextLocalizations>({});
 	let footerText = $state<string | null>(null);
 	let footerLinks = $state<FooterLink[]>([]);
 	let brandPanelTitle = $state<string | null>(null);
@@ -255,6 +289,7 @@ export function createLoginUIPageStore() {
 			'--login-page-background-color',
 			sanitizeColor(backgroundColor) || null
 		);
+		setOptionalStyleProperty('--login-accent-color', sanitizeColor(accentColor) || null);
 		setOptionalStyleProperty('--login-title-color', sanitizeColor(titleColor) || null);
 		setOptionalStyleProperty('--login-text-color', sanitizeColor(textColor) || null);
 		setOptionalStyleProperty('--login-copy-color', sanitizeColor(copyColor) || null);
@@ -293,6 +328,7 @@ export function createLoginUIPageStore() {
 		fontFamily = readFontFamily(page?.fontFamily);
 		fontScale = readFontScale(page?.fontScale);
 		backgroundColor = sanitizeColor(page?.backgroundColor) || '';
+		accentColor = sanitizeColor(page?.accentColor) || '';
 		titleColor = sanitizeColor(page?.titleColor) || '';
 		textColor = sanitizeColor(page?.textColor) || '';
 		copyColor = sanitizeColor(page?.copyColor) || '';
@@ -330,6 +366,7 @@ export function createLoginUIPageStore() {
 		brandAlign = readBrandAlign(page?.brandAlign);
 		logoDisplay = readLogoDisplay(page?.logoDisplay);
 		headerText = readOptionalText(appearance?.headerText);
+		textLocalizations = readTextLocalizations(appearance?.textLocalizations);
 		footerText = readOptionalText(appearance?.footerText);
 		footerLinks = safeFooterLinks(appearance?.footerLinks);
 		brandPanelTitle = readOptionalText(page?.brandPanelTitle);
@@ -353,6 +390,9 @@ export function createLoginUIPageStore() {
 		},
 		get backgroundColor() {
 			return backgroundColor;
+		},
+		get accentColor() {
+			return accentColor;
 		},
 		get titleColor() {
 			return titleColor;
@@ -446,6 +486,17 @@ export function createLoginUIPageStore() {
 		},
 		get headerText() {
 			return headerText;
+		},
+		getLocalizedText(locale: string, field: LoginUITextField) {
+			const localized = textLocalizations[locale];
+			if (localized && Object.prototype.hasOwnProperty.call(localized, field)) {
+				return localized[field] ?? '';
+			}
+			if (field === 'tagline') return headerText;
+			if (field === 'brandPanelTitle') return brandPanelTitle;
+			if (field === 'brandPanelText') return brandPanelText;
+			if (field === 'footerText') return footerText;
+			return null;
 		},
 		get footerText() {
 			return footerText;

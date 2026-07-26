@@ -91,6 +91,8 @@ const adminCompliance = {
 	admin_compliance_report_user_activity: 'USER ACTIVITY',
 	admin_compliance_report_unknown: 'UNKNOWN',
 	admin_compliance_cleanup_completed: 'Cleanup Completed',
+	admin_compliance_retention_updated: 'Retention policy updated.',
+	admin_compliance_cleanup_completed_count: 'Cleanup completed. Deleted {count:number} records.',
 	admin_compliance_cleanup_run: 'Run Data Cleanup',
 	admin_compliance_cleanup_success: 'Successfully deleted',
 	admin_compliance_cleanup_records_suffix: 'records.',

@@ -527,6 +527,55 @@ describe('admin Flow management handlers', () => {
     ]);
   });
 
+  it('rejects a custom consent screen that has no consent widget', async () => {
+    mocks.db.queryOne.mockResolvedValueOnce({
+      id: 'screen-review-only',
+      is_active: 1,
+      fields_json: JSON.stringify([
+        { field: 'heading.review', label: 'Review', block_type: 'heading' },
+      ]),
+    });
+    const editor = {
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'consent',
+          type: 'consent',
+          config: { screen_ref: 'screen-review-only' },
+        },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        {
+          id: 'entry:next->consent',
+          source: 'entry',
+          source_handle: 'next',
+          target: 'consent',
+        },
+        {
+          id: 'consent:accepted->complete',
+          source: 'consent',
+          source_handle: 'accepted',
+          target: 'complete',
+        },
+      ],
+    };
+
+    const response = await adminFlowValidateHandler(createContext({ body: { editor } }));
+    const body = await readJson(response);
+
+    expect(body.valid).toBe(false);
+    expect(body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: 'error',
+          code: 'missing_consent_widget',
+          node_id: 'consent',
+        }),
+      ])
+    );
+  });
+
   it('treats missing consent policy references in multi-protocol completion branches as warnings', async () => {
     const editor = {
       nodes: [

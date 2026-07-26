@@ -16,25 +16,17 @@
 	import { ToggleSwitch } from '$lib/components';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import {
+		ALL_LOGIN_UI_LOCALES,
+		LOGIN_UI_LOCALE_OPTIONS,
+		isLoginUILocale,
+		resolveEnabledLoginUILocales,
+		type LoginUILocale
+	} from '$lib/login-ui/locales';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	const CATEGORY = 'login-ui';
-	const LOGIN_UI_LOCALE_OPTIONS = [
-		{ code: 'en', label: 'English' },
-		{ code: 'ja', label: '日本語' },
-		{ code: 'zh-CN', label: '简体中文' },
-		{ code: 'zh-TW', label: '繁體中文' },
-		{ code: 'es', label: 'Español' },
-		{ code: 'pt', label: 'Português' },
-		{ code: 'fr', label: 'Français' },
-		{ code: 'de', label: 'Deutsch' },
-		{ code: 'ko', label: '한국어' },
-		{ code: 'ru', label: 'Русский' },
-		{ code: 'id', label: 'Bahasa Indonesia' }
-	] as const;
-	type LoginUILocale = (typeof LOGIN_UI_LOCALE_OPTIONS)[number]['code'];
-	const ALL_LOGIN_UI_LOCALES = LOGIN_UI_LOCALE_OPTIONS.map((locale) => locale.code);
 
 	// State
 	let meta = $state<CategoryMetaFull | null>(null);
@@ -252,21 +244,10 @@
 		}
 	}
 
-	function isLoginUILocale(value: unknown): value is LoginUILocale {
-		return typeof value === 'string' && ALL_LOGIN_UI_LOCALES.includes(value as LoginUILocale);
-	}
-
 	function initializeLanguageSettings(settingsResult: CategorySettings) {
-		const storedLocales = settingsResult.values['login-ui.supported_locales'];
-		const parsedLocales =
-			typeof storedLocales === 'string'
-				? storedLocales
-						.split(',')
-						.map((locale) => locale.trim())
-						.filter(isLoginUILocale)
-				: [];
-		enabledLocales =
-			parsedLocales.length > 0 ? [...new Set(parsedLocales)] : [...ALL_LOGIN_UI_LOCALES];
+		enabledLocales = resolveEnabledLoginUILocales(
+			settingsResult.values['login-ui.supported_locales']
+		);
 		const storedDefault = settingsResult.values['login-ui.default_locale'];
 		defaultLocale =
 			isLoginUILocale(storedDefault) && enabledLocales.includes(storedDefault)
@@ -299,6 +280,16 @@
 			toggleLocale(locale, true);
 		}
 		defaultLocale = locale;
+		languageError = '';
+	}
+
+	function selectAllLocales() {
+		enabledLocales = [...ALL_LOGIN_UI_LOCALES];
+		languageError = '';
+	}
+
+	function clearAllLocalesExceptDefault() {
+		enabledLocales = [defaultLocale];
 		languageError = '';
 	}
 
@@ -809,6 +800,27 @@
 					</span>
 				</div>
 
+				<div class="language-grid-toolbar">
+					<button
+						type="button"
+						class="btn btn-secondary language-bulk-button"
+						onclick={selectAllLocales}
+						disabled={!canEditLoginUiSettings ||
+							enabledLocales.length === ALL_LOGIN_UI_LOCALES.length}
+					>
+						{$LL.admin_login_ui_language_select_all()}
+					</button>
+					<button
+						type="button"
+						class="btn btn-secondary language-bulk-button"
+						onclick={clearAllLocalesExceptDefault}
+						disabled={!canEditLoginUiSettings ||
+							(enabledLocales.length === 1 && enabledLocales[0] === defaultLocale)}
+					>
+						{$LL.admin_login_ui_language_clear_all()}
+					</button>
+				</div>
+
 				<div class="language-grid" aria-label={$LL.admin_login_ui_language_list_label()}>
 					{#each LOGIN_UI_LOCALE_OPTIONS as locale (locale.code)}
 						<div class="language-option" class:default={defaultLocale === locale.code}>
@@ -841,12 +853,12 @@
 									{$LL.admin_login_ui_language_make_default({ language: locale.label })}
 								</span>
 							</label>
-							<span class="language-name">{locale.label}</span>
-							{#if defaultLocale === locale.code}
-								<span class="default-language-label">
-									{$LL.admin_login_ui_language_default_label()}
-								</span>
-							{/if}
+							<span class="language-name">
+								{locale.label}{#if defaultLocale === locale.code}<span
+										class="default-language-label"
+										>({$LL.admin_login_ui_language_default_label()})</span
+									>{/if}
+							</span>
 						</div>
 					{/each}
 				</div>
@@ -1459,11 +1471,24 @@
 		margin-bottom: 16px;
 	}
 
+	.language-grid-toolbar {
+		display: flex;
+		justify-content: flex-end;
+		gap: 6px;
+		margin-top: 18px;
+	}
+
+	.language-bulk-button {
+		min-height: 28px;
+		padding: 3px 9px;
+		font-size: 11px;
+	}
+
 	.language-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 0;
-		margin-top: 18px;
+		margin-top: 8px;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-control, 8px);
 		overflow: hidden;
@@ -1517,11 +1542,11 @@
 	}
 
 	.default-language-label {
-		grid-column: 3;
-		margin-top: -5px;
+		margin-left: 5px;
 		font-size: 11px;
 		line-height: 1.2;
 		color: var(--color-accent);
+		white-space: nowrap;
 	}
 
 	.language-help {
@@ -1530,7 +1555,6 @@
 		line-height: 1.5;
 		color: var(--color-text-muted);
 	}
-
 	.sr-only {
 		position: absolute;
 		width: 1px;

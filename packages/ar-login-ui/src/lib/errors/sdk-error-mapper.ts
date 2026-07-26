@@ -4,14 +4,18 @@ export interface LoginUiErrorMessages {
 	unknown(): string;
 	invalidRequest(): string;
 	accessDenied(): string;
+	unauthorizedClient(): string;
+	unsupportedResponseType(): string;
+	invalidScope(): string;
 	serverError(): string;
+	temporarilyUnavailable(): string;
 	loginRequired(): string;
 	emailCodeInvalid(): string;
 }
 
-const GENERIC_DIRECT_AUTH_ERRORS = new Set([
-	'email_code_invalid',
-	'email_code_expired',
+const EMAIL_CODE_ERRORS = new Set(['email_code_invalid', 'email_code_expired']);
+
+const INVALID_AUTH_REQUEST_ERRORS = new Set([
 	'auth_code_invalid',
 	'auth_code_expired',
 	'pkce_mismatch',
@@ -30,8 +34,11 @@ export function messageForApiError(
 		return messages.unknown();
 	}
 
-	if (GENERIC_DIRECT_AUTH_ERRORS.has(error.error)) {
+	if (EMAIL_CODE_ERRORS.has(error.error)) {
 		return messages.emailCodeInvalid();
+	}
+	if (INVALID_AUTH_REQUEST_ERRORS.has(error.error)) {
+		return messages.invalidRequest();
 	}
 
 	switch (error.error) {
@@ -39,9 +46,16 @@ export function messageForApiError(
 			return messages.invalidRequest();
 		case 'access_denied':
 			return messages.accessDenied();
+		case 'unauthorized_client':
+			return messages.unauthorizedClient();
+		case 'unsupported_response_type':
+			return messages.unsupportedResponseType();
+		case 'invalid_scope':
+			return messages.invalidScope();
 		case 'server_error':
-		case 'temporarily_unavailable':
 			return messages.serverError();
+		case 'temporarily_unavailable':
+			return messages.temporarilyUnavailable();
 		case 'login_required':
 			return messages.loginRequired();
 		default:

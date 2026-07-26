@@ -54,8 +54,8 @@
 		successMessage = '';
 
 		try {
-			const result = await adminSigningKeysAPI.rotate();
-			successMessage = result.message;
+			await adminSigningKeysAPI.rotate();
+			successMessage = $LL.admin_signing_keys_rotated();
 			showNormalRotationDialog = false;
 
 			// Reload data
@@ -85,8 +85,8 @@
 		successMessage = '';
 
 		try {
-			const result = await adminSigningKeysAPI.emergencyRotate(emergencyReason);
-			successMessage = result.message;
+			await adminSigningKeysAPI.emergencyRotate(emergencyReason);
+			successMessage = $LL.admin_signing_keys_emergency_rotated();
 			showEmergencyDialog = false;
 			emergencyReason = '';
 

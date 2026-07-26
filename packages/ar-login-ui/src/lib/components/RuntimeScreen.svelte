@@ -2,7 +2,8 @@
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type {
 		FlowRuntimeConsentPolicyContent,
-		FlowRuntimeConsentPolicyOption
+		FlowRuntimeConsentPolicyOption,
+		FlowRuntimeDestinationFieldConsentContent
 	} from '$lib/api/flow-runtime';
 	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
@@ -73,11 +74,14 @@
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
+		headingOverride?: string | null;
 		methodAvailability?: Partial<Record<AuthMethod, boolean>>;
 		methodLoading?: Partial<Record<AuthMethod, boolean>>;
 		externalProviders?: RuntimeExternalProvider[];
 		consentPolicy?: FlowRuntimeConsentPolicyContent | null;
+		destinationFieldConsent?: FlowRuntimeDestinationFieldConsentContent | null;
 		consentDecisions?: Record<string, boolean>;
+		destinationFieldDecisions?: Record<string, boolean>;
 		consentSelectedValues?: Record<string, string>;
 		consentReady?: boolean;
 		humanVerificationRequired?: boolean;
@@ -97,6 +101,7 @@
 		onAuthAction?: (method: AuthMethod, action?: AuthAction) => void;
 		onExternalProviderAction?: (providerId: string) => void;
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
+		onDestinationFieldDecisionChange?: (fieldKey: string, checked: boolean) => void;
 		onConsentSelectedValueChange?: (statementId: string, value: string) => void;
 	};
 
@@ -106,11 +111,14 @@
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
+		headingOverride = null,
 		methodAvailability = {},
 		methodLoading = {},
 		externalProviders = [],
 		consentPolicy = null,
+		destinationFieldConsent = null,
 		consentDecisions = {},
+		destinationFieldDecisions = {},
 		consentSelectedValues = {},
 		consentReady = true,
 		humanVerificationRequired = false,
@@ -130,6 +138,7 @@
 		onAuthAction,
 		onExternalProviderAction,
 		onConsentDecisionChange,
+		onDestinationFieldDecisionChange,
 		onConsentSelectedValueChange
 	}: Props = $props();
 
@@ -237,7 +246,13 @@
 	const localizedScreen = $derived(localizeRuntimeScreen(screen, activeLocale));
 	const normalizedScreen = $derived(normalizeScreen(localizedScreen));
 	const renderedFields = $derived(normalizedScreen?.fields ?? []);
+	const primaryHeadingField = $derived(
+		renderedFields.find((field) => field.block_type === 'heading') ?? null
+	);
 	const renderedSections = $derived(buildLayoutSections(renderedFields));
+	const hasConsentWidget = $derived(
+		renderedFields.some((field) => field.block_type === 'consent_widget')
+	);
 	const hasStandaloneSignupEmailField = $derived(
 		authMethodMode === 'signup' &&
 			renderedSections.some((section) => section.items.some(isEmailIdentityField))
@@ -620,11 +635,40 @@
 	}
 </script>
 
+{#snippet destinationFieldChoices()}
+	{#if destinationFieldConsent?.fields.length}
+		<div class="runtime-consent-items runtime-destination-fields">
+			{#each destinationFieldConsent.fields as destinationField (destinationField.key)}
+				<label class="runtime-consent-choice">
+					<input
+						type="checkbox"
+						checked={destinationField.required ||
+							destinationFieldDecisions[destinationField.key] === true}
+						required={destinationField.required}
+						disabled={disabled || destinationField.required}
+						onchange={(event) =>
+							onDestinationFieldDecisionChange?.(
+								destinationField.key,
+								(event.currentTarget as HTMLInputElement).checked
+							)}
+					/>
+					<span class="runtime-consent-content">
+						<strong>{destinationField.label}</strong>
+						{#if destinationField.required}<span aria-hidden="true"> *</span>{/if}
+					</span>
+				</label>
+			{/each}
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet runtimeField(field: RuntimeField)}
 	{@const blockType = field.block_type ?? 'identity_field'}
 	{#if blockType === 'heading'}
 		<div class="runtime-screen-heading">
-			<h2>{field.label}</h2>
+			<h2>
+				{field === primaryHeadingField && headingOverride !== null ? headingOverride : field.label}
+			</h2>
 			{#if field.text}
 				<p>{field.text}</p>
 			{/if}
@@ -640,6 +684,7 @@
 			{#if field.text}
 				<p>{field.text}</p>
 			{/if}
+			{@render destinationFieldChoices()}
 			{#if consentPolicy?.items.length}
 				<div class="runtime-consent-items">
 					{#each consentPolicy.items as item (item.statement_id)}
@@ -704,7 +749,7 @@
 						</div>
 					{/each}
 				</div>
-			{:else}
+			{:else if !destinationFieldConsent?.fields.length}
 				<span class="runtime-checkbox-row">
 					<input {disabled} type="checkbox" />
 					<span>{$LL.consent_items_required_title()}</span>
@@ -1034,6 +1079,13 @@
 				{/each}
 			</div>
 		{/each}
+		{#if destinationFieldConsent?.fields.length && !hasConsentWidget}
+			<div class="runtime-layout-section">
+				<div class="runtime-layout-cell runtime-screen-consent-widget">
+					{@render destinationFieldChoices()}
+				</div>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -1090,7 +1142,7 @@
 	}
 
 	.runtime-screen-field strong {
-		margin-left: 0.375rem;
+		margin-inline-start: 0.375rem;
 		color: var(--color-danger, #ef4444);
 		font-size: 0.75rem;
 	}

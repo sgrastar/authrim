@@ -26,7 +26,7 @@ const completion = {
 	dialog_description:
 		'这是一个使用 Melt UI 的测试对话框。Melt UI 是适用于 Svelte 的无样式无障碍组件库。',
 	dialog_confirm: '确认',
-	footer_stack: '由 Authrim 提供支持',
+	footer_stack: '由 <a href="https://authrim.com/">Authrim</a> 提供支持',
 	language_english: '英语',
 	language_japanese: '日语',
 	common_emailPlaceholder: 'you@example.com',

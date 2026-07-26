@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
 	import { Button } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
@@ -132,7 +133,7 @@
 
 	<!-- Footer -->
 	<footer class="landing__footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>
 
@@ -421,7 +422,7 @@
 		color: var(--text-muted);
 	}
 
-	.landing__footer p {
+	.landing__footer :global(p) {
 		margin: 0;
 	}
 

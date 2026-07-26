@@ -9,8 +9,17 @@ describe('Login UI language configuration', () => {
 	it('uses all locales and English by default', () => {
 		const config = getLoginUILanguageConfig(null);
 
-		expect(config.supportedLocales).toHaveLength(11);
+		expect(config.supportedLocales).toHaveLength(15);
 		expect(config.defaultLocale).toBe('en');
+	});
+
+	it('accepts Arabic, Italian, Thai, and Vietnamese browser locales when enabled', () => {
+		const config = normalizeLoginUILanguageConfig(['ar', 'it', 'th', 'vi'], 'ar');
+
+		expect(resolveEnabledLoginUILocale('ar-SA', config)).toBe('ar');
+		expect(resolveEnabledLoginUILocale('it-IT', config)).toBe('it');
+		expect(resolveEnabledLoginUILocale('th-TH', config)).toBe('th');
+		expect(resolveEnabledLoginUILocale('vi-VN', config)).toBe('vi');
 	});
 
 	it('keeps only unique supported locales and the configured default', () => {

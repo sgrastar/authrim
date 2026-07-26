@@ -12,6 +12,17 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
+export type LoginUITextField =
+  | 'tagline'
+  | 'brandPanelTitle'
+  | 'brandPanelText'
+  | 'footerText'
+  | 'loginTitle'
+  | 'registrationTitle'
+  | 'accountTitle';
+
+export type LoginUITextLocalizations = Record<string, Partial<Record<LoginUITextField, string>>>;
+
 /**
  * Login UI Settings Interface
  */
@@ -28,6 +39,7 @@ export interface LoginUISettings {
   'login-ui.font_family': string;
   'login-ui.font_scale': string;
   'login-ui.background_color': string;
+  'login-ui.accent_color': string;
   'login-ui.title_color': string;
   'login-ui.text_color': string;
   'login-ui.copy_color': string;
@@ -72,6 +84,7 @@ export interface LoginUISettings {
   'login-ui.brand_position': string;
   'login-ui.brand_align': string;
   'login-ui.header_text': string;
+  'login-ui.text_localizations': string;
   'login-ui.footer_text': string;
   'login-ui.footer_links': string;
   'login-ui.custom_blocks': string;
@@ -199,6 +212,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'Page background color override. Empty follows the selected theme template background',
     visibility: 'public',
   },
+  'login-ui.accent_color': {
+    key: 'login-ui.accent_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCENT_COLOR',
+    label: 'Accent Color',
+    description:
+      'Optional CSS color override for primary actions, focus indicators, and highlights',
+    visibility: 'public',
+  },
   'login-ui.title_color': {
     key: 'login-ui.title_color',
     type: 'string',
@@ -275,7 +298,7 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
   'login-ui.supported_locales': {
     key: 'login-ui.supported_locales',
     type: 'string',
-    default: 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
+    default: 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id,ar,it,th,vi',
     envKey: 'LOGIN_UI_SUPPORTED_LOCALES',
     label: 'Supported Locales',
     description: 'Comma-separated list of supported LoginUI locales',
@@ -288,7 +311,23 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     envKey: 'LOGIN_UI_DEFAULT_LOCALE',
     label: 'Default Locale',
     description: 'Fallback locale used when no enabled browser or saved locale matches',
-    enum: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
+    enum: [
+      'en',
+      'ja',
+      'zh-CN',
+      'zh-TW',
+      'es',
+      'pt',
+      'fr',
+      'de',
+      'ko',
+      'ru',
+      'id',
+      'ar',
+      'it',
+      'th',
+      'vi',
+    ],
     visibility: 'public',
   },
   'login-ui.favicon_url': {
@@ -566,6 +605,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     description: 'Header text displayed above the login form',
     visibility: 'public',
   },
+  'login-ui.text_localizations': {
+    key: 'login-ui.text_localizations',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_TEXT_LOCALIZATIONS',
+    label: 'Localized Text',
+    description: 'JSON object of locale-specific Login UI text overrides',
+    visibility: 'public',
+  },
   'login-ui.footer_text': {
     key: 'login-ui.footer_text',
     type: 'string',
@@ -683,6 +731,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.font_family': 'system',
   'login-ui.font_scale': 'comfortable',
   'login-ui.background_color': '',
+  'login-ui.accent_color': '',
   'login-ui.title_color': '',
   'login-ui.text_color': '',
   'login-ui.copy_color': '',
@@ -694,7 +743,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.logo_layout': 'stack',
   'login-ui.brand_panel_title': '',
   'login-ui.brand_panel_text': '',
-  'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
+  'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id,ar,it,th,vi',
   'login-ui.default_locale': 'en',
   'login-ui.background_image_url': '',
   'login-ui.login_panel_background_image_url': '',
@@ -721,6 +770,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.brand_position': 'center',
   'login-ui.brand_align': 'left',
   'login-ui.header_text': '',
+  'login-ui.text_localizations': '',
   'login-ui.footer_text': '',
   'login-ui.footer_links': '',
   'login-ui.custom_blocks': '',

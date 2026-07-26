@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 
-const { resolveBinding, executeMapping } = vi.hoisted(() => ({
+const { resolveBinding, executeMapping, filterClaims } = vi.hoisted(() => ({
   resolveBinding: vi.fn(),
   executeMapping: vi.fn(),
+  filterClaims: vi.fn(async (input: { claims: Record<string, unknown> }) => input.claims),
 }));
 
 vi.mock('../identity-mapping-runtime-resolver', () => ({
@@ -12,6 +13,10 @@ vi.mock('../identity-mapping-runtime-resolver', () => ({
 
 vi.mock('@authrim/ar-lib-field-mapping', () => ({
   executeRuntimeMapping: executeMapping,
+}));
+
+vi.mock('../destination-profile-consent', () => ({
+  filterOidcClaimsByDestinationConsent: filterClaims,
 }));
 
 import {
@@ -34,6 +39,8 @@ const binding = {
   fieldMappingSetId: 'set-1',
   fieldMappingVersionId: 'version-1',
   destinationNamespace: 'oidc.claim',
+  destinationProfileId: 'destination-profile-oidc',
+  destinationProfileIds: ['destination-profile-oidc'],
   catalog: {},
   edges: [],
   transforms: [],

@@ -11,6 +11,7 @@
 	import NavItemGroup from '$lib/components/admin/NavItemGroup.svelte';
 	import NavGroupLabel from '$lib/components/admin/NavGroupLabel.svelte';
 	import AdminHeader from '$lib/components/admin/AdminHeader.svelte';
+	import AdminToastHost from '$lib/components/admin/AdminToastHost.svelte';
 	import type { Snippet } from 'svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -548,6 +549,8 @@
 		}
 	}
 </script>
+
+<AdminToastHost />
 
 {#if isPublicAdminPage}
 	<!-- Public Admin page - no layout chrome -->

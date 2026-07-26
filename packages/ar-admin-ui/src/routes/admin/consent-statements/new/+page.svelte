@@ -42,7 +42,11 @@
 		| 'de'
 		| 'ko'
 		| 'ru'
-		| 'id';
+		| 'id'
+		| 'ar'
+		| 'it'
+		| 'th'
+		| 'vi';
 	type ContentLink = {
 		id: string;
 		href: string;
@@ -69,7 +73,11 @@
 		{ code: 'de', label: 'German (de)' },
 		{ code: 'ko', label: 'Korean (ko)' },
 		{ code: 'ru', label: 'Russian (ru)' },
-		{ code: 'id', label: 'Indonesian (id)' }
+		{ code: 'id', label: 'Indonesian (id)' },
+		{ code: 'ar', label: 'Arabic (ar)' },
+		{ code: 'it', label: 'Italian (it)' },
+		{ code: 'th', label: 'Thai (th)' },
+		{ code: 'vi', label: 'Vietnamese (vi)' }
 	];
 
 	const templates: Array<{
@@ -638,7 +646,12 @@
 					!Array.isArray(record.descriptions)
 						? (record.descriptions as Partial<Record<ContentLanguageCode, string>>)
 						: {};
-				return createContentOption(id, value, labels, descriptions);
+				return createContentOption(
+					id,
+					value,
+					{ ...createEmptyLanguageMap(), ...labels },
+					{ ...createEmptyLanguageMap(), ...descriptions }
+				);
 			})
 			.filter((option): option is ContentOption => Boolean(option));
 		return options.length > 0 ? options : fallback;
@@ -873,7 +886,11 @@
 			de: 'Ich habe die %link1% gelesen und stimme ihnen zu.',
 			ko: '%link1%을 읽었으며 그 내용에 동의합니다.',
 			ru: 'Я прочитал(а) %link1% и принимаю их условия.',
-			id: 'Saya telah membaca %link1% dan menyetujuinya.'
+			id: 'Saya telah membaca %link1% dan menyetujuinya.',
+			ar: 'لقد قرأت %link1% وأوافق عليها.',
+			it: 'Ho letto e accetto i %link1%.',
+			th: 'ฉันได้อ่านและยอมรับ%link1%แล้ว',
+			vi: 'Tôi đã đọc và đồng ý với %link1%.'
 		};
 	}
 
@@ -889,7 +906,11 @@
 			de: 'Ich habe die %link1% gelesen und stimme ihr zu.',
 			ko: '%link1%을 읽었으며 그 내용에 동의합니다.',
 			ru: 'Я прочитал(а) %link1% и принимаю её условия.',
-			id: 'Saya telah membaca %link1% dan menyetujuinya.'
+			id: 'Saya telah membaca %link1% dan menyetujuinya.',
+			ar: 'لقد قرأت %link1% وأوافق عليها.',
+			it: 'Ho letto e accetto l’%link1%.',
+			th: 'ฉันได้อ่านและยอมรับ%link1%แล้ว',
+			vi: 'Tôi đã đọc và đồng ý với %link1%.'
 		};
 	}
 
@@ -905,7 +926,11 @@
 			de: 'Wählen Sie aus, wie die angeforderte Attributfreigabe für diesen Dienst behandelt werden soll.',
 			ko: '이 서비스에 요청된 속성을 전송하는 방법을 선택하세요.',
 			ru: 'Выберите, как обработать передачу запрошенных атрибутов этому сервису.',
-			id: 'Pilih cara menangani pengiriman atribut yang diminta ke layanan ini.'
+			id: 'Pilih cara menangani pengiriman atribut yang diminta ke layanan ini.',
+			ar: 'اختر كيفية التعامل مع إرسال السمات المطلوبة إلى هذه الخدمة.',
+			it: 'Scegli come gestire il rilascio degli attributi richiesti a questo servizio.',
+			th: 'เลือกวิธีจัดการการส่งแอตทริบิวต์ที่บริการนี้ร้องขอ',
+			vi: 'Chọn cách xử lý việc cung cấp các thuộc tính mà dịch vụ này yêu cầu.'
 		};
 	}
 
@@ -934,15 +959,58 @@
 	function createContentOption(
 		id: string,
 		value: string,
-		labels: Partial<Record<ContentLanguageCode, string>>,
-		descriptions: Partial<Record<ContentLanguageCode, string>>
+		labels: Record<ContentLanguageCode, string>,
+		descriptions: Record<ContentLanguageCode, string>
 	): ContentOption {
 		return {
 			id,
 			valueMode: value === 'true' || value === 'false' ? 'boolean' : 'value',
 			value,
-			labels: { ...createEmptyLanguageMap(), ...labels },
-			descriptions: { ...createEmptyLanguageMap(), ...descriptions }
+			labels,
+			descriptions
+		};
+	}
+
+	function genericContentOptionLabels(
+		index: number,
+		agreement: boolean
+	): Record<ContentLanguageCode, string> {
+		if (agreement) {
+			return {
+				en: 'I agree',
+				ja: '同意します',
+				'zh-CN': '我同意',
+				'zh-TW': '我同意',
+				es: 'Acepto',
+				pt: 'Concordo',
+				fr: 'J’accepte',
+				de: 'Ich stimme zu',
+				ko: '동의합니다',
+				ru: 'Я согласен(на)',
+				id: 'Saya setuju',
+				ar: 'أوافق',
+				it: 'Accetto',
+				th: 'ยอมรับ',
+				vi: 'Tôi đồng ý'
+			};
+		}
+
+		return {
+			en: `Option ${index}`,
+			ja: `選択肢 ${index}`,
+			'zh-CN': `选项 ${index}`,
+			'zh-TW': `選項 ${index}`,
+			es: `Opción ${index}`,
+			pt: `Opção ${index}`,
+			fr: `Option ${index}`,
+			de: `Option ${index}`,
+			ko: `옵션 ${index}`,
+			ru: `Вариант ${index}`,
+			id: `Opsi ${index}`,
+			ar: `الخيار ${index}`,
+			it: `Opzione ${index}`,
+			th: `ตัวเลือก ${index}`,
+			vi: `Tùy chọn ${index}`
 		};
 	}
 
@@ -958,7 +1026,11 @@
 			de: 'Nur dieses Mal erlauben',
 			ko: '이번에만 허용',
 			ru: 'Разрешить только сейчас',
-			id: 'Izinkan hanya kali ini'
+			id: 'Izinkan hanya kali ini',
+			ar: 'السماح لهذه المرة فقط',
+			it: 'Consenti solo questa volta',
+			th: 'อนุญาตเฉพาะครั้งนี้',
+			vi: 'Chỉ cho phép lần này'
 		};
 	}
 
@@ -974,7 +1046,11 @@
 			de: 'Diese Attributfreigabe nur für die aktuelle Anmeldung erlauben.',
 			ko: '현재 로그인에 한해서만 이 속성 전송을 허용합니다.',
 			ru: 'Разрешить передачу этих атрибутов только для текущего входа.',
-			id: 'Izinkan pengiriman atribut ini hanya untuk proses masuk saat ini.'
+			id: 'Izinkan pengiriman atribut ini hanya untuk proses masuk saat ini.',
+			ar: 'السماح بإرسال هذه السمات لعملية تسجيل الدخول الحالية فقط.',
+			it: 'Consenti il rilascio di questi attributi solo per l’accesso corrente.',
+			th: 'อนุญาตให้ส่งแอตทริบิวต์เหล่านี้เฉพาะการเข้าสู่ระบบครั้งนี้',
+			vi: 'Chỉ cho phép cung cấp các thuộc tính này trong lần đăng nhập hiện tại.'
 		};
 	}
 
@@ -990,7 +1066,11 @@
 			de: 'Für diesen Dienst immer erlauben',
 			ko: '이 서비스에 항상 허용',
 			ru: 'Всегда разрешать для этого сервиса',
-			id: 'Selalu izinkan untuk layanan ini'
+			id: 'Selalu izinkan untuk layanan ini',
+			ar: 'السماح دائمًا لهذه الخدمة',
+			it: 'Consenti sempre per questo servizio',
+			th: 'อนุญาตสำหรับบริการนี้เสมอ',
+			vi: 'Luôn cho phép đối với dịch vụ này'
 		};
 	}
 
@@ -1006,7 +1086,11 @@
 			de: 'Diese Auswahl für zukünftige Anmeldungen bei diesem Dienst merken.',
 			ko: '이 서비스에 향후 로그인할 때 이 선택을 기억합니다.',
 			ru: 'Запомнить этот выбор для будущих входов в этот сервис.',
-			id: 'Ingat pilihan ini untuk proses masuk berikutnya ke layanan ini.'
+			id: 'Ingat pilihan ini untuk proses masuk berikutnya ke layanan ini.',
+			ar: 'تذكّر هذا الاختيار لعمليات تسجيل الدخول القادمة إلى هذه الخدمة.',
+			it: 'Ricorda questa scelta per i prossimi accessi a questo servizio.',
+			th: 'จดจำตัวเลือกนี้สำหรับการเข้าสู่ระบบบริการนี้ในครั้งต่อไป',
+			vi: 'Ghi nhớ lựa chọn này cho những lần đăng nhập sau vào dịch vụ này.'
 		};
 	}
 
@@ -1022,7 +1106,11 @@
 			de: 'Nicht erlauben',
 			ko: '허용하지 않음',
 			ru: 'Не разрешать',
-			id: 'Jangan izinkan'
+			id: 'Jangan izinkan',
+			ar: 'عدم السماح',
+			it: 'Non consentire',
+			th: 'ไม่อนุญาต',
+			vi: 'Không cho phép'
 		};
 	}
 
@@ -1038,7 +1126,131 @@
 			de: 'Diese Attribute nicht senden.',
 			ko: '이 속성을 전송하지 않습니다.',
 			ru: 'Не передавать эти атрибуты.',
-			id: 'Jangan kirim atribut ini.'
+			id: 'Jangan kirim atribut ini.',
+			ar: 'عدم إرسال هذه السمات.',
+			it: 'Non rilasciare questi attributi.',
+			th: 'ไม่ส่งแอตทริบิวต์เหล่านี้',
+			vi: 'Không cung cấp các thuộc tính này.'
+		};
+	}
+
+	function releaseAllInformationLabels(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Release all requested information',
+			ja: '要求された情報をすべて提供する',
+			'zh-CN': '提供所有请求的信息',
+			'zh-TW': '提供所有要求的資訊',
+			es: 'Compartir toda la información solicitada',
+			pt: 'Compartilhar todas as informações solicitadas',
+			fr: 'Partager toutes les informations demandées',
+			de: 'Alle angeforderten Informationen freigeben',
+			ko: '요청된 모든 정보 제공',
+			ru: 'Предоставить всю запрошенную информацию',
+			id: 'Bagikan semua informasi yang diminta',
+			ar: 'مشاركة جميع المعلومات المطلوبة',
+			it: 'Condividi tutte le informazioni richieste',
+			th: 'เปิดเผยข้อมูลทั้งหมดที่ร้องขอ',
+			vi: 'Cung cấp toàn bộ thông tin được yêu cầu'
+		};
+	}
+
+	function releaseAllInformationDescriptions(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Release all fields requested by this service.',
+			ja: 'このサービスが要求した項目をすべて提供します。',
+			'zh-CN': '提供此服务请求的所有字段。',
+			'zh-TW': '提供此服務要求的所有欄位。',
+			es: 'Comparte todos los campos solicitados por este servicio.',
+			pt: 'Compartilha todos os campos solicitados por este serviço.',
+			fr: 'Partage tous les champs demandés par ce service.',
+			de: 'Alle von diesem Dienst angeforderten Felder freigeben.',
+			ko: '이 서비스에서 요청한 모든 항목을 제공합니다.',
+			ru: 'Предоставить все поля, запрошенные этим сервисом.',
+			id: 'Bagikan semua kolom yang diminta oleh layanan ini.',
+			ar: 'مشاركة جميع الحقول التي تطلبها هذه الخدمة.',
+			it: 'Condividi tutti i campi richiesti da questo servizio.',
+			th: 'เปิดเผยช่องข้อมูลทั้งหมดที่บริการนี้ร้องขอ',
+			vi: 'Cung cấp tất cả các trường mà dịch vụ này yêu cầu.'
+		};
+	}
+
+	function releaseMinimumInformationLabels(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Release only minimum information',
+			ja: '必要最小限の情報だけ提供する',
+			'zh-CN': '仅提供最低限度的信息',
+			'zh-TW': '僅提供最低限度的資訊',
+			es: 'Compartir solo la información mínima',
+			pt: 'Compartilhar apenas as informações mínimas',
+			fr: 'Partager uniquement le minimum d’informations',
+			de: 'Nur die erforderlichen Mindestinformationen freigeben',
+			ko: '최소한의 정보만 제공',
+			ru: 'Предоставить только минимально необходимые данные',
+			id: 'Bagikan informasi minimum saja',
+			ar: 'مشاركة الحد الأدنى من المعلومات فقط',
+			it: 'Condividi solo le informazioni minime',
+			th: 'เปิดเผยเฉพาะข้อมูลขั้นต่ำ',
+			vi: 'Chỉ cung cấp thông tin tối thiểu'
+		};
+	}
+
+	function releaseMinimumInformationDescriptions(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Release only the minimum fields required to continue.',
+			ja: '利用継続に必要な最小限の項目だけ提供します。',
+			'zh-CN': '仅提供继续操作所需的最少字段。',
+			'zh-TW': '僅提供繼續操作所需的最低限度欄位。',
+			es: 'Comparte solo los campos mínimos necesarios para continuar.',
+			pt: 'Compartilha apenas os campos mínimos necessários para continuar.',
+			fr: 'Ne partage que les champs indispensables pour continuer.',
+			de: 'Nur die mindestens erforderlichen Felder freigeben, um fortzufahren.',
+			ko: '계속하는 데 필요한 최소한의 항목만 제공합니다.',
+			ru: 'Предоставить только минимальный набор полей, необходимый для продолжения.',
+			id: 'Bagikan hanya kolom minimum yang diperlukan untuk melanjutkan.',
+			ar: 'مشاركة الحد الأدنى من الحقول اللازمة للمتابعة.',
+			it: 'Condividi solo i campi indispensabili per continuare.',
+			th: 'เปิดเผยเฉพาะช่องข้อมูลขั้นต่ำที่จำเป็นต่อการดำเนินการต่อ',
+			vi: 'Chỉ cung cấp các trường tối thiểu cần thiết để tiếp tục.'
+		};
+	}
+
+	function releaseNoInformationLabels(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Do not release information',
+			ja: '提供しない',
+			'zh-CN': '不提供信息',
+			'zh-TW': '不提供資訊',
+			es: 'No compartir información',
+			pt: 'Não compartilhar informações',
+			fr: 'Ne pas partager d’informations',
+			de: 'Keine Informationen freigeben',
+			ko: '정보 제공 안 함',
+			ru: 'Не предоставлять информацию',
+			id: 'Jangan bagikan informasi',
+			ar: 'عدم مشاركة المعلومات',
+			it: 'Non condividere informazioni',
+			th: 'ไม่เปิดเผยข้อมูล',
+			vi: 'Không cung cấp thông tin'
+		};
+	}
+
+	function releaseNoInformationDescriptions(): Record<ContentLanguageCode, string> {
+		return {
+			en: 'Do not release optional information.',
+			ja: '任意の情報は提供しません。',
+			'zh-CN': '不提供可选信息。',
+			'zh-TW': '不提供選填資訊。',
+			es: 'No compartir información opcional.',
+			pt: 'Não compartilhar informações opcionais.',
+			fr: 'Ne pas partager les informations facultatives.',
+			de: 'Keine optionalen Informationen freigeben.',
+			ko: '선택 정보를 제공하지 않습니다.',
+			ru: 'Не предоставлять необязательные данные.',
+			id: 'Jangan bagikan informasi opsional.',
+			ar: 'عدم مشاركة المعلومات الاختيارية.',
+			it: 'Non condividere le informazioni facoltative.',
+			th: 'ไม่เปิดเผยข้อมูลที่ไม่บังคับ',
+			vi: 'Không cung cấp thông tin không bắt buộc.'
 		};
 	}
 
@@ -1060,7 +1272,11 @@
 							de: 'Ich stimme zu',
 							ko: '동의합니다',
 							ru: 'Я согласен(на)',
-							id: 'Saya setuju'
+							id: 'Saya setuju',
+							ar: 'أوافق',
+							it: 'Accetto',
+							th: 'ยอมรับ',
+							vi: 'Tôi đồng ý'
 						},
 						termsAgreementText()
 					)
@@ -1081,7 +1297,11 @@
 							de: 'Ich willige ein',
 							ko: '동의합니다',
 							ru: 'Я даю согласие',
-							id: 'Saya menyetujui'
+							id: 'Saya menyetujui',
+							ar: 'أوافق',
+							it: 'Acconsento',
+							th: 'ยินยอม',
+							vi: 'Tôi đồng ý'
 						},
 						privacyAgreementText()
 					)
@@ -1091,26 +1311,20 @@
 					createContentOption(
 						'option-1',
 						'full',
-						{ en: 'Release all requested information', ja: '要求された情報をすべて提供する' },
-						{
-							en: 'Release all fields requested by this service.',
-							ja: 'このサービスが要求した項目をすべて提供します。'
-						}
+						releaseAllInformationLabels(),
+						releaseAllInformationDescriptions()
 					),
 					createContentOption(
 						'option-2',
 						'minimal',
-						{ en: 'Release only minimum information', ja: '必要最小限の情報だけ提供する' },
-						{
-							en: 'Release only the minimum fields required to continue.',
-							ja: '利用継続に必要な最小限の項目だけ提供します。'
-						}
+						releaseMinimumInformationLabels(),
+						releaseMinimumInformationDescriptions()
 					),
 					createContentOption(
 						'option-3',
 						'none',
-						{ en: 'Do not release information', ja: '提供しない' },
-						{ en: 'Do not release optional information.', ja: '任意の情報は提供しません。' }
+						releaseNoInformationLabels(),
+						releaseNoInformationDescriptions()
 					)
 				];
 			case 'saml-attribute-release':
@@ -1167,7 +1381,11 @@
 							de: 'Nutzungsbedingungen',
 							ko: '이용약관',
 							ru: 'Условия обслуживания',
-							id: 'Ketentuan Layanan'
+							id: 'Ketentuan Layanan',
+							ar: 'شروط الخدمة',
+							it: 'Termini di servizio',
+							th: 'ข้อกำหนดการให้บริการ',
+							vi: 'Điều khoản dịch vụ'
 						}
 					}
 				];
@@ -1187,7 +1405,11 @@
 							de: 'Datenschutzerklärung',
 							ko: '개인정보 처리방침',
 							ru: 'Политика конфиденциальности',
-							id: 'Kebijakan Privasi'
+							id: 'Kebijakan Privasi',
+							ar: 'سياسة الخصوصية',
+							it: 'Informativa sulla privacy',
+							th: 'นโยบายความเป็นส่วนตัว',
+							vi: 'Chính sách quyền riêng tư'
 						}
 					}
 				];
@@ -1238,8 +1460,8 @@
 				createContentOption(
 					`option-${nextContentOptionId}`,
 					mode === 'checkbox' ? 'true' : 'value',
-					{ en: mode === 'checkbox' ? 'I agree' : 'Option', ja: '選択肢' },
-					{}
+					genericContentOptionLabels(nextContentOptionId, mode === 'checkbox'),
+					createEmptyLanguageMap()
 				)
 			];
 			nextContentOptionId += 1;
@@ -1308,8 +1530,8 @@
 			createContentOption(
 				`option-${nextContentOptionId}`,
 				contentMode === 'checkbox' ? 'true' : '',
-				{ en: `Option ${nextContentOptionId}`, ja: `選択肢 ${nextContentOptionId}` },
-				{}
+				genericContentOptionLabels(nextContentOptionId, contentMode === 'checkbox'),
+				createEmptyLanguageMap()
 			)
 		];
 		nextContentOptionId += 1;
@@ -1473,6 +1695,14 @@
 				return 'вошедший субъект';
 			case 'id':
 				return 'subjek yang sedang masuk';
+			case 'ar':
+				return 'المستخدم الذي سجّل الدخول';
+			case 'it':
+				return 'l’utente che ha effettuato l’accesso';
+			case 'th':
+				return 'ผู้ใช้ที่เข้าสู่ระบบ';
+			case 'vi':
+				return 'người dùng đã đăng nhập';
 			case 'en':
 			default:
 				return 'the signed-in subject';
@@ -1834,7 +2064,11 @@
 										<span>{$LL.admin_consent_templates_default_language()}</span>
 									</label>
 								</div>
-								<div class="content-preview mode-preview" role="presentation">
+								<div
+									class="content-preview mode-preview"
+									dir={selectedLanguage === 'ar' ? 'rtl' : 'ltr'}
+									role="presentation"
+								>
 									<SanitizedHtmlPreview html={selectedModePreviewHtml} />
 								</div>
 							</section>

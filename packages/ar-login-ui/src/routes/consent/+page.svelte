@@ -3,9 +3,11 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 
 	const { brandingStore } = useLoginUIStores();
@@ -149,7 +151,7 @@
 		try {
 			const { data, error: apiError } = await consentAPI.getData(challengeId);
 			if (apiError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 
 			consentData = data as ConsentScreenData;
@@ -169,7 +171,7 @@
 			}
 			loading = false;
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 			loading = false;
 		}
 	}
@@ -207,7 +209,7 @@
 			const { data, error: apiError } = await consentAPI.submit(submitPayload);
 
 			if (apiError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
@@ -217,7 +219,7 @@
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			allowLoading = false;
 		}
@@ -234,7 +236,7 @@
 			});
 
 			if (apiError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
@@ -244,7 +246,7 @@
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			denyLoading = false;
 		}
@@ -401,7 +403,9 @@
 							<p class="auth-info-box__value">
 								{selectedOrg.name}
 								{#if selectedOrg.is_primary}
-									<span style="margin-left: 8px; font-size: 0.75rem; color: var(--primary);">
+									<span
+										style="margin-inline-start: 8px; font-size: 0.75rem; color: var(--primary);"
+									>
 										({$LL.consent_primaryOrg()})
 									</span>
 								{/if}
@@ -738,6 +742,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

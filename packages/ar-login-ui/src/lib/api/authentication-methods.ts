@@ -77,6 +77,17 @@ export interface ExternalProvider {
 	startUrl?: string;
 }
 
+export type LoginUITextField =
+	| 'tagline'
+	| 'brandPanelTitle'
+	| 'brandPanelText'
+	| 'footerText'
+	| 'loginTitle'
+	| 'registrationTitle'
+	| 'accountTitle';
+
+export type LoginUITextLocalizations = Record<string, Partial<Record<LoginUITextField, string>>>;
+
 export interface ExternalMethod {
 	enabled: boolean;
 	providers: ExternalProvider[];
@@ -123,6 +134,7 @@ export interface LoginUIConfig {
 		fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
 		fontScale: 'compact' | 'comfortable' | 'spacious';
 		backgroundColor: string;
+		accentColor?: string;
 		titleColor?: string;
 		textColor?: string;
 		copyColor?: string;
@@ -165,6 +177,7 @@ export interface LoginUIConfig {
 		thumbnailUrl?: string | null;
 		customCss: string | null;
 		headerText: string | null;
+		textLocalizations?: LoginUITextLocalizations;
 		footerText: string | null;
 		footerLinks: Array<{ label: string; url: string }>;
 		customBlocks: Array<{
@@ -216,34 +229,45 @@ const inFlightRequests = new Map<
 		error?: AuthenticationMethodsError;
 	}>
 >();
+const inFlightRequestTokens = new Map<string, symbol>();
 let cachedResponse: AuthenticationMethodsResponse | null = null;
 
 /**
  * Fetch available authentication methods from the backend.
  * Results are cached per the server-provided TTL.
  */
-export async function fetchAuthenticationMethods(): Promise<{
+export interface AuthenticationMethodsFetchOptions {
+	forceRefresh?: boolean;
+}
+
+export async function fetchAuthenticationMethods(
+	options: AuthenticationMethodsFetchOptions = {}
+): Promise<{
 	data?: AuthenticationMethodsResponse;
 	error?: AuthenticationMethodsError;
 }> {
-	return fetchAuthenticationMethodsForClient();
+	return fetchAuthenticationMethodsForClient(null, options);
 }
 
-export async function fetchAuthenticationMethodsForClient(clientId?: string | null): Promise<{
+export async function fetchAuthenticationMethodsForClient(
+	clientId?: string | null,
+	options: AuthenticationMethodsFetchOptions = {}
+): Promise<{
 	data?: AuthenticationMethodsResponse;
 	error?: AuthenticationMethodsError;
 }> {
 	const cacheKey = clientId?.trim() || '__tenant__';
 	const cached = cachedResponses.get(cacheKey);
-	if (cached && Date.now() < cached.expiry) {
+	if (!options.forceRefresh && cached && Date.now() < cached.expiry) {
 		cachedResponse = cached.response;
 		return { data: cached.response };
 	}
 	const activeRequest = inFlightRequests.get(cacheKey);
-	if (activeRequest) {
+	if (!options.forceRefresh && activeRequest) {
 		return activeRequest;
 	}
 
+	const requestToken = Symbol(cacheKey);
 	const request = (async () => {
 		const controller = new AbortController();
 		const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -255,7 +279,8 @@ export async function fetchAuthenticationMethodsForClient(clientId?: string | nu
 			const response = await authrimFetch(path, {
 				method: 'GET',
 				headers: buildDiagnosticHeaders({ Accept: 'application/json' }),
-				signal: controller.signal
+				signal: controller.signal,
+				...(options.forceRefresh ? { cache: 'reload' as const } : {})
 			});
 
 			const data = await response.json();
@@ -289,11 +314,15 @@ export async function fetchAuthenticationMethodsForClient(clientId?: string | nu
 			};
 		} finally {
 			clearTimeout(timeoutId);
-			inFlightRequests.delete(cacheKey);
+			if (inFlightRequestTokens.get(cacheKey) === requestToken) {
+				inFlightRequests.delete(cacheKey);
+				inFlightRequestTokens.delete(cacheKey);
+			}
 		}
 	})();
 
 	inFlightRequests.set(cacheKey, request);
+	inFlightRequestTokens.set(cacheKey, requestToken);
 	return request;
 }
 
@@ -304,4 +333,5 @@ export function clearAuthenticationMethodsCache(): void {
 	cachedResponse = null;
 	cachedResponses.clear();
 	inFlightRequests.clear();
+	inFlightRequestTokens.clear();
 }

@@ -460,6 +460,39 @@ describe('Settings API v2', () => {
         ).resolves.toEqual(expect.any(String));
       });
 
+      it('accepts every newly supported Login UI locale', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: {
+                'login-ui.supported_locales': 'ar,it,th,vi',
+                'login-ui.default_locale': 'ar',
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as SettingsPatchResult;
+        expect(body.applied).toEqual(
+          expect.arrayContaining(['login-ui.supported_locales', 'login-ui.default_locale'])
+        );
+      });
+
       it('rejects unsafe Login UI custom CSS', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });

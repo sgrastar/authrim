@@ -638,8 +638,15 @@ function samlSchema(nameIdSource: string, attributes: SamlAttributeTemplate[]) {
 			format: PERSISTENT_NAME_ID,
 			source: nameIdSource
 		},
-		attributes
+		attributes: samlAttributes(attributes)
 	};
+}
+
+function samlAttributes(attributes: SamlAttributeTemplate[]) {
+	return attributes.map(({ required: _required, ...attribute }) => ({
+		...attribute,
+		nullable: true
+	}));
 }
 
 export const samlDestinationTemplates: DestinationTemplate[] = [
@@ -908,12 +915,12 @@ export const samlDestinationTemplates: DestinationTemplate[] = [
 				format: EMAIL_NAME_ID,
 				source: 'email'
 			},
-			attributes: [
-				withMeta(contractAttribute('email', 'mail', 'email', true), {
+			attributes: samlAttributes([
+				withMeta(contractAttribute('email', 'mail', 'email'), {
 					examples: ['person@example.com'],
 					note: 'Enterprise SAML email attribute used as a mailbox and often as a login identifier.',
 					valueMultiplicity: 'single',
-					nullable: false
+					nullable: true
 				}),
 				withMeta(contractAttribute('displayName', 'displayName'), {
 					examples: ['Taro Yamada'],
@@ -921,7 +928,7 @@ export const samlDestinationTemplates: DestinationTemplate[] = [
 					valueMultiplicity: 'single',
 					nullable: true
 				})
-			]
+			])
 		}
 	}
 ];

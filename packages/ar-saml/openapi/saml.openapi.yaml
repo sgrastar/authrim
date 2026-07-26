@@ -315,6 +315,15 @@ paths:
       responses:
         "202":
           $ref: "#/components/responses/SAMLBatchStatus"
+        "400":
+          description: >
+            The selected entities, provider role, Mapping Set, or per-SP destination field policy
+            is invalid. No asynchronous batch is started.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
       parameters:
         - name: previewId
           in: path
@@ -1085,6 +1094,41 @@ components:
           type: array
           items:
             type: string
+        identityMapping:
+          $ref: "#/components/schemas/SAMLIdentityMapping"
+        attributeReleaseConsent:
+          type: object
+          additionalProperties: false
+          properties:
+            enabled:
+              type: boolean
+            mode:
+              type: string
+              enum:
+                - once
+                - every_time
+                - until_attributes_change
+    SAMLIdentityMapping:
+      type: object
+      additionalProperties: true
+      required:
+        - fieldMappingSetId
+      properties:
+        fieldMappingSetId:
+          type: string
+        fieldMappingVersionId:
+          type: string
+        destinationNamespace:
+          type: string
+        destinationFieldPolicies:
+          type: object
+          description: Per-SP release mode for every attribute in the active SAML Destination Profile.
+          additionalProperties:
+            type: string
+            enum:
+              - required
+              - optional
+              - hidden
     SAMLProviderCreateRequest:
       type: object
       required:
@@ -1310,6 +1354,8 @@ components:
           type: string
         attributePresetId:
           type: string
+        identityMapping:
+          $ref: "#/components/schemas/SAMLIdentityMapping"
         enabled:
           type: boolean
     SAMLBatchStatus:

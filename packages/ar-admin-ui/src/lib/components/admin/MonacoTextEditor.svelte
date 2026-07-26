@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { onDestroy, onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 	import CssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
 	import HtmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
@@ -109,7 +110,7 @@
 			});
 			ready = true;
 		} catch (err) {
-			loadError = err instanceof Error ? err.message : 'Failed to load editor.';
+			loadError = err instanceof Error ? err.message : $LL.common_editor_load_failed();
 		}
 	}
 

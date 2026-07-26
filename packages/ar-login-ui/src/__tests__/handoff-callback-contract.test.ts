@@ -30,7 +30,7 @@ describe('hosted handoff callback contract', () => {
 
 	it('does not fall back to browser-side authorization code token exchange', () => {
 		expect(callbackSource).toContain('external_handoff_required');
-		expect(callbackSource).toContain('errorMessage = $LL.error_server_error()');
+		expect(callbackSource).toContain('external_handoff_required: () => $LL.error_server_error()');
 		expect(callbackSource).not.toContain('token-capable SDK client');
 	});
 });

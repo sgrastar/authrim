@@ -3,6 +3,7 @@ import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
 import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import { filterOidcClaimsByDestinationConsent } from './destination-profile-consent';
 import {
   resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
@@ -21,6 +22,8 @@ export interface ApplyOIDCIdentityMappingInput {
   clientId: string;
   sectorIdentifier?: string | null;
   selector?: OIDCIdentityMappingFieldMappingSelector | null;
+  destinationSurface?: 'id_token' | 'userinfo';
+  grantedScopes?: string[];
   claims: Record<string, unknown>;
 }
 
@@ -50,7 +53,10 @@ export async function applyOIDCIdentityMapping(
     });
   } catch (error) {
     if (!input.selector?.fieldMappingSetId) {
-      return { claims: input.claims, binding: null };
+      return {
+        claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
+        binding: null,
+      };
     }
     throw error;
   }
@@ -66,7 +72,21 @@ export async function applyOIDCIdentityMapping(
         }
       );
     }
-    return { claims: input.claims, binding: null };
+    return {
+      claims: await applyOIDCDestinationFieldConsent(input, input.claims, null),
+      binding: null,
+    };
+  }
+  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+    throw new OIDCIdentityMappingRuntimeError(
+      'OIDC identity mapping must reference exactly one Destination Profile',
+      {
+        code: 'policy.invalid_destination_profile_binding',
+        fieldMappingSetId: binding.fieldMappingSetId,
+        fieldMappingVersionId: binding.fieldMappingVersionId,
+        clientId: input.clientId,
+      }
+    );
   }
 
   const destinationNamespace =
@@ -108,7 +128,43 @@ export async function applyOIDCIdentityMapping(
     mappedClaims[value.sourceRef.path] = value.value;
   }
 
-  return { claims: mappedClaims, binding };
+  return {
+    claims: await applyOIDCDestinationFieldConsent(input, mappedClaims, binding),
+    binding,
+  };
+}
+
+async function applyOIDCDestinationFieldConsent(
+  input: ApplyOIDCIdentityMappingInput,
+  claims: Record<string, unknown>,
+  binding: RuntimeIdentityMappingBinding | null
+): Promise<Record<string, unknown>> {
+  const profileId = binding?.destinationProfileId ?? input.selector?.destinationProfileId;
+  const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  if (!profileId) return claims;
+  if (!subjectId) {
+    throw new OIDCIdentityMappingRuntimeError(
+      'OIDC destination release requires a subject identifier',
+      {
+        code: 'policy.missing_destination_subject',
+        fieldMappingSetId: input.selector?.fieldMappingSetId,
+        clientId: input.clientId,
+      }
+    );
+  }
+  return filterOidcClaimsByDestinationConsent({
+    coreAdapter: input.adapter,
+    adminAdapter: input.env?.DB_ADMIN
+      ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-consent')
+      : input.adapter,
+    tenantId: input.tenantId,
+    subjectId,
+    clientId: input.clientId,
+    profileId,
+    surface: input.destinationSurface,
+    grantedScopes: input.grantedScopes,
+    claims,
+  });
 }
 
 interface OIDCPersistentIdentifierProfileRow {

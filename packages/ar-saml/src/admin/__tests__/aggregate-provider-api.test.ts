@@ -23,6 +23,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     safeFetchText: mocks.safeFetchText,
     createAuthContextFromHono: mocks.createAuthContextFromHono,
     resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveAuthCorePersistenceAdapterFromEnv,
+    requireAdminDatabaseAdapter: vi.fn(
+      (env: { DB_ADMIN?: unknown }) => env.DB_ADMIN ?? mocks.createAuthContextFromHono().coreAdapter
+    ),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
+      fieldMappingSetId: 'test-saml-outbound',
+      fieldMappingVersionId: 'version-1',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
+    })),
+    loadDestinationProfileConsentDescriptor: vi.fn(async () => ({
+      profileId: 'destination-profile-saml',
+      profileVersionId: 'destination-profile-saml-v1',
+      destinationType: 'saml',
+      fields: [{ key: 'mail' }],
+    })),
     createAuditLog: mocks.createAuditLog,
     getLogger: () => ({
       module: () => ({
@@ -353,7 +368,10 @@ describe('SAML aggregate provider API', () => {
           providerType: 'saml_sp',
           metadataUrl: 'https://sp.example.test/metadata.xml',
           config: {
-            identityMapping: { fieldMappingSetId: 'test-saml-outbound' },
+            identityMapping: {
+              fieldMappingSetId: 'test-saml-outbound',
+              destinationFieldPolicies: { mail: 'optional' },
+            },
           },
         },
       })
@@ -571,6 +589,14 @@ describe('SAML aggregate provider API', () => {
             tenantId: 'tenant-a',
             metadataXml: aggregateXml,
             metadataUrl: 'https://metadata.example.test/aggregate.xml',
+            entities: [
+              {
+                entityId: 'https://sp.example.test/sp',
+                role: 'saml_sp',
+                acsUrl: 'https://sp.example.test/acs',
+                certificateCount: 0,
+              },
+            ],
             verification: {
               status: 'skipped',
               policy: 'disabled',
@@ -583,7 +609,14 @@ describe('SAML aggregate provider API', () => {
       const startResponse = await handleStartAggregateBatchCreate(
         createContext({
           params: { previewId },
-          body: { entityIds: ['https://sp.example.test/sp'], enabled: true },
+          body: {
+            entityIds: ['https://sp.example.test/sp'],
+            enabled: true,
+            identityMapping: {
+              fieldMappingSetId: 'test-saml-outbound',
+              destinationFieldPolicies: { mail: 'optional' },
+            },
+          },
           env,
           waitUntil,
         })
@@ -638,6 +671,41 @@ describe('SAML aggregate provider API', () => {
       );
     }
   );
+
+  it('rejects an aggregate batch without a Mapping Set before starting async work', async () => {
+    const previewId = 'preview-invalid-mapping';
+    const waitUntil: Array<Promise<unknown>> = [];
+    const response = await handleStartAggregateBatchCreate(
+      createContext({
+        params: { previewId },
+        body: { entityIds: ['https://sp.example.test/sp'] },
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-a',
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-a',
+              metadataXml: aggregateXml,
+              entities: [
+                {
+                  entityId: 'https://sp.example.test/sp',
+                  role: 'saml_sp',
+                  acsUrl: 'https://sp.example.test/acs',
+                  certificateCount: 0,
+                },
+              ],
+              verification: { status: 'skipped', policy: 'disabled' },
+            },
+          }) as never,
+        },
+        waitUntil,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(waitUntil).toHaveLength(0);
+    expect(mocks.resolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
+  });
 
   it('does not expose aggregate preview entities across tenants', async () => {
     const previewId = 'preview-foreign';

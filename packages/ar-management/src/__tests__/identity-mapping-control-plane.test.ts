@@ -794,13 +794,14 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         claims: [
           {
             claimName: 'sub',
+            required: true,
             valueType: 'string',
             classification: 'internal',
             surfaces: ['id_token', 'userinfo'],
-            requiredScopes: ['openid'],
           },
           {
             claimName: 'library_card',
+            required: false,
             valueType: 'string',
             classification: 'pii',
             surfaces: ['userinfo'],
@@ -832,6 +833,7 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       claimCount: 2,
       claimsParameterClaimCount: 1,
       essentialClaimCount: 1,
+      requiredClaimCount: 1,
       piiClaimCount: 1,
     });
   });
@@ -853,6 +855,34 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
               classification: 'pii',
               surfaces: ['userinfo'],
               requiredScopes: ['email'],
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('rejects an OIDC destination profile that makes sub optional', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'optional_sub',
+        displayName: 'Optional subject',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'sub',
+              required: false,
+              classification: 'internal',
+              surfaces: ['id_token'],
+              requiredScopes: ['openid'],
             },
           ],
         },
@@ -1041,6 +1071,31 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
     ]);
+  });
+
+  it('rejects required flags on SAML Destination Profile attributes', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'saml',
+        profileKey: 'invalid_required_saml',
+        displayName: 'Invalid required SAML',
+        schema: {
+          destinationType: 'saml',
+          nameId: {
+            format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            source: 'subject_identifier',
+          },
+          attributes: [{ name: 'mail', required: true }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('rejects duplicate destination profile keys before hitting database constraints', async () => {

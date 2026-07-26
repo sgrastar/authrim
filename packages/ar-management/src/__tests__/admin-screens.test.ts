@@ -43,15 +43,19 @@ type ScreenRow = Record<string, unknown> & {
 
 const rows: ScreenRow[] = [];
 const expectedLocalizationLanguages = [
+  'ar',
   'de',
   'en',
   'es',
   'fr',
   'id',
+  'it',
   'ja',
   'ko',
   'pt',
   'ru',
+  'th',
+  'vi',
   'zh-CN',
   'zh-TW',
 ];
@@ -293,12 +297,25 @@ describe('admin screens', () => {
     const registrationFields = registration?.fields as Array<Record<string, unknown>>;
     expect(registrationFields.map((field) => field.field)).toEqual([
       'heading.registration',
-      ...expectedDefaultAuthFieldNames,
+      'auth.passkey',
+      'email',
+      ...expectedDefaultAuthFieldNames.slice(1),
     ]);
     const loginFields = screensByKey.get('login')?.fields as Array<Record<string, unknown>>;
-    expect(registrationFields.slice(1).map((field) => field.field)).toEqual(
-      loginFields.slice(1).map((field) => field.field)
-    );
+    expect(
+      registrationFields
+        .slice(1)
+        .filter((field) => field.block_type !== 'identity_field')
+        .map((field) => field.field)
+    ).toEqual(loginFields.slice(1).map((field) => field.field));
+    expect(registrationFields.find((field) => field.field === 'email')).toMatchObject({
+      required: true,
+      block_type: 'identity_field',
+    });
+    expect(
+      registrationFields.find((field) => field.field === 'preferred_username')
+    ).toBeUndefined();
+    expect(registrationFields.find((field) => field.field === 'name')).toBeUndefined();
     expect(registrationFields.find((field) => field.field === 'divider.or')).toMatchObject({
       display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
     });
@@ -317,8 +334,9 @@ describe('admin screens', () => {
     ).ja?.fields as Record<string, Record<string, unknown>>;
     expect(registrationJaFields?.['heading.registration-0']?.label).toBe('アカウントを作成');
     expect(registrationJaFields?.['auth.passkey-1']?.label).toBe('Passkeyでアカウント作成');
-    expect(registrationJaFields?.['auth.mail_otp-3']?.label).toBe('認証コードをメール送信');
-    expect(registrationJaFields?.['auth.totp-4']?.label).toBe('認証アプリで新規登録');
+    expect(registrationJaFields?.['email-2']?.label).toBe('メールアドレス');
+    expect(registrationJaFields?.['auth.mail_otp-4']?.label).toBe('認証コードをメール送信');
+    expect(registrationJaFields?.['auth.totp-5']?.label).toBe('認証アプリで新規登録');
     const loginJaFields = (
       screensByKey.get('login')?.localizations as Record<string, Record<string, unknown>>
     ).ja?.fields as Record<string, Record<string, unknown>>;
@@ -331,6 +349,12 @@ describe('admin screens', () => {
     expect(loginZhCn?.['auth.totp-4']?.label).toBe('使用身份验证器应用登录');
     expect(loginZhCn?.['auth.external_idp-6']?.label).toBe('Ext. IdP');
     expect(loginZhCn?.['divider.directory_password-7']?.label).toBe('或');
+    const loginAr = (
+      screensByKey.get('login')?.localizations as Record<string, Record<string, unknown>>
+    ).ar?.fields as Record<string, Record<string, unknown>>;
+    expect(loginAr?.['heading.login-0']?.label).toBe('تسجيل الدخول');
+    expect(loginAr?.['auth.passkey-1']?.label).toBe('تسجيل الدخول باستخدام مفتاح المرور');
+    expect(loginAr?.['divider.directory_password-7']?.label).toBe('أو');
     const codeInputZhCn = (
       screensByKey.get('code_input')?.localizations as Record<string, Record<string, unknown>>
     )['zh-CN']?.fields as Record<string, Record<string, unknown>>;
@@ -432,6 +456,161 @@ describe('admin screens', () => {
     ]);
   });
 
+  it('replaces the name field in the previous uncustomized registration default', async () => {
+    const previousDefaultFields = [
+      ['heading.registration', 'heading', 0],
+      ['auth.passkey', 'auth_widget', 10],
+      ['email', 'identity_field', 15],
+      ['name', 'identity_field', 17],
+      ['divider.or', 'divider', 20],
+      ['auth.mail_otp', 'auth_widget', 30],
+      ['auth.totp', 'auth_widget', 35],
+      ['divider.other_accounts', 'divider', 40],
+      ['auth.external_idp', 'auth_widget', 50],
+      ['divider.directory_password', 'divider', 55],
+      ['auth.directory_password', 'auth_widget', 60],
+    ].map(([field, blockType, order]) => ({
+      field,
+      label: field,
+      required: field === 'email',
+      block_type: blockType,
+      order,
+    }));
+    rows.push({
+      id: 'screen-registration-default',
+      tenant_id: 'tenant-1',
+      screen_key: 'registration',
+      display_name: 'Registration',
+      description: 'Default registration screen.',
+      screen_kind: 'registration',
+      fields_json: JSON.stringify(previousDefaultFields),
+      localizations_json: '{}',
+      settings_json: '{"canvas_layout":"narrow"}',
+      is_active: 1,
+      is_system: 1,
+      created_at: 0,
+      updated_at: 0,
+    });
+
+    const response = await adminScreensListHandler(createContext());
+    expect(response.status).toBe(200);
+
+    const body = await readJson(response);
+    const registration = (body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'registration'
+    );
+    const fields = registration?.fields as Array<Record<string, unknown>>;
+    expect(fields.map((field) => field.field)).toEqual([
+      'heading.registration',
+      'auth.passkey',
+      'email',
+      ...expectedDefaultAuthFieldNames.slice(1),
+    ]);
+  });
+
+  it('keeps the email-only uncustomized registration default', async () => {
+    const emailOnlyDefaultFields = [
+      ['heading.registration', 'heading', 0],
+      ['auth.passkey', 'auth_widget', 10],
+      ['email', 'identity_field', 15],
+      ['divider.or', 'divider', 20],
+      ['auth.mail_otp', 'auth_widget', 30],
+      ['auth.totp', 'auth_widget', 35],
+      ['divider.other_accounts', 'divider', 40],
+      ['auth.external_idp', 'auth_widget', 50],
+      ['divider.directory_password', 'divider', 55],
+      ['auth.directory_password', 'auth_widget', 60],
+    ].map(([field, blockType, order]) => ({
+      field,
+      label: field,
+      required: field === 'email',
+      block_type: blockType,
+      order,
+    }));
+    rows.push({
+      id: 'screen-registration-default',
+      tenant_id: 'tenant-1',
+      screen_key: 'registration',
+      display_name: 'Registration',
+      description: 'Default registration screen.',
+      screen_kind: 'registration',
+      fields_json: JSON.stringify(emailOnlyDefaultFields),
+      localizations_json: '{}',
+      settings_json: '{"canvas_layout":"narrow"}',
+      is_active: 1,
+      is_system: 1,
+      created_at: 0,
+      updated_at: 0,
+    });
+
+    const response = await adminScreensListHandler(createContext());
+    expect(response.status).toBe(200);
+
+    const body = await readJson(response);
+    const registration = (body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'registration'
+    );
+    const fields = registration?.fields as Array<Record<string, unknown>>;
+    expect(fields.map((field) => field.field)).toEqual([
+      'heading.registration',
+      'auth.passkey',
+      'email',
+      ...expectedDefaultAuthFieldNames.slice(1),
+    ]);
+  });
+
+  it('removes preferred username from the uncustomized registration default', async () => {
+    const usernameDefaultFields = [
+      ['heading.registration', 'heading', 0],
+      ['auth.passkey', 'auth_widget', 10],
+      ['email', 'identity_field', 15],
+      ['preferred_username', 'identity_field', 17],
+      ['divider.or', 'divider', 20],
+      ['auth.mail_otp', 'auth_widget', 30],
+      ['auth.totp', 'auth_widget', 35],
+      ['divider.other_accounts', 'divider', 40],
+      ['auth.external_idp', 'auth_widget', 50],
+      ['divider.directory_password', 'divider', 55],
+      ['auth.directory_password', 'auth_widget', 60],
+    ].map(([field, blockType, order]) => ({
+      field,
+      label: field,
+      required: field === 'email',
+      block_type: blockType,
+      order,
+    }));
+    rows.push({
+      id: 'screen-registration-default',
+      tenant_id: 'tenant-1',
+      screen_key: 'registration',
+      display_name: 'Registration',
+      description: 'Default registration screen.',
+      screen_kind: 'registration',
+      fields_json: JSON.stringify(usernameDefaultFields),
+      localizations_json: '{}',
+      settings_json: '{"canvas_layout":"narrow"}',
+      is_active: 1,
+      is_system: 1,
+      created_at: 0,
+      updated_at: 0,
+    });
+
+    const response = await adminScreensListHandler(createContext());
+    expect(response.status).toBe(200);
+
+    const body = await readJson(response);
+    const registration = (body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'registration'
+    );
+    const fields = registration?.fields as Array<Record<string, unknown>>;
+    expect(fields.map((field) => field.field)).toEqual([
+      'heading.registration',
+      'auth.passkey',
+      'email',
+      ...expectedDefaultAuthFieldNames.slice(1),
+    ]);
+  });
+
   it('migrates only the exact legacy registration default fields', async () => {
     rows.push({
       id: 'screen-registration-default',
@@ -490,7 +669,9 @@ describe('admin screens', () => {
     const fields = registration?.fields as Array<Record<string, unknown>>;
     expect(fields.map((field) => field.field)).toEqual([
       'heading.registration',
-      ...expectedDefaultAuthFieldNames,
+      'auth.passkey',
+      'email',
+      ...expectedDefaultAuthFieldNames.slice(1),
     ]);
   });
 

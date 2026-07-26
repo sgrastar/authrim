@@ -28,7 +28,7 @@ const completion = {
 	dialog_description:
 		'Ini adalah dialog pengujian yang menggunakan Melt UI, pustaka komponen tanpa tampilan yang aksesibel untuk Svelte.',
 	dialog_confirm: 'Konfirmasi',
-	footer_stack: 'Didukung oleh Authrim',
+	footer_stack: 'Didukung oleh <a href="https://authrim.com/">Authrim</a>',
 	language_english: 'Bahasa Inggris',
 	language_japanese: 'Bahasa Jepang',
 	common_emailPlaceholder: 'anda@contoh.com',

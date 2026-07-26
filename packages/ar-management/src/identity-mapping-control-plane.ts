@@ -7046,6 +7046,25 @@ function validateOidcDestinationProfileSchema(
   if (!claims.some((claim) => claim.claimName === 'sub')) {
     errors.push('OIDC destination profile must include sub');
   }
+  if (claims.some((claim) => claim.claimName === 'sub' && claim.required === false)) {
+    errors.push('OIDC sub claim must be required');
+  }
+  const subjectClaims = claims.filter((claim) => claim.claimName === 'sub');
+  for (const subjectClaim of subjectClaims) {
+    const surfaces = Array.isArray(subjectClaim.surfaces) ? subjectClaim.surfaces.map(String) : [];
+    if (!surfaces.includes('id_token') || !surfaces.includes('userinfo')) {
+      errors.push('OIDC sub claim must target both id_token and userinfo');
+    }
+    if (
+      Array.isArray(subjectClaim.requiredScopes) &&
+      subjectClaim.requiredScopes.map(String).some(Boolean)
+    ) {
+      errors.push('OIDC sub claim must not depend on optional scopes');
+    }
+    if (subjectClaim.nullable === true) {
+      errors.push('OIDC sub claim must not be nullable');
+    }
+  }
 
   const claimNames = new Set<string>();
   const attributeGroupFields = new Map(
@@ -7059,6 +7078,7 @@ function validateOidcDestinationProfileSchema(
   let overReleaseWarningCount = 0;
   let claimsParameterClaimCount = 0;
   let essentialClaimCount = 0;
+  let requiredClaimCount = 0;
 
   for (const claim of claims) {
     const claimName = String(claim.claimName ?? '');
@@ -7076,6 +7096,7 @@ function validateOidcDestinationProfileSchema(
       errors.push(`${claimName} is reserved by the OIDC token envelope`);
     }
     validateFieldConstraintDefinition(claim, `claim ${claimName}`, errors);
+    if (claim.required === true || claimName === 'sub') requiredClaimCount += 1;
     const surfaces = Array.isArray(claim.surfaces) ? claim.surfaces.map(String) : [];
     if (surfaces.length === 0 || surfaces.some((surface) => !OIDC_SURFACES.has(surface))) {
       errors.push(`${claimName} must target id_token or userinfo`);
@@ -7146,6 +7167,7 @@ function validateOidcDestinationProfileSchema(
       claimCount: claims.length,
       claimsParameterClaimCount,
       essentialClaimCount,
+      requiredClaimCount,
       surfaces: ['id_token', 'userinfo'].filter((surface) =>
         claims.some((claim) => Array.isArray(claim.surfaces) && claim.surfaces.includes(surface))
       ),
@@ -7247,6 +7269,11 @@ function validateSamlDestinationProfileSchema(schema: Record<string, unknown>) {
     }
     if (seenNames.has(name)) errors.push(`${name} appears more than once`);
     seenNames.add(name);
+    if (attribute.required !== undefined) {
+      errors.push(
+        `${name}.required must be configured on the SAML SP, not the Destination Profile`
+      );
+    }
     validateFieldConstraintDefinition(attribute, `SAML attribute ${name}`, errors);
     const classification = String(attribute.classification ?? 'internal');
     if (classification === 'pii') piiAttributeCount += 1;

@@ -10,9 +10,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
-const { mockPostgresAdapterFactory, canonicalRuntimeUsers } = vi.hoisted(() => ({
+const {
+  mockPostgresAdapterFactory,
+  canonicalRuntimeUsers,
+  resolveIdentityMappingBinding,
+  loadDestinationProfileDescriptor,
+} = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
+  resolveIdentityMappingBinding: vi.fn(async () => ({
+    destinationProfileId: 'destination_oidc_1',
+    destinationProfileIds: ['destination_oidc_1'],
+  })),
+  loadDestinationProfileDescriptor: vi.fn(async () => ({
+    profileId: 'destination_oidc_1',
+    profileVersionId: 'destination_oidc_version_1',
+    destinationType: 'oidc',
+    fields: [],
+  })),
 }));
 
 // Mock specific submodules to avoid ESM barrel export resolution issues
@@ -55,6 +70,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    resolveRuntimeIdentityMappingBinding: resolveIdentityMappingBinding,
+    loadDestinationProfileConsentDescriptor: loadDestinationProfileDescriptor,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
       aaguid
         ? {
@@ -2754,6 +2771,54 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('validates and persists the selected OIDC Mapping Set on create', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Mapped Client',
+          redirect_uris: ['https://example.com/callback'],
+          identity_mapping: {
+            fieldMappingSetId: 'mapping_set_1',
+            destinationNamespace: 'oidc.claim',
+          },
+        },
+        db: mockDB,
+      });
+
+      const response = await adminClientCreateHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          protocol: 'oidc',
+          fieldMappingSetId: 'mapping_set_1',
+        })
+      );
+      expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+        JSON.stringify({
+          fieldMappingSetId: 'mapping_set_1',
+          destinationNamespace: 'oidc.claim',
+        })
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            identity_mapping: {
+              fieldMappingSetId: 'mapping_set_1',
+              destinationNamespace: 'oidc.claim',
+            },
+          }),
+        }),
+        201
+      );
+    });
+
     it('should persist explicit requestable scopes for an Agent Access connection', async () => {
       const mockDB = createMockDB({
         firstResult: null,
@@ -3346,6 +3411,44 @@ describe('Admin API Handlers', () => {
             client_id: clientId,
             client_name: 'Updated Client Name',
           }),
+        })
+      );
+    });
+
+    it('validates and persists the selected OIDC Mapping Set on update', async () => {
+      const clientId = 'mapped-client';
+      const mockDB = createMockDB({
+        firstResult: createOAuthClientRow(clientId),
+        runResult: { success: true, meta: { changes: 1 } },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          identity_mapping: {
+            fieldMappingSetId: 'mapping_set_2',
+            fieldMappingVersionId: 'mapping_version_2',
+          },
+        },
+        db: mockDB,
+      });
+
+      const response = await adminClientUpdateHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          protocol: 'oidc',
+          fieldMappingSetId: 'mapping_set_2',
+          fieldMappingVersionId: 'mapping_version_2',
+        })
+      );
+      expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+        JSON.stringify({
+          fieldMappingSetId: 'mapping_set_2',
+          fieldMappingVersionId: 'mapping_version_2',
         })
       );
     });

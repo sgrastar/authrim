@@ -1140,6 +1140,10 @@ components:
                   - ko
                   - ru
                   - id
+                  - ar
+                  - it
+                  - th
+                  - vi
             defaultLocale:
               type: string
               description: Fallback locale. The value is always included in supportedLocales.
@@ -1155,6 +1159,43 @@ components:
                 - ko
                 - ru
                 - id
+                - ar
+                - it
+                - th
+                - vi
+            appearance:
+              type: object
+              additionalProperties: true
+              properties:
+                headerText:
+                  type:
+                    - string
+                    - 'null'
+                  description: Legacy common tagline override used when no locale-specific value exists.
+                textLocalizations:
+                  type: object
+                  description: Locale-specific Login UI text overrides keyed by supported locale code.
+                  additionalProperties:
+                    type: object
+                    additionalProperties: false
+                    properties:
+                      tagline:
+                        type: string
+                      brandPanelTitle:
+                        type: string
+                      brandPanelText:
+                        type: string
+                      footerText:
+                        type: string
+                      loginTitle:
+                        type: string
+                        description: Primary heading override for the login page.
+                      registrationTitle:
+                        type: string
+                        description: Primary heading override for the registration page.
+                      accountTitle:
+                        type: string
+                        description: Primary heading override for the account page.
         meta:
           type: object
           required:

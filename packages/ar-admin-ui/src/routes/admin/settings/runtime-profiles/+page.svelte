@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminRuntimeProfilesAPI,
 		type RuntimeProfileActivationStatus,
@@ -378,7 +379,8 @@
 				null;
 			setSelectedProfile(selected);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load runtime profiles';
+			error =
+				err instanceof Error ? err.message : $LL.admin_settings_runtime_profiles_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -392,16 +394,18 @@
 		try {
 			const id = profileIdInput.trim();
 			if (!id) {
-				throw new Error('Profile ID is required');
+				throw new Error($LL.admin_settings_runtime_profile_id_required());
 			}
 
 			const parsed = JSON.parse(profileJson);
 			const result = await adminRuntimeProfilesAPI.upsert('audit', id, parsed);
-			success = result.created ? 'Audit profile created' : 'Audit profile updated';
+			success = result.created
+				? $LL.admin_settings_audit_profile_created()
+				: $LL.admin_settings_audit_profile_updated();
 			await load();
 			setSelectedProfile(result.profile);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save profile';
+			error = err instanceof Error ? err.message : $LL.admin_settings_runtime_profile_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -415,10 +419,11 @@
 		saving = true;
 		try {
 			await adminRuntimeProfilesAPI.remove('audit', selectedProfileId);
-			success = 'Audit profile deleted';
+			success = $LL.admin_settings_audit_profile_deleted();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete profile';
+			error =
+				err instanceof Error ? err.message : $LL.admin_settings_runtime_profile_delete_failed();
 		} finally {
 			saving = false;
 		}
@@ -431,13 +436,13 @@
 
 		try {
 			if (!defaultAuditProfileId) {
-				throw new Error('Default audit profile is required');
+				throw new Error($LL.admin_settings_default_audit_profile_required());
 			}
 			if (!defaultStorageProfileId) {
-				throw new Error('Default storage profile is required');
+				throw new Error($LL.admin_settings_default_storage_profile_required());
 			}
 			if (!defaultResidencyProfileId) {
-				throw new Error('Default residency profile is required');
+				throw new Error($LL.admin_settings_default_residency_profile_required());
 			}
 			const selectedStorageActivation = getActivationStatus(
 				storageActivationStatus,
@@ -446,13 +451,14 @@
 			if (selectedStorageActivation && !selectedStorageActivation.activatable) {
 				throw new Error(
 					selectedStorageActivation.blockingReasons[0] ??
-						'Selected storage profile is not activatable'
+						$LL.admin_settings_storage_profile_not_activatable()
 				);
 			}
 			const selectedActivation = getActivationStatus(auditActivationStatus, defaultAuditProfileId);
 			if (selectedActivation && !selectedActivation.activatable) {
 				throw new Error(
-					selectedActivation.blockingReasons[0] ?? 'Selected audit profile is not activatable'
+					selectedActivation.blockingReasons[0] ??
+						$LL.admin_settings_audit_profile_not_activatable()
 				);
 			}
 			const selectedResidencyActivation = getActivationStatus(
@@ -462,7 +468,7 @@
 			if (selectedResidencyActivation && !selectedResidencyActivation.activatable) {
 				throw new Error(
 					selectedResidencyActivation.blockingReasons[0] ??
-						'Selected residency profile is not activatable'
+						$LL.admin_settings_residency_profile_not_activatable()
 				);
 			}
 			await adminRuntimeProfilesAPI.updateDefaults({
@@ -470,10 +476,13 @@
 				auditProfileId: defaultAuditProfileId,
 				residencyProfileId: defaultResidencyProfileId
 			});
-			success = 'Default runtime profiles updated';
+			success = $LL.admin_settings_runtime_profile_defaults_updated();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update default profiles';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_settings_runtime_profile_defaults_save_failed();
 		} finally {
 			saving = false;
 		}

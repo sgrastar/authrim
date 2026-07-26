@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { normalizeLoginUILocale } from '$lib/i18n/locales';
@@ -15,6 +17,7 @@
 	} from '$lib/api/client';
 	import { accountAPI } from '$lib/api/account';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import {
 		isValidRedirectUrl,
 		isValidReturnUrl,
@@ -32,6 +35,7 @@
 		flowRuntimeAPI,
 		type FlowRuntimeEmailVerificationChallenge,
 		type FlowRuntimeConsentPolicyContent,
+		type FlowRuntimeDestinationFieldConsentContent,
 		type FlowRuntimeStartResponse,
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
@@ -54,6 +58,9 @@
 		shouldSignalUnknownCredentialAfterLoginFailure
 	} from '$lib/webauthn/signal';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
+	import { installPageResumeHandler } from '$lib/browser/page-resume';
+	import { buildAuthSwitchHref } from '$lib/authrim/auth-switch-url';
 	import { LOGIN_UI_SESSION_STORAGE_KEYS, setLoginUiSessionItem } from '$lib/authrim/storage-keys';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
 	import { onDestroy, onMount } from 'svelte';
@@ -68,7 +75,21 @@
 
 	let { data: pageData }: { data: LoginPageData } = $props();
 	const emailVerificationTokenAutocomplete = 'email-verification-token' as never;
-	const { brandingStore, loginUIPageStore, themeStore } = useLoginUIStores();
+	const loginUIStores = useLoginUIStores();
+	const { brandingStore, loginUIPageStore } = loginUIStores;
+	const signupHref = $derived(buildAuthSwitchHref('/signup', $page.url.searchParams));
+	const localizedBrandPanelTitle = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelTitle')
+	);
+	const localizedBrandPanelText = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelText')
+	);
+	const localizedFooterText = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'footerText')
+	);
+	const localizedLoginTitle = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'loginTitle') ?? $LL.login_title()
+	);
 
 	interface AuthenticationMethodsViewState {
 		passkeyEnabled: boolean;
@@ -199,6 +220,8 @@
 	let runtimeConsentDecisions = $state<Record<string, boolean>>({});
 	let runtimeConsentSelectedValues = $state<Record<string, string>>({});
 	let runtimeConsentDecisionKey = $state('');
+	let runtimeDestinationFieldDecisions = $state<Record<string, boolean>>({});
+	let runtimeDestinationFieldDecisionKey = $state('');
 	let pendingPostAuthRedirect = $state<string | null>(null);
 	const MAIL_OTP_RESEND_SECONDS = 60;
 	let mailOtpResendTimer: number | null = null;
@@ -227,6 +250,7 @@
 			(clientMethodsLoading || (!hasEmbeddedAuthenticationMethods && !clientMethodsLoadAttempted))
 	);
 	let methodsError = $state('');
+	let authenticationMethodsRequestSequence = 0;
 	const passkeyEnabled = $derived(authenticationMethodsState?.passkeyEnabled ?? false);
 	const emailCodeEnabled = $derived(authenticationMethodsState?.emailCodeEnabled ?? false);
 	const emailCodeDigits = $derived(authenticationMethodsState?.emailCodeDigits ?? 6);
@@ -271,6 +295,21 @@
 				)
 			: {};
 		runtimeConsentSelectedValues = {};
+	});
+
+	$effect(() => {
+		const consent = getRuntimeDestinationFieldConsent(runtimeFlowStep);
+		const key =
+			runtimeFlowStep?.id && consent
+				? `${runtimeFlowStep.id}:${consent.profile_version_id}:${consent.fields
+						.map((field) => field.key)
+						.join(',')}`
+				: '';
+		if (key === runtimeDestinationFieldDecisionKey) return;
+		runtimeDestinationFieldDecisionKey = key;
+		runtimeDestinationFieldDecisions = consent
+			? Object.fromEntries(consent.fields.map((field) => [field.key, true]))
+			: {};
 	});
 
 	// OAuth login challenge client info
@@ -382,6 +421,7 @@
 		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
 	);
 	let entryMotionEnabled = $state(true);
+	let runtimeStartSequence = 0;
 
 	$effect(() => {
 		if (methodsLoading || runtimeInitialLoading) return;
@@ -548,31 +588,56 @@
 		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
 	});
 
+	onMount(() =>
+		installPageResumeHandler(async () => {
+			const retryRuntime = runtimeInitialLoading;
+			await Promise.all([
+				loadAuthenticationMethods({ forceRefresh: true }),
+				...(retryRuntime ? [startRuntimeFlowIfAvailable()] : [])
+			]);
+		})
+	);
+
 	// ---------------------------------------------------------------------------
 	// Data fetchers
 	// ---------------------------------------------------------------------------
-	async function loadAuthenticationMethods() {
-		if (pageData.authenticationMethods) {
+	async function loadAuthenticationMethods(
+		options: { forceRefresh?: boolean; clientId?: string | null } = {}
+	) {
+		if (pageData.authenticationMethods && !options.forceRefresh && !options.clientId) {
 			clientMethodsLoadAttempted = true;
 			return;
 		}
 
+		const requestSequence = ++authenticationMethodsRequestSequence;
 		clientMethodsLoading = true;
 		methodsError = '';
 		try {
-			const { data, error: apiError } = await fetchAuthenticationMethods();
+			const requestedClientId = options.clientId ?? clientInfo?.client_id ?? null;
+			const result = requestedClientId
+				? await fetchAuthenticationMethodsForClient(requestedClientId, {
+						forceRefresh: options.forceRefresh
+					})
+				: await fetchAuthenticationMethods({ forceRefresh: options.forceRefresh });
+			if (requestSequence !== authenticationMethodsRequestSequence) return;
+			const { data, error: apiError } = result;
 			if (apiError) {
-				methodsError = apiError.error.message;
+				if (!authenticationMethodsState) methodsError = $LL.login_methodsLoadFailed();
 				return;
 			}
 			if (data) {
 				fetchedAuthenticationMethodsState = resolveAuthenticationMethodsViewState(data);
+				applyAuthenticationMethodsToLoginUI(data, loginUIStores);
 			}
 		} catch {
-			methodsError = $LL.login_methodsLoadFailed();
+			if (requestSequence === authenticationMethodsRequestSequence && !authenticationMethodsState) {
+				methodsError = $LL.login_methodsLoadFailed();
+			}
 		} finally {
-			clientMethodsLoading = false;
-			clientMethodsLoadAttempted = true;
+			if (requestSequence === authenticationMethodsRequestSequence) {
+				clientMethodsLoading = false;
+				clientMethodsLoadAttempted = true;
+			}
 		}
 	}
 
@@ -600,12 +665,7 @@
 	}
 
 	async function applyClientLoginUIOverride(clientId: string) {
-		const { data } = await fetchAuthenticationMethodsForClient(clientId);
-		if (!data?.ui) return;
-		fetchedAuthenticationMethodsState = resolveAuthenticationMethodsViewState(data);
-		themeStore.setTenantDefaults(data.ui.theme, data.ui.variant);
-		loginUIPageStore.setFromUIConfig(data.ui);
-		brandingStore.set(data.ui.branding.brandName || '', data.ui.branding.logoUrl || null);
+		await loadAuthenticationMethods({ clientId });
 	}
 
 	function getRuntimeCurrentStep(flow: FlowRuntimeStartResponse | null): FlowRuntimeStep | null {
@@ -719,6 +779,7 @@
 	}
 
 	async function startRuntimeFlowIfAvailable() {
+		const startSequence = ++runtimeStartSequence;
 		runtimeFlowLoading = true;
 		runtimeFlowError = '';
 		runtimeFlowBlocked = false;
@@ -736,6 +797,7 @@
 					contract_hash: storedRuntime.contract_hash,
 					signature: storedRuntime.signature
 				});
+				if (startSequence !== runtimeStartSequence) return;
 				if (apiError) {
 					failRuntimeStart(getApiErrorMessage(apiError), {
 						blockAuthorizationChallenge: isAuthorizationChallengeRuntimeError(apiError)
@@ -772,6 +834,7 @@
 				return_to: returnTo || undefined,
 				...getRuntimeTarget()
 			});
+			if (startSequence !== runtimeStartSequence) return;
 			if (apiError) {
 				failRuntimeStart(getApiErrorMessage(apiError), {
 					blockAuthorizationChallenge: isAuthorizationChallengeRuntimeError(apiError)
@@ -793,9 +856,10 @@
 			await advanceRuntimePastNonRenderedSteps();
 			await redirectIfCompletedRuntime();
 		} catch {
+			if (startSequence !== runtimeStartSequence) return;
 			failRuntimeStart($LL.error_server_error());
 		} finally {
-			runtimeFlowLoading = false;
+			if (startSequence === runtimeStartSequence) runtimeFlowLoading = false;
 		}
 	}
 
@@ -976,7 +1040,11 @@
 			unknown: () => $LL.error_unknown(),
 			invalidRequest: () => $LL.error_invalid_request(),
 			accessDenied: () => $LL.error_access_denied(),
+			unauthorizedClient: () => $LL.error_unauthorized_client(),
+			unsupportedResponseType: () => $LL.error_unsupported_response_type(),
+			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
+			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -1151,10 +1219,10 @@
 				human_verification_response: cfTurnstileResponse
 			});
 			if (optionsError) {
-				throw new Error(getApiErrorMessage(optionsError));
+				throw loginUiDisplayError(getApiErrorMessage(optionsError));
 			}
 			if (!optionsData?.options) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1173,7 +1241,7 @@
 				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
 					await signalUnknownCredential(credential.id);
 				}
-				throw new Error(getApiErrorMessage(verifyError));
+				throw loginUiDisplayError(getApiErrorMessage(verifyError));
 			}
 
 			await auth.refreshFromSession();
@@ -1186,7 +1254,7 @@
 			if (!continueRedirect) return;
 			window.location.href = await buildCompletedAuthRedirect(verifyData?.redirect_url);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			passkeyLoading = false;
 			passkeyProgress = 'idle';
@@ -1234,7 +1302,7 @@
 				emailVerification: options.emailVerification
 			});
 			if (apiError) {
-				throw new Error(getApiErrorMessage(apiError));
+				throw loginUiDisplayError(getApiErrorMessage(apiError));
 			}
 			if (cfTurnstileResponse) markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 			if (sendData && 'verified' in sendData && sendData.verified) {
@@ -1297,7 +1365,7 @@
 			}
 			window.location.href = `/verify-email-code?${params.toString()}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			emailCodeLoading = false;
 		}
@@ -1339,7 +1407,7 @@
 			if (!continueRedirect) return;
 			window.location.href = await buildCompletedAuthRedirect(data?.redirect_url);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
+			error = messageForCaughtError(err, $LL.emailCode_errorInvalid());
 			mailOtpCode = '';
 		} finally {
 			emailCodeLoading = false;
@@ -1382,7 +1450,7 @@
 		try {
 			const { data, error: apiError } = await totpAPI.startLogin({ identifier });
 			if (apiError || !data) {
-				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
 			totpChallengeId = data.challenge_id;
 			totpCode = '';
@@ -1396,7 +1464,7 @@
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.login_totpStartFailed();
+			error = messageForCaughtError(err, $LL.login_totpStartFailed());
 		} finally {
 			totpLoading = false;
 		}
@@ -1427,7 +1495,9 @@
 				deferAuthorizationContinuation: shouldDeferAuthorizationContinuation()
 			});
 			if (apiError || !data?.success) {
-				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.login_totpCodeInvalid());
+				throw loginUiDisplayError(
+					apiError ? getApiErrorMessage(apiError) : $LL.login_totpCodeInvalid()
+				);
 			}
 			await auth.refreshFromSession();
 			const redirectUrl = data.redirect_url;
@@ -1441,7 +1511,7 @@
 			if (!continueRedirect) return;
 			window.location.href = await buildCompletedAuthRedirect(redirectUrl);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.login_totpCodeInvalid();
+			error = messageForCaughtError(err, $LL.login_totpCodeInvalid());
 		} finally {
 			totpLoading = false;
 		}
@@ -1479,15 +1549,15 @@
 			});
 			if (apiError) {
 				if (apiError.error === 'invalid_credentials') {
-					throw new Error($LL.login_errorDirectoryInvalidCredentials());
+					throw loginUiDisplayError($LL.login_errorDirectoryInvalidCredentials());
 				}
 				if (apiError.error === 'connector_unavailable') {
-					throw new Error($LL.login_errorDirectoryUnavailable());
+					throw loginUiDisplayError($LL.login_errorDirectoryUnavailable());
 				}
 				if (apiError.error === 'directory_identity_unmapped') {
-					throw new Error($LL.login_errorDirectoryUnmapped());
+					throw loginUiDisplayError($LL.login_errorDirectoryUnmapped());
 				}
-				throw new Error(getApiErrorMessage(apiError));
+				throw loginUiDisplayError(getApiErrorMessage(apiError));
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 			if (data && 'migration' in data && data.migration?.required) {
@@ -1536,7 +1606,7 @@
 			if (!continueRedirect) return;
 			window.location.href = await buildCompletedAuthRedirect(redirectUrl);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.login_errorDirectoryFailed();
+			error = messageForCaughtError(err, $LL.login_errorDirectoryFailed());
 		} finally {
 			directoryPasswordLoading = false;
 		}
@@ -1554,7 +1624,9 @@
 					displayName: directoryMigrationTransaction.userName || undefined
 				});
 			if (optionsError || !optionsData) {
-				throw new Error(optionsError ? getApiErrorMessage(optionsError) : $LL.error_unknown());
+				throw loginUiDisplayError(
+					optionsError ? getApiErrorMessage(optionsError) : $LL.error_unknown()
+				);
 			}
 			const credential = await startRegistration({ optionsJSON: optionsData.options });
 			const { data, error: verifyError } = await directoryPasswordAPI.migrationPasskeyVerify({
@@ -1565,7 +1637,9 @@
 				deviceName: $LL.login_directoryMigrationPasskeyName()
 			});
 			if (verifyError || !data) {
-				throw new Error(verifyError ? getApiErrorMessage(verifyError) : $LL.error_unknown());
+				throw loginUiDisplayError(
+					verifyError ? getApiErrorMessage(verifyError) : $LL.error_unknown()
+				);
 			}
 			directoryMigrationTransaction = null;
 			directoryMigrationEmailChallengeId = '';
@@ -1575,7 +1649,7 @@
 			const redirectUrl = 'redirect_url' in data ? data.redirect_url : undefined;
 			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			directoryMigrationPasskeyLoading = false;
 		}
@@ -1592,7 +1666,7 @@
 				transactionToken: fallback.transactionToken
 			});
 			if (apiError || !data) {
-				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
 			directoryMigrationEmailChallengeId = data.challenge_id;
 			directoryMigrationEmailCode = '';
@@ -1600,7 +1674,7 @@
 				email: data.masked_email
 			});
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			directoryMigrationEmailLoading = false;
 		}
@@ -1624,7 +1698,7 @@
 				code
 			});
 			if (apiError || !data) {
-				throw new Error(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
+				throw loginUiDisplayError(apiError ? getApiErrorMessage(apiError) : $LL.error_unknown());
 			}
 			directoryMigrationTransaction = null;
 			directoryRecoveryTransaction = null;
@@ -1635,7 +1709,7 @@
 			const redirectUrl = 'redirect_url' in data ? data.redirect_url : undefined;
 			window.location.href = await buildPostAuthRedirect(redirectUrl);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
+			error = messageForCaughtError(err, $LL.emailCode_errorInvalid());
 		} finally {
 			directoryMigrationEmailLoading = false;
 		}
@@ -1696,7 +1770,7 @@
 			);
 
 			if (!isValidRedirectUrl(url)) {
-				throw new Error($LL.error_invalid_request());
+				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 			markHumanVerificationTokenSubmitted(cfTurnstileResponse);
 
@@ -1710,7 +1784,7 @@
 			// Redirect to external IdP
 			window.location.href = url;
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 			externalIdpLoading = null;
 		}
 	}
@@ -1760,12 +1834,20 @@
 		return Array.isArray(items) ? (policy as FlowRuntimeConsentPolicyContent) : null;
 	}
 
+	function getRuntimeDestinationFieldConsent(
+		step: FlowRuntimeStep | null
+	): FlowRuntimeDestinationFieldConsentContent | null {
+		const consent = step?.content?.destination_field_consent;
+		if (!consent || typeof consent !== 'object' || Array.isArray(consent)) return null;
+		const fields = (consent as FlowRuntimeDestinationFieldConsentContent).fields;
+		return Array.isArray(fields) ? (consent as FlowRuntimeDestinationFieldConsentContent) : null;
+	}
+
 	function getRuntimeConsentItemDecisionPayload() {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		if (!policy) return { consent_item_decisions: {} };
 		return {
 			consent_item_decisions: Object.fromEntries(
-				policy.items.map((item) => [
+				(policy?.items ?? []).map((item) => [
 					item.statement_id,
 					item.content_mode === 'radio'
 						? runtimeConsentSelectedValues[item.statement_id]
@@ -1777,15 +1859,17 @@
 				])
 			),
 			consent_item_selected_values: Object.fromEntries(
-				policy.items
+				(policy?.items ?? [])
 					.filter((item) => item.content_mode === 'radio')
 					.map((item) => [item.statement_id, runtimeConsentSelectedValues[item.statement_id] || ''])
-			)
+			),
+			destination_field_decisions: runtimeDestinationFieldDecisions
 		};
 	}
 
 	function getRuntimeStepSubmitInputForAuthenticatedAction() {
-		return getRuntimeConsentPolicy(runtimeFlowStep)
+		return getRuntimeConsentPolicy(runtimeFlowStep) ||
+			getRuntimeDestinationFieldConsent(runtimeFlowStep)
 			? getRuntimeConsentItemDecisionPayload()
 			: undefined;
 	}
@@ -1809,15 +1893,23 @@
 
 	function canSubmitRuntimeConsent(): boolean {
 		const policy = getRuntimeConsentPolicy(runtimeFlowStep);
-		if (!policy) return true;
-		return policy.items.every(
-			(item) =>
-				!item.is_required ||
-				(item.content_mode === 'radio' &&
-					Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
-				item.checkbox_mode === 'none' ||
-				runtimeConsentDecisions[item.statement_id] === true
-		);
+		const policyReady =
+			!policy ||
+			policy.items.every(
+				(item) =>
+					!item.is_required ||
+					(item.content_mode === 'radio' &&
+						Boolean(runtimeConsentSelectedValues[item.statement_id])) ||
+					item.checkbox_mode === 'none' ||
+					runtimeConsentDecisions[item.statement_id] === true
+			);
+		const destinationConsent = getRuntimeDestinationFieldConsent(runtimeFlowStep);
+		const destinationReady =
+			!destinationConsent ||
+			destinationConsent.fields.every(
+				(field) => !field.required || runtimeDestinationFieldDecisions[field.key] === true
+			);
+		return policyReady && destinationReady;
 	}
 
 	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
@@ -1946,10 +2038,20 @@
 			[statementId]: value
 		};
 	}
+
+	function setRuntimeDestinationFieldDecision(fieldKey: string, checked: boolean) {
+		runtimeDestinationFieldDecisions = {
+			...runtimeDestinationFieldDecisions,
+			[fieldKey]: checked
+		};
+	}
 </script>
 
 <svelte:head>
-	<title>{$LL.login_title()} - {brandingStore.brandName || $LL.app_title()}</title>
+	<title
+		>{localizedLoginTitle || $LL.login_title()} - {brandingStore.brandName ||
+			$LL.app_title()}</title
+	>
 	<meta name="description" content={$LL.login_metaDescription()} />
 </svelte:head>
 
@@ -1979,11 +2081,11 @@
 					{/if}
 					{#if loginUIPageStore.brandContentMode === 'logo_copy'}
 						<p class="auth-brand-panel__eyebrow">{brandingStore.brandName || $LL.app_title()}</p>
-						{#if loginUIPageStore.brandPanelTitle}
-							<h2>{loginUIPageStore.brandPanelTitle}</h2>
+						{#if localizedBrandPanelTitle}
+							<h2>{localizedBrandPanelTitle}</h2>
 						{/if}
-						{#if loginUIPageStore.brandPanelText}
-							<p>{loginUIPageStore.brandPanelText}</p>
+						{#if localizedBrandPanelText}
+							<p>{localizedBrandPanelText}</p>
 						{/if}
 					{:else if !showBrandLogo}
 						<h2>{brandingStore.brandName || $LL.app_title()}</h2>
@@ -2010,7 +2112,7 @@
 					{/if}
 					{#if loginUIPageStore.subtitleEnabled}
 						<p class="auth-header__subtitle">
-							{loginUIPageStore.headerText || $LL.app_subtitle()}
+							<LocalizedTagline />
 						</p>
 					{/if}
 				</header>
@@ -2096,7 +2198,7 @@
 			{/if}
 
 			<!-- Loading State -->
-			{#if methodsLoading || runtimeInitialLoading}
+			{#if methodsLoading}
 				<div class="auth-initial-loading" role="status">
 					<span class="auth-initial-loading__spinner" aria-hidden="true"></span>
 					<span class="sr-only">{$LL.common_loading()}</span>
@@ -2123,7 +2225,7 @@
 						{#if !blockLegacyFormLayout}
 							<div class="mb-6">
 								<h2 class="auth-section-title">
-									{$LL.login_title()}
+									{localizedLoginTitle}
 								</h2>
 								<p class="auth-section-subtitle">
 									{$LL.login_subtitle()}
@@ -2187,6 +2289,7 @@
 								<div class="runtime-screen-step mb-4">
 									<RuntimeScreen
 										screen={runtimeScreen}
+										headingOverride={localizedLoginTitle}
 										disabled={authActionDisabled}
 										authMethodMode="login"
 										fieldValues={runtimeScreenFieldValues}
@@ -2194,7 +2297,9 @@
 										methodLoading={runtimeMethodLoading}
 										externalProviders={runtimeExternalProviders}
 										consentPolicy={getRuntimeConsentPolicy(runtimeFlowStep)}
+										destinationFieldConsent={getRuntimeDestinationFieldConsent(runtimeFlowStep)}
 										consentDecisions={runtimeConsentDecisions}
+										destinationFieldDecisions={runtimeDestinationFieldDecisions}
 										consentSelectedValues={runtimeConsentSelectedValues}
 										consentReady={canSubmitRuntimeConsent()}
 										humanVerificationRequired={useRuntimeAuthFormLayout && turnstileRequired}
@@ -2214,6 +2319,7 @@
 										onAuthAction={handleRuntimeScreenAuthAction}
 										onExternalProviderAction={handleRuntimeExternalProviderAction}
 										onConsentDecisionChange={setRuntimeConsentDecision}
+										onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
 										onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
 									/>
 									{#if !isRuntimeAuthStep(runtimeFlowStep)}
@@ -2245,6 +2351,33 @@
 										</div>
 										{#if runtimeFlowStep.component === 'consent_policy'}
 											{@const consentPolicy = getRuntimeConsentPolicy(runtimeFlowStep)}
+											{@const destinationFieldConsent =
+												getRuntimeDestinationFieldConsent(runtimeFlowStep)}
+											{#if destinationFieldConsent?.fields.length}
+												<div class="space-y-3">
+													{#each destinationFieldConsent.fields as destinationField (destinationField.key)}
+														<label class="runtime-consent-choice">
+															<input
+																type="checkbox"
+																checked={destinationField.required ||
+																	runtimeDestinationFieldDecisions[destinationField.key] === true}
+																required={destinationField.required}
+																disabled={destinationField.required}
+																onchange={(event) =>
+																	setRuntimeDestinationFieldDecision(
+																		destinationField.key,
+																		(event.currentTarget as HTMLInputElement).checked
+																	)}
+															/>
+															<span
+																>{destinationField.label}{destinationField.required
+																	? ' *'
+																	: ''}</span
+															>
+														</label>
+													{/each}
+												</div>
+											{/if}
 											{#if consentPolicy?.items.length}
 												<div class="space-y-3">
 													{#each consentPolicy.items as item (item.statement_id)}
@@ -2695,7 +2828,7 @@
 			<!-- Create Account Link -->
 			{#if loginUIPageStore.authSwitchLinkEnabled}
 				<p class="auth-bottom-link">
-					<a href="/signup" data-sveltekit-reload>
+					<a href={signupHref} data-sveltekit-reload>
 						{$LL.login_createAccount()}
 					</a>
 				</p>
@@ -2706,9 +2839,6 @@
 	<!-- Footer -->
 	{#if loginUIPageStore.footerEnabled}
 		<footer class="auth-footer auth-page-footer">
-			{#if loginUIPageStore.footerText}
-				<p>{loginUIPageStore.footerText}</p>
-			{/if}
 			{#if loginUIPageStore.footerLinks.length > 0}
 				<nav class="auth-footer__links" aria-label={$LL.common_footerLinks()}>
 					{#each loginUIPageStore.footerLinks as link (link.url)}
@@ -2717,7 +2847,7 @@
 				</nav>
 			{/if}
 			{#if loginUIPageStore.poweredByEnabled}
-				<p>{$LL.footer_stack()}</p>
+				<FooterText value={localizedFooterText ?? $LL.footer_stack()} />
 			{/if}
 		</footer>
 	{/if}

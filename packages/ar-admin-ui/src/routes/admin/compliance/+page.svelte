@@ -23,6 +23,7 @@
 	import type { AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import { formatDate, isValidDownloadUrl, SMALL_PAGE_SIZE, sanitizeText } from '$lib/utils';
 	import { LL } from '$i18n/i18n-svelte';
+	import { toast } from '$lib/toast';
 
 	// State
 	let loading = $state(true);
@@ -678,6 +679,7 @@
 		// Reload data to show updated values
 		const freshData = await adminComplianceAPI.getDataRetentionStatus();
 		dataRetention = freshData;
+		toast.success($LL.admin_compliance_retention_updated());
 		closeRetentionEditDialog();
 	}
 
@@ -703,6 +705,7 @@
 				deleted: result.deleted_count || 0,
 				runId: result.run_id
 			};
+			toast.success($LL.admin_compliance_cleanup_completed_count({ count: cleanupResult.deleted }));
 			// Reload data to show updated values
 			const freshData = await adminComplianceAPI.getDataRetentionStatus();
 			dataRetention = freshData;

@@ -30,7 +30,7 @@ const completion = {
 	dialog_description:
 		'Это тестовый диалог на базе Melt UI — доступной библиотеки headless-компонентов для Svelte.',
 	dialog_confirm: 'Подтвердить',
-	footer_stack: 'Работает на Authrim',
+	footer_stack: 'Работает на <a href="https://authrim.com/">Authrim</a>',
 	language_english: 'Английский',
 	language_japanese: 'Японский',
 	common_emailPlaceholder: 'you@example.com',

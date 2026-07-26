@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminAuthenticationMethodsAPI,
 		type AuthenticationMethodBuiltInSettings,
@@ -88,7 +89,7 @@
 			humanVerification = response.humanVerification;
 			externalProviderUsages = response.externalProviderUsages;
 		} catch (err) {
-			error = err instanceof Error ? err.message : '認証方式プロフィールの読み込みに失敗しました。';
+			error = err instanceof Error ? err.message : $LL.admin_authentication_methods_error_load();
 		} finally {
 			loading = false;
 		}

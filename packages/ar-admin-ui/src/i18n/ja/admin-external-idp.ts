@@ -77,6 +77,8 @@ const adminExternalIdp = {
 	admin_external_idp_userinfo_endpoint: 'Userinfo Endpoint',
 	admin_external_idp_jwks_uri: 'JWKS URI',
 	admin_external_idp_behavior_settings: 'Behavior Settings',
+	admin_external_idp_dynamic_registration_completed: '動的クライアント登録が完了しました。',
+	admin_external_idp_dynamic_registration_failed: '動的クライアント登録に失敗しました。',
 	admin_external_idp_auto_link_email: 'Auto Link Email',
 	admin_external_idp_auto_link_email_desc: '一致するemail addressを持つaccountを自動linkします',
 	admin_external_idp_jit_provisioning: 'JIT Provisioning',

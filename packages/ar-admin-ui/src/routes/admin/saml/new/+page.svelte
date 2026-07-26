@@ -7,6 +7,7 @@
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
 		type SAMLAttributeReleaseConfirmationValueDisplay,
+		type SAMLDestinationFieldReleaseMode,
 		type SAMLFederationTrustProfile,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
@@ -32,6 +33,13 @@
 		AdminSection
 	} from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
+	import {
+		buildSAMLFieldReleasePolicies,
+		resolveSAMLMappingSetDestinationProfileIds,
+		resolveSAMLMappingSetReleaseFields,
+		type SAMLMappingSetReleaseField
+	} from '$lib/saml/mapping-set-release-policy';
 	import { selectMetadataNameIdFormat } from '$lib/saml/metadata-nameid';
 	import { onMount } from 'svelte';
 
@@ -108,9 +116,14 @@
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let identityMappingFieldMappingSetId = $state('');
-	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>(
-		'uapprove_until_attributes_change'
-	);
+	let identityMappingDestinationProfileId = $state('');
+	let destinationFieldPolicies = $state<Record<string, SAMLDestinationFieldReleaseMode>>({});
+	let mappingReleaseFields = $state<SAMLMappingSetReleaseField[]>([]);
+	let loadingMappingReleaseFields = $state(false);
+	let mappingReleaseFieldsError = $state('');
+	let mappingReleaseLoadSequence = 0;
+	let metadataRequestedAttributes = $state<SAMLProviderConfig['metadataRequestedAttributes']>([]);
+	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>('disabled');
 	let attributeReleaseValueDisplay =
 		$state<SAMLAttributeReleaseConfirmationValueDisplay>('masked_values');
 	let attributeReleaseTemplateStatementId = $state('');
@@ -285,9 +298,72 @@
 		return {
 			identityMapping: {
 				fieldMappingSetId: identityMappingFieldMappingSetId,
-				destinationNamespace: providerType === 'saml_sp' ? 'saml.attribute' : undefined
+				destinationNamespace: providerType === 'saml_sp' ? 'saml.attribute' : undefined,
+				destinationFieldPolicies: providerType === 'saml_sp' ? destinationFieldPolicies : undefined
 			}
 		};
+	}
+
+	async function handleFieldMappingSetChange(event: Event) {
+		identityMappingFieldMappingSetId = (event.currentTarget as HTMLSelectElement).value;
+		await loadMappingReleaseFields();
+	}
+
+	async function loadMappingReleaseFields() {
+		const sequence = ++mappingReleaseLoadSequence;
+		mappingReleaseFieldsError = '';
+		if (providerType !== 'saml_sp' || !identityMappingFieldMappingSetId) {
+			loadingMappingReleaseFields = false;
+			mappingReleaseFields = [];
+			if (providerType === 'saml_sp') {
+				destinationFieldPolicies = {};
+				identityMappingDestinationProfileId = '';
+			}
+			return;
+		}
+		loadingMappingReleaseFields = true;
+		try {
+			const [versionResult, destinationResult] = await Promise.all([
+				adminIdentityMappingAPI.listFieldMappingVersions(identityMappingFieldMappingSetId),
+				adminIdentityMappingAPI.listDestinationProfiles()
+			]);
+			if (sequence !== mappingReleaseLoadSequence) return;
+			const releaseInput = {
+				versions: versionResult.fieldMappingVersions,
+				destinationProfiles: destinationResult.destinationProfiles
+			};
+			const destinationProfileIds = resolveSAMLMappingSetDestinationProfileIds(releaseInput);
+			if (destinationProfileIds.length !== 1) {
+				throw new Error(
+					getLocale() === 'ja'
+						? 'Mapping Setには有効なSAML Destination Profileが1つ必要です。'
+						: 'The Mapping Set must reference exactly one active SAML destination profile.'
+				);
+			}
+			identityMappingDestinationProfileId = destinationProfileIds[0];
+			mappingReleaseFields = resolveSAMLMappingSetReleaseFields(releaseInput);
+			destinationFieldPolicies = buildSAMLFieldReleasePolicies({
+				fields: mappingReleaseFields,
+				existing: destinationFieldPolicies,
+				metadataRequestedAttributes
+			});
+		} catch (err) {
+			if (sequence !== mappingReleaseLoadSequence) return;
+			mappingReleaseFields = [];
+			identityMappingDestinationProfileId = '';
+			mappingReleaseFieldsError =
+				err instanceof Error
+					? err.message
+					: getLocale() === 'ja'
+						? 'Mapping Setの属性を読み込めませんでした。'
+						: 'Failed to load Mapping Set attributes.';
+		} finally {
+			if (sequence === mappingReleaseLoadSequence) loadingMappingReleaseFields = false;
+		}
+	}
+
+	function updateDestinationFieldPolicy(key: string, mode: SAMLDestinationFieldReleaseMode) {
+		destinationFieldPolicies = { ...destinationFieldPolicies, [key]: mode };
 	}
 
 	function tAttributeRelease(key: string): string {
@@ -493,6 +569,8 @@
 		passkeyAuthnContextClassRef =
 			config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
 		identityMappingFieldMappingSetId = config.identityMapping?.fieldMappingSetId || '';
+		metadataRequestedAttributes = config.metadataRequestedAttributes ?? [];
+		if (identityMappingFieldMappingSetId) void loadMappingReleaseFields();
 		if (!name.trim() && config.entityId) {
 			name = config.entityId;
 		}
@@ -584,6 +662,7 @@
 		}
 		providerType = nextProviderType;
 		setupTarget = nextProviderType;
+		if (identityMappingFieldMappingSetId) void loadMappingReleaseFields();
 	}
 
 	function chooseFederation() {
@@ -1012,6 +1091,7 @@
 			aggregateBatch = await adminSAMLAPI.startAggregateBatchCreate(aggregatePreview.previewId, {
 				entityIds: selectedAggregateEntityIds,
 				samlProfile,
+				identityMapping: identityMappingConfig().identityMapping,
 				enabled
 			});
 			if (aggregateBatchPolling) clearInterval(aggregateBatchPolling);
@@ -1061,16 +1141,36 @@
 				return $LL.admin_saml_detail_sp_required();
 			}
 		}
+		return validateIdentityMappingSelection();
+	}
+
+	function validateIdentityMappingSelection() {
 		if (!identityMappingFieldMappingSetId) {
 			return getLocale() === 'ja'
 				? 'Field Mapping Setを選択してください。'
 				: 'Select a Field Mapping Set.';
+		}
+		if (providerType === 'saml_sp' && mappingReleaseFieldsError) return mappingReleaseFieldsError;
+		if (providerType === 'saml_sp' && !identityMappingDestinationProfileId) {
+			return getLocale() === 'ja'
+				? 'Mapping SetのSAML Destination Profileを特定できません。'
+				: 'The Mapping Set SAML destination profile could not be resolved.';
+		}
+		if (providerType === 'saml_sp' && mappingReleaseFields.length === 0) {
+			return getLocale() === 'ja'
+				? '選択したMapping Setに有効なSAML Destination属性がありません。'
+				: 'The selected Mapping Set has no active SAML destination attributes.';
 		}
 		return '';
 	}
 
 	async function handleSubmit() {
 		if (aggregatePreview) {
+			const mappingValidationError = validateIdentityMappingSelection();
+			if (mappingValidationError) {
+				error = mappingValidationError;
+				return;
+			}
 			if (aggregateImportMode === 'trust_profile') {
 				await createFederationTrustProfile();
 			} else {
@@ -2151,7 +2251,8 @@
 								</label>
 								<select
 									id="identityMappingFieldMapping"
-									bind:value={identityMappingFieldMappingSetId}
+									value={identityMappingFieldMappingSetId}
+									onchange={handleFieldMappingSetChange}
 									class="admin-select"
 								>
 									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option
@@ -2168,6 +2269,16 @@
 										{$LL.admin_saml_detail_identity_mapping_policy_link()}
 									</a>
 								</p>
+							</div>
+
+							<div class="admin-field admin-field--full">
+								<SAMLMappingSetReleasePolicy
+									fields={mappingReleaseFields}
+									policies={destinationFieldPolicies}
+									loading={loadingMappingReleaseFields}
+									error={mappingReleaseFieldsError}
+									onChange={updateDestinationFieldPolicy}
+								/>
 							</div>
 
 							<div class="admin-field admin-field--full attribute-release-confirmation">

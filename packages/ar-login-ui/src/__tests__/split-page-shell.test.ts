@@ -104,10 +104,29 @@ describe('split page shell', () => {
 
 		expect(css).toContain('--bg-card: rgba(14, 10, 9, 0.45);');
 		expect(css).toContain('--bg-card: rgba(255, 253, 250, 0.5);');
+		expect(css).toContain('--primary: var(--login-accent-color, #e8623f);');
+		expect(css).toContain('--primary: var(--login-accent-color, #c93a22);');
+		expect(css).toContain('--button-primary-bg: var(--primary);');
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__title");
+		expect(css).toMatch(
+			/\[data-login-theme='fullbleed-glass'\] \.auth-page \.auth-header__title \{[\s\S]*?font-size: 2em;[\s\S]*?font-weight: 300;[\s\S]*?letter-spacing: 0\.5em;[\s\S]*?text-indent: 0\.5em;/
+		);
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-header__subtitle");
 		expect(css).toContain("[data-login-theme='fullbleed-glass'] .auth-page .auth-bottom-link");
 		expect(css).toContain('rgba(10, 7, 6, 0.58)');
+	});
+
+	it('keeps split brand copy readable independently from light form colors', () => {
+		const css = source('app.css');
+
+		expect(css).toContain('--brand-panel-title-color: #f4f7ff;');
+		expect(css).toContain('--brand-panel-copy-color: #c7d2eb;');
+		expect(css).toContain(
+			'color: var(--brand-panel-title-color, var(--login-title-color, var(--text-primary)));'
+		);
+		expect(css).toContain(
+			'color: var(--brand-panel-copy-color, var(--login-copy-color, var(--text-secondary)));'
+		);
 	});
 
 	it('keeps authentication actions on one line at narrow mobile widths', () => {

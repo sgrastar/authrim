@@ -42766,6 +42766,14 @@ components:
           type: boolean
         allow_claims_without_scope:
           type: boolean
+        identity_mapping:
+          oneOf:
+            - $ref: '#/components/schemas/OIDCIdentityMappingSelector'
+            - type: 'null'
+        attribute_release_consent:
+          oneOf:
+            - $ref: '#/components/schemas/AttributeReleaseConsentPolicy'
+            - type: 'null'
         allowed_redirect_origins:
           type: array
           items:
@@ -42891,6 +42899,35 @@ components:
             - RS256
             - ES256
             - null
+    OIDCIdentityMappingSelector:
+      type: object
+      additionalProperties: false
+      required:
+        - fieldMappingSetId
+      properties:
+        fieldMappingSetId:
+          type: string
+        fieldMappingVersionId:
+          type: string
+        destinationNamespace:
+          type: string
+        sourceProfileId:
+          type: string
+    AttributeReleaseConsentPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+        - mode
+      properties:
+        enabled:
+          type: boolean
+        mode:
+          type: string
+          enum:
+            - once
+            - every_time
+            - until_attributes_change
     AdminClientCreate:
       allOf:
         - $ref: '#/components/schemas/AdminClientBase'

@@ -338,6 +338,7 @@ export * from './services/support-ops';
 export * from './services/check-audit-service';
 export * from './services/permission-change-notifier';
 export * from './services/admin-database-adapter';
+export * from './services/destination-profile-consent';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';

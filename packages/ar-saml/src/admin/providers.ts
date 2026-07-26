@@ -30,6 +30,7 @@ import type {
   SAMLMetadataBatchCreateResult,
   SAMLMetadataBatchStatusResponse,
   SAMLMetadataEntityListResponse,
+  SAMLMetadataEntitySummary,
   SAMLMetadataVerificationSummary,
   SAMLCertificateValidationSummary,
   SAMLJitEmailLinkingPolicy,
@@ -42,7 +43,10 @@ import {
   safeFetchText,
   createAuthContextFromHono,
   resolveAuthCorePersistenceAdapterFromEnv,
+  requireAdminDatabaseAdapter,
   requireDedicatedAdminDatabaseAdapter,
+  resolveRuntimeIdentityMappingBinding,
+  loadDestinationProfileConsentDescriptor,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -249,8 +253,20 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
   if (!config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };
   }
+  const destinationFieldPolicies = normalizeSAMLDestinationFieldPolicies(
+    config.identityMapping.destinationFieldPolicies
+  );
+  if (destinationFieldPolicies === null) {
+    return { field: 'identityMapping.destinationFieldPolicies' };
+  }
+  const { destinationProfileId: _legacyDestinationProfileId, ...identityMapping } =
+    config.identityMapping;
+  const normalizedIdentityMapping = {
+    ...identityMapping,
+    ...(destinationFieldPolicies ? { destinationFieldPolicies } : {}),
+  };
   if (config.attributeReleaseConsent === undefined) {
-    return config;
+    return { ...config, identityMapping: normalizedIdentityMapping };
   }
 
   const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
@@ -262,8 +278,96 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
 
   return {
     ...config,
+    identityMapping: normalizedIdentityMapping,
     attributeReleaseConsent,
   };
+}
+
+async function validateSAMLSPMappingConfig(
+  env: Env,
+  tenantId: string,
+  config: SAMLSPConfig
+): Promise<ResponseValidationError | null> {
+  const fieldMappingSetId = config.identityMapping?.fieldMappingSetId;
+  if (!fieldMappingSetId) return { field: 'identityMapping.fieldMappingSetId' };
+
+  try {
+    const adminAdapter = requireAdminDatabaseAdapter(env, 'saml-sp-identity-mapping');
+    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
+      tenantId,
+      protocol: 'saml',
+      role: 'idp',
+      fieldMappingSetId,
+      fieldMappingVersionId: config.identityMapping?.fieldMappingVersionId,
+      partnerEntityId: config.entityId,
+    });
+    if (!binding || binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+      return { field: 'identityMapping.fieldMappingSetId' };
+    }
+    const descriptor = await loadDestinationProfileConsentDescriptor(
+      adminAdapter,
+      tenantId,
+      binding.destinationProfileId
+    );
+    if (!descriptor || descriptor.destinationType !== 'saml') {
+      return { field: 'identityMapping.fieldMappingSetId' };
+    }
+    const profileFields = new Set(descriptor.fields.map((field) => field.key));
+    const policyFields = new Set(
+      Object.keys(config.identityMapping?.destinationFieldPolicies ?? {})
+    );
+    if (
+      profileFields.size === 0 ||
+      profileFields.size !== policyFields.size ||
+      [...profileFields].some((field) => !policyFields.has(field))
+    ) {
+      return { field: 'identityMapping.destinationFieldPolicies' };
+    }
+    return null;
+  } catch {
+    return { field: 'identityMapping.fieldMappingSetId' };
+  }
+}
+
+async function validateSAMLIdPMappingConfig(
+  env: Env,
+  tenantId: string,
+  config: SAMLIdPConfig
+): Promise<ResponseValidationError | null> {
+  const fieldMappingSetId = config.identityMapping?.fieldMappingSetId;
+  if (!fieldMappingSetId) return { field: 'identityMapping.fieldMappingSetId' };
+
+  try {
+    const adminAdapter = requireAdminDatabaseAdapter(env, 'saml-idp-identity-mapping');
+    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
+      tenantId,
+      protocol: 'saml',
+      role: 'sp',
+      fieldMappingSetId,
+      fieldMappingVersionId: config.identityMapping?.fieldMappingVersionId,
+      partnerEntityId: config.entityId,
+    });
+    return binding ? null : { field: 'identityMapping.fieldMappingSetId' };
+  } catch {
+    return { field: 'identityMapping.fieldMappingSetId' };
+  }
+}
+
+function normalizeSAMLDestinationFieldPolicies(
+  value: unknown
+): Record<string, 'required' | 'optional' | 'hidden'> | undefined | null {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > 256) return null;
+  const normalized: Record<string, 'required' | 'optional' | 'hidden'> = {};
+  for (const [rawKey, rawMode] of entries) {
+    const key = rawKey.trim();
+    if (!key || key.length > 1024) return null;
+    if (rawMode !== 'required' && rawMode !== 'optional' && rawMode !== 'hidden') return null;
+    normalized[key] = rawMode;
+  }
+  return normalized;
 }
 
 interface ResponseValidationError {
@@ -1073,6 +1177,7 @@ interface SAMLMetadataBatchCreateRequest {
   providerType?: 'saml_idp' | 'saml_sp';
   samlProfile?: SAMLSPProfile;
   attributePresetId?: SAMLAttributePresetId;
+  identityMapping?: SAMLSPConfig['identityMapping'];
   enabled?: boolean;
 }
 
@@ -1440,6 +1545,19 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         variables: { field: normalizedConfig.field },
       });
     }
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    if (body.providerType === 'saml_sp') {
+      const mappingError = await validateSAMLSPMappingConfig(
+        c.env,
+        tenantId,
+        normalizedConfig as SAMLSPConfig
+      );
+      if (mappingError) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: mappingError.field },
+        });
+      }
+    }
     const normalizedConfigWithValidation =
       await withProviderCertificateValidation(normalizedConfig);
     const providerEnabled =
@@ -1448,7 +1566,6 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     const id = crypto.randomUUID();
     const now = Date.now();
 
-    const tenantId = resolveSAMLTenantIdFromContext(c);
     const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
     await coreAdapter.execute(
       `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
@@ -1614,6 +1731,18 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: newConfig.field },
       });
+    }
+    if (existing.provider_type === 'saml_sp') {
+      const mappingError = await validateSAMLSPMappingConfig(
+        c.env,
+        tenantId,
+        newConfig as SAMLSPConfig
+      );
+      if (mappingError) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: mappingError.field },
+        });
+      }
     }
     const newConfigWithValidation = await withProviderCertificateValidation(newConfig);
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
@@ -2175,6 +2304,16 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const validated = await validateAggregateBatchCreateRequest(c.env, tenantId, preview, {
+      ...body,
+      entityIds,
+    });
+    if ('field' in validated) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: validated.field },
+      });
+    }
+
     const batchId = crypto.randomUUID();
     const status = await startAggregateBatch(c.env, batchId, tenantId, entityIds.length);
     c.executionCtx.waitUntil(
@@ -2183,9 +2322,10 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
         previewId,
         batchId,
         entityIds,
-        providerType: body.providerType,
+        providerType: validated.providerType,
         samlProfile: body.samlProfile,
         attributePresetId: body.attributePresetId,
+        identityMapping: body.identityMapping,
         enabled: body.enabled !== false,
       })
     );
@@ -2196,6 +2336,64 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
       .error('Start aggregate batch create error', { previewId }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+async function validateAggregateBatchCreateRequest(
+  env: Env,
+  tenantId: string,
+  preview: { entities: SAMLMetadataEntitySummary[] },
+  body: SAMLMetadataBatchCreateRequest & { entityIds: string[] }
+): Promise<{ providerType: 'saml_idp' | 'saml_sp' } | ResponseValidationError> {
+  if (!Array.isArray(preview.entities)) return { field: 'entityIds' };
+  const entitiesById = new Map(preview.entities.map((entity) => [entity.entityId, entity]));
+  const selected = body.entityIds.map((entityId) => entitiesById.get(entityId));
+  if (selected.some((entity) => !entity)) return { field: 'entityIds' };
+
+  const resolvedRoles = new Set<'saml_idp' | 'saml_sp'>();
+  for (const entity of selected as SAMLMetadataEntitySummary[]) {
+    if (entity.role !== 'saml_idp' && entity.role !== 'saml_sp' && entity.role !== 'ambiguous') {
+      return { field: 'entityIds' };
+    }
+    if (body.providerType) {
+      if (entity.role !== 'ambiguous' && entity.role !== body.providerType) {
+        return { field: 'providerType' };
+      }
+      resolvedRoles.add(body.providerType);
+    } else {
+      if (entity.role === 'ambiguous') return { field: 'providerType' };
+      resolvedRoles.add(entity.role);
+    }
+  }
+  if (resolvedRoles.size !== 1) return { field: 'entityIds' };
+  const providerType = [...resolvedRoles][0];
+  if (!providerType) return { field: 'entityIds' };
+
+  if (!body.identityMapping?.fieldMappingSetId) {
+    return { field: 'identityMapping.fieldMappingSetId' };
+  }
+
+  for (const entity of selected as SAMLMetadataEntitySummary[]) {
+    if (providerType === 'saml_sp') {
+      const config = normalizeSAMLSPConfig({
+        entityId: entity.entityId,
+        identityMapping: body.identityMapping,
+      } as SAMLSPConfig);
+      if (isResponseValidationError(config)) return config;
+      const mappingError = await validateSAMLSPMappingConfig(env, tenantId, config);
+      if (mappingError) return mappingError;
+      continue;
+    }
+
+    const config = normalizeSAMLIdPJitLinkingPolicyConfig({
+      entityId: entity.entityId,
+      identityMapping: body.identityMapping,
+    } as SAMLIdPConfig);
+    if (isResponseValidationError(config)) return config;
+    const mappingError = await validateSAMLIdPMappingConfig(env, tenantId, config);
+    if (mappingError) return mappingError;
+  }
+
+  return { providerType };
 }
 
 export async function handleGetAggregateBatchStatus(c: AdminSAMLContext): Promise<Response> {
@@ -2796,6 +2994,7 @@ async function getAggregatePreview(
   tenantId: string;
   metadataXml: string;
   metadataUrl?: string;
+  entities: SAMLMetadataEntitySummary[];
   verification: SAMLMetadataVerificationSummary;
 } | null> {
   const response = await aggregateStoreFetch(env, `/preview/${encodeURIComponent(previewId)}`, {
@@ -2806,6 +3005,7 @@ async function getAggregatePreview(
         tenantId: string;
         metadataXml: string;
         metadataUrl?: string;
+        entities: SAMLMetadataEntitySummary[];
         verification: SAMLMetadataVerificationSummary;
       })
     : null;
@@ -2861,6 +3061,7 @@ async function processAggregateBatchCreate(
     providerType?: 'saml_idp' | 'saml_sp';
     samlProfile?: SAMLSPProfile;
     attributePresetId?: SAMLAttributePresetId;
+    identityMapping?: SAMLSPConfig['identityMapping'];
     enabled: boolean;
   }
 ): Promise<void> {
@@ -2906,12 +3107,31 @@ async function processAggregateBatchCreate(
         if (existingEntityKeys.has(entityKey)) {
           throw new Error(`Provider already exists for entityID: ${entityId}`);
         }
-        const config = buildConfigFromMetadata(
+        const metadataConfig = buildConfigFromMetadata(
           providerType,
           metadataXml,
           input.samlProfile,
           input.attributePresetId
         );
+        const configWithMapping = {
+          ...metadataConfig,
+          ...(input.identityMapping ? { identityMapping: input.identityMapping } : {}),
+        } as SAMLIdPConfig | SAMLSPConfig;
+        const config =
+          providerType === 'saml_sp'
+            ? normalizeSAMLSPConfig(configWithMapping as SAMLSPConfig)
+            : normalizeSAMLIdPJitLinkingPolicyConfig(configWithMapping as SAMLIdPConfig);
+        if (isResponseValidationError(config)) {
+          throw new Error(`Invalid ${config.field}`);
+        }
+        if (providerType === 'saml_sp') {
+          const mappingError = await validateSAMLSPMappingConfig(
+            env,
+            input.tenantId,
+            config as SAMLSPConfig
+          );
+          if (mappingError) throw new Error(`Invalid ${mappingError.field}`);
+        }
         const metadataAnalysis = analyzeSAMLMetadata(metadataXml);
         const now = Date.now();
         const providerId = crypto.randomUUID();

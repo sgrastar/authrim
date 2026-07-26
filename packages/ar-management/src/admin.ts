@@ -1995,7 +1995,23 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
       loginUI: {
         theme: 'light',
         variant: 'beige',
-        supportedLocales: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
+        supportedLocales: [
+          'en',
+          'ja',
+          'zh-CN',
+          'zh-TW',
+          'es',
+          'pt',
+          'fr',
+          'de',
+          'ko',
+          'ru',
+          'id',
+          'ar',
+          'it',
+          'th',
+          'vi',
+        ],
       },
     };
 

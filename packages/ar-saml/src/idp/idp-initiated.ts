@@ -20,7 +20,9 @@ import {
   usesNakedDomainIssuer,
   getLogger,
   resolveAuthCorePersistenceAdapterFromEnv,
+  requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
+  filterSamlAttributesByDestinationConsentWithStatus,
 } from '@authrim/ar-lib-core';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
 import { base64Encode, generateSAMLId } from '../common/xml-utils';
@@ -48,6 +50,10 @@ import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cooki
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { resolveSAMLAuthnContextClassRef } from './authn-context';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import {
+  enforceSAMLAttributeReleaseConsent,
+  SAMLAttributeReleaseConsentRequiredError,
+} from './attribute-release-consent';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -83,40 +89,16 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
 
     // Check user authentication
     const authenticatedSession = await checkUserAuthentication(c, env);
+    const consentTransactionId = readConsentTransactionId(c.req.query('consent_tx'));
+    const consentRetry = c.req.query('consent_retry') === '1';
 
-    if (!authenticatedSession) {
-      // Redirect to login with return URL
-      const returnTo = `${issuerUrl}/saml/idp/init?sp=${encodeURIComponent(spEntityId)}`;
-
-      // Conformance mode: use built-in login path
-      if (await shouldUseBuiltinForms(env)) {
-        const loginUrl = new URL('/flow/login', issuerUrl);
-        loginUrl.searchParams.set('return_to', returnTo);
-        return c.redirect(loginUrl.toString());
-      }
-
-      // Normal mode: use UI config
-      const uiConfig = await getUIConfig(env);
-      if (!uiConfig?.baseUrl) {
-        return c.json(createConfigurationError(), 500);
-      }
-
-      const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(env, tenantId);
-      const loginUrl =
-        loginUrlPolicy === 'tenant_host'
-          ? new URL(uiConfig.paths?.login || '/login', issuerUrl).toString()
-          : buildUIUrl(
-              uiConfig,
-              'login',
-              { return_to: returnTo },
-              usesNakedDomainIssuer(env, tenantId) ? undefined : tenantId
-            );
-      if (loginUrlPolicy === 'tenant_host') {
-        const tenantLoginUrl = new URL(loginUrl);
-        tenantLoginUrl.searchParams.set('return_to', returnTo);
-        return c.redirect(tenantLoginUrl.toString());
-      }
-      return c.redirect(loginUrl);
+    if (!authenticatedSession || !consentTransactionId) {
+      return redirectToIdPInitiatedConsentFlow(c, {
+        issuerUrl,
+        tenantId,
+        spEntityId,
+        consentTransactionId: consentTransactionId ?? crypto.randomUUID(),
+      });
     }
 
     // Get user information
@@ -126,15 +108,32 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     }
 
     // Generate SAML Response (no InResponseTo since this is IdP-initiated)
-    const responseXml = await generateIdPInitiatedResponse(
-      issuerUrl,
-      idpEntityId,
-      env,
-      spConfig,
-      userInfo,
-      tenantId,
-      authenticatedSession
-    );
+    let responseXml: string;
+    try {
+      responseXml = await generateIdPInitiatedResponse(
+        issuerUrl,
+        idpEntityId,
+        env,
+        spConfig,
+        userInfo,
+        tenantId,
+        authenticatedSession,
+        consentTransactionId
+      );
+    } catch (error) {
+      if (!(error instanceof SAMLAttributeReleaseConsentRequiredError)) throw error;
+      if (consentRetry) {
+        return c.json(createConfigurationError(), 500);
+      }
+      await supersedeIdPInitiatedDestinationConsents(env, tenantId, userInfo.id, spConfig.entityId);
+      return redirectToIdPInitiatedConsentFlow(c, {
+        issuerUrl,
+        tenantId,
+        spEntityId,
+        consentTransactionId: crypto.randomUUID(),
+        consentRetry: true,
+      });
+    }
 
     // Return auto-submit form
     return sendSAMLResponse(spConfig, responseXml);
@@ -142,6 +141,87 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+function readConsentTransactionId(value: string | undefined): string | null {
+  if (
+    !value ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+async function redirectToIdPInitiatedConsentFlow(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    issuerUrl: string;
+    tenantId: string;
+    spEntityId: string;
+    consentTransactionId: string;
+    consentRetry?: boolean;
+  }
+): Promise<Response> {
+  const returnUrl = new URL('/saml/idp/init', input.issuerUrl);
+  returnUrl.searchParams.set('sp', input.spEntityId);
+  returnUrl.searchParams.set('consent_tx', input.consentTransactionId);
+  if (input.consentRetry) returnUrl.searchParams.set('consent_retry', '1');
+  const loginParameters = {
+    return_to: returnUrl.toString(),
+    saml_request_id: input.consentTransactionId,
+    saml_sp_entity_id: input.spEntityId,
+  };
+
+  if (await shouldUseBuiltinForms(c.env)) {
+    const loginUrl = new URL('/flow/login', input.issuerUrl);
+    for (const [key, value] of Object.entries(loginParameters))
+      loginUrl.searchParams.set(key, value);
+    return c.redirect(loginUrl.toString());
+  }
+
+  const uiConfig = await getUIConfig(c.env);
+  if (!uiConfig?.baseUrl) return c.json(createConfigurationError(), 500);
+  const loginUrlPolicy = await getSAMLInteractiveLoginUrlPolicy(c.env, input.tenantId);
+  if (loginUrlPolicy === 'tenant_host') {
+    const loginUrl = new URL(uiConfig.paths?.login || '/login', input.issuerUrl);
+    for (const [key, value] of Object.entries(loginParameters))
+      loginUrl.searchParams.set(key, value);
+    return c.redirect(loginUrl.toString());
+  }
+  return c.redirect(
+    buildUIUrl(
+      uiConfig,
+      'login',
+      loginParameters,
+      usesNakedDomainIssuer(c.env, input.tenantId) ? undefined : input.tenantId
+    )
+  );
+}
+
+async function supersedeIdPInitiatedDestinationConsents(
+  env: Env,
+  tenantId: string,
+  subjectId: string,
+  spEntityId: string
+): Promise<void> {
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'saml-idp-initiated-consent-refresh'
+  );
+  const now = Math.floor(Date.now() / 1000);
+  await adapter.execute(
+    `UPDATE consent_records
+        SET status = 'superseded', updated_at = ?
+      WHERE tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = 'saml'
+        AND recipient_type = 'saml_sp'
+        AND recipient_id = ?
+        AND binding_type = 'destination_field_mapping_set'
+        AND status = 'active'`,
+    [now, tenantId, subjectId, spEntityId]
+  );
 }
 
 /**
@@ -216,7 +296,8 @@ async function generateIdPInitiatedResponse(
   spConfig: SAMLSPConfig,
   userInfo: SAMLUserInfo,
   tenantId: string,
-  authSession: AuthenticatedSAMLSession
+  authSession: AuthenticatedSAMLSession,
+  consentTransactionId: string
 ): Promise<string> {
   const { privateKeyPem, certificate } = await getSAMLIdPSigningMaterial(env, {
     tenantId,
@@ -243,10 +324,49 @@ async function generateIdPInitiatedResponse(
     idpEntityId,
     spConfig
   );
-  const attributes = buildSAMLAttributesForSP(userInfo, {
+  let attributes = buildSAMLAttributesForSP(userInfo, {
     ...spConfig,
     localEntityId: idpEntityId,
     identityMapping,
+  });
+  let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
+  if (identityMapping?.destinationProfileId) {
+    const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
+      coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'saml-idp-initiated-destination-consent'
+      ),
+      adminAdapter: requireAdminDatabaseAdapter(env, 'saml-idp-initiated-destination-consent'),
+      tenantId,
+      subjectId: userInfo.id,
+      samlSpId: spConfig.entityId,
+      profileId: identityMapping.destinationProfileId,
+      fieldPolicies: identityMapping.destinationFieldPolicies,
+      attributes,
+    })) as {
+      attributes: typeof attributes;
+      consentApplied: boolean;
+      consentRecordId?: string;
+      consentEvidence?: Record<string, unknown>;
+    };
+    attributes = destinationRelease.attributes;
+    if (
+      destinationRelease.consentApplied &&
+      destinationRelease.consentRecordId &&
+      destinationRelease.consentEvidence?.saml_request_id === consentTransactionId
+    ) {
+      destinationFieldConsentConfirmed = {
+        consentRecordId: destinationRelease.consentRecordId,
+      };
+    }
+  }
+  await enforceSAMLAttributeReleaseConsent({
+    env,
+    tenantId,
+    subjectId: userInfo.id,
+    spConfig,
+    attributes,
+    destinationFieldConsentConfirmed,
   });
   const timing = buildSAMLAssertionTiming({
     assertionValiditySeconds:
@@ -289,12 +409,49 @@ async function generateIdPInitiatedResponse(
     attributes,
   });
 
-  // Sign if required
-  if (spConfig.signResponses || spConfig.signAssertions) {
-    return applySAMLResponseSigningPolicy(responseXml, spConfig, { privateKeyPem, certificate });
+  const finalResponseXml =
+    spConfig.signResponses || spConfig.signAssertions
+      ? await applySAMLResponseSigningPolicy(responseXml, spConfig, {
+          privateKeyPem,
+          certificate,
+        })
+      : responseXml;
+  if (
+    destinationFieldConsentConfirmed &&
+    spConfig.attributeReleaseConsent?.enabled === true &&
+    spConfig.attributeReleaseConsent.mode === 'every_time'
+  ) {
+    await consumeIdPInitiatedDestinationConsent(
+      env,
+      tenantId,
+      userInfo.id,
+      destinationFieldConsentConfirmed.consentRecordId
+    );
   }
+  return finalResponseXml;
+}
 
-  return responseXml;
+async function consumeIdPInitiatedDestinationConsent(
+  env: Env,
+  tenantId: string,
+  subjectId: string,
+  consentRecordId: string
+): Promise<void> {
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'saml-idp-initiated-consent-consume'
+  );
+  await adapter.execute(
+    `UPDATE consent_records
+        SET status = 'superseded', updated_at = ?
+      WHERE id = ?
+        AND tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = 'saml'
+        AND binding_type = 'destination_field_mapping_set'
+        AND status = 'active'`,
+    [Math.floor(Date.now() / 1000), consentRecordId, tenantId, subjectId]
+  );
 }
 
 async function resolveSAMLRuntimeIdentityMapping(
@@ -308,7 +465,7 @@ async function resolveSAMLRuntimeIdentityMapping(
     return configured;
   }
 
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-identity-mapping');
+  const adapter = requireAdminDatabaseAdapter(env, 'saml-identity-mapping');
   const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
     tenantId,
     protocol: 'saml',
@@ -322,6 +479,15 @@ async function resolveSAMLRuntimeIdentityMapping(
       {
         category: 'policy',
         code: 'policy.missing_identity_mapping_binding',
+        severity: 'critical',
+      },
+    ]);
+  }
+  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.invalid_destination_profile_binding',
         severity: 'critical',
       },
     ]);
@@ -340,10 +506,11 @@ async function resolveSAMLRuntimeIdentityMapping(
     fieldMappingSet: binding.fieldMappingSet,
     destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
     attributeDescriptors: configured?.attributeDescriptors,
+    destinationFieldPolicies: configured?.destinationFieldPolicies,
     fieldMappingSetId: binding.fieldMappingSetId,
     fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
-    destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
+    destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
   };
 }
 

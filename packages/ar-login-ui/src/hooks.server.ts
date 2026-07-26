@@ -26,7 +26,7 @@ import {
 	type HumanVerificationProvider
 } from '$lib/server/authentication-methods-cache';
 import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
-import { toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
 import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
 import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
 import { sanitizeColor } from '$lib/utils/url-validation';
@@ -469,6 +469,10 @@ export function shouldPrefetchLoginUITheme(pathname: string): boolean {
 
 export function shouldBootstrapLoginUITheme(pathname: string): boolean {
 	return shouldPrefetchLoginUITheme(pathname);
+}
+
+export function shouldResolveLoginChallengeThemeTarget(pathname: string): boolean {
+	return pathname === '/login' || pathname === '/signup';
 }
 
 function hasEmailVerificationOriginTrialConfig(
@@ -1083,10 +1087,9 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
-		const challengeTarget =
-			event.url.pathname === '/login'
-				? await fetchLoginChallengeThemeTargetForPageRequest(event, platformEnv)
-				: null;
+		const challengeTarget = shouldResolveLoginChallengeThemeTarget(event.url.pathname)
+			? await fetchLoginChallengeThemeTargetForPageRequest(event, platformEnv)
+			: null;
 		if (challengeTarget) {
 			event.locals.loginChallengeThemeTarget = challengeTarget;
 		}
@@ -1131,6 +1134,7 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 			transformPageChunk: ({ html }) =>
 				html
 					.replace('__AUTHRIM_DOCUMENT_LANGUAGE__', toDocumentLanguage(locale))
+					.replace('__AUTHRIM_DOCUMENT_DIRECTION__', toDocumentDirection(locale))
 					.replaceAll('__AUTHRIM_INITIAL_BACKGROUND__', initialAppearance.background)
 					.replaceAll('__AUTHRIM_INITIAL_COLOR_SCHEME__', initialAppearance.colorScheme)
 		});

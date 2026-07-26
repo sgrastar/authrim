@@ -106,7 +106,7 @@
 
 	.verified {
 		display: inline-flex;
-		margin-left: 8px;
+		margin-inline-start: 8px;
 		font-size: 0.75rem;
 		color: var(--success);
 	}

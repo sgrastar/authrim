@@ -200,7 +200,9 @@
 				initiateLoginUri =
 					typeof config.initiateLoginUri === 'string' ? config.initiateLoginUri : '';
 				requestUris = Array.isArray(config.requestUris)
-					? config.requestUris.filter((value): value is string => typeof value === 'string').join('\n')
+					? config.requestUris
+							.filter((value): value is string => typeof value === 'string')
+							.join('\n')
 					: '';
 				userinfoSignedResponseAlg =
 					typeof config.userinfoSignedResponseAlg === 'string'
@@ -315,7 +317,8 @@
 			registrationSuccess = true;
 			await loadProvider();
 		} catch (err) {
-			registrationError = err instanceof Error ? err.message : 'Dynamic registration failed';
+			registrationError =
+				err instanceof Error ? err.message : $LL.admin_external_idp_dynamic_registration_failed();
 		} finally {
 			registering = false;
 		}
@@ -659,9 +662,7 @@
 							</div>
 
 							<div class="admin-field admin-field--full">
-								<label for="initiateLoginUri" class="admin-field__label"
-									>Initiate login URI</label
-								>
+								<label for="initiateLoginUri" class="admin-field__label">Initiate login URI</label>
 								<input
 									id="initiateLoginUri"
 									type="url"
@@ -688,7 +689,9 @@
 							<div class="alert alert-error">{registrationError}</div>
 						{/if}
 						{#if registrationSuccess}
-							<div class="alert alert-success">Dynamic registration completed.</div>
+							<div class="alert alert-success">
+								{$LL.admin_external_idp_dynamic_registration_completed()}
+							</div>
 						{/if}
 						<div class="registration-actions">
 							<button

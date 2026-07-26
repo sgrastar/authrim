@@ -621,7 +621,8 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
   tenantId: string,
   clientId: string,
   clientMetadata: ClientMetadata,
-  claims: Record<string, unknown>
+  claims: Record<string, unknown>,
+  grantedScopes?: string[]
 ): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
   try {
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -632,6 +633,8 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes,
       claims,
     });
     return { ok: true, claims: mapped.claims };
@@ -2492,7 +2495,8 @@ async function handleAuthorizationCodeGrant(
     tenantId,
     client_id,
     clientMetadata as ClientMetadata,
-    idTokenClaims
+    idTokenClaims,
+    splitScope(authCodeData.scope)
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
@@ -3407,7 +3411,8 @@ async function handleRefreshTokenGrant(
       tenantId,
       client_id,
       clientMetadata as ClientMetadata,
-      idTokenClaims
+      idTokenClaims,
+      splitScope(grantedScope)
     );
     if (!mappedIdTokenClaims.ok) {
       return mappedIdTokenClaims.response;
@@ -4207,7 +4212,8 @@ async function handleDeviceCodeGrant(
     getTenantIdFromContext(c),
     client_id,
     clientMetadata as ClientMetadata,
-    idTokenClaims
+    idTokenClaims,
+    splitScope(metadata.scope)
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
@@ -4870,7 +4876,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     getTenantIdFromContext(c),
     metadata.client_id,
     clientMetadata as ClientMetadata,
-    idTokenClaims
+    idTokenClaims,
+    splitScope(metadata.scope)
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
@@ -6800,6 +6807,8 @@ async function handleNativeSSOTokenExchange(
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes,
       claims: newIdTokenClaims,
     });
     if (mapped.claims !== newIdTokenClaims) {

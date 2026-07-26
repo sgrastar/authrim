@@ -78,6 +78,8 @@ const adminExternalIdp = {
 	admin_external_idp_userinfo_endpoint: 'Userinfo Endpoint',
 	admin_external_idp_jwks_uri: 'JWKS URI',
 	admin_external_idp_behavior_settings: 'Behavior Settings',
+	admin_external_idp_dynamic_registration_completed: 'Dynamic registration completed.',
+	admin_external_idp_dynamic_registration_failed: 'Dynamic registration failed.',
 	admin_external_idp_auto_link_email: 'Auto Link Email',
 	admin_external_idp_auto_link_email_desc:
 		'Automatically link accounts with matching email addresses',
