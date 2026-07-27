@@ -465,7 +465,7 @@
 	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: showRuntimePasskey,
 		mail_otp: showRuntimeEmailCode,
-		mail_otp_totp: showRuntimeEmailCode && showRuntimeTotp,
+		mail_otp_totp: showRuntimeEmailCode || showRuntimeTotp,
 		totp: showRuntimeTotp,
 		directory_password: showRuntimeDirectoryPassword,
 		external_idp: showRuntimeExternal
@@ -1440,7 +1440,7 @@
 		error = '';
 		if (!ensureAuthorizationChallengeCanContinue()) return;
 
-		const identifier = totpIdentifier.trim();
+		const identifier = (totpIdentifier || combinedIdentifier || email).trim();
 		if (!identifier) {
 			error = $LL.login_totpIdentifierRequired();
 			return;
@@ -2715,7 +2715,7 @@
 								</div>
 							{/if}
 
-							{#if !totpCodeRequested}
+							{#if !totpCodeRequested && !showRuntimeEmailCode}
 								<div class="mb-4">
 									<Input
 										label={$LL.login_totpIdentifierLabel()}

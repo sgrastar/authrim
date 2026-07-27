@@ -333,7 +333,7 @@
 	const runtimeMethodAvailability = $derived<Partial<Record<RuntimeAuthMethod, boolean>>>({
 		passkey: showRuntimePasskey,
 		mail_otp: showRuntimeEmailCode,
-		mail_otp_totp: showRuntimeEmailCode && showRuntimeTotp,
+		mail_otp_totp: showRuntimeEmailCode || showRuntimeTotp,
 		totp: showRuntimeTotp,
 		external_idp: showRuntimeExternal,
 		directory_password: false

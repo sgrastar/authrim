@@ -88,6 +88,12 @@ describe('split page shell', () => {
 		);
 	});
 
+	it('keeps the shared email widget available when either email method is enabled', () => {
+		for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
+			expect(source(page)).toContain('mail_otp_totp: showRuntimeEmailCode || showRuntimeTotp');
+		}
+	});
+
 	it('uses the shared compact scale for every login theme layout', () => {
 		const css = source('app.css');
 
