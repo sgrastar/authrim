@@ -1407,6 +1407,7 @@
 <style>
 	.settings-detail-page {
 		max-width: 980px;
+		--panel-border: none;
 	}
 
 	.scope-badge,

@@ -6,17 +6,6 @@ const adminFlows = {
 		'Review the path from login, attribute release, consent, and output in one place.',
 	admin_flows_consent_policies: 'Consent Policies',
 	admin_flows_field_mapping: 'Field Mapping',
-	admin_flows_overview_title: 'Flow overview',
-	admin_flows_overview_description:
-		'Start with representative SAML/OIDC paths and review Mapping, Consent, and Output together.',
-	admin_flows_overview_request_title: 'Request',
-	admin_flows_overview_request_subtitle: 'protocol request',
-	admin_flows_overview_mapping_title: 'Mapping',
-	admin_flows_overview_mapping_subtitle: 'schema / field set',
-	admin_flows_overview_consent_title: 'Consent',
-	admin_flows_overview_consent_subtitle: 'statement / policy',
-	admin_flows_overview_output_title: 'Output',
-	admin_flows_overview_output_subtitle: 'response / grant',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description:
 		'Check the configuration elements in details, then open the Flow view for the full picture.',

@@ -28434,46 +28434,6 @@ type RootTranslation = {
 	 */
 	admin_flows_field_mapping: string
 	/**
-	 * F​l​o​w​ ​o​v​e​r​v​i​e​w
-	 */
-	admin_flows_overview_title: string
-	/**
-	 * S​t​a​r​t​ ​w​i​t​h​ ​r​e​p​r​e​s​e​n​t​a​t​i​v​e​ ​S​A​M​L​/​O​I​D​C​ ​p​a​t​h​s​ ​a​n​d​ ​r​e​v​i​e​w​ ​M​a​p​p​i​n​g​,​ ​C​o​n​s​e​n​t​,​ ​a​n​d​ ​O​u​t​p​u​t​ ​t​o​g​e​t​h​e​r​.
-	 */
-	admin_flows_overview_description: string
-	/**
-	 * R​e​q​u​e​s​t
-	 */
-	admin_flows_overview_request_title: string
-	/**
-	 * p​r​o​t​o​c​o​l​ ​r​e​q​u​e​s​t
-	 */
-	admin_flows_overview_request_subtitle: string
-	/**
-	 * M​a​p​p​i​n​g
-	 */
-	admin_flows_overview_mapping_title: string
-	/**
-	 * s​c​h​e​m​a​ ​/​ ​f​i​e​l​d​ ​s​e​t
-	 */
-	admin_flows_overview_mapping_subtitle: string
-	/**
-	 * C​o​n​s​e​n​t
-	 */
-	admin_flows_overview_consent_title: string
-	/**
-	 * s​t​a​t​e​m​e​n​t​ ​/​ ​p​o​l​i​c​y
-	 */
-	admin_flows_overview_consent_subtitle: string
-	/**
-	 * O​u​t​p​u​t
-	 */
-	admin_flows_overview_output_title: string
-	/**
-	 * r​e​s​p​o​n​s​e​ ​/​ ​g​r​a​n​t
-	 */
-	admin_flows_overview_output_subtitle: string
-	/**
 	 * F​l​o​w​ ​l​i​s​t
 	 */
 	admin_flows_list_title: string
@@ -61577,46 +61537,6 @@ Remove this role from {email}?
 	 * Field Mapping
 	 */
 	admin_flows_field_mapping: () => LocalizedString
-	/**
-	 * Flow overview
-	 */
-	admin_flows_overview_title: () => LocalizedString
-	/**
-	 * Start with representative SAML/OIDC paths and review Mapping, Consent, and Output together.
-	 */
-	admin_flows_overview_description: () => LocalizedString
-	/**
-	 * Request
-	 */
-	admin_flows_overview_request_title: () => LocalizedString
-	/**
-	 * protocol request
-	 */
-	admin_flows_overview_request_subtitle: () => LocalizedString
-	/**
-	 * Mapping
-	 */
-	admin_flows_overview_mapping_title: () => LocalizedString
-	/**
-	 * schema / field set
-	 */
-	admin_flows_overview_mapping_subtitle: () => LocalizedString
-	/**
-	 * Consent
-	 */
-	admin_flows_overview_consent_title: () => LocalizedString
-	/**
-	 * statement / policy
-	 */
-	admin_flows_overview_consent_subtitle: () => LocalizedString
-	/**
-	 * Output
-	 */
-	admin_flows_overview_output_title: () => LocalizedString
-	/**
-	 * response / grant
-	 */
-	admin_flows_overview_output_subtitle: () => LocalizedString
 	/**
 	 * Flow list
 	 */
