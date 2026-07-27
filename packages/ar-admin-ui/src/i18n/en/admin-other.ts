@@ -334,6 +334,7 @@ const adminOther = {
 		'Edit the Login UI text for each enabled language. The preview follows the selected language.',
 	admin_theme_text_language: 'Editing language',
 	admin_theme_text_brand_name: 'Brand name',
+	admin_theme_text_brand_name_required: 'Enter a brand name.',
 	admin_theme_text_tagline: 'Tagline',
 	admin_theme_text_brand_panel_title: 'Brand panel title',
 	admin_theme_text_brand_panel_text: 'Brand panel text',

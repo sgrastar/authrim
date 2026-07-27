@@ -123,4 +123,17 @@ describe('theme preview page shell', () => {
 		expect(source).toContain('return getThemeTextOverride(locale, field) ?? fallback;');
 		expect(source).not.toContain('placeholder={themeTextFallback');
 	});
+
+	it('keeps an empty brand name draft and rejects it only when saving', () => {
+		expect(source).toContain("getEditableStringSetting('login-ui.brand_name', 'Authrim')");
+		expect(source).toContain(
+			"handleEditorChange('login-ui.brand_name', event.currentTarget.value);"
+		);
+		expect(source).toContain("typeof rawBrandName === 'string' ? rawBrandName.trim() : 'Authrim'");
+		expect(source).toContain('admin_theme_text_brand_name_required');
+		expect(source).toContain('aria-invalid={Boolean(brandNameValidationError)}');
+		expect(source).not.toContain(
+			"handleEditorChange('login-ui.brand_name', event.currentTarget.value.trim())"
+		);
+	});
 });

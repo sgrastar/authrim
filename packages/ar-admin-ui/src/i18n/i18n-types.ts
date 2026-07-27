@@ -31542,6 +31542,10 @@ type RootTranslation = {
 	 */
 	admin_theme_text_brand_name: string
 	/**
+	 * E​n​t​e​r​ ​a​ ​b​r​a​n​d​ ​n​a​m​e​.
+	 */
+	admin_theme_text_brand_name_required: string
+	/**
 	 * T​a​g​l​i​n​e
 	 */
 	admin_theme_text_tagline: string
@@ -64653,6 +64657,10 @@ Remove this role from {email}?
 	 * Brand name
 	 */
 	admin_theme_text_brand_name: () => LocalizedString
+	/**
+	 * Enter a brand name.
+	 */
+	admin_theme_text_brand_name_required: () => LocalizedString
 	/**
 	 * Tagline
 	 */

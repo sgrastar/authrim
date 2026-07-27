@@ -33,6 +33,12 @@ describe('Login UI locale settings', () => {
 		expect(DEFAULT_LOGIN_UI_FOOTER_TEXTS.en).toBe(
 			'Powered by <a href="https://authrim.com/">Authrim</a>'
 		);
+		expect(DEFAULT_LOGIN_UI_FOOTER_TEXTS.ja).toBe(
+			'Powered by <a href="https://authrim.com/">Authrim</a>'
+		);
+		expect(DEFAULT_LOGIN_UI_FOOTER_TEXTS.ko).toBe(
+			'Powered by <a href="https://authrim.com/">Authrim</a>'
+		);
 		expect(DEFAULT_LOGIN_UI_PAGE_TITLES.ja).toEqual({
 			loginTitle: 'おかえりなさい',
 			registrationTitle: 'アカウント作成',

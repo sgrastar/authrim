@@ -339,6 +339,7 @@ const adminOther = {
 		'有効な言語ごとにLogin UIの文言を編集します。プレビューも選択した言語に切り替わります。',
 	admin_theme_text_language: '編集する言語',
 	admin_theme_text_brand_name: 'ブランド名',
+	admin_theme_text_brand_name_required: 'ブランド名を入力してください。',
 	admin_theme_text_tagline: 'タグライン',
 	admin_theme_text_brand_panel_title: 'ブランドパネルのタイトル',
 	admin_theme_text_brand_panel_text: 'ブランドパネルの本文',

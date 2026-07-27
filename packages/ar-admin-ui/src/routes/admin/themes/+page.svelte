@@ -374,6 +374,7 @@
 	let editorValues = $state<Record<string, unknown>>({});
 	let editorName = $state('');
 	let editorDirty = $state(false);
+	let brandNameValidationError = $state('');
 	let applyingTheme = $state(false);
 	let previewSurface = $state<ThemePreviewSurface>('login');
 	let previewColorMode = $state<ThemePreviewColorMode>('light');
@@ -448,7 +449,7 @@
 		assetPreviewOverrides['panel-background'] ??
 			getSafePreviewUrl(getThemeAwareValue('login-ui.login_panel_background_image_url'))
 	);
-	let previewBrandName = $derived(getStringSetting('login-ui.brand_name', 'Authrim'));
+	let previewBrandName = $derived(getEditableStringSetting('login-ui.brand_name', 'Authrim'));
 	let previewHeaderText = $derived(
 		getLocalizedThemeText(
 			textEditorLocale,
@@ -805,6 +806,11 @@
 		return typeof value === 'string' && value.trim() ? value : fallback;
 	}
 
+	function getEditableStringSetting(key: string, fallback: string): string {
+		const value = themeSource(key);
+		return typeof value === 'string' ? value : fallback;
+	}
+
 	function parseThemeTextLocalizations(value: unknown): ThemeTextLocalizations {
 		try {
 			const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value;
@@ -1134,6 +1140,7 @@
 		editorName = custom ? custom.name : (builtin?.name ?? '');
 		editorAccountPageId = custom?.account_page_id ?? '';
 		editorDirty = false;
+		brandNameValidationError = '';
 		previewSurface = 'login';
 		previewViewport = 'desktop';
 		const baseOption = custom
@@ -1150,6 +1157,7 @@
 		editingThemeId = null;
 		editorValues = {};
 		editorDirty = false;
+		brandNameValidationError = '';
 		clearAssetPreviewOverrides();
 	}
 
@@ -1259,11 +1267,20 @@
 
 	async function saveCustomTheme() {
 		if (!editingCustomTheme) return;
+		const rawBrandName = editorValues['login-ui.brand_name'];
+		const brandName = typeof rawBrandName === 'string' ? rawBrandName.trim() : 'Authrim';
+		if (!brandName) {
+			brandNameValidationError = $LL.admin_theme_text_brand_name_required();
+			error = brandNameValidationError;
+			return;
+		}
+		brandNameValidationError = '';
+		if (error === $LL.admin_theme_text_brand_name_required()) error = '';
 		const name = editorName.trim() || editingCustomTheme.name;
 		const updated: CustomTheme = {
 			...editingCustomTheme,
 			name: name.slice(0, 80),
-			values: { ...editorValues },
+			values: { ...editorValues, 'login-ui.brand_name': brandName },
 			account_page_id: editorAccountPageId || null,
 			updated_at: Date.now()
 		};
@@ -2804,11 +2821,22 @@
 								class="settings-input"
 								dir="auto"
 								maxlength="128"
-								value={getStringSetting('login-ui.brand_name', 'Authrim')}
+								value={getEditableStringSetting('login-ui.brand_name', 'Authrim')}
+								class:form-input-error={Boolean(brandNameValidationError)}
+								aria-invalid={Boolean(brandNameValidationError)}
+								aria-describedby={brandNameValidationError ? 'brand-name-error' : undefined}
 								disabled={!canEditLoginUiSettings}
-								oninput={(event) =>
-									handleEditorChange('login-ui.brand_name', event.currentTarget.value.trim())}
+								oninput={(event) => {
+									handleEditorChange('login-ui.brand_name', event.currentTarget.value);
+									if (event.currentTarget.value.trim()) {
+										if (error === brandNameValidationError) error = '';
+										brandNameValidationError = '';
+									}
+								}}
 							/>
+							{#if brandNameValidationError}
+								<span id="brand-name-error" class="field-error">{brandNameValidationError}</span>
+							{/if}
 						</label>
 						<label class="editor-field">
 							<span class="editor-field-label">{$LL.admin_theme_text_tagline()}</span>

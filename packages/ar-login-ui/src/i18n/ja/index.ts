@@ -11,7 +11,7 @@ const ja = {
 	dialog_confirm: '確認',
 	dialog_close: '閉じる',
 	//footer_stack: 'SvelteKit v5 + UnoCSS + Melt UI + Cloudflare Pages',
-	footer_stack: '<a href="https://authrim.com/">Authrim</a> が提供しています',
+	footer_stack: 'Powered by <a href="https://authrim.com/">Authrim</a>',
 	language_switch: '言語を切り替え',
 	language_english: 'English',
 	language_japanese: '日本語',

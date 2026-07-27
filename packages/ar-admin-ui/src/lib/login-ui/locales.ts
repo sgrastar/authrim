@@ -42,14 +42,14 @@ const AUTHRIM_FOOTER_LINK = '<a href="https://authrim.com/">Authrim</a>';
 
 export const DEFAULT_LOGIN_UI_FOOTER_TEXTS: Record<LoginUILocale, string> = {
 	en: `Powered by ${AUTHRIM_FOOTER_LINK}`,
-	ja: `${AUTHRIM_FOOTER_LINK} が提供しています`,
+	ja: `Powered by ${AUTHRIM_FOOTER_LINK}`,
 	'zh-CN': `由 ${AUTHRIM_FOOTER_LINK} 提供支持`,
 	'zh-TW': `由 ${AUTHRIM_FOOTER_LINK} 提供技術支援`,
 	es: `Con tecnología de ${AUTHRIM_FOOTER_LINK}`,
 	pt: `Desenvolvido com tecnologia ${AUTHRIM_FOOTER_LINK}`,
 	fr: `Propulsé par ${AUTHRIM_FOOTER_LINK}`,
 	de: `Bereitgestellt von ${AUTHRIM_FOOTER_LINK}`,
-	ko: `${AUTHRIM_FOOTER_LINK} 제공`,
+	ko: `Powered by ${AUTHRIM_FOOTER_LINK}`,
 	ru: `Работает на ${AUTHRIM_FOOTER_LINK}`,
 	id: `Didukung oleh ${AUTHRIM_FOOTER_LINK}`,
 	ar: `مدعوم من ${AUTHRIM_FOOTER_LINK}`,
