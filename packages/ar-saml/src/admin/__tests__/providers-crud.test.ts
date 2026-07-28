@@ -5,6 +5,18 @@ const mocks = vi.hoisted(() => ({
   adapter: null as ReturnType<typeof createAdapter> | null,
   audit: vi.fn(async () => undefined),
   safeFetchText: vi.fn(),
+  runtimeBinding: {
+    fieldMappingSetId: 'saml-sp',
+    fieldMappingVersionId: 'version-1',
+    destinationProfileId: 'destination-profile-saml',
+    destinationProfileIds: ['destination-profile-saml'],
+  } as Record<string, unknown> | null,
+  destinationDescriptor: {
+    profileId: 'destination-profile-saml',
+    profileVersionId: 'destination-profile-saml-v1',
+    destinationType: 'saml',
+    fields: [{ key: 'mail' }, { key: 'displayName' }, { key: 'eduPersonAffiliation' }],
+  } as Record<string, unknown> | null,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -13,18 +25,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
-      fieldMappingSetId: 'saml-sp',
-      fieldMappingVersionId: 'version-1',
-      destinationProfileId: 'destination-profile-saml',
-      destinationProfileIds: ['destination-profile-saml'],
-    })),
-    loadDestinationProfileConsentDescriptor: vi.fn(async () => ({
-      profileId: 'destination-profile-saml',
-      profileVersionId: 'destination-profile-saml-v1',
-      destinationType: 'saml',
-      fields: [{ key: 'mail' }, { key: 'displayName' }, { key: 'eduPersonAffiliation' }],
-    })),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.runtimeBinding),
+    loadDestinationProfileConsentDescriptor: vi.fn(async () => mocks.destinationDescriptor),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.adapter),
     createAuditLog: mocks.audit,
     safeFetchText: mocks.safeFetchText,
@@ -133,6 +135,18 @@ describe('SAML provider CRUD boundaries', () => {
     vi.clearAllMocks();
     mocks.adapter = createAdapter();
     mocks.safeFetchText.mockReset();
+    mocks.runtimeBinding = {
+      fieldMappingSetId: 'saml-sp',
+      fieldMappingVersionId: 'version-1',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
+    };
+    mocks.destinationDescriptor = {
+      profileId: 'destination-profile-saml',
+      profileVersionId: 'destination-profile-saml-v1',
+      destinationType: 'saml',
+      fields: [{ key: 'mail' }, { key: 'displayName' }, { key: 'eduPersonAffiliation' }],
+    };
   });
 
   it('requires authentication and the specific admin permission', async () => {
@@ -306,6 +320,7 @@ describe('SAML provider CRUD boundaries', () => {
           config: {
             entityId: 'https://sp.example.test',
             acsUrl: 'https://sp.example.test/acs',
+            attributeReleaseConsent: { enabled: true, mode: 'every_time' },
             identityMapping: {
               fieldMappingSetId: 'saml-sp',
               destinationProfileId: 'stale-destination-profile',
@@ -324,6 +339,7 @@ describe('SAML provider CRUD boundaries', () => {
     const executeArguments = mocks.adapter!.execute.mock.calls[0]?.[1] as unknown[];
     const persistedConfig = JSON.parse(String(executeArguments[4]));
     expect(persistedConfig).toMatchObject({
+      attributeReleaseConsent: { enabled: true, mode: 'every_time' },
       identityMapping: {
         destinationFieldPolicies: {
           mail: 'required',
@@ -356,6 +372,33 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 
+  it('rejects an unsupported attribute release consent mode', async () => {
+    const response = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Provider',
+          providerType: 'saml_sp',
+          config: {
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            attributeReleaseConsent: { enabled: true, mode: 'unsupported' },
+            identityMapping: {
+              fieldMappingSetId: 'saml-sp',
+              destinationFieldPolicies: {
+                mail: 'optional',
+                displayName: 'optional',
+                eduPersonAffiliation: 'optional',
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
   it('requires an explicit release policy for every field in the Mapping Set destination', async () => {
     const response = await handleCreateProvider(
       context({
@@ -381,6 +424,85 @@ describe('SAML provider CRUD boundaries', () => {
     expect(await response.json()).toMatchObject({
       error: 'invalid_request',
     });
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an omitted policy map', undefined],
+    ['a null policy map', null],
+    ['an array policy map', []],
+    [
+      'more than 256 policy entries',
+      Object.fromEntries(Array.from({ length: 257 }, (_, index) => [`field-${index}`, 'optional'])),
+    ],
+    ['a blank destination field', { '   ': 'optional' }],
+    ['an oversized destination field', { ['x'.repeat(1025)]: 'optional' }],
+  ])('rejects %s', async (_label, destinationFieldPolicies) => {
+    const response = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Provider',
+          providerType: 'saml_sp',
+          config: {
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            identityMapping: {
+              fieldMappingSetId: 'saml-sp',
+              destinationFieldPolicies,
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a missing Mapping Set binding', 'binding'],
+    ['a Mapping Set binding with multiple destination profiles', 'profile-count'],
+    ['a missing destination profile descriptor', 'descriptor'],
+    ['a non-SAML destination profile descriptor', 'descriptor-type'],
+  ])('rejects %s', async (_label, missingDependency) => {
+    if (missingDependency === 'binding') {
+      mocks.runtimeBinding = null;
+    } else if (missingDependency === 'profile-count') {
+      mocks.runtimeBinding = {
+        ...(mocks.runtimeBinding ?? {}),
+        destinationProfileIds: ['destination-profile-saml', 'destination-profile-secondary'],
+      };
+    } else if (missingDependency === 'descriptor') {
+      mocks.destinationDescriptor = null;
+    } else {
+      mocks.destinationDescriptor = {
+        ...(mocks.destinationDescriptor ?? {}),
+        destinationType: 'oidc',
+      };
+    }
+
+    const response = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Provider',
+          providerType: 'saml_sp',
+          config: {
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            identityMapping: {
+              fieldMappingSetId: 'saml-sp',
+              destinationFieldPolicies: {
+                mail: 'optional',
+                displayName: 'optional',
+                eduPersonAffiliation: 'optional',
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 
