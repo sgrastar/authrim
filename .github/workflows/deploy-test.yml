@@ -105,10 +105,10 @@ jobs:
 
       - name: Deploy environment
         run: |
-          pnpm exec tsx packages/setup/src/index.ts deploy \
+          pnpm exec tsx packages/setup/src/index.ts update \
             --env "$AUTHRIM_ENV_NAME" \
-            --source "$GITHUB_WORKSPACE" \
-            --keys-dir "$GITHUB_WORKSPACE/.authrim-keys/$AUTHRIM_ENV_NAME" \
+            --allow-draft-manifest \
+            --all \
             --yes
 
       - name: Validate generated environment
