@@ -15,7 +15,7 @@ describe('login and signup entry motion', () => {
 			expect(pageSource).toContain('class:auth-page--entry-motion={entryMotionEnabled}');
 			expect(pageSource).toContain('class="auth-entry-form"');
 			expect(pageSource).toContain('class="auth-provider-stack space-y-3"');
-			expect(pageSource).toContain('if (methodsLoading || runtimeInitialLoading) return;');
+			expect(pageSource).toContain('if (initialAuthUiLoading) return;');
 			expect(pageSource).toContain('entryMotionEnabled = false;');
 		}
 	});

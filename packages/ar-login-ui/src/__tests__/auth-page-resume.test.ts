@@ -8,12 +8,17 @@ function source(path: string): string {
 
 describe('auth page resume recovery', () => {
 	for (const page of ['routes/login/+page.svelte', 'routes/signup/+page.svelte']) {
-		it(`refreshes authentication methods without hiding the ${page} card`, () => {
+		it(`waits for the initial runtime contract without hiding the ${page} card on resume`, () => {
 			const pageSource = source(page);
 
 			expect(pageSource).toContain('installPageResumeHandler(async () => {');
 			expect(pageSource).toContain('loadAuthenticationMethods({ forceRefresh: true })');
-			expect(pageSource).toContain('{#if methodsLoading}');
+			expect(pageSource).toContain('let initialRuntimeBootstrapPending = $state(true);');
+			expect(pageSource).toContain(
+				'const initialAuthUiLoading = $derived(methodsLoading || initialRuntimeBootstrapPending);'
+			);
+			expect(pageSource).toContain('{#if initialAuthUiLoading}');
+			expect(pageSource).toContain('initialRuntimeBootstrapPending = false;');
 			expect(pageSource).not.toContain('{#if methodsLoading || runtimeInitialLoading}');
 		});
 	}

@@ -420,11 +420,13 @@
 	const runtimeInitialLoading = $derived(
 		runtimeFlowLoading && !runtimeFlow && !runtimeFlowStep && !runtimeFlowError
 	);
+	let initialRuntimeBootstrapPending = $state(true);
+	const initialAuthUiLoading = $derived(methodsLoading || initialRuntimeBootstrapPending);
 	let entryMotionEnabled = $state(true);
 	let runtimeStartSequence = 0;
 
 	$effect(() => {
-		if (methodsLoading || runtimeInitialLoading) return;
+		if (initialAuthUiLoading) return;
 
 		const timeout = window.setTimeout(() => {
 			entryMotionEnabled = false;
@@ -570,7 +572,13 @@
 				runtimeTargetReady = challengeTask;
 			}
 		}
-		tasks.push(runtimeTargetReady.then(() => startRuntimeFlowIfAvailable()));
+		tasks.push(
+			runtimeTargetReady
+				.then(() => startRuntimeFlowIfAvailable())
+				.finally(() => {
+					initialRuntimeBootstrapPending = false;
+				})
+		);
 		await Promise.all(tasks);
 		await refreshEmailVerificationProtocolChallenge();
 	});
@@ -2198,7 +2206,7 @@
 			{/if}
 
 			<!-- Loading State -->
-			{#if methodsLoading}
+			{#if initialAuthUiLoading}
 				<div class="auth-initial-loading" role="status">
 					<span class="auth-initial-loading__spinner" aria-hidden="true"></span>
 					<span class="sr-only">{$LL.common_loading()}</span>
