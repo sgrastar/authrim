@@ -1,0 +1,72 @@
+{
+  "startedAt": "2026-07-27T19:40:26.534Z",
+  "accountId": "<redacted>",
+  "targetEnvironment": "test",
+  "workerName": "authrim-control-plane-spike-test-20260727t194026",
+  "dbName": "authrim-control-plane-spike-test-20260727t194026-db",
+  "steps": [
+    {
+      "step": "fixture_written",
+      "at": "2026-07-27T19:40:26.535Z",
+      "tempDir": "<redacted>"
+    },
+    {
+      "step": "worker_deployed_initial",
+      "at": "2026-07-27T19:40:30.177Z",
+      "workerUrl": "https://authrim-control-plane-spike-test-20260727t194026.sgrastar.workers.dev"
+    },
+    {
+      "step": "active_worker_before_patch",
+      "at": "2026-07-27T19:40:53.153Z",
+      "ok": true,
+      "marker": "initial",
+      "hasDb": false
+    },
+    {
+      "step": "d1_created",
+      "at": "2026-07-27T19:40:55.099Z",
+      "dbId": "417f8df9-e52a-45b5-b146-c18baeac9a4b"
+    },
+    {
+      "step": "d1_migration_applied",
+      "at": "2026-07-27T19:40:56.326Z",
+      "dbName": "authrim-control-plane-spike-test-20260727t194026-db"
+    },
+    {
+      "step": "settings_get_before_patch",
+      "at": "2026-07-27T19:40:58.939Z",
+      "bindingNames": [
+        "SPIKE_MARKER"
+      ],
+      "bindingTypes": [
+        "plain_text"
+      ],
+      "compatibilityDate": "2026-07-01"
+    }
+  ],
+  "observations": {
+    "deploymentsBeforePatch": [
+      {
+        "id": "b6887eac-9f05-4770-bad3-f25609097b1c",
+        "createdOn": "2026-07-27T19:40:28.98923Z",
+        "versions": [
+          {
+            "id": "b38c4c1e-1a91-4465-b2f3-0768167830bc",
+            "percentage": 100
+          }
+        ]
+      }
+    ],
+    "versionsBeforePatch": [
+      {
+        "id": "b38c4c1e-1a91-4465-b2f3-0768167830bc"
+      }
+    ]
+  },
+  "cleanup": {
+    "worker": "deleted",
+    "d1": "deleted",
+    "tempDir": "deleted"
+  },
+  "finishedAt": "2026-07-27T19:40:59.201Z"
+}

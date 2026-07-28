@@ -8722,7 +8722,7 @@ type RootTranslation = {
 	 */
 	admin_roles_end_user_rbac: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​o​l​e​s​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​r​o​l​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_roles_info_banner: string
 	/**
@@ -9616,7 +9616,7 @@ type RootTranslation = {
 	 */
 	admin_access_control_banner_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​ ​f​o​r​ ​E​n​d​ ​U​s​e​r​s​ ​(​y​o​u​r​ ​a​p​p​l​i​c​a​t​i​o​n​'​s​ ​u​s​e​r​s​)​.​ ​F​o​r​ ​A​d​m​i​n​ ​O​p​e​r​a​t​o​r​ ​a​c​c​e​s​s​ ​c​o​n​t​r​o​l​,​ ​v​i​s​i​t​
 	 */
 	admin_access_control_banner: string
 	/**
@@ -9931,15 +9931,15 @@ type RootTranslation = {
 	 */
 	admin_attributes_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​a​t​t​r​i​b​u​t​e​s​ ​f​o​r​
 	 */
 	admin_attributes_info_prefix: string
 	/**
-	 * .​ ​F​o​r​ 
+	 * .​ ​F​o​r​
 	 */
 	admin_attributes_info_middle: string
 	/**
-	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 *  ​a​t​t​r​i​b​u​t​e​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_attributes_info_suffix: string
 	/**
@@ -10142,11 +10142,11 @@ type RootTranslation = {
 	 */
 	admin_attributes_delete_attribute: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​t​t​r​i​b​u​t​e​
 	 */
 	admin_attributes_delete_confirm_prefix: string
 	/**
-	 *  ​f​o​r​ ​u​s​e​r​ 
+	 *  ​f​o​r​ ​u​s​e​r​
 	 */
 	admin_attributes_delete_confirm_middle: string
 	/**
@@ -10166,7 +10166,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_expired_title: string
 	/**
-	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​ 
+	 * S​u​c​c​e​s​s​f​u​l​l​y​ ​d​e​l​e​t​e​d​
 	 */
 	admin_attributes_cleanup_success_prefix: string
 	/**
@@ -10178,7 +10178,7 @@ type RootTranslation = {
 	 */
 	admin_attributes_cleanup_description: string
 	/**
-	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​ 
+	 * C​u​r​r​e​n​t​l​y​ ​t​h​e​r​e​ ​a​r​e​
 	 */
 	admin_attributes_cleanup_current_prefix: string
 	/**
@@ -10479,7 +10479,7 @@ type RootTranslation = {
 	 */
 	admin_policies_delete_rule: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​r​u​l​e​
 	 */
 	admin_policies_delete_confirm_prefix: string
 	/**
@@ -11000,15 +11000,15 @@ type RootTranslation = {
 	 */
 	admin_rebac_info_title: string
 	/**
-	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​ 
+	 * T​h​i​s​ ​p​a​g​e​ ​m​a​n​a​g​e​s​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​f​o​r​
 	 */
 	admin_rebac_info_prefix: string
 	/**
-	 * .​ ​F​o​r​ 
+	 * .​ ​F​o​r​
 	 */
 	admin_rebac_info_middle: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​ 
+	 *  ​r​e​l​a​t​i​o​n​s​h​i​p​ ​m​a​n​a​g​e​m​e​n​t​,​ ​v​i​s​i​t​
 	 */
 	admin_rebac_info_suffix: string
 	/**
@@ -11452,7 +11452,7 @@ type RootTranslation = {
 	 */
 	admin_rebac_definitions_delete_title: string
 	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​ 
+	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​r​e​l​a​t​i​o​n​ ​d​e​f​i​n​i​t​i​o​n​
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: string
 	/**
@@ -11580,11 +11580,11 @@ type RootTranslation = {
 	 */
 	admin_rebac_definition_detail_show: string
 	/**
-	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​ 
+	 * T​e​s​t​ ​i​f​ ​a​ ​u​s​e​r​ ​w​o​u​l​d​ ​h​a​v​e​ ​t​h​e​
 	 */
 	admin_rebac_definition_detail_test_prefix: string
 	/**
-	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​ 
+	 *  ​r​e​l​a​t​i​o​n​ ​o​n​ ​a​
 	 */
 	admin_rebac_definition_detail_test_middle: string
 	/**
@@ -42108,7 +42108,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_roles_end_user_rbac: () => LocalizedString
 	/**
-	 * This page manages roles for End Users. For Admin Operator role management, visit 
+	 * This page manages roles for End Users. For Admin Operator role management, visit
 	 */
 	admin_roles_info_banner: () => LocalizedString
 	/**
@@ -42988,7 +42988,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_access_control_banner_title: () => LocalizedString
 	/**
-	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit 
+	 * This page manages access control for End Users (your application's users). For Admin Operator access control, visit
 	 */
 	admin_access_control_banner: () => LocalizedString
 	/**
@@ -43292,15 +43292,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_info_title: () => LocalizedString
 	/**
-	 * This page manages attributes for 
+	 * This page manages attributes for
 	 */
 	admin_attributes_info_prefix: () => LocalizedString
 	/**
-	 * . For 
+	 * . For
 	 */
 	admin_attributes_info_middle: () => LocalizedString
 	/**
-	 *  attribute management, visit 
+	 *  attribute management, visit
 	 */
 	admin_attributes_info_suffix: () => LocalizedString
 	/**
@@ -43500,11 +43500,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_delete_attribute: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the attribute 
+	 * Are you sure you want to delete the attribute
 	 */
 	admin_attributes_delete_confirm_prefix: () => LocalizedString
 	/**
-	 *  for user 
+	 *  for user
 	 */
 	admin_attributes_delete_confirm_middle: () => LocalizedString
 	/**
@@ -43524,7 +43524,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_expired_title: () => LocalizedString
 	/**
-	 * Successfully deleted 
+	 * Successfully deleted
 	 */
 	admin_attributes_cleanup_success_prefix: () => LocalizedString
 	/**
@@ -43536,7 +43536,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_attributes_cleanup_description: () => LocalizedString
 	/**
-	 * Currently there are 
+	 * Currently there are
 	 */
 	admin_attributes_cleanup_current_prefix: () => LocalizedString
 	/**
@@ -43832,7 +43832,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_policies_delete_rule: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the policy rule 
+	 * Are you sure you want to delete the policy rule
 	 */
 	admin_policies_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -44332,15 +44332,15 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_info_title: () => LocalizedString
 	/**
-	 * This page manages relationships for 
+	 * This page manages relationships for
 	 */
 	admin_rebac_info_prefix: () => LocalizedString
 	/**
-	 * . For 
+	 * . For
 	 */
 	admin_rebac_info_middle: () => LocalizedString
 	/**
-	 *  relationship management, visit 
+	 *  relationship management, visit
 	 */
 	admin_rebac_info_suffix: () => LocalizedString
 	/**
@@ -44780,7 +44780,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definitions_delete_title: () => LocalizedString
 	/**
-	 * Are you sure you want to delete the relation definition 
+	 * Are you sure you want to delete the relation definition
 	 */
 	admin_rebac_definitions_delete_confirm_prefix: () => LocalizedString
 	/**
@@ -44908,11 +44908,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_rebac_definition_detail_show: () => LocalizedString
 	/**
-	 * Test if a user would have the 
+	 * Test if a user would have the
 	 */
 	admin_rebac_definition_detail_test_prefix: () => LocalizedString
 	/**
-	 *  relation on a 
+	 *  relation on a
 	 */
 	admin_rebac_definition_detail_test_middle: () => LocalizedString
 	/**
