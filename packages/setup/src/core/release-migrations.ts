@@ -71,7 +71,16 @@ export interface MigrationStreamDefinition {
   includePath?: (path: string) => boolean;
 }
 
-const CORE_EXCLUDED_DIRECTORIES = new Set(['admin', 'archive', 'external', 'pii', 'releases']);
+const CORE_EXCLUDED_DIRECTORIES = new Set([
+  'admin',
+  'archive',
+  'control',
+  'external',
+  'lookup',
+  'pii',
+  'plugin-runner',
+  'releases',
+]);
 const EXTERNAL_POSTGRES_PII_MIGRATION_PATTERN =
   /_(?:durable_pii|totp_credentials|linked_identity|external_postgres_pii)(?:_|\.)/u;
 
@@ -98,6 +107,24 @@ export const RELEASE_MIGRATION_STREAM_DEFINITIONS: readonly MigrationStreamDefin
     dialect: 'sqlite',
     directory: 'admin',
     logicalRoles: ['admin', 'control'],
+  },
+  {
+    id: 'd1-control',
+    dialect: 'sqlite',
+    directory: 'control',
+    logicalRoles: ['control'],
+  },
+  {
+    id: 'd1-lookup',
+    dialect: 'sqlite',
+    directory: 'lookup',
+    logicalRoles: ['lookup'],
+  },
+  {
+    id: 'd1-plugin-runner',
+    dialect: 'sqlite',
+    directory: 'plugin-runner',
+    logicalRoles: ['plugin_runner'],
   },
   {
     id: 'external-postgres-core',

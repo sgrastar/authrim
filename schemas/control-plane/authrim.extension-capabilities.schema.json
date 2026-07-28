@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://authrim.com/schemas/control-plane/authrim.extension-capabilities.schema.json",
+  "title": "Authrim Project Extension Capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "extensionId", "owner", "source", "scope", "reason", "workers"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "extensionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "owner": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "scope": { "enum": ["platform", "tenant"] },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "workers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["scriptName", "bindings", "secrets", "services"],
+        "properties": {
+          "scriptName": { "type": "string", "minLength": 1 },
+          "bindings": { "type": "array", "items": { "$ref": "#/$defs/request" } },
+          "services": { "type": "array", "items": { "$ref": "#/$defs/request" } },
+          "secrets": { "type": "array", "items": { "$ref": "#/$defs/secretRequest" } }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "capability", "scope", "reason"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "capability": { "type": "string", "minLength": 1 },
+        "scope": { "enum": ["platform", "tenant"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "secretRequest": {
+      "allOf": [
+        { "$ref": "#/$defs/request" },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "not": { "pattern": "^(CLOUDFLARE|CF)_.+_(API_)?TOKEN$" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

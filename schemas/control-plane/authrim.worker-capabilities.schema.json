@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://authrim.com/schemas/control-plane/authrim.worker-capabilities.schema.json",
+  "title": "Authrim Worker Capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageName",
+    "worker",
+    "requiredDataRoles",
+    "bindings",
+    "secrets"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageName": { "type": "string", "pattern": "^@authrim/[a-z0-9-]+$" },
+    "worker": { "type": "string", "pattern": "^ar-[a-z0-9-]+$" },
+    "requiredDataRoles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "tenant_core/default",
+          "tenant_core/users",
+          "tenant_pii",
+          "lookup",
+          "control",
+          "plugin_runner"
+        ]
+      }
+    },
+    "lookupBlindIndex": { "type": "boolean", "default": false },
+    "bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding" }
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/secret" }
+    }
+  },
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "required"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "kind": {
+          "enum": [
+            "d1",
+            "kv_namespace",
+            "r2_bucket",
+            "service",
+            "dispatch_namespace",
+            "durable_object_namespace"
+          ]
+        },
+        "required": { "type": "boolean" },
+        "dataRole": {
+          "enum": [
+            "tenant_core/default",
+            "tenant_core/users",
+            "tenant_pii",
+            "lookup",
+            "control",
+            "plugin_runner"
+          ]
+        },
+        "capability": { "type": "string", "minLength": 1 }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "capability", "required"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "not": { "pattern": "^(CLOUDFLARE|CF)_.+_(API_)?TOKEN$" }
+        },
+        "capability": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

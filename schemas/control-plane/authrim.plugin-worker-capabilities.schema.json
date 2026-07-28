@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://authrim.com/schemas/control-plane/authrim.plugin-worker-capabilities.schema.json",
+  "title": "Authrim Plugin Worker Capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "pluginId",
+    "backend",
+    "resourceScope",
+    "visibility",
+    "bindings",
+    "capabilities",
+    "egressAllowedHosts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "pluginId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "backend": { "enum": ["in_process", "dynamic_worker"] },
+    "resourceScope": { "const": "tenant" },
+    "visibility": { "enum": ["tenant", "platform"] },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "interface", "scope"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "interface": { "type": "string", "minLength": 1 },
+          "scope": { "const": "tenant" }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "execution",
+          "failurePolicy",
+          "timeoutMs",
+          "mutationScopes",
+          "asyncOutbox"
+        ],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "execution": { "enum": ["sync", "async"] },
+          "failurePolicy": { "enum": ["fail_open", "fail_closed", "retry_async"] },
+          "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 30000 },
+          "mutationScopes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "notifier.send",
+                "human_verification.verify",
+                "identity_provider.resolve",
+                "flow.evaluate",
+                "account.metadata.write"
+              ]
+            }
+          },
+          "asyncOutbox": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["enabled", "succeededRetentionDays", "deadLetterRetentionDays"],
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "succeededRetentionDays": { "const": 7 },
+              "deadLetterRetentionDays": { "const": 90 }
+            }
+          }
+        }
+      }
+    },
+    "egressAllowedHosts": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "host"],
+            "properties": {
+              "kind": { "const": "exact" },
+              "host": {
+                "type": "string",
+                "format": "hostname",
+                "not": { "enum": ["localhost"] }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "suffix"],
+            "properties": {
+              "kind": { "const": "suffix_wildcard" },
+              "suffix": {
+                "type": "string",
+                "pattern": "^\\*\\.[a-z0-9-]+\\.[a-z0-9.-]+$"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

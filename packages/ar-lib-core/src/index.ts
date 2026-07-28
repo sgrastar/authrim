@@ -364,6 +364,9 @@ export * from './services/tenant-database-stats';
 export * from './services/tenant-runtime-config-snapshot';
 export * from './services/tenant-runtime-registry-security-events';
 export * from './services/tenant-runtime-registry-snapshot';
+export * from './services/control-plane/cloudflare-worker-settings';
+export * from './services/control-plane/cloudflare-control-api-client';
+export * from './services/control-plane/control-plane-contracts';
 export * from './services/user-store-runtime-sources';
 export * from './services/refresh-token-family-store';
 

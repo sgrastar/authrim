@@ -125,6 +125,10 @@
         {
           "path": "031_normalize_screen_locale_tags.sql",
           "checksum": "1aec5ec16ecd2065b5e94b01fa83e6fee238120bf98ad688d21d8bb7343ed9db"
+        },
+        {
+          "path": "032_tenant_directory_and_plugin_outboxes.sql",
+          "checksum": "c353069bff61b9e0cf9f107017f301ced547569c22287f899a8050208251b674"
         }
       ]
     },
@@ -269,6 +273,45 @@
         {
           "path": "029_stale_self_service_agent_snapshots.sql",
           "checksum": "12d5dc4341c317deed31799fad9d68835bfa3e6971d88afbd978fa967dd0367e"
+        }
+      ]
+    },
+    {
+      "id": "d1-control",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "control"
+      ],
+      "files": [
+        {
+          "path": "001_control_plane.sql",
+          "checksum": "e9d79783b8f32750dab544a7723017eea078e2328027cbd1e79630629936c5c1"
+        }
+      ]
+    },
+    {
+      "id": "d1-lookup",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "lookup"
+      ],
+      "files": [
+        {
+          "path": "001_lookup_directory.sql",
+          "checksum": "e6cca076e57c965341c1b37e7d4d75bc8433daf5ceb4e0016bc0cb53028d770c"
+        }
+      ]
+    },
+    {
+      "id": "d1-plugin-runner",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "plugin_runner"
+      ],
+      "files": [
+        {
+          "path": "001_plugin_runner.sql",
+          "checksum": "84750dc7173e286bbedd3d31095c1926b11585049f10407aeb08b8ffd67f4c9e"
         }
       ]
     },
