@@ -35,7 +35,11 @@
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
 	import type { APIError } from '$lib/api/client';
+	import { messageForCaughtError } from '$lib/errors/display-error';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
+
+	const { brandingStore, loginUIPageStore } = useLoginUIStores();
 
 	let loading = $state(true);
 	let logoutLoading = $state(false);
@@ -151,8 +155,9 @@
 	function localizedPageCopy(): { title: string; description: string } {
 		const definition = accountCapabilities?.account_page?.definition;
 		const localized = definition?.localizations?.[getLocale()];
+		const themeTitle = loginUIPageStore.getLocalizedText(getLocale(), 'accountTitle');
 		return {
-			title: localized?.title || definition?.title || $LL.account_title(),
+			title: themeTitle ?? localized?.title ?? definition?.title ?? $LL.account_title(),
 			description: localized?.description || definition?.description || ''
 		};
 	}
@@ -485,7 +490,7 @@
 
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -506,7 +511,7 @@
 			emailReauthCode = '';
 			emailReauthCodeSent = true;
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -527,7 +532,7 @@
 			}
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -545,7 +550,7 @@
 			}
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -625,7 +630,7 @@
 			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
 			await refreshSecurity();
 		} catch (error) {
-			securityError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			securityError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			actionLoading = '';
 		}
@@ -773,7 +778,10 @@
 </script>
 
 <svelte:head>
-	<title>{$LL.account_pageTitle()}</title>
+	<title
+		>{localizedPageCopy().title || $LL.account_title()} - {brandingStore.brandName ||
+			$LL.app_title()}</title
+	>
 </svelte:head>
 
 <div class="account-shell">
@@ -789,7 +797,7 @@
 		<div class="account-layout">
 			<header class="account-header">
 				<div>
-					<p class="account-kicker">Authrim</p>
+					<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
 					<h1>{localizedPageCopy().title}</h1>
 					{#if localizedPageCopy().description}
 						<p class="account-description">
@@ -807,7 +815,7 @@
 		<div class="account-layout">
 			<header class="account-header">
 				<div>
-					<p class="account-kicker">Authrim</p>
+					<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
 					<h1>{localizedPageCopy().title}</h1>
 					{#if localizedPageCopy().description}<p class="account-description">
 							{localizedPageCopy().description}

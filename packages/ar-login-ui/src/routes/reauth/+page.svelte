@@ -3,9 +3,11 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Alert, Input, TurnstileWidget } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { isValidRedirectUrl, isValidImageUrl } from '$lib/utils/url-validation';
 	import { fetchAuthenticationMethods } from '$lib/api/authentication-methods';
 	import { resolveTurnstileLanguage as resolveConfiguredTurnstileLanguage } from '$lib/turnstile-options';
@@ -127,14 +129,14 @@
 		try {
 			const { data, error: apiError } = await loginChallengeAPI.getData(challengeId);
 			if (apiError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			challengeData = data as unknown as ChallengeData;
 			if (challengeData?.user?.email) {
 				email = challengeData.user.email;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		}
 	}
 
@@ -213,7 +215,7 @@
 				authorizationChallengeId: challengeId || undefined
 			});
 			if (optionsError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -229,7 +231,7 @@
 				if (shouldSignalUnknownCredentialAfterLoginFailure(verifyError)) {
 					await signalUnknownCredential(credential.id);
 				}
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -240,7 +242,7 @@
 				window.location.href = '/';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			passkeyLoading = false;
 		}
@@ -265,11 +267,11 @@
 				authorizationChallengeId: challengeId || undefined
 			});
 			if (apiError) {
-				throw new Error($LL.error_server_error());
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			window.location.href = `/verify-email-code?email=${encodeURIComponent(email)}&challenge_id=${encodeURIComponent(challengeId)}`;
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			emailCodeLoading = false;
 		}
@@ -282,13 +284,13 @@
 		try {
 			const { data, error: apiError } = await startTotpReauth(totpAPI, challengeId);
 			if (apiError || !data) {
-				throw new Error($LL.login_totpStartFailed());
+				throw loginUiDisplayError($LL.login_totpStartFailed());
 			}
 			totpChallengeId = data.challenge_id;
 			totpCode = '';
 			totpCodeRequested = true;
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.login_totpStartFailed();
+			error = messageForCaughtError(err, $LL.login_totpStartFailed());
 		} finally {
 			totpLoading = false;
 		}
@@ -311,7 +313,7 @@
 				authorizationChallengeId: challengeId
 			});
 			if (apiError || !data?.success) {
-				throw new Error($LL.login_totpCodeInvalid());
+				throw loginUiDisplayError($LL.login_totpCodeInvalid());
 			}
 			if (data.redirect_url && isValidRedirectUrl(data.redirect_url)) {
 				window.location.href = data.redirect_url;
@@ -319,7 +321,7 @@
 				window.location.href = '/';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.login_totpCodeInvalid();
+			error = messageForCaughtError(err, $LL.login_totpCodeInvalid());
 		} finally {
 			totpLoading = false;
 		}
@@ -508,6 +510,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

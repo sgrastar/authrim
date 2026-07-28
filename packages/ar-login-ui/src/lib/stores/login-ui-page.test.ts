@@ -28,6 +28,7 @@ describe('loginUIPageStore', () => {
 				fontFamily: 'mono',
 				fontScale: 'spacious',
 				backgroundColor: '#112233',
+				accentColor: '#336699',
 				titleColor: '#fefefe',
 				textColor: '#e1e2e3',
 				copyColor: '#a1a2a3',
@@ -63,6 +64,19 @@ describe('loginUIPageStore', () => {
 				thumbnailUrl: 'https://example.com/thumbnail.webp',
 				customCss: '.auth-page { opacity: 0.99; }',
 				headerText: 'Saved header text',
+				textLocalizations: {
+					en: {
+						tagline: 'Saved English tagline',
+						loginTitle: 'Custom sign in',
+						registrationTitle: 'Custom registration',
+						accountTitle: 'Custom account',
+						brandPanelTitle: 'Localized brand title',
+						brandPanelText: 'Localized brand text',
+						footerText: 'Localized footer text'
+					},
+					ja: { tagline: '保存した日本語タグライン' },
+					fr: { tagline: '   ', brandPanelTitle: '', footerText: ' ' }
+				},
 				footerText: 'Saved footer text',
 				footerLinks: [{ label: 'Privacy', url: 'https://example.com/privacy' }],
 				customBlocks: []
@@ -94,6 +108,7 @@ describe('loginUIPageStore', () => {
 		expect(html.getAttribute('data-brand-align')).toBe('right');
 		expect(html.getAttribute('data-logo-display')).toBe('text');
 		expect(html.style.getPropertyValue('--login-page-background-color')).toBe('#112233');
+		expect(html.style.getPropertyValue('--login-accent-color')).toBe('#336699');
 		expect(html.style.getPropertyValue('--login-title-color')).toBe('#fefefe');
 		expect(html.style.getPropertyValue('--login-text-color')).toBe('#e1e2e3');
 		expect(html.style.getPropertyValue('--login-copy-color')).toBe('#a1a2a3');
@@ -121,6 +136,24 @@ describe('loginUIPageStore', () => {
 		expect(loginUIPageStore.brandContentMode).toBe('logo');
 		expect(loginUIPageStore.logoDisplay).toBe('text');
 		expect(loginUIPageStore.headerText).toBe('Saved header text');
+		expect(loginUIPageStore.getLocalizedText('en', 'tagline')).toBe('Saved English tagline');
+		expect(loginUIPageStore.getLocalizedText('en', 'loginTitle')).toBe('Custom sign in');
+		expect(loginUIPageStore.getLocalizedText('en', 'registrationTitle')).toBe(
+			'Custom registration'
+		);
+		expect(loginUIPageStore.getLocalizedText('en', 'accountTitle')).toBe('Custom account');
+		expect(loginUIPageStore.getLocalizedText('ja', 'loginTitle')).toBeNull();
+		expect(loginUIPageStore.getLocalizedText('ja', 'tagline')).toBe('保存した日本語タグライン');
+		expect(loginUIPageStore.getLocalizedText('fr', 'tagline')).toBe('');
+		expect(loginUIPageStore.getLocalizedText('fr', 'brandPanelTitle')).toBe('');
+		expect(loginUIPageStore.getLocalizedText('fr', 'footerText')).toBe('');
+		expect(loginUIPageStore.getLocalizedText('de', 'tagline')).toBe('Saved header text');
+		expect(loginUIPageStore.getLocalizedText('en', 'brandPanelTitle')).toBe(
+			'Localized brand title'
+		);
+		expect(loginUIPageStore.getLocalizedText('en', 'brandPanelText')).toBe('Localized brand text');
+		expect(loginUIPageStore.getLocalizedText('en', 'footerText')).toBe('Localized footer text');
+		expect(loginUIPageStore.getLocalizedText('ja', 'brandPanelTitle')).toBe('Saved brand title');
 		expect(loginUIPageStore.footerText).toBe('Saved footer text');
 		expect(loginUIPageStore.footerLinks).toEqual([
 			{ label: 'Privacy', url: 'https://example.com/privacy' }

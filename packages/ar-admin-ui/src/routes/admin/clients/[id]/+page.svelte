@@ -387,7 +387,6 @@
 	function setIdentityMappingFieldMappingSet(fieldMappingSetId: string) {
 		editForm.identity_mapping = fieldMappingSetId
 			? {
-					...(editForm.identity_mapping ?? {}),
 					fieldMappingSetId,
 					destinationNamespace: editForm.identity_mapping?.destinationNamespace ?? 'oidc.claim'
 				}

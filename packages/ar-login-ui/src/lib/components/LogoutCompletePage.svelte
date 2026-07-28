@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Button, Card } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -25,7 +27,7 @@
 				{brandingStore.brandName || $LL.app_title()}
 			</h1>
 			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
+				<LocalizedTagline />
 			</p>
 		</div>
 
@@ -51,6 +53,6 @@
 	</div>
 
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

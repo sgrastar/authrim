@@ -59,6 +59,7 @@ const core = {
 	common_status_warning: '警告',
 	common_status_error: 'エラー',
 	common_status_info: '情報',
+	common_editor_load_failed: 'エディターを読み込めませんでした。',
 	common_status_neutral: '中立'
 } as const;
 

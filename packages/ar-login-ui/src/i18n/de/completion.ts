@@ -31,7 +31,7 @@ const completion = {
 	dialog_description:
 		'Dies ist ein Testdialog mit Melt UI, einer zugänglichen Headless-Komponentenbibliothek für Svelte.',
 	dialog_confirm: 'Bestätigen',
-	footer_stack: 'Bereitgestellt von Authrim',
+	footer_stack: 'Bereitgestellt von <a href="https://authrim.com/">Authrim</a>',
 	language_english: 'Englisch',
 	language_japanese: 'Japanisch',
 	common_emailPlaceholder: 'sie@beispiel.de',

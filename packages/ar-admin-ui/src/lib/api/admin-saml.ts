@@ -115,6 +115,7 @@ export type SAMLAttributeReleaseConfirmationValueDisplay =
 	| 'names'
 	| 'masked_values'
 	| 'full_values';
+export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -172,6 +173,7 @@ export interface SAMLProviderConfig {
 		sourceProfileId?: string;
 		destinationProfileId?: string;
 		attributeDescriptors?: Record<string, unknown>;
+		destinationFieldPolicies?: Record<string, SAMLDestinationFieldReleaseMode>;
 	};
 	attributePresetId?: string;
 	attributePresetVersion?: string;
@@ -806,6 +808,7 @@ export const adminSAMLAPI = {
 			providerType?: SAMLProvider['providerType'];
 			samlProfile?: string;
 			attributePresetId?: string;
+			identityMapping?: SAMLProviderConfig['identityMapping'];
 			enabled?: boolean;
 		}
 	): Promise<SAMLMetadataBatchStatus> {

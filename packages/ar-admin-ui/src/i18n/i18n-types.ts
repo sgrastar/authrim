@@ -250,6 +250,10 @@ type RootTranslation = {
 	 */
 	common_status_info: string
 	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​h​e​ ​e​d​i​t​o​r​.
+	 */
+	common_editor_load_failed: string
+	/**
 	 * N​e​u​t​r​a​l
 	 */
 	common_status_neutral: string
@@ -4312,6 +4316,14 @@ type RootTranslation = {
 	 * B​e​h​a​v​i​o​r​ ​S​e​t​t​i​n​g​s
 	 */
 	admin_external_idp_behavior_settings: string
+	/**
+	 * D​y​n​a​m​i​c​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​m​p​l​e​t​e​d​.
+	 */
+	admin_external_idp_dynamic_registration_completed: string
+	/**
+	 * D​y​n​a​m​i​c​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d​.
+	 */
+	admin_external_idp_dynamic_registration_failed: string
 	/**
 	 * A​u​t​o​ ​L​i​n​k​ ​E​m​a​i​l
 	 */
@@ -19913,6 +19925,15 @@ type RootTranslation = {
 	 */
 	admin_compliance_cleanup_completed: string
 	/**
+	 * R​e​t​e​n​t​i​o​n​ ​p​o​l​i​c​y​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_compliance_retention_updated: string
+	/**
+	 * C​l​e​a​n​u​p​ ​c​o​m​p​l​e​t​e​d​.​ ​D​e​l​e​t​e​d​ ​{​c​o​u​n​t​}​ ​r​e​c​o​r​d​s​.
+	 * @param {number} count
+	 */
+	admin_compliance_cleanup_completed_count: RequiredParams<'count'>
+	/**
 	 * R​u​n​ ​D​a​t​a​ ​C​l​e​a​n​u​p
 	 */
 	admin_compliance_cleanup_run: string
@@ -28413,46 +28434,6 @@ type RootTranslation = {
 	 */
 	admin_flows_field_mapping: string
 	/**
-	 * F​l​o​w​ ​o​v​e​r​v​i​e​w
-	 */
-	admin_flows_overview_title: string
-	/**
-	 * S​t​a​r​t​ ​w​i​t​h​ ​r​e​p​r​e​s​e​n​t​a​t​i​v​e​ ​S​A​M​L​/​O​I​D​C​ ​p​a​t​h​s​ ​a​n​d​ ​r​e​v​i​e​w​ ​M​a​p​p​i​n​g​,​ ​C​o​n​s​e​n​t​,​ ​a​n​d​ ​O​u​t​p​u​t​ ​t​o​g​e​t​h​e​r​.
-	 */
-	admin_flows_overview_description: string
-	/**
-	 * R​e​q​u​e​s​t
-	 */
-	admin_flows_overview_request_title: string
-	/**
-	 * p​r​o​t​o​c​o​l​ ​r​e​q​u​e​s​t
-	 */
-	admin_flows_overview_request_subtitle: string
-	/**
-	 * M​a​p​p​i​n​g
-	 */
-	admin_flows_overview_mapping_title: string
-	/**
-	 * s​c​h​e​m​a​ ​/​ ​f​i​e​l​d​ ​s​e​t
-	 */
-	admin_flows_overview_mapping_subtitle: string
-	/**
-	 * C​o​n​s​e​n​t
-	 */
-	admin_flows_overview_consent_title: string
-	/**
-	 * s​t​a​t​e​m​e​n​t​ ​/​ ​p​o​l​i​c​y
-	 */
-	admin_flows_overview_consent_subtitle: string
-	/**
-	 * O​u​t​p​u​t
-	 */
-	admin_flows_overview_output_title: string
-	/**
-	 * r​e​s​p​o​n​s​e​ ​/​ ​g​r​a​n​t
-	 */
-	admin_flows_overview_output_subtitle: string
-	/**
 	 * F​l​o​w​ ​l​i​s​t
 	 */
 	admin_flows_list_title: string
@@ -30308,6 +30289,120 @@ type RootTranslation = {
 	 */
 	admin_settings_runtime_profiles_desc: string
 	/**
+	 * U​p​d​a​t​e​d​ ​1​ ​s​e​t​t​i​n​g​.
+	 */
+	admin_settings_updated_one: string
+	/**
+	 * U​p​d​a​t​e​d​ ​{​c​o​u​n​t​}​ ​s​e​t​t​i​n​g​s​.
+	 * @param {number} count
+	 */
+	admin_settings_updated_many: RequiredParams<'count'>
+	/**
+	 * C​o​d​e​ ​s​h​a​r​d​s​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_settings_code_shards_updated: string
+	/**
+	 * R​e​v​o​c​a​t​i​o​n​ ​s​h​a​r​d​s​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_settings_revocation_shards_updated: string
+	/**
+	 * C​a​c​h​e​ ​m​o​d​e​ ​c​h​a​n​g​e​d​ ​t​o​ ​{​m​o​d​e​}​.
+	 * @param {string} mode
+	 */
+	admin_settings_cache_mode_updated: RequiredParams<'mode'>
+	/**
+	 * A​u​d​i​t​ ​p​r​o​f​i​l​e​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_settings_audit_profile_created: string
+	/**
+	 * A​u​d​i​t​ ​p​r​o​f​i​l​e​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_settings_audit_profile_updated: string
+	/**
+	 * A​u​d​i​t​ ​p​r​o​f​i​l​e​ ​d​e​l​e​t​e​d​.
+	 */
+	admin_settings_audit_profile_deleted: string
+	/**
+	 * D​e​f​a​u​l​t​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_settings_runtime_profile_defaults_updated: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_settings_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_settings_save_failed: string
+	/**
+	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​e​d​i​t​ ​s​e​t​t​i​n​g​s​ ​a​t​ ​t​h​i​s​ ​s​c​o​p​e​.
+	 */
+	admin_settings_edit_forbidden: string
+	/**
+	 * S​e​t​t​i​n​g​s​ ​w​e​r​e​ ​c​h​a​n​g​e​d​ ​b​y​ ​a​n​o​t​h​e​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.​ ​R​e​l​o​a​d​ ​a​n​d​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	admin_settings_conflict: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​h​e​ ​s​h​a​r​d​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
+	 */
+	admin_settings_shards_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​t​h​e​ ​s​h​a​r​d​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
+	 */
+	admin_settings_shards_save_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​h​e​ ​c​a​c​h​e​ ​m​o​d​e​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_settings_cache_mode_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​t​h​e​ ​c​a​c​h​e​ ​m​o​d​e​.
+	 */
+	admin_settings_cache_mode_save_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​.
+	 */
+	admin_settings_runtime_profiles_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​t​h​e​ ​a​u​d​i​t​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_settings_runtime_profile_save_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​e​ ​a​u​d​i​t​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_settings_runtime_profile_delete_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​t​h​e​ ​d​e​f​a​u​l​t​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​.
+	 */
+	admin_settings_runtime_profile_defaults_save_failed: string
+	/**
+	 * P​r​o​f​i​l​e​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 */
+	admin_settings_runtime_profile_id_required: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​d​e​f​a​u​l​t​ ​a​u​d​i​t​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_settings_default_audit_profile_required: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​d​e​f​a​u​l​t​ ​s​t​o​r​a​g​e​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_settings_default_storage_profile_required: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​d​e​f​a​u​l​t​ ​r​e​s​i​d​e​n​c​y​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_settings_default_residency_profile_required: string
+	/**
+	 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​s​t​o​r​a​g​e​ ​p​r​o​f​i​l​e​ ​c​a​n​n​o​t​ ​b​e​ ​a​c​t​i​v​a​t​e​d​.
+	 */
+	admin_settings_storage_profile_not_activatable: string
+	/**
+	 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​a​u​d​i​t​ ​p​r​o​f​i​l​e​ ​c​a​n​n​o​t​ ​b​e​ ​a​c​t​i​v​a​t​e​d​.
+	 */
+	admin_settings_audit_profile_not_activatable: string
+	/**
+	 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​r​e​s​i​d​e​n​c​y​ ​p​r​o​f​i​l​e​ ​c​a​n​n​o​t​ ​b​e​ ​a​c​t​i​v​a​t​e​d​.
+	 */
+	admin_settings_residency_profile_not_activatable: string
+	/**
 	 * D​i​a​g​n​o​s​t​i​c​ ​L​o​g​g​i​n​g
 	 */
 	admin_settings_diagnostic_logging: string
@@ -30492,6 +30587,14 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​p​e​r​f​o​r​m​ ​e​m​e​r​g​e​n​c​y​ ​r​o​t​a​t​i​o​n
 	 */
 	admin_signing_keys_error_emergency: string
+	/**
+	 * S​i​g​n​i​n​g​ ​k​e​y​ ​r​o​t​a​t​e​d​.
+	 */
+	admin_signing_keys_rotated: string
+	/**
+	 * E​m​e​r​g​e​n​c​y​ ​s​i​g​n​i​n​g​ ​k​e​y​ ​r​o​t​a​t​i​o​n​ ​c​o​m​p​l​e​t​e​d​.
+	 */
+	admin_signing_keys_emergency_rotated: string
 	/**
 	 * R​e​a​s​o​n​ ​m​u​s​t​ ​b​e​ ​a​t​ ​l​e​a​s​t​ ​1​0​ ​c​h​a​r​a​c​t​e​r​s
 	 */
@@ -31080,11 +31183,66 @@ type RootTranslation = {
 	 */
 	admin_theme_templates_description: string
 	/**
+	 * T​h​e​m​e​s
+	 */
+	admin_theme_custom_title: string
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​h​e​m​e​ ​t​o​ ​p​u​b​l​i​s​h​,​ ​o​r​ ​o​p​e​n​ ​i​t​ ​f​o​r​ ​e​d​i​t​i​n​g​.
+	 */
+	admin_theme_custom_description: string
+	/**
+	 * N​o​ ​t​h​e​m​e​s​ ​h​a​v​e​ ​b​e​e​n​ ​c​r​e​a​t​e​d​ ​y​e​t​.​ ​C​h​o​o​s​e​ ​a​ ​t​e​m​p​l​a​t​e​ ​t​o​ ​c​r​e​a​t​e​ ​o​n​e​.
+	 */
+	admin_theme_custom_empty: string
+	/**
+	 * P​u​b​l​i​s​h​ ​s​e​l​e​c​t​e​d​ ​t​h​e​m​e
+	 */
+	admin_theme_publish: string
+	/**
+	 * P​u​b​l​i​s​h​i​n​g​.​.​.
+	 */
+	admin_theme_publishing: string
+	/**
+	 * E​d​i​t
+	 */
+	admin_theme_edit: string
+	/**
+	 * S​e​l​e​c​t​ ​{​n​a​m​e​}​ ​f​o​r​ ​p​u​b​l​i​s​h​i​n​g
+	 * @param {string} name
+	 */
+	admin_theme_select_for_publish: RequiredParams<'name'>
+	/**
+	 * S​e​l​e​c​t​ ​a​ ​t​h​e​m​e​ ​t​o​ ​p​u​b​l​i​s​h​.
+	 */
+	admin_theme_publish_select_required: string
+	/**
+	 * P​u​b​l​i​s​h​e​d​ ​"​{​n​a​m​e​}​"​ ​a​s​ ​L​o​g​i​n​ ​U​I​ ​t​h​e​m​e​ ​v​{​v​e​r​s​i​o​n​}​.
+	 * @param {string} name
+	 * @param {number} version
+	 */
+	admin_theme_publish_success: RequiredParams<'name' | 'version'>
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​p​u​b​l​i​s​h​ ​t​h​e​ ​L​o​g​i​n​ ​U​I​ ​t​h​e​m​e​.
+	 */
+	admin_theme_publish_failed: string
+	/**
+	 * C​r​e​a​t​e​d
+	 */
+	admin_theme_created_at: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_theme_updated_at: string
+	/**
+	 * N​o​t​ ​r​e​c​o​r​d​e​d
+	 */
+	admin_theme_date_unknown: string
+	/**
 	 * B​u​i​l​t​-​i​n
 	 */
 	admin_theme_badge_builtin: string
 	/**
-	 * A​c​t​i​v​e
+	 * P​u​b​l​i​s​h​e​d
 	 */
 	admin_theme_badge_active: string
 	/**
@@ -31092,10 +31250,6 @@ type RootTranslation = {
 	 * @param {string} name
 	 */
 	admin_theme_based_on: RequiredParams<'name'>
-	/**
-	 * D​e​l​e​t​e
-	 */
-	admin_theme_delete: string
 	/**
 	 * T​h​e​m​e​ ​t​e​m​p​l​a​t​e​s
 	 */
@@ -31113,9 +31267,9 @@ type RootTranslation = {
 	 */
 	admin_theme_saving: string
 	/**
-	 * S​a​v​e​ ​&​ ​a​p​p​l​y
+	 * S​a​v​e
 	 */
-	admin_theme_save_apply: string
+	admin_theme_save: string
 	/**
 	 * U​s​e​ ​t​h​i​s​ ​t​e​m​p​l​a​t​e
 	 */
@@ -31137,7 +31291,15 @@ type RootTranslation = {
 	 */
 	admin_theme_error_update_failed: string
 	/**
-	 * Y​o​u​ ​c​a​n​ ​k​e​e​p​ ​u​p​ ​t​o​ ​{​c​o​u​n​t​}​ ​c​u​s​t​o​m​ ​t​h​e​m​e​s​.​ ​D​e​l​e​t​e​ ​o​n​e​ ​f​i​r​s​t​.
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​h​e​m​e​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_theme_error_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​l​o​a​d​ ​t​h​e​ ​a​s​s​e​t​.
+	 */
+	admin_theme_asset_upload_failed: string
+	/**
+	 * Y​o​u​ ​c​a​n​ ​k​e​e​p​ ​u​p​ ​t​o​ ​{​c​o​u​n​t​}​ ​c​u​s​t​o​m​ ​t​h​e​m​e​s​.
 	 * @param {number} count
 	 */
 	admin_theme_error_max_custom_themes: RequiredParams<'count'>
@@ -31147,24 +31309,14 @@ type RootTranslation = {
 	 */
 	admin_theme_duplicated_success: RequiredParams<'name'>
 	/**
-	 * D​e​l​e​t​e​ ​t​h​e​m​e​ ​"​{​n​a​m​e​}​"​?​ ​T​h​i​s​ ​c​a​n​n​o​t​ ​b​e​ ​u​n​d​o​n​e​.
-	 * @param {string} name
-	 */
-	admin_theme_delete_confirm: RequiredParams<'name'>
-	/**
-	 * D​e​l​e​t​e​d​ ​t​h​e​m​e​ ​"​{​n​a​m​e​}​"​.
-	 * @param {string} name
-	 */
-	admin_theme_deleted_success: RequiredParams<'name'>
-	/**
 	 * D​i​s​c​a​r​d​ ​u​n​s​a​v​e​d​ ​t​h​e​m​e​ ​c​h​a​n​g​e​s​?
 	 */
 	admin_theme_discard_confirm: string
 	/**
-	 * S​a​v​e​d​ ​a​n​d​ ​a​p​p​l​i​e​d​ ​"​{​n​a​m​e​}​"​.
+	 * S​a​v​e​d​ ​"​{​n​a​m​e​}​"​.
 	 * @param {string} name
 	 */
-	admin_theme_saved_applied_success: RequiredParams<'name'>
+	admin_theme_saved_success: RequiredParams<'name'>
 	/**
 	 * C​e​n​t​e​r​e​d​ ​c​a​r​d​,​ ​c​o​b​a​l​t​ ​o​n​ ​c​o​o​l​ ​p​a​p​e​r​,​ ​i​m​a​g​e​ ​o​p​t​i​o​n​a​l​.
 	 */
@@ -31333,6 +31485,74 @@ type RootTranslation = {
 	 * T​h​e​m​e​ ​t​o​g​g​l​e
 	 */
 	admin_theme_preview_inspector_theme_toggle: string
+	/**
+	 * T​e​x​t
+	 */
+	admin_theme_text_title: string
+	/**
+	 * E​d​i​t​ ​t​h​e​ ​L​o​g​i​n​ ​U​I​ ​t​e​x​t​ ​f​o​r​ ​e​a​c​h​ ​e​n​a​b​l​e​d​ ​l​a​n​g​u​a​g​e​.​ ​T​h​e​ ​p​r​e​v​i​e​w​ ​f​o​l​l​o​w​s​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​l​a​n​g​u​a​g​e​.
+	 */
+	admin_theme_text_description: string
+	/**
+	 * E​d​i​t​i​n​g​ ​l​a​n​g​u​a​g​e
+	 */
+	admin_theme_text_language: string
+	/**
+	 * B​r​a​n​d​ ​n​a​m​e
+	 */
+	admin_theme_text_brand_name: string
+	/**
+	 * E​n​t​e​r​ ​a​ ​b​r​a​n​d​ ​n​a​m​e​.
+	 */
+	admin_theme_text_brand_name_required: string
+	/**
+	 * T​a​g​l​i​n​e
+	 */
+	admin_theme_text_tagline: string
+	/**
+	 * B​r​a​n​d​ ​p​a​n​e​l​ ​t​i​t​l​e
+	 */
+	admin_theme_text_brand_panel_title: string
+	/**
+	 * B​r​a​n​d​ ​p​a​n​e​l​ ​t​e​x​t
+	 */
+	admin_theme_text_brand_panel_text: string
+	/**
+	 * F​o​o​t​e​r​ ​t​e​x​t
+	 */
+	admin_theme_text_footer: string
+	/**
+	 * O​n​l​y​ ​<​a​ ​h​r​e​f​=​"​…​"​>​ ​l​i​n​k​s​ ​a​r​e​ ​r​e​n​d​e​r​e​d​ ​a​s​ ​H​T​M​L​.​ ​O​t​h​e​r​ ​t​a​g​s​ ​a​r​e​ ​r​e​m​o​v​e​d​.
+	 */
+	admin_theme_text_footer_help: string
+	/**
+	 * O​n​l​y​ ​l​a​n​g​u​a​g​e​s​ ​e​n​a​b​l​e​d​ ​i​n​ ​L​a​n​g​u​a​g​e​ ​S​e​t​t​i​n​g​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.​ ​E​m​p​t​y​ ​f​i​e​l​d​s​ ​r​e​m​a​i​n​ ​b​l​a​n​k​ ​i​n​ ​t​h​e​ ​L​o​g​i​n​ ​U​I​.
+	 */
+	admin_theme_text_help: string
+	/**
+	 * P​a​g​e​ ​t​i​t​l​e​s
+	 */
+	admin_theme_page_titles_title: string
+	/**
+	 * E​d​i​t​ ​t​h​e​ ​p​r​i​m​a​r​y​ ​h​e​a​d​i​n​g​ ​s​h​o​w​n​ ​o​n​ ​e​a​c​h​ ​m​a​i​n​ ​L​o​g​i​n​ ​U​I​ ​p​a​g​e​ ​f​o​r​ ​t​h​e​ ​s​e​l​e​c​t​e​d​ ​l​a​n​g​u​a​g​e​.
+	 */
+	admin_theme_page_titles_description: string
+	/**
+	 * L​o​g​i​n​ ​p​a​g​e
+	 */
+	admin_theme_page_titles_login: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​p​a​g​e
+	 */
+	admin_theme_page_titles_registration: string
+	/**
+	 * A​c​c​o​u​n​t​ ​p​a​g​e
+	 */
+	admin_theme_page_titles_account: string
+	/**
+	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​,​ ​c​o​n​s​e​n​t​,​ ​d​e​v​i​c​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​,​ ​e​m​a​i​l​ ​v​e​r​i​f​i​c​a​t​i​o​n​,​ ​e​r​r​o​r​,​ ​a​n​d​ ​c​o​m​p​l​e​t​i​o​n​ ​t​i​t​l​e​s​ ​r​e​m​a​i​n​ ​c​o​n​t​e​x​t​u​a​l​ ​s​y​s​t​e​m​ ​m​e​s​s​a​g​e​s​.
+	 */
+	admin_theme_page_titles_help: string
 	/**
 	 * P​o​l​i​c​y​ ​S​e​t​t​i​n​g​s
 	 */
@@ -31947,6 +32167,14 @@ type RootTranslation = {
 	 * D​e​f​a​u​l​t​ ​l​a​n​g​u​a​g​e
 	 */
 	admin_login_ui_language_default_label: string
+	/**
+	 * S​e​l​e​c​t​ ​a​l​l
+	 */
+	admin_login_ui_language_select_all: string
+	/**
+	 * C​l​e​a​r​ ​a​l​l
+	 */
+	admin_login_ui_language_clear_all: string
 	/**
 	 * C​h​e​c​k​e​d​ ​l​a​n​g​u​a​g​e​s​ ​a​p​p​e​a​r​ ​i​n​ ​t​h​e​ ​l​a​n​g​u​a​g​e​ ​s​e​l​e​c​t​o​r​ ​o​n​ ​l​o​g​i​n​,​ ​r​e​g​i​s​t​r​a​t​i​o​n​,​ ​a​c​c​o​u​n​t​,​ ​a​n​d​ ​a​l​l​ ​o​t​h​e​r​ ​L​o​g​i​n​ ​U​I​ ​p​a​g​e​s​.
 	 */
@@ -33535,6 +33763,10 @@ export type TranslationFunctions = {
 	 * Info
 	 */
 	common_status_info: () => LocalizedString
+	/**
+	 * Failed to load the editor.
+	 */
+	common_editor_load_failed: () => LocalizedString
 	/**
 	 * Neutral
 	 */
@@ -37539,6 +37771,14 @@ export type TranslationFunctions = {
 	 * Behavior Settings
 	 */
 	admin_external_idp_behavior_settings: () => LocalizedString
+	/**
+	 * Dynamic registration completed.
+	 */
+	admin_external_idp_dynamic_registration_completed: () => LocalizedString
+	/**
+	 * Dynamic registration failed.
+	 */
+	admin_external_idp_dynamic_registration_failed: () => LocalizedString
 	/**
 	 * Auto Link Email
 	 */
@@ -52910,6 +53150,14 @@ Remove this role from {email}?
 	 */
 	admin_compliance_cleanup_completed: () => LocalizedString
 	/**
+	 * Retention policy updated.
+	 */
+	admin_compliance_retention_updated: () => LocalizedString
+	/**
+	 * Cleanup completed. Deleted {count} records.
+	 */
+	admin_compliance_cleanup_completed_count: (arg: { count: number }) => LocalizedString
+	/**
 	 * Run Data Cleanup
 	 */
 	admin_compliance_cleanup_run: () => LocalizedString
@@ -61290,46 +61538,6 @@ Remove this role from {email}?
 	 */
 	admin_flows_field_mapping: () => LocalizedString
 	/**
-	 * Flow overview
-	 */
-	admin_flows_overview_title: () => LocalizedString
-	/**
-	 * Start with representative SAML/OIDC paths and review Mapping, Consent, and Output together.
-	 */
-	admin_flows_overview_description: () => LocalizedString
-	/**
-	 * Request
-	 */
-	admin_flows_overview_request_title: () => LocalizedString
-	/**
-	 * protocol request
-	 */
-	admin_flows_overview_request_subtitle: () => LocalizedString
-	/**
-	 * Mapping
-	 */
-	admin_flows_overview_mapping_title: () => LocalizedString
-	/**
-	 * schema / field set
-	 */
-	admin_flows_overview_mapping_subtitle: () => LocalizedString
-	/**
-	 * Consent
-	 */
-	admin_flows_overview_consent_title: () => LocalizedString
-	/**
-	 * statement / policy
-	 */
-	admin_flows_overview_consent_subtitle: () => LocalizedString
-	/**
-	 * Output
-	 */
-	admin_flows_overview_output_title: () => LocalizedString
-	/**
-	 * response / grant
-	 */
-	admin_flows_overview_output_subtitle: () => LocalizedString
-	/**
 	 * Flow list
 	 */
 	admin_flows_list_title: () => LocalizedString
@@ -63174,6 +63382,118 @@ Remove this role from {email}?
 	 */
 	admin_settings_runtime_profiles_desc: () => LocalizedString
 	/**
+	 * Updated 1 setting.
+	 */
+	admin_settings_updated_one: () => LocalizedString
+	/**
+	 * Updated {count} settings.
+	 */
+	admin_settings_updated_many: (arg: { count: number }) => LocalizedString
+	/**
+	 * Code shards updated.
+	 */
+	admin_settings_code_shards_updated: () => LocalizedString
+	/**
+	 * Revocation shards updated.
+	 */
+	admin_settings_revocation_shards_updated: () => LocalizedString
+	/**
+	 * Cache mode changed to {mode}.
+	 */
+	admin_settings_cache_mode_updated: (arg: { mode: string }) => LocalizedString
+	/**
+	 * Audit profile created.
+	 */
+	admin_settings_audit_profile_created: () => LocalizedString
+	/**
+	 * Audit profile updated.
+	 */
+	admin_settings_audit_profile_updated: () => LocalizedString
+	/**
+	 * Audit profile deleted.
+	 */
+	admin_settings_audit_profile_deleted: () => LocalizedString
+	/**
+	 * Default runtime profiles updated.
+	 */
+	admin_settings_runtime_profile_defaults_updated: () => LocalizedString
+	/**
+	 * Failed to load settings.
+	 */
+	admin_settings_load_failed: () => LocalizedString
+	/**
+	 * Failed to save settings.
+	 */
+	admin_settings_save_failed: () => LocalizedString
+	/**
+	 * You do not have permission to edit settings at this scope.
+	 */
+	admin_settings_edit_forbidden: () => LocalizedString
+	/**
+	 * Settings were changed by another administrator. Reload and try again.
+	 */
+	admin_settings_conflict: () => LocalizedString
+	/**
+	 * Failed to load the shard configuration.
+	 */
+	admin_settings_shards_load_failed: () => LocalizedString
+	/**
+	 * Failed to save the shard configuration.
+	 */
+	admin_settings_shards_save_failed: () => LocalizedString
+	/**
+	 * Failed to load the cache mode settings.
+	 */
+	admin_settings_cache_mode_load_failed: () => LocalizedString
+	/**
+	 * Failed to save the cache mode.
+	 */
+	admin_settings_cache_mode_save_failed: () => LocalizedString
+	/**
+	 * Failed to load runtime profiles.
+	 */
+	admin_settings_runtime_profiles_load_failed: () => LocalizedString
+	/**
+	 * Failed to save the audit profile.
+	 */
+	admin_settings_runtime_profile_save_failed: () => LocalizedString
+	/**
+	 * Failed to delete the audit profile.
+	 */
+	admin_settings_runtime_profile_delete_failed: () => LocalizedString
+	/**
+	 * Failed to update the default runtime profiles.
+	 */
+	admin_settings_runtime_profile_defaults_save_failed: () => LocalizedString
+	/**
+	 * Profile ID is required.
+	 */
+	admin_settings_runtime_profile_id_required: () => LocalizedString
+	/**
+	 * Select a default audit profile.
+	 */
+	admin_settings_default_audit_profile_required: () => LocalizedString
+	/**
+	 * Select a default storage profile.
+	 */
+	admin_settings_default_storage_profile_required: () => LocalizedString
+	/**
+	 * Select a default residency profile.
+	 */
+	admin_settings_default_residency_profile_required: () => LocalizedString
+	/**
+	 * The selected storage profile cannot be activated.
+	 */
+	admin_settings_storage_profile_not_activatable: () => LocalizedString
+	/**
+	 * The selected audit profile cannot be activated.
+	 */
+	admin_settings_audit_profile_not_activatable: () => LocalizedString
+	/**
+	 * The selected residency profile cannot be activated.
+	 */
+	admin_settings_residency_profile_not_activatable: () => LocalizedString
+	/**
 	 * Diagnostic Logging
 	 */
 	admin_settings_diagnostic_logging: () => LocalizedString
@@ -63353,6 +63673,14 @@ Remove this role from {email}?
 	 * Failed to perform emergency rotation
 	 */
 	admin_signing_keys_error_emergency: () => LocalizedString
+	/**
+	 * Signing key rotated.
+	 */
+	admin_signing_keys_rotated: () => LocalizedString
+	/**
+	 * Emergency signing key rotation completed.
+	 */
+	admin_signing_keys_emergency_rotated: () => LocalizedString
 	/**
 	 * Reason must be at least 10 characters
 	 */
@@ -63938,21 +64266,69 @@ Remove this role from {email}?
 	 */
 	admin_theme_templates_description: () => LocalizedString
 	/**
+	 * Themes
+	 */
+	admin_theme_custom_title: () => LocalizedString
+	/**
+	 * Select a theme to publish, or open it for editing.
+	 */
+	admin_theme_custom_description: () => LocalizedString
+	/**
+	 * No themes have been created yet. Choose a template to create one.
+	 */
+	admin_theme_custom_empty: () => LocalizedString
+	/**
+	 * Publish selected theme
+	 */
+	admin_theme_publish: () => LocalizedString
+	/**
+	 * Publishing...
+	 */
+	admin_theme_publishing: () => LocalizedString
+	/**
+	 * Edit
+	 */
+	admin_theme_edit: () => LocalizedString
+	/**
+	 * Select {name} for publishing
+	 */
+	admin_theme_select_for_publish: (arg: { name: string }) => LocalizedString
+	/**
+	 * Select a theme to publish.
+	 */
+	admin_theme_publish_select_required: () => LocalizedString
+	/**
+	 * Published "{name}" as Login UI theme v{version}.
+	 */
+	admin_theme_publish_success: (arg: { name: string, version: number }) => LocalizedString
+	/**
+	 * Failed to publish the Login UI theme.
+	 */
+	admin_theme_publish_failed: () => LocalizedString
+	/**
+	 * Created
+	 */
+	admin_theme_created_at: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_theme_updated_at: () => LocalizedString
+	/**
+	 * Not recorded
+	 */
+	admin_theme_date_unknown: () => LocalizedString
+	/**
 	 * Built-in
 	 */
 	admin_theme_badge_builtin: () => LocalizedString
 	/**
-	 * Active
+	 * Published
 	 */
 	admin_theme_badge_active: () => LocalizedString
 	/**
 	 * Based on {name}
 	 */
 	admin_theme_based_on: (arg: { name: string }) => LocalizedString
-	/**
-	 * Delete
-	 */
-	admin_theme_delete: () => LocalizedString
 	/**
 	 * Theme templates
 	 */
@@ -63970,9 +64346,9 @@ Remove this role from {email}?
 	 */
 	admin_theme_saving: () => LocalizedString
 	/**
-	 * Save & apply
+	 * Save
 	 */
-	admin_theme_save_apply: () => LocalizedString
+	admin_theme_save: () => LocalizedString
 	/**
 	 * Use this template
 	 */
@@ -63994,7 +64370,15 @@ Remove this role from {email}?
 	 */
 	admin_theme_error_update_failed: () => LocalizedString
 	/**
-	 * You can keep up to {count} custom themes. Delete one first.
+	 * Failed to load theme settings.
+	 */
+	admin_theme_error_load_failed: () => LocalizedString
+	/**
+	 * Failed to upload the asset.
+	 */
+	admin_theme_asset_upload_failed: () => LocalizedString
+	/**
+	 * You can keep up to {count} custom themes.
 	 */
 	admin_theme_error_max_custom_themes: (arg: { count: number }) => LocalizedString
 	/**
@@ -64002,21 +64386,13 @@ Remove this role from {email}?
 	 */
 	admin_theme_duplicated_success: (arg: { name: string }) => LocalizedString
 	/**
-	 * Delete theme "{name}"? This cannot be undone.
-	 */
-	admin_theme_delete_confirm: (arg: { name: string }) => LocalizedString
-	/**
-	 * Deleted theme "{name}".
-	 */
-	admin_theme_deleted_success: (arg: { name: string }) => LocalizedString
-	/**
 	 * Discard unsaved theme changes?
 	 */
 	admin_theme_discard_confirm: () => LocalizedString
 	/**
-	 * Saved and applied "{name}".
+	 * Saved "{name}".
 	 */
-	admin_theme_saved_applied_success: (arg: { name: string }) => LocalizedString
+	admin_theme_saved_success: (arg: { name: string }) => LocalizedString
 	/**
 	 * Centered card, cobalt on cool paper, image optional.
 	 */
@@ -64185,6 +64561,74 @@ Remove this role from {email}?
 	 * Theme toggle
 	 */
 	admin_theme_preview_inspector_theme_toggle: () => LocalizedString
+	/**
+	 * Text
+	 */
+	admin_theme_text_title: () => LocalizedString
+	/**
+	 * Edit the Login UI text for each enabled language. The preview follows the selected language.
+	 */
+	admin_theme_text_description: () => LocalizedString
+	/**
+	 * Editing language
+	 */
+	admin_theme_text_language: () => LocalizedString
+	/**
+	 * Brand name
+	 */
+	admin_theme_text_brand_name: () => LocalizedString
+	/**
+	 * Enter a brand name.
+	 */
+	admin_theme_text_brand_name_required: () => LocalizedString
+	/**
+	 * Tagline
+	 */
+	admin_theme_text_tagline: () => LocalizedString
+	/**
+	 * Brand panel title
+	 */
+	admin_theme_text_brand_panel_title: () => LocalizedString
+	/**
+	 * Brand panel text
+	 */
+	admin_theme_text_brand_panel_text: () => LocalizedString
+	/**
+	 * Footer text
+	 */
+	admin_theme_text_footer: () => LocalizedString
+	/**
+	 * Only <a href="…"> links are rendered as HTML. Other tags are removed.
+	 */
+	admin_theme_text_footer_help: () => LocalizedString
+	/**
+	 * Only languages enabled in Language Settings are available. Empty fields remain blank in the Login UI.
+	 */
+	admin_theme_text_help: () => LocalizedString
+	/**
+	 * Page titles
+	 */
+	admin_theme_page_titles_title: () => LocalizedString
+	/**
+	 * Edit the primary heading shown on each main Login UI page for the selected language.
+	 */
+	admin_theme_page_titles_description: () => LocalizedString
+	/**
+	 * Login page
+	 */
+	admin_theme_page_titles_login: () => LocalizedString
+	/**
+	 * Registration page
+	 */
+	admin_theme_page_titles_registration: () => LocalizedString
+	/**
+	 * Account page
+	 */
+	admin_theme_page_titles_account: () => LocalizedString
+	/**
+	 * Re-authentication, consent, device verification, email verification, error, and completion titles remain contextual system messages.
+	 */
+	admin_theme_page_titles_help: () => LocalizedString
 	/**
 	 * Policy Settings
 	 */
@@ -64785,6 +65229,14 @@ Remove this role from {email}?
 	 * Default language
 	 */
 	admin_login_ui_language_default_label: () => LocalizedString
+	/**
+	 * Select all
+	 */
+	admin_login_ui_language_select_all: () => LocalizedString
+	/**
+	 * Clear all
+	 */
+	admin_login_ui_language_clear_all: () => LocalizedString
 	/**
 	 * Checked languages appear in the language selector on login, registration, account, and all other Login UI pages.
 	 */

@@ -108,7 +108,11 @@ type ScreenLocalizationLanguage =
   | 'de'
   | 'ko'
   | 'ru'
-  | 'id';
+  | 'id'
+  | 'ar'
+  | 'it'
+  | 'th'
+  | 'vi';
 
 type LocalizedText = Record<ScreenLocalizationLanguage, string>;
 
@@ -124,6 +128,10 @@ const SCREEN_LOCALIZATION_LANGUAGES: ScreenLocalizationLanguage[] = [
   'ko',
   'ru',
   'id',
+  'ar',
+  'it',
+  'th',
+  'vi',
 ];
 
 const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
@@ -139,6 +147,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '등록',
     ru: 'Регистрация',
     id: 'Pendaftaran',
+    ar: 'التسجيل',
+    it: 'Registrazione',
+    th: 'การลงทะเบียน',
+    vi: 'Đăng ký',
   },
   'Create your account': {
     en: 'Create your account',
@@ -152,6 +164,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '계정 만들기',
     ru: 'Создайте учетную запись',
     id: 'Buat akun Anda',
+    ar: 'إنشاء حسابك',
+    it: 'Crea il tuo account',
+    th: 'สร้างบัญชีของคุณ',
+    vi: 'Tạo tài khoản',
   },
   'Profile completion': {
     en: 'Profile completion',
@@ -165,6 +181,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '프로필 추가 입력',
     ru: 'Заполнение профиля',
     id: 'Pelengkapan profil',
+    ar: 'إكمال الملف الشخصي',
+    it: 'Completamento del profilo',
+    th: 'กรอกโปรไฟล์ให้สมบูรณ์',
+    vi: 'Hoàn thiện hồ sơ',
   },
   Login: {
     en: 'Login',
@@ -178,6 +198,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '로그인',
     ru: 'Вход',
     id: 'Masuk',
+    ar: 'تسجيل الدخول',
+    it: 'Accesso',
+    th: 'เข้าสู่ระบบ',
+    vi: 'Đăng nhập',
   },
   Consent: {
     en: 'Consent',
@@ -191,6 +215,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '동의',
     ru: 'Согласие',
     id: 'Persetujuan',
+    ar: 'الموافقة',
+    it: 'Consenso',
+    th: 'ความยินยอม',
+    vi: 'Sự đồng ý',
   },
   'Default registration screen.': {
     en: 'Default registration screen.',
@@ -204,6 +232,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 등록 양식입니다.',
     ru: 'Форма регистрации по умолчанию.',
     id: 'Formulir pendaftaran default.',
+    ar: 'شاشة التسجيل الافتراضية.',
+    it: 'Schermata di registrazione predefinita.',
+    th: 'หน้าลงทะเบียนเริ่มต้น',
+    vi: 'Màn hình đăng ký mặc định.',
   },
   'Default profile completion screen.': {
     en: 'Default profile completion screen.',
@@ -217,6 +249,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 프로필 추가 입력 양식입니다.',
     ru: 'Форма заполнения профиля по умолчанию.',
     id: 'Formulir pelengkapan profil default.',
+    ar: 'شاشة إكمال الملف الشخصي الافتراضية.',
+    it: 'Schermata predefinita per il completamento del profilo.',
+    th: 'หน้ากรอกโปรไฟล์เริ่มต้น',
+    vi: 'Màn hình hoàn thiện hồ sơ mặc định.',
   },
   'Default login screen.': {
     en: 'Default login screen.',
@@ -230,6 +266,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 로그인 양식입니다.',
     ru: 'Форма входа по умолчанию.',
     id: 'Formulir masuk default.',
+    ar: 'شاشة تسجيل الدخول الافتراضية.',
+    it: 'Schermata di accesso predefinita.',
+    th: 'หน้าเข้าสู่ระบบเริ่มต้น',
+    vi: 'Màn hình đăng nhập mặc định.',
   },
   'Code input': {
     en: 'Code input',
@@ -243,6 +283,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '코드 입력',
     ru: 'Ввод кода',
     id: 'Input kode',
+    ar: 'إدخال الرمز',
+    it: 'Inserimento del codice',
+    th: 'การกรอกรหัส',
+    vi: 'Nhập mã',
   },
   'Default code input screen.': {
     en: 'Default code input screen.',
@@ -256,6 +300,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 코드 입력 양식입니다.',
     ru: 'Форма ввода кода по умолчанию.',
     id: 'Formulir input kode default.',
+    ar: 'شاشة إدخال الرمز الافتراضية.',
+    it: 'Schermata predefinita per l’inserimento del codice.',
+    th: 'หน้ากรอกรหัสเริ่มต้น',
+    vi: 'Màn hình nhập mã mặc định.',
   },
   'Default login helper screen.': {
     en: 'Default login helper screen.',
@@ -269,6 +317,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 로그인 보조 양식입니다.',
     ru: 'Вспомогательная форма входа по умолчанию.',
     id: 'Formulir bantuan masuk default.',
+    ar: 'شاشة المساعدة الافتراضية لتسجيل الدخول.',
+    it: 'Schermata predefinita di assistenza all’accesso.',
+    th: 'หน้าช่วยเหลือการเข้าสู่ระบบเริ่มต้น',
+    vi: 'Màn hình hỗ trợ đăng nhập mặc định.',
   },
   'Default consent confirmation screen.': {
     en: 'Default consent confirmation screen.',
@@ -282,6 +334,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기본 동의 확인 양식입니다.',
     ru: 'Форма подтверждения согласия по умолчанию.',
     id: 'Formulir konfirmasi persetujuan default.',
+    ar: 'شاشة تأكيد الموافقة الافتراضية.',
+    it: 'Schermata predefinita di conferma del consenso.',
+    th: 'หน้ายืนยันความยินยอมเริ่มต้น',
+    vi: 'Màn hình xác nhận đồng ý mặc định.',
   },
   'Create Account with Passkey': {
     en: 'Create Account with Passkey',
@@ -295,6 +351,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: 'Passkey로 계정 만들기',
     ru: 'Создать аккаунт с Passkey',
     id: 'Buat akun dengan Passkey',
+    ar: 'إنشاء حساب باستخدام مفتاح المرور',
+    it: 'Crea un account con una passkey',
+    th: 'สร้างบัญชีด้วย Passkey',
+    vi: 'Tạo tài khoản bằng Passkey',
   },
   'Sign in with Passkey': {
     en: 'Sign in with Passkey',
@@ -308,6 +368,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: 'Passkey로 로그인',
     ru: 'Войти с Passkey',
     id: 'Masuk dengan Passkey',
+    ar: 'تسجيل الدخول باستخدام مفتاح المرور',
+    it: 'Accedi con una passkey',
+    th: 'เข้าสู่ระบบด้วย Passkey',
+    vi: 'Đăng nhập bằng Passkey',
   },
   Email: {
     en: 'Email',
@@ -321,6 +385,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이메일',
     ru: 'Электронная почта',
     id: 'Email',
+    ar: 'البريد الإلكتروني',
+    it: 'Email',
+    th: 'อีเมล',
+    vi: 'Email',
   },
   Name: {
     en: 'Name',
@@ -334,6 +402,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이름',
     ru: 'Имя',
     id: 'Nama',
+    ar: 'الاسم',
+    it: 'Nome',
+    th: 'ชื่อ',
+    vi: 'Tên',
   },
   'First Name': {
     en: 'First Name',
@@ -347,6 +419,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이름',
     ru: 'Имя',
     id: 'Nama depan',
+    ar: 'الاسم الأول',
+    it: 'Nome',
+    th: 'ชื่อ',
+    vi: 'Tên',
   },
   'Last Name': {
     en: 'Last Name',
@@ -360,6 +436,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '성',
     ru: 'Фамилия',
     id: 'Nama belakang',
+    ar: 'اسم العائلة',
+    it: 'Cognome',
+    th: 'นามสกุล',
+    vi: 'Họ',
   },
   'Preferred username': {
     en: 'Preferred username',
@@ -373,6 +453,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '선호 사용자 이름',
     ru: 'Предпочитаемое имя пользователя',
     id: 'Nama pengguna pilihan',
+    ar: 'اسم المستخدم المفضّل',
+    it: 'Nome utente preferito',
+    th: 'ชื่อผู้ใช้ที่ต้องการ',
+    vi: 'Tên người dùng mong muốn',
   },
   'Send verification code': {
     en: 'Send verification code',
@@ -386,6 +470,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 코드 보내기',
     ru: 'Отправить код подтверждения',
     id: 'Kirim kode verifikasi',
+    ar: 'إرسال رمز التحقق',
+    it: 'Invia il codice di verifica',
+    th: 'ส่งรหัสยืนยัน',
+    vi: 'Gửi mã xác minh',
   },
   'Send code by email': {
     en: 'Send code by email',
@@ -399,6 +487,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이메일로 인증 코드 보내기',
     ru: 'Отправить код по электронной почте',
     id: 'Kirim kode melalui email',
+    ar: 'إرسال رمز عبر البريد الإلكتروني',
+    it: 'Invia codice via email',
+    th: 'ส่งรหัสทางอีเมล',
+    vi: 'Gửi mã qua email',
   },
   'Mail OTP + authenticator app': {
     en: 'Mail OTP + authenticator app',
@@ -412,6 +504,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '메일 OTP + 인증 앱',
     ru: 'OTP по email + приложение-аутентификатор',
     id: 'OTP email + aplikasi autentikator',
+    ar: 'رمز بريد إلكتروني + تطبيق مصادقة',
+    it: 'OTP via email + app di autenticazione',
+    th: 'OTP ทางอีเมล + แอปยืนยันตัวตน',
+    vi: 'OTP qua email + ứng dụng xác thực',
   },
   'Sign in with authenticator app': {
     en: 'Sign in with authenticator app',
@@ -425,6 +521,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 앱으로 로그인',
     ru: 'Войти с помощью приложения-аутентификатора',
     id: 'Masuk dengan aplikasi autentikator',
+    ar: 'تسجيل الدخول باستخدام تطبيق المصادقة',
+    it: 'Accedi con l’app di autenticazione',
+    th: 'เข้าสู่ระบบด้วยแอปยืนยันตัวตน',
+    vi: 'Đăng nhập bằng ứng dụng xác thực',
   },
   'Create account with authenticator app': {
     en: 'Create account with authenticator app',
@@ -438,6 +538,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 앱으로 계정 만들기',
     ru: 'Создать учетную запись с помощью приложения-аутентификатора',
     id: 'Buat akun dengan aplikasi autentikator',
+    ar: 'إنشاء حساب باستخدام تطبيق المصادقة',
+    it: 'Crea un account con l’app di autenticazione',
+    th: 'สร้างบัญชีด้วยแอปยืนยันตัวตน',
+    vi: 'Tạo tài khoản bằng ứng dụng xác thực',
   },
   'Authentication code': {
     en: 'Authentication code',
@@ -451,6 +555,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 코드',
     ru: 'Код аутентификации',
     id: 'Kode autentikasi',
+    ar: 'رمز المصادقة',
+    it: 'Codice di autenticazione',
+    th: 'รหัสยืนยันตัวตน',
+    vi: 'Mã xác thực',
   },
   'Enter verification code': {
     en: 'Enter verification code',
@@ -464,6 +572,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 코드를 입력하세요',
     ru: 'Введите код подтверждения',
     id: 'Masukkan kode verifikasi',
+    ar: 'أدخل رمز التحقق',
+    it: 'Inserisci il codice di verifica',
+    th: 'กรอกรหัสยืนยัน',
+    vi: 'Nhập mã xác minh',
   },
   'Email verification code': {
     en: 'Email verification code',
@@ -477,6 +589,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이메일 인증 코드',
     ru: 'Код подтверждения из письма',
     id: 'Kode verifikasi email',
+    ar: 'رمز التحقق عبر البريد الإلكتروني',
+    it: 'Codice di verifica ricevuto via email',
+    th: 'รหัสยืนยันทางอีเมล',
+    vi: 'Mã xác minh qua email',
   },
   'Authenticator app code': {
     en: 'Authenticator app code',
@@ -490,6 +606,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 앱 코드',
     ru: 'Код из приложения-аутентификатора',
     id: 'Kode aplikasi autentikator',
+    ar: 'رمز تطبيق المصادقة',
+    it: 'Codice dell’app di autenticazione',
+    th: 'รหัสจากแอปยืนยันตัวตน',
+    vi: 'Mã ứng dụng xác thực',
   },
   'Enter the code from your email or authenticator app.': {
     en: 'Enter the code from your email or authenticator app.',
@@ -503,6 +623,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이메일 또는 인증 앱의 코드를 입력하세요.',
     ru: 'Введите код из письма или приложения-аутентификатора.',
     id: 'Masukkan kode dari email atau aplikasi autentikator.',
+    ar: 'أدخل الرمز الوارد في بريدك الإلكتروني أو الظاهر في تطبيق المصادقة.',
+    it: 'Inserisci il codice ricevuto via email o generato dall’app di autenticazione.',
+    th: 'กรอกรหัสจากอีเมลหรือแอปยืนยันตัวตนของคุณ',
+    vi: 'Nhập mã trong email hoặc ứng dụng xác thực của bạn.',
   },
   or: {
     en: 'or',
@@ -516,6 +640,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '또는',
     ru: 'или',
     id: 'atau',
+    ar: 'أو',
+    it: 'oppure',
+    th: 'หรือ',
+    vi: 'hoặc',
   },
   'Continue with another account': {
     en: 'Continue with another account',
@@ -529,6 +657,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '다른 계정으로 계속',
     ru: 'Продолжить с другой учетной записью',
     id: 'Lanjutkan dengan akun lain',
+    ar: 'المتابعة باستخدام حساب آخر',
+    it: 'Continua con un altro account',
+    th: 'ดำเนินการต่อด้วยบัญชีอื่น',
+    vi: 'Tiếp tục bằng tài khoản khác',
   },
   'Continue with external IdP': {
     en: 'Continue with external IdP',
@@ -542,6 +674,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '외부 IdP로 계속',
     ru: 'Продолжить через внешний IdP',
     id: 'Lanjutkan dengan IdP eksternal',
+    ar: 'المتابعة باستخدام موفّر هوية خارجي',
+    it: 'Continua con un provider di identità esterno',
+    th: 'ดำเนินการต่อด้วยผู้ให้บริการข้อมูลประจำตัวภายนอก',
+    vi: 'Tiếp tục với nhà cung cấp danh tính bên ngoài',
   },
   'Ext. IdP': {
     en: 'Ext. IdP',
@@ -555,6 +691,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: 'Ext. IdP',
     ru: 'Ext. IdP',
     id: 'Ext. IdP',
+    ar: 'موفّر هوية خارجي',
+    it: 'IdP esterno',
+    th: 'IdP ภายนอก',
+    vi: 'IdP bên ngoài',
   },
   'Sign in': {
     en: 'Sign in',
@@ -568,6 +708,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '로그인',
     ru: 'Войти',
     id: 'Masuk',
+    ar: 'تسجيل الدخول',
+    it: 'Accedi',
+    th: 'เข้าสู่ระบบ',
+    vi: 'Đăng nhập',
   },
   'Sign in with directory password': {
     en: 'Sign in with directory password',
@@ -581,6 +725,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '디렉터리 비밀번호로 로그인',
     ru: 'Войти с паролем каталога',
     id: 'Masuk dengan kata sandi direktori',
+    ar: 'تسجيل الدخول باستخدام كلمة مرور الدليل',
+    it: 'Accedi con la password della directory',
+    th: 'เข้าสู่ระบบด้วยรหัสผ่านไดเรกทอรี',
+    vi: 'Đăng nhập bằng mật khẩu thư mục',
   },
   'Consent confirmation': {
     en: 'Consent confirmation',
@@ -594,6 +742,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '동의 확인',
     ru: 'Подтверждение согласия',
     id: 'Konfirmasi persetujuan',
+    ar: 'تأكيد الموافقة',
+    it: 'Conferma del consenso',
+    th: 'ยืนยันความยินยอม',
+    vi: 'Xác nhận sự đồng ý',
   },
   'Review the consent items required for this step.': {
     en: 'Review the consent items required for this step.',
@@ -607,6 +759,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '이 단계에 필요한 동의 항목을 확인하세요.',
     ru: 'Проверьте пункты согласия, необходимые для этого шага.',
     id: 'Tinjau item persetujuan yang diperlukan untuk langkah ini.',
+    ar: 'راجع بنود الموافقة المطلوبة لهذه الخطوة.',
+    it: 'Controlla i consensi richiesti per questo passaggio.',
+    th: 'ตรวจสอบรายการความยินยอมที่จำเป็นสำหรับขั้นตอนนี้',
+    vi: 'Xem lại các mục đồng ý bắt buộc cho bước này.',
   },
   'Security verification': {
     en: 'Security verification',
@@ -620,6 +776,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '보안 확인',
     ru: 'Проверка безопасности',
     id: 'Verifikasi keamanan',
+    ar: 'التحقق الأمني',
+    it: 'Verifica di sicurezza',
+    th: 'การยืนยันความปลอดภัย',
+    vi: 'Xác minh bảo mật',
   },
   Divider: {
     en: 'Divider',
@@ -633,6 +793,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '구분선',
     ru: 'Разделитель',
     id: 'Pemisah',
+    ar: 'فاصل',
+    it: 'Separatore',
+    th: 'เส้นคั่น',
+    vi: 'Dòng phân cách',
   },
   'Account overview': {
     en: 'Account overview',
@@ -646,6 +810,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '계정 개요',
     ru: 'Обзор учетной записи',
     id: 'Ikhtisar akun',
+    ar: 'نظرة عامة على الحساب',
+    it: 'Panoramica dell’account',
+    th: 'ภาพรวมบัญชี',
+    vi: 'Tổng quan tài khoản',
   },
   'Manage your account': {
     en: 'Manage your account',
@@ -659,6 +827,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '계정 관리',
     ru: 'Управление учетной записью',
     id: 'Kelola akun Anda',
+    ar: 'إدارة حسابك',
+    it: 'Gestisci il tuo account',
+    th: 'จัดการบัญชีของคุณ',
+    vi: 'Quản lý tài khoản',
   },
   'Review security settings': {
     en: 'Review security settings',
@@ -672,6 +844,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '보안 설정 검토',
     ru: 'Проверить настройки безопасности',
     id: 'Tinjau pengaturan keamanan',
+    ar: 'مراجعة إعدادات الأمان',
+    it: 'Controlla le impostazioni di sicurezza',
+    th: 'ตรวจสอบการตั้งค่าความปลอดภัย',
+    vi: 'Xem lại cài đặt bảo mật',
   },
   'User profile': {
     en: 'User profile',
@@ -685,6 +861,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '사용자 프로필',
     ru: 'Профиль пользователя',
     id: 'Profil pengguna',
+    ar: 'الملف الشخصي للمستخدم',
+    it: 'Profilo utente',
+    th: 'โปรไฟล์ผู้ใช้',
+    vi: 'Hồ sơ người dùng',
   },
   Devices: {
     en: 'Devices',
@@ -698,6 +878,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '기기',
     ru: 'Устройства',
     id: 'Perangkat',
+    ar: 'الأجهزة',
+    it: 'Dispositivi',
+    th: 'อุปกรณ์',
+    vi: 'Thiết bị',
   },
   Sessions: {
     en: 'Sessions',
@@ -711,6 +895,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '세션',
     ru: 'Сеансы',
     id: 'Sesi',
+    ar: 'الجلسات',
+    it: 'Sessioni',
+    th: 'เซสชัน',
+    vi: 'Phiên đăng nhập',
   },
   Passkeys: {
     en: 'Passkeys',
@@ -724,6 +912,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '패스키',
     ru: 'Ключи доступа',
     id: 'Passkey',
+    ar: 'مفاتيح المرور',
+    it: 'Passkey',
+    th: 'Passkey',
+    vi: 'Passkey',
   },
   'Authenticator app': {
     en: 'Authenticator app',
@@ -737,6 +929,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '인증 앱',
     ru: 'Приложение-аутентификатор',
     id: 'Aplikasi autentikator',
+    ar: 'تطبيق المصادقة',
+    it: 'App di autenticazione',
+    th: 'แอปยืนยันตัวตน',
+    vi: 'Ứng dụng xác thực',
   },
   'Consent information': {
     en: 'Consent information',
@@ -750,6 +946,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '동의 정보',
     ru: 'Информация о согласиях',
     id: 'Informasi persetujuan',
+    ar: 'معلومات الموافقات',
+    it: 'Informazioni sui consensi',
+    th: 'ข้อมูลความยินยอม',
+    vi: 'Thông tin đồng ý',
   },
   'Account activity': {
     en: 'Account activity',
@@ -763,6 +963,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '계정 활동',
     ru: 'Активность учетной записи',
     id: 'Aktivitas akun',
+    ar: 'نشاط الحساب',
+    it: 'Attività dell’account',
+    th: 'กิจกรรมในบัญชี',
+    vi: 'Hoạt động tài khoản',
   },
   'Connected accounts': {
     en: 'Connected accounts',
@@ -776,6 +980,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '연결된 계정',
     ru: 'Связанные учетные записи',
     id: 'Akun terhubung',
+    ar: 'الحسابات المرتبطة',
+    it: 'Account collegati',
+    th: 'บัญชีที่เชื่อมต่อ',
+    vi: 'Tài khoản đã liên kết',
   },
   'Custom guidance': {
     en: 'Custom guidance',
@@ -789,6 +997,10 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     ko: '사용자 지정 안내',
     ru: 'Пользовательские указания',
     id: 'Panduan khusus',
+    ar: 'إرشادات مخصصة',
+    it: 'Indicazioni personalizzate',
+    th: 'คำแนะนำที่กำหนดเอง',
+    vi: 'Hướng dẫn tùy chỉnh',
   },
 };
 
@@ -814,6 +1026,17 @@ function defaultAuthenticationFields(screenKind: 'registration' | 'login'): Scre
       auth_method: 'passkey',
       order: 10,
     },
+    ...(isRegistration
+      ? [
+          {
+            field: 'email',
+            label: 'Email',
+            required: true,
+            block_type: 'identity_field' as const,
+            order: 15,
+          },
+        ]
+      : []),
     {
       field: 'divider.or',
       label: 'or',
@@ -1457,17 +1680,6 @@ function defaultScreenField(
   return screen.fields.find((field) => field.field === fieldName);
 }
 
-function isRemovedRegistrationDefaultField(field: ScreenField): boolean {
-  const blockType = field.block_type ?? 'identity_field';
-  return (
-    (field.field === 'auth.totp' &&
-      blockType === 'auth_widget' &&
-      (field.auth_method === undefined || field.auth_method === 'totp')) ||
-    (field.field === 'email' && blockType === 'identity_field') ||
-    (field.field === 'name' && blockType === 'identity_field')
-  );
-}
-
 function isLegacyRegistrationDefaultScreen(fields: ScreenField[]): boolean {
   if (fields.length !== 4 || fields.some((field) => field.block_id)) return false;
   const expectedFields = new Map<string, { blockType: string; order: number }>([
@@ -1475,6 +1687,58 @@ function isLegacyRegistrationDefaultScreen(fields: ScreenField[]): boolean {
     ['auth.totp', { blockType: 'auth_widget', order: 15 }],
     ['email', { blockType: 'identity_field', order: 20 }],
     ['name', { blockType: 'identity_field', order: 30 }],
+  ]);
+
+  return fields.every((field) => {
+    const expected = expectedFields.get(field.field);
+    return (
+      expected !== undefined &&
+      (field.block_type ?? 'identity_field') === expected.blockType &&
+      field.order === expected.order
+    );
+  });
+}
+
+function isPreviousRegistrationDefaultScreen(fields: ScreenField[]): boolean {
+  if (fields.length !== 11 || fields.some((field) => field.block_id)) return false;
+  const expectedFields = new Map<string, { blockType: string; order: number }>([
+    ['heading.registration', { blockType: 'heading', order: 0 }],
+    ['auth.passkey', { blockType: 'auth_widget', order: 10 }],
+    ['email', { blockType: 'identity_field', order: 15 }],
+    ['name', { blockType: 'identity_field', order: 17 }],
+    ['divider.or', { blockType: 'divider', order: 20 }],
+    ['auth.mail_otp', { blockType: 'auth_widget', order: 30 }],
+    ['auth.totp', { blockType: 'auth_widget', order: 35 }],
+    ['divider.other_accounts', { blockType: 'divider', order: 40 }],
+    ['auth.external_idp', { blockType: 'auth_widget', order: 50 }],
+    ['divider.directory_password', { blockType: 'divider', order: 55 }],
+    ['auth.directory_password', { blockType: 'auth_widget', order: 60 }],
+  ]);
+
+  return fields.every((field) => {
+    const expected = expectedFields.get(field.field);
+    return (
+      expected !== undefined &&
+      (field.block_type ?? 'identity_field') === expected.blockType &&
+      field.order === expected.order
+    );
+  });
+}
+
+function isPreferredUsernameRegistrationDefaultScreen(fields: ScreenField[]): boolean {
+  if (fields.length !== 11 || fields.some((field) => field.block_id)) return false;
+  const expectedFields = new Map<string, { blockType: string; order: number }>([
+    ['heading.registration', { blockType: 'heading', order: 0 }],
+    ['auth.passkey', { blockType: 'auth_widget', order: 10 }],
+    ['email', { blockType: 'identity_field', order: 15 }],
+    ['preferred_username', { blockType: 'identity_field', order: 17 }],
+    ['divider.or', { blockType: 'divider', order: 20 }],
+    ['auth.mail_otp', { blockType: 'auth_widget', order: 30 }],
+    ['auth.totp', { blockType: 'auth_widget', order: 35 }],
+    ['divider.other_accounts', { blockType: 'divider', order: 40 }],
+    ['auth.external_idp', { blockType: 'auth_widget', order: 50 }],
+    ['divider.directory_password', { blockType: 'divider', order: 55 }],
+    ['auth.directory_password', { blockType: 'auth_widget', order: 60 }],
   ]);
 
   return fields.every((field) => {
@@ -1571,13 +1835,18 @@ function mergeDefaultScreenFieldMetadata(
   let working = fields;
 
   if (screen.screen_key === 'registration') {
-    if (isLegacyRegistrationDefaultScreen(fields)) {
-      working = fields.filter((field) => !isRemovedRegistrationDefaultField(field));
-      if (working.length !== fields.length) changed = true;
+    if (
+      isLegacyRegistrationDefaultScreen(fields) ||
+      isPreviousRegistrationDefaultScreen(fields) ||
+      isPreferredUsernameRegistrationDefaultScreen(fields)
+    ) {
+      working = screen.fields;
+      changed = true;
     }
     for (const fieldName of [
       'heading.registration',
       'auth.passkey',
+      'email',
       'divider.or',
       'auth.mail_otp',
       'auth.totp',

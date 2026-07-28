@@ -110,7 +110,7 @@
 
 			settings = settingsResult;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load settings';
+			error = err instanceof Error ? err.message : $LL.admin_settings_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -168,7 +168,7 @@
 
 		// Check if editing is allowed at current scope
 		if (!canEdit) {
-			error = 'You do not have permission to edit settings at this scope level';
+			error = $LL.admin_settings_edit_forbidden();
 			return;
 		}
 
@@ -205,7 +205,10 @@
 			pendingPatches = [];
 
 			// Show success message
-			successMessage = `Successfully updated ${appliedCount} setting${appliedCount !== 1 ? 's' : ''}`;
+			successMessage =
+				appliedCount === 1
+					? $LL.admin_settings_updated_one()
+					: $LL.admin_settings_updated_many({ count: appliedCount });
 
 			// Reload data to get updated version
 			await loadData();
@@ -216,9 +219,9 @@
 			}, 3000);
 		} catch (err) {
 			if (err instanceof SettingsConflictError) {
-				error = `Settings were modified by another user. Please reload and try again.`;
+				error = $LL.admin_settings_conflict();
 			} else {
-				error = err instanceof Error ? err.message : 'Failed to save settings';
+				error = err instanceof Error ? err.message : $LL.admin_settings_save_failed();
 			}
 		} finally {
 			saving = false;

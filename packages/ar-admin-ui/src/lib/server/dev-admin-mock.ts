@@ -7334,7 +7334,22 @@ function sampleDestinationProfiles() {
 				id: 'destination-profile-version-saml-sp',
 				versionLabel: 'v1',
 				lifecycleState: 'active',
-				schema: { fields: ['urn:oid:0.9.2342.19200300.100.1.3', 'urn:oid:2.5.4.3'] }
+				schema: {
+					attributes: [
+						{
+							name: 'urn:oid:0.9.2342.19200300.100.1.3',
+							label: 'mail',
+							classification: 'pii',
+							nullable: true
+						},
+						{
+							name: 'urn:oid:2.5.4.3',
+							label: 'cn',
+							classification: 'pii',
+							nullable: true
+						}
+					]
+				}
 			}
 		}
 	];

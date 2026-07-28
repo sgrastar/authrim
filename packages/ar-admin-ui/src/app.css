@@ -91,6 +91,17 @@
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* Successful action messages are presented by the shared Admin toast host. */
+:is(
+	.alert.alert-success,
+	.alert.alert--success,
+	.alert.success,
+	.message.success,
+	.notice.success
+) {
+	display: none !important;
+}
+
 /* === Base Styles === */
 html {
 	font-size: 16px;

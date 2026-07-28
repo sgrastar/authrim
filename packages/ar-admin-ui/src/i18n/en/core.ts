@@ -59,6 +59,7 @@ const core = {
 	common_status_warning: 'Warning',
 	common_status_error: 'Error',
 	common_status_info: 'Info',
+	common_editor_load_failed: 'Failed to load the editor.',
 	common_status_neutral: 'Neutral'
 } as const;
 

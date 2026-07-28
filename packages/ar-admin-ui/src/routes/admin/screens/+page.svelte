@@ -117,8 +117,10 @@
 			type: 'consent_widget',
 			labelJa: '同意ウィジェット',
 			labelEn: 'Consent widget',
-			descriptionJa: 'Flowで選択した同意ポリシーを表示し、回答を取得する枠です。',
-			descriptionEn: 'Render the consent policy selected on the Flow node and collect answers.',
+			descriptionJa:
+				'Flowで選択した同意ポリシーと、Destination Profileの必須・任意項目を表示します。',
+			descriptionEn:
+				'Render the Flow consent policy and required or optional Destination Profile fields.',
 			icon: 'i-ph-handshake'
 		},
 		{
@@ -295,7 +297,11 @@
 		de: { labelJa: 'ドイツ語 (de)', labelEn: 'German (de)' },
 		ko: { labelJa: '韓国語 (ko)', labelEn: 'Korean (ko)' },
 		ru: { labelJa: 'ロシア語 (ru)', labelEn: 'Russian (ru)' },
-		id: { labelJa: 'インドネシア語 (id)', labelEn: 'Indonesian (id)' }
+		id: { labelJa: 'インドネシア語 (id)', labelEn: 'Indonesian (id)' },
+		ar: { labelJa: 'アラビア語 (ar)', labelEn: 'Arabic (ar)' },
+		it: { labelJa: 'イタリア語 (it)', labelEn: 'Italian (it)' },
+		th: { labelJa: 'タイ語 (th)', labelEn: 'Thai (th)' },
+		vi: { labelJa: 'ベトナム語 (vi)', labelEn: 'Vietnamese (vi)' }
 	};
 	const localizationLanguages = SCREEN_LOCALIZATION_LANGUAGES.map((code) => ({
 		code,
@@ -393,6 +399,11 @@
 					field: 'auth.passkey',
 					label: t('Passkeyでアカウント作成', 'Create Account with Passkey'),
 					auth_method: 'passkey'
+				}),
+				createBlock('identity_field', 15, {
+					field: 'email',
+					label: t('メールアドレス', 'Email'),
+					required: true
 				}),
 				createBlock('divider', 20, {
 					field: 'divider.or',
@@ -892,8 +903,8 @@
 				text:
 					patch.text ??
 					t(
-						'Flowノードで選択した同意ポリシーをここに表示します。',
-						'The consent policy selected on the Flow node is rendered here.'
+						'Flowの同意ポリシーとDestination Profileの必須・任意項目をここに表示します。',
+						'The Flow consent policy and Destination Profile fields are rendered here.'
 					),
 				order,
 				...patch
@@ -1693,7 +1704,7 @@
 																	</button>
 																{:else if method === 'mail_otp_totp'}
 																	<div class="preview-field">
-																		<span>{t('メールまたはユーザー名', 'Email or username')}</span>
+																		<span>{t('メールアドレス', 'Email address')}</span>
 																		<input readonly placeholder="you@example.com" />
 																	</div>
 																	<button class="preview-auth-button secondary" type="button">
@@ -1719,7 +1730,7 @@
 																	</button>
 																{:else if method === 'totp'}
 																	<div class="preview-field">
-																		<span>{t('メールまたはユーザー名', 'Email or username')}</span>
+																		<span>{t('メールアドレス', 'Email address')}</span>
 																		<input readonly placeholder="you@example.com" />
 																	</div>
 																	<button class="preview-auth-button secondary" type="button">
@@ -1784,8 +1795,8 @@
 																<p>
 																	{field.text ||
 																		t(
-																			'Flowノードで選択した同意ポリシーがここに表示されます。',
-																			'The consent policy selected on the Flow node is rendered here.'
+																			'Flowの同意ポリシーとDestination Profileの項目がここに表示されます。',
+																			'The Flow consent policy and Destination Profile fields are rendered here.'
 																		)}
 																</p>
 																<label class="preview-check-field">
@@ -2418,8 +2429,7 @@
 																		</button>
 																	{:else if method === 'mail_otp_totp'}
 																		<div class="preview-field">
-																			<span>{t('メールまたはユーザー名', 'Email or username')}</span
-																			>
+																			<span>{t('メールアドレス', 'Email address')}</span>
 																			<input readonly placeholder="you@example.com" />
 																		</div>
 																		<button class="preview-auth-button secondary" type="button">
@@ -2445,8 +2455,7 @@
 																		</button>
 																	{:else if method === 'totp'}
 																		<div class="preview-field">
-																			<span>{t('メールまたはユーザー名', 'Email or username')}</span
-																			>
+																			<span>{t('メールアドレス', 'Email address')}</span>
 																			<input readonly placeholder="you@example.com" />
 																		</div>
 																		<button class="preview-auth-button secondary" type="button">
@@ -2512,8 +2521,8 @@
 																	<p>
 																		{field.text ||
 																			t(
-																				'Flowノードで選択した同意ポリシーがここに表示されます。',
-																				'The consent policy selected on the Flow node is rendered here.'
+																				'Flowの同意ポリシーとDestination Profileの項目がここに表示されます。',
+																				'The Flow consent policy and Destination Profile fields are rendered here.'
 																			)}
 																	</p>
 																	<label class="preview-check-field">

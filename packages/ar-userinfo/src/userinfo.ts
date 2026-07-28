@@ -294,6 +294,8 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         clientId: client_id,
         sectorIdentifier: clientMetadata.sector_identifier_uri,
         selector: clientMetadata.identity_mapping,
+        destinationSurface: 'userinfo',
+        grantedScopes: scopes,
         claims: userClaims,
       });
       if (mapped.claims !== userClaims) {

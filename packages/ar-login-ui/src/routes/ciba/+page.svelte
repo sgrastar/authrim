@@ -3,6 +3,7 @@
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { Card, Button } from '$lib/components';
 	import { cibaAPI } from '$lib/api/client';
+	import { messageForCaughtError } from '$lib/errors/display-error';
 	import { onMount } from 'svelte';
 
 	const { brandingStore } = useLoginUIStores();
@@ -38,7 +39,7 @@
 				pendingRequests = (data as typeof pendingRequests) || [];
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
+			error = messageForCaughtError(err, $LL.ciba_errorGeneric());
 		} finally {
 			loading = false;
 		}
@@ -66,7 +67,7 @@
 				}, 3000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
+			error = messageForCaughtError(err, $LL.ciba_errorGeneric());
 		} finally {
 			processingId = null;
 		}
@@ -94,7 +95,7 @@
 				}, 3000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.ciba_errorGeneric();
+			error = messageForCaughtError(err, $LL.ciba_errorGeneric());
 		} finally {
 			processingId = null;
 		}

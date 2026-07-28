@@ -88,7 +88,7 @@
 
 	.input-icon {
 		position: absolute;
-		left: 12px;
+		inset-inline-start: 12px;
 		top: 50%;
 		transform: translateY(-50%);
 		width: 18px;
@@ -120,7 +120,7 @@
 	}
 
 	.form-input.has-icon {
-		padding-left: 36px;
+		padding-inline-start: 36px;
 	}
 
 	.form-input::placeholder {

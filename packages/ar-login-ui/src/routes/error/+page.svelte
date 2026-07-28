@@ -2,20 +2,20 @@
 	import { onMount } from 'svelte';
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 
 	const { brandingStore } = useLoginUIStores();
 
 	let errorCode = $state('');
-	let errorMessage = $state('');
+	let errorMessage = $derived(getErrorMessage(errorCode));
 
 	onMount(() => {
 		// Get error parameters from URL
 		const urlParams = new URLSearchParams(window.location.search);
 		errorCode = urlParams.get('error') || 'unknown';
-		// Get user-friendly error message
-		errorMessage = getErrorMessage(errorCode);
 	});
 
 	function getErrorMessage(code: string): string {
@@ -58,7 +58,7 @@
 				{brandingStore.brandName || $LL.app_title()}
 			</h1>
 			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
+				<LocalizedTagline />
 			</p>
 		</div>
 
@@ -118,6 +118,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

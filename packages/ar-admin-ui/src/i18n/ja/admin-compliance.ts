@@ -90,6 +90,8 @@ const adminCompliance = {
 	admin_compliance_report_user_activity: 'USER ACTIVITY',
 	admin_compliance_report_unknown: 'UNKNOWN',
 	admin_compliance_cleanup_completed: 'Cleanup Completed',
+	admin_compliance_retention_updated: '保持ポリシーを更新しました。',
+	admin_compliance_cleanup_completed_count: 'クリーンアップが完了し、{count}件を削除しました。',
 	admin_compliance_cleanup_run: 'Run Data Cleanup',
 	admin_compliance_cleanup_success: '削除しました:',
 	admin_compliance_cleanup_records_suffix: 'records',

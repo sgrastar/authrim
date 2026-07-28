@@ -981,6 +981,10 @@ paths:
                   contract:
                     type: object
                     additionalProperties: true
+                    description: >
+                      Signed runtime contract. Consent-policy steps can include
+                      content.destination_field_consent, derived from the active Destination
+                      Profile, with required fields locked and optional fields selectable.
                   contract_hash:
                     type: string
                   signature:
@@ -1079,8 +1083,8 @@ paths:
       description: >
         Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
         contract hash, HMAC signature, and current step identity. Step input is interpreted by the
-        active runtime component; consent-policy input records consent item decisions for the
-        authenticated user.
+        active runtime component; consent-policy input records consent item decisions and
+        Destination Profile field selections for the authenticated user.
       parameters:
         - name: interaction_id
           in: path
@@ -1112,6 +1116,26 @@ paths:
                 input:
                   type: object
                   additionalProperties: true
+                  properties:
+                    consent_item_decisions:
+                      type: object
+                      additionalProperties:
+                        type: string
+                        enum:
+                          - granted
+                          - denied
+                          - selected
+                    consent_item_selected_values:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    destination_field_decisions:
+                      type: object
+                      description: >
+                        Boolean decisions keyed by Destination Profile field key. Required fields
+                        must be true; optional fields set to false are omitted from release.
+                      additionalProperties:
+                        type: boolean
       responses:
         '200':
           description: Updated runtime interaction state and next step.

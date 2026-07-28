@@ -22,7 +22,7 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, LoginUITextLocalizations } from '@authrim/ar-lib-core';
 import {
   getRequestHost,
   getLogger,
@@ -157,6 +157,7 @@ interface UIConfig {
     fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
     fontScale: 'compact' | 'comfortable' | 'spacious';
     backgroundColor: string;
+    accentColor: string;
     titleColor: string;
     textColor: string;
     copyColor: string;
@@ -199,6 +200,7 @@ interface UIConfig {
     thumbnailUrl: string | null;
     customCss: string | null;
     headerText: string | null;
+    textLocalizations: LoginUITextLocalizations;
     footerText: string | null;
     footerLinks: Array<{ label: string; url: string }>;
     customBlocks: Array<{
@@ -282,7 +284,32 @@ const LOGIN_UI_LOCALES = [
   'ko',
   'ru',
   'id',
+  'ar',
+  'it',
+  'th',
+  'vi',
 ] as const;
+
+const LEGACY_DEFAULT_LOGIN_UI_LOCALES = [
+  'en',
+  'ja',
+  'zh-CN',
+  'zh-TW',
+  'es',
+  'pt',
+  'fr',
+  'de',
+  'ko',
+  'ru',
+  'id',
+] as const;
+
+function isLegacyDefaultLoginUILocaleSet(locales: readonly string[]): boolean {
+  return (
+    locales.length === LEGACY_DEFAULT_LOGIN_UI_LOCALES.length &&
+    LEGACY_DEFAULT_LOGIN_UI_LOCALES.every((locale) => locales.includes(locale))
+  );
+}
 
 const LOGIN_PROVIDER_ICON_NAMES = new Set([
   'buildings',
@@ -336,6 +363,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     fontFamily: 'system',
     fontScale: 'comfortable',
     backgroundColor: '',
+    accentColor: '',
     titleColor: '',
     textColor: '',
     copyColor: '',
@@ -371,11 +399,28 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     thumbnailUrl: null,
     customCss: null,
     headerText: null,
+    textLocalizations: {},
     footerText: null,
     footerLinks: [],
     customBlocks: [],
   },
-  supportedLocales: ['en', 'ja', 'zh-CN', 'zh-TW', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'],
+  supportedLocales: [
+    'en',
+    'ja',
+    'zh-CN',
+    'zh-TW',
+    'es',
+    'pt',
+    'fr',
+    'de',
+    'ko',
+    'ru',
+    'id',
+    'ar',
+    'it',
+    'th',
+    'vi',
+  ],
   defaultLocale: 'en',
   selfService: {
     accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
@@ -436,6 +481,7 @@ interface LoginUIKVSettings {
   'login-ui.font_family'?: string;
   'login-ui.font_scale'?: string;
   'login-ui.background_color'?: string;
+  'login-ui.accent_color'?: string;
   'login-ui.title_color'?: string;
   'login-ui.text_color'?: string;
   'login-ui.copy_color'?: string;
@@ -474,6 +520,7 @@ interface LoginUIKVSettings {
   'login-ui.brand_position'?: string;
   'login-ui.brand_align'?: string;
   'login-ui.header_text'?: string;
+  'login-ui.text_localizations'?: string;
   'login-ui.footer_text'?: string;
   'login-ui.footer_links'?: string;
   'login-ui.custom_blocks'?: string;
@@ -553,6 +600,7 @@ interface LoginUIResolved {
   fontFamily: UIConfig['pageTemplate']['fontFamily'];
   fontScale: UIConfig['pageTemplate']['fontScale'];
   backgroundColor: string;
+  accentColor: string;
   titleColor: string;
   textColor: string;
   copyColor: string;
@@ -591,6 +639,7 @@ interface LoginUIResolved {
   brandPosition: UIConfig['pageTemplate']['brandPosition'];
   brandAlign: UIConfig['pageTemplate']['brandAlign'];
   headerText: string | null;
+  textLocalizations: LoginUITextLocalizations;
   footerText: string | null;
   footerLinks: Array<{ label: string; url: string }>;
   customBlocks: Array<{
@@ -613,6 +662,50 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
+  }
+}
+
+const LOGIN_UI_TEXT_FIELDS = new Set([
+  'tagline',
+  'brandPanelTitle',
+  'brandPanelText',
+  'footerText',
+  'loginTitle',
+  'registrationTitle',
+  'accountTitle',
+]);
+
+function safeParseTextLocalizations(
+  json: string | undefined,
+  fallback: LoginUITextLocalizations = {}
+): LoginUITextLocalizations {
+  if (!json || typeof json !== 'string') return fallback;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(
+          ([locale, value]) =>
+            LOGIN_UI_LOCALES.includes(locale as (typeof LOGIN_UI_LOCALES)[number]) &&
+            Boolean(value) &&
+            typeof value === 'object' &&
+            !Array.isArray(value)
+        )
+        .flatMap(([locale, value]) => {
+          const localized = Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .filter(
+                ([field, text]) => LOGIN_UI_TEXT_FIELDS.has(field) && typeof text === 'string'
+              )
+              .map(([field, text]) => [field, (text as string).trim().slice(0, MAX_STRING_LENGTH)])
+          );
+          return Object.keys(localized).length > 0 ? [[locale, localized]] : [];
+        })
+    );
+  } catch {
+    return fallback;
   }
 }
 
@@ -753,7 +846,7 @@ function buildAuthenticationMethodsEdgeCacheRequest(input: {
   clientId: string | null;
   revision: string;
 }): Request {
-  const url = new URL('/cache/authentication-methods/v1', EDGE_CACHE_KEY_ORIGIN);
+  const url = new URL('/cache/authentication-methods/v2', EDGE_CACHE_KEY_ORIGIN);
   url.searchParams.set('tenant', input.tenantId);
   url.searchParams.set('host', normalizeCacheKeyPart(input.forwardedHost, '__unknown_host__'));
   url.searchParams.set('client', input.clientId?.trim() || '__tenant__');
@@ -914,13 +1007,16 @@ function resolveLoginUIFromKVSettings(
   kvSettings: LoginUIKVSettings,
   defaults: LoginUIResolved
 ): LoginUIResolved {
-  const supportedLocales = kvSettings['login-ui.supported_locales']
+  const configuredSupportedLocales = kvSettings['login-ui.supported_locales']
     ? kvSettings['login-ui.supported_locales']
         .split(',')
         .map((locale) => locale.trim())
         .filter((locale) => LOGIN_UI_LOCALES.includes(locale as (typeof LOGIN_UI_LOCALES)[number]))
         .filter((locale, index, locales) => locales.indexOf(locale) === index)
     : defaults.supportedLocales;
+  const supportedLocales = isLegacyDefaultLoginUILocaleSet(configuredSupportedLocales)
+    ? [...LOGIN_UI_LOCALES]
+    : configuredSupportedLocales;
   const safeSupportedLocales =
     supportedLocales.length > 0 ? supportedLocales : defaults.supportedLocales;
   const configuredDefaultLocale = kvSettings['login-ui.default_locale'];
@@ -952,6 +1048,7 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_color'],
       defaults.backgroundColor
     ),
+    accentColor: readSafeColor(kvSettings['login-ui.accent_color'], defaults.accentColor),
     titleColor: readSafeColor(kvSettings['login-ui.title_color'], defaults.titleColor),
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
@@ -1093,6 +1190,13 @@ function resolveLoginUIFromKVSettings(
       defaults.brandAlign
     ),
     headerText: kvSettings['login-ui.header_text'] || defaults.headerText,
+    textLocalizations:
+      kvSettings['login-ui.text_localizations'] === undefined
+        ? defaults.textLocalizations
+        : safeParseTextLocalizations(
+            kvSettings['login-ui.text_localizations'],
+            defaults.textLocalizations
+          ),
     footerText: kvSettings['login-ui.footer_text'] || defaults.footerText,
     footerLinks:
       kvSettings['login-ui.footer_links'] === undefined
@@ -1151,6 +1255,7 @@ async function getLoginUISettings(
     fontFamily: DEFAULT_UI_CONFIG.pageTemplate.fontFamily,
     fontScale: DEFAULT_UI_CONFIG.pageTemplate.fontScale,
     backgroundColor: DEFAULT_UI_CONFIG.pageTemplate.backgroundColor,
+    accentColor: DEFAULT_UI_CONFIG.pageTemplate.accentColor,
     titleColor: DEFAULT_UI_CONFIG.pageTemplate.titleColor,
     textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
     copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
@@ -1190,6 +1295,7 @@ async function getLoginUISettings(
     brandPosition: DEFAULT_UI_CONFIG.pageTemplate.brandPosition,
     brandAlign: DEFAULT_UI_CONFIG.pageTemplate.brandAlign,
     headerText: DEFAULT_UI_CONFIG.appearance.headerText,
+    textLocalizations: DEFAULT_UI_CONFIG.appearance.textLocalizations,
     footerText: DEFAULT_UI_CONFIG.appearance.footerText,
     footerLinks: [...DEFAULT_UI_CONFIG.appearance.footerLinks],
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
@@ -1240,6 +1346,7 @@ async function getLoginUISettings(
     fontFamily: defaults.fontFamily,
     fontScale: defaults.fontScale,
     backgroundColor: defaults.backgroundColor,
+    accentColor: defaults.accentColor,
     titleColor: defaults.titleColor,
     textColor: defaults.textColor,
     copyColor: defaults.copyColor,
@@ -1280,6 +1387,7 @@ async function getLoginUISettings(
     brandPosition: defaults.brandPosition,
     brandAlign: defaults.brandAlign,
     headerText: defaults.headerText,
+    textLocalizations: defaults.textLocalizations,
     footerText: defaults.footerText,
     footerLinks: defaults.footerLinks,
     customBlocks: defaults.customBlocks,
@@ -2120,6 +2228,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       fontFamily: loginUI.fontFamily,
       fontScale: loginUI.fontScale,
       backgroundColor: loginUI.backgroundColor,
+      accentColor: loginUI.accentColor,
       titleColor: loginUI.titleColor,
       textColor: loginUI.textColor,
       copyColor: loginUI.copyColor,
@@ -2155,6 +2264,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       thumbnailUrl: loginUI.thumbnailUrl,
       customCss: loginUI.customCss,
       headerText: loginUI.headerText,
+      textLocalizations: loginUI.textLocalizations,
       footerText: loginUI.footerText,
       footerLinks: loginUI.footerLinks,
       customBlocks: loginUI.customBlocks,

@@ -44,6 +44,7 @@
 	} from '$lib/components/flow-editor/FlowEditorNode.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
+	import { toast } from '$lib/toast';
 	import {
 		Background,
 		BackgroundVariant,
@@ -2850,9 +2851,11 @@
 			});
 			savedFlow = response.flow;
 			syncFlowMetadata(response.flow);
-			saveStatus = $LL.admin_flows_saved();
+			saveStatus = '';
+			toast.success($LL.admin_flows_saved());
 		} catch (error) {
 			saveStatus = error instanceof Error ? error.message : $LL.admin_flows_save_failed();
+			toast.error(saveStatus);
 		} finally {
 			saving = false;
 		}
@@ -2878,6 +2881,7 @@
 			await goto('/admin/flows');
 		} catch (error) {
 			saveStatus = error instanceof Error ? error.message : $LL.admin_flows_delete_failed();
+			toast.error(saveStatus);
 			deleteFlowModalOpen = false;
 		} finally {
 			deletingFlow = false;

@@ -183,45 +183,6 @@
 	</AdminPageHeader>
 
 	<AdminSection
-		title={$LL.admin_flows_overview_title()}
-		description={$LL.admin_flows_overview_description()}
-	>
-		<div class="flow-overview">
-			<div class="overview-step">
-				<span class="overview-step__icon i-ph-sign-in" aria-hidden="true"></span>
-				<div>
-					<strong>{$LL.admin_flows_overview_request_title()}</strong>
-					<span>{$LL.admin_flows_overview_request_subtitle()}</span>
-				</div>
-			</div>
-			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
-			<div class="overview-step">
-				<span class="overview-step__icon i-ph-graph" aria-hidden="true"></span>
-				<div>
-					<strong>{$LL.admin_flows_overview_mapping_title()}</strong>
-					<span>{$LL.admin_flows_overview_mapping_subtitle()}</span>
-				</div>
-			</div>
-			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
-			<div class="overview-step">
-				<span class="overview-step__icon i-ph-handshake" aria-hidden="true"></span>
-				<div>
-					<strong>{$LL.admin_flows_overview_consent_title()}</strong>
-					<span>{$LL.admin_flows_overview_consent_subtitle()}</span>
-				</div>
-			</div>
-			<span class="overview-arrow i-ph-arrow-right" aria-hidden="true"></span>
-			<div class="overview-step">
-				<span class="overview-step__icon i-ph-paper-plane-tilt" aria-hidden="true"></span>
-				<div>
-					<strong>{$LL.admin_flows_overview_output_title()}</strong>
-					<span>{$LL.admin_flows_overview_output_subtitle()}</span>
-				</div>
-			</div>
-		</div>
-	</AdminSection>
-
-	<AdminSection
 		title={$LL.admin_flows_list_title()}
 		description={$LL.admin_flows_list_description()}
 	>
@@ -367,60 +328,6 @@
 	.btn:disabled {
 		opacity: 0.68;
 		cursor: wait;
-	}
-
-	.flow-overview {
-		display: grid;
-		grid-template-columns:
-			minmax(150px, 1fr) auto minmax(150px, 1fr) auto minmax(150px, 1fr)
-			auto minmax(150px, 1fr);
-		align-items: center;
-		gap: 12px;
-	}
-
-	.overview-step {
-		min-height: 82px;
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 16px;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-surface);
-	}
-
-	.overview-step__icon {
-		width: 34px;
-		height: 34px;
-		display: inline-flex;
-		flex: 0 0 auto;
-		align-items: center;
-		justify-content: center;
-		border-radius: 8px;
-		background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-		color: var(--color-accent);
-		font-size: 1.25rem;
-	}
-
-	.overview-step strong,
-	.overview-step span {
-		display: block;
-	}
-
-	.overview-step strong {
-		color: var(--color-text);
-		font-size: 0.92rem;
-	}
-
-	.overview-step span {
-		margin-top: 3px;
-		color: var(--color-text-muted);
-		font-size: 0.78rem;
-	}
-
-	.overview-arrow {
-		color: var(--color-text-muted);
-		font-size: 1.1rem;
 	}
 
 	.flow-list {
@@ -671,12 +578,10 @@
 	}
 
 	@media (max-width: 980px) {
-		.flow-overview,
 		.flow-row {
 			grid-template-columns: 1fr;
 		}
 
-		.overview-arrow,
 		.flow-row__arrow {
 			display: none;
 		}

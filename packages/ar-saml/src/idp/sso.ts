@@ -34,6 +34,7 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
+  filterSamlAttributesByDestinationConsentWithStatus,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -1333,6 +1334,37 @@ async function generateSAMLResponse(
         }
       : undefined,
   });
+  let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
+  if (identityMapping?.destinationProfileId) {
+    const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
+      coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'saml-destination-profile-consent'
+      ),
+      adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
+      tenantId,
+      subjectId: userInfo.id,
+      samlSpId: spConfig.entityId,
+      profileId: identityMapping.destinationProfileId,
+      fieldPolicies: identityMapping.destinationFieldPolicies,
+      attributes: attributeRelease.attributes,
+    })) as {
+      attributes: typeof attributeRelease.attributes;
+      consentApplied: boolean;
+      consentRecordId?: string;
+      consentEvidence?: Record<string, unknown>;
+    };
+    attributeRelease.attributes = destinationRelease.attributes;
+    if (
+      destinationRelease.consentApplied &&
+      destinationRelease.consentRecordId &&
+      destinationRelease.consentEvidence?.saml_request_id === authnRequest.id
+    ) {
+      destinationFieldConsentConfirmed = {
+        consentRecordId: destinationRelease.consentRecordId,
+      };
+    }
+  }
   await enforceSAMLAttributeReleaseConsent({
     env,
     tenantId,
@@ -1340,6 +1372,7 @@ async function generateSAMLResponse(
     spConfig,
     attributes: attributeRelease.attributes,
     confirmedRelease: requestContext?.attributeReleaseConsentConfirmed,
+    destinationFieldConsentConfirmed,
   });
   if (attributeRelease.optionalMissingAttributes.length > 0) {
     log?.debug('Optional SAML attributes omitted', {
@@ -1446,6 +1479,15 @@ async function resolveSAMLRuntimeIdentityMapping(
       },
     ]);
   }
+  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.invalid_destination_profile_binding',
+        severity: 'critical',
+      },
+    ]);
+  }
 
   return {
     id: binding.id,
@@ -1460,10 +1502,11 @@ async function resolveSAMLRuntimeIdentityMapping(
     fieldMappingSet: binding.fieldMappingSet,
     destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
     attributeDescriptors: configured?.attributeDescriptors,
+    destinationFieldPolicies: configured?.destinationFieldPolicies,
     fieldMappingSetId: binding.fieldMappingSetId,
     fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
-    destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
+    destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
   };
 }
 

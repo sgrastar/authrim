@@ -613,6 +613,8 @@ export interface SAMLIdentityMappingAttributeDescriptor {
   required?: boolean;
 }
 
+export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
+
 export interface SAMLIdentityMappingFieldMappingSelector {
   /** Active mapping policy set selected for this SP override. Empty falls back to tenant activation scope. */
   fieldMappingSetId?: string;
@@ -622,6 +624,8 @@ export interface SAMLIdentityMappingFieldMappingSelector {
   sourceProfileId?: string;
   destinationProfileId?: string;
   attributeDescriptors?: Record<string, SAMLIdentityMappingAttributeDescriptor>;
+  /** Per-SP release policy keyed by the destination SAML attribute name. */
+  destinationFieldPolicies?: Record<string, SAMLDestinationFieldReleaseMode>;
 }
 
 export interface SAMLAssertionConsumerService {

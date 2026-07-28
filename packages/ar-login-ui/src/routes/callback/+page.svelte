@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { Card, Alert, Spinner } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
@@ -22,8 +23,8 @@
 	const { brandingStore } = useLoginUIStores();
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
-	let errorMessage = $state('');
 	let errorCode = $state('');
+	let errorMessage = $derived(getErrorMessage(errorCode));
 
 	/**
 	 * Handle Smart Handoff SSO callback
@@ -46,7 +47,6 @@
 		try {
 			if (!state) {
 				errorCode = 'missing_state';
-				errorMessage = $LL.error_invalid_request();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -74,7 +74,6 @@
 			if (!finalizeResponse.ok) {
 				const data = await finalizeResponse.json().catch(() => ({}));
 				errorCode = data.error || 'handoff_finalize_failed';
-				errorMessage = getErrorMessage(errorCode);
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -90,7 +89,6 @@
 				assertNoBrowserTokenMaterial(finalizeData, 'handoff finalize');
 			} catch {
 				errorCode = 'handoff_finalize_invalid_response';
-				errorMessage = $LL.error_server_error();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -105,7 +103,6 @@
 
 			if (!auth.checkAuth()) {
 				errorCode = 'handoff_cookie_session_missing';
-				errorMessage = $LL.error_server_error();
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -170,7 +167,6 @@
 		} catch (error) {
 			console.error('[Authrim] Handoff error:', error);
 			errorCode = 'network_error';
-			errorMessage = $LL.error_unknown();
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
@@ -187,7 +183,6 @@
 		const error = params.get('error');
 		if (error) {
 			errorCode = error;
-			errorMessage = getErrorMessage(error);
 			status = 'error';
 			return;
 		}
@@ -219,7 +214,6 @@
 				// Storage cleanup is best-effort after an unsupported callback shape.
 			}
 			errorCode = 'external_handoff_required';
-			errorMessage = $LL.error_server_error();
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
@@ -231,7 +225,6 @@
 		}
 
 		errorCode = 'missing_handoff_token';
-		errorMessage = $LL.callback_errorMissingCode();
 		status = 'error';
 	});
 
@@ -239,9 +232,18 @@
 		const messages: Record<string, () => string> = {
 			access_denied: () => $LL.error_access_denied(),
 			invalid_request: () => $LL.error_invalid_request(),
+			missing_state: () => $LL.error_invalid_request(),
+			unauthorized_client: () => $LL.error_unauthorized_client(),
+			unsupported_response_type: () => $LL.error_unsupported_response_type(),
+			invalid_scope: () => $LL.error_invalid_scope(),
 			server_error: () => $LL.error_server_error(),
+			handoff_finalize_invalid_response: () => $LL.error_server_error(),
+			handoff_cookie_session_missing: () => $LL.error_server_error(),
+			external_handoff_required: () => $LL.error_server_error(),
 			temporarily_unavailable: () => $LL.error_temporarily_unavailable(),
-			login_required: () => $LL.error_login_required()
+			login_required: () => $LL.error_login_required(),
+			missing_handoff_token: () => $LL.callback_errorMissingCode(),
+			network_error: () => $LL.error_unknown()
 		};
 		return (messages[code] || (() => $LL.error_unknown()))();
 	}
@@ -329,6 +331,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

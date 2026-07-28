@@ -9,7 +9,11 @@ export const SCREEN_LOCALIZATION_LANGUAGES = [
 	'de',
 	'ko',
 	'ru',
-	'id'
+	'id',
+	'ar',
+	'it',
+	'th',
+	'vi'
 ] as const;
 
 export type ScreenLocalizationLanguage = (typeof SCREEN_LOCALIZATION_LANGUAGES)[number];
@@ -27,7 +31,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Mit Passkey anmelden',
 		ko: 'Passkey로 로그인',
 		ru: 'Войти с Passkey',
-		id: 'Masuk dengan Passkey'
+		id: 'Masuk dengan Passkey',
+		ar: 'تسجيل الدخول باستخدام مفتاح المرور',
+		it: 'Accedi con una passkey',
+		th: 'เข้าสู่ระบบด้วย Passkey',
+		vi: 'Đăng nhập bằng Passkey'
 	},
 	'Create Account with Passkey': {
 		en: 'Create Account with Passkey',
@@ -40,7 +48,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Konto mit Passkey erstellen',
 		ko: 'Passkey로 계정 만들기',
 		ru: 'Создать аккаунт с Passkey',
-		id: 'Buat akun dengan Passkey'
+		id: 'Buat akun dengan Passkey',
+		ar: 'إنشاء حساب باستخدام مفتاح المرور',
+		it: 'Crea un account con una passkey',
+		th: 'สร้างบัญชีด้วย Passkey',
+		vi: 'Tạo tài khoản bằng Passkey'
 	},
 	'Create your account': {
 		en: 'Create your account',
@@ -53,7 +65,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Konto erstellen',
 		ko: '계정 만들기',
 		ru: 'Создайте учетную запись',
-		id: 'Buat akun Anda'
+		id: 'Buat akun Anda',
+		ar: 'إنشاء حسابك',
+		it: 'Crea il tuo account',
+		th: 'สร้างบัญชีของคุณ',
+		vi: 'Tạo tài khoản'
 	},
 	'Send code by email': {
 		en: 'Send code by email',
@@ -66,7 +82,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Code per E-Mail senden',
 		ko: '이메일로 인증 코드 보내기',
 		ru: 'Отправить код по электронной почте',
-		id: 'Kirim kode melalui email'
+		id: 'Kirim kode melalui email',
+		ar: 'إرسال رمز عبر البريد الإلكتروني',
+		it: 'Invia codice via email',
+		th: 'ส่งรหัสทางอีเมล',
+		vi: 'Gửi mã qua email'
 	},
 	'Mail OTP + authenticator app': {
 		en: 'Mail OTP + authenticator app',
@@ -79,7 +99,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'E-Mail-OTP + Authenticator-App',
 		ko: '메일 OTP + 인증 앱',
 		ru: 'OTP по email + приложение-аутентификатор',
-		id: 'OTP email + aplikasi autentikator'
+		id: 'OTP email + aplikasi autentikator',
+		ar: 'رمز بريد إلكتروني + تطبيق مصادقة',
+		it: 'OTP via email + app di autenticazione',
+		th: 'OTP ทางอีเมล + แอปยืนยันตัวตน',
+		vi: 'OTP qua email + ứng dụng xác thực'
 	},
 	'Sign in with authenticator app': {
 		en: 'Sign in with authenticator app',
@@ -92,7 +116,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Mit Authenticator-App anmelden',
 		ko: '인증 앱으로 로그인',
 		ru: 'Войти с помощью приложения-аутентификатора',
-		id: 'Masuk dengan aplikasi autentikator'
+		id: 'Masuk dengan aplikasi autentikator',
+		ar: 'تسجيل الدخول باستخدام تطبيق المصادقة',
+		it: 'Accedi con l’app di autenticazione',
+		th: 'เข้าสู่ระบบด้วยแอปยืนยันตัวตน',
+		vi: 'Đăng nhập bằng ứng dụng xác thực'
 	},
 	'Create account with authenticator app': {
 		en: 'Create account with authenticator app',
@@ -105,7 +133,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Konto mit Authenticator-App erstellen',
 		ko: '인증 앱으로 계정 만들기',
 		ru: 'Создать учетную запись с помощью приложения-аутентификатора',
-		id: 'Buat akun dengan aplikasi autentikator'
+		id: 'Buat akun dengan aplikasi autentikator',
+		ar: 'إنشاء حساب باستخدام تطبيق المصادقة',
+		it: 'Crea un account con l’app di autenticazione',
+		th: 'สร้างบัญชีด้วยแอปยืนยันตัวตน',
+		vi: 'Tạo tài khoản bằng ứng dụng xác thực'
 	},
 	'Authentication code': {
 		en: 'Authentication code',
@@ -118,7 +150,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Authentifizierungscode',
 		ko: '인증 코드',
 		ru: 'Код аутентификации',
-		id: 'Kode autentikasi'
+		id: 'Kode autentikasi',
+		ar: 'رمز المصادقة',
+		it: 'Codice di autenticazione',
+		th: 'รหัสยืนยันตัวตน',
+		vi: 'Mã xác thực'
 	},
 	'Enter verification code': {
 		en: 'Enter verification code',
@@ -131,7 +167,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Bestätigungscode eingeben',
 		ko: '인증 코드를 입력하세요',
 		ru: 'Введите код подтверждения',
-		id: 'Masukkan kode verifikasi'
+		id: 'Masukkan kode verifikasi',
+		ar: 'أدخل رمز التحقق',
+		it: 'Inserisci il codice di verifica',
+		th: 'กรอกรหัสยืนยัน',
+		vi: 'Nhập mã xác minh'
 	},
 	'Email verification code': {
 		en: 'Email verification code',
@@ -144,7 +184,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'E-Mail-Bestätigungscode',
 		ko: '이메일 인증 코드',
 		ru: 'Код подтверждения из письма',
-		id: 'Kode verifikasi email'
+		id: 'Kode verifikasi email',
+		ar: 'رمز التحقق عبر البريد الإلكتروني',
+		it: 'Codice di verifica ricevuto via email',
+		th: 'รหัสยืนยันทางอีเมล',
+		vi: 'Mã xác minh qua email'
 	},
 	'Authenticator app code': {
 		en: 'Authenticator app code',
@@ -157,7 +201,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Code aus der Authenticator-App',
 		ko: '인증 앱 코드',
 		ru: 'Код из приложения-аутентификатора',
-		id: 'Kode aplikasi autentikator'
+		id: 'Kode aplikasi autentikator',
+		ar: 'رمز تطبيق المصادقة',
+		it: 'Codice dell’app di autenticazione',
+		th: 'รหัสจากแอปยืนยันตัวตน',
+		vi: 'Mã ứng dụng xác thực'
 	},
 	'Enter the code from your email or authenticator app.': {
 		en: 'Enter the code from your email or authenticator app.',
@@ -170,7 +218,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Gib den Code aus deiner E-Mail oder Authenticator-App ein.',
 		ko: '이메일 또는 인증 앱의 코드를 입력하세요.',
 		ru: 'Введите код из письма или приложения-аутентификатора.',
-		id: 'Masukkan kode dari email atau aplikasi autentikator.'
+		id: 'Masukkan kode dari email atau aplikasi autentikator.',
+		ar: 'أدخل الرمز الوارد في بريدك الإلكتروني أو الظاهر في تطبيق المصادقة.',
+		it: 'Inserisci il codice ricevuto via email o generato dall’app di autenticazione.',
+		th: 'กรอกรหัสจากอีเมลหรือแอปยืนยันตัวตนของคุณ',
+		vi: 'Nhập mã trong email hoặc ứng dụng xác thực của bạn.'
 	},
 	or: {
 		en: 'or',
@@ -183,7 +235,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'oder',
 		ko: '또는',
 		ru: 'или',
-		id: 'atau'
+		id: 'atau',
+		ar: 'أو',
+		it: 'oppure',
+		th: 'หรือ',
+		vi: 'hoặc'
 	},
 	'Continue with another account': {
 		en: 'Continue with another account',
@@ -196,7 +252,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Mit einem anderen Konto fortfahren',
 		ko: '다른 계정으로 계속',
 		ru: 'Продолжить с другой учетной записью',
-		id: 'Lanjutkan dengan akun lain'
+		id: 'Lanjutkan dengan akun lain',
+		ar: 'المتابعة باستخدام حساب آخر',
+		it: 'Continua con un altro account',
+		th: 'ดำเนินการต่อด้วยบัญชีอื่น',
+		vi: 'Tiếp tục bằng tài khoản khác'
 	},
 	'Continue with external IdP': {
 		en: 'Continue with external IdP',
@@ -209,7 +269,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Mit externem IdP fortfahren',
 		ko: '외부 IdP로 계속',
 		ru: 'Продолжить через внешний IdP',
-		id: 'Lanjutkan dengan IdP eksternal'
+		id: 'Lanjutkan dengan IdP eksternal',
+		ar: 'المتابعة باستخدام موفّر هوية خارجي',
+		it: 'Continua con un provider di identità esterno',
+		th: 'ดำเนินการต่อด้วยผู้ให้บริการข้อมูลประจำตัวภายนอก',
+		vi: 'Tiếp tục với nhà cung cấp danh tính bên ngoài'
 	},
 	'Ext. IdP': {
 		en: 'Ext. IdP',
@@ -222,7 +286,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Ext. IdP',
 		ko: 'Ext. IdP',
 		ru: 'Ext. IdP',
-		id: 'Ext. IdP'
+		id: 'Ext. IdP',
+		ar: 'موفّر هوية خارجي',
+		it: 'IdP esterno',
+		th: 'IdP ภายนอก',
+		vi: 'IdP bên ngoài'
 	},
 	'Sign in': {
 		en: 'Sign in',
@@ -235,7 +303,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Anmelden',
 		ko: '로그인',
 		ru: 'Войти',
-		id: 'Masuk'
+		id: 'Masuk',
+		ar: 'تسجيل الدخول',
+		it: 'Accedi',
+		th: 'เข้าสู่ระบบ',
+		vi: 'Đăng nhập'
 	},
 	'Sign in with directory password': {
 		en: 'Sign in with directory password',
@@ -248,7 +320,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Mit Verzeichnispasswort anmelden',
 		ko: '디렉터리 비밀번호로 로그인',
 		ru: 'Войти с паролем каталога',
-		id: 'Masuk dengan kata sandi direktori'
+		id: 'Masuk dengan kata sandi direktori',
+		ar: 'تسجيل الدخول باستخدام كلمة مرور الدليل',
+		it: 'Accedi con la password della directory',
+		th: 'เข้าสู่ระบบด้วยรหัสผ่านไดเรกทอรี',
+		vi: 'Đăng nhập bằng mật khẩu thư mục'
 	},
 	Email: {
 		en: 'Email',
@@ -261,7 +337,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'E-Mail-Adresse',
 		ko: '이메일',
 		ru: 'Электронная почта',
-		id: 'Email'
+		id: 'Email',
+		ar: 'البريد الإلكتروني',
+		it: 'Email',
+		th: 'อีเมล',
+		vi: 'Email'
 	},
 	Name: {
 		en: 'Name',
@@ -274,7 +354,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Name',
 		ko: '이름',
 		ru: 'Имя',
-		id: 'Nama'
+		id: 'Nama',
+		ar: 'الاسم',
+		it: 'Nome',
+		th: 'ชื่อ',
+		vi: 'Tên'
 	},
 	'First Name': {
 		en: 'First Name',
@@ -287,7 +371,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Vorname',
 		ko: '이름',
 		ru: 'Имя',
-		id: 'Nama depan'
+		id: 'Nama depan',
+		ar: 'الاسم الأول',
+		it: 'Nome',
+		th: 'ชื่อ',
+		vi: 'Tên'
 	},
 	'Last Name': {
 		en: 'Last Name',
@@ -300,7 +388,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Nachname',
 		ko: '성',
 		ru: 'Фамилия',
-		id: 'Nama belakang'
+		id: 'Nama belakang',
+		ar: 'اسم العائلة',
+		it: 'Cognome',
+		th: 'นามสกุล',
+		vi: 'Họ'
 	},
 	'Preferred username': {
 		en: 'Preferred username',
@@ -313,7 +405,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Bevorzugter Benutzername',
 		ko: '선호 사용자 이름',
 		ru: 'Предпочитаемое имя пользователя',
-		id: 'Nama pengguna pilihan'
+		id: 'Nama pengguna pilihan',
+		ar: 'اسم المستخدم المفضّل',
+		it: 'Nome utente preferito',
+		th: 'ชื่อผู้ใช้ที่ต้องการ',
+		vi: 'Tên người dùng mong muốn'
 	},
 	'Consent confirmation': {
 		en: 'Consent confirmation',
@@ -326,7 +422,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Einwilligungsbestätigung',
 		ko: '동의 확인',
 		ru: 'Подтверждение согласия',
-		id: 'Konfirmasi persetujuan'
+		id: 'Konfirmasi persetujuan',
+		ar: 'تأكيد الموافقة',
+		it: 'Conferma del consenso',
+		th: 'ยืนยันความยินยอม',
+		vi: 'Xác nhận sự đồng ý'
 	},
 	'Review the consent items required for this step.': {
 		en: 'Review the consent items required for this step.',
@@ -339,7 +439,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Prüfen Sie die für diesen Schritt erforderlichen Einwilligungen.',
 		ko: '이 단계에 필요한 동의 항목을 확인하세요.',
 		ru: 'Проверьте пункты согласия, необходимые для этого шага.',
-		id: 'Tinjau item persetujuan yang diperlukan untuk langkah ini.'
+		id: 'Tinjau item persetujuan yang diperlukan untuk langkah ini.',
+		ar: 'راجع بنود الموافقة المطلوبة لهذه الخطوة.',
+		it: 'Controlla i consensi richiesti per questo passaggio.',
+		th: 'ตรวจสอบรายการความยินยอมที่จำเป็นสำหรับขั้นตอนนี้',
+		vi: 'Xem lại các mục đồng ý bắt buộc cho bước này.'
 	},
 	'The consent policy selected on the Flow node is rendered here.': {
 		en: 'The consent policy selected on the Flow node is rendered here.',
@@ -352,7 +456,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Die im Flow-Knoten ausgewählte Einwilligungsrichtlinie wird hier angezeigt.',
 		ko: 'Flow 노드에서 선택한 동의 정책이 여기에 표시됩니다.',
 		ru: 'Здесь отображается политика согласия, выбранная в узле Flow.',
-		id: 'Kebijakan persetujuan yang dipilih pada node Flow ditampilkan di sini.'
+		id: 'Kebijakan persetujuan yang dipilih pada node Flow ditampilkan di sini.',
+		ar: 'تظهر هنا سياسة الموافقة المحددة في عقدة التدفق.',
+		it: 'Qui viene mostrata la politica di consenso selezionata nel nodo del flusso.',
+		th: 'นโยบายความยินยอมที่เลือกในโหนด Flow จะแสดงที่นี่',
+		vi: 'Chính sách đồng ý được chọn trong nút Flow sẽ hiển thị tại đây.'
 	},
 	'Security check': {
 		en: 'Security check',
@@ -365,7 +473,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Sicherheitsprüfung',
 		ko: '보안 확인',
 		ru: 'Проверка безопасности',
-		id: 'Verifikasi keamanan'
+		id: 'Verifikasi keamanan',
+		ar: 'فحص الأمان',
+		it: 'Controllo di sicurezza',
+		th: 'การตรวจสอบความปลอดภัย',
+		vi: 'Kiểm tra bảo mật'
 	},
 	'I am human': {
 		en: 'I am human',
@@ -378,7 +490,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Ich bin ein Mensch',
 		ko: '저는 사람입니다',
 		ru: 'Я человек',
-		id: 'Saya manusia'
+		id: 'Saya manusia',
+		ar: 'أنا إنسان',
+		it: 'Sono una persona',
+		th: 'ฉันเป็นมนุษย์',
+		vi: 'Tôi là con người'
 	},
 	Divider: {
 		en: 'Divider',
@@ -391,7 +507,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Trennlinie',
 		ko: '구분선',
 		ru: 'Разделитель',
-		id: 'Pemisah'
+		id: 'Pemisah',
+		ar: 'فاصل',
+		it: 'Separatore',
+		th: 'เส้นคั่น',
+		vi: 'Dòng phân cách'
 	},
 	'Layout row': {
 		en: 'Layout row',
@@ -404,7 +524,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Layout-Zeile',
 		ko: '레이아웃 행',
 		ru: 'Строка макета',
-		id: 'Baris tata letak'
+		id: 'Baris tata letak',
+		ar: 'صف التخطيط',
+		it: 'Riga del layout',
+		th: 'แถวเค้าโครง',
+		vi: 'Hàng bố cục'
 	},
 	Heading: {
 		en: 'Heading',
@@ -417,7 +541,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Überschrift',
 		ko: '제목',
 		ru: 'Заголовок',
-		id: 'Judul'
+		id: 'Judul',
+		ar: 'عنوان',
+		it: 'Titolo',
+		th: 'หัวเรื่อง',
+		vi: 'Tiêu đề'
 	},
 	Text: {
 		en: 'Text',
@@ -430,7 +558,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Text',
 		ko: '텍스트',
 		ru: 'Текст',
-		id: 'Teks'
+		id: 'Teks',
+		ar: 'نص',
+		it: 'Testo',
+		th: 'ข้อความ',
+		vi: 'Văn bản'
 	},
 	'Add helper text here.': {
 		en: 'Add helper text here.',
@@ -443,7 +575,11 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		de: 'Füge hier Hilfetext hinzu.',
 		ko: '여기에 도움말 텍스트를 추가하세요.',
 		ru: 'Добавьте здесь вспомогательный текст.',
-		id: 'Tambahkan teks bantuan di sini.'
+		id: 'Tambahkan teks bantuan di sini.',
+		ar: 'أضف نصًا توضيحيًا هنا.',
+		it: 'Aggiungi qui un testo di supporto.',
+		th: 'เพิ่มข้อความช่วยเหลือที่นี่',
+		vi: 'Thêm nội dung hướng dẫn tại đây.'
 	}
 };
 

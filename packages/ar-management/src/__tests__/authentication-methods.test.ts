@@ -243,6 +243,10 @@ describe('Authentication Methods API', () => {
         'ko',
         'ru',
         'id',
+        'ar',
+        'it',
+        'th',
+        'vi',
       ]);
       expect(body.ui.selfService).toEqual({
         accountPageEnabled: true,
@@ -279,6 +283,7 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.thumbnailUrl).toBeNull();
       expect(body.ui.appearance.customCss).toBeNull();
       expect(body.ui.appearance.headerText).toBeNull();
+      expect(body.ui.appearance.textLocalizations).toEqual({});
       expect(body.ui.appearance.footerText).toBeNull();
       expect(body.ui.appearance.footerLinks).toEqual([]);
       expect(body.ui.appearance.customBlocks).toEqual([]);
@@ -1142,6 +1147,39 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
 
   describe('UI config from settings-v2', () => {
+    it('expands the legacy default locale set to include newly supported locales', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
+          'login-ui.default_locale': 'en',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.supportedLocales).toEqual([
+        'en',
+        'ja',
+        'zh-CN',
+        'zh-TW',
+        'es',
+        'pt',
+        'fr',
+        'de',
+        'ko',
+        'ru',
+        'id',
+        'ar',
+        'it',
+        'th',
+        'vi',
+      ]);
+      expect(body.ui.defaultLocale).toBe('en');
+    });
+
     it('inherits platform language settings when tenant settings are absent', async () => {
       const settingsKV = createMockKV({
         'settings:platform:login-ui': JSON.stringify({
@@ -1192,6 +1230,7 @@ describe('Authentication Methods API', () => {
           'login-ui.font_family': 'mono',
           'login-ui.font_scale': 'spacious',
           'login-ui.background_color': '#0b1220',
+          'login-ui.accent_color': '#336699',
           'login-ui.title_color': '#111827',
           'login-ui.text_color': '#1f2937',
           'login-ui.copy_color': '#4b5563',
@@ -1230,6 +1269,20 @@ describe('Authentication Methods API', () => {
           'login-ui.login_panel_background_image_url': 'https://example.com/panel.jpg',
           'login-ui.custom_css': '.auth-page { background: #fff; }',
           'login-ui.header_text': 'Welcome',
+          'login-ui.text_localizations': JSON.stringify({
+            en: {
+              tagline: '  Identity at every edge  ',
+              loginTitle: '  Sign in to Example  ',
+              registrationTitle: 'Create an Example account',
+              accountTitle: 'Your Example account',
+              brandPanelTitle: 'Welcome back',
+              brandPanelText: '   ',
+              unsupportedField: 'Ignored',
+            },
+            ja: { tagline: 'あらゆる場所のアイデンティティ', footerText: 'Authrim提供' },
+            fr: { tagline: '   ' },
+            unsupported: { tagline: 'Ignored' },
+          }),
           'login-ui.footer_text': '© 2025 My App',
           'login-ui.footer_links': JSON.stringify([
             { label: 'Privacy', url: 'https://example.com/privacy' },
@@ -1255,6 +1308,7 @@ describe('Authentication Methods API', () => {
         fontFamily: 'mono',
         fontScale: 'spacious',
         backgroundColor: '#0b1220',
+        accentColor: '#336699',
         titleColor: '#111827',
         textColor: '#1f2937',
         copyColor: '#4b5563',
@@ -1291,6 +1345,18 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.thumbnailUrl).toBe('https://example.com/thumb.webp');
       expect(body.ui.appearance.customCss).toBe('.auth-page { background: #fff; }');
       expect(body.ui.appearance.headerText).toBe('Welcome');
+      expect(body.ui.appearance.textLocalizations).toEqual({
+        en: {
+          tagline: 'Identity at every edge',
+          loginTitle: 'Sign in to Example',
+          registrationTitle: 'Create an Example account',
+          accountTitle: 'Your Example account',
+          brandPanelTitle: 'Welcome back',
+          brandPanelText: '',
+        },
+        ja: { tagline: 'あらゆる場所のアイデンティティ', footerText: 'Authrim提供' },
+        fr: { tagline: '' },
+      });
       expect(body.ui.appearance.footerText).toBe('© 2025 My App');
       expect(body.ui.appearance.footerLinks).toEqual([
         { label: 'Privacy', url: 'https://example.com/privacy' },

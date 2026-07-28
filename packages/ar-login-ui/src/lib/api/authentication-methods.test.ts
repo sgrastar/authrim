@@ -112,4 +112,58 @@ describe('authentication methods API', () => {
 		);
 		expect(authrimFetchMock.mock.calls[0]?.[1]).not.toMatchObject({ cache: 'reload' });
 	});
+
+	it('bypasses memory and HTTP caches when a suspended page resumes', async () => {
+		const { fetchAuthenticationMethods } = await loadApi();
+		authrimFetchMock
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify(createAuthenticationMethodsResponse()), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify(createAuthenticationMethodsResponse()), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
+
+		await fetchAuthenticationMethods();
+		await fetchAuthenticationMethods({ forceRefresh: true });
+
+		expect(authrimFetchMock).toHaveBeenCalledTimes(2);
+		expect(authrimFetchMock.mock.calls[1]?.[1]).toMatchObject({ cache: 'reload' });
+	});
+
+	it('does not reuse a request that was suspended before the page resumed', async () => {
+		const { fetchAuthenticationMethods } = await loadApi();
+		let resolveSuspendedRequest: ((response: Response) => void) | undefined;
+		authrimFetchMock
+			.mockImplementationOnce(
+				() =>
+					new Promise<Response>((resolve) => {
+						resolveSuspendedRequest = resolve;
+					})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify(createAuthenticationMethodsResponse()), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			);
+
+		const suspendedRequest = fetchAuthenticationMethods();
+		const resumedRequest = fetchAuthenticationMethods({ forceRefresh: true });
+
+		expect(authrimFetchMock).toHaveBeenCalledTimes(2);
+		await expect(resumedRequest).resolves.toHaveProperty('data.meta.revision', 'test');
+		resolveSuspendedRequest?.(
+			new Response(JSON.stringify(createAuthenticationMethodsResponse()), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+		await suspendedRequest;
+	});
 });

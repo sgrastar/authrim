@@ -46,6 +46,7 @@ export interface RuntimeIdentityMappingBinding {
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
+  destinationProfileIds: string[];
 }
 
 interface ActiveActivationRow {
@@ -130,6 +131,11 @@ export async function resolveRuntimeIdentityMappingBinding(
     ]
   );
   const activationScope = parseJsonObject(selected.activation_scope_json);
+  const destinationProfileIds = uniqueDestinationProfileIds(edges);
+  const scopedDestinationProfileId = readString(activationScope.destinationProfileId);
+  if (scopedDestinationProfileId && !destinationProfileIds.includes(scopedDestinationProfileId)) {
+    destinationProfileIds.unshift(scopedDestinationProfileId);
+  }
 
   return {
     id: selected.activation_id,
@@ -184,8 +190,23 @@ export async function resolveRuntimeIdentityMappingBinding(
     activationScope,
     destinationNamespace: readString(activationScope.destinationNamespace),
     sourceProfileId: readString(activationScope.sourceProfileId),
-    destinationProfileId: readString(activationScope.destinationProfileId),
+    destinationProfileId:
+      destinationProfileIds.length === 1 ? destinationProfileIds[0] : scopedDestinationProfileId,
+    destinationProfileIds,
   };
+}
+
+function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
+  const profileIds = new Set<string>();
+  for (const edge of edges) {
+    const targetRef = parseJsonObject(edge.target_ref_json);
+    const profileId = readString(targetRef.profileId) ?? readString(targetRef.profile_id);
+    const side = readString(targetRef.side);
+    if (profileId && (!side || side === 'destination')) {
+      profileIds.add(profileId);
+    }
+  }
+  return [...profileIds];
 }
 
 async function loadActiveActivationRows(

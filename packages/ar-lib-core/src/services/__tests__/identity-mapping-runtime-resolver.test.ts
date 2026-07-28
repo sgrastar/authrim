@@ -39,6 +39,8 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
       id: 'activation-sp',
       fieldMappingSetId: 'field_mapping_sp',
       fieldMappingVersionId: 'version_sp',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
     });
     expect(binding?.edges).toEqual([
       {
@@ -220,6 +222,7 @@ class ResolverAdapter implements DatabaseAdapter {
           }),
           target_ref_json: JSON.stringify({
             side: 'destination',
+            profileId: 'destination-profile-saml',
             namespace: 'saml.attribute',
             path: 'urn:oid:0.9.2342.19200300.100.1.3',
             catalogEntryId: 'field.saml.mail',

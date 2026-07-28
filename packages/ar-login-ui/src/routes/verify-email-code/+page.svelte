@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
@@ -11,6 +13,7 @@
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { auth } from '$lib/stores/auth';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
@@ -54,7 +57,11 @@
 			unknown: () => $LL.error_unknown(),
 			invalidRequest: () => $LL.error_invalid_request(),
 			accessDenied: () => $LL.error_access_denied(),
+			unauthorizedClient: () => $LL.error_unauthorized_client(),
+			unsupportedResponseType: () => $LL.error_unsupported_response_type(),
+			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
+			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -190,7 +197,7 @@
 				window.location.href = postVerifyRedirect;
 			}, 2000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
+			error = messageForCaughtError(err, $LL.emailCode_errorInvalid());
 			code = '';
 		} finally {
 			loading = false;
@@ -248,7 +255,7 @@
 
 		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
 		if (!storedRuntime) {
-			throw new Error($LL.error_invalid_request());
+			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
 		const { data: resumedFlow, error: resumeError } = await flowRuntimeAPI.start({
@@ -257,7 +264,7 @@
 			signature: storedRuntime.signature
 		});
 		if (resumeError || !resumedFlow) {
-			throw new Error($LL.error_invalid_request());
+			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
 		let flow: FlowRuntimeStartResponse = resumedFlow;
@@ -271,12 +278,12 @@
 
 			const step = getRuntimeCurrentStep(flow);
 			if (!step) {
-				throw new Error($LL.error_invalid_request());
+				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
 			if (step.render !== false && step.component !== 'email_verification') {
 				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
-					throw new Error($LL.error_invalid_request());
+					throw loginUiDisplayError($LL.error_invalid_request());
 				}
 				return `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
 					flow.interaction.id
@@ -294,7 +301,7 @@
 				}
 			);
 			if (submitError || !submittedFlow) {
-				throw new Error($LL.error_invalid_request());
+				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
 			flow = {
@@ -313,7 +320,7 @@
 			}
 		}
 
-		throw new Error($LL.error_invalid_request());
+		throw loginUiDisplayError($LL.error_invalid_request());
 	}
 
 	async function handleResend() {
@@ -332,7 +339,7 @@
 			});
 
 			if (apiError) {
-				throw new Error(getApiErrorMessage(apiError));
+				throw loginUiDisplayError(getApiErrorMessage(apiError));
 			}
 
 			// Clear the input
@@ -351,7 +358,7 @@
 				}
 			}, 3000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.error_unknown();
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			resendLoading = false;
 		}
@@ -373,7 +380,7 @@
 				{brandingStore.brandName || $LL.app_title()}
 			</h1>
 			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
+				<LocalizedTagline />
 			</p>
 		</div>
 
@@ -490,6 +497,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

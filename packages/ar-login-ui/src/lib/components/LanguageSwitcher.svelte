@@ -3,7 +3,12 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
-	import { LOGIN_UI_LOCALE_LABELS, isLoginUILocale, toDocumentLanguage } from '$lib/i18n/locales';
+	import {
+		LOGIN_UI_LOCALE_LABELS,
+		isLoginUILocale,
+		toDocumentDirection,
+		toDocumentLanguage
+	} from '$lib/i18n/locales';
 
 	const { languageStore, themeStore } = useLoginUIStores();
 
@@ -19,6 +24,8 @@
 		if (!languageStore.isEnabled(currentLang)) {
 			currentLang = languageStore.defaultLocale;
 			setLocale(currentLang);
+			document.documentElement.lang = toDocumentLanguage(currentLang);
+			document.documentElement.dir = toDocumentDirection(currentLang);
 		}
 	});
 
@@ -28,6 +35,7 @@
 		setLocale(lang);
 		currentLang = lang;
 		document.documentElement.lang = toDocumentLanguage(lang);
+		document.documentElement.dir = toDocumentDirection(lang);
 		window.dispatchEvent(new CustomEvent('authrim:locale-change', { detail: { locale: lang } }));
 
 		try {

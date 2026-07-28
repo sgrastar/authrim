@@ -2,7 +2,8 @@
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type {
 		FlowRuntimeConsentPolicyContent,
-		FlowRuntimeConsentPolicyOption
+		FlowRuntimeConsentPolicyOption,
+		FlowRuntimeDestinationFieldConsentContent
 	} from '$lib/api/flow-runtime';
 	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
 	import SanitizedHtml from '$lib/components/SanitizedHtml.svelte';
@@ -73,11 +74,14 @@
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
+		headingOverride?: string | null;
 		methodAvailability?: Partial<Record<AuthMethod, boolean>>;
 		methodLoading?: Partial<Record<AuthMethod, boolean>>;
 		externalProviders?: RuntimeExternalProvider[];
 		consentPolicy?: FlowRuntimeConsentPolicyContent | null;
+		destinationFieldConsent?: FlowRuntimeDestinationFieldConsentContent | null;
 		consentDecisions?: Record<string, boolean>;
+		destinationFieldDecisions?: Record<string, boolean>;
 		consentSelectedValues?: Record<string, string>;
 		consentReady?: boolean;
 		humanVerificationRequired?: boolean;
@@ -97,6 +101,7 @@
 		onAuthAction?: (method: AuthMethod, action?: AuthAction) => void;
 		onExternalProviderAction?: (providerId: string) => void;
 		onConsentDecisionChange?: (statementId: string, checked: boolean) => void;
+		onDestinationFieldDecisionChange?: (fieldKey: string, checked: boolean) => void;
 		onConsentSelectedValueChange?: (statementId: string, value: string) => void;
 	};
 
@@ -106,11 +111,14 @@
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
+		headingOverride = null,
 		methodAvailability = {},
 		methodLoading = {},
 		externalProviders = [],
 		consentPolicy = null,
+		destinationFieldConsent = null,
 		consentDecisions = {},
+		destinationFieldDecisions = {},
 		consentSelectedValues = {},
 		consentReady = true,
 		humanVerificationRequired = false,
@@ -130,6 +138,7 @@
 		onAuthAction,
 		onExternalProviderAction,
 		onConsentDecisionChange,
+		onDestinationFieldDecisionChange,
 		onConsentSelectedValueChange
 	}: Props = $props();
 
@@ -237,10 +246,15 @@
 	const localizedScreen = $derived(localizeRuntimeScreen(screen, activeLocale));
 	const normalizedScreen = $derived(normalizeScreen(localizedScreen));
 	const renderedFields = $derived(normalizedScreen?.fields ?? []);
+	const primaryHeadingField = $derived(
+		renderedFields.find((field) => field.block_type === 'heading') ?? null
+	);
 	const renderedSections = $derived(buildLayoutSections(renderedFields));
-	const hasStandaloneSignupEmailField = $derived(
-		authMethodMode === 'signup' &&
-			renderedSections.some((section) => section.items.some(isEmailIdentityField))
+	const hasConsentWidget = $derived(
+		renderedFields.some((field) => field.block_type === 'consent_widget')
+	);
+	const hasStandaloneEmailField = $derived(
+		renderedSections.some((section) => section.items.some(isEmailIdentityField))
 	);
 
 	function isSecurityVerificationField(field: RuntimeField): boolean {
@@ -278,8 +292,7 @@
 		if (method === 'mail_otp_totp') {
 			return (
 				methodAvailability.mail_otp_totp !== false &&
-				methodAvailability.mail_otp !== false &&
-				methodAvailability.totp !== false
+				(methodAvailability.mail_otp !== false || methodAvailability.totp !== false)
 			);
 		}
 		return methodAvailability[method] !== false;
@@ -588,6 +601,24 @@
 		return field.block_id ?? field.field;
 	}
 
+	function usesSharedEmailInput(field: RuntimeField): boolean {
+		if ((field.block_type ?? 'identity_field') !== 'auth_widget') return false;
+		const method = authWidgetMethod(field);
+		return method === 'mail_otp' || method === 'mail_otp_totp' || method === 'totp';
+	}
+
+	const sharedEmailWidgetKey = $derived.by(() => {
+		if (hasStandaloneEmailField) return null;
+		const owner = renderedFields.find(
+			(field) => usesSharedEmailInput(field) && shouldRenderLayoutField(field)
+		);
+		return owner ? fieldKey(owner) : null;
+	});
+
+	function shouldRenderSharedEmailInput(field: RuntimeField): boolean {
+		return sharedEmailWidgetKey !== null && sharedEmailWidgetKey === fieldKey(field);
+	}
+
 	function buildLayoutSections(fields: RuntimeField[]): RuntimeLayoutSection[] {
 		const sections: RuntimeLayoutSection[] = [{ id: 'implicit-layout-row', columns: 1, items: [] }];
 		let current = sections[0];
@@ -620,11 +651,40 @@
 	}
 </script>
 
+{#snippet destinationFieldChoices()}
+	{#if destinationFieldConsent?.fields.length}
+		<div class="runtime-consent-items runtime-destination-fields">
+			{#each destinationFieldConsent.fields as destinationField (destinationField.key)}
+				<label class="runtime-consent-choice">
+					<input
+						type="checkbox"
+						checked={destinationField.required ||
+							destinationFieldDecisions[destinationField.key] === true}
+						required={destinationField.required}
+						disabled={disabled || destinationField.required}
+						onchange={(event) =>
+							onDestinationFieldDecisionChange?.(
+								destinationField.key,
+								(event.currentTarget as HTMLInputElement).checked
+							)}
+					/>
+					<span class="runtime-consent-content">
+						<strong>{destinationField.label}</strong>
+						{#if destinationField.required}<span aria-hidden="true"> *</span>{/if}
+					</span>
+				</label>
+			{/each}
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet runtimeField(field: RuntimeField)}
 	{@const blockType = field.block_type ?? 'identity_field'}
 	{#if blockType === 'heading'}
 		<div class="runtime-screen-heading">
-			<h2>{field.label}</h2>
+			<h2>
+				{field === primaryHeadingField && headingOverride !== null ? headingOverride : field.label}
+			</h2>
 			{#if field.text}
 				<p>{field.text}</p>
 			{/if}
@@ -640,6 +700,7 @@
 			{#if field.text}
 				<p>{field.text}</p>
 			{/if}
+			{@render destinationFieldChoices()}
 			{#if consentPolicy?.items.length}
 				<div class="runtime-consent-items">
 					{#each consentPolicy.items as item (item.statement_id)}
@@ -704,7 +765,7 @@
 						</div>
 					{/each}
 				</div>
-			{:else}
+			{:else if !destinationFieldConsent?.fields.length}
 				<span class="runtime-checkbox-row">
 					<input {disabled} type="checkbox" />
 					<span>{$LL.consent_items_required_title()}</span>
@@ -809,22 +870,27 @@
 		{@const method = authWidgetMethod(field)}
 		{#if authMethodAvailable(method)}
 			<div class="runtime-auth-widget">
+				{#if shouldRenderSharedEmailInput(field)}
+					<label class="runtime-screen-field">
+						<span>{$LL.common_email()}</span>
+						<input
+							value={String(
+								fieldValues.email ?? fieldValues.identifier ?? fieldValues.totp_identifier ?? ''
+							)}
+							disabled={disabled || authMethodBusy('mail_otp_totp')}
+							placeholder={$LL.common_emailPlaceholder()}
+							type="email"
+							name="email"
+							autocomplete="email"
+							oninput={(event) =>
+								onFieldValueChange?.('email', (event.currentTarget as HTMLInputElement).value)}
+						/>
+						{#if fieldErrors.email}
+							<small class="runtime-screen-error">{fieldErrors.email}</small>
+						{/if}
+					</label>
+				{/if}
 				{#if method === 'mail_otp'}
-					{#if !hasStandaloneSignupEmailField}
-						<label class="runtime-screen-field">
-							<span>{$LL.common_email()}</span>
-							<input
-								value={String(fieldValues.email ?? '')}
-								disabled={disabled || authMethodBusy(method)}
-								placeholder={$LL.common_emailPlaceholder()}
-								type="email"
-								name="email"
-								autocomplete="email"
-								oninput={(event) =>
-									onFieldValueChange?.('email', (event.currentTarget as HTMLInputElement).value)}
-							/>
-						</label>
-					{/if}
 					<button
 						class="runtime-auth-button secondary"
 						type={emailVerificationProtocolEnabled ? 'submit' : 'button'}
@@ -835,37 +901,30 @@
 						{authWidgetLabel(field)}
 					</button>
 				{:else if method === 'mail_otp_totp'}
-					<label class="runtime-screen-field">
-						<span>{$LL.login_totpIdentifierLabel()}</span>
-						<input
-							value={String(
-								fieldValues.identifier ?? fieldValues.email ?? fieldValues.totp_identifier ?? ''
-							)}
-							disabled={disabled || authMethodBusy(method)}
-							placeholder={$LL.login_totpIdentifierPlaceholder()}
-							autocomplete="username"
-							oninput={(event) =>
-								onFieldValueChange?.('identifier', (event.currentTarget as HTMLInputElement).value)}
-						/>
-					</label>
-					<button
-						class="runtime-auth-button secondary"
-						type="button"
-						disabled={authButtonDisabled('mail_otp') || authMethodBusy('mail_otp')}
-						onclick={() => onAuthAction?.('mail_otp', 'send_mail_otp')}
-					>
-						<span class="i-ph-envelope-simple"></span>
-						{$LL.login_sendCode()}
-					</button>
-					<button
-						class="runtime-auth-button secondary"
-						type="button"
-						disabled={authButtonDisabled('totp') || authMethodBusy('totp')}
-						onclick={() => onAuthAction?.('totp', 'start_totp')}
-					>
-						<span class="i-ph-device-mobile"></span>
-						{authMethodMode === 'signup' ? $LL.register_createWithTotp() : $LL.login_totpContinue()}
-					</button>
+					{#if authMethodAvailable('mail_otp')}
+						<button
+							class="runtime-auth-button secondary"
+							type="button"
+							disabled={authButtonDisabled('mail_otp') || authMethodBusy('mail_otp')}
+							onclick={() => onAuthAction?.('mail_otp', 'send_mail_otp')}
+						>
+							<span class="i-ph-envelope-simple"></span>
+							{$LL.login_sendCode()}
+						</button>
+					{/if}
+					{#if authMethodAvailable('totp')}
+						<button
+							class="runtime-auth-button secondary"
+							type="button"
+							disabled={authButtonDisabled('totp') || authMethodBusy('totp')}
+							onclick={() => onAuthAction?.('totp', 'start_totp')}
+						>
+							<span class="i-ph-device-mobile"></span>
+							{authMethodMode === 'signup'
+								? $LL.register_createWithTotp()
+								: $LL.login_totpContinue()}
+						</button>
+					{/if}
 				{:else if method === 'directory_password'}
 					<label class="runtime-screen-field">
 						<span>{$LL.login_directoryUsernamePlaceholder()}</span>
@@ -907,22 +966,6 @@
 						{authWidgetLabel(field)}
 					</button>
 				{:else if method === 'totp'}
-					{#if authMethodMode === 'login'}
-						<label class="runtime-screen-field">
-							<span>{$LL.login_totpIdentifierLabel()}</span>
-							<input
-								value={String(fieldValues.totp_identifier ?? fieldValues.identifier ?? '')}
-								disabled={disabled || authMethodBusy(method)}
-								placeholder={$LL.login_totpIdentifierPlaceholder()}
-								autocomplete="username"
-								oninput={(event) =>
-									onFieldValueChange?.(
-										'totp_identifier',
-										(event.currentTarget as HTMLInputElement).value
-									)}
-							/>
-						</label>
-					{/if}
 					<button
 						class="runtime-auth-button secondary"
 						type="button"
@@ -1034,6 +1077,13 @@
 				{/each}
 			</div>
 		{/each}
+		{#if destinationFieldConsent?.fields.length && !hasConsentWidget}
+			<div class="runtime-layout-section">
+				<div class="runtime-layout-cell runtime-screen-consent-widget">
+					{@render destinationFieldChoices()}
+				</div>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -1090,7 +1140,7 @@
 	}
 
 	.runtime-screen-field strong {
-		margin-left: 0.375rem;
+		margin-inline-start: 0.375rem;
 		color: var(--color-danger, #ef4444);
 		font-size: 0.75rem;
 	}

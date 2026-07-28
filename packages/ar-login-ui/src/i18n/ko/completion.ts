@@ -27,7 +27,7 @@ const completion = {
 	dialog_description:
 		'Svelte용 접근성 헤드리스 컴포넌트 라이브러리인 Melt UI를 사용한 테스트 대화 상자입니다.',
 	dialog_confirm: '확인',
-	footer_stack: 'Authrim 제공',
+	footer_stack: 'Powered by <a href="https://authrim.com/">Authrim</a>',
 	language_english: '영어',
 	language_japanese: '일본어',
 	common_emailPlaceholder: 'you@example.com',

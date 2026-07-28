@@ -27,6 +27,9 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
+  loadDestinationProfileConsentDescriptor,
+  requireAdminDatabaseAdapter,
+  resolveRuntimeIdentityMappingBinding,
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
 } from '@authrim/ar-lib-core';
@@ -51,8 +54,8 @@ type AdminTokenEndpointAuthMethod =
   | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
-  policySetId?: string;
-  policyVersionId?: string;
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
@@ -430,8 +433,8 @@ function validateOptionalIdentityMappingSelectorField(
   const source = value as Record<string, unknown>;
   const selector: AdminOIDCIdentityMappingSelector = {};
   for (const key of [
-    'policySetId',
-    'policyVersionId',
+    'fieldMappingSetId',
+    'fieldMappingVersionId',
     'destinationNamespace',
     'sourceProfileId',
     'destinationProfileId',
@@ -447,6 +450,24 @@ function validateOptionalIdentityMappingSelectorField(
     if (trimmed) {
       selector[key] = trimmed;
     }
+  }
+
+  const legacyFieldMappingSetId = source.policySetId;
+  const legacyFieldMappingVersionId = source.policyVersionId;
+  if (legacyFieldMappingSetId !== undefined && typeof legacyFieldMappingSetId !== 'string') {
+    return { ok: false, error: `${field}.policySetId must be a string` };
+  }
+  if (
+    legacyFieldMappingVersionId !== undefined &&
+    typeof legacyFieldMappingVersionId !== 'string'
+  ) {
+    return { ok: false, error: `${field}.policyVersionId must be a string` };
+  }
+  if (!selector.fieldMappingSetId && typeof legacyFieldMappingSetId === 'string') {
+    selector.fieldMappingSetId = legacyFieldMappingSetId.trim() || undefined;
+  }
+  if (!selector.fieldMappingVersionId && typeof legacyFieldMappingVersionId === 'string') {
+    selector.fieldMappingVersionId = legacyFieldMappingVersionId.trim() || undefined;
   }
 
   return { ok: true, value: Object.keys(selector).length > 0 ? selector : null };
@@ -523,6 +544,45 @@ function parseIdentityMappingSelectorField(
   }
   const validation = validateOptionalIdentityMappingSelectorField(current, 'identity_mapping');
   return validation.ok ? (validation.value ?? null) : null;
+}
+
+async function validateOIDCIdentityMappingSelector(
+  env: Env,
+  tenantId: string,
+  selector: AdminOIDCIdentityMappingSelector | null | undefined
+): Promise<string | null> {
+  if (selector === undefined || selector === null) return null;
+  if (!selector.fieldMappingSetId) {
+    return 'identity_mapping.fieldMappingSetId is required';
+  }
+
+  try {
+    const adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
+    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
+      tenantId,
+      protocol: 'oidc',
+      role: 'op',
+      fieldMappingSetId: selector.fieldMappingSetId,
+      fieldMappingVersionId: selector.fieldMappingVersionId,
+    });
+    if (!binding) {
+      return 'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set';
+    }
+    if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+      return 'The active Mapping Set must reference exactly one OIDC Destination Profile';
+    }
+    const descriptor = await loadDestinationProfileConsentDescriptor(
+      adminAdapter,
+      tenantId,
+      binding.destinationProfileId
+    );
+    if (!descriptor || descriptor.destinationType !== 'oidc') {
+      return 'The active Mapping Set must reference an active OIDC Destination Profile';
+    }
+    return null;
+  } catch {
+    return 'Unable to validate identity_mapping against the active Mapping Set';
+  }
 }
 
 function parseAttributeReleaseConsentPolicyField(
@@ -681,6 +741,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent?: boolean;
       allow_claims_without_scope?: boolean;
       claims_parameter_policy?: Record<string, ClaimReleasePolicy> | null;
+      identity_mapping?: AdminOIDCIdentityMappingSelector | null;
       attribute_release_consent?: AttributeReleaseConsentPolicy | null;
       asc_enabled?: boolean;
       asc_protected_request_required?: boolean;
@@ -951,6 +1012,19 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const identityMappingValidation = validateOptionalIdentityMappingSelectorField(
+      body.identity_mapping,
+      'identity_mapping'
+    );
+    if (!identityMappingValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: identityMappingValidation.error,
+        },
+        400
+      );
+    }
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
       body.attribute_release_consent,
       'attribute_release_consent'
@@ -1217,6 +1291,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    const identityMappingError = await validateOIDCIdentityMappingSelector(
+      c.env,
+      tenantId,
+      identityMappingValidation.value
+    );
+    if (identityMappingError) {
+      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+    }
     const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
     const clientSecret = isPublicClient
       ? undefined
@@ -1256,6 +1338,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent: body.skip_consent || false,
       allow_claims_without_scope: body.allow_claims_without_scope || false,
       claims_parameter_policy: claimsParameterPolicyValidation.value,
+      identity_mapping: identityMappingValidation.value,
       attribute_release_consent: attributeReleaseConsentValidation.value,
       asc_enabled: ascEnabledValidation.value ?? true,
       asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? true,
@@ -1345,6 +1428,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope: client.allow_claims_without_scope,
       claims_parameter_policy:
         parseClaimsParameterPolicyField(client.claims_parameter_policy) ?? undefined,
+      identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
       attribute_release_consent:
         parseAttributeReleaseConsentPolicyField(client.attribute_release_consent) ?? undefined,
       asc_enabled: client.asc_enabled,
@@ -1457,6 +1541,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           skip_consent: client.skip_consent,
           allow_claims_without_scope: client.allow_claims_without_scope,
           claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+          identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
           attribute_release_consent: parseAttributeReleaseConsentPolicyField(
             client.attribute_release_consent
           ),
@@ -2004,6 +2089,14 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
+    }
+    const identityMappingError = await validateOIDCIdentityMappingSelector(
+      c.env,
+      tenantId,
+      identityMappingValidation.value
+    );
+    if (identityMappingError) {
+      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
     }
 
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(

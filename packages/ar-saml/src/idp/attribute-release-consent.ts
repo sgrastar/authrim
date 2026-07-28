@@ -81,6 +81,9 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
   spConfig: SAMLSPConfig;
   attributes: SAMLAttribute[];
   confirmedRelease?: SAMLRequestContext['attributeReleaseConsentConfirmed'];
+  destinationFieldConsentConfirmed?: {
+    consentRecordId: string;
+  };
 }): Promise<SAMLAttributeReleaseConsentCheckResult> {
   if (input.attributes.length === 0) {
     return { action: 'release', attributeSetHash: null, reasonCodes: [] };
@@ -143,6 +146,26 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     return { action: 'release', attributeSetHash: null, reasonCodes: [] };
   }
 
+  const repository = new AttributeReleaseConsentRepository(adapter);
+  if (input.destinationFieldConsentConfirmed) {
+    if (policy.mode !== 'every_time') {
+      await repository.grant({
+        tenant_id: input.tenantId,
+        subject_id: input.subjectId,
+        destination_type: 'saml_sp',
+        destination_id: input.spConfig.entityId,
+        attribute_set_hash: attributeSetHash,
+        consent_mode: policy.mode,
+        consent_record_id: input.destinationFieldConsentConfirmed.consentRecordId,
+      });
+    }
+    return {
+      action: 'release',
+      attributeSetHash,
+      reasonCodes: ['release.attribute_consent.transaction_confirmed'],
+    };
+  }
+
   if (
     confirmedAttributeReleaseMatches({
       confirmedRelease: input.confirmedRelease,
@@ -158,7 +181,6 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
     };
   }
 
-  const repository = new AttributeReleaseConsentRepository(adapter);
   const existingConsent =
     policy.mode === 'until_attributes_change'
       ? ((await repository.findGrantedConsent({

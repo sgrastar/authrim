@@ -13,6 +13,14 @@ function readComponent(relativePath: string): string {
 }
 
 describe('Flow Admin UI smoke checks', () => {
+	it('keeps the flows index focused on saved flows without the overview guide', () => {
+		const flowsPage = readRoute('admin/flows/+page.svelte');
+
+		expect(flowsPage).toContain('admin_flows_list_title');
+		expect(flowsPage).not.toContain('admin_flows_overview_');
+		expect(flowsPage).not.toContain('class="flow-overview"');
+	});
+
 	it('keeps palette-added nodes aligned with runtime handle defaults', () => {
 		const editorPage = readRoute('admin/flows/[id]/edit/+page.svelte');
 		const addNodeBlock = editorPage.slice(

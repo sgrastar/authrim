@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   decision: { action: 'release', reasonCodes: ['release.granted'] } as Record<string, unknown>,
   findGranted: vi.fn(),
   findLatest: vi.fn(),
+  grant: vi.fn(async () => undefined),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -25,6 +26,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     AttributeReleaseConsentRepository: class {
       findGrantedConsent = mocks.findGranted;
       findLatestGrantedConsentForDestination = mocks.findLatest;
+      grant = mocks.grant;
     },
   };
 });
@@ -139,6 +141,45 @@ describe('SAML attribute release consent', () => {
       attributeSetHash,
       reasonCodes: ['release.attribute_consent.transaction_confirmed'],
     });
+  });
+
+  it('bridges generic destination consent into until-attributes-change persistence', async () => {
+    await expect(
+      enforceSAMLAttributeReleaseConsent(
+        input({
+          attributeReleaseConsent: { enabled: true, mode: 'until_attributes_change' },
+          destinationFieldConsentConfirmed: { consentRecordId: 'destination-consent-1' },
+        })
+      )
+    ).resolves.toMatchObject({
+      action: 'release',
+      reasonCodes: ['release.attribute_consent.transaction_confirmed'],
+    });
+
+    expect(mocks.grant).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant-a',
+        subject_id: 'user-1',
+        destination_type: 'saml_sp',
+        destination_id: 'https://sp.example.edu/saml',
+        consent_mode: 'until_attributes_change',
+        consent_record_id: 'destination-consent-1',
+      })
+    );
+  });
+
+  it('treats generic every-time destination consent as transaction-only', async () => {
+    await expect(
+      enforceSAMLAttributeReleaseConsent(
+        input({
+          attributeReleaseConsent: { enabled: true, mode: 'every_time' },
+          destinationFieldConsentConfirmed: { consentRecordId: 'destination-consent-1' },
+        })
+      )
+    ).resolves.toMatchObject({ action: 'release' });
+
+    expect(mocks.grant).not.toHaveBeenCalled();
+    expect(mocks.findLatest).not.toHaveBeenCalled();
   });
 
   it('releases empty attribute sets without persistence', async () => {

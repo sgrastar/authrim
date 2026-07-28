@@ -9,7 +9,11 @@ export const LOGIN_UI_LOCALES = [
 	'de',
 	'ko',
 	'ru',
-	'id'
+	'id',
+	'ar',
+	'it',
+	'th',
+	'vi'
 ] as const;
 
 export type LoginUILocale = (typeof LOGIN_UI_LOCALES)[number];
@@ -25,8 +29,14 @@ export const LOGIN_UI_LOCALE_LABELS: Record<LoginUILocale, string> = {
 	de: 'Deutsch',
 	ko: '한국어',
 	ru: 'Русский',
-	id: 'Bahasa Indonesia'
+	id: 'Bahasa Indonesia',
+	ar: 'العربية',
+	it: 'Italiano',
+	th: 'ไทย',
+	vi: 'Tiếng Việt'
 };
+
+const RTL_LOGIN_UI_LOCALES = new Set<LoginUILocale>(['ar']);
 
 export function isLoginUILocale(value: string): value is LoginUILocale {
 	return LOGIN_UI_LOCALES.includes(value as LoginUILocale);
@@ -63,4 +73,8 @@ export function normalizeLoginUILocale(value: string | null | undefined): LoginU
 
 export function toDocumentLanguage(locale: LoginUILocale): string {
 	return locale;
+}
+
+export function toDocumentDirection(locale: LoginUILocale): 'ltr' | 'rtl' {
+	return RTL_LOGIN_UI_LOCALES.has(locale) ? 'rtl' : 'ltr';
 }

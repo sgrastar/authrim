@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { adminInfrastructureAPI, type ShardConfig } from '$lib/api/admin-infrastructure';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
@@ -43,7 +44,8 @@
 			codeShards.config = await adminInfrastructureAPI.getCodeShards();
 			codeShards.editValue = codeShards.config.current;
 		} catch (err) {
-			codeShards.error = err instanceof Error ? err.message : 'Failed to load';
+			codeShards.error =
+				err instanceof Error ? err.message : $LL.admin_settings_shards_load_failed();
 		} finally {
 			codeShards.loading = false;
 		}
@@ -56,7 +58,8 @@
 			revocationShards.config = await adminInfrastructureAPI.getRevocationShards();
 			revocationShards.editValue = revocationShards.config.current;
 		} catch (err) {
-			revocationShards.error = err instanceof Error ? err.message : 'Failed to load';
+			revocationShards.error =
+				err instanceof Error ? err.message : $LL.admin_settings_shards_load_failed();
 		} finally {
 			revocationShards.loading = false;
 		}
@@ -70,13 +73,14 @@
 		codeShards.error = '';
 		try {
 			await adminInfrastructureAPI.updateCodeShards(codeShards.editValue);
-			successMessage = 'Code Shards updated successfully';
+			successMessage = $LL.admin_settings_code_shards_updated();
 			await loadCodeShards();
 			setTimeout(() => {
 				successMessage = '';
 			}, 3000);
 		} catch (err) {
-			codeShards.error = err instanceof Error ? err.message : 'Failed to save';
+			codeShards.error =
+				err instanceof Error ? err.message : $LL.admin_settings_shards_save_failed();
 		} finally {
 			codeShards.saving = false;
 		}
@@ -93,13 +97,14 @@
 		revocationShards.error = '';
 		try {
 			await adminInfrastructureAPI.updateRevocationShards(revocationShards.editValue);
-			successMessage = 'Revocation Shards updated successfully';
+			successMessage = $LL.admin_settings_revocation_shards_updated();
 			await loadRevocationShards();
 			setTimeout(() => {
 				successMessage = '';
 			}, 3000);
 		} catch (err) {
-			revocationShards.error = err instanceof Error ? err.message : 'Failed to save';
+			revocationShards.error =
+				err instanceof Error ? err.message : $LL.admin_settings_shards_save_failed();
 		} finally {
 			revocationShards.saving = false;
 		}

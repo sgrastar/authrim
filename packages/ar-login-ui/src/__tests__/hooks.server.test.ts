@@ -131,7 +131,7 @@ describe('Login UI proxy hooks', () => {
 			event: event as never,
 			resolve: async (_event, options) => {
 				const transformedHtml = await options?.transformPageChunk?.({
-					html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" style="background: __AUTHRIM_INITIAL_BACKGROUND__; color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__"></html>',
+					html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" dir="__AUTHRIM_DOCUMENT_DIRECTION__" style="background: __AUTHRIM_INITIAL_BACKGROUND__; color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__"></html>',
 					done: true
 				});
 				renderedHtml = transformedHtml ?? '';
@@ -141,6 +141,7 @@ describe('Login UI proxy hooks', () => {
 
 		expect(event.locals).toMatchObject({ locale: 'zh-TW' });
 		expect(renderedHtml).toContain('<html lang="zh-TW"');
+		expect(renderedHtml).toContain('dir="ltr"');
 		expect(renderedHtml).toContain('background: #112233; color-scheme: dark');
 		expect(renderedHtml).not.toContain('__AUTHRIM_INITIAL_');
 		expect(event.cookies.set).toHaveBeenCalledWith(
@@ -148,6 +149,33 @@ describe('Login UI proxy hooks', () => {
 			'dark',
 			expect.objectContaining({ path: '/', maxAge: 3600, sameSite: 'lax' })
 		);
+	});
+
+	it('renders an RTL document from the first response for Arabic', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'ar-SA,ar;q=0.9' } }),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+		let renderedHtml = '';
+
+		await localeHandle({
+			event: event as never,
+			resolve: async (_event, options) => {
+				renderedHtml =
+					(await options?.transformPageChunk?.({
+						html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" dir="__AUTHRIM_DOCUMENT_DIRECTION__"></html>',
+						done: true
+					})) ?? '';
+				return new Response(renderedHtml);
+			}
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'ar' });
+		expect(renderedHtml).toContain('<html lang="ar" dir="rtl"');
 	});
 
 	it('honors Accept-Language quality values and ignores excluded languages', async () => {
@@ -467,12 +495,18 @@ describe('Login UI proxy hooks', () => {
 	});
 
 	it('bootstraps the configured theme for plain login and signup documents', async () => {
-		const { resolveInitialLoginUIAppearance, shouldBootstrapLoginUITheme } =
-			await import('../hooks.server');
+		const {
+			resolveInitialLoginUIAppearance,
+			shouldBootstrapLoginUITheme,
+			shouldResolveLoginChallengeThemeTarget
+		} = await import('../hooks.server');
 
 		expect(shouldBootstrapLoginUITheme('/login')).toBe(true);
 		expect(shouldBootstrapLoginUITheme('/signup')).toBe(true);
 		expect(shouldBootstrapLoginUITheme('/discover')).toBe(false);
+		expect(shouldResolveLoginChallengeThemeTarget('/login')).toBe(true);
+		expect(shouldResolveLoginChallengeThemeTarget('/signup')).toBe(true);
+		expect(shouldResolveLoginChallengeThemeTarget('/account')).toBe(false);
 		expect(
 			resolveInitialLoginUIAppearance({
 				ui: {

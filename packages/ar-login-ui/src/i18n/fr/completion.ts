@@ -31,7 +31,7 @@ const completion = {
 	dialog_description:
 		'Il s’agit d’une boîte de dialogue de test utilisant Melt UI, une bibliothèque de composants accessibles et sans style pour Svelte.',
 	dialog_confirm: 'Confirmer',
-	footer_stack: 'Propulsé par Authrim',
+	footer_stack: 'Propulsé par <a href="https://authrim.com/">Authrim</a>',
 	language_english: 'Anglais',
 	language_japanese: 'Japonais',
 	common_emailPlaceholder: 'vous@exemple.fr',

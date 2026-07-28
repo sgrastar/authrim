@@ -35,6 +35,24 @@ export type {
 	FlowRuntimeSubmitResponse
 };
 
+export interface FlowRuntimeDestinationFieldConsentItem {
+	key: string;
+	label: string;
+	required: boolean;
+	nullable: boolean;
+	classification: string;
+	surfaces: string[];
+	required_scopes: string[];
+}
+
+export interface FlowRuntimeDestinationFieldConsentContent {
+	profile_id: string;
+	profile_version_id: string;
+	destination_type: 'oidc' | 'saml';
+	consent_mode?: 'once' | 'every_time' | 'until_attributes_change' | null;
+	fields: FlowRuntimeDestinationFieldConsentItem[];
+}
+
 export interface FlowRuntimeApiResult<T> {
 	data?: T;
 	error?: APIError & {

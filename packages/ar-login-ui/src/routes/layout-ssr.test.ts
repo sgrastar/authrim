@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRawSnippet } from 'svelte';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
@@ -22,6 +23,7 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 				fontFamily: 'serif',
 				fontScale: 'compact',
 				backgroundColor: '#112233',
+				accentColor: '#336699',
 				titleColor: '#fefefe',
 				textColor: '#eeeeee',
 				copyColor: '#cccccc',
@@ -70,6 +72,12 @@ function authenticationMethods(): AuthenticationMethodsResponse {
 const children = createRawSnippet(() => ({ render: () => '<main data-test-child></main>' }));
 
 describe('Login UI layout SSR theme bootstrap', () => {
+	it('does not subscribe the route-data effect to branding store state', () => {
+		const source = readFileSync(new URL('./+layout.svelte', import.meta.url), 'utf8');
+
+		expect(source).toMatch(/untrack\(\(\) => applyTenantBranding\(authenticationMethods\)\)/);
+	});
+
 	it('applies the server-selected locale before rendering child content', () => {
 		setLocale('en');
 		const localizedChildren = createRawSnippet(() => ({
@@ -111,6 +119,7 @@ describe('Login UI layout SSR theme bootstrap', () => {
 		expect(body).toContain('data-has-page-background-image="true"');
 		expect(body).toContain('data-has-login-panel-background-image="true"');
 		expect(body).toContain('--login-page-background-color: #112233');
+		expect(body).toContain('--login-accent-color: #336699');
 		expect(body).toContain(
 			'--login-page-background-layer: url(&quot;https://cdn.example.com/background.webp&quot;)'
 		);

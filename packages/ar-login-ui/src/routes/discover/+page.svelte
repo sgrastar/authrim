@@ -606,7 +606,7 @@
 	.tenant-option-button {
 		width: 100%;
 		font: inherit;
-		text-align: left;
+		text-align: start;
 		cursor: pointer;
 	}
 

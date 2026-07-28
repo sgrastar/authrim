@@ -474,11 +474,14 @@ function extractSchemaFields(
 ): ExtractedField[] {
 	if (!schema) return [];
 
-	const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : []);
+	const allowInlineRequired = schema.destinationType !== 'saml';
+	const required = new Set(
+		allowInlineRequired && Array.isArray(schema.required) ? schema.required.map(String) : []
+	);
 	const candidates = [
-		fieldsFromArray(schema.attributes, required),
-		fieldsFromArray(schema.fields, required),
-		fieldsFromArray(schema.columns, required),
+		fieldsFromArray(schema.attributes, required, allowInlineRequired),
+		fieldsFromArray(schema.fields, required, allowInlineRequired),
+		fieldsFromArray(schema.columns, required, allowInlineRequired),
 		fieldsFromClaims(schema.claims, required),
 		fieldsFromProperties(schema.properties, required)
 	].find((fields) => fields.length > 0);
@@ -495,7 +498,11 @@ function extractSchemaFields(
 		}));
 }
 
-function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[] {
+function fieldsFromArray(
+	value: unknown,
+	required: Set<string>,
+	allowInlineRequired = true
+): ExtractedField[] {
 	if (!Array.isArray(value)) return [];
 	return value.flatMap((item) => {
 		if (typeof item === 'string') {
@@ -527,7 +534,7 @@ function fieldsFromArray(value: unknown, required: Set<string>): ExtractedField[
 				label: stringValue(item.label) ?? key,
 				caption: stringValue(item.description) ?? type ?? 'schema field',
 				type,
-				required: required.has(key) || item.required === true,
+				required: required.has(key) || (allowInlineRequired && item.required === true),
 				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
 				examples:
 					examplesFromRecord(item) ??

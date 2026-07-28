@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   user: null as Record<string, unknown> | null,
   attributeError: null as Error | null,
   consentError: null as Error | null,
+  destinationConsentApplied: false,
   authnContextError: null as Error | null,
   nameIdError: null as Error | null,
   consentGrant: vi.fn(async () => undefined),
@@ -62,6 +63,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       fieldMappingSetId: 'set',
       fieldMappingVersionId: 'version',
       destinationNamespace: 'saml',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
+    })),
+    filterSamlAttributesByDestinationConsentWithStatus: vi.fn(async (input) => ({
+      attributes: input.attributes,
+      consentApplied: mocks.destinationConsentApplied,
+      ...(mocks.destinationConsentApplied
+        ? {
+            consentRecordId: 'destination-consent-1',
+            consentEvidence: { saml_request_id: '_request' },
+          }
+        : {}),
     })),
     getLocalization: vi.fn(async () => ({ locale: 'en', t: (key: string) => key })),
     getLogger: () => ({
@@ -131,9 +144,12 @@ vi.mock('../attribute-release-consent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../attribute-release-consent')>();
   return {
     ...actual,
-    enforceSAMLAttributeReleaseConsent: vi.fn(async () => {
-      if (mocks.consentError) throw mocks.consentError;
-    }),
+    enforceSAMLAttributeReleaseConsent: vi.fn(
+      async (input: { destinationFieldConsentConfirmed?: unknown }) => {
+        if (input.destinationFieldConsentConfirmed) return;
+        if (mocks.consentError) throw mocks.consentError;
+      }
+    ),
   };
 });
 
@@ -276,6 +292,7 @@ describe('IdP SSO handler policy boundaries', () => {
     mocks.user = null;
     mocks.attributeError = null;
     mocks.consentError = null;
+    mocks.destinationConsentApplied = false;
     mocks.authnContextError = null;
     mocks.nameIdError = null;
     mocks.pairwiseSecret = 'pairwise-secret';
@@ -499,6 +516,24 @@ describe('IdP SSO handler policy boundaries', () => {
       attributeSetHash: 'hash',
       consentMode: 'once',
     });
+  });
+
+  it('does not render the legacy confirmation after generic destination consent', async () => {
+    authenticateSession();
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.destinationConsentApplied = true;
+    mocks.consentError = new SAMLAttributeReleaseConsentRequiredError({
+      attributeSetHash: 'hash',
+      reasonCodes: ['consent.required'],
+      consentMode: 'once',
+      attributes: [{ name: 'mail', values: ['user@example.test'] }],
+    });
+
+    const response = await post(authnRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('SAMLResponse');
+    expect(mocks.buildResponse).toHaveBeenCalled();
   });
 
   it('rejects GET redirect binding without a SAMLRequest', async () => {

@@ -3,9 +3,12 @@
 	import { page } from '$app/stores';
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import FooterText from '$lib/components/FooterText.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { deviceFlowAPI } from '$lib/api/client';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 
 	const { brandingStore } = useLoginUIStores();
@@ -70,14 +73,14 @@
 		try {
 			const { data, error: apiError } = await deviceFlowAPI.verify(cleanCode);
 			if (apiError) {
-				throw new Error($LL.device_errorInvalidOrExpiredCode());
+				throw loginUiDisplayError($LL.device_errorInvalidOrExpiredCode());
 			}
 			if (data) {
 				deviceInfo = data as DeviceInfo;
 				step = 'verified';
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.device_errorVerifyFailed();
+			error = messageForCaughtError(err, $LL.device_errorVerifyFailed());
 		} finally {
 			verifying = false;
 		}
@@ -92,7 +95,7 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { data, error: apiError } = await deviceFlowAPI.approve(cleanCode);
 			if (apiError) {
-				throw new Error($LL.device_errorApproveFailed());
+				throw loginUiDisplayError($LL.device_errorApproveFailed());
 			}
 			if (!data?.redirect_url) {
 				success = $LL.device_success();
@@ -106,7 +109,7 @@
 				}, 2000);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.device_errorApproveFailed();
+			error = messageForCaughtError(err, $LL.device_errorApproveFailed());
 		} finally {
 			loading = false;
 		}
@@ -121,11 +124,11 @@
 			const cleanCode = userCode.replace(/-/g, '');
 			const { error: apiError } = await deviceFlowAPI.deny(cleanCode);
 			if (apiError) {
-				throw new Error($LL.device_errorDenyFailed());
+				throw loginUiDisplayError($LL.device_errorDenyFailed());
 			}
 			window.location.href = '/';
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.device_errorDenyFailed();
+			error = messageForCaughtError(err, $LL.device_errorDenyFailed());
 		} finally {
 			loading = false;
 		}
@@ -152,7 +155,7 @@
 				{brandingStore.brandName || $LL.app_title()}
 			</h1>
 			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
+				<LocalizedTagline />
 			</p>
 		</div>
 
@@ -306,6 +309,6 @@
 
 	<!-- Footer -->
 	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
+		<FooterText value={$LL.footer_stack()} />
 	</footer>
 </div>

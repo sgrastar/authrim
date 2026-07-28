@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
+	import { LL } from '$i18n/i18n-svelte';
 	import Modal from './Modal.svelte';
 	import OrganizationTree from './OrganizationTree.svelte';
 	import {
@@ -50,7 +51,7 @@
 			const rootOrgs = orgList.organizations.filter((org) => !org.parent_org_id);
 
 			if (rootOrgs.length === 0) {
-				error = 'No organizations found';
+				error = $LL.admin_org_empty();
 				return;
 			}
 
@@ -63,7 +64,7 @@
 			expandedNodes.clear();
 			expandedNodes.add(hierarchyData.organization.id);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load organizations';
+			error = e instanceof Error ? e.message : $LL.admin_org_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -181,9 +182,9 @@
 	<!-- Tree -->
 	<div class="tree-container">
 		{#if loading}
-			<div class="loading">Loading organizations...</div>
+			<div class="loading">{$LL.admin_org_loading_organizations()}</div>
 		{:else if error}
-			<div class="error">{error}</div>
+			<div class="error error-message">{error}</div>
 		{:else if hierarchyData}
 			<OrganizationTree
 				node={hierarchyData.organization}

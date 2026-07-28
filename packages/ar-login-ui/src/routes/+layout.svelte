@@ -4,7 +4,6 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import { setLocale, getLocale } from '$i18n/i18n-svelte';
 	import { initializeLoginUIStores } from '$lib/stores/login-ui-context';
-	import { isValidImageUrl } from '$lib/utils/url-validation';
 	import {
 		fetchAuthenticationMethods,
 		type AuthenticationMethodsResponse
@@ -14,7 +13,8 @@
 	import { get } from 'svelte/store';
 	import type { LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
-	import { isLoginUILocale, toDocumentLanguage } from '$lib/i18n/locales';
+	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
+	import { applyAuthenticationMethodsToLoginUI } from '$lib/stores/login-ui-configuration';
 
 	let { children, data } = $props<{ children: Snippet; data: LayoutData }>();
 	const initialPreferredLanguage = untrack(() => data.preferredLanguage);
@@ -33,37 +33,17 @@
 		// Sync html lang attribute with current locale
 		if (typeof document !== 'undefined') {
 			document.documentElement.lang = toDocumentLanguage(getLocale());
+			document.documentElement.dir = toDocumentDirection(getLocale());
 		}
 	});
 
 	function applyTenantBranding(authenticationMethods: AuthenticationMethodsResponse) {
-		if (!authenticationMethods.ui) return;
-		languageStore.setConfig(
-			authenticationMethods.ui.supportedLocales,
-			authenticationMethods.ui.defaultLocale
-		);
-		if (!languageStore.isEnabled(getLocale())) {
-			setLocale(languageStore.defaultLocale);
-			if (typeof document !== 'undefined') {
-				document.documentElement.lang = toDocumentLanguage(languageStore.defaultLocale);
-			}
-		}
-		themeStore.setTenantDefaults(authenticationMethods.ui.theme, authenticationMethods.ui.variant);
-		loginUIPageStore.setFromUIConfig(authenticationMethods.ui);
-		brandingStore.set(
-			authenticationMethods.ui.branding.brandName || '',
-			authenticationMethods.ui.branding.logoUrl || null
-		);
-		if (
-			typeof document !== 'undefined' &&
-			authenticationMethods.ui.branding.faviconUrl &&
-			isValidImageUrl(authenticationMethods.ui.branding.faviconUrl)
-		) {
-			const faviconLink = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-			if (faviconLink) {
-				faviconLink.href = authenticationMethods.ui.branding.faviconUrl;
-			}
-		}
+		applyAuthenticationMethodsToLoginUI(authenticationMethods, {
+			brandingStore,
+			languageStore,
+			loginUIPageStore,
+			themeStore
+		});
 	}
 
 	if (initialAuthenticationMethods) {
@@ -74,7 +54,8 @@
 	// Svelte updates the page so login/signup transitions never retain the previous/default theme.
 	$effect.pre(() => {
 		if (data.authenticationMethods) {
-			applyTenantBranding(data.authenticationMethods);
+			const authenticationMethods = data.authenticationMethods;
+			untrack(() => applyTenantBranding(authenticationMethods));
 		}
 	});
 
@@ -149,6 +130,7 @@
 	data-logo-display={loginUIPageStore.logoDisplay}
 	data-branding-loaded={brandingStore.isLoaded ? '' : undefined}
 	style:--login-page-background-color={loginUIPageStore.backgroundColor || undefined}
+	style:--login-accent-color={loginUIPageStore.accentColor || undefined}
 	style:--login-title-color={loginUIPageStore.titleColor || undefined}
 	style:--login-text-color={loginUIPageStore.textColor || undefined}
 	style:--login-copy-color={loginUIPageStore.copyColor || undefined}

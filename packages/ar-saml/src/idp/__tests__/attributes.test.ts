@@ -343,6 +343,9 @@ describe('buildSAMLAttributesFromMapping', () => {
           attributeMapping: {},
           identityMapping: {
             catalog: identityMappingSamlCatalog(),
+            destinationFieldPolicies: {
+              'urn:oid:0.9.2342.19200300.100.1.3': 'required',
+            },
             edges: [
               {
                 id: 'edge.email.saml-mail',
@@ -779,7 +782,7 @@ describe('buildSAMLAttributesFromMapping', () => {
     expect(attributes[0]?.valueType).toBe(expected);
   });
 
-  it('resolves descriptors by destination path and namespace key and deduplicates required errors', () => {
+  it('uses the SP destination field policy instead of destination profile required flags', () => {
     const catalog = identityMappingSamlCatalog();
     expect(() =>
       buildSAMLAttributesForSP(
@@ -804,10 +807,37 @@ describe('buildSAMLAttributesFromMapping', () => {
                 required: true,
               },
             },
+            destinationFieldPolicies: { mail: 'required' },
           },
         }
       )
     ).toThrow(MissingRequiredSAMLAttributeError);
+  });
+
+  it('does not emit attributes hidden by the SP destination field policy', () => {
+    const result = buildSAMLAttributesForSP(
+      { id: 'user-123', email: 'user@example.edu' },
+      {
+        attributeMapping: {},
+        identityMapping: {
+          catalog: identityMappingSamlCatalog(),
+          edges: [
+            identityMappingEdge(
+              'field.profile.email',
+              'authrim.profile',
+              'email',
+              'field.saml.mail',
+              'urn:oid:0.9.2342.19200300.100.1.3'
+            ),
+          ],
+          destinationFieldPolicies: {
+            'urn:oid:0.9.2342.19200300.100.1.3': 'hidden',
+          },
+        },
+      }
+    );
+
+    expect(result).toEqual([]);
   });
 });
 

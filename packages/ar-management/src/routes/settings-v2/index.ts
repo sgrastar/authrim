@@ -390,6 +390,10 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
     'ko',
     'ru',
     'id',
+    'ar',
+    'it',
+    'th',
+    'vi',
   ];
   const supportedLocales = body.set?.['login-ui.supported_locales'];
   const defaultLocale = body.set?.['login-ui.default_locale'];
