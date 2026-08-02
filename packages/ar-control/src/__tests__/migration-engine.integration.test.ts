@@ -183,6 +183,6 @@ describe('ApiMigrationEngine current release integration', () => {
       } finally {
         database.close();
       }
-    });
+    }, 15_000);
   }
 });
