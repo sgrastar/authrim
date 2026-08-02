@@ -1,4 +1,5 @@
 import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { transform } from 'esbuild';
 import { describe, expect, it } from 'vitest';
@@ -279,7 +280,7 @@ describe('Phase 0 live spike safety', () => {
   });
 
   it('writes redacted dry-run evidence without requiring Cloudflare credentials', async () => {
-    const outputDir = resolve('/private/tmp', `authrim-phase0-test-${crypto.randomUUID()}`);
+    const outputDir = resolve(tmpdir(), `authrim-phase0-test-${crypto.randomUUID()}`);
     try {
       const result = await runPhase0Spike(
         {

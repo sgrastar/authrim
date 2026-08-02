@@ -1,4 +1,5 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -244,7 +245,7 @@ describe('Phase 0c performance gate', () => {
   });
 
   it('persists only normalized fields and does not carry arbitrary secret input', async () => {
-    const directory = resolve('/private/tmp', `authrim-phase0c-${crypto.randomUUID()}`);
+    const directory = resolve(tmpdir(), `authrim-phase0c-${crypto.randomUUID()}`);
     const inputPath = resolve(directory, 'input.json');
     try {
       await mkdir(directory, { recursive: true });

@@ -1,4 +1,5 @@
 import { readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type {
@@ -104,7 +105,7 @@ describe('Phase 0b D1 capacity harness', () => {
   });
 
   it('writes a credential-free dry-run plan without contacting Cloudflare', async () => {
-    const outputDir = resolve('/private/tmp', `authrim-phase0b-${crypto.randomUUID()}`);
+    const outputDir = resolve(tmpdir(), `authrim-phase0b-${crypto.randomUUID()}`);
     try {
       const options = parsePhase0bArgs(['--env', 'test', '--output-dir', outputDir]);
       const result = await runPhase0bCapacity(options, {});
@@ -126,7 +127,7 @@ describe('Phase 0b D1 capacity harness', () => {
   });
 
   it('runs the current three migration streams through every step and cleans all databases', async () => {
-    const outputDir = resolve('/private/tmp', `authrim-phase0b-live-${crypto.randomUUID()}`);
+    const outputDir = resolve(tmpdir(), `authrim-phase0b-live-${crypto.randomUUID()}`);
     const databases: CloudflareD1Database[] = [];
     const deleted: string[] = [];
     const successful = (count = 1): CloudflareD1QueryResult[] =>
@@ -187,7 +188,7 @@ describe('Phase 0b D1 capacity harness', () => {
   });
 
   it('recovers a created database by deterministic name after response loss and deletes it', async () => {
-    const outputDir = resolve('/private/tmp', `authrim-phase0b-loss-${crypto.randomUUID()}`);
+    const outputDir = resolve(tmpdir(), `authrim-phase0b-loss-${crypto.randomUUID()}`);
     const databases: CloudflareD1Database[] = [];
     const deleted: string[] = [];
     const client = {
