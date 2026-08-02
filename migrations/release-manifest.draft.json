@@ -388,7 +388,7 @@
         },
         {
           "path": "007_control_operation_manual_retry.sql",
-          "checksum": "f8c7a0cfe7e6cf46dfe87d1eed3f5600cdabd9da0e8768ff517641cf34be4182"
+          "checksum": "eb55cac6c7d3edc37d8287d9d356f7eebf43041c15b457bec54554f238d3bcfc"
         },
         {
           "path": "008_signing_key_verifications.sql",
