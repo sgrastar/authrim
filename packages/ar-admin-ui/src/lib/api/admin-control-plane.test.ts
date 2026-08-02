@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminControlPlaneAPI } from './admin-control-plane';
 
+function requestPath(url: unknown): string {
+	return new URL(String(url), 'http://localhost').pathname;
+}
+
 const finding = {
 	findingId: 'drift:test:actual_only:test-unmanaged',
 	environmentId: 'test',
@@ -176,7 +180,7 @@ describe('admin control-plane API', () => {
 			authority
 		});
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/provisioning-authority');
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/provisioning-authority');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
@@ -212,11 +216,11 @@ describe('admin control-plane API', () => {
 		});
 
 		const [previewUrl, previewInit] = fetchMock.mock.calls[0] ?? [];
-		expect(previewUrl).toBe('/api/admin/platform/control-plane/capacity/preview');
+		expect(requestPath(previewUrl)).toBe('/api/admin/platform/control-plane/capacity/preview');
 		expect(previewInit?.body).toBe(JSON.stringify(request));
 		expect((previewInit?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 		const [requestUrl, requestInit] = fetchMock.mock.calls[1] ?? [];
-		expect(requestUrl).toBe('/api/admin/platform/control-plane/capacity/requests');
+		expect(requestPath(requestUrl)).toBe('/api/admin/platform/control-plane/capacity/requests');
 		expect((requestInit?.headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
 	});
 
@@ -268,7 +272,7 @@ describe('admin control-plane API', () => {
 			operation
 		});
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/operations/operation-1');
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/operations/operation-1');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
@@ -422,7 +426,7 @@ describe('admin control-plane API', () => {
 			count: 1
 		});
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/drift-findings');
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/drift-findings');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
@@ -436,7 +440,7 @@ describe('admin control-plane API', () => {
 			count: 1
 		});
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/shard-cleanup');
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/shard-cleanup');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
@@ -537,13 +541,13 @@ describe('admin control-plane API', () => {
 		).resolves.toEqual({ candidate: approvedCandidate, auditId: 'audit-2' });
 
 		const [quarantineUrl, quarantineInit] = fetchMock.mock.calls[0] ?? [];
-		expect(quarantineUrl).toBe(
+		expect(requestPath(quarantineUrl)).toBe(
 			'/api/admin/platform/control-plane/shard-cleanup/retired-shard-1/quarantine'
 		);
 		expect(quarantineInit?.body).toBe('{}');
 		expect((quarantineInit?.headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
 		const [approveUrl, approveInit] = fetchMock.mock.calls[1] ?? [];
-		expect(approveUrl).toBe(
+		expect(requestPath(approveUrl)).toBe(
 			'/api/admin/platform/control-plane/shard-cleanup/retired-shard-1/approve'
 		);
 		expect(JSON.parse(String(approveInit?.body))).toEqual({
@@ -579,7 +583,9 @@ describe('admin control-plane API', () => {
 			adminControlPlaneAPI.retryProvisioningOperationStep('operation-1', 'create_d1')
 		).resolves.toEqual({ operation: retriedOperation, auditId: 'audit-1' });
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/operations/operation-1/retry-step');
+		expect(requestPath(url)).toBe(
+			'/api/admin/platform/control-plane/operations/operation-1/retry-step'
+		);
 		expect(init?.method).toBe('POST');
 		expect(init?.body).toBe(JSON.stringify({ stepKey: 'create_d1' }));
 		expect((init?.headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
@@ -611,7 +617,9 @@ describe('admin control-plane API', () => {
 			auditId: 'audit-2'
 		});
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe('/api/admin/platform/control-plane/operations/operation-1/cancel');
+		expect(requestPath(url)).toBe(
+			'/api/admin/platform/control-plane/operations/operation-1/cancel'
+		);
 		expect(init?.method).toBe('POST');
 		expect(init?.body).toBeUndefined();
 		expect((init?.headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
@@ -646,7 +654,7 @@ describe('admin control-plane API', () => {
 			adminControlPlaneAPI.restoreProvisioningOperationPreviousSettings('operation-1')
 		).resolves.toEqual({ operation: restoreRequestedOperation, auditId: 'audit-3' });
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe(
+		expect(requestPath(url)).toBe(
 			'/api/admin/platform/control-plane/operations/operation-1/restore-previous-settings'
 		);
 		expect(init?.method).toBe('POST');
@@ -666,7 +674,7 @@ describe('admin control-plane API', () => {
 
 		await adminControlPlaneAPI.reviewDriftFinding(finding.findingId, 'reviewed');
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
-		expect(url).toBe(
+		expect(requestPath(url)).toBe(
 			'/api/admin/platform/control-plane/drift-findings/drift%3Atest%3Aactual_only%3Atest-unmanaged/review'
 		);
 		expect(init?.method).toBe('POST');
