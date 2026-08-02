@@ -2317,10 +2317,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       tasks.push(
         scheduledTask(
           'plugin_resource_operator_handoff',
-          handoffPluginResourceOperationsToSetup(
-            this.env.CONTROL_DB,
-            Math.floor(Date.now() / 1000)
-          )
+          handoffPluginResourceOperationsToSetup(this.env.CONTROL_DB, Math.floor(Date.now() / 1000))
         ),
         scheduledTask(
           'tenant_disaster_recovery_binding_handoff',
@@ -2336,9 +2333,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         ),
         scheduledTask(
           'lookup_hmac_key_state_publication',
-          new LookupHmacKeyStatePublisher(this.env, () =>
-            Math.floor(Date.now() / 1000)
-          ).reconcile()
+          new LookupHmacKeyStatePublisher(this.env, () => Math.floor(Date.now() / 1000)).reconcile()
         ),
         scheduledTask(
           'plugin_runner_registry_publication',

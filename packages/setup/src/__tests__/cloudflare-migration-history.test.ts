@@ -142,18 +142,12 @@ describe('D1 migration history safety', () => {
   });
 
   it('refreshes only an OAuth credential once for an authentication rejection', async () => {
-    expect(shouldRefreshD1OAuthCredential({ status: 401, source: 'oauth', attempt: 1 })).toBe(
-      true
-    );
-    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'oauth', attempt: 1 })).toBe(
-      true
-    );
+    expect(shouldRefreshD1OAuthCredential({ status: 401, source: 'oauth', attempt: 1 })).toBe(true);
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'oauth', attempt: 1 })).toBe(true);
     expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'oauth', attempt: 2 })).toBe(
       false
     );
-    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'env', attempt: 1 })).toBe(
-      false
-    );
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'env', attempt: 1 })).toBe(false);
     expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'd1_env', attempt: 1 })).toBe(
       false
     );

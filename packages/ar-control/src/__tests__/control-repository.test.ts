@@ -84,7 +84,10 @@ class PreparedStatement {
 function d1Adapter(database: DatabaseSync): D1Database {
   return {
     prepare(sql: string) {
-      return new PreparedStatement(database.prepare(sql), /^\s*(?:SELECT|PRAGMA|EXPLAIN)\b/iu.test(sql));
+      return new PreparedStatement(
+        database.prepare(sql),
+        /^\s*(?:SELECT|PRAGMA|EXPLAIN)\b/iu.test(sql)
+      );
     },
     async batch(statements: unknown[]) {
       database.exec('BEGIN IMMEDIATE');

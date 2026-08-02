@@ -103,43 +103,38 @@ async function deleteRepairUsers(input: {
 }): Promise<void> {
   let nextIndex = 0;
   await Promise.all(
-    Array.from(
-      { length: Math.min(REPAIR_DELETE_CONCURRENCY, input.userIds.length) },
-      async () => {
-        while (nextIndex < input.userIds.length) {
-          const userId = input.userIds[nextIndex++];
-          let deleted = false;
-          let failureStatus = 'unknown';
-          for (let attempt = 0; attempt < 5; attempt += 1) {
-            try {
-              await phase0cAdminJson({
-                baseUrl: input.baseUrl,
-                path: `/api/admin/users/${encodeURIComponent(userId)}`,
-                method: 'DELETE',
-                token: input.token,
-                tenantId: input.tenantId,
-              });
-              deleted = true;
-              break;
-            } catch (error) {
-              const message = error instanceof Error ? error.message : '';
-              failureStatus =
-                /^phase0c_mail_admin_request_failed:DELETE:[^:]+:(\d{3})(?::|$)/u.exec(
-                  message
-                )?.[1] ?? 'unknown';
-              if (attempt < 4) {
-                await new Promise((resolveDelay) =>
-                  setTimeout(resolveDelay, 250 * (attempt + 1))
-                );
-              }
+    Array.from({ length: Math.min(REPAIR_DELETE_CONCURRENCY, input.userIds.length) }, async () => {
+      while (nextIndex < input.userIds.length) {
+        const userId = input.userIds[nextIndex++];
+        let deleted = false;
+        let failureStatus = 'unknown';
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          try {
+            await phase0cAdminJson({
+              baseUrl: input.baseUrl,
+              path: `/api/admin/users/${encodeURIComponent(userId)}`,
+              method: 'DELETE',
+              token: input.token,
+              tenantId: input.tenantId,
+            });
+            deleted = true;
+            break;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            failureStatus =
+              /^phase0c_mail_admin_request_failed:DELETE:[^:]+:(\d{3})(?::|$)/u.exec(
+                message
+              )?.[1] ?? 'unknown';
+            if (attempt < 4) {
+              await new Promise((resolveDelay) => setTimeout(resolveDelay, 250 * (attempt + 1)));
             }
           }
-          if (!deleted) {
-            throw new Error(`phase0c_totp_repair_user_delete_failed_${failureStatus}`);
-          }
+        }
+        if (!deleted) {
+          throw new Error(`phase0c_totp_repair_user_delete_failed_${failureStatus}`);
         }
       }
-    )
+    })
   );
 }
 

@@ -858,9 +858,7 @@ export async function runPhase0cTotpFullLogin(input: {
         : authorizationRedirect.origin === new URL(input.baseUrl).origin
           ? 'authrim'
           : 'other';
-    throw new Error(
-      `phase0c_totp_authorization_code_missing:${safeOauthError}:${redirectTarget}`
-    );
+    throw new Error(`phase0c_totp_authorization_code_missing:${safeOauthError}:${redirectTarget}`);
   }
 
   startedAt = performance.now();
