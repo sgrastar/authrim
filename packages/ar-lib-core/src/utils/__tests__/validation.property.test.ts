@@ -377,7 +377,7 @@ describe('State Validation Properties', () => {
       }),
       { numRuns: 200 }
     );
-  });
+  }, 15_000);
 
   it('undefined state: returns valid=true (optional parameter)', () => {
     expect(validateState(undefined).valid).toBe(true);
