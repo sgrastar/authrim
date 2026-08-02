@@ -56,6 +56,12 @@ function activePiiMigrationFiles(): string[] {
   return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii')).map((file) => `pii/${file}`);
 }
 
+function activePluginRunnerMigrationFiles(): string[] {
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner')).map(
+    (file) => `plugin-runner/${file}`
+  );
+}
+
 function activeD1MigrationFiles(): string[] {
   return [
     ...activeCoreMigrationFiles(),
@@ -326,6 +332,67 @@ describe('buildRecordMigrationSql', () => {
     expect(sql).toContain("SELECT 'seed''file.sql', '', 1234567890");
     expect(sql).toContain('WHERE NOT EXISTS');
     expect(sql).not.toContain('INSERT OR IGNORE');
+  });
+});
+
+describe('Control plane drift notification migration', () => {
+  it('preserves existing events and accepts the new category', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const migrationPath = 'admin/030_control_plane_drift_notifications.sql';
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-control-drift-notification-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runMigrationFiles(
+        sqlite3Path,
+        dbPath,
+        activeAdminMigrationFiles().filter((file) => file !== migrationPath)
+      );
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `INSERT INTO internal_notification_events (
+           id, tenant_id, category, event_type, severity, payload_json
+         ) VALUES (
+           'existing-event', 'tenant-a', 'tenant_database_health',
+           'tenant.database.unhealthy', 'high', '{}'
+         );`
+      );
+
+      runMigrationFiles(sqlite3Path, dbPath, [migrationPath]);
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `INSERT INTO internal_notification_events (
+           id, tenant_id, category, event_type, severity, payload_json
+         ) VALUES (
+           'control-event', '__control__', 'control_plane_drift',
+           'control.worker_inventory.actual_only', 'medium', '{}'
+         );`
+      );
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          'SELECT id || ":" || category FROM internal_notification_events ORDER BY id;'
+        )
+      ).toBe('control-event:control_plane_drift\nexisting-event:tenant_database_health');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'index' AND name LIKE 'idx_internal_notification_events_%';`
+        )
+      ).toBe('3');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1169,12 +1236,64 @@ INSERT INTO admin_agent_token_families (
     expect(sql).not.toContain("'system_claim_' || t.id || '_address_country'");
   });
 
-  it('removes partial indexes from migration assets in the current gate', () => {
+  it('removes partial indexes from the final current schemas', () => {
     const partialIndexPattern = /CREATE(?: UNIQUE)? INDEX[\s\S]{0,120}?WHERE\b/;
+    const transitionalMigration = 'plugin-runner/006_dynamic_worker_loader_artifacts.sql';
 
     for (const migrationFile of activeD1MigrationFiles()) {
+      if (migrationFile === transitionalMigration) continue;
       const sql = readMigration(migrationFile);
       expect(sql).not.toMatch(partialIndexPattern);
+    }
+
+    const transitionalSql = readMigration(transitionalMigration);
+    const replacementSql = readMigration(
+      'plugin-runner/007_replace_dynamic_rollout_partial_index.sql'
+    );
+    expect(transitionalSql).toContain(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_runner_dynamic_rollout_active_plugin'
+    );
+    expect(replacementSql).toContain(
+      'DROP INDEX IF EXISTS idx_plugin_runner_dynamic_rollout_active_plugin'
+    );
+    expect(replacementSql).toContain('trg_plugin_runner_dynamic_rollout_running_insert');
+    expect(replacementSql).toContain('trg_plugin_runner_dynamic_rollout_running_update');
+
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-plugin-runner-index-gate-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activePluginRunnerMigrationFiles());
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND upper(sql) LIKE '% WHERE %';`
+        )
+      ).toBe('0');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger'
+               AND name IN (
+                 'trg_plugin_runner_dynamic_rollout_running_insert',
+                 'trg_plugin_runner_dynamic_rollout_running_update'
+               );`
+        )
+      ).toBe('2');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps D1 REST migration triggers compatible with the query parser', () => {
+    for (const migrationFile of activeD1MigrationFiles()) {
+      const sql = readMigration(migrationFile);
+      expect(sql, migrationFile).not.toMatch(/SELECT\s+CASE\s+WHEN/iu);
     }
   });
 
@@ -1837,6 +1956,7 @@ INSERT INTO flow_assignments (
 ) VALUES ('link-1', 'tenant-1', 'user-1', 'provider-1', 'subject-1', 100, 200);`
         );
         runMigrationFiles(sqlite3Path, dbPath, ['pii/002_linked_identity_oidc_fields.sql']);
+        runMigrationFiles(sqlite3Path, dbPath, ['pii/007_external_idp_jit_provisioning_state.sql']);
 
         const columns = readSqliteLines(
           sqlite3Path,
@@ -1853,16 +1973,24 @@ INSERT INTO flow_assignments (
             'profile_data',
             'last_login_at',
             'updated_at',
+            'provisioning_state',
           ])
         );
         expect(
           readSqlite(
             sqlite3Path,
             dbPath,
-            `SELECT email_verified || '|' || last_login_at || '|' || updated_at
+            `SELECT email_verified || '|' || last_login_at || '|' || updated_at || '|' || provisioning_state
                FROM linked_identities WHERE id = 'link-1';`
           )
-        ).toBe('0|200|200');
+        ).toBe('0|200|200|active');
+        expect(() =>
+          runSqlite(
+            sqlite3Path,
+            dbPath,
+            "UPDATE linked_identities SET provisioning_state = 'invalid' WHERE id = 'link-1';"
+          )
+        ).toThrow();
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
@@ -1889,6 +2017,13 @@ INSERT INTO flow_assignments (
     }
     expect(postgresMigration).toContain('last_used_at');
     expect(postgresMigration).toContain('linked_at');
+    const jitProvisioningMigration = readMigration(
+      'external/postgres/019_external_idp_jit_provisioning_state.sql'
+    );
+    expect(jitProvisioningMigration).toContain('ADD COLUMN IF NOT EXISTS provisioning_state');
+    expect(jitProvisioningMigration).toContain(
+      "CHECK (provisioning_state IN ('pending', 'active'))"
+    );
   });
 
   for (const [databaseRole, migrationFiles] of [

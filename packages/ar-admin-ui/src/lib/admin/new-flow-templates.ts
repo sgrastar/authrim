@@ -771,8 +771,8 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 	},
 	{
 		id: 'default-login-no-consent',
-		title: 'Login (No consent)',
-		subtitle: '同意確認なしのログイン',
+		title: 'Authentication-only Login',
+		subtitle: '対話的な同意ノードを含まないログイン',
 		protocol: 'OIDC',
 		destinationType: 'OIDC Client',
 		flowKind: 'login',
@@ -874,7 +874,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 		flowKind: 'login',
 		status: 'planning',
 		description:
-			'Login (No consent) と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
+			'Authentication-only Login と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
 		primaryEntry: 'SAML AuthnRequest / OIDC Authorization Request',
 		primaryOutput: 'SAML Response / OIDC Authorization Response',
 		mappingSet: '',
@@ -900,7 +900,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 			{
 				id: 'authentication',
 				label: 'Authentication Method',
-				description: 'Login (No consent) と同じ認証方法でログインします。',
+				description: 'Authentication-only Login と同じ認証方法でログインします。',
 				icon: 'i-ph-sign-in',
 				settings: ['Passkey', 'Authenticator app', 'Email OTP'],
 				links: [{ label: '認証方法', href: '/admin/authentication-methods' }]

@@ -98,17 +98,12 @@ export async function tenantDatabaseCommand(options: TenantDatabaseCommandOption
     if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
       console.error(
         chalk.red(
-          'This environment uses the slot-based Tenant D1 pool. tenant-db creates legacy tenant-id D1 databases and is not supported here.'
+          'This environment uses Control Plane-managed Tenant D1. The legacy tenant-db command is not supported here.'
         )
       );
       console.log(
         chalk.gray(
-          'Use Admin UI while preallocated slots are available, or tenant-db-pool-expand to add capacity.'
-        )
-      );
-      console.log(
-        chalk.gray(
-          'Automatic migration from legacy tenant-id D1 databases to slot-based D1 pool is intentionally out of scope.'
+          'Create tenants in Admin UI; shard provisioning and capacity expansion are automatic.'
         )
       );
       process.exit(1);

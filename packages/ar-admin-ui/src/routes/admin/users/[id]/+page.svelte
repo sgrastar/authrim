@@ -4,7 +4,12 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import { adminUsersAPI, type User, type UpdateUserInput } from '$lib/api/admin-users';
+	import {
+		adminUsersAPI,
+		type IdentifierReplacementOperation,
+		type User,
+		type UpdateUserInput
+	} from '$lib/api/admin-users';
 	import { adminSessionsAPI, type Session } from '$lib/api/admin-sessions';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import {
@@ -38,6 +43,15 @@
 	let saving = $state(false);
 	let actionError = $state('');
 	let totpResetLoading = $state(false);
+	let identifierOperations = $state<IdentifierReplacementOperation[]>([]);
+	let identifierOperationsLoading = $state(false);
+	let identifierOperationsError = $state('');
+	let resumingIdentifierOperationId = $state<string | null>(null);
+	let activeIdentifierOperations = $derived(
+		identifierOperations.filter(
+			(operation) => operation.state !== 'completed' && operation.state !== 'canceled'
+		)
+	);
 
 	// Edit form state
 	let editForm = $state<UpdateUserInput>({});
@@ -156,6 +170,41 @@
 		}
 	}
 
+	async function loadIdentifierOperations() {
+		identifierOperationsLoading = true;
+		identifierOperationsError = '';
+		try {
+			identifierOperations = await adminUsersAPI.listIdentifierReplacements(userId);
+		} catch (err) {
+			console.error('Failed to load identifier operations:', err);
+			identifierOperationsError = $LL.admin_user_detail_identifier_operations_error();
+		} finally {
+			identifierOperationsLoading = false;
+		}
+	}
+
+	async function resumeIdentifierOperation(operationId: string) {
+		if (!canWriteUsers || resumingIdentifierOperationId) return;
+		resumingIdentifierOperationId = operationId;
+		identifierOperationsError = '';
+		try {
+			await adminUsersAPI.resumeIdentifierReplacement(userId, operationId);
+			await loadIdentifierOperations();
+		} catch (err) {
+			console.error('Failed to resume identifier operation:', err);
+			await loadIdentifierOperations();
+			if (
+				identifierOperations.some(
+					(operation) => operation.operation_id === operationId && operation.attention_required
+				)
+			) {
+				identifierOperationsError = $LL.admin_user_detail_identifier_operation_resume_error();
+			}
+		} finally {
+			resumingIdentifierOperationId = null;
+		}
+	}
+
 	function resetEditForm() {
 		if (user) {
 			editForm = {
@@ -197,6 +246,7 @@
 		showWithdrawModal = false;
 		statementToWithdraw = null;
 		loadUser();
+		loadIdentifierOperations();
 		loadUserRoles();
 		loadAvailableRoles();
 		if (activeTab === 'consents') {
@@ -981,6 +1031,45 @@
 
 		<!-- Overview Tab -->
 		{#if activeTab === 'overview'}
+			{#if identifierOperationsLoading || identifierOperationsError || activeIdentifierOperations.length > 0}
+				<AdminSection title={$LL.admin_user_detail_identifier_operations()}>
+					{#if identifierOperationsError}
+						<div class="alert alert-error">{identifierOperationsError}</div>
+					{:else if identifierOperationsLoading}
+						<div class="loading-state">
+							<i class="i-ph-circle-notch loading-spinner"></i>
+							<p>{$LL.admin_user_detail_identifier_operations_loading()}</p>
+						</div>
+					{:else}
+						<div class="identifier-operation-list">
+							{#each activeIdentifierOperations as operation (operation.operation_id)}
+								<div class="identifier-operation-row">
+									<div>
+										<p class="user-detail-strong">
+											{operation.attention_required
+												? $LL.admin_user_detail_identifier_operation_attention()
+												: $LL.admin_user_detail_identifier_operation_processing()}
+										</p>
+										<p class="muted mono">{sanitizeText(operation.state)}</p>
+									</div>
+									{#if operation.attention_required && canWriteUsers}
+										<button
+											class="btn btn-secondary btn-sm"
+											disabled={resumingIdentifierOperationId !== null}
+											onclick={() => resumeIdentifierOperation(operation.operation_id)}
+										>
+											<i class="i-ph-arrow-clockwise"></i>
+											{resumingIdentifierOperationId === operation.operation_id
+												? $LL.admin_user_detail_identifier_operation_resuming()
+												: $LL.admin_user_detail_identifier_operation_resume()}
+										</button>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</AdminSection>
+			{/if}
 			<!-- Account Information -->
 			<AdminSection title={$LL.admin_user_detail_account_information()}>
 				<dl class="account-info-list">
@@ -2169,6 +2258,29 @@
 		color: var(--color-text);
 	}
 
+	.identifier-operation-list {
+		display: grid;
+		gap: 0;
+	}
+
+	.identifier-operation-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		min-height: 56px;
+		padding: 10px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.identifier-operation-row:last-child {
+		border-bottom: none;
+	}
+
+	.identifier-operation-row p {
+		margin: 0;
+	}
+
 	@media (max-width: 760px) {
 		.account-info-row,
 		.user-audit-row,
@@ -2180,6 +2292,11 @@
 		}
 
 		.auth-method-row {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.identifier-operation-row {
 			align-items: flex-start;
 			flex-direction: column;
 		}

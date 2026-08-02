@@ -1,4 +1,6 @@
 import { type DatabaseSource } from '../../db';
+import type { Context as HonoContext } from 'hono';
+import type { Env } from '../../types/env';
 import type { StorageProfile } from '../../types/runtime-profile';
 import {
   resolveTenantRuntimeProfilesFromEnv,
@@ -10,6 +12,10 @@ import {
   getRequiredStorageSliceTarget,
 } from '../storage-target-resolver';
 import { resolveTenantDatabaseSourceForTarget } from '../tenant-database-resolver';
+import {
+  getAccountDataContextFromHono,
+  getTenantMetadataContextFromHono,
+} from '../runtime-data-context';
 
 export interface CustomClaimRuntimeSourceEnv extends RuntimeProfileResolverEnv {
   DB: DatabaseSource;
@@ -67,5 +73,26 @@ export async function resolveCustomClaimRuntimeSourcesFromEnv(
     schemaDb: await resolveSource(schemaTarget),
     nonPiiDb: await resolveSource(nonPiiTarget),
     piiDb: piiTarget ? await resolveSource(piiTarget) : null,
+  };
+}
+
+export async function resolveCustomClaimRuntimeSourcesFromHono(
+  c: HonoContext<{ Bindings: Env }>,
+  tenantId: string
+): Promise<ResolvedCustomClaimRuntimeSources> {
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (tenantMetadata?.storageProfileId !== 'builtin:storage:tenant-d1') {
+    return resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  }
+  if (tenantMetadata.tenantId !== tenantId) throw new Error('tenant_metadata_context_conflict');
+  const accountData = getAccountDataContextFromHono(c);
+  if (!accountData) throw new Error('account_data_context_required');
+  if (accountData.tenantId !== tenantId) throw new Error('account_data_context_conflict');
+  const { storageProfile } = await resolveTenantRuntimeProfilesFromEnv(c.env, tenantId);
+  return {
+    storageProfile,
+    schemaDb: tenantMetadata.coreDb,
+    nonPiiDb: accountData.coreDb,
+    piiDb: accountData.piiDb,
   };
 }

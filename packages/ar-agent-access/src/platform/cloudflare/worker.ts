@@ -464,3 +464,4 @@ const worker: ExportedHandler<CloudflareAgentAccessWorkerEnv> = {
 };
 
 export default worker;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

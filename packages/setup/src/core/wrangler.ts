@@ -6,11 +6,13 @@
  */
 
 import type { AuthrimConfig } from './config.js';
-import type { AuthrimLock } from './lock.js';
+import type { AuthrimLock, ControlKeyState } from './lock.js';
 import { extractZoneName } from './cloudflare.js';
 import {
   getWorkerName,
   getDOScriptName,
+  getBuiltinD1BindingsForComponent,
+  getRequiredDataRolesForComponent,
   DURABLE_OBJECTS,
   D1_DATABASES,
   type WorkerComponent,
@@ -18,8 +20,12 @@ import {
 } from './naming.js';
 import { getSecretNamesForWorker } from './secrets.js';
 import { classifyUiApiSite, type UiApiSiteClassification } from './site-classifier.js';
-import { isTenantDatabaseBinding } from './tenant-database.js';
+import {
+  getControlGeneratedDatabaseDataRoleFromBinding,
+  isControlGeneratedDatabaseBinding,
+} from './tenant-database.js';
 import { resolveRegisteredSchemaReferences } from './release-migrations.js';
+import type { ActivePluginRunnerResourceBinding } from './plugin-resource-deployment-projection.js';
 
 // =============================================================================
 // Types
@@ -31,6 +37,8 @@ export interface ResourceIds {
   queues?: Record<string, { id: string; name: string }>;
   r2?: Record<string, { name: string }>;
   registeredSchemaReferences?: string[];
+  controlKeyState?: ControlKeyState;
+  pluginRunnerResources?: ActivePluginRunnerResourceBinding[];
 }
 
 export function buildResourceIdsFromLock(lock: AuthrimLock, config?: AuthrimConfig): ResourceIds {
@@ -50,6 +58,7 @@ export function buildResourceIdsFromLock(lock: AuthrimLock, config?: AuthrimConf
         )
       : undefined,
     r2: lock.r2 ? Object.fromEntries(Object.entries(lock.r2)) : undefined,
+    controlKeyState: lock.controlKeyState,
     ...(config
       ? { registeredSchemaReferences: resolveRegisteredSchemaReferences({ lock, config }) }
       : {}),
@@ -63,6 +72,8 @@ export interface WranglerConfig {
   compatibility_flags: string[];
   workers_dev: boolean;
   placement?: { mode: string };
+  version_metadata?: { binding: string };
+  worker_loaders?: Array<{ binding: string }>;
   kv_namespaces?: Array<{ binding: string; id: string; preview_id?: string }>;
   d1_databases?: Array<{ binding: string; database_name: string; database_id: string }>;
   hyperdrive?: Array<{ binding: string; id: string }>;
@@ -86,7 +97,12 @@ export interface WranglerConfig {
       dead_letter_queue?: string;
     }>;
   };
-  services?: Array<{ binding: string; service: string; entrypoint?: string }>;
+  services?: Array<{
+    binding: string;
+    service: string;
+    entrypoint?: string;
+    props?: Record<string, string | number | boolean>;
+  }>;
   send_email?: Array<{
     name: string;
     destination_address?: string;
@@ -97,6 +113,14 @@ export interface WranglerConfig {
 
 export interface GenerateWranglerConfigOptions {
   includeDurableObjectMigrations?: boolean;
+  /** Operator-controlled test experiment. Production defaults remain placement off. */
+  placementMode?: 'off' | 'smart';
+  /** Initial-deploy escape hatch for Control smoke bindings whose targets do not exist yet. */
+  includeControlSmokeBindings?: boolean;
+  /** Initial-deploy escape hatch for the Auth -> Management -> Auth bootstrap cycle. */
+  includeAuthAccountProvisioner?: boolean;
+  /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
+  includeExternalIdpAccountProvisioner?: boolean;
 }
 
 const LOGGING_DELIVERY_QUEUE_DEFINITIONS = [
@@ -128,6 +152,56 @@ const LOGGING_DELIVERY_PRODUCER_COMPONENTS: readonly WorkerComponent[] = [
   'ar-vc',
 ];
 
+const CONTROL_SMOKE_RUNTIME_COMPONENTS = [
+  'ar-lib-core',
+  'ar-discovery',
+  'ar-auth',
+  'ar-token',
+  'ar-userinfo',
+  'ar-management',
+  'ar-agent-access',
+  'ar-async',
+  'ar-policy',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
+  'ar-plugin-runner',
+] as const satisfies readonly WorkerComponent[];
+
+const PLUGIN_RUNNER_RPC_COMPONENTS = [
+  'ar-auth',
+  'ar-bridge',
+  'ar-management',
+  'ar-policy',
+  'ar-saml',
+] as const satisfies readonly WorkerComponent[];
+
+const SHARED_NOTIFICATION_CORE_COMPONENTS = [
+  'ar-auth',
+  'ar-management',
+  'ar-plugin-runner',
+] as const satisfies readonly WorkerComponent[];
+
+function isPluginRunnerRpcComponent(
+  component: WorkerComponent
+): component is (typeof PLUGIN_RUNNER_RPC_COMPONENTS)[number] {
+  return PLUGIN_RUNNER_RPC_COMPONENTS.includes(
+    component as (typeof PLUGIN_RUNNER_RPC_COMPONENTS)[number]
+  );
+}
+
+function isControlSmokeRuntimeComponent(
+  component: WorkerComponent
+): component is (typeof CONTROL_SMOKE_RUNTIME_COMPONENTS)[number] {
+  return CONTROL_SMOKE_RUNTIME_COMPONENTS.includes(
+    component as (typeof CONTROL_SMOKE_RUNTIME_COMPONENTS)[number]
+  );
+}
+
+function getControlSmokeBindingName(component: WorkerComponent): string {
+  return `SMOKE_${component.replace(/^ar-/u, 'AR_').replaceAll('-', '_').toUpperCase()}`;
+}
+
 function collectConfiguredHyperdriveBindings(
   config: AuthrimConfig
 ): Array<{ binding: string; id: string }> {
@@ -148,27 +222,18 @@ function collectConfiguredHyperdriveBindings(
 }
 
 function shouldAttachConfiguredHyperdriveBindings(component: WorkerComponent): boolean {
-  return component !== 'ar-router' && component !== 'ar-agent-access';
+  const roles = getRequiredDataRolesForComponent(component);
+  return roles.some((role) => role.startsWith('tenant_'));
 }
 
 function collectD1DatabaseBindings(
   component: WorkerComponent,
   resourceIds: ResourceIds
 ): Array<{ binding: string; database_name: string; database_id: string }> {
-  if (component === 'ar-router') {
-    return [];
-  }
-
-  const selectedDatabases =
-    component === 'ar-agent-access'
-      ? D1_DATABASES.filter(
-          (database) => database.binding === 'DB' || database.binding === 'DB_ADMIN'
-        )
-      : component === 'ar-async'
-        ? D1_DATABASES.filter(
-            (database) => database.binding === 'DB' || database.binding === 'DB_PII'
-          )
-        : D1_DATABASES;
+  const allowedBuiltinBindings = new Set(getBuiltinD1BindingsForComponent(component));
+  const selectedDatabases = D1_DATABASES.filter((database) =>
+    allowedBuiltinBindings.has(database.binding)
+  );
   const builtins = selectedDatabases
     .map((db) => ({
       binding: db.binding,
@@ -177,8 +242,27 @@ function collectD1DatabaseBindings(
     }))
     .filter((db) => db.database_id);
 
-  const tenantDatabases = (component === 'ar-agent-access' ? [] : Object.entries(resourceIds.d1))
-    .filter(([binding]) => isTenantDatabaseBinding(binding))
+  const requiredRoles = new Set(getRequiredDataRolesForComponent(component));
+  const sharedCore =
+    SHARED_NOTIFICATION_CORE_COMPONENTS.includes(
+      component as (typeof SHARED_NOTIFICATION_CORE_COMPONENTS)[number]
+    ) &&
+    (requiredRoles.has('tenant_core/default') || requiredRoles.has('tenant_core/users')) &&
+    resourceIds.d1.DB
+      ? [
+          {
+            binding: 'TDB_SHARED_CORE',
+            database_name: resourceIds.d1.DB.name,
+            database_id: resourceIds.d1.DB.id,
+          },
+        ]
+      : [];
+  const tenantDatabases = Object.entries(resourceIds.d1)
+    .filter(([binding]) => {
+      if (!isControlGeneratedDatabaseBinding(binding)) return false;
+      const role = getControlGeneratedDatabaseDataRoleFromBinding(binding);
+      return role !== null && requiredRoles.has(role);
+    })
     .map(([binding, resource]) => ({
       binding,
       database_name: resource.name,
@@ -186,7 +270,18 @@ function collectD1DatabaseBindings(
     }))
     .sort((left, right) => left.binding.localeCompare(right.binding));
 
-  return [...builtins, ...tenantDatabases];
+  const pluginResources =
+    component === 'ar-plugin-runner'
+      ? (resourceIds.pluginRunnerResources ?? [])
+          .filter((resource) => resource.kind === 'd1')
+          .map((resource) => ({
+            binding: resource.binding,
+            database_name: resource.providerName,
+            database_id: resource.providerResourceId,
+          }))
+      : [];
+
+  return [...builtins, ...sharedCore, ...tenantDatabases, ...pluginResources];
 }
 
 // =============================================================================
@@ -194,8 +289,10 @@ function collectD1DatabaseBindings(
 // =============================================================================
 
 const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
-  'ar-lib-core': ['AUTHRIM_CONFIG'],
-  'ar-discovery': ['SETTINGS', 'AUTHRIM_CONFIG'],
+  'ar-lib-core': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-control': ['TENANT_RUNTIME_REGISTRY'],
+  'ar-plugin-runner': ['TENANT_RUNTIME_REGISTRY'],
+  'ar-discovery': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-auth': [
     'CLIENTS_CACHE',
     'SETTINGS',
@@ -236,6 +333,8 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
 
 const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-lib-core': [], // Defines DOs, doesn't reference external
+  'ar-control': [],
+  'ar-plugin-runner': [],
   'ar-discovery': [],
   'ar-auth': [
     'KEY_MANAGER',
@@ -256,6 +355,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'TOKEN_REVOCATION_STORE',
     'DEVICE_CODE_STORE',
     'CIBA_REQUEST_STORE',
+    'DEVICE_SECRET_ROUTE_STORE',
   ],
   'ar-userinfo': [
     'KEY_MANAGER',
@@ -320,6 +420,8 @@ const COMPONENT_EXTERNAL_DO_BINDINGS: Partial<
 
 const COMPONENT_ENTRY_POINTS: Record<WorkerComponent, string> = {
   'ar-lib-core': 'src/durable-objects/index.ts',
+  'ar-control': 'src/index.ts',
+  'ar-plugin-runner': 'src/worker.ts',
   'ar-discovery': 'src/index.ts',
   'ar-auth': 'src/index.ts',
   'ar-token': 'src/index.ts',
@@ -501,13 +603,37 @@ export function generateWranglerConfig(
   const wranglerConfig: WranglerConfig = {
     name: workerName,
     main: COMPONENT_ENTRY_POINTS[component],
-    compatibility_date: component === 'ar-agent-access' ? '2026-07-16' : '2024-09-23',
-    compatibility_flags: ['nodejs_compat'],
+    compatibility_date:
+      component === 'ar-agent-access'
+        ? '2026-07-16'
+        : component === 'ar-control' || component === 'ar-plugin-runner'
+          ? '2026-07-01'
+          : '2024-09-23',
+    compatibility_flags:
+      component === 'ar-management' ? ['nodejs_compat', 'enable_ctx_exports'] : ['nodejs_compat'],
     // With Service Binding, UI Workers can reach ar-router internally without workers.dev.
     // Disable workers.dev when a custom API domain is set to avoid dual public endpoints.
-    workers_dev: !config.urls?.api?.custom,
+    workers_dev:
+      component === 'ar-control' || component === 'ar-plugin-runner'
+        ? false
+        : !config.urls?.api?.custom,
     vars: generateEnvVars(component, config, workersSubdomain),
   };
+  if (resourceIds.controlKeyState && component === 'ar-control') {
+    wranglerConfig.vars['RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT'] =
+      resourceIds.controlKeyState.runtimeRegistry.activeSlot;
+    wranglerConfig.vars['SMOKE_RPC_SIGNING_ACTIVE_SLOT'] =
+      resourceIds.controlKeyState.smokeRpc.activeSlot;
+    wranglerConfig.vars['SMOKE_RPC_SIGNING_ACTIVE_KID'] =
+      resourceIds.controlKeyState.smokeRpc.activeKeyId;
+  }
+  if (resourceIds.controlKeyState && component === 'ar-management') {
+    wranglerConfig.vars['LOOKUP_HMAC_ACTIVE_SLOT'] =
+      resourceIds.controlKeyState.lookupHmac.activeSlot;
+    wranglerConfig.vars['LOOKUP_HMAC_ACTIVE_GENERATION'] = String(
+      resourceIds.controlKeyState.lookupHmac.activeGeneration
+    );
+  }
   if (component === 'ar-management') {
     const registeredSchemaReferences = JSON.stringify(resourceIds.registeredSchemaReferences ?? []);
     if (Buffer.byteLength(registeredSchemaReferences, 'utf-8') > 5 * 1024) {
@@ -516,8 +642,12 @@ export function generateWranglerConfig(
     wranglerConfig.vars['AUTHRIM_REGISTERED_SCHEMA_REFS'] = registeredSchemaReferences;
   }
 
-  // Placement (off for better performance with sharded DOs)
-  wranglerConfig.placement = { mode: 'off' };
+  if (isControlSmokeRuntimeComponent(component)) {
+    wranglerConfig.version_metadata = { binding: 'CONTROL_SMOKE_VERSION' };
+  }
+
+  // Placement remains off by default because most Workers also access sharded Durable Objects.
+  wranglerConfig.placement = { mode: options.placementMode ?? 'off' };
 
   if (component === 'ar-bridge') {
     wranglerConfig.triggers = {
@@ -525,9 +655,35 @@ export function generateWranglerConfig(
     };
   }
 
+  if (component === 'ar-control') {
+    wranglerConfig.triggers = {
+      crons: ['* * * * *'],
+    };
+  }
+
+  if (component === 'ar-plugin-runner') {
+    wranglerConfig.vars['PLUGIN_ENCRYPTION_ACTIVE_KEY_ID'] = 'v1';
+  }
+
+  if (component === 'ar-plugin-runner' && config.features.pluginDynamicWorkers?.enabled === true) {
+    if (!resourceIds.r2?.['PLUGIN_BUNDLES']?.name) {
+      throw new Error('plugin_dynamic_workers_bundle_bucket_missing');
+    }
+    wranglerConfig.triggers = {
+      crons: ['* * * * *'],
+    };
+    wranglerConfig.worker_loaders = [{ binding: 'PLUGIN_LOADER' }];
+  }
+
+  if (component === 'ar-plugin-runner' && config.features.pluginDynamicWorkers?.enabled !== true) {
+    wranglerConfig.triggers = {
+      crons: ['* * * * *'],
+    };
+  }
+
   if (component === 'ar-management') {
     wranglerConfig.triggers = {
-      crons: ['* * * * *', '0 */6 * * *'],
+      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
     };
   }
 
@@ -537,15 +693,41 @@ export function generateWranglerConfig(
     };
   }
 
+  if (component === 'ar-control' && options.includeControlSmokeBindings !== false) {
+    wranglerConfig.services = CONTROL_SMOKE_RUNTIME_COMPONENTS.map((targetComponent) => ({
+      binding: getControlSmokeBindingName(targetComponent),
+      service: `${env}-${targetComponent}`,
+      entrypoint: 'RuntimeSmokeEntrypoint',
+      props: {
+        caller: 'ar-control',
+        audience: 'authrim-runtime-smoke-v1',
+        environmentId: env,
+        targetWorker: `${env}-${targetComponent}`,
+      },
+    }));
+  }
+
   // KV Namespaces
   const kvBindings = COMPONENT_KV_BINDINGS[component];
-  if (kvBindings.length > 0) {
-    wranglerConfig.kv_namespaces = kvBindings
-      .filter((binding) => resourceIds.kv[binding])
-      .map((binding) => ({
-        binding,
-        id: resourceIds.kv[binding].id,
-      }));
+  const pluginKvBindings =
+    component === 'ar-plugin-runner'
+      ? (resourceIds.pluginRunnerResources ?? [])
+          .filter((resource) => resource.kind === 'kv_namespace')
+          .map((resource) => ({
+            binding: resource.binding,
+            id: resource.providerResourceId,
+          }))
+      : [];
+  if (kvBindings.length > 0 || pluginKvBindings.length > 0) {
+    wranglerConfig.kv_namespaces = [
+      ...kvBindings
+        .filter((binding) => resourceIds.kv[binding])
+        .map((binding) => ({
+          binding,
+          id: resourceIds.kv[binding].id,
+        })),
+      ...pluginKvBindings,
+    ];
   }
 
   // D1 Databases (most components need shared D1; tenant-d1 adds generated TDB_* bindings)
@@ -632,6 +814,34 @@ export function generateWranglerConfig(
   // R2 Buckets — add bindings whenever provisioned resources are available
   if (resourceIds.r2 && Object.keys(resourceIds.r2).length > 0) {
     const r2Buckets: Array<{ binding: string; bucket_name: string }> = [];
+
+    if (component === 'ar-control') {
+      r2Buckets.push({
+        binding: 'MIGRATION_RELEASES',
+        bucket_name: resourceIds.r2['MIGRATION_RELEASES']?.name || `${env}-migration-releases`,
+      });
+    }
+
+    if (
+      component === 'ar-plugin-runner' &&
+      config.features.pluginDynamicWorkers?.enabled === true
+    ) {
+      r2Buckets.push({
+        binding: 'PLUGIN_BUNDLES',
+        bucket_name: resourceIds.r2['PLUGIN_BUNDLES'].name,
+      });
+    }
+
+    if (component === 'ar-plugin-runner') {
+      r2Buckets.push(
+        ...(resourceIds.pluginRunnerResources ?? [])
+          .filter((resource) => resource.kind === 'r2_bucket')
+          .map((resource) => ({
+            binding: resource.binding,
+            bucket_name: resource.providerName,
+          }))
+      );
+    }
 
     if (component === 'ar-auth' || component === 'ar-management') {
       r2Buckets.push({
@@ -735,10 +945,7 @@ export function generateWranglerConfig(
     }
   }
 
-  if (
-    config.features.email?.provider === 'cloudflare' &&
-    (component === 'ar-auth' || component === 'ar-management')
-  ) {
+  if (config.features.email?.provider === 'cloudflare' && component === 'ar-plugin-runner') {
     wranglerConfig.send_email = [{ name: 'EMAIL' }];
   }
 
@@ -767,6 +974,29 @@ export function generateWranglerConfig(
 
   if (component === 'ar-auth' || component === 'ar-management') {
     wranglerConfig.services = [{ binding: 'EXTERNAL_IDP', service: `${env}-ar-bridge` }];
+    if (component === 'ar-auth' && options.includeAuthAccountProvisioner !== false) {
+      wranglerConfig.services.push({
+        binding: 'ACCOUNT_PROVISIONER',
+        service: `${env}-ar-management`,
+        entrypoint: 'AuthAccountProvisioningEntrypoint',
+        props: {
+          caller: 'ar-auth',
+          environmentId: env,
+          audience: 'authrim-auth-account-provisioning-v1',
+        },
+      });
+    }
+    if (component === 'ar-management') {
+      wranglerConfig.services.push({
+        binding: 'CONTROL',
+        service: `${env}-ar-control`,
+        props: {
+          caller: 'ar-management',
+          environmentId: env,
+          audience: 'authrim-control-v1',
+        },
+      });
+    }
     if (component === 'ar-management' && config.components.vc === true) {
       wranglerConfig.services.push({
         binding: 'VC_ISSUER',
@@ -774,6 +1004,34 @@ export function generateWranglerConfig(
         entrypoint: 'VCIssuerEntrypoint',
       });
     }
+  }
+
+  if (component === 'ar-bridge' && options.includeExternalIdpAccountProvisioner !== false) {
+    wranglerConfig.services = [
+      {
+        binding: 'EXTERNAL_IDP_ACCOUNT_PROVISIONER',
+        service: `${env}-ar-management`,
+        entrypoint: 'AuthAccountProvisioningEntrypoint',
+        props: {
+          caller: 'ar-bridge',
+          environmentId: env,
+          audience: 'authrim-external-idp-account-provisioning-v1',
+        },
+      },
+    ];
+  }
+
+  if (isPluginRunnerRpcComponent(component)) {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'PLUGIN_RUNNER',
+      service: `${env}-ar-plugin-runner`,
+      props: {
+        caller: component,
+        environmentId: env,
+        audience: 'authrim-plugin-runner-v1',
+      },
+    });
   }
 
   // Service Bindings for ar-router (required for routing to other workers)
@@ -873,8 +1131,39 @@ export function generateEnvVars(
   const loginUiUsesApiDomain = config.urls?.loginUi?.sameAsApi === true;
   const loginUiRunsOnIssuer = loginUiUsesApiDomain || multiTenantEnabled;
 
-  if (component === 'ar-discovery' || component === 'ar-agent-access') {
+  if (
+    component === 'ar-lib-core' ||
+    component === 'ar-discovery' ||
+    component === 'ar-control' ||
+    component === 'ar-plugin-runner' ||
+    isControlSmokeRuntimeComponent(component)
+  ) {
     vars['AUTHRIM_ENVIRONMENT_NAME'] = config.environment.prefix;
+  }
+
+  if (isControlSmokeRuntimeComponent(component)) {
+    vars['AUTHRIM_WORKER_SCRIPT_NAME'] = getWorkerName(config.environment.prefix, component);
+  }
+
+  if (component === 'ar-control') {
+    vars['RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT'] = 'A';
+    vars['SMOKE_RPC_SIGNING_ACTIVE_SLOT'] = 'A';
+    vars['CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED'] = 'false';
+    vars['AUTHRIM_AUTOMATIC_PROVISIONING'] =
+      config.tenantD1?.automaticProvisioning === true ? 'true' : 'false';
+    vars['AUTHRIM_DEPLOYMENT_TARGET'] = 'default';
+    if (config.keys.keyId) {
+      vars['SMOKE_RPC_SIGNING_ACTIVE_KID'] = `${config.keys.keyId}-control-smoke`;
+    }
+  }
+
+  if (component === 'ar-management') {
+    vars['LOOKUP_HMAC_ACTIVE_SLOT'] = 'A';
+    vars['LOOKUP_HMAC_ACTIVE_GENERATION'] = '1';
+  }
+
+  if (component === 'ar-control' && config.cloudflare?.accountId) {
+    vars['CLOUDFLARE_ACCOUNT_ID'] = config.cloudflare.accountId;
   }
 
   // Determine issuer URL
@@ -917,7 +1206,10 @@ export function generateEnvVars(
         config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || issuerUrl,
         workersSubdomain
       );
-  const adminUiApiMode = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+  const hasAdminUiOrigins = Boolean(getUrlHost(apiUrlForUi) && getUrlHost(adminUiUrl));
+  if (config.components.adminUi && !hasAdminUiOrigins) {
+    throw new Error('admin_ui_origin_configuration_invalid');
+  }
   const profileDefaults = config.profiles?.defaults ?? {
     storage: 'builtin:storage:shared-d1',
     audit: 'builtin:audit:standard',
@@ -925,6 +1217,7 @@ export function generateEnvVars(
   };
   const profileRegistryBackend = config.profiles?.registry?.backend ?? 'kv';
   const profileAwareComponents: WorkerComponent[] = [
+    'ar-lib-core',
     'ar-auth',
     'ar-management',
     'ar-token',
@@ -1016,8 +1309,14 @@ export function generateEnvVars(
     }
   }
 
-  if (component === 'ar-auth' || component === 'ar-management') {
-    vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
+  if (
+    component === 'ar-auth' ||
+    component === 'ar-management' ||
+    component === 'ar-plugin-runner'
+  ) {
+    if (component !== 'ar-plugin-runner') {
+      vars['ADMIN_UI_ENABLED'] = config.components.adminUi ? 'true' : 'false';
+    }
     if (config.features.email?.fromAddress) {
       vars['EMAIL_FROM'] = config.features.email.fromAddress;
     }
@@ -1037,15 +1336,19 @@ export function generateEnvVars(
     const loginUiSameOrigin = config.components.loginUi && loginUiRunsOnIssuer;
     vars['COOKIE_SAME_SITE'] = loginUiSameOrigin ? 'Lax' : 'None';
 
-    vars['ADMIN_UI_URL'] = adminUiUrl;
-    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    if (hasAdminUiOrigins) {
+      vars['ADMIN_UI_URL'] = adminUiUrl;
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+    }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
   }
 
   // ar-management also needs cookie configuration for admin sessions
   if (component === 'ar-management') {
-    vars['ADMIN_UI_URL'] = adminUiUrl;
-    vars['ADMIN_UI_API_MODE'] = adminUiApiMode;
+    if (hasAdminUiOrigins) {
+      vars['ADMIN_UI_URL'] = adminUiUrl;
+      vars['ADMIN_UI_API_MODE'] = getAdminUiApiMode(apiUrlForUi, adminUiUrl, multiTenantBaseDomain);
+    }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
     vars['SAML_ENABLED'] = 'true';
     vars['ASYNC_ENABLED'] = 'true';
@@ -1085,6 +1388,10 @@ export function generateEnvVars(
   // Key configuration
   if (config.keys.keyId) {
     vars['KEY_ID'] = config.keys.keyId;
+    if (component === 'ar-auth' || component === 'ar-management') {
+      vars['NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID'] =
+        `${config.keys.keyId}-notification-payload`;
+    }
   }
 
   // Security settings
@@ -1243,6 +1550,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
       tag: 'v10',
       new_sqlite_classes: ['SAMLAggregateMetadataStore'],
     },
+    {
+      tag: 'v11',
+      new_sqlite_classes: ['DeviceSecretRouteStore'],
+    },
   ];
 }
 
@@ -1264,6 +1575,20 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
  */
 export function toToml(config: WranglerConfig, envName?: string): string {
   const lines: string[] = [];
+  const serializeServiceProps = (props: Record<string, string | number | boolean>): string => {
+    const entries = Object.entries(props)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+          throw new Error(`invalid_service_binding_prop_key:${key}`);
+        }
+        if (typeof value === 'number' && !Number.isFinite(value)) {
+          throw new Error(`invalid_service_binding_prop_value:${key}`);
+        }
+        return `${key} = ${typeof value === 'string' ? JSON.stringify(value) : String(value)}`;
+      });
+    return `{ ${entries.join(', ')} }`;
+  };
   const appendSendEmailBindings = (prefix?: string) => {
     if (!config.send_email || config.send_email.length === 0) {
       return;
@@ -1338,6 +1663,21 @@ export function toToml(config: WranglerConfig, envName?: string): string {
       lines.push(`[env.${envName}.placement]`);
       lines.push(`mode = "${config.placement.mode}"`);
       lines.push('');
+    }
+
+    if (config.version_metadata) {
+      lines.push(`[env.${envName}.version_metadata]`);
+      lines.push(`binding = "${config.version_metadata.binding}"`);
+      lines.push('');
+    }
+
+    if (config.worker_loaders && config.worker_loaders.length > 0) {
+      lines.push('# Dynamic Workers Loader');
+      for (const loader of config.worker_loaders) {
+        lines.push(`[[env.${envName}.worker_loaders]]`);
+        lines.push(`binding = "${loader.binding}"`);
+        lines.push('');
+      }
     }
 
     if (config.triggers?.crons && config.triggers.crons.length > 0) {
@@ -1465,6 +1805,9 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         if (svc.entrypoint) {
           lines.push(`entrypoint = "${svc.entrypoint}"`);
         }
+        if (svc.props) {
+          lines.push(`props = ${serializeServiceProps(svc.props)}`);
+        }
         lines.push('');
       }
     }
@@ -1505,6 +1848,20 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     if (config.placement) {
       lines.push('[placement]');
       lines.push(`mode = "${config.placement.mode}"`);
+      lines.push('');
+    }
+    if (config.worker_loaders && config.worker_loaders.length > 0) {
+      lines.push('# Dynamic Workers Loader');
+      for (const loader of config.worker_loaders) {
+        lines.push('[[worker_loaders]]');
+        lines.push(`binding = "${loader.binding}"`);
+        lines.push('');
+      }
+    }
+
+    if (config.version_metadata) {
+      lines.push('[version_metadata]');
+      lines.push(`binding = "${config.version_metadata.binding}"`);
       lines.push('');
     }
 
@@ -1649,6 +2006,9 @@ export function toToml(config: WranglerConfig, envName?: string): string {
         lines.push(`service = "${svc.service}"`);
         if (svc.entrypoint) {
           lines.push(`entrypoint = "${svc.entrypoint}"`);
+        }
+        if (svc.props) {
+          lines.push(`props = ${serializeServiceProps(svc.props)}`);
         }
         lines.push('');
       }
@@ -1863,6 +2223,24 @@ export async function validateWranglerConfigs(
   const { join } = await import('node:path');
 
   const result: WranglerValidationResult = { valid: true, mismatches: [] };
+  const expectedPluginResources = lockResourceIds.pluginRunnerResources;
+  const expectedPluginResourceMap = new Map(
+    (expectedPluginResources ?? []).map((resource) => [
+      `${resource.kind}:${resource.binding}`,
+      resource,
+    ])
+  );
+
+  const recordPluginResourceMismatch = (
+    component: WorkerComponent,
+    type: 'kv' | 'd1' | 'r2',
+    binding: string,
+    expected: string,
+    actual: string
+  ) => {
+    result.valid = false;
+    result.mismatches.push({ component, type, binding, expected, actual });
+  };
 
   for (const component of components) {
     const tomlPath = join(rootDir, 'packages', component, 'wrangler.toml');
@@ -1872,6 +2250,72 @@ export async function validateWranglerConfigs(
 
     const content = await readFile(tomlPath, 'utf-8');
     const parsed = parseWranglerToml(content, env);
+
+    const parsedPluginResources = [
+      ...Object.entries(parsed.d1).map(([binding, id]) => ({
+        binding,
+        id,
+        kind: 'd1' as const,
+        type: 'd1' as const,
+        pattern: /^PRES_D1_[A-F0-9]{24}$/u,
+      })),
+      ...Object.entries(parsed.kv).map(([binding, id]) => ({
+        binding,
+        id,
+        kind: 'kv_namespace' as const,
+        type: 'kv' as const,
+        pattern: /^PRES_KV_[A-F0-9]{24}$/u,
+      })),
+      ...Object.entries(parsed.r2).map(([binding, id]) => ({
+        binding,
+        id,
+        kind: 'r2_bucket' as const,
+        type: 'r2' as const,
+        pattern: /^PRES_R2_[A-F0-9]{24}$/u,
+      })),
+    ].filter((binding) => binding.binding.startsWith('PRES_'));
+
+    for (const binding of parsedPluginResources) {
+      if (component !== 'ar-plugin-runner' || !binding.pattern.test(binding.binding)) {
+        recordPluginResourceMismatch(
+          component,
+          binding.type,
+          binding.binding,
+          'valid ar-plugin-runner PRES resource binding',
+          binding.id
+        );
+        continue;
+      }
+      if (expectedPluginResources === undefined) continue;
+      const expected = expectedPluginResourceMap.get(`${binding.kind}:${binding.binding}`);
+      const expectedId =
+        expected?.kind === 'r2_bucket' ? expected.providerName : expected?.providerResourceId;
+      if (!expectedId || binding.id !== expectedId) {
+        recordPluginResourceMismatch(
+          component,
+          binding.type,
+          binding.binding,
+          expectedId ?? 'not present in Control deployable desired state',
+          binding.id
+        );
+      }
+    }
+
+    if (component === 'ar-plugin-runner' && expectedPluginResources !== undefined) {
+      const parsedKeys = new Set(
+        parsedPluginResources.map((binding) => `${binding.kind}:${binding.binding}`)
+      );
+      for (const expected of expectedPluginResources) {
+        if (parsedKeys.has(`${expected.kind}:${expected.binding}`)) continue;
+        recordPluginResourceMismatch(
+          component,
+          expected.kind === 'kv_namespace' ? 'kv' : expected.kind === 'r2_bucket' ? 'r2' : 'd1',
+          expected.binding,
+          expected.kind === 'r2_bucket' ? expected.providerName : expected.providerResourceId,
+          'missing'
+        );
+      }
+    }
 
     // Check KV namespaces
     for (const [binding, id] of Object.entries(parsed.kv)) {

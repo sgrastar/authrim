@@ -379,7 +379,7 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const body = await c.req.json<{ profile: string }>();
+  const body = await c.req.json<{ profile: string; expires_in?: number }>();
   const { profile } = body;
 
   if (!profile) {
@@ -402,8 +402,36 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  const loadTestExpiresIn =
+    profile === 'loadTest' ? (body.expires_in === undefined ? 15 * 60 : body.expires_in) : null;
+  if (
+    loadTestExpiresIn !== null &&
+    (!Number.isSafeInteger(loadTestExpiresIn) || loadTestExpiresIn < 60 || loadTestExpiresIn > 3600)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_expiration',
+        error_description: 'loadTest expires_in must be an integer between 60 and 3600 seconds',
+      },
+      400
+    );
+  }
+  if (profile !== 'loadTest' && body.expires_in !== undefined) {
+    return c.json(
+      {
+        error: 'invalid_expiration',
+        error_description: 'expires_in is supported only for the loadTest profile',
+      },
+      400
+    );
+  }
+
   const kvKey = getProfileOverrideKVKey();
-  await c.env.AUTHRIM_CONFIG.put(kvKey, profile);
+  await c.env.AUTHRIM_CONFIG.put(
+    kvKey,
+    profile,
+    loadTestExpiresIn === null ? undefined : { expirationTtl: loadTestExpiresIn }
+  );
 
   // Clear cache to apply immediately
   clearRateLimitConfigCache();
@@ -413,12 +441,13 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     profile_override: profile,
+    expires_in: loadTestExpiresIn,
     effective_config: {
       maxRequests: profileConfig.maxRequests,
       windowSeconds: profileConfig.windowSeconds,
     },
     kv_key: kvKey,
-    note: `All rate-limited endpoints now using "${profile}" profile. ${RATE_LIMIT_REFRESH_NOTE}`,
+    note: `All rate-limited endpoints will use "${profile}" after their runtime caches refresh. ${RATE_LIMIT_REFRESH_NOTE}`,
     warning:
       profile === 'loadTest'
         ? 'Load test profile is active. Remember to clear override after testing!'

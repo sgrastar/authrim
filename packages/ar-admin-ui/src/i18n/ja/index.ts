@@ -56,6 +56,7 @@ import adminConsentPolicies from './admin-consent-policies';
 import adminFlows from './admin-flows';
 import adminScreens from './admin-screens';
 import adminOther from './admin-other';
+import adminControlPlane from './admin-control-plane';
 
 const ja: Translation = {
 	...core,
@@ -114,6 +115,7 @@ const ja: Translation = {
 	...adminConsentPolicies,
 	...adminFlows,
 	...adminScreens,
+	...adminControlPlane,
 	...adminOther
 } satisfies Translation;
 

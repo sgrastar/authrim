@@ -795,6 +795,18 @@ describe('Encryption Utilities', () => {
       expect(decrypted).toBe(plaintext);
     });
 
+    it('binds encrypted values to optional authenticated context', async () => {
+      const aad = new TextEncoder().encode(JSON.stringify(['tenant-a', 'plugin-a', 'apiKey', 1]));
+      const otherAad = new TextEncoder().encode(
+        JSON.stringify(['tenant-b', 'plugin-a', 'apiKey', 1])
+      );
+      const encrypted = await encryptValue('provider-secret', key, aad);
+
+      await expect(decryptValue(encrypted, key, aad)).resolves.toBe('provider-secret');
+      await expect(decryptValue(encrypted, key, otherAad)).rejects.toThrow();
+      await expect(decryptValue(encrypted, key)).rejects.toThrow();
+    });
+
     it('should produce encrypted values in correct format', async () => {
       const encrypted = await encryptValue('test', key);
 

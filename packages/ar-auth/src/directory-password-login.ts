@@ -11,6 +11,7 @@ import {
   createAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   createPIIContextFromHono,
   generateBrowserState,
   findActiveInvitationByToken,
@@ -20,7 +21,7 @@ import {
   getBrowserStateCookieSameSite,
   getChallengeStoreByChallengeId,
   getLogger,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
   getTenantSettings,
@@ -60,6 +61,7 @@ import {
 import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
+import { publishTenantD1PasskeyRoute } from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
@@ -383,6 +385,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         { action: 'directory_password' },
         error as Error
       );
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -829,6 +833,8 @@ export async function directoryMigrationPasskeyOptionsHandler(c: Context<{ Bindi
       action: 'migration_passkey_options',
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -925,10 +931,12 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     }
 
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const passkeyId = crypto.randomUUID();
     await authCtx.repositories.passkey.create({
-      id: crypto.randomUUID(),
+      id: passkeyId,
       user_id: transaction.user_id,
       credential_id: credentialIDBase64URL,
+      rp_id: challengeMetadata.rpID,
       public_key: Buffer.from(credentialPublicKey).toString('base64'),
       counter,
       transports: Array.isArray(body.credential.response?.transports)
@@ -936,6 +944,13 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         : [],
       device_name: deviceName || 'Directory Migration Passkey',
       aaguid: regInfo.aaguid ?? null,
+    });
+    await publishTenantD1PasskeyRoute(c, {
+      tenantId,
+      userId: transaction.user_id,
+      passkeyId,
+      credentialId: credentialIDBase64URL,
+      rpId: challengeMetadata.rpID,
     });
 
     const now = Date.now();
@@ -994,6 +1009,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       action: 'migration_passkey_verify_final',
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1054,15 +1071,6 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
     }
 
-    const pluginCtx = getRequiredPluginContext(c, 'notification');
-    const emailNotifier = pluginCtx.registry.getNotifier('email');
-    if (!emailNotifier) {
-      log.warn('No email notifier plugin configured for directory migration email fallback', {
-        action: 'migration_email_notifier_check',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
     const code = generateEmailCode();
     const challengeId = crypto.randomUUID();
     const issuedAt = Date.now();
@@ -1092,39 +1100,46 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     });
 
     const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-    const emailResult = await emailNotifier.send({
-      channel: 'email',
-      to: normalizedEmail,
-      from: fromEmail,
-      subject:
-        transaction.scope === 'recovery'
-          ? 'Your Authrim directory recovery code'
-          : 'Your Authrim migration verification code',
-      body: getEmailCodeHtml({
-        name: runtimeUser.name || undefined,
-        email: normalizedEmail,
-        code,
-        expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
-        appName: 'Authrim',
-        logoUrl: undefined,
-      }),
-      metadata: {
-        textBody: getEmailCodeText({
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId },
+      intentId: `directory-email-code:${challengeId}`,
+      outboxId: `notification:${challengeId}`,
+      notificationKind: 'auth.directory-email-code',
+      idempotencyKey: `directory-email-code:${challengeId}`,
+      expiresAt: Math.floor(issuedAt / 1000) + MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      payload: {
+        channel: 'email',
+        to: normalizedEmail,
+        from: fromEmail,
+        subject:
+          transaction.scope === 'recovery'
+            ? 'Your Authrim directory recovery code'
+            : 'Your Authrim migration verification code',
+        body: getEmailCodeHtml({
           name: runtimeUser.name || undefined,
           email: normalizedEmail,
           code,
           expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
           appName: 'Authrim',
+          logoUrl: undefined,
         }),
-        headers: {
-          'Authentication-Info': `<${getRequestIssuer(c)}>; otpauth=email`,
+        metadata: {
+          textBody: getEmailCodeText({
+            name: runtimeUser.name || undefined,
+            email: normalizedEmail,
+            code,
+            expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+            appName: 'Authrim',
+          }),
+          headers: {
+            'Authentication-Info': `<${getRequestIssuer(c)}>; otpauth=email`,
+          },
         },
       },
     });
-    if (!emailResult.success) {
+    if (delivery.delivery === 'permanent_failure') {
       log.error('Failed to send directory migration email code', {
         action: 'migration_email_send',
-        providerError: emailResult.error ? 'send_failed' : undefined,
       });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1146,6 +1161,8 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       },
       error as Error
     );
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1298,6 +1315,8 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       },
       error as Error
     );
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

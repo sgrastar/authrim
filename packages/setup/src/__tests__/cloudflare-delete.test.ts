@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  filterControlManagedD1ForEnvironment,
+  filterControlManagedKVForEnvironment,
+  filterControlManagedR2ForEnvironment,
   filterKnownD1NamesForEnvironment,
   getObjectCatalogR2BucketName,
   parseR2BucketRows,
@@ -81,5 +84,37 @@ describe('Cloudflare environment deletion helpers', () => {
       'authrim-phase9-tenant-d1-first-core',
       'authrim-phase9-tenant-d1-first-pii',
     ]);
+  });
+
+  it('selects only exact Control-managed resources for the requested environment', () => {
+    expect(
+      filterControlManagedD1ForEnvironment('test', [
+        { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
+        { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+        { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+        { name: 'authrim-test-unrelated-a1b2c3d4', uuid: 'unrelated' },
+        { name: 'authrim-other-core-default-default-a1b2c3d4', uuid: 'other' },
+      ])
+    ).toEqual([
+      { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
+      { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+      { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+    ]);
+
+    expect(
+      filterControlManagedKVForEnvironment('test', [
+        { title: `authrim-test-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
+        { title: `authrim-other-${'b'.repeat(32)}-kv`, id: 'other-kv' },
+        { title: 'authrim-test-not-owned-kv', id: 'unrelated-kv' },
+      ])
+    ).toEqual([{ title: `authrim-test-${'b'.repeat(32)}-kv`, id: 'plugin-kv' }]);
+
+    expect(
+      filterControlManagedR2ForEnvironment('test', [
+        { name: `authrim-test-${'c'.repeat(32)}-r2` },
+        { name: `authrim-other-${'c'.repeat(32)}-r2` },
+        { name: 'authrim-test-not-owned-r2' },
+      ])
+    ).toEqual([{ name: `authrim-test-${'c'.repeat(32)}-r2` }]);
   });
 });

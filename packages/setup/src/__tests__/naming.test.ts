@@ -12,6 +12,7 @@ import {
   CORE_WORKER_COMPONENTS,
   WORKER_COMPONENTS,
   WORKER_DEPLOYMENT_DEPENDENCIES,
+  getBuiltinD1BindingsForComponent,
 } from '../core/naming.js';
 
 describe('Worker Naming', () => {
@@ -45,6 +46,7 @@ describe('Component Lists', () => {
     expect(CORE_WORKER_COMPONENTS).toContain('ar-lib-core');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-auth');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-token');
+    expect(CORE_WORKER_COMPONENTS).toContain('ar-control');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-agent-access');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-saml');
     expect(CORE_WORKER_COMPONENTS).toContain('ar-async');
@@ -120,9 +122,19 @@ describe('getDeploymentOrder', () => {
 
 describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
   it('should require ar-lib-core before every other Worker', () => {
-    for (const component of WORKER_COMPONENTS.filter((worker) => worker !== 'ar-lib-core')) {
+    for (const component of WORKER_COMPONENTS.filter(
+      (worker) =>
+        worker !== 'ar-lib-core' && worker !== 'ar-control' && worker !== 'ar-plugin-runner'
+    )) {
       expect(WORKER_DEPLOYMENT_DEPENDENCIES[component]).toContain('ar-lib-core');
     }
+  });
+
+  it('deploys the private control plane independently before its management caller', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-control']).toEqual([]);
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-plugin-runner']).toEqual([]);
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toContain('ar-control');
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toContain('ar-plugin-runner');
   });
 
   it('should require ar-bridge before ar-auth', () => {
@@ -142,8 +154,43 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
   });
 
   it('should require every API target before ar-router', () => {
-    const apiTargets = CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router');
+    const apiTargets = CORE_WORKER_COMPONENTS.filter(
+      (component) =>
+        component !== 'ar-router' && component !== 'ar-control' && component !== 'ar-plugin-runner'
+    );
 
     expect([...WORKER_DEPLOYMENT_DEPENDENCIES['ar-router']].sort()).toEqual([...apiTargets].sort());
+  });
+});
+
+describe('getBuiltinD1BindingsForComponent', () => {
+  it('keeps control-plane databases out of runtime Workers', () => {
+    expect(getBuiltinD1BindingsForComponent('ar-control')).toEqual(['CONTROL_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-plugin-runner')).toEqual(['PLUGIN_RUNNER_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-auth')).toEqual([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'LOOKUP_DB',
+    ]);
+    expect(getBuiltinD1BindingsForComponent('ar-management')).toEqual([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'LOOKUP_DB',
+    ]);
+    expect(getBuiltinD1BindingsForComponent('ar-token')).toEqual([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'LOOKUP_DB',
+    ]);
+    expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['DB', 'DB_PII', 'LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-bridge')).toEqual(['DB', 'DB_PII', 'LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-discovery')).toEqual(['DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-lib-core')).toEqual(['DB', 'DB_PII', 'LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-router')).toEqual([]);
+    expect(getBuiltinD1BindingsForComponent('ar-auth')).not.toContain('PLUGIN_RUNNER_DB');
+    expect(getBuiltinD1BindingsForComponent('ar-auth')).not.toContain('CONTROL_DB');
   });
 });

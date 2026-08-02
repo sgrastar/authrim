@@ -125,6 +125,13 @@ describe('CanonicalRuntimeUserWriter', () => {
         name: 'Example Person',
       },
     });
+    adapter.seed('identity_accounts', [
+      {
+        ...adapter.getById('identity_accounts', 'account:user-1'),
+        id: 'account:user-1',
+        directory_publication_state: 'active',
+      },
+    ]);
     const resolver: CanonicalRuntimeValueResolver = {
       async resolveValue(valueStorageRef) {
         const values: Record<string, unknown> = {

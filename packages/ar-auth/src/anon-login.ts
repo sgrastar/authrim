@@ -26,11 +26,13 @@ import {
   getSessionStoreForNewSession,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
+  resolveAccountDataContextFromHono,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
@@ -61,6 +63,12 @@ import {
   CanonicalRuntimeUserStore,
 } from '@authrim/ar-lib-core';
 import { resolveSessionTtl } from './session-ttl';
+import {
+  provisionTenantD1AnonymousAccount,
+  removeTenantD1AnonymousDeviceRoute,
+  resolveTenantD1AnonymousAccountRoute,
+  usesTenantD1AccountStorage,
+} from './account-provisioning';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
 
@@ -239,6 +247,8 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (error) {
       log.error('Anon login challenge error', { action: 'challenge' }, error as Error);
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });
@@ -409,154 +419,235 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         }
       }
 
-      // Get auth context
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
       const now = Date.now();
 
       // Check for existing anonymous device
       let userId: string | null = null;
       let isNewUser = false;
+      let runtimeUsers: CanonicalRuntimeUserStore;
 
       // Hash current device_id for lookup
       const currentSignature = await hashDeviceIdentifiers(
         { device_id, installation_id, fingerprint, platform },
         hmacSecret
       );
-
-      // Look up existing anonymous device by device_id_hash
-      const existingDevice = await authCtx.coreAdapter.queryOne<{
-        id: string;
-        user_id: string;
-        expires_at: number | null;
-        is_active: number;
-      }>(
-        `SELECT id, user_id, expires_at, is_active FROM anonymous_devices
-         WHERE tenant_id = ? AND device_id_hash = ? AND is_active = 1`,
-        [tenantId, currentSignature.device_id_hash]
-      );
-
-      if (existingDevice) {
-        // Check if expired
-        if (existingDevice.expires_at && existingDevice.expires_at < now) {
-          // Device expired - deactivate and create new
-          await authCtx.coreAdapter.execute(
-            'UPDATE anonymous_devices SET is_active = 0 WHERE id = ? AND tenant_id = ?',
-            [existingDevice.id, tenantId]
+      if (usesTenantD1AccountStorage(c)) {
+        let account = null;
+        try {
+          account = await resolveTenantD1AnonymousAccountRoute(c, currentSignature.device_id_hash);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
+            throw error;
+          }
+        }
+        if (account) {
+          const authCtx = createAuthContextFromHono(c, tenantId);
+          const existingDevice = await authCtx.coreAdapter.queryOne<{
+            id: string;
+            user_id: string;
+            expires_at: number | null;
+          }>(
+            `SELECT id, user_id, expires_at FROM anonymous_devices
+              WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
+            [tenantId, currentSignature.device_id_hash],
+            { consistencyClass: 'primary_required' }
           );
-        } else {
-          // Resume existing user
+          if (!existingDevice || existingDevice.user_id !== account.legacyUserId) {
+            return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+          }
+          if (existingDevice.expires_at !== null && existingDevice.expires_at < now) {
+            await authCtx.coreAdapter.execute(
+              `UPDATE anonymous_devices SET is_active = FALSE
+                WHERE id = ? AND tenant_id = ? AND user_id = ? AND is_active = TRUE`,
+              [existingDevice.id, tenantId, existingDevice.user_id]
+            );
+            await removeTenantD1AnonymousDeviceRoute(c, {
+              tenantId,
+              userId: existingDevice.user_id,
+              deviceId: existingDevice.id,
+              deviceIdHash: currentSignature.device_id_hash,
+            });
+            return c.json(
+              {
+                status: 'anonymous_credential_recycling',
+                restart_required: true,
+                retry_after_ms: 500,
+              },
+              202
+            );
+          }
           userId = existingDevice.user_id;
-
-          // Update last_used_at
           await authCtx.coreAdapter.execute(
             'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
             [now, existingDevice.id, tenantId]
           );
-        }
-      }
-
-      // Create new anonymous user if not found
-      if (!userId) {
-        isNewUser = true;
-        const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-
-        // Load client contract for expiration settings
-        const clientContract = await loadClientContractCached(
-          c,
-          c.env.AUTHRIM_CONFIG,
-          c.env,
-          tenantId,
-          clientId
-        );
-
-        const expiresInDays = clientContract?.anonymousAuth?.expiresInDays;
-        const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
-
-        // Create anonymous user in canonical runtime tables. No sensitive values are written.
-        await runtimeUsers.syncUser({
-          userId: newUserId,
-          active: true,
-          emailVerified: false,
-          userType: 'anonymous',
-          sourceRef: 'anonymous_login',
-        });
-
-        const deviceId = generateId();
-        let insertedDeviceRecord = false;
-        try {
-          await authCtx.coreAdapter.execute(
-            `INSERT INTO anonymous_devices (
-              id, tenant_id, user_id, device_id_hash, installation_id_hash,
-              fingerprint_hash, device_platform, device_stability,
-              expires_at, created_at, last_used_at, is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-            [
-              deviceId,
-              tenantId,
-              newUserId,
-              currentSignature.device_id_hash,
-              currentSignature.installation_id_hash || null,
-              currentSignature.fingerprint_hash || null,
-              currentSignature.device_platform || null,
-              challengeData.metadata?.device_stability || 'installation',
-              expiresAt,
-              now,
-              now,
-            ]
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        } else {
+          const clientContract = await loadClientContractCached(
+            c,
+            c.env.AUTHRIM_CONFIG,
+            c.env,
+            tenantId,
+            clientId
           );
-          insertedDeviceRecord = true;
-        } catch (error) {
-          if (!isConflictInsertError(error)) {
-            throw error;
+          const candidateUserId = await generateUserIdFromSettings(
+            c.env.AUTHRIM_CONFIG,
+            tenantId,
+            c.env
+          );
+          const stability = ['session', 'installation', 'device'].includes(
+            challengeData.metadata?.device_stability ?? ''
+          )
+            ? (challengeData.metadata?.device_stability as 'session' | 'installation' | 'device')
+            : 'installation';
+          const provisioned = await provisionTenantD1AnonymousAccount(c, {
+            tenantId,
+            candidateUserId,
+            device: {
+              deviceIdHash: currentSignature.device_id_hash,
+              installationIdHash: currentSignature.installation_id_hash ?? null,
+              fingerprintHash: currentSignature.fingerprint_hash ?? null,
+              platform: currentSignature.device_platform ?? null,
+              stability,
+              expiresInDays: clientContract?.anonymousAuth?.expiresInDays ?? null,
+            },
+          });
+          if (provisioned.status === 'pending') return provisioned.response;
+          const resolved = await resolveAccountDataContextFromHono(c, provisioned.userId);
+          if (
+            resolved.accountId !== provisioned.accountId ||
+            resolved.legacyUserId !== provisioned.userId
+          ) {
+            throw new Error('anonymous_account_provisioning_route_mismatch');
           }
+          const authCtx = createAuthContextFromHono(c, tenantId);
+          const reflectedDevice = await authCtx.coreAdapter.queryOne<{ user_id: string }>(
+            `SELECT user_id FROM anonymous_devices
+              WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
+            [tenantId, currentSignature.device_id_hash],
+            { consistencyClass: 'primary_required' }
+          );
+          if (reflectedDevice?.user_id !== provisioned.userId) {
+            throw new Error('anonymous_account_provisioning_authority_missing');
+          }
+          userId = provisioned.userId;
+          isNewUser = true;
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
         }
-
-        // RACE CONDITION FIX: Re-check if another request created a device first
-        // This handles the case where two requests passed the initial check concurrently
-        const raceCheckDevice = await authCtx.coreAdapter.queryOne<{
+      } else {
+        const authCtx = createAuthContextFromHono(c, tenantId);
+        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        const existingDevice = await authCtx.coreAdapter.queryOne<{
+          id: string;
           user_id: string;
+          expires_at: number | null;
+          is_active: number;
         }>(
-          `SELECT user_id FROM anonymous_devices
-           WHERE tenant_id = ? AND device_id_hash = ? AND is_active = 1
-           ORDER BY created_at ASC LIMIT 1`,
+          `SELECT id, user_id, expires_at, is_active FROM anonymous_devices
+           WHERE tenant_id = ? AND device_id_hash = ? AND is_active = 1`,
           [tenantId, currentSignature.device_id_hash]
         );
+        if (existingDevice) {
+          if (existingDevice.expires_at && existingDevice.expires_at < now) {
+            await authCtx.coreAdapter.execute(
+              'UPDATE anonymous_devices SET is_active = 0 WHERE id = ? AND tenant_id = ?',
+              [existingDevice.id, tenantId]
+            );
+          } else {
+            userId = existingDevice.user_id;
+            await authCtx.coreAdapter.execute(
+              'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
+              [now, existingDevice.id, tenantId]
+            );
+          }
+        }
 
-        if (raceCheckDevice && raceCheckDevice.user_id !== newUserId) {
-          // Another request won the race - use their user and cleanup ours
-          userId = raceCheckDevice.user_id;
-          isNewUser = false;
-
-          // Cleanup our orphaned user (fire-and-forget)
-          runtimeUsers.deleteUser(newUserId).catch((err: unknown) => {
-            log.error('Failed to cleanup orphaned user', { action: 'cleanup_user' }, err as Error);
+        if (!userId) {
+          isNewUser = true;
+          const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+          const clientContract = await loadClientContractCached(
+            c,
+            c.env.AUTHRIM_CONFIG,
+            c.env,
+            tenantId,
+            clientId
+          );
+          const expiresInDays = clientContract?.anonymousAuth?.expiresInDays;
+          const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
+          await runtimeUsers.syncUser({
+            userId: newUserId,
+            active: true,
+            emailVerified: false,
+            userType: 'anonymous',
+            sourceRef: 'anonymous_login',
           });
-
-          // Also delete our device record if it was inserted
-          if (insertedDeviceRecord) {
-            authCtx.coreAdapter
-              .execute('DELETE FROM anonymous_devices WHERE id = ? AND tenant_id = ?', [
+          const deviceId = generateId();
+          let insertedDeviceRecord = false;
+          try {
+            await authCtx.coreAdapter.execute(
+              `INSERT INTO anonymous_devices (
+                id, tenant_id, user_id, device_id_hash, installation_id_hash,
+                fingerprint_hash, device_platform, device_stability,
+                expires_at, created_at, last_used_at, is_active
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+              [
                 deviceId,
                 tenantId,
-              ])
-              .catch((err) => {
-                log.error(
-                  'Failed to cleanup orphaned device',
-                  { action: 'cleanup_device' },
-                  err as Error
-                );
-              });
+                newUserId,
+                currentSignature.device_id_hash,
+                currentSignature.installation_id_hash || null,
+                currentSignature.fingerprint_hash || null,
+                currentSignature.device_platform || null,
+                challengeData.metadata?.device_stability || 'installation',
+                expiresAt,
+                now,
+                now,
+              ]
+            );
+            insertedDeviceRecord = true;
+          } catch (error) {
+            if (!isConflictInsertError(error)) throw error;
           }
-        } else {
-          if (!raceCheckDevice) {
-            throw new Error('Anonymous device insert conflict could not be resolved');
+          const raceCheckDevice = await authCtx.coreAdapter.queryOne<{ user_id: string }>(
+            `SELECT user_id FROM anonymous_devices
+             WHERE tenant_id = ? AND device_id_hash = ? AND is_active = 1
+             ORDER BY created_at ASC LIMIT 1`,
+            [tenantId, currentSignature.device_id_hash]
+          );
+          if (raceCheckDevice && raceCheckDevice.user_id !== newUserId) {
+            userId = raceCheckDevice.user_id;
+            isNewUser = false;
+            runtimeUsers.deleteUser(newUserId).catch((err: unknown) => {
+              log.error(
+                'Failed to cleanup orphaned user',
+                { action: 'cleanup_user' },
+                err as Error
+              );
+            });
+            if (insertedDeviceRecord) {
+              authCtx.coreAdapter
+                .execute('DELETE FROM anonymous_devices WHERE id = ? AND tenant_id = ?', [
+                  deviceId,
+                  tenantId,
+                ])
+                .catch((err) => {
+                  log.error(
+                    'Failed to cleanup orphaned device',
+                    { action: 'cleanup_device' },
+                    err as Error
+                  );
+                });
+            }
+          } else {
+            if (!raceCheckDevice) {
+              throw new Error('Anonymous device insert conflict could not be resolved');
+            }
+            userId = newUserId;
           }
-
-          // Our insert succeeded or we won the race
-          userId = newUserId;
         }
       }
+
+      if (!userId) throw new Error('anonymous_account_resolution_failed');
 
       const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'anonymous');
 
@@ -695,6 +786,8 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       });
     } catch (error) {
       log.error('Anon login verify error', { action: 'verify' }, error as Error);
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
   });

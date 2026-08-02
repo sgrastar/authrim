@@ -142,6 +142,65 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('detects a plugin-runner-only environment so an interrupted delete can resume', async () => {
+    mockCloudflareInventory([], [{ id: 'test-ar-plugin-runner' }]);
+
+    await expect(detectEnvironments()).resolves.toEqual([
+      {
+        env: 'test',
+        workers: [{ name: 'test-ar-plugin-runner' }],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [],
+        pages: [],
+      },
+    ]);
+  });
+
+  it('detects R2-only environments including an orphan plugin bundle bucket', async () => {
+    mockCloudflareInventory([], [], [{ name: 'test-plugin-bundles' }]);
+
+    await expect(detectEnvironments()).resolves.toEqual([
+      {
+        env: 'test',
+        workers: [],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [{ name: 'test-plugin-bundles' }],
+        pages: [],
+      },
+    ]);
+  });
+
+  it('does not adopt an R2-only bucket outside the Authrim inventory suffixes', async () => {
+    mockCloudflareInventory([], [], [{ name: 'test-customer-backups' }]);
+
+    await expect(detectEnvironments()).resolves.toEqual([]);
+  });
+
+  it('deletes an R2-only environment through the API without querying a missing D1 catalog', async () => {
+    mockCloudflareInventory([], [], [{ name: 'test-plugin-bundles' }]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.deleted.r2).toEqual(['test-plugin-bundles']);
+    expect(execaMock.mock.calls.some(([, args]) => (args as string[]).includes('execute'))).toBe(
+      false
+    );
+  });
+
   it('deletes lock-recorded Queues even when environment detection finds no Workers or D1', async () => {
     mockCloudflareInventory([]);
 
@@ -216,16 +275,30 @@ describe('Cloudflare Queue deletion helpers', () => {
 
 function mockCloudflareInventory(
   queues: Array<{ queue_name: string; queue_id: string }>,
-  workers: Array<{ id: string }> = []
+  workers: Array<{ id: string }> = [],
+  r2Buckets: Array<{ name: string }> = []
 ): void {
   process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
 
-  fetchMock.mockResolvedValue({
-    ok: true,
-    status: 200,
-    json: async () => ({ success: true, result: workers }),
-  });
+  fetchMock.mockImplementation(
+    async (input: string | URL | Request, init?: { method?: string }) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      let result: unknown = workers;
+      if (url.includes('/r2/buckets?')) {
+        result = { buckets: r2Buckets };
+      } else if (url.includes('/r2/buckets/') && url.includes('/objects?')) {
+        result = [];
+      } else if (url.includes('/r2/buckets/') && init?.method === 'DELETE') {
+        result = {};
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, result }),
+      };
+    }
+  );
 
   execaMock.mockImplementation(async (_command: string, args: string[]) => {
     const wranglerArgs = args.slice(1);

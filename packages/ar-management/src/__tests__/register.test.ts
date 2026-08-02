@@ -56,7 +56,12 @@ function createMockDB() {
 
   return {
     prepare: vi.fn().mockReturnValue(mockStatement),
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi.fn(async (statements: D1PreparedStatement[]) =>
+      statements.map(() => ({
+        success: true,
+        meta: { changes: 1 },
+      }))
+    ),
     _mockStatement: mockStatement,
   } as unknown as D1Database & { _mockStatement: typeof mockStatement };
 }

@@ -32,6 +32,7 @@ import {
   resolveRuntimeIdentityMappingBinding,
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
+  buildContractKey,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -110,6 +111,53 @@ const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'trust_group_id',
   'allow_cross_client_native_sso',
 ]);
+
+async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix, cursor, limit: 1000 });
+    for (let offset = 0; offset < page.keys.length; offset += 25) {
+      await Promise.all(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+}
+
+async function deleteClientOwnedConfiguration(
+  env: Env,
+  tenantId: string,
+  clientId: string
+): Promise<void> {
+  await Promise.all([
+    deleteKvPrefix(env.SETTINGS, `settings:client:${tenantId}:${clientId}:`),
+    env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'client', tenantId, clientId)),
+  ]);
+}
+
+async function deleteClientAndOwnedPolicy(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string
+): Promise<boolean> {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  if (!(await authCtx.repositories.client.exists(clientId))) return false;
+
+  // Delete remote configuration first so a transient failure leaves the client retriable.
+  await deleteClientOwnedConfiguration(c.env, tenantId, clientId);
+  const results = await authCtx.coreAdapter.batch([
+    {
+      sql: `DELETE FROM client_trust_policies
+            WHERE tenant_id = ? AND target_type = 'oidc_client' AND target_id = ?`,
+      params: [tenantId, clientId],
+    },
+    {
+      sql: 'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      params: [tenantId, clientId],
+    },
+  ]);
+  return (results[1]?.rowsAffected ?? 0) > 0;
+}
 
 function validateOptionalStringArrayField(
   value: unknown,
@@ -2613,10 +2661,9 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const exists = await authCtx.repositories.client.exists(clientId);
+    const deleted = await deleteClientAndOwnedPolicy(c, tenantId, clientId);
 
-    if (!exists) {
+    if (!deleted) {
       return c.json(
         {
           error: 'not_found',
@@ -2625,8 +2672,6 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
         404
       );
     }
-
-    await authCtx.repositories.client.delete(clientId);
 
     const log = getLogger(c).module('ADMIN-CLIENT');
     try {
@@ -2698,10 +2743,25 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const result = await authCtx.repositories.client.bulkDelete(client_ids);
     const log = getLogger(c).module('ADMIN-CLIENT');
-    const successfullyDeletedIds = client_ids.filter((id) => !result.failed.includes(id));
+    const successfullyDeletedIds: string[] = [];
+    const failedIds: string[] = [];
+    for (const clientId of client_ids) {
+      try {
+        if (await deleteClientAndOwnedPolicy(c, tenantId, clientId)) {
+          successfullyDeletedIds.push(clientId);
+        } else {
+          failedIds.push(clientId);
+        }
+      } catch (error) {
+        failedIds.push(clientId);
+        log.warn('Failed to delete client and owned configuration', {
+          action: 'client_delete_cleanup',
+          clientId,
+          error: error instanceof Error ? error.message : 'unknown_error',
+        });
+      }
+    }
     for (const clientId of successfullyDeletedIds) {
       try {
         await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId, tenantId));
@@ -2712,21 +2772,21 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     }
 
     const errors =
-      result.failed.length > 0
-        ? result.failed.map((id) => `Failed to delete ${id}: client not found or delete failed`)
+      failedIds.length > 0
+        ? failedIds.map((id) => `Failed to delete ${id}: client not found or delete failed`)
         : undefined;
 
     scheduleAdminAuditLog(c, 'client.bulk_deleted', null, 'success', {
-      deleted_count: result.deleted,
+      deleted_count: successfullyDeletedIds.length,
       requested_count: client_ids.length,
-      failed_count: result.failed.length,
+      failed_count: failedIds.length,
       deleted_ids: successfullyDeletedIds,
-      failed_ids: result.failed.length > 0 ? result.failed : undefined,
+      failed_ids: failedIds.length > 0 ? failedIds : undefined,
     });
 
     return c.json({
       success: true,
-      deleted: result.deleted,
+      deleted: successfullyDeletedIds.length,
       requested: client_ids.length,
       errors,
     });

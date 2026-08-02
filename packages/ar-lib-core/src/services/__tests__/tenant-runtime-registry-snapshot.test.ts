@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { decodeProtectedHeader } from 'jose';
 import type {
   TenantDatabaseActivePointer,
   TenantDatabaseRegistryRepository,
@@ -13,6 +14,9 @@ import {
   loadTenantRuntimeRegistryVerificationKeysFromEnv,
   publishTenantRuntimeRegistrySnapshot,
   purgeTenantRuntimeRegistrySnapshot,
+  signRuntimeRegistrySnapshotPayloadJws,
+  transitionTenantRuntimeRegistryRouteState,
+  reactivateTenantRuntimeRegistryRouteState,
   verifyTenantRuntimeRegistrySnapshotSignature,
   type RuntimeRegistrySnapshotStore,
 } from '../tenant-runtime-registry-snapshot';
@@ -72,6 +76,10 @@ function createRegistryRow(
 function createRepository(options: {
   pointers?: TenantDatabaseActivePointer[];
   rows?: TenantDatabaseRegistryRow[];
+  runtimeCacheGeneration?: {
+    generation: number;
+    metadata_json: string | null;
+  } | null;
 }) {
   const pointers = options.pointers ?? [createPointer()];
   const rows = options.rows ?? [createRegistryRow()];
@@ -92,21 +100,27 @@ function createRepository(options: {
     }),
     updateActivePointerStatus: vi.fn(async () => undefined),
     updateRegistryStatusAndMetadata: vi.fn(async () => undefined),
-    upsertRuntimeCacheGeneration: vi.fn(async () => ({
-      tenant_id: 'tenant-a',
-      cache_namespace: 'runtime_registry',
-      generation: 7,
-      updated_at: '2026-05-16T00:00:00.000Z',
-      updated_by: 'system',
-      metadata_json: null,
-    })),
+    getRuntimeCacheGeneration: vi.fn(async () => {
+      if (options.runtimeCacheGeneration === undefined) return null;
+      if (options.runtimeCacheGeneration === null) return null;
+      return {
+        tenant_id: 'tenant-a',
+        cache_namespace: 'runtime_registry' as const,
+        generation: options.runtimeCacheGeneration.generation,
+        updated_at: '2026-05-16T00:00:00.000Z',
+        updated_by: 'system',
+        metadata_json: options.runtimeCacheGeneration.metadata_json,
+      };
+    }),
+    commitRuntimeCacheGenerationPublication: vi.fn(async () => true),
+    compareAndSetRuntimeCacheGeneration: vi.fn(async () => true),
     upsertRuntimeRegistrySnapshot: vi.fn(async () => ({
       tenant_id: 'tenant-a',
       snapshot_scope: 'tenant',
       deployment_target: 'edge-a',
       runtime_generation: 7,
       storage_profile_id: 'builtin:storage:tenant-d1',
-      snapshot_version: 1,
+      snapshot_version: 2,
       status: 'active',
       object_ref: buildTenantRuntimeRegistrySnapshotKey('tenant-a', 'edge-a'),
       published_at: '2026-05-16T00:00:00.000Z',
@@ -120,7 +134,9 @@ function createRepository(options: {
     getRegistryRow: ReturnType<typeof vi.fn>;
     updateActivePointerStatus: ReturnType<typeof vi.fn>;
     updateRegistryStatusAndMetadata: ReturnType<typeof vi.fn>;
-    upsertRuntimeCacheGeneration: ReturnType<typeof vi.fn>;
+    getRuntimeCacheGeneration: ReturnType<typeof vi.fn>;
+    commitRuntimeCacheGenerationPublication: ReturnType<typeof vi.fn>;
+    compareAndSetRuntimeCacheGeneration: ReturnType<typeof vi.fn>;
     upsertRuntimeRegistrySnapshot: ReturnType<typeof vi.fn>;
   };
 }
@@ -137,6 +153,10 @@ async function generateEd25519Jwks(kid = 'runtime-registry-key-1') {
   const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey;
   privateJwk.kid = kid;
   publicJwk.kid = kid;
+  privateJwk.alg = 'EdDSA';
+  privateJwk.use = 'sig';
+  publicJwk.alg = 'EdDSA';
+  publicJwk.use = 'sig';
   return { privateJwk, publicJwk };
 }
 
@@ -185,8 +205,10 @@ describe('tenant-runtime-registry-snapshot', () => {
         tenantId: 'tenant-a',
         deploymentTarget: 'edge-a',
         runtimeGeneration: 7,
+        routeStatus: 'active',
+        quarantineDenyGeneration: 0,
         storageProfileId: 'builtin:storage:tenant-d1',
-        expiresAt: '2026-05-23T00:00:00.000Z',
+        expiresAt: '2026-05-16T00:30:00.000Z',
       })
     );
     expect(result.snapshot.metadata.roles).toEqual(['tenant_core', 'tenant_pii']);
@@ -213,17 +235,20 @@ describe('tenant-runtime-registry-snapshot', () => {
       result.generationKey,
       JSON.stringify({
         runtimeGeneration: 7,
+        routeStatus: 'active',
+        quarantineDenyGeneration: 0,
         publishedAt: '2026-05-16T00:00:00.000Z',
         expiresAt: '2026-05-23T00:00:00.000Z',
       }),
       { expirationTtl: DEFAULT_RUNTIME_REGISTRY_GENERATION_TTL_SECONDS }
     );
-    expect(repository.upsertRuntimeCacheGeneration).toHaveBeenCalledWith(
+    expect(repository.commitRuntimeCacheGenerationPublication).toHaveBeenCalledWith(
       expect.objectContaining({
         tenant_id: 'tenant-a',
         cache_namespace: 'runtime_registry',
         generation: 7,
-      })
+      }),
+      null
     );
     expect(repository.upsertRuntimeRegistrySnapshot).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -238,6 +263,129 @@ describe('tenant-runtime-registry-snapshot', () => {
     );
     expect(repository.updateActivePointerStatus).not.toHaveBeenCalled();
     expect(repository.updateRegistryStatusAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('transitions active routes to quarantining with a monotonic deny generation', async () => {
+    const repository = createRepository({
+      runtimeCacheGeneration: {
+        generation: 7,
+        metadata_json: JSON.stringify({
+          route_status: 'active',
+          quarantine_deny_generation: 0,
+        }),
+      },
+    });
+
+    await expect(
+      transitionTenantRuntimeRegistryRouteState(repository, {
+        tenantId: 'tenant-a',
+        routeStatus: 'quarantining',
+        operationId: 'tenant-delete:job-1',
+        actorId: 'job-1',
+        now: new Date('2026-05-16T00:00:00.000Z'),
+      })
+    ).resolves.toEqual({
+      routeStatus: 'quarantining',
+      quarantineDenyGeneration: 1,
+      runtimeGeneration: 8,
+      changed: true,
+    });
+    expect(repository.compareAndSetRuntimeCacheGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 8,
+        metadata_json: expect.stringContaining('tenant-delete:job-1'),
+      }),
+      expect.objectContaining({ generation: 7 })
+    );
+  });
+
+  it('rejects route-state takeover by a different operation', async () => {
+    const repository = createRepository({
+      runtimeCacheGeneration: {
+        generation: 8,
+        metadata_json: JSON.stringify({
+          route_status: 'quarantining',
+          quarantine_deny_generation: 1,
+          route_state_operation_id: 'tenant-delete:job-1',
+        }),
+      },
+    });
+
+    await expect(
+      transitionTenantRuntimeRegistryRouteState(repository, {
+        tenantId: 'tenant-a',
+        routeStatus: 'quarantining',
+        operationId: 'tenant-delete:job-2',
+        actorId: 'job-2',
+      })
+    ).rejects.toThrow('runtime_registry_route_state_operation_conflict');
+    expect(repository.compareAndSetRuntimeCacheGeneration).not.toHaveBeenCalled();
+  });
+
+  it('reactivates only the same DR operation and preserves the deny generation', async () => {
+    const repository = createRepository({
+      runtimeCacheGeneration: {
+        generation: 12,
+        metadata_json: JSON.stringify({
+          route_status: 'quarantined',
+          quarantine_deny_generation: 4,
+          route_state_operation_id: 'tenant-dr:operation-1',
+        }),
+      },
+    });
+
+    await expect(
+      reactivateTenantRuntimeRegistryRouteState(repository, {
+        tenantId: 'tenant-a',
+        operationId: 'tenant-dr:operation-1',
+        actorId: 'admin-a',
+        expectedQuarantineDenyGeneration: 4,
+        now: new Date('2026-05-16T00:30:00.000Z'),
+      })
+    ).resolves.toEqual({
+      routeStatus: 'active',
+      quarantineDenyGeneration: 4,
+      runtimeGeneration: 13,
+      changed: true,
+    });
+    expect(repository.compareAndSetRuntimeCacheGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 13,
+        metadata_json: expect.stringContaining('route_state_reactivated_at'),
+      }),
+      expect.objectContaining({ generation: 12 })
+    );
+  });
+
+  it('rejects DR reactivation with another operation or deny generation', async () => {
+    const repository = createRepository({
+      runtimeCacheGeneration: {
+        generation: 12,
+        metadata_json: JSON.stringify({
+          route_status: 'quarantined',
+          quarantine_deny_generation: 4,
+          route_state_operation_id: 'tenant-dr:operation-1',
+        }),
+      },
+    });
+
+    await expect(
+      reactivateTenantRuntimeRegistryRouteState(repository, {
+        tenantId: 'tenant-a',
+        operationId: 'tenant-dr:operation-2',
+        actorId: 'admin-a',
+        expectedQuarantineDenyGeneration: 4,
+      })
+    ).rejects.toThrow('runtime_registry_route_state_reactivation_not_allowed');
+    await expect(
+      reactivateTenantRuntimeRegistryRouteState(repository, {
+        tenantId: 'tenant-a',
+        operationId: 'tenant-dr:operation-1',
+        actorId: 'admin-a',
+        expectedQuarantineDenyGeneration: 5,
+      })
+    ).rejects.toThrow('runtime_registry_route_state_reactivation_not_allowed');
+    expect(repository.compareAndSetRuntimeCacheGeneration).not.toHaveBeenCalled();
   });
 
   it('marks active pointers and registry rows degraded when snapshot publication fails', async () => {
@@ -281,7 +429,7 @@ describe('tenant-runtime-registry-snapshot', () => {
       expect.stringContaining('kv_unavailable'),
       'system'
     );
-    expect(repository.upsertRuntimeCacheGeneration).not.toHaveBeenCalled();
+    expect(repository.commitRuntimeCacheGenerationPublication).not.toHaveBeenCalled();
     expect(repository.upsertRuntimeRegistrySnapshot).not.toHaveBeenCalled();
   });
 
@@ -340,11 +488,16 @@ describe('tenant-runtime-registry-snapshot', () => {
     expect(result.snapshot.metadata).toEqual(
       expect.objectContaining({
         signatureKeyId: 'runtime-registry-key-1',
-        signatureAlgorithm: 'Ed25519',
+        signatureAlgorithm: 'EdDSA',
         signedAt: '2026-05-16T00:00:00.000Z',
       })
     );
     expect(result.snapshot.metadata.signature).toEqual(expect.any(String));
+    expect(decodeProtectedHeader(result.snapshot.metadata.signature!)).toEqual({
+      alg: 'EdDSA',
+      typ: 'authrim-runtime-registry+jws',
+      kid: 'runtime-registry-key-1',
+    });
     const keys = loadTenantRuntimeRegistryVerificationKeysFromEnv({
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
     });
@@ -369,7 +522,10 @@ describe('tenant-runtime-registry-snapshot', () => {
   it('supports an external snapshot signer contract for future KMS-backed signing', async () => {
     const repository = createRepository({});
     const snapshotStore = createSnapshotStore();
-    const sign = vi.fn(async () => 'external-signature');
+    const { privateJwk } = await generateEd25519Jwks('kms-key-1');
+    const sign = vi.fn((payload: Uint8Array) =>
+      signRuntimeRegistrySnapshotPayloadJws({ payload, privateJwk, keyId: 'kms-key-1' })
+    );
 
     const result = await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
@@ -380,7 +536,8 @@ describe('tenant-runtime-registry-snapshot', () => {
       now: new Date('2026-05-16T00:00:00.000Z'),
       externalSigner: {
         keyId: 'kms-key-1',
-        algorithm: 'Ed25519',
+        algorithm: 'EdDSA',
+        type: 'authrim-runtime-registry+jws',
         sign,
       },
     });
@@ -388,12 +545,34 @@ describe('tenant-runtime-registry-snapshot', () => {
     expect(sign).toHaveBeenCalledWith(expect.any(Uint8Array));
     expect(result.snapshot.metadata).toEqual(
       expect.objectContaining({
-        signature: 'external-signature',
+        signature: expect.stringMatching(/^[^.]+\.[^.]+\.[^.]+$/u),
         signatureKeyId: 'kms-key-1',
-        signatureAlgorithm: 'Ed25519',
+        signatureAlgorithm: 'EdDSA',
         signedAt: '2026-05-16T00:00:00.000Z',
       })
     );
+  });
+
+  it('rejects private, duplicate, and malformed runtime verification JWKS', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+
+    expect(() =>
+      loadTenantRuntimeRegistryVerificationKeysFromEnv({
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [privateJwk] }),
+      })
+    ).toThrow('runtime_registry_snapshot_verification_jwk_invalid');
+    expect(() =>
+      loadTenantRuntimeRegistryVerificationKeysFromEnv({
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({
+          keys: [publicJwk, publicJwk],
+        }),
+      })
+    ).toThrow('runtime_registry_snapshot_verification_jwk_duplicate');
+    expect(() =>
+      loadTenantRuntimeRegistryVerificationKeysFromEnv({
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: 'null',
+      })
+    ).toThrow('runtime_registry_snapshot_verification_jwks_invalid');
   });
 
   it('refuses to publish runtime snapshots to KV without a signer', async () => {
@@ -428,8 +607,29 @@ describe('tenant-runtime-registry-snapshot', () => {
       expect.stringContaining('runtime_registry_snapshot_signer_required'),
       'system'
     );
-    expect(repository.upsertRuntimeCacheGeneration).not.toHaveBeenCalled();
+    expect(repository.commitRuntimeCacheGenerationPublication).not.toHaveBeenCalled();
     expect(repository.upsertRuntimeRegistrySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects a raw external signature instead of accepting a non-JWS fallback', async () => {
+    const repository = createRepository({});
+    const snapshotStore = createSnapshotStore();
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        storageProfileId: 'builtin:storage:tenant-d1',
+        repository,
+        snapshotStore,
+        externalSigner: {
+          keyId: 'kms-key-1',
+          algorithm: 'EdDSA',
+          type: 'authrim-runtime-registry+jws',
+          sign: vi.fn(async () => 'raw-signature'),
+        },
+      })
+    ).rejects.toThrow('runtime_registry_snapshot_jws_invalid');
+    expect(snapshotStore.put).not.toHaveBeenCalled();
   });
 
   it('rejects ambiguous snapshot signer configuration', async () => {
@@ -446,7 +646,8 @@ describe('tenant-runtime-registry-snapshot', () => {
         signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
         externalSigner: {
           keyId: 'kms-key-1',
-          algorithm: 'Ed25519',
+          algorithm: 'EdDSA',
+          type: 'authrim-runtime-registry+jws',
           sign: vi.fn(async () => 'external-signature'),
         },
       })
@@ -464,6 +665,115 @@ describe('tenant-runtime-registry-snapshot', () => {
         now: new Date('2026-05-16T00:00:00.000Z'),
       })
     ).rejects.toThrow('tenant_runtime_registry_snapshot_no_active_stores:tenant-a');
+  });
+
+  it('publishes a signed deny snapshot without active stores for quarantined tenants', async () => {
+    const repository = createRepository({
+      pointers: [],
+      rows: [],
+      runtimeCacheGeneration: {
+        generation: 9,
+        metadata_json: JSON.stringify({
+          route_status: 'quarantined',
+          quarantine_deny_generation: 3,
+          quarantine_reason: 'tenant_delete',
+        }),
+      },
+    });
+    const snapshotStore = createSnapshotStore();
+    const { privateJwk } = await generateEd25519Jwks();
+
+    const result = await publishTenantRuntimeRegistrySnapshot({
+      tenantId: 'tenant-a',
+      storageProfileId: 'builtin:storage:tenant-d1',
+      repository,
+      snapshotStore,
+      now: new Date('2026-05-16T00:00:00.000Z'),
+      signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+    });
+
+    expect(result.snapshot).toEqual(
+      expect.objectContaining({
+        version: 2,
+        runtimeGeneration: 9,
+        routeStatus: 'quarantined',
+        quarantineDenyGeneration: 3,
+        stores: [],
+      })
+    );
+    expect(snapshotStore.put.mock.calls[0]?.[0]).toBe(result.generationKey);
+    expect(snapshotStore.put.mock.calls[1]?.[0]).toBe(result.snapshotKey);
+    expect(repository.commitRuntimeCacheGenerationPublication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        generation: 9,
+        metadata_json: expect.stringContaining('tenant_delete'),
+      }),
+      expect.objectContaining({ generation: 9 })
+    );
+  });
+
+  it('refuses malformed persisted route state instead of silently reactivating it', async () => {
+    const repository = createRepository({
+      runtimeCacheGeneration: {
+        generation: 9,
+        metadata_json: JSON.stringify({
+          route_status: 'quarantined',
+          quarantine_deny_generation: 0,
+        }),
+      },
+    });
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        storageProfileId: 'builtin:storage:tenant-d1',
+        repository,
+      })
+    ).rejects.toThrow('runtime_registry_quarantine_deny_generation_invalid');
+    expect(repository.commitRuntimeCacheGenerationPublication).not.toHaveBeenCalled();
+  });
+
+  it('repairs lightweight deny state when an active publication loses its state CAS', async () => {
+    const repository = createRepository({});
+    const quarantinedRow = {
+      tenant_id: 'tenant-a',
+      cache_namespace: 'runtime_registry' as const,
+      generation: 8,
+      updated_at: '2026-05-16T00:00:01.000Z',
+      updated_by: 'admin-1',
+      metadata_json: JSON.stringify({
+        route_status: 'quarantining',
+        quarantine_deny_generation: 1,
+      }),
+    };
+    repository.getRuntimeCacheGeneration
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(quarantinedRow);
+    repository.commitRuntimeCacheGenerationPublication.mockResolvedValueOnce(false);
+    const snapshotStore = createSnapshotStore();
+    const { privateJwk } = await generateEd25519Jwks();
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        storageProfileId: 'builtin:storage:tenant-d1',
+        deploymentTarget: 'edge-a',
+        repository,
+        snapshotStore,
+        now: new Date('2026-05-16T00:00:00.000Z'),
+        signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+      })
+    ).rejects.toThrow('tenant_runtime_registry_snapshot_stale_publication');
+
+    const repairedGeneration = JSON.parse(String(snapshotStore.put.mock.calls[2]?.[1]));
+    expect(repairedGeneration).toEqual(
+      expect.objectContaining({
+        runtimeGeneration: 8,
+        routeStatus: 'quarantining',
+        quarantineDenyGeneration: 1,
+      })
+    );
+    expect(repository.upsertRuntimeRegistrySnapshot).not.toHaveBeenCalled();
   });
 
   it('purges runtime snapshot keys only with system admin break-glass confirmation', async () => {

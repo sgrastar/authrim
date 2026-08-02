@@ -7,7 +7,10 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   ensureDatabaseAdapter,
   type DatabaseAdapter,
+  type DatabaseSource,
   resolveUserStoreRuntimeSourcesFromEnv,
+  getCachedAuthCorePersistenceContextFromEnv,
+  resolveAccountDataContextByIdentifier,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity, TokenResponse } from '../types';
 import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
@@ -15,8 +18,10 @@ import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
 async function getTenantLinkedIdentityAdapter(
   env: Env,
   tenantId: string,
-  partition: string
+  partition: string,
+  piiSource?: DatabaseSource
 ): Promise<DatabaseAdapter> {
+  if (piiSource) return ensureDatabaseAdapter(piiSource, partition);
   const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
   return ensureDatabaseAdapter(sources.piiDb ?? sources.coreDb, partition);
 }
@@ -27,11 +32,17 @@ async function getTenantLinkedIdentityAdapter(
 export async function getLinkedIdentityById(
   env: Env,
   tenantId: string,
-  id: string
+  id: string,
+  piiSource?: DatabaseSource
 ): Promise<LinkedIdentity | null> {
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:get-by-id');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:get-by-id',
+    piiSource
+  );
   const result = await adapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE tenant_id = ? AND id = ?',
+    "SELECT * FROM linked_identities WHERE tenant_id = ? AND id = ? AND provisioning_state = 'active'",
     [tenantId, id]
   );
 
@@ -46,20 +57,104 @@ export async function findLinkedIdentity(
   env: Env,
   tenantId: string,
   providerId: string,
-  providerUserId: string
+  providerUserId: string,
+  piiSource?: DatabaseSource
 ): Promise<LinkedIdentity | null> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
     tenantId,
-    'linked-identity:find-by-provider-sub'
+    'linked-identity:find-by-provider-sub',
+    piiSource
   );
   const result = await adapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?',
+    `SELECT * FROM linked_identities
+      WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?
+        AND provisioning_state = 'active'`,
     [tenantId, providerId, providerUserId]
   );
 
   if (!result) return null;
   return mapDbToLinkedIdentity(result);
+}
+
+export interface PendingLinkedIdentityProvisioning {
+  id: string;
+  tenantId: string;
+  userId: string;
+  providerId: string;
+  providerUserId: string;
+  profileDataEncrypted: string;
+}
+
+export async function findPendingLinkedIdentityProvisioning(
+  env: Env,
+  tenantId: string,
+  providerId: string,
+  providerUserId: string,
+  piiSource: DatabaseSource
+): Promise<PendingLinkedIdentityProvisioning | null> {
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:find-pending-provisioning',
+    piiSource
+  );
+  const row = await adapter.queryOne<{
+    id: string;
+    tenant_id: string;
+    user_id: string;
+    provider_id: string;
+    provider_user_id: string;
+    profile_data: string | null;
+  }>(
+    `SELECT id, tenant_id, user_id, provider_id, provider_user_id, profile_data
+       FROM linked_identities
+      WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?
+        AND provisioning_state = 'pending'`,
+    [tenantId, providerId, providerUserId],
+    { consistencyClass: 'primary_required' }
+  );
+  if (!row?.profile_data) return null;
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    userId: row.user_id,
+    providerId: row.provider_id,
+    providerUserId: row.provider_user_id,
+    profileDataEncrypted: row.profile_data,
+  };
+}
+
+export async function activatePendingLinkedIdentity(
+  env: Env,
+  input: PendingLinkedIdentityProvisioning,
+  piiSource: DatabaseSource
+): Promise<void> {
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    input.tenantId,
+    'linked-identity:activate-pending-provisioning',
+    piiSource
+  );
+  const result = await adapter.execute(
+    `UPDATE linked_identities
+        SET provisioning_state = 'active', profile_data = NULL, updated_at = ?
+      WHERE id = ? AND tenant_id = ? AND user_id = ? AND provider_id = ?
+        AND provider_user_id = ? AND provisioning_state = 'pending'`,
+    [Date.now(), input.id, input.tenantId, input.userId, input.providerId, input.providerUserId]
+  );
+  if (result.rowsAffected !== 1) {
+    const active = await adapter.queryOne<{ id: string }>(
+      `SELECT id FROM linked_identities
+        WHERE id = ? AND tenant_id = ? AND user_id = ? AND provider_id = ?
+          AND provider_user_id = ? AND provisioning_state = 'active'`,
+      [input.id, input.tenantId, input.userId, input.providerId, input.providerUserId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (active?.id !== input.id) {
+      throw new Error('external_idp_pending_identity_activation_conflict');
+    }
+  }
 }
 
 /**
@@ -70,16 +165,19 @@ export async function findLinkedIdentitiesByProviderSub(
   env: Env,
   tenantId: string,
   providerId: string,
-  providerUserId: string
+  providerUserId: string,
+  piiSource?: DatabaseSource
 ): Promise<LinkedIdentity[]> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
     tenantId,
-    'linked-identity:list-by-provider-sub'
+    'linked-identity:list-by-provider-sub',
+    piiSource
   );
   const result = await adapter.query<DbLinkedIdentity>(
     `SELECT * FROM linked_identities
-     WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?`,
+     WHERE tenant_id = ? AND provider_id = ? AND provider_user_id = ?
+       AND provisioning_state = 'active'`,
     [tenantId, providerId, providerUserId]
   );
 
@@ -97,10 +195,30 @@ export async function findLinkedIdentitiesAcrossTenantsByProviderSub(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity[]> {
+  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
   const results = await Promise.all(
-    tenantIds.map((tenantId) =>
-      findLinkedIdentitiesByProviderSub(env, tenantId, providerId, providerUserId)
-    )
+    tenantIds.map(async (tenantId) => {
+      if (persistence.storageProfileId !== 'builtin:storage:tenant-d1') {
+        return findLinkedIdentitiesByProviderSub(env, tenantId, providerId, providerUserId);
+      }
+      try {
+        const account = await resolveAccountDataContextByIdentifier(env, {
+          tenantId,
+          indexKind: 'external_subject',
+          identifier: { issuer: providerId, subject: providerUserId },
+        });
+        return findLinkedIdentitiesByProviderSub(
+          env,
+          tenantId,
+          providerId,
+          providerUserId,
+          account.piiDb
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === 'account_data_route_not_found') return [];
+        throw error;
+      }
+    })
   );
 
   return results.flat();
@@ -112,11 +230,17 @@ export async function findLinkedIdentitiesAcrossTenantsByProviderSub(
 export async function listLinkedIdentities(
   env: Env,
   tenantId: string,
-  userId: string
+  userId: string,
+  piiSource?: DatabaseSource
 ): Promise<LinkedIdentity[]> {
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:list');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:list',
+    piiSource
+  );
   const result = await adapter.query<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? ORDER BY linked_at DESC',
+    "SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provisioning_state = 'active' ORDER BY linked_at DESC",
     [tenantId, userId]
   );
 
@@ -130,15 +254,17 @@ export async function getLinkedIdentityForUserAndProvider(
   env: Env,
   tenantId: string,
   userId: string,
-  providerId: string
+  providerId: string,
+  piiSource?: DatabaseSource
 ): Promise<LinkedIdentity | null> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
     tenantId,
-    'linked-identity:get-for-user-provider'
+    'linked-identity:get-for-user-provider',
+    piiSource
   );
   const result = await adapter.queryOne<DbLinkedIdentity>(
-    'SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provider_id = ?',
+    "SELECT * FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provider_id = ? AND provisioning_state = 'active'",
     [tenantId, userId, providerId]
   );
 
@@ -160,7 +286,8 @@ export async function createLinkedIdentity(
     tokens: TokenResponse;
     rawClaims?: Record<string, unknown>;
     tenantId: string;
-  }
+  },
+  piiSource?: DatabaseSource
 ): Promise<string> {
   const tenantId = params.tenantId;
   const id = crypto.randomUUID();
@@ -176,7 +303,12 @@ export async function createLinkedIdentity(
     ? await encrypt(params.tokens.refresh_token, encryptionKey)
     : null;
 
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:create');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:create',
+    piiSource
+  );
   await adapter.execute(
     `INSERT INTO linked_identities (
       id, tenant_id, user_id, provider_id, provider_user_id,
@@ -216,9 +348,11 @@ export async function updateLinkedIdentity(
   id: string,
   updates: {
     tokens?: TokenResponse;
+    clearTokens?: boolean;
     lastLoginAt?: number;
     rawClaims?: Record<string, unknown>;
-  }
+  },
+  piiSource?: DatabaseSource
 ): Promise<boolean> {
   const now = Date.now();
   const tokenExpiresAt = updates.tokens?.expires_in
@@ -229,7 +363,11 @@ export async function updateLinkedIdentity(
   const setClauses: string[] = ['updated_at = ?'];
   const params: (string | number | null)[] = [now];
 
-  if (updates.tokens) {
+  if (updates.clearTokens) {
+    setClauses.push('access_token_encrypted = NULL');
+    setClauses.push('refresh_token_encrypted = NULL');
+    setClauses.push('token_expires_at = NULL');
+  } else if (updates.tokens) {
     // Encrypt tokens (required)
     const encryptionKey = getEncryptionKey(env);
 
@@ -258,7 +396,12 @@ export async function updateLinkedIdentity(
     params.push(JSON.stringify(updates.rawClaims));
   }
 
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:update');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:update',
+    piiSource
+  );
   const result = await adapter.execute(
     `UPDATE linked_identities SET ${setClauses.join(', ')} WHERE tenant_id = ? AND id = ?`,
     [...params, tenantId, id]
@@ -273,9 +416,15 @@ export async function updateLinkedIdentity(
 export async function deleteLinkedIdentity(
   env: Env,
   tenantId: string,
-  id: string
+  id: string,
+  piiSource?: DatabaseSource
 ): Promise<boolean> {
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:delete');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:delete',
+    piiSource
+  );
   const result = await adapter.execute(
     'DELETE FROM linked_identities WHERE tenant_id = ? AND id = ?',
     [tenantId, id]
@@ -289,11 +438,17 @@ export async function deleteLinkedIdentity(
 export async function countLinkedIdentities(
   env: Env,
   tenantId: string,
-  userId: string
+  userId: string,
+  piiSource?: DatabaseSource
 ): Promise<number> {
-  const adapter = await getTenantLinkedIdentityAdapter(env, tenantId, 'linked-identity:count');
+  const adapter = await getTenantLinkedIdentityAdapter(
+    env,
+    tenantId,
+    'linked-identity:count',
+    piiSource
+  );
   const result = await adapter.queryOne<{ count: number }>(
-    'SELECT COUNT(*) as count FROM linked_identities WHERE tenant_id = ? AND user_id = ?',
+    "SELECT COUNT(*) as count FROM linked_identities WHERE tenant_id = ? AND user_id = ? AND provisioning_state = 'active'",
     [tenantId, userId]
   );
 

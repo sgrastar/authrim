@@ -325,6 +325,47 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route account provisioning status polls to OP_AUTH', async () => {
+        const req = new Request('https://example.com/api/v1/auth/account-provisioning/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+          body: JSON.stringify({ provisioning_token: 'opaque-token' }),
+        });
+        await app.fetch(req, { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' });
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_AUTH.fetch.mock.calls[0][0] as Request;
+        expect(new URL(forwarded.url).pathname).toBe('/api/v1/auth/account-provisioning/status');
+        expect(await forwarded.json()).toEqual({ provisioning_token: 'opaque-token' });
+      });
+
+      it('should route public invitation validation and consumption to OP_AUTH', async () => {
+        const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+        await app.fetch(
+          new Request('https://example.com/api/v1/invitations/validate?token=opaque'),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/api/v1/invitations/use', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+            body: JSON.stringify({ token: 'opaque' }),
+          }),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(2);
+        expect(
+          mockEnv.OP_AUTH.fetch.mock.calls.map(([request]) => [
+            request.method,
+            new URL(request.url).pathname,
+          ])
+        ).toEqual([
+          ['GET', '/api/v1/invitations/validate'],
+          ['POST', '/api/v1/invitations/use'],
+        ]);
+      });
+
       it('should route LoginUI runtime interactions to OP_AUTH', async () => {
         const env = { ...mockEnv, BASE_DOMAIN: 'example.com', DEFAULT_TENANT_ID: 'acme' };
         await app.fetch(

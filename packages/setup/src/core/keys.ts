@@ -78,11 +78,17 @@ export interface KeyMetadata {
     objectEncryptionRootKey?: string;
     otpHmacSecret?: string;
     loggingCursorHmacSecret?: string;
+    lookupHmacKeySlotA?: string;
     flowRuntimeHmacSecret?: string;
     vcTransactionCodeHmacSecret?: string;
     vcEvidenceHmacSecret?: string;
     vcProfileContractHmacSecret?: string;
     pluginEncryptionKey?: string;
+    pluginMutationHmacKey?: string;
+    notificationPayloadDecryptJwkSlotA?: string;
+    notificationPayloadDecryptJwkSlotB?: string;
+    notificationPayloadEncryptPublicJwks?: string;
+    notificationIntentHmacKey?: string;
     agentElevationEncryptionKey?: string;
     setupMachinePrivateKey?: string;
     setupMachinePublicKey?: string;
@@ -91,6 +97,9 @@ export interface KeyMetadata {
     tenantRuntimeRegistrySigningPrivateJwk?: string;
     tenantRuntimeRegistryVerifyingPublicJwks?: string;
     tenantRuntimeRegistrySigningKeyId?: string;
+    smokeRpcSigningJwkSlotA?: string;
+    smokeRpcSigningJwkSlotB?: string;
+    controlSmokeVerifyingPublicJwks?: string;
   };
 }
 
@@ -119,6 +128,10 @@ export interface GeneratedSecrets {
   adminUiBffMachineKeyPair: KeyPair;
   /** Ed25519 key pair for tenant runtime registry snapshots */
   tenantRuntimeRegistryKeyPair: JwkKeyPair;
+  /** Dedicated Ed25519 key pair for Control-to-Runtime binding smoke RPCs */
+  controlSmokeKeyPair: JwkKeyPair;
+  /** RSA-OAEP key pair for short-lived notification payload envelopes */
+  notificationPayloadKeyPair: JwkKeyPair;
   /** RP Token encryption key (hex encoded) */
   rpTokenEncryptionKey: string;
   /** PII field encryption key (hex encoded) */
@@ -129,6 +142,8 @@ export interface GeneratedSecrets {
   otpHmacSecret: string;
   /** HMAC secret for opaque logging Admin API cursors */
   loggingCursorHmacSecret: string;
+  /** Dedicated HMAC key for Lookup blind indexes (initial active slot). */
+  lookupHmacKeySlotA: string;
   /** HMAC secret for LoginUI Flow runtime contract signatures */
   flowRuntimeHmacSecret: string;
   /** Dedicated HMAC pepper for low-entropy OpenID4VCI transaction codes */
@@ -139,6 +154,10 @@ export interface GeneratedSecrets {
   vcProfileContractHmacSecret: string;
   /** Dedicated encryption key for plugin configuration secrets */
   pluginEncryptionKey: string;
+  /** Stable HMAC key for plugin mutation idempotency fingerprints */
+  pluginMutationHmacKey: string;
+  /** HMAC key for notification intent idempotency fingerprints */
+  notificationIntentHmacKey: string;
   /** Dedicated AES-256-GCM key for Agent elevation payloads and terminal results. */
   agentElevationEncryptionKey: string;
   /** Setup token for initial admin creation */
@@ -280,6 +299,113 @@ export function generateEd25519JwkKeyPair(keyId?: string): JwkKeyPair {
   };
 }
 
+export function generateRsaOaepJwkKeyPair(
+  keyId?: string,
+  keySize: number = DEFAULT_RSA_SIGNING_KEY_BITS
+): JwkKeyPair {
+  const kid = keyId || generateKeyId('notification-payload');
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: keySize,
+  });
+  const metadata = {
+    kid,
+    use: 'enc',
+    alg: 'RSA-OAEP-256',
+  };
+  return {
+    privateJwk: {
+      ...(privateKey.export({ format: 'jwk' }) as JWK),
+      ...metadata,
+      key_ops: ['decrypt'],
+    },
+    publicJwk: {
+      ...(publicKey.export({ format: 'jwk' }) as JWK),
+      ...metadata,
+      key_ops: ['encrypt'],
+    },
+    keyId: kid,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function notificationJwk(value: unknown, privateKey: boolean): JWK {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid notification payload key set');
+  }
+  const key = value as JWK;
+  const operations: unknown[] = Array.isArray(key.key_ops) ? key.key_ops : [];
+  const privateFields = ['d', 'p', 'q', 'dp', 'dq', 'qi'] as const;
+  if (
+    key.kty !== 'RSA' ||
+    key.use !== 'enc' ||
+    key.alg !== 'RSA-OAEP-256' ||
+    typeof key.kid !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(key.kid) ||
+    typeof key.n !== 'string' ||
+    typeof key.e !== 'string' ||
+    operations.length !== 1 ||
+    operations[0] !== (privateKey ? 'decrypt' : 'encrypt') ||
+    (privateKey
+      ? privateFields.some((field) => typeof key[field] !== 'string')
+      : privateFields.some((field) => key[field] !== undefined))
+  ) {
+    throw new Error('Invalid notification payload key set');
+  }
+  return key;
+}
+
+function parseNotificationPrivateJwk(value: string): JWK {
+  try {
+    return notificationJwk(JSON.parse(value) as unknown, true);
+  } catch {
+    throw new Error('Invalid notification payload key set');
+  }
+}
+
+function parseNotificationPublicJwks(value: string): JWK[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('invalid');
+    }
+    const keys = (parsed as { keys?: unknown }).keys;
+    if (!Array.isArray(keys) || keys.length < 1 || keys.length > 2) {
+      throw new Error('invalid');
+    }
+    return (keys as unknown[]).map((key) => notificationJwk(key, false));
+  } catch {
+    throw new Error('Invalid notification payload key set');
+  }
+}
+
+function validateNotificationPayloadKeySet(privateJwks: string[], publicJwks: string): void {
+  const privateKeys = privateJwks.map(parseNotificationPrivateJwk);
+  const publicKeys = parseNotificationPublicJwks(publicJwks);
+  const privateKeyIds = new Set(privateKeys.map((key) => key.kid));
+  const publicKeyIds = new Set(publicKeys.map((key) => key.kid));
+  if (
+    privateKeyIds.size !== privateKeys.length ||
+    publicKeyIds.size !== publicKeys.length ||
+    privateKeyIds.size !== publicKeyIds.size ||
+    [...privateKeyIds].some((keyId) => !publicKeyIds.has(keyId))
+  ) {
+    throw new Error('Invalid notification payload key set');
+  }
+  for (const privateJwk of privateKeys) {
+    try {
+      const derived = createPublicKey(createPrivateKey({ key: privateJwk, format: 'jwk' })).export({
+        format: 'jwk',
+      }) as JWK;
+      const publicJwk = publicKeys.find((key) => key.kid === privateJwk.kid);
+      if (!publicJwk || derived.n !== publicJwk.n || derived.e !== publicJwk.e) {
+        throw new Error('invalid');
+      }
+    } catch {
+      throw new Error('Invalid notification payload key set');
+    }
+  }
+}
+
 // =============================================================================
 // Secret Generation
 // =============================================================================
@@ -312,22 +438,31 @@ export function generateAllSecrets(keyId?: string): GeneratedSecrets {
   const tenantRuntimeRegistryKeyPair = generateEd25519JwkKeyPair(
     `${keyPair.keyId}-tenant-runtime-registry`
   );
+  const controlSmokeKeyPair = generateEd25519JwkKeyPair(`${keyPair.keyId}-control-smoke`);
+  const notificationPayloadKeyPair = generateRsaOaepJwkKeyPair(
+    `${keyPair.keyId}-notification-payload`
+  );
 
   return {
     keyPair,
     setupMachineKeyPair,
     adminUiBffMachineKeyPair,
     tenantRuntimeRegistryKeyPair,
+    controlSmokeKeyPair,
+    notificationPayloadKeyPair,
     rpTokenEncryptionKey: generateHexSecret(32), // 256-bit key
     piiEncryptionKey: generateHexSecret(32), // 256-bit key
     objectEncryptionRootKey: generateHexSecret(32), // 256-bit key
     otpHmacSecret: generateBase64Secret(32), // 256-bit secret
     loggingCursorHmacSecret: generateBase64Secret(32), // 256-bit secret
+    lookupHmacKeySlotA: generateBase64Secret(32), // 256-bit dedicated blind-index key
     flowRuntimeHmacSecret: generateBase64Secret(32), // 256-bit secret
     vcTransactionCodeHmacSecret: generateBase64Secret(32), // 256-bit secret
     vcEvidenceHmacSecret: generateBase64Secret(32), // 256-bit secret
     vcProfileContractHmacSecret: generateBase64Secret(32), // 256-bit secret
     pluginEncryptionKey: generateBase64Secret(32), // 256-bit secret
+    pluginMutationHmacKey: generateBase64Secret(32), // 256-bit stable idempotency key
+    notificationIntentHmacKey: generateBase64Secret(32), // 256-bit notification fingerprint key
     agentElevationEncryptionKey: generateHexSecret(32), // 256-bit AES-GCM key
     setupToken: generateBase64Secret(32), // 256-bit URL-safe token for initial setup
   };
@@ -547,11 +682,26 @@ export async function saveKeysToDirectory(
     objectEncryptionRootKey: join(targetDir, 'object_encryption_root_key.txt'),
     otpHmacSecret: join(targetDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(targetDir, 'logging_cursor_hmac_secret.txt'),
+    lookupHmacKeySlotA: join(targetDir, 'lookup_hmac_key_slot_a.txt'),
     flowRuntimeHmacSecret: join(targetDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(targetDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(targetDir, 'vc_evidence_hmac_secret.txt'),
     vcProfileContractHmacSecret: join(targetDir, 'vc_profile_contract_hmac_secret.txt'),
     pluginEncryptionKey: join(targetDir, 'plugin_encryption_key.txt'),
+    pluginMutationHmacKey: join(targetDir, 'plugin_mutation_hmac_key.txt'),
+    notificationPayloadDecryptJwkSlotA: join(
+      targetDir,
+      'notification_payload_decryption_jwk_slot_a.private.jwk.json'
+    ),
+    notificationPayloadDecryptJwkSlotB: join(
+      targetDir,
+      'notification_payload_decryption_jwk_slot_b.private.jwk.json'
+    ),
+    notificationPayloadEncryptPublicJwks: join(
+      targetDir,
+      'notification_payload_encryption_public.jwks.json'
+    ),
+    notificationIntentHmacKey: join(targetDir, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(targetDir, 'agent_elevation_encryption_key.txt'),
     setupToken: join(targetDir, 'setup_token.txt'),
     setupMachinePrivateKey: join(targetDir, 'setup_machine_private.pem'),
@@ -570,6 +720,9 @@ export async function saveKeysToDirectory(
       targetDir,
       'tenant_runtime_registry_signing_key_id.txt'
     ),
+    smokeRpcSigningJwkSlotA: join(targetDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+    smokeRpcSigningJwkSlotB: join(targetDir, 'smoke_rpc_signing_jwk_slot_b.private.jwk.json'),
+    controlSmokeVerifyingPublicJwks: join(targetDir, 'control_smoke_verify.jwks.json'),
     metadata: join(targetDir, 'metadata.json'),
   };
 
@@ -595,6 +748,8 @@ export async function saveKeysToDirectory(
   await chmod(paths.otpHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.loggingCursorHmacSecret, secrets.loggingCursorHmacSecret, 'utf-8');
   await chmod(paths.loggingCursorHmacSecret, SENSITIVE_FILE_MODE);
+  await writeFile(paths.lookupHmacKeySlotA, secrets.lookupHmacKeySlotA, 'utf-8');
+  await chmod(paths.lookupHmacKeySlotA, SENSITIVE_FILE_MODE);
   await writeFile(paths.flowRuntimeHmacSecret, secrets.flowRuntimeHmacSecret, 'utf-8');
   await chmod(paths.flowRuntimeHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(
@@ -617,6 +772,22 @@ export async function saveKeysToDirectory(
   await chmod(paths.vcProfileContractHmacSecret, SENSITIVE_FILE_MODE);
   await writeFile(paths.pluginEncryptionKey, secrets.pluginEncryptionKey, 'utf-8');
   await chmod(paths.pluginEncryptionKey, SENSITIVE_FILE_MODE);
+  await writeFile(paths.pluginMutationHmacKey, secrets.pluginMutationHmacKey, 'utf-8');
+  await chmod(paths.pluginMutationHmacKey, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.notificationPayloadDecryptJwkSlotA,
+    JSON.stringify(secrets.notificationPayloadKeyPair.privateJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.notificationPayloadDecryptJwkSlotA, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.notificationPayloadEncryptPublicJwks,
+    JSON.stringify({ keys: [secrets.notificationPayloadKeyPair.publicJwk] }, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.notificationPayloadEncryptPublicJwks, SENSITIVE_FILE_MODE);
+  await writeFile(paths.notificationIntentHmacKey, secrets.notificationIntentHmacKey, 'utf-8');
+  await chmod(paths.notificationIntentHmacKey, SENSITIVE_FILE_MODE);
   await writeFile(paths.agentElevationEncryptionKey, secrets.agentElevationEncryptionKey, 'utf-8');
   await chmod(paths.agentElevationEncryptionKey, SENSITIVE_FILE_MODE);
 
@@ -664,6 +835,18 @@ export async function saveKeysToDirectory(
     'utf-8'
   );
   await chmod(paths.tenantRuntimeRegistrySigningKeyId, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.smokeRpcSigningJwkSlotA,
+    JSON.stringify(secrets.controlSmokeKeyPair.privateJwk, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.smokeRpcSigningJwkSlotA, SENSITIVE_FILE_MODE);
+  await writeFile(
+    paths.controlSmokeVerifyingPublicJwks,
+    JSON.stringify({ keys: [secrets.controlSmokeKeyPair.publicJwk] }, null, 2),
+    'utf-8'
+  );
+  await chmod(paths.controlSmokeVerifyingPublicJwks, SENSITIVE_FILE_MODE);
 
   // Write metadata
   const metadata: KeyMetadata = {
@@ -679,11 +862,16 @@ export async function saveKeysToDirectory(
       objectEncryptionRootKey: paths.objectEncryptionRootKey,
       otpHmacSecret: paths.otpHmacSecret,
       loggingCursorHmacSecret: paths.loggingCursorHmacSecret,
+      lookupHmacKeySlotA: paths.lookupHmacKeySlotA,
       flowRuntimeHmacSecret: paths.flowRuntimeHmacSecret,
       vcTransactionCodeHmacSecret: paths.vcTransactionCodeHmacSecret,
       vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
       vcProfileContractHmacSecret: paths.vcProfileContractHmacSecret,
       pluginEncryptionKey: paths.pluginEncryptionKey,
+      pluginMutationHmacKey: paths.pluginMutationHmacKey,
+      notificationPayloadDecryptJwkSlotA: paths.notificationPayloadDecryptJwkSlotA,
+      notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
+      notificationIntentHmacKey: paths.notificationIntentHmacKey,
       agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
       setupMachinePrivateKey: paths.setupMachinePrivateKey,
       setupMachinePublicKey: paths.setupMachinePublicKey,
@@ -692,6 +880,8 @@ export async function saveKeysToDirectory(
       tenantRuntimeRegistrySigningPrivateJwk: paths.tenantRuntimeRegistrySigningPrivateJwk,
       tenantRuntimeRegistryVerifyingPublicJwks: paths.tenantRuntimeRegistryVerifyingPublicJwks,
       tenantRuntimeRegistrySigningKeyId: paths.tenantRuntimeRegistrySigningKeyId,
+      smokeRpcSigningJwkSlotA: paths.smokeRpcSigningJwkSlotA,
+      controlSmokeVerifyingPublicJwks: paths.controlSmokeVerifyingPublicJwks,
     },
   };
 
@@ -814,7 +1004,8 @@ async function removeLegacyStaticSecretFiles(keysDir: string): Promise<void> {
  * before uploading secrets and before bootstrapping DB_ADMIN machine principals.
  */
 export async function ensureSupplementalKeyFiles(
-  keysDir: string
+  keysDir: string,
+  options: { includeSetupMachineKeyPair?: boolean } = {}
 ): Promise<SupplementalKeyFilesResult> {
   validateKeysDirectory(keysDir);
 
@@ -831,11 +1022,26 @@ export async function ensureSupplementalKeyFiles(
     piiEncryptionKey: join(keysDir, 'pii_encryption_key.txt'),
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
     flowRuntimeHmacSecret: join(keysDir, 'flow_runtime_hmac_secret.txt'),
     vcTransactionCodeHmacSecret: join(keysDir, 'vc_transaction_code_hmac_secret.txt'),
     vcEvidenceHmacSecret: join(keysDir, 'vc_evidence_hmac_secret.txt'),
     vcProfileContractHmacSecret: join(keysDir, 'vc_profile_contract_hmac_secret.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
+    pluginMutationHmacKey: join(keysDir, 'plugin_mutation_hmac_key.txt'),
+    notificationPayloadDecryptJwkSlotA: join(
+      keysDir,
+      'notification_payload_decryption_jwk_slot_a.private.jwk.json'
+    ),
+    notificationPayloadDecryptJwkSlotB: join(
+      keysDir,
+      'notification_payload_decryption_jwk_slot_b.private.jwk.json'
+    ),
+    notificationPayloadEncryptPublicJwks: join(
+      keysDir,
+      'notification_payload_encryption_public.jwks.json'
+    ),
+    notificationIntentHmacKey: join(keysDir, 'notification_intent_hmac_key.txt'),
     agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
     setupMachinePrivateKey: join(keysDir, 'setup_machine_private.pem'),
     setupMachinePublicKey: join(keysDir, 'setup_machine_public.jwk.json'),
@@ -850,6 +1056,9 @@ export async function ensureSupplementalKeyFiles(
       'tenant_runtime_registry_verify.jwks.json'
     ),
     tenantRuntimeRegistrySigningKeyId: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+    smokeRpcSigningJwkSlotA: join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+    smokeRpcSigningJwkSlotB: join(keysDir, 'smoke_rpc_signing_jwk_slot_b.private.jwk.json'),
+    controlSmokeVerifyingPublicJwks: join(keysDir, 'control_smoke_verify.jwks.json'),
   };
 
   if (!existsSync(paths.objectEncryptionRootKey)) {
@@ -870,6 +1079,11 @@ export async function ensureSupplementalKeyFiles(
   if (!existsSync(paths.loggingCursorHmacSecret)) {
     await writeSensitiveFile(paths.loggingCursorHmacSecret, generateBase64Secret(32));
     createdFiles.push(paths.loggingCursorHmacSecret);
+  }
+
+  if (!existsSync(paths.lookupHmacKeySlotA)) {
+    await writeSensitiveFile(paths.lookupHmacKeySlotA, generateBase64Secret(32));
+    createdFiles.push(paths.lookupHmacKeySlotA);
   }
 
   if (!existsSync(paths.flowRuntimeHmacSecret)) {
@@ -896,19 +1110,60 @@ export async function ensureSupplementalKeyFiles(
     await writeSensitiveFile(paths.pluginEncryptionKey, generateBase64Secret(32));
     createdFiles.push(paths.pluginEncryptionKey);
   }
+  if (!existsSync(paths.pluginMutationHmacKey)) {
+    await writeSensitiveFile(paths.pluginMutationHmacKey, generateBase64Secret(32));
+    createdFiles.push(paths.pluginMutationHmacKey);
+  }
+  const hasNotificationPayloadPrivate = existsSync(paths.notificationPayloadDecryptJwkSlotA);
+  const hasNotificationPayloadPublic = existsSync(paths.notificationPayloadEncryptPublicJwks);
+  if (hasNotificationPayloadPrivate || hasNotificationPayloadPublic) {
+    if (!hasNotificationPayloadPrivate || !hasNotificationPayloadPublic) {
+      throw new Error(
+        `Incomplete notification payload key set: ${paths.notificationPayloadDecryptJwkSlotA} and ${paths.notificationPayloadEncryptPublicJwks} are required`
+      );
+    }
+    const privateJwks = [await readFile(paths.notificationPayloadDecryptJwkSlotA, 'utf-8')];
+    if (existsSync(paths.notificationPayloadDecryptJwkSlotB)) {
+      privateJwks.push(await readFile(paths.notificationPayloadDecryptJwkSlotB, 'utf-8'));
+    }
+    validateNotificationPayloadKeySet(
+      privateJwks,
+      await readFile(paths.notificationPayloadEncryptPublicJwks, 'utf-8')
+    );
+  } else {
+    const keyPair = generateRsaOaepJwkKeyPair(`${baseKeyId}-notification-payload`);
+    await writeSensitiveFile(
+      paths.notificationPayloadDecryptJwkSlotA,
+      JSON.stringify(keyPair.privateJwk, null, 2)
+    );
+    await writeSensitiveFile(
+      paths.notificationPayloadEncryptPublicJwks,
+      JSON.stringify({ keys: [keyPair.publicJwk] }, null, 2)
+    );
+    createdFiles.push(
+      paths.notificationPayloadDecryptJwkSlotA,
+      paths.notificationPayloadEncryptPublicJwks
+    );
+  }
+  if (!existsSync(paths.notificationIntentHmacKey)) {
+    await writeSensitiveFile(paths.notificationIntentHmacKey, generateBase64Secret(32));
+    createdFiles.push(paths.notificationIntentHmacKey);
+  }
   if (!existsSync(paths.agentElevationEncryptionKey)) {
     await writeSensitiveFile(paths.agentElevationEncryptionKey, generateHexSecret(32));
     createdFiles.push(paths.agentElevationEncryptionKey);
   }
 
-  await writeMissingMachineKeyPair(
-    {
-      privateKey: paths.setupMachinePrivateKey,
-      publicKey: paths.setupMachinePublicKey,
-    },
-    `${baseKeyId}-setup`,
-    createdFiles
-  );
+  if (options.includeSetupMachineKeyPair !== false) {
+    await writeMissingMachineKeyPair(
+      {
+        privateKey: paths.setupMachinePrivateKey,
+        publicKey: paths.setupMachinePublicKey,
+      },
+      `${baseKeyId}-setup`,
+      createdFiles
+    );
+  }
   await writeMissingMachineKeyPair(
     {
       privateKey: paths.adminUiBffPrivateKey,
@@ -944,6 +1199,27 @@ export async function ensureSupplementalKeyFiles(
     );
   }
 
+  const hasControlSmokePrivate = existsSync(paths.smokeRpcSigningJwkSlotA);
+  const hasControlSmokePublic = existsSync(paths.controlSmokeVerifyingPublicJwks);
+  if (hasControlSmokePrivate || hasControlSmokePublic) {
+    if (!hasControlSmokePrivate || !hasControlSmokePublic) {
+      throw new Error(
+        `Incomplete control smoke key set: ${paths.smokeRpcSigningJwkSlotA} and ${paths.controlSmokeVerifyingPublicJwks} are required`
+      );
+    }
+  } else {
+    const keyPair = generateEd25519JwkKeyPair(`${baseKeyId}-control-smoke`);
+    await writeSensitiveFile(
+      paths.smokeRpcSigningJwkSlotA,
+      JSON.stringify(keyPair.privateJwk, null, 2)
+    );
+    await writeSensitiveFile(
+      paths.controlSmokeVerifyingPublicJwks,
+      JSON.stringify({ keys: [keyPair.publicJwk] }, null, 2)
+    );
+    createdFiles.push(paths.smokeRpcSigningJwkSlotA, paths.controlSmokeVerifyingPublicJwks);
+  }
+
   await updateMetadataWithSupplementalFiles(keysDir, {
     objectEncryptionRootKey: paths.objectEncryptionRootKey,
     piiEncryptionKey: paths.piiEncryptionKey,
@@ -954,14 +1230,30 @@ export async function ensureSupplementalKeyFiles(
     vcEvidenceHmacSecret: paths.vcEvidenceHmacSecret,
     vcProfileContractHmacSecret: paths.vcProfileContractHmacSecret,
     pluginEncryptionKey: paths.pluginEncryptionKey,
+    pluginMutationHmacKey: paths.pluginMutationHmacKey,
+    notificationPayloadDecryptJwkSlotA: paths.notificationPayloadDecryptJwkSlotA,
+    ...(existsSync(paths.notificationPayloadDecryptJwkSlotB)
+      ? { notificationPayloadDecryptJwkSlotB: paths.notificationPayloadDecryptJwkSlotB }
+      : {}),
+    notificationPayloadEncryptPublicJwks: paths.notificationPayloadEncryptPublicJwks,
+    notificationIntentHmacKey: paths.notificationIntentHmacKey,
     agentElevationEncryptionKey: paths.agentElevationEncryptionKey,
-    setupMachinePrivateKey: paths.setupMachinePrivateKey,
-    setupMachinePublicKey: paths.setupMachinePublicKey,
+    ...(options.includeSetupMachineKeyPair !== false
+      ? {
+          setupMachinePrivateKey: paths.setupMachinePrivateKey,
+          setupMachinePublicKey: paths.setupMachinePublicKey,
+        }
+      : {}),
     adminUiBffPrivateKey: paths.adminUiBffPrivateKey,
     adminUiBffPublicKey: paths.adminUiBffPublicKey,
     tenantRuntimeRegistrySigningPrivateJwk: paths.tenantRuntimeRegistrySigningPrivateJwk,
     tenantRuntimeRegistryVerifyingPublicJwks: paths.tenantRuntimeRegistryVerifyingPublicJwks,
     tenantRuntimeRegistrySigningKeyId: paths.tenantRuntimeRegistrySigningKeyId,
+    smokeRpcSigningJwkSlotA: paths.smokeRpcSigningJwkSlotA,
+    ...(existsSync(paths.smokeRpcSigningJwkSlotB)
+      ? { smokeRpcSigningJwkSlotB: paths.smokeRpcSigningJwkSlotB }
+      : {}),
+    controlSmokeVerifyingPublicJwks: paths.controlSmokeVerifyingPublicJwks,
   });
 
   return { createdFiles };
@@ -1153,6 +1445,10 @@ export function generateWranglerSecretCommands(
 
   commands.push(
     `echo -n "$(cat ${join(keysDir, 'plugin_encryption_key.txt')})" | wrangler secret put PLUGIN_ENCRYPTION_KEY${envFlag}`
+  );
+
+  commands.push(
+    `echo -n "$(cat ${join(keysDir, 'plugin_mutation_hmac_key.txt')})" | wrangler secret put PLUGIN_MUTATION_HMAC_KEY${envFlag}`
   );
 
   commands.push(

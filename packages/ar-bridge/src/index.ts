@@ -50,7 +50,11 @@ import { handleListProviders } from './handlers/list';
 import { handleExternalStart } from './handlers/start';
 import { handleThirdPartyInitiatedLogin } from './handlers/initiate-login';
 import { handleRequestObject } from './handlers/request-object';
-import { handleExternalCallback } from './handlers/callback';
+import {
+  handleExternalCallback,
+  handleExternalProvisioningResume,
+  handleExternalProvisioningStatus,
+} from './handlers/callback';
 import { handleBackchannelLogout } from './handlers/backchannel-logout';
 import { handleFrontchannelLogout } from './handlers/frontchannel-logout';
 import {
@@ -211,6 +215,10 @@ app.post('/api/external/:provider/callback', handleExternalCallback);
 app.get('/auth/external/:provider/callback', handleExternalCallback);
 app.post('/auth/external/:provider/callback', handleExternalCallback);
 
+app.post('/api/external/provisioning/status', handleExternalProvisioningStatus);
+app.post('/auth/external/provisioning/status', handleExternalProvisioningStatus);
+app.get('/auth/external/provisioning/resume', handleExternalProvisioningResume);
+
 // Handle backchannel logout from external IdP (OpenID Connect Back-Channel Logout 1.0)
 app.post('/api/external/:provider/backchannel-logout', handleBackchannelLogout);
 app.post('/auth/external/:provider/backchannel-logout', handleBackchannelLogout);
@@ -335,3 +343,4 @@ export default {
   fetch: app.fetch,
   scheduled,
 };
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

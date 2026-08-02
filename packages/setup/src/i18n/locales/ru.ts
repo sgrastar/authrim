@@ -788,11 +788,7 @@ const ru: Translations = {
     'Один core D1 и один PII D1 на все развертывание. Минимальная стоимость настройки и путь по умолчанию.',
   'web.db.tenantD1Title': 'D1 для tenant',
   'web.db.tenantD1Desc':
-    'Одна пара core/PII D1 на tenant. Требуется подготовить базу данных tenant перед активацией.',
-  'web.db.preallocatedSlotsTitle': 'Предварительно выделенные слоты tenant',
-  'web.db.preallocatedSlotsDesc': 'Каждый слот tenant создает две базы данных D1: core и PII.',
-  'web.db.slotsLabel': 'Слоты',
-  'web.db.slotsHelp': 'По умолчанию 3. Максимум 500 слотов.',
+    'Инициализирует Control Plane и первые shards; дальнейшая емкость создается автоматически.',
 
   // Web UI Email
   'web.email.title': 'Провайдер email',

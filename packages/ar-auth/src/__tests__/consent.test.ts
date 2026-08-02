@@ -12,6 +12,7 @@ import { getConsentItemsForScreen, processConsentItemDecisions } from '@authrim/
 import { consentGetHandler, consentPostHandler } from '../consent';
 
 const mockRedirectWithError = vi.hoisted(() => vi.fn());
+const mockResolveClientTrustPolicy = vi.hoisted(() => vi.fn());
 
 vi.mock('../authorize', () => ({
   redirectWithError: mockRedirectWithError,
@@ -32,6 +33,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     getConsentItemsForScreen: vi.fn(async () => []),
     processConsentItemDecisions: vi.fn(async () => undefined),
+    resolveClientTrustPolicy: mockResolveClientTrustPolicy,
   };
 });
 
@@ -196,6 +198,7 @@ describe('Consent Handlers', () => {
     vi.clearAllMocks();
     vi.mocked(getConsentItemsForScreen).mockResolvedValue([]);
     vi.mocked(processConsentItemDecisions).mockResolvedValue(undefined);
+    mockResolveClientTrustPolicy.mockResolvedValue(null);
     mockRedirectWithError.mockResolvedValue(
       new Response(null, {
         status: 302,
@@ -424,6 +427,55 @@ describe('Consent Handlers', () => {
             }),
           ]),
         })
+      );
+    });
+
+    it('derives the trusted badge from Client Trust Policy instead of legacy metadata', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'authoritative-trust-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: { client_id: 'test-client', scope: 'openid' },
+      });
+      const db = createMockDB({
+        firstResult: {
+          client_id: 'test-client',
+          client_name: 'Test App',
+          is_trusted: 1,
+        },
+      });
+
+      const withoutPolicy = createMockContext({
+        query: { challenge_id: 'authoritative-trust-challenge' },
+        challengeStore,
+        db,
+      });
+      await consentGetHandler(withoutPolicy);
+      expect(withoutPolicy.json).toHaveBeenCalledWith(
+        expect.objectContaining({ client: expect.objectContaining({ is_trusted: false }) })
+      );
+
+      mockResolveClientTrustPolicy.mockResolvedValue({
+        target_type: 'oidc_client',
+        target_id: 'test-client',
+        first_party: true,
+        trusted: true,
+        skip_authorization_consent: false,
+      });
+      const policyChallengeStore = createMockChallengeStore({
+        id: 'policy-trust-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: { client_id: 'test-client', scope: 'openid' },
+      });
+      const withPolicy = createMockContext({
+        query: { challenge_id: 'policy-trust-challenge' },
+        challengeStore: policyChallengeStore,
+        db,
+      });
+      await consentGetHandler(withPolicy);
+      expect(withPolicy.json).toHaveBeenCalledWith(
+        expect.objectContaining({ client: expect.objectContaining({ is_trusted: true }) })
       );
     });
 

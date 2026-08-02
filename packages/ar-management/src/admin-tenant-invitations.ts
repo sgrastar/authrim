@@ -18,7 +18,7 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
@@ -187,19 +187,21 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
 
     const inviteUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
-    // Conditionally send email if invited_email is specified and email plugin is available
+    // Conditionally enqueue email if invited_email is specified.
     let emailSent = false;
     if (invited_email) {
       try {
-        const pluginCtx = getRequiredPluginContext(c, 'notification');
-        const emailNotifier = pluginCtx.registry.getNotifier('email');
-
-        if (emailNotifier) {
-          const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-          const emailResult = await emailNotifier.send({
+        const delivery = await produceNotificationDelivery(c.env, {
+          owner: { owner: 'tenant', tenantId },
+          intentId: `tenant-invitation:${invitationId}`,
+          outboxId: `notification:${invitationId}`,
+          notificationKind: 'admin.tenant-invitation',
+          idempotencyKey: `tenant-invitation:${invitationId}`,
+          expiresAt,
+          payload: {
             channel: 'email',
             to: invited_email,
-            from: fromEmail,
+            from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
             subject: `You've been invited to ${sanitizeEmailHeader(tenant.name)}`,
             body: getInvitationEmailHtml({
               tenantName: tenant.name,
@@ -213,24 +215,19 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
                 expiresInHours: expires_in_hours,
               }),
             },
-          });
+          },
+        });
 
-          if (emailResult.success) {
-            emailSent = true;
-          } else {
-            log.warn('Failed to send invitation email', { error: emailResult.error });
-          }
-        } else {
-          log.warn('Email notifier not configured, invitation URL returned without sending email', {
+        emailSent = delivery.delivery !== 'permanent_failure';
+        if (!emailSent) {
+          log.warn('Failed to enqueue invitation email', {
             tenant_id: tenantId,
-            invited_email,
           });
         }
       } catch (error) {
         log.warn('Invitation email delivery failed', {
           tenant_id: tenantId,
-          invited_email,
-          error: String(error),
+          errorType: error instanceof Error ? error.name : 'Unknown',
         });
       }
     }

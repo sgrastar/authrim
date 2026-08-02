@@ -7,6 +7,7 @@ export interface ExternalTokenRefreshConfig {
 	refreshThresholdSeconds: number;
 	batchSize: number;
 	scheduledTenantBatchSize: number;
+	piiShardPageSize: number;
 }
 
 export interface ExternalTokenRefreshRunSummary {

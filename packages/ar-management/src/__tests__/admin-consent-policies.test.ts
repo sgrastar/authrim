@@ -30,13 +30,13 @@ import {
   adminSignInConfirmationPolicyUpsertHandler,
 } from '../admin-consent-policies';
 
-function context(body: unknown = {}, id = 'policy-1') {
+function context(body: unknown = {}, id = 'policy-1', env: Record<string, unknown> = {}) {
   return {
     req: {
       json: vi.fn().mockResolvedValue(body),
       param: vi.fn((name: string) => (name === 'id' ? id : undefined)),
     },
-    env: {},
+    env,
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -321,7 +321,11 @@ describe('admin consent policy APIs', () => {
       ['saml_sp', []],
       ['oidc_client', [{ id: 'existing' }]],
     ])('upserts %s trust policy with existing=%s', async (targetType, existing) => {
-      queueQueries(existing, [{ target_type: targetType }]);
+      if (targetType === 'oidc_client') {
+        queueQueries([{ client_id: 'app-1' }], existing, [{ target_type: targetType }]);
+      } else {
+        queueQueries(existing, [{ target_type: targetType }]);
+      }
       const response = await adminClientTrustPolicyUpsertHandler(
         context({
           target_type: targetType,
@@ -339,6 +343,54 @@ describe('admin consent policy APIs', () => {
         expect.stringContaining(existing.length ? 'UPDATE' : 'INSERT'),
         expect.arrayContaining(['Description', 1, 1, 1, 0])
       );
+    });
+
+    it('rejects a missing or cross-tenant OIDC client target', async () => {
+      const response = await adminClientTrustPolicyUpsertHandler(
+        context({
+          target_type: 'oidc_client',
+          target_id: 'other-tenant-client',
+          first_party: true,
+          trusted: true,
+          skip_authorization_consent: true,
+        })
+      );
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'not_found',
+        error_description: 'OIDC client was not found',
+      });
+      expect(mocks.adapter.query).toHaveBeenCalledWith(
+        expect.stringContaining('tenant_id = ? AND client_id = ?'),
+        ['tenant-a', 'other-tenant-client']
+      );
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects disabling first-party trust while App Login is enabled', async () => {
+      queueQueries([{ client_id: 'app-1' }]);
+      const settings = {
+        get: vi.fn().mockResolvedValue(JSON.stringify({ 'client.app_login_enabled': true })),
+      };
+      const response = await adminClientTrustPolicyUpsertHandler(
+        context(
+          {
+            target_type: 'oidc_client',
+            target_id: 'app-1',
+            first_party: false,
+            is_active: true,
+          },
+          'policy-1',
+          { SETTINGS: settings }
+        )
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error_description: expect.stringContaining('first-party Client Trust Policy'),
+      });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
     });
 
     it('lists trust policies and handles query failures', async () => {

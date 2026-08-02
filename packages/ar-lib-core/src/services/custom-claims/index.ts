@@ -80,6 +80,7 @@ export {
   type SetUserLifecycleStateParams,
 } from './user-lifecycle';
 export {
+  resolveCustomClaimRuntimeSourcesFromHono,
   resolveCustomClaimRuntimeSourcesFromEnv,
   type CustomClaimRuntimeSourceEnv,
   type ResolvedCustomClaimRuntimeSources,

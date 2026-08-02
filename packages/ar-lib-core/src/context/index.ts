@@ -48,6 +48,7 @@ export { ContextFactory, createContextFactory, isPIIContext, getUserWithPII } fr
 
 // Hono Integration (recommended for route handlers)
 export {
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
   elevateToPIIContext,

@@ -258,8 +258,8 @@ const adminFlows = {
 		'既存アカウントでログインし、SPへ送信する属性を確認して許可',
 	admin_flows_template_academic_saml_login_recorded_state:
 		'tenant + user + SAML SP + statement/version + User Decision',
-	admin_flows_template_oidc_login_no_consent_title: 'Login (No consent)',
-	admin_flows_template_oidc_login_no_consent_subtitle: '同意確認なしのログイン',
+	admin_flows_template_oidc_login_no_consent_title: 'Authentication-only Login',
+	admin_flows_template_oidc_login_no_consent_subtitle: '対話的な同意ノードを含まないログイン',
 	admin_flows_template_oidc_login_no_consent_description:
 		'ログインリクエストからセッション確認、認証方式選択、ログイン、アプリケーションへの継続までを確認します。',
 	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
@@ -272,7 +272,7 @@ const adminFlows = {
 	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
 	admin_flows_template_saml_sp_oidc_rp_subtitle: 'SAML SP・OIDC RP向けログイン',
 	admin_flows_template_saml_sp_oidc_rp_description:
-		'Login (No consent) と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
+		'Authentication-only Login と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
 	admin_flows_template_saml_sp_oidc_rp_primary_entry:
 		'SAML AuthnRequest / OIDC Authorization Request',
 	admin_flows_template_saml_sp_oidc_rp_primary_output:
@@ -465,15 +465,16 @@ const adminFlows = {
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',
 	admin_flows_editor_setting_redirect: 'redirect',
-	admin_flows_trust_policy_title: '同意ポリシー',
+	admin_flows_trust_policy_title: 'Client Trust Policy',
 	admin_flows_trust_policy_description:
-		'信頼設定を構成します。Flowの割り当てはFlow設定で管理します。',
+		'OIDC ClientまたはSAML Service Providerの信頼動作を決める唯一のポリシーです。',
 	admin_flows_trust_policy_loading: '同意ポリシー設定を読み込んでいます...',
 	admin_flows_trust_policy_load_failed: '同意ポリシー設定を読み込めませんでした',
 	admin_flows_trust_policy_saved: 'Trust policy設定を保存しました。',
 	admin_flows_trust_policy_save_failed: 'Trust policy設定を保存できませんでした',
 	admin_flows_trust_policy_flow_hint:
-		'この対象で利用するLoginまたはRegistration FlowはFlow設定で選択します。同意ポリシーはFlow内のConsent nodeに紐付けます。',
+		'このゲートは認可プロトコルの権威を読み取り専用で表示します。Flowの編集や公開ではClient Trust Policyは変更されません。',
+	admin_flows_authoritative_consent_gate_output: '認可 / 属性送信',
 	admin_flows_trust_policy_first_party_label: 'ファーストパーティアプリケーション',
 	admin_flows_trust_policy_first_party_description:
 		'同じサービス運営者が提供するアプリケーションとして扱います。',

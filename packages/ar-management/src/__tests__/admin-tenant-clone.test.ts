@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   singleTenant: vi.fn(),
   singleTenantError: vi.fn(),
   audit: vi.fn(),
+  beginProvisioning: vi.fn(),
   provision: vi.fn(),
   activate: vi.fn(),
   rotateSigningKey: vi.fn(),
@@ -24,6 +25,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn((_c, tenantId: string) => ({
       coreAdapter: tenantId === 'source' ? mocks.source : mocks.target,
     })),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (_env, partition: string) =>
+      partition.includes('source') ? mocks.source : mocks.target
+    ),
+    createAuditLog: mocks.audit,
     createAuditLogFromContext: mocks.audit,
     requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
     createErrorResponse: vi.fn((c, code, options) => {
@@ -50,6 +55,8 @@ vi.mock('../single-tenant-guard', () => ({
 }));
 
 vi.mock('../admin-tenants', () => ({
+  beginTenantProvisioning: mocks.beginProvisioning,
+  formatTenantProvisioningOperation: vi.fn((operation) => operation),
   provisionTenant: mocks.provision,
   activateProvisionedTenant: mocks.activate,
   rotateProvisionedTenantSigningKey: mocks.rotateSigningKey,
@@ -61,8 +68,10 @@ import {
   classifySettingsKey,
   CLIENT_CREDENTIAL_COLUMNS,
   CLIENT_NON_CREDENTIAL_COLUMNS,
+  cleanupTenantCloneKvArtifacts,
   OAUTH_CLIENT_CLONE_COLUMNS,
   OAUTH_CLIENT_NON_CLONE_COLUMNS,
+  prepareTenantCloneForProvisioning,
   sanitizeClientJwks,
   sanitizeCopiedSettingsValue,
 } from '../admin-tenant-clone';
@@ -117,6 +126,7 @@ describe('admin tenant clone', () => {
       id: 'source',
       name: 'Source tenant',
       lifecycle_state: 'active',
+      updated_at: 1,
     });
     mocks.source.query.mockResolvedValue([]);
     mocks.target.query.mockResolvedValue([]);
@@ -124,6 +134,26 @@ describe('admin tenant clone', () => {
     mocks.admin.query.mockResolvedValue([]);
     mocks.admin.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.audit.mockResolvedValue(undefined);
+    mocks.beginProvisioning.mockResolvedValue({
+      tenant: {
+        id: 'destination',
+        tenant_code: 'destination',
+        name: 'Destination',
+        description: null,
+        lifecycle_state: 'provisioning',
+        is_default: false,
+        created_at: 1,
+        updated_at: 1,
+      },
+      operation: {
+        operationId: 'tenant_clone_destination',
+        tenantId: 'destination',
+        operationKind: 'clone',
+        status: 'queued',
+        currentStep: 'request_accepted',
+        steps: [],
+      },
+    });
     mocks.provision.mockResolvedValue({
       ok: true,
       tenant: {
@@ -442,6 +472,161 @@ describe('admin tenant clone', () => {
       'destination',
       expect.objectContaining({ signing_keys: 'generated' })
     );
+  });
+
+  it('starts the Control-plane saga instead of reserving a preallocated clone slot', async () => {
+    const response = await adminTenantCloneHandler(
+      context(
+        { id: 'destination', name: 'Destination', copy: { settings: false, roles: false } },
+        {
+          DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+          SETTINGS: kvNamespace(),
+          AUTHRIM_CONFIG: kvNamespace(),
+          ENVIRONMENT: 'test',
+        }
+      )
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.beginProvisioning).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        id: 'destination',
+        operationKind: 'clone',
+        sourceTenantId: 'source',
+        preparationPayload: {
+          copy: expect.objectContaining({ settings: false, roles: false }),
+          source_snapshot: {
+            tenant_updated_at: 1,
+            database_version: expect.stringMatching(/^[a-f0-9]{64}$/),
+            kv_version: expect.stringMatching(/^[a-f0-9]{64}$/),
+          },
+        },
+      })
+    );
+    expect(mocks.provision).not.toHaveBeenCalled();
+    expect(await response.json()).toMatchObject({
+      lifecycle_state: 'provisioning',
+      provisioning: { mode: 'control-plane', operationId: 'tenant_clone_destination' },
+    });
+  });
+
+  it('prepares a clone on the routed destination before Lookup activation', async () => {
+    const rotateKeysRpc = vi.fn();
+    const emptyStateHash = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({})))
+      ),
+      (byte) => byte.toString(16).padStart(2, '0')
+    ).join('');
+    const result = await prepareTenantCloneForProvisioning(
+      {
+        DB_ADMIN: 'admin',
+        TDB_DEFAULT_A: {},
+        SETTINGS: kvNamespace(),
+        AUTHRIM_CONFIG: kvNamespace(),
+        KEY_MANAGER: {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({ rotateKeysRpc })),
+        },
+      } as never,
+      {
+        operationId: 'tenant_clone_destination',
+        environmentId: 'test',
+        tenantId: 'destination',
+        tenantCode: 'destination',
+        tenantName: 'Destination',
+        tenantDescription: null,
+        isolationPolicy: 'tenant_exclusive',
+        operationKind: 'clone',
+        sourceTenantId: 'source',
+        preparationPayload: {
+          copy: {
+            settings: false,
+            secret_settings: false,
+            clients: false,
+            client_credentials: false,
+            roles: false,
+            admin_access: false,
+            webhooks: false,
+            webhook_secrets: false,
+          },
+          source_snapshot: {
+            tenant_updated_at: 1,
+            database_version: emptyStateHash,
+            kv_version: emptyStateHash,
+          },
+        },
+        preparationResult: null,
+        residencyPolicyId: 'builtin:residency:default',
+        residencyPartition: 'default',
+        requestHash: 'a'.repeat(64),
+        idempotencyKey: 'clone-destination',
+        status: 'running',
+        currentStep: 'tenant_prepare',
+        capacityOperationIds: {},
+        defaultRouteAllocation: null,
+        attemptCount: 1,
+        retryBudgetStartedAt: 1,
+        nextAttemptAt: null,
+        lastErrorCode: null,
+        fencingToken: 1,
+        createdBy: 'admin-a',
+        createdAt: 1,
+        startedAt: 1,
+        completedAt: null,
+        updatedAt: 1,
+        steps: [],
+      },
+      {
+        allocationId: 'allocation-a',
+        tenantId: 'destination',
+        state: 'reserved',
+        target: {
+          shardId: 'default-a',
+          dataRole: 'tenant_core/default',
+          residencyPolicyId: 'builtin:residency:default',
+          residencyPartition: 'default',
+          routeGeneration: 1,
+          bindingRef: 'TDB_DEFAULT_A',
+          databaseId: 'database-a',
+          databaseName: 'database-a',
+          allocationScope: 'tenant_exclusive',
+          ownerTenantId: 'destination',
+          assignmentGeneration: 1,
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      source_tenant_id: 'source',
+      cloned_items: { settings: 0, clients: 0, roles: 0 },
+    });
+    expect(rotateKeysRpc).toHaveBeenCalledOnce();
+    expect(mocks.activate).not.toHaveBeenCalled();
+  });
+
+  it('removes every clone-owned KV shape during terminal provisioning cleanup', async () => {
+    const settings = kvNamespace({
+      'plugins:registry': JSON.stringify({ resend: {} }),
+      'settings:tenant:destination:login-ui': '{}',
+      'settings:client:destination:client-a': '{}',
+      'plugins:config:resend:tenant:destination': '{"apiKey":"encrypted"}',
+      'plugins:enabled:resend:tenant:destination': 'true',
+    });
+    const config = kvNamespace({
+      'settings:tenant:destination:tenant': '{}',
+      'test:contract:tenant:destination': '{}',
+      'test:contract:client:destination:client-a': '{}',
+    });
+
+    await cleanupTenantCloneKvArtifacts(
+      { SETTINGS: settings, AUTHRIM_CONFIG: config, ENVIRONMENT: 'test' } as never,
+      'destination'
+    );
+
+    expect([...settings.values.keys()]).toEqual(['plugins:registry']);
+    expect([...config.values.keys()]).toEqual([]);
   });
 
   it('preserves destination origins instead of granting source origins', async () => {
@@ -1564,6 +1749,26 @@ describe('admin tenant clone', () => {
     expect(response.status).toBe(500);
     expect(settings.values.has('settings:tenant:destination:login-ui')).toBe(false);
     expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
+  });
+
+  it('restores destination seed settings when a later clone step fails', async () => {
+    const settings = kvNamespace({
+      'settings:tenant:source:login-ui': '{"brand":"Source"}',
+      'settings:tenant:destination:login-ui': '{"brand":"Destination default"}',
+    });
+    mocks.source.query.mockRejectedValueOnce(new Error('role copy failed'));
+
+    const response = await adminTenantCloneHandler(
+      context(
+        { id: 'destination', name: 'Destination', copy: { settings: true, roles: true } },
+        { SETTINGS: settings, AUTHRIM_CONFIG: kvNamespace(), ENVIRONMENT: 'test' }
+      )
+    );
+
+    expect(response.status).toBe(500);
+    expect(settings.values.get('settings:tenant:destination:login-ui')).toBe(
+      '{"brand":"Destination default"}'
+    );
   });
 
   it('reports KV artifacts that could not be removed during rollback', async () => {

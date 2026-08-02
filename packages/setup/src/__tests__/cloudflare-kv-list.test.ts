@@ -7,7 +7,12 @@ vi.mock('execa', () => ({
   execa: execaMock,
 }));
 
-import { listKVNamespaces, parseKVNamespaceListOutput } from '../core/cloudflare.js';
+import {
+  getOptionalKVKeyByNamespaceId,
+  listKVNamespaces,
+  parseKVKeyListOutput,
+  parseKVNamespaceListOutput,
+} from '../core/cloudflare.js';
 
 describe('Cloudflare KV namespace listing', () => {
   const originalAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -54,6 +59,54 @@ describe('Cloudflare KV namespace listing', () => {
     expect(() => parseKVNamespaceListOutput('["notice"]\n[{"title":"missing-id"}]')).toThrow(
       'valid KV namespace list'
     );
+  });
+
+  it('parses exact KV key inventory and reads only an exact match', async () => {
+    expect(parseKVKeyListOutput('[{"name":"region_shard_config:tenant-a"}]')).toEqual([
+      { name: 'region_shard_config:tenant-a' },
+    ]);
+    execaMock
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: JSON.stringify([
+          { name: 'region_shard_config:tenant-a' },
+          { name: 'region_shard_config:tenant-a:other' },
+        ]),
+        stderr: '',
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '{"version":2}', stderr: '' });
+
+    await expect(
+      getOptionalKVKeyByNamespaceId('namespace-a', 'region_shard_config:tenant-a')
+    ).resolves.toBe('{"version":2}');
+    expect(execaMock).toHaveBeenNthCalledWith(
+      1,
+      'npx',
+      [
+        'wrangler',
+        'kv',
+        'key',
+        'list',
+        '--namespace-id',
+        'namespace-a',
+        '--prefix',
+        'region_shard_config:tenant-a',
+        '--remote',
+      ],
+      expect.objectContaining({ reject: false, timeout: 60000 })
+    );
+  });
+
+  it('returns null without issuing a value read when the exact KV key is absent', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify([{ name: 'region_shard_config:tenant-a:other' }]),
+      stderr: '',
+    });
+    await expect(
+      getOptionalKVKeyByNamespaceId('namespace-a', 'region_shard_config:tenant-a')
+    ).resolves.toBeNull();
+    expect(execaMock).toHaveBeenCalledOnce();
   });
 
   it('prefers the Cloudflare API when CI credentials are available', async () => {

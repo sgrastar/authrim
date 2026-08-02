@@ -317,6 +317,71 @@ describe('Rate Limiting Middleware', () => {
       expect(res.headers.get('Retry-After')).toBeDefined();
     });
 
+    it('rechecks a freshly relaxed global profile before returning a stale-limit denial', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi
+        .fn()
+        .mockResolvedValueOnce({
+          allowed: false,
+          current: 11,
+          limit: 10,
+          resetAt,
+          retryAfter: 30,
+        })
+        .mockResolvedValueOnce({
+          allowed: true,
+          current: 12,
+          limit: 10_000,
+          resetAt,
+          retryAfter: 0,
+        });
+      const config = createMockKV();
+      await config.put('rate_limit_profile_override', 'loadTest');
+      mockEnv.AUTHRIM_CONFIG = config;
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use('*', rateLimitMiddleware(RateLimitProfiles.strict));
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-RateLimit-Limit')).toBe('10000');
+      expect(incrementRpc).toHaveBeenNthCalledWith(2, 'tenant:default:rate-limit:192.168.1.1', {
+        maxRequests: 10_000,
+        windowSeconds: 60,
+      });
+    });
+
+    it('keeps a denial fail closed when no relaxed override is authoritative', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: false,
+        current: 11,
+        limit: 10,
+        resetAt,
+        retryAfter: 30,
+      });
+      const config = createMockKV();
+      await config.put('rate_limit_profile_override', 'strict');
+      mockEnv.AUTHRIM_CONFIG = config;
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use('*', rateLimitMiddleware(RateLimitProfiles.strict));
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(429);
+      expect(incrementRpc).toHaveBeenCalledTimes(1);
+    });
+
     it('should track different IPs separately', async () => {
       app.use(
         '*',

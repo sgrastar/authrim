@@ -1,5 +1,5 @@
 export type DiscoveryMethod =
-	| 'email_domain'
+	| 'email_exact'
 	| 'tenant_code'
 	| 'tenant_slug'
 	| 'wayf'
@@ -16,7 +16,7 @@ export function getInteractiveDiscoveryMethods(
 	selectionPolicy: SelectionPolicy
 ): DiscoveryMethod[] {
 	const interactiveMethods = discoveryMethods.filter((method): method is DiscoveryMethod =>
-		['email_domain', 'tenant_code', 'tenant_slug', 'wayf'].includes(method)
+		['email_exact', 'tenant_code', 'tenant_slug', 'wayf'].includes(method)
 	);
 
 	if (
@@ -36,7 +36,7 @@ export function getInteractiveDiscoveryMethods(
 export function getDefaultDiscoveryMode(
 	methods: string[]
 ): 'email' | 'tenant_code' | 'tenant_slug' | 'wayf' {
-	if (methods.includes('email_domain')) return 'email';
+	if (methods.includes('email_exact')) return 'email';
 	if (methods.includes('tenant_code')) return 'tenant_code';
 	if (methods.includes('wayf')) return 'wayf';
 	return 'tenant_slug';

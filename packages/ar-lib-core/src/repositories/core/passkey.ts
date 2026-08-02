@@ -48,6 +48,8 @@ export interface Passkey {
   user_id: string;
   /** Credential ID (base64url encoded) */
   credential_id: string;
+  /** WebAuthn relying-party ID used to namespace credential routing */
+  rp_id: string | null;
   /** Public key (base64url encoded COSE key) */
   public_key: string;
   /** Signature counter for clone detection */
@@ -74,6 +76,8 @@ export interface CreatePasskeyInput {
   user_id: string;
   /** Credential ID (base64url encoded) */
   credential_id: string;
+  /** WebAuthn relying-party ID used to namespace credential routing */
+  rp_id?: string | null;
   /** Public key (base64url encoded COSE key) */
   public_key: string;
   /** Initial signature counter (usually 0) */
@@ -116,6 +120,7 @@ interface PasskeyRow {
   tenant_id: string;
   user_id: string;
   credential_id: string;
+  rp_id: string | null;
   public_key: string;
   counter: number;
   transports: string | null;
@@ -185,8 +190,8 @@ export class PasskeyRepository {
     const transportsJson = input.transports ? JSON.stringify(input.transports) : null;
 
     const sql = `
-      INSERT INTO passkeys (id, tenant_id, user_id, credential_id, public_key, counter, transports, device_name, aaguid, created_at, last_used_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      INSERT INTO passkeys (id, tenant_id, user_id, credential_id, rp_id, public_key, counter, transports, device_name, aaguid, created_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
     `;
 
     await this.adapter.execute(sql, [
@@ -194,6 +199,7 @@ export class PasskeyRepository {
       this.tenantId,
       input.user_id,
       input.credential_id,
+      input.rp_id ?? null,
       input.public_key,
       validCounter,
       transportsJson,
@@ -207,6 +213,7 @@ export class PasskeyRepository {
       tenant_id: this.tenantId,
       user_id: input.user_id,
       credential_id: input.credential_id,
+      rp_id: input.rp_id ?? null,
       public_key: input.public_key,
       counter: validCounter,
       transports: input.transports ?? [],
@@ -485,6 +492,7 @@ export class PasskeyRepository {
       tenant_id: row.tenant_id,
       user_id: row.user_id,
       credential_id: row.credential_id,
+      rp_id: row.rp_id ?? null,
       public_key: row.public_key,
       counter: row.counter,
       transports,

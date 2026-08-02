@@ -4,10 +4,11 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   CanonicalIdentityRepository,
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getRuntimeUserStoreSourcesFromHonoContext,
-  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveCustomClaimRuntimeSourcesFromHono,
   registerSessionClientInStore,
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
@@ -60,6 +61,10 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   validateClientCertificateBinding,
   setBoundedMapEntry,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextFromHono,
+  recordDeviceSecretRouteHint,
+  resolveDeviceSecretRouteHint,
 } from '@authrim/ar-lib-core';
 import {
   resolveIDTokenSigningAlgorithm,
@@ -135,6 +140,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
+import { timeTokenRequestDiagnosticOperation } from './request-diagnostics';
 // Custom Claim Schema Resolver
 import {
   loadFeatureConfig,
@@ -184,6 +190,18 @@ class SecurityProfileSettingsUnavailableError extends Error {
     super('Security profile settings are temporarily unavailable');
     this.name = 'SecurityProfileSettingsUnavailableError';
   }
+}
+
+let cachedOAuthConfigManager: ReturnType<typeof createOAuthConfigManager> | null = null;
+let cachedOAuthConfigBinding: Env['AUTHRIM_CONFIG'] | null = null;
+
+function getOAuthConfigManager(env: Env): ReturnType<typeof createOAuthConfigManager> {
+  const binding = env.AUTHRIM_CONFIG ?? null;
+  if (!cachedOAuthConfigManager || cachedOAuthConfigBinding !== binding) {
+    cachedOAuthConfigManager = createOAuthConfigManager(env);
+    cachedOAuthConfigBinding = binding;
+  }
+  return cachedOAuthConfigManager;
 }
 
 async function loadOIDCClaimsUser(
@@ -614,6 +632,33 @@ function oauthError(
     },
     status
   );
+}
+
+async function resolveTrustedSubjectAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  subject: string
+): Promise<Response | null> {
+  if (getTenantMetadataContextFromHono(c)?.storageProfileId !== 'builtin:storage:tenant-d1') {
+    return null;
+  }
+  try {
+    await resolveAccountDataContextFromHono(c, subject);
+    return null;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'account_data_route_unavailable';
+    getLogger(c).module('TOKEN').warn('Token subject account route resolution failed', {
+      error: code,
+    });
+    if (code === 'account_data_route_not_found') {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+    return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+  }
 }
 
 async function applyOIDCIdentityMappingToIDTokenClaims(
@@ -1600,7 +1645,9 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Fetch client metadata early (needed for FAPI/DPoP checks) - request-level cached
-  const clientMetadata = await getClientCached(c, c.env, client_id);
+  const clientMetadata = await timeTokenRequestDiagnosticOperation(c, 'token_client', () =>
+    getClientCached(c, c.env, client_id)
+  );
   if (!clientMetadata) {
     // Security: Generic message to prevent client_id enumeration
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
@@ -1608,12 +1655,16 @@ async function handleAuthorizationCodeGrant(
 
   // Load TenantProfile for TTL limits (Human Auth / AI Ephemeral Auth two-layer model) - request-level cached
   const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
-  const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+  const tenantProfile = await timeTokenRequestDiagnosticOperation(c, 'token_tenant_profile', () =>
+    loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId)
+  );
 
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+    const settings = await timeTokenRequestDiagnosticOperation(c, 'token_security_settings', () =>
+      getSystemSettingsCached(c, c.env, { failOnError: true })
+    );
     if (settings) {
       const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
@@ -1705,11 +1756,16 @@ async function handleAuthorizationCodeGrant(
 
   // Authenticate the client before atomically consuming the authorization code. Otherwise an
   // attacker with a leaked code could invalidate it using deliberately bad client credentials.
-  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+  const clientAuthenticationPolicy = await timeTokenRequestDiagnosticOperation(
     c,
-    clientMetadata as unknown as ClientMetadata,
-    client_assertion,
-    client_assertion_type
+    'token_client_auth_policy',
+    () =>
+      resolveTokenClientAuthenticationPolicy(
+        c,
+        clientMetadata as unknown as ClientMetadata,
+        client_assertion,
+        client_assertion_type
+      )
   );
   if (!clientAuthenticationPolicy.ok) {
     return clientAuthenticationPolicy.response;
@@ -1738,7 +1794,12 @@ async function handleAuthorizationCodeGrant(
     }
   } else if (clientMetadata.client_secret_hash) {
     const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
-    if (!client_secret || !(await verifyClientSecretHash(client_secret, storedHash))) {
+    if (
+      !client_secret ||
+      !(await timeTokenRequestDiagnosticOperation(c, 'token_client_secret_verify', () =>
+        verifyClientSecretHash(client_secret, storedHash)
+      ))
+    ) {
       return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
     }
   } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
@@ -1756,7 +1817,11 @@ async function handleAuthorizationCodeGrant(
 
   if (shardInfo) {
     // Get current shard count (KV priority, with caching)
-    currentShardCount = await getShardCount(c.env);
+    currentShardCount = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_code_shard_config',
+      () => getShardCount(c.env)
+    );
 
     // Remap shard index for scale-down compatibility
     actualShardIndex = remapShardIndex(shardInfo.shardIndex, currentShardCount);
@@ -1796,14 +1861,16 @@ async function handleAuthorizationCodeGrant(
   let authCodeData;
   try {
     // Use RPC for auth code consumption (atomic single-use guarantee)
-    const consumedData = (await authCodeStore.consumeCodeRpc({
-      code: validCode,
-      tenantId: getTenantIdFromContext(c),
-      clientId: client_id,
-      codeVerifier: code_verifier,
-      expectedAuthorizationServer: 'default',
-      expectedSubjectType: 'end_user',
-    })) as AuthCodeStoreResponse;
+    const consumedData = (await timeTokenRequestDiagnosticOperation(c, 'token_code_consume', () =>
+      authCodeStore.consumeCodeRpc({
+        code: validCode,
+        tenantId: getTenantIdFromContext(c),
+        clientId: client_id,
+        codeVerifier: code_verifier,
+        expectedAuthorizationServer: 'default',
+        expectedSubjectType: 'end_user',
+      })
+    )) as AuthCodeStoreResponse;
 
     // RFC 6749 Section 4.1.2: Handle replay attack detection
     // If authorization code was already used, revoke previously issued tokens
@@ -1954,53 +2021,108 @@ async function handleAuthorizationCodeGrant(
     log.debug('Authorization code binding verified successfully', { action: 'DPoP' });
   }
 
-  // Load private key for signing tokens from KeyManager
-  // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
-  let privateKey: CryptoKey;
-  let keyId: string;
+  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
+  if (!parsedClaimsRequest.ok) {
+    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
+  }
+  const tokenPIIRequirement = resolveOIDCPIIRequirement({
+    scopes: authCodeData.scope,
+    claimsRequest: parsedClaimsRequest.request,
+    targets: ['userinfo', 'id_token'],
+  });
 
-  try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
-    privateKey = signingKey.privateKey;
-    keyId = signingKey.kid;
-  } catch (error) {
-    log.error('Failed to get signing key from KeyManager', {}, error as Error);
+  const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
+  const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
+  const shouldIssueRefreshToken =
+    !isBrowserPublicClientRequest ||
+    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
+  const configManager = getOAuthConfigManager(c.env);
+  const optionalFeatureStatePromise = timeTokenRequestDiagnosticOperation(
+    c,
+    'token_optional_features',
+    () =>
+      Promise.all([
+        isPolicyEmbeddingEnabled(c.env),
+        isIdLevelPermissionsEnabled(c.env),
+        isCustomClaimsEnabled(c.env),
+        isNativeSSOEnabled(c.env),
+        loadFeatureConfig(c.env.AUTHRIM_CONFIG || null),
+      ])
+  ).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
+
+  const [signingKeyResult, accessTtlResult, accountRouteResult, refreshTtlResult] =
+    await Promise.allSettled([
+      timeTokenRequestDiagnosticOperation(c, 'token_signing_key', () =>
+        getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c))
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_access_ttl', () =>
+        configManager.getTokenExpiry()
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_account_route', () =>
+        resolveTrustedSubjectAccountRoute(c, authCodeData.sub)
+      ),
+      shouldIssueRefreshToken
+        ? timeTokenRequestDiagnosticOperation(c, 'token_refresh_ttl', () =>
+            configManager.getRefreshTokenExpiry()
+          )
+        : Promise.resolve(undefined),
+    ] as const);
+
+  if (signingKeyResult.status === 'rejected') {
+    log.error('Failed to get signing key from KeyManager', {}, signingKeyResult.reason as Error);
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
+  const privateKey = signingKeyResult.value.privateKey;
+  const keyId = signingKeyResult.value.kid;
 
-  // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
-  const baseExpiresIn = await configManager.getTokenExpiry();
+  if (accessTtlResult.status === 'rejected') {
+    log.error('Failed to load access token lifetime', {}, accessTtlResult.reason as Error);
+    return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+  }
+  const baseExpiresIn = accessTtlResult.value;
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
 
-  // DPoP support (RFC 9449)
-  // dpopJkt was already validated earlier for authorization code binding verification
-  const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
+  if (accountRouteResult.status === 'rejected') {
+    log.error(
+      'Token subject account route resolution failed',
+      {},
+      accountRouteResult.reason as Error
+    );
+    return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+  }
+  if (accountRouteResult.value) return accountRouteResult.value;
+
+  let configuredRefreshTokenExpiresIn: number | undefined;
+  if (shouldIssueRefreshToken) {
+    if (refreshTtlResult.status === 'rejected') {
+      log.error('Failed to load refresh token lifetime', {}, refreshTtlResult.reason as Error);
+      return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+    }
+    configuredRefreshTokenExpiresIn = refreshTtlResult.value;
+  }
 
   // Note: For Authorization Code Flow (response_type=code), scope-based claims
   // (profile, email, etc.) should be returned from the UserInfo endpoint, NOT in the ID token.
   // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
-  if (!parsedClaimsRequest.ok) {
-    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
-  }
-
-  const tokenPIIRequirement = resolveOIDCPIIRequirement({
-    scopes: authCodeData.scope,
-    claimsRequest: parsedClaimsRequest.request,
-    targets: ['userinfo', 'id_token'],
-  });
-  try {
-    const subjectAccount = await findCanonicalRuntimeAccount(
-      authCtx.coreAdapter,
-      tenantId,
-      authCodeData.sub
-    );
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  let subjectAccount: Awaited<ReturnType<typeof findCanonicalRuntimeAccount>> = null;
+  const [subjectAccountResult, tenantRBACClaimsConfigResult] = await Promise.allSettled([
+    timeTokenRequestDiagnosticOperation(c, 'token_subject_account', () =>
+      findCanonicalRuntimeAccount(authCtx.coreAdapter, tenantId, authCodeData.sub)
+    ),
+    timeTokenRequestDiagnosticOperation(c, 'token_rbac_config', () =>
+      resolveTenantRBACClaimsConfig(c.env, tenantId)
+    ),
+  ] as const);
+  if (subjectAccountResult.status === 'fulfilled') {
+    subjectAccount = subjectAccountResult.value;
     if (!subjectAccount && tokenPIIRequirement.requiresPII) {
       const piiAccess = canIssueTokenWithPIIStatus('failed', {
         requiresPII: tokenPIIRequirement.requiresPII,
@@ -2009,11 +2131,11 @@ async function handleAuthorizationCodeGrant(
         return oauthError(c, piiAccess.error, piiAccess.error_description, 400);
       }
     }
-  } catch (piiStatusError) {
+  } else {
     log.error(
       'Failed to evaluate subject PII status for token issuance',
       {},
-      piiStatusError as Error
+      subjectAccountResult.reason as Error
     );
     if (tokenPIIRequirement.requiresPII) {
       return oauthError(
@@ -2025,23 +2147,41 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
+  if (tenantRBACClaimsConfigResult.status === 'rejected') {
+    throw tenantRBACClaimsConfigResult.reason;
+  }
+  const tenantRBACClaimsConfig = tenantRBACClaimsConfigResult.value;
+  const optionalFeatureState = await optionalFeatureStatePromise;
+  if (!optionalFeatureState.ok) throw optionalFeatureState.error;
+  const [
+    policyEmbeddingEnabled,
+    idLevelPermissionsEnabled,
+    customClaimsEnabled,
+    nativeSSOGloballyEnabled,
+    customClaimSchemaFeatureConfig,
+  ] = optionalFeatureState.value;
+
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
-  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, tenantId);
   try {
-    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
-        cache: c.env.REBAC_CACHE,
-        claimsConfig: tenantRBACClaimsConfig.accessToken,
-        tenantId,
-      }),
-      getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
-        cache: c.env.REBAC_CACHE,
-        claimsConfig: tenantRBACClaimsConfig.idToken,
-        tenantId,
-      }),
-    ]);
+    [accessTokenRBACClaims, idTokenRBACClaims] = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_rbac_claims',
+      () =>
+        Promise.all([
+          getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+            cache: c.env.REBAC_CACHE,
+            claimsConfig: tenantRBACClaimsConfig.accessToken,
+            tenantId,
+          }),
+          getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+            cache: c.env.REBAC_CACHE,
+            claimsConfig: tenantRBACClaimsConfig.idToken,
+            tenantId,
+          }),
+        ])
+    );
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
     log.error('Failed to fetch RBAC claims', {}, rbacError as Error);
@@ -2051,7 +2191,6 @@ async function handleAuthorizationCodeGrant(
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
-    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && authCodeData.scope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
@@ -2070,8 +2209,7 @@ async function handleAuthorizationCodeGrant(
   // Phase 8.2: ID-level Resource Permissions
   let idLevelPermissions: string[] = [];
   try {
-    const idLevelEnabled = await isIdLevelPermissionsEnabled(c.env);
-    if (idLevelEnabled) {
+    if (idLevelPermissionsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const allIdPerms = await evaluateIdLevelPermissions(
         authCtx.coreAdapter,
@@ -2099,12 +2237,7 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userAccount = await findCanonicalRuntimeAccount(
-      authCtx.coreAdapter,
-      tenantId,
-      authCodeData.sub
-    );
-    if (userAccount?.account_type === 'anonymous') {
+    if (subjectAccount?.account_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
         upgrade_eligible: true, // Anonymous users can always upgrade
@@ -2118,7 +2251,6 @@ async function handleAuthorizationCodeGrant(
   // Phase 8.2: Custom Claims Evaluation
   let customClaims: Record<string, unknown> = {};
   try {
-    const customClaimsEnabled = await isCustomClaimsEnabled(c.env);
     if (customClaimsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
@@ -2236,14 +2368,13 @@ async function handleAuthorizationCodeGrant(
   let tokenJti: string;
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
-    const result = await createAccessToken(
-      accessTokenClaims,
-      privateKey,
-      keyId,
-      expiresIn,
-      regionAwareJti
-    );
+    const result = await timeTokenRequestDiagnosticOperation(c, 'token_access_create', async () => {
+      const { jti: regionAwareJti } = await generateRegionAwareJti(
+        c.env,
+        getTenantIdFromContext(c)
+      );
+      return createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn, regionAwareJti);
+    });
     accessToken = result.token;
     tokenJti = result.jti;
   } catch (error) {
@@ -2282,7 +2413,6 @@ async function handleAuthorizationCodeGrant(
   let issuedDeviceSecretEntity: DeviceSecret | undefined;
 
   // Check if Native SSO is enabled (feature flag + client configuration)
-  const nativeSSOGloballyEnabled = await isNativeSSOEnabled(c.env);
   const clientNativeSSOIssuanceEligible = isNativeSSOIssuanceEligible(
     clientMetadata,
     formData.channel
@@ -2380,12 +2510,33 @@ async function handleAuthorizationCodeGrant(
           dsHash = await calculateDsHash(deviceSecret);
           await deviceInstallationRepo.ensureForDeviceSecret(result.entity);
 
-          log.info('Created device secret', {
-            userIdPrefix: authCodeData.sub.substring(0, 8),
-            sessionIdPrefix: authCodeData.sid.substring(0, 8),
-            expiresInDays: nativeSSOConfig.deviceSecretTTLDays,
-            action: 'NativeSSO',
-          });
+          try {
+            await recordDeviceSecretRouteHint(c.env, {
+              secret: deviceSecret,
+              tenantId,
+              accountId: `account:${authCodeData.sub}`,
+              issuedAt: result.entity.created_at,
+              expiresAt: result.entity.expires_at,
+            });
+          } catch (error) {
+            await deviceSecretRepo.revoke(result.entity.id, 'route_hint_write_failed', tenantId);
+            deviceSecret = undefined;
+            issuedDeviceSecretEntity = undefined;
+            dsHash = undefined;
+            log.error('Failed to create device secret route hint', {
+              action: 'NativeSSO',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+          }
+
+          if (deviceSecret) {
+            log.info('Created device secret', {
+              userIdPrefix: authCodeData.sub.substring(0, 8),
+              sessionIdPrefix: authCodeData.sid.substring(0, 8),
+              expiresInDays: nativeSSOConfig.deviceSecretTTLDays,
+              action: 'NativeSSO',
+            });
+          }
         } else if ('ok' in result && result.ok === false) {
           // Creation failed (likely limit_exceeded)
           log.warn('Device secret creation returned failure', {
@@ -2404,24 +2555,29 @@ async function handleAuthorizationCodeGrant(
   // Custom Claim Schema: resolve claims for ID Token
   let idTokenCustomClaims: Record<string, unknown> = {};
   try {
-    const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
-    if (ccFeatureConfig.enabled) {
-      const ccSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
-      const ccResolver = createCustomClaimSchemaResolverFromSources({
-        schemaDb: ccSources.schemaDb,
-        nonPiiDb: ccSources.nonPiiDb,
-        piiDb: ccSources.piiDb,
-        cache: c.env.AUTHRIM_CONFIG || null,
-        featureConfig: ccFeatureConfig,
-      });
-      const ccScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
-      const ccResult = await ccResolver.resolveClaimsForTarget(
-        tenantId,
-        authCodeData.sub,
-        ccScopes,
-        'id_token'
+    if (customClaimSchemaFeatureConfig.enabled) {
+      idTokenCustomClaims = await timeTokenRequestDiagnosticOperation(
+        c,
+        'token_custom_claim_schema',
+        async () => {
+          const ccSources = await resolveCustomClaimRuntimeSourcesFromHono(c, tenantId);
+          const ccResolver = createCustomClaimSchemaResolverFromSources({
+            schemaDb: ccSources.schemaDb,
+            nonPiiDb: ccSources.nonPiiDb,
+            piiDb: ccSources.piiDb,
+            cache: c.env.AUTHRIM_CONFIG || null,
+            featureConfig: customClaimSchemaFeatureConfig,
+          });
+          const ccScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
+          const ccResult = await ccResolver.resolveClaimsForTarget(
+            tenantId,
+            authCodeData.sub,
+            ccScopes,
+            'id_token'
+          );
+          return ccResult.claims;
+        }
       );
-      idTokenCustomClaims = ccResult.claims;
     }
   } catch (ccError) {
     log.error('Failed to resolve custom claims for ID token', {}, ccError as Error);
@@ -2490,24 +2646,34 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
-  const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+  const mappedIdTokenClaims = await timeTokenRequestDiagnosticOperation(
     c,
-    tenantId,
-    client_id,
-    clientMetadata as ClientMetadata,
-    idTokenClaims,
-    splitScope(authCodeData.scope)
+    'token_identity_mapping',
+    () =>
+      applyOIDCIdentityMappingToIDTokenClaims(
+        c,
+        tenantId,
+        client_id,
+        clientMetadata as ClientMetadata,
+        idTokenClaims,
+        splitScope(authCodeData.scope)
+      )
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
   }
   idTokenClaims = mappedIdTokenClaims.claims;
 
-  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+  const idTokenConsent = await timeTokenRequestDiagnosticOperation(
     c,
-    tenantId,
-    clientMetadata as ClientMetadata,
-    idTokenClaims
+    'token_attribute_consent',
+    () =>
+      enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+        c,
+        tenantId,
+        clientMetadata as ClientMetadata,
+        idTokenClaims
+      )
   );
   if (!idTokenConsent.ok) {
     return idTokenConsent.response;
@@ -2537,12 +2703,14 @@ async function handleAuthorizationCodeGrant(
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
-      idToken = await createClientIDToken(
-        c.env,
-        tenantId,
-        clientMetadata as ClientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        expiresIn
+      idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
+        createClientIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          expiresIn
+        )
       );
     }
 
@@ -2614,17 +2782,15 @@ async function handleAuthorizationCodeGrant(
 
   // Generate Refresh Token
   // https://tools.ietf.org/html/rfc6749#section-6
-  const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
-  const shouldIssueRefreshToken =
-    !isBrowserPublicClientRequest ||
-    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
   let refreshToken: string | undefined;
   let refreshTokenJti: string | undefined;
-  let refreshTokenExpiresIn: number | undefined;
+  let refreshTokenExpiresIn = configuredRefreshTokenExpiresIn;
 
   if (shouldIssueRefreshToken) {
-    refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
-
+    if (refreshTokenExpiresIn === undefined) {
+      return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+    }
+    const refreshTokenTtl = refreshTokenExpiresIn;
     try {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
@@ -2643,14 +2809,16 @@ async function handleAuthorizationCodeGrant(
 
       if (c.env.REFRESH_TOKEN_ROTATOR) {
         try {
-          familyResult = await createRefreshTokenFamily(c.env, {
-            userId: authCodeData.sub,
-            clientId: client_id,
-            scope: authCodeData.scope,
-            ttl: refreshTokenExpiresIn,
-            tenantId: getTenantIdFromContext(c),
-            resourceAudience: audienceResolution.audience,
-          });
+          familyResult = await timeTokenRequestDiagnosticOperation(c, 'token_refresh_family', () =>
+            createRefreshTokenFamily(c.env, {
+              userId: authCodeData.sub,
+              clientId: client_id,
+              scope: authCodeData.scope,
+              ttl: refreshTokenTtl,
+              tenantId: getTenantIdFromContext(c),
+              resourceAudience: audienceResolution.audience,
+            })
+          );
           refreshTokenJti = familyResult.jti;
         } catch (error) {
           log.error('Failed to register refresh token family', {}, error as Error);
@@ -2664,29 +2832,32 @@ async function handleAuthorizationCodeGrant(
         }
         rtv = familyResult.family.version;
 
-        // V3: Record in the token family index for user-wide revocation support
-        // (non-blocking, fire-and-forget for performance)
-        void recordTokenFamilyIndex(
-          authCtx.coreAdapter,
-          getTenantIdFromContext(c),
-          refreshTokenJti,
-          authCodeData.sub,
-          client_id,
-          familyResult.resolution.generation,
-          refreshTokenExpiresIn
+        // Keep issuance non-blocking while extending the Worker event until the index write settles.
+        c.executionCtx.waitUntil(
+          recordTokenFamilyIndex(
+            authCtx.coreAdapter,
+            getTenantIdFromContext(c),
+            refreshTokenJti,
+            authCodeData.sub,
+            client_id,
+            familyResult.resolution.generation,
+            refreshTokenTtl
+          )
         );
       } else {
         refreshTokenJti = `rt_${crypto.randomUUID()}`;
       }
 
       // Create JWT with rtv (Refresh Token Version) claim
-      const result = await createRefreshToken(
-        refreshTokenClaims,
-        privateKey,
-        keyId,
-        refreshTokenExpiresIn,
-        refreshTokenJti,
-        rtv // V2: Include version for theft detection
+      const result = await timeTokenRequestDiagnosticOperation(c, 'token_refresh_create', () =>
+        createRefreshToken(
+          refreshTokenClaims,
+          privateKey,
+          keyId,
+          refreshTokenTtl,
+          refreshTokenJti,
+          rtv // V2: Include version for theft detection
+        )
       );
       refreshToken = result.token;
       // V2: Family is already registered via RefreshTokenRotator DO above
@@ -2723,7 +2894,9 @@ async function handleAuthorizationCodeGrant(
   // This registration enables token revocation when a replay attack is detected.
   // The additional DO hop is acceptable as it's required for OIDC Conformance.
   try {
-    await authCodeStore.registerIssuedTokensRpc(validCode, tokenJti, refreshTokenJti);
+    await timeTokenRequestDiagnosticOperation(c, 'token_code_register', () =>
+      authCodeStore.registerIssuedTokensRpc(validCode, tokenJti, refreshTokenJti)
+    );
   } catch (error) {
     // Log but don't fail the request - token issuance succeeded
     // This is a "SHOULD" requirement, not a "MUST"
@@ -3193,12 +3366,14 @@ async function handleRefreshTokenGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, refreshTokenData.sub);
+  if (accountRouteError) return accountRouteError;
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
@@ -3820,7 +3995,7 @@ async function handleJWTBearerGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
 
   // Generate Access Token
@@ -4112,6 +4287,9 @@ async function handleDeviceCodeGrant(
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
 
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
+  if (accountRouteError) return accountRouteError;
+
   // Atomically reserve the approved device code before issuing tokens. This closes
   // the get-then-delete race where concurrent polls could both observe approved.
   const consumeResponse = await deviceCodeStore.fetch(
@@ -4150,9 +4328,9 @@ async function handleDeviceCodeGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
-  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
@@ -4320,14 +4498,16 @@ async function handleDeviceCodeGrant(
         resourceAudience: audienceResolution.audience,
       });
       refreshJti = familyResult.jti;
-      void recordTokenFamilyIndex(
-        authCtx.coreAdapter,
-        getTenantIdFromContext(c),
-        refreshJti,
-        metadata.sub!,
-        client_id,
-        familyResult.resolution.generation,
-        refreshTokenExpiry
+      c.executionCtx.waitUntil(
+        recordTokenFamilyIndex(
+          authCtx.coreAdapter,
+          getTenantIdFromContext(c),
+          refreshJti,
+          metadata.sub!,
+          client_id,
+          familyResult.resolution.generation,
+          refreshTokenExpiry
+        )
       );
     } else {
       refreshJti = `rt_${crypto.randomUUID()}`;
@@ -4715,6 +4895,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
 
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
+  if (accountRouteError) return accountRouteError;
+
   // Mark tokens as issued (one-time use enforcement)
   const markIssuedResponse = await cibaRequestStore.fetch(
     new Request('https://internal/mark-token-issued', {
@@ -4742,7 +4925,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     }
   }
 
-  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Verify user exists in canonical runtime account tables without reading PII.
   const userAccount = await findCanonicalRuntimeAccount(
@@ -4766,7 +4949,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
   // Token expiration times (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
   const refreshExpiresIn = await configManager.getRefreshTokenExpiry();
 
@@ -4944,14 +5127,16 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       resourceAudience: audienceResolution.audience,
     });
     refreshTokenJti = cibaFamilyResult.jti;
-    void recordTokenFamilyIndex(
-      authCtx.coreAdapter,
-      getTenantIdFromContext(c),
-      refreshTokenJti,
-      metadata.sub!,
-      metadata.client_id,
-      cibaFamilyResult.resolution.generation,
-      refreshExpiresIn
+    c.executionCtx.waitUntil(
+      recordTokenFamilyIndex(
+        authCtx.coreAdapter,
+        getTenantIdFromContext(c),
+        refreshTokenJti,
+        metadata.sub!,
+        metadata.client_id,
+        cibaFamilyResult.resolution.generation,
+        refreshExpiresIn
+      )
     );
   } else {
     refreshTokenJti = `rt_${crypto.randomUUID()}`;
@@ -5063,11 +5248,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 /**
  * Record token family in the relational index for user-wide revocation support (V3 Sharding)
  *
- * This is a non-blocking operation that records the token family in the
+ * This waitUntil-backed operation records the token family in the
  * user_token_families table. This enables efficient user-wide token revocation
  * by allowing the admin API to query all token families for a user.
  *
- * Note: This is fire-and-forget for performance. Failure does not affect
+ * Failure does not affect
  * token issuance, but may impact user-wide revocation functionality.
  */
 async function recordTokenFamilyIndex(
@@ -6079,7 +6264,7 @@ async function handleTokenExchangeGrant(
     );
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
@@ -6301,7 +6486,7 @@ async function handleNativeSSOTokenExchange(
     error: string,
     errorDescription: string,
     code: NativeSSOErrorDetailCode,
-    status: 400 | 401 | 403 | 429 | 500 = 400,
+    status: 400 | 401 | 403 | 429 | 500 | 503 = 400,
     userAction: Phase1ErrorDetailUserAction = 'reauthenticate',
     options: {
       retryable?: boolean;
@@ -6340,9 +6525,6 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const nativeSSOConfig = await getNativeSSOConfig(c.env);
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -6474,6 +6656,34 @@ async function handleNativeSSOTokenExchange(
 
   // 4. Validate device_secret (this also marks it as used)
   // Pass maxUseCountPerSecret from config for replay attack prevention
+  let deviceSecretRouteHint: Awaited<ReturnType<typeof resolveDeviceSecretRouteHint>> = null;
+  if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
+    try {
+      deviceSecretRouteHint = await resolveDeviceSecretRouteHint(c.env, {
+        secret: deviceSecret,
+        tenantId,
+      });
+      if (!deviceSecretRouteHint) {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      await resolveAccountDataContextFromHono(c, deviceSecretRouteHint.accountId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      return exchangeError(
+        'temporarily_unavailable',
+        'Native SSO account data is unavailable',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'warning' }
+      );
+    }
+  }
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
     maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
     tenantId,
@@ -6494,6 +6704,12 @@ async function handleNativeSSOTokenExchange(
 
   const validatedDeviceSecret = deviceSecretValidation.entity;
   const deviceSecretUserId = validatedDeviceSecret.user_id;
+  if (
+    deviceSecretRouteHint &&
+    deviceSecretRouteHint.accountId !== `account:${deviceSecretUserId}`
+  ) {
+    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
+  }
 
   // 5. Parse and validate ID Token
   let idTokenPayload: Record<string, unknown>;
@@ -6716,7 +6932,7 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
   const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
@@ -6920,14 +7136,16 @@ async function handleNativeSSOTokenExchange(
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;
-        void recordTokenFamilyIndex(
-          authCtx.coreAdapter,
-          tenantId,
-          refreshTokenJti,
-          idTokenSub,
-          clientId,
-          familyResult.resolution.generation,
-          refreshTokenExpiresIn
+        c.executionCtx.waitUntil(
+          recordTokenFamilyIndex(
+            authCtx.coreAdapter,
+            tenantId,
+            refreshTokenJti,
+            idTokenSub,
+            clientId,
+            familyResult.resolution.generation,
+            refreshTokenExpiresIn
+          )
         );
       } else {
         refreshTokenJti = `rt_${crypto.randomUUID()}`;
@@ -7300,7 +7518,7 @@ async function handleClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server

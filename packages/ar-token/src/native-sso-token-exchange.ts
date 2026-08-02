@@ -96,7 +96,7 @@ export function nativeSSOError(
   error: string,
   errorDescription: string,
   code: NativeSSOErrorDetailCode,
-  status: 400 | 401 | 403 | 429 | 500 = 400,
+  status: 400 | 401 | 403 | 429 | 500 | 503 = 400,
   userAction: Phase1ErrorDetailUserAction = 'reauthenticate',
   options: {
     retryable?: boolean;

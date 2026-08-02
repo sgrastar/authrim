@@ -7,6 +7,12 @@
 		type Tenant,
 		type TenantLifecycleCommand,
 		type TenantLifecycleJob,
+		type ControlProvisioningOperation,
+		type ControlProvisioningOperationStep,
+		type TenantProvisioningOperation,
+		type TenantProvisioningOperationStep,
+		type TenantPlacementMigrationOperation,
+		type TenantPlacementMigrationStepKey,
 		type UpdateTenantRequest
 	} from '$lib/api/admin-tenants';
 	import {
@@ -19,7 +25,6 @@
 		type CategorySettings,
 		type CategoryMetaFull
 	} from '$lib/api/admin-settings';
-	import { getTenantProvisioningDraftUiState } from '$lib/admin/tenant-d1-ui-state';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
@@ -54,6 +59,15 @@
 	let lifecycleJobsLoading = $state(false);
 	let lifecycleRetryingId = $state<string | null>(null);
 	let lifecyclePollTimer: ReturnType<typeof setInterval> | null = null;
+	let provisioningOperation = $state<TenantProvisioningOperation | null>(null);
+	let provisioningOperationError = $state('');
+	let provisioningPollTimer: ReturnType<typeof setInterval> | null = null;
+	let provisioningResourcesLoaded = false;
+	let placementMigration = $state<TenantPlacementMigrationOperation | null>(null);
+	let placementMigrationError = $state('');
+	let placementMigrationAction = $state<'start' | 'cancel' | 'purge' | null>(null);
+	let placementPurgeConfirm = $state(false);
+	let placementPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Delete confirmation
 	let showDeleteConfirm = $state(false);
@@ -90,8 +104,7 @@
 	let vanityPrimaryId = $state<string | null>(null);
 
 	const singleTenantMode = $derived(tenantStore.singleTenantMode);
-	const provisioningFailed = $derived(tenant?.provisioning_status === 'provisioning_failed');
-	const provisioningDraftState = $derived(getTenantProvisioningDraftUiState(tenant));
+	const provisioningFailed = $derived(provisioningOperation?.status === 'blocked');
 	const tenantOperational = $derived(tenant?.lifecycle_state === 'active' && !provisioningFailed);
 	const lifecycleActions = $derived.by((): TenantLifecycleCommand[] => {
 		if (!tenant || tenant.is_default || singleTenantMode) return [];
@@ -156,6 +169,59 @@
 		}
 	}
 
+	async function loadProvisioningOperation(silent = false) {
+		if (!tenantId) return;
+		try {
+			const operation = await adminTenantsAPI.provisioning(tenantId);
+			provisioningOperation = operation;
+			provisioningOperationError = '';
+			if (operation.status === 'succeeded') {
+				await loadTenant();
+				if (!provisioningResourcesLoaded) {
+					provisioningResourcesLoaded = true;
+					await Promise.all([loadSettings(), loadVanityDomains()]);
+				}
+			}
+		} catch (err) {
+			if (!silent) {
+				provisioningOperationError =
+					err instanceof Error ? err.message : $LL.admin_tenants_provisioning_load_failed();
+			}
+		}
+	}
+
+	async function loadPlacementMigration(silent = false) {
+		if (!tenantId) return;
+		try {
+			placementMigration = await adminTenantsAPI.latestPlacementMigration(tenantId);
+			placementMigrationError = '';
+			if (
+				placementMigration?.status === 'succeeded' &&
+				tenant?.isolation_policy === 'shared_pool'
+			) {
+				await loadTenant();
+			}
+		} catch (err) {
+			if (!silent) {
+				placementMigrationError =
+					err instanceof Error ? err.message : $LL.admin_tenants_placement_migration_load_failed();
+			}
+		}
+	}
+
+	function shouldPollPlacementMigration(): boolean {
+		if (!placementMigration) return false;
+		if (['queued', 'running', 'waiting_retry'].includes(placementMigration.status)) return true;
+		const control = placementMigration.control;
+		if (control?.state === 'purge_pending') return true;
+		return (
+			control?.state === 'source_quarantined' &&
+			!control.canApprovePurge &&
+			control.sourceRetentionExpiresAt !== null &&
+			control.sourceRetentionExpiresAt <= Math.floor(Date.now() / 1000)
+		);
+	}
+
 	async function loadSettings() {
 		settingsLoading = true;
 		settingsError = '';
@@ -194,19 +260,90 @@
 	onMount(async () => {
 		await loadTenant();
 		await loadLifecycleJobs();
+		if (tenant?.lifecycle_state === 'provisioning') {
+			await loadProvisioningOperation();
+			provisioningPollTimer = setInterval(async () => {
+				if (
+					provisioningOperation &&
+					['queued', 'running', 'waiting_retry'].includes(provisioningOperation.status)
+				) {
+					await loadProvisioningOperation(true);
+				}
+			}, 2000);
+		}
 		lifecyclePollTimer = setInterval(async () => {
 			if (lifecycleJobs.some((job) => job.status === 'pending' || job.status === 'processing')) {
 				await Promise.all([loadLifecycleJobs(true), loadTenant()]);
 			}
 		}, 3000);
 		if (tenantOperational) {
-			await Promise.all([loadSettings(), loadVanityDomains()]);
+			await Promise.all([loadSettings(), loadVanityDomains(), loadPlacementMigration()]);
+			placementPollTimer = setInterval(async () => {
+				if (shouldPollPlacementMigration()) {
+					await loadPlacementMigration(true);
+				}
+			}, 2000);
 		}
 	});
 
 	onDestroy(() => {
 		if (lifecyclePollTimer) clearInterval(lifecyclePollTimer);
+		if (provisioningPollTimer) clearInterval(provisioningPollTimer);
+		if (placementPollTimer) clearInterval(placementPollTimer);
 	});
+
+	async function handleStartPlacementMigration() {
+		if (!tenant || placementMigrationAction) return;
+		placementMigrationAction = 'start';
+		placementMigrationError = '';
+		try {
+			placementMigration = await adminTenantsAPI.startPlacementMigration(tenant.id);
+		} catch (err) {
+			placementMigrationError =
+				err instanceof Error ? err.message : $LL.admin_tenants_placement_migration_action_failed();
+		} finally {
+			placementMigrationAction = null;
+		}
+	}
+
+	async function handleCancelPlacementMigration() {
+		if (!tenant || !placementMigration || placementMigrationAction) return;
+		placementMigrationAction = 'cancel';
+		placementMigrationError = '';
+		try {
+			placementMigration = await adminTenantsAPI.cancelPlacementMigration(
+				tenant.id,
+				placementMigration.operation_id
+			);
+		} catch (err) {
+			placementMigrationError =
+				err instanceof Error ? err.message : $LL.admin_tenants_placement_migration_action_failed();
+		} finally {
+			placementMigrationAction = null;
+		}
+	}
+
+	async function handleApprovePlacementPurge() {
+		if (!tenant || !placementMigration || placementMigrationAction) return;
+		if (!placementPurgeConfirm) {
+			placementPurgeConfirm = true;
+			return;
+		}
+		placementMigrationAction = 'purge';
+		placementMigrationError = '';
+		try {
+			placementMigration = await adminTenantsAPI.approvePlacementMigrationPurge(
+				tenant.id,
+				placementMigration.operation_id
+			);
+			placementPurgeConfirm = false;
+		} catch (err) {
+			placementMigrationError =
+				err instanceof Error ? err.message : $LL.admin_tenants_placement_migration_action_failed();
+		} finally {
+			placementMigrationAction = null;
+		}
+	}
 
 	// ==========================================================================
 	// Edit
@@ -400,10 +537,7 @@
 		retryProvisioning = true;
 		retryProvisioningError = '';
 		try {
-			const updated = await adminTenantsAPI.retryProvisioning(tenant.id);
-			tenantStore.update(updated);
-			tenant = updated;
-			await Promise.all([loadSettings(), loadVanityDomains()]);
+			provisioningOperation = await adminTenantsAPI.retryProvisioning(tenant.id);
 		} catch (err) {
 			retryProvisioningError =
 				err instanceof Error ? err.message : $LL.admin_tenants_retry_failed();
@@ -536,6 +670,134 @@
 				return state;
 		}
 	}
+
+	function provisioningStepLabel(step: TenantProvisioningOperationStep['step_key']): string {
+		switch (step) {
+			case 'request_accepted':
+				return $LL.admin_tenants_provisioning_step_request();
+			case 'capacity_check':
+				return $LL.admin_tenants_provisioning_step_capacity();
+			case 'reserve_default_route':
+				return $LL.admin_tenants_provisioning_step_route();
+			case 'tenant_seed':
+				return $LL.admin_tenants_provisioning_step_seed();
+			case 'registry_publish':
+				return $LL.admin_tenants_provisioning_step_registry();
+			case 'tenant_smoke':
+				return $LL.admin_tenants_provisioning_step_smoke();
+			case 'tenant_prepare':
+				return $LL.admin_tenants_provisioning_step_prepare();
+			case 'lookup_activate':
+				return $LL.admin_tenants_provisioning_step_lookup();
+			case 'tenant_active':
+				return $LL.admin_tenants_provisioning_step_activate();
+		}
+	}
+
+	function provisioningStatusLabel(status: TenantProvisioningOperation['status']): string {
+		switch (status) {
+			case 'queued':
+				return $LL.admin_tenants_provisioning_status_queued();
+			case 'running':
+				return $LL.admin_tenants_provisioning_status_running();
+			case 'waiting_retry':
+				return $LL.admin_tenants_provisioning_status_waiting();
+			case 'blocked':
+				return $LL.admin_tenants_provisioning_status_blocked();
+			case 'succeeded':
+				return $LL.admin_tenants_provisioning_status_succeeded();
+			case 'canceled':
+				return $LL.admin_tenants_provisioning_status_canceled();
+		}
+	}
+
+	function placementMigrationStatusLabel(
+		status: TenantPlacementMigrationOperation['status']
+	): string {
+		switch (status) {
+			case 'queued':
+				return $LL.admin_tenants_placement_migration_status_queued();
+			case 'running':
+				return $LL.admin_tenants_placement_migration_status_running();
+			case 'waiting_retry':
+				return $LL.admin_tenants_placement_migration_status_waiting();
+			case 'blocked':
+				return $LL.admin_tenants_placement_migration_status_blocked();
+			case 'succeeded':
+				return $LL.admin_tenants_placement_migration_status_succeeded();
+			case 'canceled':
+				return $LL.admin_tenants_placement_migration_status_canceled();
+		}
+	}
+
+	function placementMigrationStepLabel(step: TenantPlacementMigrationStepKey): string {
+		switch (step) {
+			case 'wait_control':
+				return $LL.admin_tenants_placement_migration_step_wait_control();
+			case 'begin_route_cutover':
+				return $LL.admin_tenants_placement_migration_step_begin_cutover();
+			case 'prepare_lookup':
+				return $LL.admin_tenants_placement_migration_step_prepare_lookup();
+			case 'prepare_alias':
+				return $LL.admin_tenants_placement_migration_step_prepare_alias();
+			case 'commit_control':
+				return $LL.admin_tenants_placement_migration_step_commit_control();
+			case 'publish_registry':
+				return $LL.admin_tenants_placement_migration_step_publish_registry();
+			case 'activate_alias':
+				return $LL.admin_tenants_placement_migration_step_activate_alias();
+			case 'activate_lookup':
+				return $LL.admin_tenants_placement_migration_step_activate_lookup();
+			case 'verify_routes':
+				return $LL.admin_tenants_placement_migration_step_verify_routes();
+			case 'finalize_source':
+				return $LL.admin_tenants_placement_migration_step_finalize_source();
+			case 'complete':
+				return $LL.admin_tenants_placement_migration_step_complete();
+		}
+	}
+
+	function capacityRoleLabel(dataRole: string): string {
+		switch (dataRole) {
+			case 'tenant_core/default':
+				return $LL.admin_tenants_provisioning_role_default();
+			case 'tenant_core/users':
+				return $LL.admin_tenants_provisioning_role_users();
+			case 'tenant_pii':
+				return $LL.admin_tenants_provisioning_role_pii();
+			default:
+				return dataRole;
+		}
+	}
+
+	function currentControlStep(
+		operation: ControlProvisioningOperation
+	): ControlProvisioningOperationStep | undefined {
+		return (
+			operation.steps.find((step) =>
+				['running', 'waiting_retry', 'blocked'].includes(step.status)
+			) ??
+			operation.steps.find((step) => !['succeeded', 'skipped'].includes(step.status)) ??
+			operation.steps.at(-1)
+		);
+	}
+
+	function controlStepLabel(step: string): string {
+		switch (step) {
+			case 'create_d1':
+				return $LL.admin_tenants_provisioning_control_create_d1();
+			case 'apply_migrations':
+				return $LL.admin_tenants_provisioning_control_migrations();
+			case 'reconcile_worker_bindings':
+				return $LL.admin_tenants_provisioning_control_bindings();
+			case 'smoke_bindings':
+				return $LL.admin_tenants_provisioning_control_smoke();
+			case 'stabilize_bindings':
+				return $LL.admin_tenants_provisioning_control_stabilize();
+			default:
+				return step;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -625,45 +887,71 @@
 				</div>
 			{/if}
 
-			{#if provisioningFailed || tenant.lifecycle_state !== 'active'}
-				<section class="card status-card">
+			{#if provisioningOperation && tenant.lifecycle_state === 'provisioning'}
+				<section class="card status-card" aria-live="polite">
 					<div class="status-card-header">
-						<i class={provisioningFailed ? 'i-ph-warning-circle' : 'i-ph-pause-circle'}></i>
+						<i
+							class={provisioningOperation.status === 'blocked'
+								? 'i-ph-warning-circle'
+								: provisioningOperation.status === 'succeeded'
+									? 'i-ph-check-circle'
+									: 'i-ph-circle-notch animate-spin'}
+						></i>
 						<div>
-							<h2 class="card-title">
-								{provisioningFailed
-									? $LL.admin_tenants_provisioning_failed()
-									: $LL.admin_tenants_provisioning_inactive_title()}
-							</h2>
+							<h2 class="card-title">{$LL.admin_tenants_provisioning_title()}</h2>
 							<p class="card-description">
-								{provisioningFailed
-									? $LL.admin_tenants_provisioning_failed_description()
-									: $LL.admin_tenants_provisioning_inactive_description()}
+								{provisioningStatusLabel(provisioningOperation.status)}
 							</p>
 						</div>
 					</div>
-					{#if provisioningDraftState.showActions}
-						<dl class="detail-grid compact-details">
-							<div class="detail-row">
-								<dt>{$LL.admin_tenants_slot()}</dt>
-								<dd class="mono">{provisioningDraftState.slot}</dd>
-							</div>
-							<div class="detail-row">
-								<dt>{$LL.admin_tenants_last_error()}</dt>
-								<dd>{tenant.provisioning_error ?? $LL.admin_tenants_no_error_detail()}</dd>
-							</div>
-							{#if tenant.provisioning_updated_at}
-								<div class="detail-row">
-									<dt>{$LL.admin_tenants_updated()}</dt>
-									<dd>{new Date(tenant.provisioning_updated_at * 1000).toLocaleString()}</dd>
+					<ol class="provisioning-operation-steps">
+						{#each provisioningOperation.steps as step (step.step_key)}
+							<li class:current={step.step_key === provisioningOperation.current_step}>
+								<i
+									class={step.status === 'succeeded'
+										? 'i-ph-check-circle-fill'
+										: step.status === 'blocked'
+											? 'i-ph-warning-circle-fill'
+											: step.status === 'running' || step.status === 'waiting_retry'
+												? 'i-ph-circle-notch animate-spin'
+												: 'i-ph-circle'}
+								></i>
+								<span>{provisioningStepLabel(step.step_key)}</span>
+							</li>
+						{/each}
+					</ol>
+					{#if provisioningOperation.capacity_operations?.length}
+						<div class="capacity-operation-status">
+							{#each provisioningOperation.capacity_operations as capacity (capacity.data_role)}
+								{@const controlStep = currentControlStep(capacity)}
+								<div>
+									<i
+										class={capacity.status === 'succeeded'
+											? 'i-ph-check-circle-fill'
+											: capacity.status === 'blocked'
+												? 'i-ph-warning-circle-fill'
+												: 'i-ph-circle-notch animate-spin'}
+									></i>
+									<span>
+										<strong>{capacityRoleLabel(capacity.data_role)}</strong>
+										{#if controlStep}{controlStepLabel(controlStep.step_key)}{/if}
+									</span>
 								</div>
-							{/if}
-						</dl>
-						{#if cleanupProvisioningError}
-							<div class="alert alert-error">{cleanupProvisioningError}</div>
-						{/if}
+							{/each}
+						</div>
+					{/if}
+					{#if provisioningOperation.last_error_code}
+						<div class="alert alert-error mono">{provisioningOperation.last_error_code}</div>
+					{/if}
+					{#if provisioningOperationError}
+						<div class="alert alert-error">{provisioningOperationError}</div>
+					{/if}
+					{#if provisioningOperation.status === 'blocked'}
 						{#if retryProvisioningError}
 							<div class="alert alert-error">{retryProvisioningError}</div>
+						{/if}
+						{#if cleanupProvisioningError}
+							<div class="alert alert-error">{cleanupProvisioningError}</div>
 						{/if}
 						<div class="form-actions">
 							<button
@@ -693,6 +981,145 @@
 								{/if}
 							</button>
 						</div>
+					{/if}
+				</section>
+			{:else if tenant.lifecycle_state !== 'active'}
+				<section class="card status-card">
+					<div class="status-card-header">
+						<i class="i-ph-pause-circle"></i>
+						<div>
+							<h2 class="card-title">{$LL.admin_tenants_provisioning_inactive_title()}</h2>
+							<p class="card-description">
+								{$LL.admin_tenants_provisioning_inactive_description()}
+							</p>
+						</div>
+					</div>
+				</section>
+			{/if}
+
+			{#if tenantOperational && (tenant.isolation_policy === 'shared_pool' || placementMigration)}
+				<section class="card placement-migration-card" aria-live="polite">
+					<div class="card-header-row">
+						<div>
+							<h2 class="card-title">{$LL.admin_tenants_placement_migration_title()}</h2>
+							<p class="card-description">
+								{tenant.isolation_policy === 'tenant_exclusive'
+									? $LL.admin_tenants_placement_migration_exclusive_description()
+									: $LL.admin_tenants_placement_migration_shared_description()}
+							</p>
+						</div>
+						<i class="i-ph-database placement-migration-icon"></i>
+					</div>
+
+					{#if placementMigration}
+						<div class="placement-migration-summary">
+							<i
+								class={placementMigration.status === 'succeeded'
+									? 'i-ph-check-circle-fill'
+									: placementMigration.status === 'blocked'
+										? 'i-ph-warning-circle-fill'
+										: placementMigration.status === 'canceled'
+											? 'i-ph-x-circle-fill'
+											: 'i-ph-circle-notch animate-spin'}
+							></i>
+							<span>{placementMigrationStatusLabel(placementMigration.status)}</span>
+						</div>
+						<ol class="provisioning-operation-steps placement-migration-steps">
+							{#each placementMigration.steps as step (step.step)}
+								<li class:current={step.step === placementMigration.current_step}>
+									<i
+										class={step.status === 'completed'
+											? 'i-ph-check-circle-fill'
+											: step.status === 'blocked'
+												? 'i-ph-warning-circle-fill'
+												: step.status === 'canceled'
+													? 'i-ph-x-circle-fill'
+													: step.status === 'running' || step.status === 'waiting_retry'
+														? 'i-ph-circle-notch animate-spin'
+														: 'i-ph-circle'}
+									></i>
+									<span>{placementMigrationStepLabel(step.step)}</span>
+								</li>
+							{/each}
+						</ol>
+						{#if placementMigration.control_status === 'unavailable'}
+							<div class="alert alert-warning">
+								{$LL.admin_tenants_placement_migration_control_unavailable()}
+							</div>
+						{/if}
+						{#if placementMigration.last_error_code || placementMigration.control?.lastErrorCode}
+							<div class="alert alert-error mono">
+								{placementMigration.last_error_code ?? placementMigration.control?.lastErrorCode}
+							</div>
+						{/if}
+					{:else}
+						<div class="form-actions placement-migration-actions">
+							<button
+								class="btn btn-primary"
+								onclick={handleStartPlacementMigration}
+								disabled={placementMigrationAction !== null}
+							>
+								{#if placementMigrationAction === 'start'}
+									<i class="i-ph-circle-notch animate-spin"></i>
+									{$LL.admin_tenants_placement_migration_starting()}
+								{:else}
+									<i class="i-ph-arrow-right"></i>
+									{$LL.admin_tenants_placement_migration_start()}
+								{/if}
+							</button>
+						</div>
+					{/if}
+
+					{#if placementMigration?.control?.canCancel}
+						<div class="form-actions placement-migration-actions">
+							<button
+								class="btn btn-secondary"
+								onclick={handleCancelPlacementMigration}
+								disabled={placementMigrationAction !== null}
+							>
+								{#if placementMigrationAction === 'cancel'}
+									<i class="i-ph-circle-notch animate-spin"></i>
+									{$LL.admin_tenants_placement_migration_canceling()}
+								{:else}
+									<i class="i-ph-x"></i>
+									{$LL.admin_tenants_placement_migration_cancel()}
+								{/if}
+							</button>
+						</div>
+					{/if}
+
+					{#if placementMigration?.control?.canApprovePurge}
+						{#if placementPurgeConfirm}
+							<div class="alert alert-warning">
+								{$LL.admin_tenants_placement_migration_purge_confirm()}
+							</div>
+						{/if}
+						<div class="form-actions placement-migration-actions">
+							<button
+								class="btn btn-danger-outline"
+								onclick={handleApprovePlacementPurge}
+								disabled={placementMigrationAction !== null}
+							>
+								{#if placementMigrationAction === 'purge'}
+									<i class="i-ph-circle-notch animate-spin"></i>
+								{:else}
+									<i class="i-ph-trash"></i>
+								{/if}
+								{placementPurgeConfirm
+									? $LL.admin_tenants_placement_migration_purge_confirm_action()
+									: $LL.admin_tenants_placement_migration_purge()}
+							</button>
+							{#if placementPurgeConfirm}
+								<button class="btn btn-secondary" onclick={() => (placementPurgeConfirm = false)}>
+									<i class="i-ph-x"></i>
+									{$LL.admin_tenants_cancel()}
+								</button>
+							{/if}
+						</div>
+					{/if}
+
+					{#if placementMigrationError}
+						<div class="alert alert-error">{placementMigrationError}</div>
 					{/if}
 				</section>
 			{/if}
@@ -773,6 +1200,14 @@
 						<div class="detail-row">
 							<dt>{$LL.admin_tenants_description_label()}</dt>
 							<dd>{tenant.description ?? '—'}</dd>
+						</div>
+						<div class="detail-row">
+							<dt>{$LL.admin_tenants_placement_label()}</dt>
+							<dd>
+								{tenant.isolation_policy === 'tenant_exclusive'
+									? $LL.admin_tenants_placement_exclusive()
+									: $LL.admin_tenants_placement_shared()}
+							</dd>
 						</div>
 						<div class="detail-row">
 							<dt>{$LL.admin_tenants_status()}</dt>
@@ -1259,7 +1694,38 @@
 		margin-top: 1px;
 	}
 
-	.compact-details {
+	.placement-migration-card {
+		border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+	}
+
+	.placement-migration-icon {
+		width: 24px;
+		height: 24px;
+		color: var(--color-accent);
+		flex: 0 0 auto;
+	}
+
+	.placement-migration-summary {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-top: 16px;
+		font-size: 0.875rem;
+		font-weight: 600;
+	}
+
+	.placement-migration-summary :global(i) {
+		width: 18px;
+		height: 18px;
+		color: var(--color-accent);
+		flex: 0 0 auto;
+	}
+
+	.placement-migration-steps {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.placement-migration-actions {
 		margin-top: 16px;
 	}
 
@@ -1630,6 +2096,83 @@
 		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 	}
 
+	.provisioning-operation-steps {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+		margin: 18px 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.provisioning-operation-steps li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		padding: 10px 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+	}
+
+	.provisioning-operation-steps li.current {
+		border-color: var(--color-accent);
+		color: var(--color-text);
+	}
+
+	.provisioning-operation-steps :global(i) {
+		width: 16px;
+		height: 16px;
+		flex: 0 0 auto;
+	}
+
+	.provisioning-operation-steps span {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.provisioning-operation-steps + .alert {
+		margin-top: 16px;
+	}
+
+	.capacity-operation-status {
+		display: grid;
+		gap: 6px;
+		margin-top: 12px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control);
+		background: var(--color-surface-muted);
+	}
+
+	.capacity-operation-status > div {
+		display: grid;
+		grid-template-columns: 16px minmax(0, 1fr);
+		align-items: center;
+		gap: 8px;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.capacity-operation-status :global(i) {
+		width: 16px;
+		height: 16px;
+	}
+
+	.capacity-operation-status span {
+		display: flex;
+		justify-content: space-between;
+		gap: 12px;
+		min-width: 0;
+	}
+
+	.capacity-operation-status strong {
+		color: var(--color-text);
+		font-weight: 600;
+	}
+
 	/* Alerts */
 	.alert {
 		display: flex;
@@ -1697,9 +2240,14 @@
 
 		.tenant-detail-actions {
 			justify-content: flex-start;
+			width: 100%;
 		}
 
 		.form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.provisioning-operation-steps {
 			grid-template-columns: 1fr;
 		}
 

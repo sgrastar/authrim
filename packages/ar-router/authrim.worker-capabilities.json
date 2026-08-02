@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-router",
+  "worker": "ar-router",
+  "requiredDataRoles": [],
+  "bindings": [
+    {
+      "name": "SETTINGS",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "routing_settings.read"
+    },
+    {
+      "name": "AUTHRIM_CONFIG",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "tenant_route_config.read"
+    },
+    { "name": "OP_DISCOVERY", "kind": "service", "required": true },
+    { "name": "OP_AUTH", "kind": "service", "required": true },
+    { "name": "OP_TOKEN", "kind": "service", "required": true },
+    { "name": "OP_USERINFO", "kind": "service", "required": true },
+    { "name": "OP_MANAGEMENT", "kind": "service", "required": true },
+    { "name": "OP_AGENT_ACCESS", "kind": "service", "required": true },
+    { "name": "EXTERNAL_IDP", "kind": "service", "required": true },
+    { "name": "POLICY_SERVICE", "kind": "service", "required": true },
+    { "name": "OP_ASYNC", "kind": "service", "required": true },
+    { "name": "OP_SAML", "kind": "service", "required": true },
+    { "name": "OP_VC", "kind": "service", "required": true },
+    { "name": "LOGIN_UI_WORKER", "kind": "service", "required": false },
+    { "name": "ADMIN_UI_WORKER", "kind": "service", "required": false }
+  ],
+  "secrets": []
+}

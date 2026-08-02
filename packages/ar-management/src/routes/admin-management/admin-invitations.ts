@@ -7,7 +7,7 @@ import {
   AdminUserRepository,
   generateAdminInvitationCode,
   generateId,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
   getTenantIdFromContext,
   hashAdminInvitationCode,
   hasAdminPermission,
@@ -179,33 +179,41 @@ This code can only bootstrap Passkey registration. Authrim will ask you to authe
 
 async function sendInvitationEmail(
   c: AdminInvitationContext,
-  input: { email: string; code: string; roleName: string; expiresAt: number }
+  input: {
+    deliveryId: string;
+    email: string;
+    code: string;
+    roleName: string;
+    expiresAt: number;
+  }
 ): Promise<{ success: boolean; error?: string }> {
   const joinUrl = resolveJoinUrl(c.env);
   if (!joinUrl) return { success: false, error: 'ADMIN_UI_URL is not configured as a safe origin' };
 
   try {
-    const notifier = getRequiredPluginContext(
-      c as unknown as Context<{ Bindings: Env }>,
-      'notification'
-    ).registry.getNotifier('email');
-    if (!notifier) return { success: false, error: 'Email notifier is not configured' };
-
     const content = invitationEmail({
       code: input.code,
       joinUrl,
       roleName: input.roleName,
       expiresAt: input.expiresAt,
     });
-    const result = await notifier.send({
-      channel: 'email',
-      to: input.email,
-      from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
-      subject: 'Authrim administrator invitation',
-      body: content.html,
-      metadata: { textBody: content.text },
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId: getTenantIdFromContext(c) },
+      intentId: `admin-invitation:${input.deliveryId}`,
+      outboxId: `notification:${input.deliveryId}`,
+      notificationKind: 'admin.admin-invitation',
+      idempotencyKey: `admin-invitation:${input.deliveryId}`,
+      expiresAt: Math.floor(input.expiresAt / 1000),
+      payload: {
+        channel: 'email',
+        to: input.email,
+        from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
+        subject: 'Authrim administrator invitation',
+        body: content.html,
+        metadata: { textBody: content.text },
+      },
     });
-    return result.success
+    return delivery.delivery !== 'permanent_failure'
       ? { success: true }
       : { success: false, error: 'Email delivery provider rejected the message' };
   } catch {
@@ -392,6 +400,7 @@ adminInvitationsRouter.post('/', async (c) => {
   }
 
   const delivery = await sendInvitationEmail(c, {
+    deliveryId: invitationId,
     email,
     code,
     roleName: role.display_name || role.name,
@@ -479,6 +488,7 @@ adminInvitationsRouter.post('/:id/resend', async (c) => {
     return c.json({ error: 'invitation_resend_conflict' }, 409);
   }
   const delivery = await sendInvitationEmail(c, {
+    deliveryId: `${invitation.id}:${now}`,
     email: invitation.email,
     code,
     roleName: invitation.role_display_name || invitation.role_name,

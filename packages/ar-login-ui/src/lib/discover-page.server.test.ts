@@ -28,7 +28,7 @@ describe('/discover page server', () => {
 				config: {
 					tenant_id: 'first',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -58,7 +58,7 @@ describe('/discover page server', () => {
 		});
 	});
 
-	it('switches to manual tenant input when email discovery returns manual_required', async () => {
+	it('starts OTP verification before resolving exact email membership', async () => {
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(
@@ -66,7 +66,7 @@ describe('/discover page server', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -79,11 +79,14 @@ describe('/discover page server', () => {
 				})
 			)
 			.mockResolvedValueOnce(
-				jsonResponse({
-					result: 'manual_required',
-					methods: ['email_domain', 'tenant_code', 'tenant_slug'],
-					allow_manual_tenant_entry: true
-				})
+				jsonResponse(
+					{
+						challenge_id: 'discovery-42-00000000-0000-4000-8000-000000000001',
+						expires_in: 600,
+						status: 'code_sent'
+					},
+					202
+				)
 			);
 
 		const cookies = createCookies();
@@ -103,15 +106,16 @@ describe('/discover page server', () => {
 		} as never);
 
 		expect(result).toMatchObject({
-			mode: 'tenant_code',
-			result: 'manual_required'
+			mode: 'email',
+			result: 'email_code_sent',
+			emailChallengeId: 'discovery-42-00000000-0000-4000-8000-000000000001'
 		});
 		expect(fetch).toHaveBeenNthCalledWith(1, '/api/auth/discovery', {
 			headers: { 'x-authrim-original-host': 'login.example.com' }
 		});
 		expect(fetch).toHaveBeenNthCalledWith(
 			2,
-			'/api/auth/discovery',
+			'/api/auth/discovery/email/start',
 			expect.objectContaining({
 				method: 'POST',
 				headers: expect.any(Headers)
@@ -130,7 +134,7 @@ describe('/discover page server', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -195,7 +199,7 @@ describe('/discover page server', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -247,7 +251,7 @@ describe('/discover page server', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -267,7 +271,7 @@ describe('/discover page server', () => {
 						tenant_code: 'first',
 						display_name: 'First Tenant',
 						login_url: 'https://first.multi-tenant.authrim.com/login',
-						source: 'email_domain'
+						source: 'email_exact'
 					}
 				})
 			)
@@ -287,7 +291,9 @@ describe('/discover page server', () => {
 					method: 'POST',
 					body: new URLSearchParams({
 						mode: 'email',
-						value: 'user@example.com'
+						value: 'user@example.com',
+						email_challenge_id: 'discovery-42-00000000-0000-4000-8000-000000000001',
+						email_code: '123456'
 					})
 				}),
 				url: new URL('https://multi-tenant.authrim.com/discover?/resolve')
@@ -310,7 +316,7 @@ describe('/discover page server', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,

@@ -25,4 +25,13 @@ describe('deployment script version safety', () => {
     expect(shellSource).not.toContain('verify_versions_registered');
     expect(shellSource).not.toContain('admin_secret');
   });
+
+  it('keeps the test endpoint override test-only and management-only', () => {
+    const apiSource = readFileSync(deployApiPath, 'utf-8');
+
+    expect(apiSource).toContain("env !== 'test'");
+    expect(apiSource).toContain("component !== 'ar-management'");
+    expect(apiSource).toContain("ENABLE_TEST_ENDPOINTS: options.testEndpoints === 'enabled'");
+    expect(apiSource).toContain('--test-endpoints must be enabled or disabled');
+  });
 });

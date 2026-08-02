@@ -8,7 +8,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig } from '@authrim/ar-lib-core';
-import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -16,6 +15,7 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
+  verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -52,14 +52,18 @@ async function verifySPLoginHumanVerification(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): Promise<Response | null> {
-  const result = await verifyHumanVerificationToken({
-    env: c.env,
-    tenantId,
-    actions: ['login', 'signup'],
-    response: c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
-    remoteIp: remoteIp(c),
-  });
-  if (result.ok) return null;
+  try {
+    const result = await verifyHumanVerificationWithRunner(c.env, {
+      tenantId,
+      action: 'login',
+      responseToken:
+        c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
+      remoteIp: remoteIp(c),
+    });
+    if (result.verified) return null;
+  } catch {
+    // Provider, configuration, and Runner failures share the same public denial.
+  }
 
   return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
     variables: { field: 'human_verification_response' },

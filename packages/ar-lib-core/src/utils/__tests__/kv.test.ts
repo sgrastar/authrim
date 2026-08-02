@@ -742,5 +742,16 @@ describe('KV Utilities', () => {
         JSON.stringify(consent)
       );
     });
+
+    it('does not negative-cache a missing consent', async () => {
+      const coreAdapter = createMockAdapter(null);
+      const consentCacheKV = new MockKVNamespace();
+      (env as unknown as Env).CONSENT_CACHE = consentCacheKV as unknown as KVNamespace;
+
+      await expect(
+        getCachedConsent(env, 'user-3', 'client-3', 'tenant-c', coreAdapter)
+      ).resolves.toBeNull();
+      expect(await consentCacheKV.get('tenant:tenant-c:consent:user-3:client-3')).toBeNull();
+    });
   });
 });

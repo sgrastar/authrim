@@ -153,6 +153,23 @@ const CUSTOM_ATTRIBUTES_CATALOG_IDS = new Set([
   'custom_attributes_json',
   'field.canonical.custom_attributes',
 ]);
+
+const MAX_PARALLEL_SENSITIVE_VALUE_READS = 4;
+
+async function mapInBoundedBatches<T, R>(
+  values: readonly T[],
+  mapper: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let offset = 0; offset < values.length; offset += MAX_PARALLEL_SENSITIVE_VALUE_READS) {
+    results.push(
+      ...(await Promise.all(
+        values.slice(offset, offset + MAX_PARALLEL_SENSITIVE_VALUE_READS).map(mapper)
+      ))
+    );
+  }
+  return results;
+}
 const CANONICAL_SENSITIVE_REF_SCHEME = 'canonical-sensitive:';
 const CANONICAL_SENSITIVE_FIELDS = new Set<string>([
   'email',
@@ -223,6 +240,12 @@ function requireTenantId(tenantId: string): string {
 
 function activeClause(includeInactive: boolean | undefined): string {
   return includeInactive ? '' : " AND lifecycle_state = 'active'";
+}
+
+function activeAccountClause(includeInactive: boolean | undefined): string {
+  return includeInactive
+    ? ''
+    : " AND lifecycle_state = 'active' AND directory_publication_state = 'active'";
 }
 
 function unixToIso(value: number | null | undefined): string {
@@ -309,7 +332,7 @@ export class CanonicalRuntimeUserProjectionRepository {
     const account = await this.adapter.queryOne<IdentityAccountRow>(
       `SELECT *
          FROM identity_accounts
-        WHERE legacy_user_id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
+        WHERE legacy_user_id = ? AND tenant_id = ?${activeAccountClause(options?.includeInactive)}
         LIMIT 1`,
       [legacyUserId, this.tenantId]
     );
@@ -326,7 +349,7 @@ export class CanonicalRuntimeUserProjectionRepository {
     const account = await this.adapter.queryOne<IdentityAccountRow>(
       `SELECT *
          FROM identity_accounts
-        WHERE id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
+        WHERE id = ? AND tenant_id = ?${activeAccountClause(options?.includeInactive)}
         LIMIT 1`,
       [accountId, this.tenantId]
     );
@@ -344,31 +367,39 @@ export class CanonicalRuntimeUserProjectionRepository {
       return null;
     }
 
-    const subject = await this.adapter.queryOne<IdentitySubjectRow>(
-      `SELECT *
-         FROM identity_subjects
-        WHERE id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
-        LIMIT 1`,
-      [account.primary_subject_id, this.tenantId]
-    );
+    const [subject, profile, subjectContacts] = await Promise.all([
+      this.adapter.queryOne<IdentitySubjectRow>(
+        `SELECT *
+           FROM identity_subjects
+          WHERE id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
+          LIMIT 1`,
+        [account.primary_subject_id, this.tenantId]
+      ),
+      this.adapter.queryOne<ProfileRow>(
+        `SELECT *
+           FROM profiles
+          WHERE subject_id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
+          ORDER BY profile_type ASC, created_at ASC
+          LIMIT 1`,
+        [account.primary_subject_id, this.tenantId]
+      ),
+      this.adapter.query<ContactPointRow>(
+        `SELECT *
+           FROM contact_points
+          WHERE subject_id = ? AND tenant_id = ?${activeClause(false)}
+          ORDER BY is_primary DESC, created_at ASC`,
+        [account.primary_subject_id, this.tenantId]
+      ),
+    ]);
     if (!subject) {
       return null;
     }
-
-    const profile = await this.adapter.queryOne<ProfileRow>(
-      `SELECT *
-         FROM profiles
-        WHERE subject_id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}
-        ORDER BY profile_type ASC, created_at ASC
-        LIMIT 1`,
-      [subject.id, this.tenantId]
-    );
 
     const projection = this.emptyProjection(account, subject, profile);
     if (profile) {
       await this.applyProfileAttributes(projection, subject, account, profile);
     }
-    await this.applyContactPoints(projection, subject, account);
+    await this.applyContactPoints(projection, subject, account, subjectContacts);
     return projection;
   }
 
@@ -440,8 +471,12 @@ export class CanonicalRuntimeUserProjectionRepository {
     );
     const customAttributes: Record<string, unknown> = {};
 
-    for (const attribute of attributes) {
-      const value = await this.resolveAttributeValue(attribute, subject, account);
+    const values = await mapInBoundedBatches(attributes, (attribute) =>
+      this.resolveAttributeValue(attribute, subject, account)
+    );
+
+    for (const [index, attribute] of attributes.entries()) {
+      const value = values[index];
       const field = PROFILE_ATTRIBUTE_TO_RUNTIME_FIELD[attribute.catalog_entry_id];
       if (field) {
         projection[field] = toStringOrNull(value);
@@ -481,31 +516,26 @@ export class CanonicalRuntimeUserProjectionRepository {
   private async applyContactPoints(
     projection: CanonicalRuntimeUserProjection,
     subject: IdentitySubjectRow,
-    account: IdentityAccountRow
+    account: IdentityAccountRow,
+    subjectContacts: ContactPointRow[]
   ): Promise<void> {
-    const subjectContacts = await this.adapter.query<ContactPointRow>(
-      `SELECT *
-         FROM contact_points
-        WHERE subject_id = ? AND tenant_id = ?${activeClause(false)}
-        ORDER BY is_primary DESC, created_at ASC`,
-      [subject.id, this.tenantId]
-    );
     const accountContacts = subjectContacts.filter((contact) => contact.account_id === account.id);
     const contacts =
       accountContacts.length > 0
         ? accountContacts
         : subjectContacts.filter((contact) => contact.account_id === null);
 
-    for (const contact of contacts) {
-      const value = toStringOrNull(
-        await this.valueResolver.resolveValue(contact.value_storage_ref, {
-          tenantId: this.tenantId,
-          subjectId: subject.id,
-          accountId: account.id,
-          contactType: contact.contact_type,
-        })
-      );
+    const values = await mapInBoundedBatches(contacts, (contact) =>
+      this.valueResolver.resolveValue(contact.value_storage_ref, {
+        tenantId: this.tenantId,
+        subjectId: subject.id,
+        accountId: account.id,
+        contactType: contact.contact_type,
+      })
+    );
 
+    for (const [index, contact] of contacts.entries()) {
+      const value = toStringOrNull(values[index]);
       if (contact.contact_type === 'email' && projection.email === null) {
         projection.email = value;
         projection.email_verified = contact.verification_state === 'verified' ? 1 : 0;

@@ -61,7 +61,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import { encryptObjectArtifact } from '@authrim/ar-lib-core';
-import { processPendingGenericAdminJobs } from '../admin-job-executor';
+import {
+  isAdminJobAllowedForTenantLifecycle,
+  processPendingGenericAdminJobs,
+} from '../admin-job-executor';
 
 function createMockR2Bucket() {
   const objects = new Map<string, string>();
@@ -158,6 +161,38 @@ describe('generic admin job executor', () => {
       },
       piiCacheMode: 'encrypted_short_ttl',
     });
+  });
+
+  it('allows only pre-purge exports while a tenant is deleting', () => {
+    expect(isAdminJobAllowedForTenantLifecycle('deleting', 'tenant-database/export')).toBe(true);
+    expect(isAdminJobAllowedForTenantLifecycle('deleting', 'reports/generate')).toBe(false);
+    expect(isAdminJobAllowedForTenantLifecycle('deleted', 'tenant-database/export')).toBe(false);
+  });
+
+  it('records lifecycle-blocked jobs in the deployed error_message column', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-blocked',
+        tenant_id: 'tenant-a',
+        job_type: 'reports/generate',
+        status: 'pending',
+        progress: null,
+        config: '{}',
+        created_at: 1,
+        tenant_lifecycle_state: 'deleting',
+      },
+    ]);
+
+    await processPendingGenericAdminJobs({} as never, logger);
+
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('error_message = ?'),
+      expect.arrayContaining(['tenant_lifecycle_blocked:deleting'])
+    );
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining(' error = ?'),
+      expect.anything()
+    );
   });
 
   it('generates tenant database provisioning binding and deployment plans', async () => {
@@ -365,7 +400,10 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           policy: 'deletion_before_purge',
-          tables: { core: ['identity_accounts'], pii: ['identity_sensitive_values'] },
+          tables: {
+            core: ['identity_accounts'],
+            pii: ['identity_sensitive_values', 'subject_identifiers', 'audit_log_pii'],
+          },
           reason: 'tenant deletion pre-purge backup',
         }),
         created_at: 1,
@@ -376,6 +414,12 @@ describe('generic admin job executor', () => {
     ]);
     mockTenantPiiAdapter.query.mockResolvedValueOnce([
       { tenant_id: 'tenant-a', user_id: 'user-1', email: 'user@example.test' },
+    ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      { id: 'subject-1', user_id: 'user-1', subject: 'pairwise-subject' },
+    ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      { id: 'audit-1', tenant_id: 'tenant-a', action: 'pii_accessed' },
     ]);
 
     await processPendingGenericAdminJobs(
@@ -400,6 +444,16 @@ describe('generic admin job executor', () => {
       'SELECT * FROM identity_sensitive_values WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
     );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      `SELECT scoped.* FROM subject_identifiers AS scoped
+           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
+           WHERE tenant_parent.tenant_id = ? LIMIT ?`,
+      ['tenant-a', 50001]
+    );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      'SELECT * FROM audit_log_pii WHERE tenant_id = ? LIMIT ?',
+      ['tenant-a', 50001]
+    );
     expect(put).toHaveBeenCalledWith(
       'exports/tenant-a/tenant-backup/job-backup/core/identity_accounts.jsonl',
       expect.any(String),
@@ -419,8 +473,8 @@ describe('generic admin job executor', () => {
     const resultJson = (finalUpdate?.[1] as unknown[])[2] as string;
     expect(JSON.parse(resultJson)).toMatchObject({
       summary: {
-        total_tables: 2,
-        total_rows: 2,
+        total_tables: 4,
+        total_rows: 4,
         policy: 'deletion_before_purge',
         consistency: 'maintenance_read_only',
       },
@@ -430,6 +484,8 @@ describe('generic admin job executor', () => {
       table_artifacts: [
         expect.objectContaining({ plane: 'core', table: 'identity_accounts', row_count: 1 }),
         expect.objectContaining({ plane: 'pii', table: 'identity_sensitive_values', row_count: 1 }),
+        expect.objectContaining({ plane: 'pii', table: 'subject_identifiers', row_count: 1 }),
+        expect.objectContaining({ plane: 'pii', table: 'audit_log_pii', row_count: 1 }),
       ],
     });
   });

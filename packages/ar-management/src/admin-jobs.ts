@@ -1862,8 +1862,7 @@ export async function adminJobsTenantDatabaseProvisionHandler(c: Context<{ Bindi
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: {
           field: 'storage_profile',
-          reason:
-            'Tenant D1 pool expansion is managed by the setup tool/wrangler, not Admin UI jobs.',
+          reason: 'Tenant D1 capacity is managed by the Control Worker, not Admin UI jobs.',
         },
       });
     }

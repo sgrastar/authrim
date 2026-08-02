@@ -176,6 +176,54 @@
 		}
 	}
 
+	async function handleProvisioningCallback(token: string, tenantId: string): Promise<void> {
+		history.replaceState(null, '', window.location.pathname);
+		const deadline = Date.now() + 5 * 60 * 1000;
+		let pollingDelay = 250;
+		try {
+			while (Date.now() < deadline) {
+				const response = await authrimFetch('/api/external/provisioning/status', {
+					baseUrl: API_BASE_URL,
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ provisioning_token: token, tenant_id: tenantId })
+				});
+				const data = await response.json().catch(() => ({}));
+				if (response.status === 202 && data.status === 'pending') {
+					const serverRetryAfter =
+						typeof data.retry_after_ms === 'number'
+							? Math.min(2000, Math.max(250, data.retry_after_ms))
+							: 500;
+					pollingDelay = Math.min(2000, Math.max(serverRetryAfter, Math.ceil(pollingDelay * 1.5)));
+					await new Promise((resolve) => setTimeout(resolve, pollingDelay));
+					continue;
+				}
+				if (response.ok && data.status === 'ready' && typeof data.resume_url === 'string') {
+					const apiOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+					const resumeUrl = new URL(data.resume_url, apiOrigin);
+					if (
+						resumeUrl.origin !== apiOrigin ||
+						resumeUrl.pathname !== '/auth/external/provisioning/resume'
+					) {
+						throw new Error('invalid provisioning resume URL');
+					}
+					window.location.assign(resumeUrl.toString());
+					return;
+				}
+				throw new Error('external provisioning failed');
+			}
+			throw new Error('external provisioning timed out');
+		} catch {
+			errorCode = 'temporarily_unavailable';
+			status = 'error';
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'deny',
+				reason: 'external_idp_provisioning_resume_failed',
+				flow: 'external_idp'
+			});
+		}
+	}
+
 	onMount(async () => {
 		const params = new URLSearchParams(window.location.search);
 
@@ -184,6 +232,13 @@
 		if (error) {
 			errorCode = error;
 			status = 'error';
+			return;
+		}
+
+		const provisioningToken = params.get('provisioning_token');
+		const provisioningTenant = params.get('provisioning_tenant');
+		if (provisioningToken && provisioningTenant) {
+			await handleProvisioningCallback(provisioningToken, provisioningTenant);
 			return;
 		}
 

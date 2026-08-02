@@ -60,6 +60,8 @@ import {
   loggingPoliciesRouter,
   notificationsRouter,
 } from './logging-control';
+import { readReplicationRouter } from './read-replication';
+import { controlPlaneOperationsRouter } from './control-plane-operations';
 
 // Create main router for admin management
 export const adminManagementRouter = new Hono<{ Bindings: Env }>();
@@ -103,6 +105,8 @@ adminManagementRouter.route('/agent-secret-refs', agentSecretRefsRouter);
 adminManagementRouter.route('/agent-bulk-plans', agentBulkPlansRouter);
 adminManagementRouter.route('/agent-templates', agentTemplatesRouter);
 adminManagementRouter.route('/agent-baselines', agentBaselinesRouter);
+adminManagementRouter.route('/platform/read-replication', readReplicationRouter);
+adminManagementRouter.route('/platform/control-plane', controlPlaneOperationsRouter);
 
 // Mount sub-routers - Admin ABAC/ReBAC/Policies (these also have /admins/:userId subroutes)
 adminManagementRouter.route('/', adminAbacRouter);
@@ -140,6 +144,8 @@ export {
 } from './agent-configuration';
 export { agentBulkPlansRouter } from './agent-bulk';
 export { agentBaselinesRouter, agentTemplatesRouter } from './agent-baselines';
+export { readReplicationRouter } from './read-replication';
+export { controlPlaneOperationsRouter } from './control-plane-operations';
 export {
   adminLoggingRouter,
   destinationsRouter,

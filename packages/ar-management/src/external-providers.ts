@@ -33,10 +33,11 @@ const EXTERNAL_TOKEN_REFRESH_ADMIN_PATH = '/api/admin/external-token-refresh';
 const EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES = 256 * 1024;
 const EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES = 1024 * 1024;
 const DEFAULT_TOKEN_REFRESH_CONFIG = {
-  enabled: true,
+  enabled: false,
   refreshThresholdSeconds: 3600,
   batchSize: 100,
   scheduledTenantBatchSize: 100,
+  piiShardPageSize: 4,
 };
 
 const OIDC_ISSUER_REL = 'http://openid.net/specs/connect/1.0/issuer';

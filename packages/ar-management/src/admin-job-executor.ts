@@ -64,7 +64,7 @@ const TENANT_BACKUP_PII_TABLES = [
   'identity_sensitive_values',
   'subject_identifiers',
   'linked_identities',
-  'pii_audit_log',
+  'audit_log_pii',
   'users_pii_tombstone',
 ] as const;
 
@@ -182,6 +182,9 @@ export function isAdminJobAllowedForTenantLifecycle(
   jobType: string
 ): boolean {
   if (lifecycleState === 'active') return true;
+  if (lifecycleState === 'deleting') {
+    return jobType === 'tenant-database/export';
+  }
   if (jobType === 'tenants/lifecycle-validation') {
     return ['suspended', 'frozen', 'restore_pending', 'restore_validating'].includes(
       lifecycleState
@@ -1187,10 +1190,16 @@ async function exportTenantTableToArtifact(input: {
   chunked: boolean;
   chunk_count: number;
 }> {
-  const rows = await input.adapter.query<Record<string, unknown>>(
-    `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`,
-    [input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1]
-  );
+  const tenantScopedQuery =
+    input.plane === 'pii' && input.table === 'subject_identifiers'
+      ? `SELECT scoped.* FROM subject_identifiers AS scoped
+           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
+           WHERE tenant_parent.tenant_id = ? LIMIT ?`
+      : `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`;
+  const rows = await input.adapter.query<Record<string, unknown>>(tenantScopedQuery, [
+    input.job.tenant_id,
+    TENANT_BACKUP_TABLE_ROW_LIMIT + 1,
+  ]);
   if (rows.length > TENANT_BACKUP_TABLE_ROW_LIMIT) {
     throw new Error(
       `tenant_backup_table_row_limit_exceeded:${input.plane}:${input.table}:${TENANT_BACKUP_TABLE_ROW_LIMIT}`
@@ -2226,7 +2235,7 @@ export async function processPendingGenericAdminJobs(
       const blockedAt = Math.floor(Date.now() / 1000);
       await adapter.execute(
         `UPDATE admin_jobs
-            SET status = 'partial_failure', progress = ?, error = ?, completed_at = ?, updated_at = ?
+            SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
           WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
         [
           JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),

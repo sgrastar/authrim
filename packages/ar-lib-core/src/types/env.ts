@@ -11,6 +11,12 @@ import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
 import type { JWK } from 'jose';
 import type { VCIssuerServiceBinding } from './vc-service';
+import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
+import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
+import type {
+  AuthAccountProvisioningServiceBinding,
+  ExternalIdpAccountProvisioningServiceBinding,
+} from '../services/account-provisioning';
 
 export interface KeyManagerPublicServiceBinding {
   getAllPublicKeys(tenantId: string): Promise<JWK[]>;
@@ -28,6 +34,283 @@ export interface EmailServiceBinding {
     replyTo?: string | { email: string; name: string };
     headers?: Record<string, string>;
   }): Promise<{ messageId?: string }>;
+}
+
+export type ImmediateNotificationDeliveryResult = 'delivered' | 'pending' | 'permanent_failure';
+
+export interface ImmediateNotificationDeliveryInput {
+  tenantId: string;
+  intentId: string;
+  outboxId: string;
+  pluginInstallationId: string;
+  bindingRef: string;
+}
+
+export interface HumanVerificationHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  action: 'login' | 'signup' | 'reauth';
+  responseToken: string;
+  remoteIp?: string;
+}
+
+export interface PolicyDecisionHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  subjectId: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  attributes: Record<string, string | number | boolean>;
+}
+
+export interface FlowHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  flowId: string;
+  hookName: string;
+  accountId?: string;
+  stateVersion: number;
+}
+
+export interface PluginRunnerDecisionResult {
+  decision: 'allow' | 'deny';
+  reasonCode: string;
+}
+
+export interface PluginRunnerFlowResult {
+  decision: 'continue' | 'deny';
+  reasonCode: string;
+}
+
+export interface ConfigureNotificationInstallationInput {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  backendKind: 'in_process' | 'dynamic_worker';
+  scriptName?: string;
+  enabled: boolean;
+}
+
+export interface ConfigureNotificationInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
+export interface ConfigureDynamicPluginInstallationInput {
+  tenantId: string;
+  pluginId: string;
+  enabled: boolean;
+  activationRequestId?: string;
+}
+
+export interface StageDynamicPluginActivationInput {
+  tenantId: string;
+  pluginId: string;
+  activationRequestId: string;
+}
+
+export interface StageDynamicPluginActivationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  activationRequestId: string;
+  state: 'pending';
+}
+
+export interface DynamicPluginInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+  pinnedVersionDigest: string | null;
+}
+
+export interface ApprovedDynamicPlugin {
+  pluginId: string;
+  capabilityManifestDigest: string;
+  activeVersionDigest: string;
+  visibility: 'tenant' | 'platform';
+  capabilities: string[];
+  credentials: Array<{ configKey: string; required: boolean }>;
+  resources: Array<{
+    logicalResourceId: string;
+    binding: string;
+    kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+    access: 'read_only' | 'read_write';
+    allowExisting: boolean;
+  }>;
+  updatedAt: number;
+}
+
+export interface DynamicPluginInstallationStatus {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'absent' | 'enabled' | 'disabled' | 'blocked';
+  configVersion: number;
+  configuredKeys: string[];
+  missingRequiredFields: string[];
+  pinnedVersionDigest: string | null;
+}
+
+export interface DynamicPluginRolloutBatchInput {
+  operationId: string;
+  pluginId: string;
+  batchSize: number;
+}
+
+export interface DynamicPluginRolloutBatchResult {
+  operationId: string;
+  pluginId: string;
+  targetVersionDigest: string;
+  state: 'running' | 'completed' | 'completed_with_errors' | 'blocked';
+  cursorInstallationId: string | null;
+  processedThisBatch: number;
+  succeededCount: number;
+  blockedCount: number;
+  failedCount: number;
+  hasMore: boolean;
+  lastErrorCode: string | null;
+}
+
+export interface ReplaceDynamicPluginCredentialsInput {
+  operationId: string;
+  tenantId: string;
+  pluginId: string;
+  expectedConfigVersion: number;
+  credentials: Record<string, string>;
+}
+
+export interface PluginCredentialInput {
+  configKey: string;
+  destinationHost: string;
+  injectionKind: 'header' | 'bearer' | 'json_field' | 'form_field';
+  injectionName: string;
+  value: string;
+}
+
+export interface ConfigureHumanVerificationInstallationInput {
+  operationId: string;
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  enabled: boolean;
+  config?: {
+    siteKey: string;
+    secretKey: string;
+    expectedHostname?: string;
+    widgetMode?: 'managed' | 'checkbox' | 'invisible' | 'score';
+    scoreThreshold?: number;
+  };
+}
+
+export interface ConfigureHumanVerificationInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
+export interface ReplacePluginCredentialsInput {
+  operationId: string;
+  tenantId: string;
+  installationId: string;
+  expectedConfigVersion: number;
+  credentials: PluginCredentialInput[];
+}
+
+export interface ReplacePluginCredentialsResult {
+  operationId: string;
+  installationId: string;
+  configVersion: number;
+  credentialCount: number;
+}
+
+export interface ReplaceNotificationProviderOrderInput {
+  operationId: string;
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+  expectedConfigVersion: number;
+  installationIds: string[];
+}
+
+export interface ResolveNotificationProviderOrderInput {
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+}
+
+export interface NotificationProviderOrder {
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+  configVersion: number;
+  state: 'enabled' | 'disabled';
+  installationIds: string[];
+}
+
+export interface ResolveAccountEventInstallationsInput {
+  tenantId: string;
+  eventType: 'account.created';
+}
+
+export interface AccountEventInstallation {
+  installationId: string;
+  capability: 'hook.account.lifecycle';
+}
+
+export interface PluginRunnerServiceBinding {
+  runHumanVerification(input: HumanVerificationHookInput): Promise<PluginRunnerDecisionResult>;
+  runPolicyDecision(input: PolicyDecisionHookInput): Promise<PluginRunnerDecisionResult>;
+  runFlowHook(input: FlowHookInput): Promise<PluginRunnerFlowResult>;
+  deliverNotification(
+    input: ImmediateNotificationDeliveryInput
+  ): Promise<ImmediateNotificationDeliveryResult>;
+  configureNotificationInstallation(
+    input: ConfigureNotificationInstallationInput
+  ): Promise<ConfigureNotificationInstallationResult>;
+  configureHumanVerificationInstallation(
+    input: ConfigureHumanVerificationInstallationInput
+  ): Promise<ConfigureHumanVerificationInstallationResult>;
+  configureDynamicPluginInstallation(
+    input: ConfigureDynamicPluginInstallationInput
+  ): Promise<DynamicPluginInstallationResult>;
+  stageDynamicPluginActivation(
+    input: StageDynamicPluginActivationInput
+  ): Promise<StageDynamicPluginActivationResult>;
+  rolloutDynamicPluginInstallation(
+    input: ConfigureDynamicPluginInstallationInput
+  ): Promise<DynamicPluginInstallationResult>;
+  rolloutDynamicPluginBatch(
+    input: DynamicPluginRolloutBatchInput
+  ): Promise<DynamicPluginRolloutBatchResult>;
+  listApprovedDynamicPlugins(): Promise<ApprovedDynamicPlugin[]>;
+  getDynamicPluginInstallationStatus(input: {
+    tenantId: string;
+    pluginId: string;
+  }): Promise<DynamicPluginInstallationStatus>;
+  replaceDynamicPluginCredentials(
+    input: ReplaceDynamicPluginCredentialsInput
+  ): Promise<ReplacePluginCredentialsResult>;
+  replacePluginCredentials(
+    input: ReplacePluginCredentialsInput
+  ): Promise<ReplacePluginCredentialsResult>;
+  replaceNotificationProviderOrder(
+    input: ReplaceNotificationProviderOrderInput
+  ): Promise<NotificationProviderOrder>;
+  resolveNotificationProviderOrder(
+    input: ResolveNotificationProviderOrderInput
+  ): Promise<NotificationProviderOrder>;
+  resolveAccountEventInstallations(
+    input: ResolveAccountEventInstallationsInput
+  ): Promise<AccountEventInstallation[]>;
 }
 
 /**
@@ -59,8 +342,10 @@ export interface EmailServiceBinding {
 export interface Env {
   // D1 Databases
   DB: D1Database; // Core DB (non-PII data: canonical identity graph, sessions, passkeys, clients, roles)
+  TDB_SHARED_CORE?: D1Database; // Stable Runner alias for the shared notification/core D1
   DB_PII: D1Database; // PII DB (personal information: canonical sensitive values, linked identities, subject identifiers)
   DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
+  LOOKUP_DB?: D1Database; // Account and tenant discovery directory owned by ar-management
   LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
 
   // R2 Buckets
@@ -103,6 +388,7 @@ export interface Env {
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
   CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
+  DEVICE_SECRET_ROUTE_STORE?: DurableObjectNamespace; // Native SSO secret-hash routing hints
   VERSION_MANAGER: DurableObjectNamespace<VersionManager>; // Worker bundle version management
   SAML_REQUEST_STORE: DurableObjectNamespace; // SAML 2.0 request/artifact store
   SAML_AGGREGATE_METADATA_STORE?: DurableObjectNamespace<SAMLAggregateMetadataStore>; // SAML aggregate metadata previews and batch imports
@@ -113,6 +399,11 @@ export interface Env {
   // Service Bindings (Worker-to-Worker communication)
   KEY_MANAGER_PUBLIC?: KeyManagerPublicServiceBinding; // Public-key-only KeyManager RPC facade
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
+  ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
+  ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
+  EXTERNAL_IDP_ACCOUNT_PROVISIONER?: ExternalIdpAccountProvisioningServiceBinding;
+  PLUGIN_RUNNER?: PluginRunnerServiceBinding; // Narrow Plugin Runner RPC facade
   VC_ISSUER?: VCIssuerServiceBinding; // Least-privilege credential-offer creation facade
   VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
   VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
@@ -332,11 +623,16 @@ export interface Env {
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
+  LOOKUP_HMAC_KEY_SLOT_A?: string; // Dedicated Lookup blind-index HMAC key slot A
+  LOOKUP_HMAC_KEY_SLOT_B?: string; // Dedicated Lookup blind-index HMAC key slot B
+  LOOKUP_HMAC_ACTIVE_SLOT?: string; // Active Lookup blind-index key slot (A or B)
+  LOOKUP_HMAC_ACTIVE_GENERATION?: string; // Positive integer generation for the active slot
   PLUGIN_ENCRYPTION_KEY?: string; // Dedicated encryption key for plugin configuration secrets
+  NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS?: string; // Public-only RSA-OAEP keys for notification intents
+  NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID?: string; // Current notification payload encryption key id
+  NOTIFICATION_INTENT_HMAC_KEY?: string; // Notification intent idempotency fingerprint key
   PLUGIN_ENCRYPTION_SALT?: string; // Optional salt override for plugin configuration secret encryption
   VERSION_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
-  TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
-  TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWK?: string; // Ed25519 public JWK for runtime snapshot verification
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS?: string; // JWKS with current/previous runtime snapshot verification keys
   TENANT_RUNTIME_REGISTRY_PREVIOUS_VERIFYING_PUBLIC_JWK?: string; // Optional previous public JWK during key rotation

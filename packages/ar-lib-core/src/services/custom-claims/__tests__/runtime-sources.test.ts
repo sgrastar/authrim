@@ -8,7 +8,10 @@ import {
   TENANT_D1_STORAGE_PROFILE_ID,
 } from '../../../types/runtime-profile';
 import { clearTenantDatabaseResolverMemoryCache } from '../../tenant-database-resolver';
-import { resolveCustomClaimRuntimeSourcesFromEnv } from '../runtime-sources';
+import {
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveCustomClaimRuntimeSourcesFromHono,
+} from '../runtime-sources';
 
 function createMockKV(initial: Record<string, string> = {}): KVNamespace {
   const store = new Map<string, string>(Object.entries(initial));
@@ -300,5 +303,57 @@ describe('resolveCustomClaimRuntimeSourcesFromEnv', () => {
     expect(resolved.schemaDb).toBe(tenantCore);
     expect(resolved.nonPiiDb).toBe(tenantCore);
     expect(resolved.piiDb).toBe(tenantPii);
+  });
+
+  it('separates tenant-D1 schema, account core, and account PII sources in Hono', async () => {
+    const metadataCore = createMockAdapter('metadata-core');
+    const accountCore = createMockAdapter('account-core');
+    const accountPii = createMockAdapter('account-pii');
+    const c = {
+      env: {
+        DB: metadataCore,
+        DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        DEFAULT_AUDIT_PROFILE_ID,
+        DEFAULT_RESIDENCY_PROFILE_ID,
+      },
+      get(key: string) {
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: TENANT_D1_STORAGE_PROFILE_ID,
+            coreDb: metadataCore,
+          };
+        }
+        if (key === 'accountDataContext') {
+          return { tenantId: 'tenant-a', coreDb: accountCore, piiDb: accountPii };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof resolveCustomClaimRuntimeSourcesFromHono>[0];
+
+    const resolved = await resolveCustomClaimRuntimeSourcesFromHono(c, 'tenant-a');
+    expect(resolved.schemaDb).toBe(metadataCore);
+    expect(resolved.nonPiiDb).toBe(accountCore);
+    expect(resolved.piiDb).toBe(accountPii);
+  });
+
+  it('requires an account context for tenant-D1 custom claim values', async () => {
+    const metadataCore = createMockAdapter('metadata-core');
+    const c = {
+      env: {},
+      get(key: string) {
+        return key === 'tenantMetadataContext'
+          ? {
+              tenantId: 'tenant-a',
+              storageProfileId: TENANT_D1_STORAGE_PROFILE_ID,
+              coreDb: metadataCore,
+            }
+          : undefined;
+      },
+    } as unknown as Parameters<typeof resolveCustomClaimRuntimeSourcesFromHono>[0];
+
+    await expect(resolveCustomClaimRuntimeSourcesFromHono(c, 'tenant-a')).rejects.toThrow(
+      'account_data_context_required'
+    );
   });
 });

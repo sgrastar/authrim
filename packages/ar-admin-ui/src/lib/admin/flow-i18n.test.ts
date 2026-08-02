@@ -33,7 +33,7 @@ describe('flow template localization', () => {
 			getFlowTemplateText(LL, requireTemplate('default-registration-no-consent')).subtitle
 		).toBe('Account creation without profile input or registration consent');
 		expect(getFlowTemplateText(LL, requireTemplate('default-login-no-consent')).subtitle).toBe(
-			'Sign-in without consent confirmation'
+			'Sign-in without an interactive consent node'
 		);
 		expect(getFlowTemplateText(LL, requireTemplate('saml-sp-oidc-rp')).subtitle).toBe(
 			'Sign-in for SAML SPs and OIDC RPs'
@@ -50,7 +50,7 @@ describe('flow template localization', () => {
 			'学術出版社・図書館系SP向けログイン'
 		);
 		expect(getFlowTemplateText(LL, requireTemplate('default-login-no-consent')).subtitle).toBe(
-			'同意確認なしのログイン'
+			'対話的な同意ノードを含まないログイン'
 		);
 		expect(getFlowTemplateText(LL, requireTemplate('saml-sp-oidc-rp')).subtitle).toBe(
 			'SAML SP・OIDC RP向けログイン'

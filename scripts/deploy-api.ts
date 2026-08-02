@@ -43,6 +43,7 @@ interface CliOptions {
   keysDir?: string;
   preflight: boolean;
   finalizeLegacyStaticSecretCleanup: boolean;
+  testEndpoints?: 'enabled' | 'disabled';
 }
 
 function readValue(argument: string, name: string): string | undefined {
@@ -62,6 +63,7 @@ function parseOptions(argv: string[]): CliOptions {
   let keysDir: string | undefined;
   let preflight = false;
   let finalizeLegacyStaticSecretCleanup = false;
+  let testEndpoints: CliOptions['testEndpoints'];
 
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
@@ -74,6 +76,7 @@ function parseOptions(argv: string[]): CliOptions {
     const gradualWaitValue = readValue(argument, 'gradual-wait-seconds');
     const healthUrlValue = readValue(argument, 'health-url');
     const keysDirValue = readValue(argument, 'keys-dir');
+    const testEndpointsValue = readValue(argument, 'test-endpoints');
 
     if (envValue !== undefined) {
       env = envValue;
@@ -115,6 +118,11 @@ function parseOptions(argv: string[]): CliOptions {
     } else if (argument === '--keys-dir' && next) {
       keysDir = next;
       index++;
+    } else if (testEndpointsValue !== undefined) {
+      testEndpoints = testEndpointsValue as CliOptions['testEndpoints'];
+    } else if (argument === '--test-endpoints' && next) {
+      testEndpoints = next as CliOptions['testEndpoints'];
+      index++;
     } else {
       throw new Error(`Unknown deploy-api option: ${argument}`);
     }
@@ -154,6 +162,17 @@ function parseOptions(argv: string[]): CliOptions {
   if (!Number.isFinite(gradualWaitMs) || gradualWaitMs < 0) {
     throw new Error('--gradual-wait-seconds must be a non-negative number');
   }
+  if (testEndpoints !== undefined) {
+    if (env !== 'test') {
+      throw new Error('--test-endpoints is restricted to the test environment');
+    }
+    if (component !== 'ar-management') {
+      throw new Error('--test-endpoints requires --component=ar-management');
+    }
+    if (testEndpoints !== 'enabled' && testEndpoints !== 'disabled') {
+      throw new Error('--test-endpoints must be enabled or disabled');
+    }
+  }
   if (healthUrl && !/^https:\/\//.test(healthUrl)) {
     throw new Error('--health-url must be an https URL');
   }
@@ -174,6 +193,7 @@ function parseOptions(argv: string[]): CliOptions {
     keysDir,
     preflight,
     finalizeLegacyStaticSecretCleanup,
+    testEndpoints,
   };
 }
 
@@ -219,10 +239,10 @@ async function checkOidcHealth(baseUrl: string): Promise<{ success: boolean; err
   return { success: false, error: lastError };
 }
 
-function buildVersionVars(): DeployOptions['varsByComponent'] {
+function buildVersionVars(options: CliOptions): DeployOptions['varsByComponent'] {
   const codeVersion = process.env.AUTHRIM_DEPLOY_UUID;
   const deployTime = process.env.AUTHRIM_DEPLOY_TIME;
-  if (!codeVersion && !deployTime) {
+  if (!codeVersion && !deployTime && options.testEndpoints === undefined) {
     return undefined;
   }
   return Object.fromEntries(
@@ -233,6 +253,9 @@ function buildVersionVars(): DeployOptions['varsByComponent'] {
       {
         ...(codeVersion ? { CODE_VERSION_UUID: codeVersion } : {}),
         ...(deployTime ? { DEPLOY_TIME_UTC: deployTime } : {}),
+        ...(component === 'ar-management' && options.testEndpoints !== undefined
+          ? { ENABLE_TEST_ENDPOINTS: options.testEndpoints === 'enabled' ? 'true' : 'false' }
+          : {}),
       },
     ])
   );
@@ -360,7 +383,7 @@ async function main(): Promise<void> {
     if (keysPath && !options.dryRun && !options.preflight) {
       await ensureSupplementalKeyFiles(keysPath);
     }
-    const secrets = keysPath ? await loadDeploySecretsFromKeys(keysPath, deploymentScope) : {};
+    const secrets = await loadDeploySecretsFromKeys(keysPath, deploymentScope);
 
     if (!process.env.CLOUDFLARE_API_TOKEN && options.concurrency > 1) {
       console.warn(
@@ -377,7 +400,17 @@ async function main(): Promise<void> {
       existingComponents: lockComponents,
       secrets,
       cleanupLegacyStaticSecrets: true,
-      varsByComponent: buildVersionVars(),
+      ...(lock?.d1.CONTROL_DB
+        ? {
+            deploymentLease: {
+              controlDatabaseId: lock.d1.CONTROL_DB.id,
+              environmentId: options.env,
+              actorId: 'setup:deploy-api',
+              required: true,
+            },
+          }
+        : {}),
+      varsByComponent: buildVersionVars(options),
       maxRetries: 4,
       retryDelayMs: 1000,
       signal: controller.signal,

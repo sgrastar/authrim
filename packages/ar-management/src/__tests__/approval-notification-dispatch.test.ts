@@ -17,6 +17,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getRequiredPluginContext: mockGetRequiredPluginContext,
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const notifier = mockGetRequiredPluginContext().registry.getNotifier(input.payload.channel);
+      if (!notifier) throw new Error('notification_delivery_provider_order_unavailable');
+      const result = await notifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
   };
 });
 
@@ -245,7 +255,7 @@ describe('approval notification dispatch', () => {
     );
     expect(result.summary.provider).toBe('notifier.email');
     expect(result.summary.delivery_status).toBe('sent');
-    expect(result.summary.transport_request_id).toBe('email-msg-1');
+    expect(result.summary.transport_request_id).toBe('approval-notification:apc_1');
     expect(result.completionArtifact).toEqual({
       artifactId: 'apc_1',
       path: '/api/approval-artifacts/apc_1/portal',
@@ -320,7 +330,7 @@ describe('approval notification dispatch', () => {
     expect(result.success).toBe(false);
     expect(result.summary.provider).toBe('notifier.sms');
     expect(result.summary.delivery_status).toBe('failed');
-    expect(result.error).toContain('No sms notifier');
+    expect(result.error).toBe('notification_delivery_unavailable');
     expect(mockIssueApprovalOtpChallenge).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

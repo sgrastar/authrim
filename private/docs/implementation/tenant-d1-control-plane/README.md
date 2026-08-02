@@ -30,7 +30,8 @@ Tenant D1 構成を、初回 setup 時の事前 slot 作成モデルから、Adm
 既存環境の migration、旧 preallocated pool からの互換移行、既存 tenant のオンライン移動はこの計画では扱わない。
 新規環境では最初から次の構成にする。
 
-- Control Worker だけが Cloudflare API token を持つ。
+- Automatic provisioning が ON の場合だけ Control Worker が用途分離した Cloudflare API token を持つ。OFF の場合は
+  setup が Wrangler OAuth / operator credential で正規 operation を実行し、Control Worker に token を保存しない。
 - Control DB 上の desired state を正とし、`.authrim/lock` と generated `wrangler.toml` は生成物にする。
 - 小規模環境でも Tenant Lookup DB を用意し、大規模時と同じ routing architecture にする。
 - D1 shard 追加は無停止で行い、active routing map の切り替えだけを runtime-visible な変更にする。
@@ -96,22 +97,26 @@ shardの安全上限とせず、storage size、query latency、overloaded error�
   まで初期 scope に含める。初期実装ではpartitionごとに別D1へroutingできてもlocation policyはenvironmentから継承し、
   partitionごとの異なるjurisdiction/location指定は後続拡張とする。
 - Control Worker 自体のdeploy / rollbackはsetup toolが担当する。bootstrap handoff accepted後のD1 / binding / migrationなど
-  Cloudflare infrastructure resourceとtenant/shard routing desired stateのmutationはControl DBをsource of truthとし、
-  Control Workerだけが実行する。per-account allocation / identifier route publicationは`ar-management`が所有する。
-- setup/updateのWorker deploy、Worker secret更新、R2 release artifact upload、release digest登録は継続する。
-  setup/updateはoperator端末の短命Cloudflare credentialを実行時だけ使い、credentialをgenerated artifactやWorkerへ
-  配布・保存しない。永続的なCloudflare API tokenを持つWorkerはControl Workerだけとする。
+  Cloudflare infrastructure resourceとtenant/shard routing desired stateのmutationはControl DBをsource of truthとする。
+  Automatic provisioning ONではControl Worker、OFFまたはoperator repairではsetupが、同じoperation/lease/fencingを通して
+  実行する。per-account allocation / identifier route publicationは`ar-management`が所有する。
+- setup/updateのWorker deploy、Worker secret更新、R2 release artifact upload、release digest登録、全体migration、環境削除、
+  operator provisioningを継続する。setup/updateはoperator端末の短命Cloudflare credentialを実行時だけ使い、credentialを
+  generated artifactへ保存しない。Automatic provisioning ONの場合だけ用途別child tokenをControl Worker secretへ直接登録し、
+  OFFの場合はControl WorkerへCloudflare API tokenを一切保存しない。
 - Cloudflare API rate limit / transient failure は Control DB に operation state を保存し、Control Worker の
   scheduled reconciler が exponential backoff + jitter で再開する。
 - Retry budget は標準 2 時間を上限に自動 retry し、budget 超過後は `blocked` として operator の
   inspect / resume / cancel に回す。
 - Worker binding 更新は Workers `/settings` API で append-only に行う。読み戻せないsecretを含む既存bindingは、
-  patch元versionを固定した`type = inherit` bindingとして明示的に継承する。Phase 0 live API spike では、
+  immutableなpatch元deploymentをlease/fencingで固定したうえで、`version_id = latest`の`type = inherit` bindingとして
+  明示的に継承する。immutable version IDを直接指定するpayloadはtest環境でprovider code `10057`により拒否されたため、
+  patch直前のsource再確認とpatch後のexactly-one deployment / reflected diff検証を必須にする。Phase 0 live API spike では、
   `/settings` PATCH は new Worker version と new deployment を即 100% active にしたため、Worker config 自体の
   staged promote は前提にしない。安全性は、既存 bindings を保持する preflight / reflected diff、post-patch smoke、
   tenant lifecycle / Runtime Registry / Tenant Lookup DB の `active` 化を最後まで遅らせる routing gate で担保する。
 - Phase 0ではdisposable Cloudflare Worker / D1を使い、`plain_text`既存bindingへのD1追加とsettings / versions /
-  deployments APIの挙動を実測済みである。secret / Service Binding等のversion-pinned inheritとnon-binding settings
+  deployments APIの挙動を実測済みである。secret / Service Binding等のdeployment-fenced `latest` inheritとnon-binding settings
   preservation matrixは追加spikeが必要であり、単純appendの成功だけでproduction-readyとは扱わない。
 - 現時点では production 環境は存在しない前提とし、Phase 0 live API spike は `test` 環境で実行する。
   `conformance` 環境は OIDF/conformance 用に残し、Control Worker adapter 検証では触らない。
@@ -125,12 +130,13 @@ shardの安全上限とせず、storage size、query latency、overloaded error�
   routingしない。smokeとstabilization完了前に3つを`active`へ変更しない。
 - D1 delete / binding cleanup は quarantine 後に手動承認で実行する。即時削除と grace period 後の自動削除は
   初期実装では禁止する。
-- Control Worker の Cloudflare API token は D1、Workers settings / deployment、Workers KV、R2 の用途別に分離する。
-  D1 token は `D1 Write`、Workers token は `/settings` PATCH、deployment rollback、dispatch namespace操作に必要な
+- Automatic provisioning ONで発行する Control Worker の Cloudflare API token は D1、Workers settings / deployment、
+  Workers KV、R2 の用途別に分離する。
+  D1 token は `D1 Write`、Workers token は `/settings` PATCH、deployment観測、Worker Loader binding更新に必要な
   `Workers Scripts Write`、KV tokenは`Workers KV Storage Write`、R2 tokenは`Workers R2 Storage Write`を持つ。
-  D1 / Workers tokenはbaselineで必須とし、KV / R2 tokenは承認済みplugin desired stateがそのresourceを要求する
-  environmentでだけ必須にする。optional token欠落時は該当resource operationだけを`capability_unavailable`で`blocked`にし、
-  他用途tokenへfallbackしない。
+  D1 / Workers tokenはAutomatic provisioning ONのbaselineで必須とし、KV / R2 tokenは承認済みplugin desired stateが
+  そのresourceを要求するenvironmentでだけ発行する。OFFまたはoptional token欠落時は該当resource operationを
+  `operator_action_required`または`capability_unavailable`で止め、他用途tokenへfallbackしない。
   Workers token の script allowlist は Control DB の desired worker inventory を source of truth にする。
   desired worker inventory は setup/update が capability manifest から自動登録する。v1 では review を
   approval gate にはしないが、後からレビュー可能な diff / provenance / review state を保存する。
@@ -155,9 +161,9 @@ shardの安全上限とせず、storage size、query latency、overloaded error�
   対象 Worker ごとに 3 回連続成功を要求し、成功後も最短 30 秒の stabilization wait を置いてから
   tenant lifecycle / Runtime Registry / Tenant Lookup DB を同じgenerationで`active`にする。
 - `/settings` PATCH 後の reflected diff で既存 binding 喪失や scope mismatch を検出した場合は、
-  記録済み previous deployment へ即 rollback する。deployment rollback を 1 回試し、失敗または利用不能な
-  場合だけ、保存済み previous settings を `/settings` PATCH で復元する fallback を 1 回試す。
-  それでも復旧できなければ operation を `blocked` にする。
+  settings-patched deploymentをleaseでfenceしたまま、保存済みprevious settingsを`/settings` PATCHで1回だけ復元する。
+  Worker version rollbackは接続resourceを変更せず、その後のversion settings PATCHはprovider code `10214`で
+  拒否され得るため、このbinding補償経路では使わない。復元のreflected diffが一致しなければoperationを`blocked`にする。
   この場合もtenant lifecycle / Runtime Registry / Lookupは`pending`のままにし、shardは`failed`、D1とobserved bindingは
   保持して手動復旧に回す。
   `blocked` operation では Admin UI / CLI から inspect、retry step、restore previous settings、cancel、
@@ -213,8 +219,8 @@ shardの安全上限とせず、storage size、query latency、overloaded error�
   初期Admin UIはenvironment全体の1 toggleだけを表示し、eligibleな全role/partition policyをまとめてON/OFFする。
   partial failureやdriftは単純化して隠さず、aggregate statusのwarningとして表示する。
 - D1 disaster recoveryはv1ではCloudflare Time Travelを使うmanual runbookとし、Control Worker / Admin UIに
-  restore RPCを追加しない。復旧対象をquarantineし、restore後にmigration、Lookup projection、binding / routingを
-  reconcileしてから再activateする。定期R2 database exportは初期scopeに含めない。
+  Cloudflare restore RPCを追加しない。Admin UIは復旧operationの開始、手動restore完了のdigest-only確認、migration
+  検証、Lookup/binding進捗、明示的な再activateだけを扱う。定期R2 database exportは初期scopeに含めない。
 - external public release前のperformance checkは、test環境で固定した最小限のscenarioを手動実行し、
   事前に決めたabsolute thresholdとhard failureを確認する。広範なA/B matrixや自動workflowは初回公開の
   必須条件にせず、実装後の包括的なperformance tuningへ送る。
@@ -379,8 +385,8 @@ deployment-lease repositoryを呼び、Worker単位leaseを取得する。expect
 - `CLOUDFLARE_D1_API_TOKEN`: `D1 Write`。D1 database 作成、read replication mode更新・確認、
   migration SQL 実行、D1 smoke query に使う。
 - `CLOUDFLARE_WORKERS_API_TOKEN`: `Workers Scripts Write`。Worker `/settings` PATCH、settings 取得後の
-  reflected verification、`deployments` API による previous version rollback、Dynamic Workers dispatch namespaceの
-  作成・確認に使う。
+  reflected verification、`deployments` API によるsource/result fencing、Dynamic Workers Worker Loader bindingの
+  更新・確認に使う。Dispatch Namespaceの作成権限は要求しない。
 - `CLOUDFLARE_KV_API_TOKEN`: `Workers KV Storage Write`。plugin専用KV namespaceの作成・確認・quarantine/cleanupに使う。
   旧`/workers/namespaces` APIは使わず、`/storage/kv/namespaces` APIだけを使う。
 - `CLOUDFLARE_R2_API_TOKEN`: `Workers R2 Storage Write`。plugin専用R2 bucketの作成・確認・quarantine/cleanupに使う。
@@ -393,13 +399,13 @@ tokenがない状態で該当desired stateをactiveにしようとした場合�
 Control Worker の Cloudflare API client は operation type から使用 token を選ぶ。
 `createTenantDatabase`, `configureTenantDatabaseReadReplication`, `applyMigration`, `queryD1Smoke` は
 D1 token のみを使う。
-`attachTenantDatabaseBindings`, `rollbackWorkerDeployment`, `verifyWorkerBindings` は Workers token のみを使う。
+`attachTenantDatabaseBindings`, `restoreWorkerSettings`, `verifyWorkerBindings` は Workers token のみを使う。
 `createPluginDispatchNamespace`もWorkers tokenのみを使う。
 `createPluginKvNamespace`, `verifyPluginKvNamespace`, `cleanupPluginKvNamespace`はKV tokenのみを使う。
 `createPluginR2Bucket`, `verifyPluginR2Bucket`, `cleanupPluginR2Bucket`はR2 tokenのみを使う。
 plugin専用D1は他のD1 operationと同様にD1 tokenだけを使い、resource bindingはWorkers tokenだけを使う。
-つまり、rollback の A 案に相当する previous deployment 作成と、B 案に相当する previous settings restore は、
-どちらも Control Worker の `CLOUDFLARE_WORKERS_API_TOKEN` で実行できる。D1 token では実行しない。
+binding補償のprevious settings restoreはControl Workerの`CLOUDFLARE_WORKERS_API_TOKEN`だけで実行する。
+D1 tokenでは実行せず、previous code versionのdeployment作成も行わない。
 
 Phase 0 で実際に必要な最小 scope を検証し、token が対象 account / Worker script / D1 resource 以外を操作できない
 構成に寄せる。audit log には token value を残さず、`token_kind = d1 | workers | kv | r2` だけを記録する。
@@ -835,7 +841,7 @@ Cronがauthoritative account routeから各identifier rowをresumableに再proje
 previous decoderをRuntimeから外し、previous-schema rowが0件であることを再確認する。一度にdecode可能なschemaは
 current / previousの最大2 versionとし、未完了のschema migration中に次のmigrationを開始しない。
 
-119:Bのmanual performance checkでidentifier discoveryがp95 750 msを満たさない場合だけ、計測結果とKVの
+Decision 182 Bのmanual performance checkでidentifier discoveryがp95 400 ms / p99 750 msを満たさない場合だけ、計測結果とKVの
 read/write見積りを添えてper-account KV cacheを再検討する。KV追加はv1の前提にせず、採用時に署名、TTL、
 generation invalidation、key rotationを新しい設計判断として定義する。
 
@@ -1220,6 +1226,41 @@ API responseは、Lookup routeのactive化まで完了した場合を`201 Create
 budget超過後は`blocked`へ遷移する。account / allocation / pending Lookup rowは調査とresumeのため保持し、timeoutだけを
 理由にrollbackや自動削除を行わない。
 
+account publicationの`active` commitと同じTenant Core D1 batchで、reference-onlyの`account.created` lifecycle eventを
+作成する。event payloadはtenant/account/user/operation referenceとversionだけを持ち、emailなどのraw identifierを含めない。
+directory schedulerは次のpassでeventをleaseし、Plugin Runnerから`hook.account.lifecycle`の有効installationを最大32件で
+snapshotしてから、installationごとのidempotent `plugin_hook_outbox`へ展開する。Plugin Runner unavailableやresponse lossは
+source eventからretryし、account activation自体はplugin availabilityに依存させない。legacy `user.created` dispatcherは
+互換通知に限定し、durable plugin deliveryやactivation gateの成功条件にはしない。
+
+user deletionとexternal subject unlinkは、authoritative Core/PIIをfail closedにした後、同じroute projectionに対する
+blind-index-only removal outboxからLookup rowをdisabled、reservationをreleasedへ収束させる。HMAC rotation中のcleanupは
+新規書込み対象の`writeKeys`ではなく、検索対象であるcurrent/previous `readKeys`の全generationへ適用する。raw identifierを
+消去する前に全removal publicationを永続化し、response loss後は永続payloadだけから再開する。
+
+Admin UIのidentifier replacement表示は初期UIでは例外時だけとする。通常処理中は自動回復状態、
+`blocked_forward_repair`だけは固定されたoperation referenceとforward resumeを表示する。Admin APIはtenant/account scope、
+primary read、固定error codeを使い、raw email、HMAC digest、binding ref、内部例外を返さない。resumeはaudit成功後に同じoperationの
+lease/retry budgetを再開し、別operationを作らない。
+
+account routeをruntime requestへ適用する際、`tenant_core/default`のtenant metadata sourceと、Lookupで確定した
+`tenant_core/users` / `tenant_pii`のaccount sourceを同じ単一adapterへ混在させてはならない。request/isolate cache keyは
+`tenantId + path`だけでは不十分であり、active Lookup membership、account route generation、binding route generation、
+residency partitionを含むaccount route identityで分離する。認証前のemail/external subject、認証後のaccount/session reference、
+Admin exact searchのいずれから開始しても同じroute contractへ収束し、到達先でsubmitted identifierとactive account stateを
+primaryまたはbookmark付きreadで再確認する。
+
+Decision 166:A / 167:A / 168:Aとして、account本体、credential、cold session mirrorは固定account routeの
+`tenant_core/users`に置き、認証前の一時状態は既存Durable Object / `transient_auth`に置く。Session Durable Objectは
+`tenantId + accountId`を保持し、後続requestでaccount routeを再解決できるようにする。trusted account IDから開始する場合も
+`account_id` HMACを使ってactive physical Lookup D1を1個だけ読み、request-local / 10分isolate positive cacheと到達先の
+active account再確認を適用する。account routeをControl Workerのhot pathや別のper-account KVへ複製しない。
+
+runtime request contextは`TenantMetadataContext`と`AccountDataContext`に明示分離する。前者は
+`tenant_core/default`のtenant/client/policy metadataだけを持ち、後者はLookup membership、account route generation、
+residency partition、`tenant_core/users` / `tenant_pii` source、destination verification stateを持つ。account-awareな処理が
+`AccountDataContext`未解決のままmetadata sourceへfallbackすること、また両contextのadapterを暗黙に共有することを禁止する。
+
 ### Identifier replacement publication
 
 Self-service email変更はaccount作成とは別のidentifier replacement operationとして扱う。現在のself-service
@@ -1227,13 +1268,27 @@ Self-service email変更はaccount作成とは別のidentifier replacement opera
 によるemail変更は同じdirectory publication primitiveを使うが、self-serviceのreauth / OTP policyを流用せず、それぞれの
 authority contractで認可する。
 
+Decision 163:D / 164:A / 165:Aとして、replacement operation、step、retry、outboxのauthoritative stateは対象accountの
+Tenant PII D1に置く。Lookup D1はtenant-scoped uniqueness reservationとroute reflectionのverification gateであり、sagaの
+source of truthにはしない。`identity_sensitive_values`のemail rowは新旧2行を並存させず、authoritative switch時に同じrowを
+in-place更新する。old/new value、blind index、key generation、actor、authority、verification evidenceはimmutable replacement
+historyへ記録し、通常のaccount readからは分離する。raw emailをLookup、Control DB、routing outbox、audit logへ保存しない。
+PII erasure時はreplacement historyも同じerasure対象とし、operation整合性に必要な非可逆digestと状態だけを残す。
+
+Lookup HMAC rotationでcurrent/previousがactiveな間は、新email reservation、pending/active route、旧email disable/release checkを
+両generationへ適用する。一方だけ成功した状態をcompletedにせず、同じreplacement operation/outboxからforward repairする。
+grace完了後はprevious generationを通常cleanup対象にできる。
+
 1. initiating account sessionを確認し、5分以内のrecent reauthを要求する。
 2. 新emailへOTPを送り、所有確認と正規化を行う。active virtual bucket側Lookup D1でtenant-scoped reservationを取得し、
    同一tenant内に別accountの`reserved | active` emailがあればrejectする。同じemailが別tenantに存在することは許可する。
-3. Tenant PII D1へ新identifierを`pending`で作成し、old/new blind indexとimmutable route projectionを持つ
-   identifier replacement outboxを同じlocal transactionで作成する。raw emailはoutboxへ保存しない。
+3. Tenant PII D1へimmutable replacement operation/historyを作成し、old/new blind index、HMAC key generation、認可・検証
+   evidenceと、再開に必要なPII valueを保存する。同じlocal transactionでblind-index-only identifier replacement outboxを
+   作成し、raw emailはoutboxへ保存しない。
 4. 新emailのLookup rowを`pending`で作成し、reflected route / generationを検証する。
-5. Tenant PII D1のlocal transactionで新emailを`active + verified`、旧emailを`disabled`へ切り替える。
+5. Tenant PII D1のlocal transactionで既存`identity_sensitive_values` email rowを新emailへin-place更新し、replacement
+   operationをauthoritative switchedへ進める。旧emailはimmutable history上だけに残し、authoritative identifierとしては
+   即時無効にする。
 6. 新email Lookup rowを`active`、旧email Lookup rowを`disabled`へ収束させる。旧Lookup rowが一時的に残っても、
    Tenant D1 authoritative identifier checkで旧email loginをfail closedにする。
 7. primary consistencyで新emailのexact LookupとTenant D1 authoritative checkを実行する。
@@ -1243,9 +1298,11 @@ authority contractで認可する。
    plugin retry / dead letter / observabilityで扱う。
 10. step 7と必須revocationが完了して初めて`200 OK`を返す。
 
-旧email reservationはstep 5で`releasing`へ遷移し、旧authoritative identifierと旧Lookup rowがともにdisabled、replacement
-operationがcompleted、同じidentifierを参照するpending operationがないことをprimary repair checkで確認してから解放する。
-retry/blocked中は保持し、lease expiryだけで別accountへ再利用させない。
+旧email reservationはstep 6で`releasing`へ遷移し、旧authoritative identifierと旧Lookup rowがともにdisabled、必須revocationと
+security notification enqueueが完了し、同じidentifierを参照するpending operationがないことをprimary repair checkで確認する。
+その後、terminal `completed` commitの直前に`released`へ進める。retry/blocked中は保持し、lease expiryだけで別accountへ
+再利用させない。新しいoperationは`released`、または前operationがauthoritative switch前に終了して期限切れとなった`reserved`
+rowだけをatomic upsertで再取得できる。
 
 step 5以降でLookup publicationまたはrevocationが未収束なら`202 Accepted + operation_id`を返し、Account UIは
 `processing`としてpollingする。initiating sessionはoperationの成否確認に使えるよう維持する。新emailでの再loginを
@@ -1266,6 +1323,11 @@ maintenanceとは`event.cron`で分岐し、同じhandler invocationへ混在さ
 1. account routing outboxのdue retry
 2. active HMAC rotationのresumable reindex batch
 3. Lookup bucket counterのbounded reconciliation
+
+Identifier replacementはTenant PII outboxをsource of truthとするため、上記Lookup DB cursor classには混在させない。同じ2分Cron内で
+先にAdmin DBのfenced shard cursorを取得し、1回最大100 PII shardを走査、最大25 operationだけを共通outbox lease経由で再開する。
+request-time status resumeも同じleaseとnext-attempt gateを使い、provider/binding一時障害は指数backoff、reservation/gate整合性違反は
+authoritative switch前なら`canceled`、切替後なら`blocked_forward_repair`へfail closedする。
 
 各classは独立したlease、cursor、最大行数、wall-clock budgetを持つ。上位classがbudgetを使い切った場合、下位classは
 checkpointを変更せず次回へ送る。Cron invocationが重複しても同じoutbox、rotation shard、counter reconciliation cursorを
@@ -1612,6 +1674,9 @@ Plugin credential policy:
 - `PLUGIN_ENCRYPTION_KEY` / `PLUGIN_ENCRYPTION_SALT` は、plugin config を保存・復号する Worker だけに配る。
   少なくとも `ar-management` と Plugin Runner Worker が対象になる。同期 hook も Plugin Runner RPC へ寄せるため、
   Runtime Worker へ plugin credential 復号用 secret を配らない。
+- `PLUGIN_MUTATION_HMAC_KEY` は Plugin Runner だけに配り、credential replacement と typed mutation の durable
+  idempotency fingerprint に使用する。plugin config encryption key rotation とは独立した寿命とし、値を
+  Dynamic Worker、Runtime Worker、Management Workerへ渡さない。
 - Plugin Runner / host gateway は credential を復号し、outbound request に header/body として注入する。
   Dynamic Worker plugin code へ credential value を binding / env / props / config として渡さない。
 - 現行実装では Resend は `apiKey` を `secretField` として宣言し、Admin API が secret field を暗号化して
@@ -1660,8 +1725,9 @@ Dynamic Worker plugin binding policy:
 - 初期実装で作成できる plugin 専用 resource は tenant-scoped のみとする。manifest / Control DB には
   `resource_scope = tenant | platform | plugin_install_instance` を表現できるようにするが、v1 の validator と
   Control Worker は `tenant` 以外を reject する。
-- Workers for Platforms / Dynamic Workers の dispatch namespace や user Worker bindings を使う場合も、
-  binding metadata は Control DB desired state に記録し、Control Worker が reconcile する。
+- Dynamic Workers の Worker Loader bindingとhost側custom bindingもControl DB desired stateに記録し、
+  setup/Controlの共通binding reconcilerが反映する。Dynamic Workerへraw Cloudflare resourceを直接渡さず、
+  host Workerのloopback entrypointでtenant/plugin/capability scopeを固定する。
 - plugin worker の actual bindings は observed state として取り込み、未承認 binding、missing binding、scope mismatch を
   drift として扱う。
 
@@ -1716,17 +1782,19 @@ Runtime Registry snapshot には既に `deployment_target`, `shard_group`, `shar
    更新するoperationはscript nameの安定順でleaseを取得し、deadlockを防ぐ。
 2. Cloudflare actual settings、active deployment、source versionを取得して`expected_source_version`として固定する。
 3. 現在のbindingをparseし、desired binding setとdiffを取る。
-4. 既存の変更しないbindingは、secretを含め原則`{ type: 'inherit', name, version_id: expected_source_version }`で継承し、
-   new D1 bindingだけを明示objectとして追加する。rename時だけ`old_name`を使う。
+4. 既存の変更しないbindingは、secretを含め原則`{ type: 'inherit', name, version_id: 'latest' }`で継承し、
+   new D1 bindingだけを明示objectとして追加する。rename時だけ`old_name`を使う。Cloudflareがimmutable version IDを
+   provider code `10057`で拒否することをlive検証したため、`latest`は手順2/6のimmutable expected source fencingと
+   手順8のexactly-one deployment / reflected settings検証を伴う場合だけ許可する。
 5. annotations、compatibility、placement、limits、observability、tail consumer等のnon-binding settingsについて、APIの
    field別inherit/replace semanticsに従うpreservation matrixを適用する。GET結果を盲目的に再送せず、未対応fieldはhard failする。
 6. patch直前にactive deployment/versionとlease fencing tokenを再確認し、変化していれば再baseしてpreflightをやり直す。
 7. `/settings` PATCH を`multipart/form-data`の`settings` fieldで送り、inherit bindings + new desired bindingsを反映する。
 8. reflected settings と deployments を再取得して desired state と照合する。既存 binding 喪失や scope mismatch を
-   検出した場合は previous deployment へ即 rollback する。rollback は `deployments` API で記録済み previous
-   version を 100% active に戻す経路を primary とし、1 回だけ試す。それが失敗または利用不能な場合だけ、
-   保存済み previous settings を `/settings` PATCH で復元する fallback を 1 回試す。いずれの復旧も reflected diff で検証し、
-   復旧できなければ operation を `blocked` にする。この時点でも tenant lifecycle、Runtime Registry route、Lookup row は
+   検出した場合は、settings-patched deploymentがまだactiveであることとlease fencingを再確認し、保存済みprevious
+   settingsを`/settings` PATCHで1回だけ復元する。Worker version rollbackは接続resourceを戻さず、旧versionへ
+   戻した後のversion settings PATCHはprovider code `10214`で拒否されるため、このsettings-only補償では実行しない。
+   復元もreflected diffで検証し、復旧できなければoperationを`blocked`にする。この時点でもtenant lifecycle、Runtime Registry route、Lookup row は
    `pending` のままにし、
    shard は `failed`、D1 resource と observed binding state は調査・手動復旧のため保持する。
    patch後に別deploymentがactiveになった場合は、それをprevious versionへ自動rollbackせずconcurrent driftとして`blocked`にする。
@@ -1863,7 +1931,7 @@ cleanup operation も通常 operation と同じ retry / blocked / audit policy �
 4. setup tool が Control Worker を deploy し、必要な Worker secrets を設定する。
 5. setup tool が Control Worker と共有する provisioning adapter で Tenant Lookup D1 と initial tenant shard D1 core/PII を
    deterministic name で作成し、migrationを適用する。
-6. setup tool が同じ binding diff / version-pinned inherit / settings preservation contract で Runtime Worker 群へ initial
+6. setup tool が同じ binding diff / deployment-fenced `latest` inherit / settings preservation contract で Runtime Worker 群へ initial
    shard binding を付ける。
 7. setup tool が Runtime Worker 群を dependency-safe order で deploy する。
 8. setup tool が作成した resource、binding、release、deployment の desired / observed state と ownership fingerprint を
@@ -1872,13 +1940,78 @@ cleanup operation も通常 operation と同じ retry / blocked / audit policy �
    `bootstrap_handoff = accepted`にする。不一致時は自動adoptせず環境を`blocked`にする。
 10. first tenant を作成し、Tenant Lookup DB / runtime registry / tenant lifecycleを`pending`で準備する。
 11. 全対象Workerのsmokeとstabilization waitを完了する。
-12. Control Workerがruntime registry / Tenant Lookup DBを同じgenerationでactive・read-backし、最後に`ar-management`が
-    tenant lifecycleを同generationでactive化する。
+12. `ar-management`がControl Workerのnarrow signing RPCでruntime registryを署名・publishし、Management所有の
+    Tenant Lookup DBを同じgenerationでactive・read-backする。Control route commitのreflection確認後、最後に
+    `ar-management`がtenant lifecycleを同generationでactive化する。
 13. direct host/issuer routeとemail discoveryの両方をsmokeしてから環境をreadyにする。
 
 初回環境構築ではsetup toolがoperatorから渡された短命Cloudflare API credentialを使ってbootstrapしてよい。
-`bootstrap_handoff = accepted`後の tenant/shard resource mutation は Control Worker に集約する。setupとControl Workerは
-Cloudflare adapter、validation、deterministic naming、idempotency、audit schemaを共有し、bootstrap専用の別挙動を作らない。
+`bootstrap_handoff = accepted`後も setup は release/deployment plane と operator executor として存続する。
+禁止するのは Control DB operation、共通 planner、lease/fencing を経由しない legacy な直接 mutation であり、setup が
+Wrangler OAuth または明示 operator credential を使って正規 operation を実行することは禁止しない。setup と Control Worker は
+Cloudflare adapter、validation、deterministic naming、idempotency、audit schemaを共有し、bootstrap専用または
+post-handoff専用の別挙動を作らない。
+
+### Final setup and automatic-provisioning authority
+
+この節を setup の使い捨て、post-handoff authority、Control Worker token bootstrap に関する以前の記述より優先する。
+
+責務境界:
+
+- setup は release/deployment plane を担当する。初期環境構築、version update、Worker deploy/rollback、全体 migration、
+  Control Worker 自身の更新、環境全削除、operator による D1 create/scale-out/retry/repair を継続して提供する。
+- Control Worker は provisioning plane を担当する。tenant/shard D1 create、migration、binding、smoke/stabilization、activation、
+  capacity monitoring、自動 scale-out、operation status を実行する。
+- Control Worker の自己更新・自己削除と Finalizer Worker は v1 に導入しない。
+- setup と Control Worker の相違は credential provider と executor identity だけである。desired/operation state machine、naming、
+  ownership fingerprint、placement/capacity/resource-cap validation、response-loss reconciliation、migration checksum、binding diff、
+  settings preservation、smoke/activation gate、retry/idempotency、lease/fencing、audit/status は共通 Provisioning Engine を使う。
+
+`Automatic provisioning` は setup CLI/Web で任意選択とする。新規tenant-D1環境の対話wizardでは管理者作業を減らすため
+ONを推奨初期選択とする。一方、既存configのimport、noninteractive実行、またはfield欠落時はcredentialの存在を推測せず
+fail-closedでOFFとする。operatorが`Skip`を選んだ場合も明示的にOFFを保存する。
+
+既存のtenant-D1環境がOFFの場合も、setup Webのenvironment Overviewから同じone-time bootstrap flowを開始できる。
+setupはControl DB authorityを`pending`へ遷移させてから共通deploy engineを実行し、全Workerの成功後にだけchild tokenを
+登録してbootstrap tokenを失効する。CLIはtoken templateを開く処理とmasked inputを全Worker deploy成功後まで遅延する。
+Webでtoken入力後にprepareまたはControl deployが失敗した場合は、setup sessionとexact loopback Originで保護したcleanup
+routeへ同じtokenを一度だけ渡してbootstrapを失効する。失効を確認できない場合はONをreadyとして扱わず、Dashboardでの
+manual cleanupを明示して同じsetup画面からretry/repairする。
+
+- ON: operator は Cloudflare Dashboard の権限指定済み link から一時 bootstrap token を1個だけ作る。setup は対象 account 限定の
+  D1 token と Workers Scripts token を別々に発行し、capability が要求する場合だけ KV/R2 等の token も発行する。child token は
+  Control Worker secret へ直接登録・検証し、最後に bootstrap token を失効する。Dashboard session は Wrangler OAuth と独立して
+  おり、Dashboard 側で再ログインが必要な場合がある。
+- OFF/Skip: Control Worker に Cloudflare API token を保存しない。Control Worker は新規 provisioning operation を自動実行せず、
+  `operator_action_required` として保持する。setup CLI/Web は Wrangler OAuth または明示 operator credential で同じ operation を
+  claim し、共通 engine で実行できる。既存 routing は維持し、shared shard や別 credential へ fallback しない。
+- token が失効、権限不足、account 不一致の場合は ON と扱わない。新規 operation を fail closed で `blocked` または
+  `operator_action_required` にし、既存 route を変更しない。Control の D1 create / migration または Worker binding reconciliation が
+  401/403 相当の capability rejection を観測した場合は、operation の block と environment の
+  `provisioning_capability_state = blocked`、secret-free audit evidence を同じ Control DB batch で確定する。
+
+token secret は bootstrap/child のいずれも lock、`.authrim`、`.authrim-key`、config、Control DB、generated artifact、log、audit、
+Web response に保存しない。CLI は masked input、Web は `type=password` と `autocomplete=off`、loopback、CSRF/session token、
+exact Origin を要求する。token は CLI argument に渡さず、response loss で値不明の token を adopt しない。部分失敗では作成済み
+child token と bootstrap token を可能な限り失効する。child作成前のprepare/deploy failureでも、入力済みbootstrapを専用cleanup
+routeで失効する。cleanup 未確認を成功扱いにしない。CI/上級者向け direct split-token input はfallback として残す。
+
+custom Dynamic Worker backendはWorkers for PlatformsやDispatch Namespaceではなく、Workers Paid planの通常Dynamic Workers
+Worker Loaderを使う。`features.pluginDynamicWorkers.enabled = true`のときだけ`PLUGIN_LOADER`とcontent-addressed bundle用
+`PLUGIN_BUNDLES` R2 bindingを生成する。loader、R2 bundle、digest、active installation artifactのいずれかが欠ける場合は
+provider unavailableとしてfail closedにし、custom pluginをin-processへ暗黙fallbackさせない。組み込みproviderと
+Plugin Runnerのin-process backendはWorker Loaderなしで動作する。
+
+manual scale-out の capacity input は raw D1 count ではなく次の profile とする。
+
+1. `minimum`: 現在の不足を解消する最小 valid capacity unit。
+2. `recommended`（default）: low-watermark、使用量、in-flight allocation、target capacity から planner が算出。
+3. `extra_headroom`: recommended に spare capacity unit を1つ追加。
+
+preview は unit ごとの D1 数、data role、residency、Worker binding を表示する。tenant-exclusive は tenant、shared pool は
+environment/shared pool を scope とし、residency/data role は server-owned plan から導出する。database name、binding name、IDは
+編集不可とし、tenant policy、resource cap、Cloudflare limit に反する profile は fail closed にする。Web/CLI/Admin/Control は
+同じ planner を呼ぶ。
 
 ### Control Worker deploy / rollback ownership
 
@@ -1890,7 +2023,9 @@ setup tool が Control Worker の deploy / rollback を担当する。
 - setup tool: Control Worker / Runtime Worker package deploy・rollback、Worker secrets設定、Control DB bootstrap、R2 release
   upload、release catalog登録、generated artifact export、および`setup init`中のinitial Lookup / first shard bootstrap。
   短命operator credentialを実行時だけ使う。
-- Control Worker: D1 create/delete guard、migration apply、Worker binding reconciliation、runtime snapshot signing、routing publish。
+- Control Worker: D1 create/delete guard、migration apply、Worker binding reconciliation、route reservation/commit、runtime
+  snapshot signing。Lookup HMAC keyとLookup D1 mutation authorityは持たない。
+- ar-management: Control署名を使ったruntime snapshot publish、Lookup account/alias directory mutation、tenant activation saga。
 - generated lock / wrangler config: Control DB から再生成される deploy input。手編集される source of truth ではない。
 
 rollback policy:
@@ -1987,8 +2122,9 @@ tenant creation は shard capacity が既にある場合、Cloudflare API mutati
 8. tenant database registry / active pointer を `pending` として更新する。
 9. `route_status = pending`のruntime registry snapshotをpublishする。Runtimeはpending routeを使用しない。
 10. ready shardのbinding/migration smokeとtenant-specific resolver smokeを実行する。
-11. Control Workerがruntime registry entry / Tenant Lookup DBをactive・read-backし、最後に`ar-management`がtenant rowを
-    同generationでactive化して3 stateのreflected readを確認する。
+11. `ar-management`がControl署名済みruntime registry entryとManagement所有Tenant Lookup DBをactive・read-backし、
+    Control route commitのreflection確認後、最後にtenant rowを同generationでactive化して3 stateのreflected readを
+    確認する。
 
 Activationはtenant row、runtime registry、Tenant Lookup DBの3 stateがすべて`active`であることを要求する。
 email discoveryだけでなくhost/issuer/custom-domain direct routeも同じgateを通るため、途中で失敗してもLogin UI / runtimeが
@@ -2045,7 +2181,8 @@ cache hit/miss別のe2e latencyで検証する。
 ### Deferred comprehensive measurements
 
 次のmatrixは初回external public releaseの必須gateにはしない。実際の利用規模、Cloudflare analytics、
-manual checkの結果から優先度を付け、公開後の包括的なperformance tuningで段階的に測る。
+manual checkの結果から優先度を付け、後続の包括的なperformance tuningで段階的に測る。現在の
+Phase 0-9 goalからは外し、`FOLLOW_UP_TASKS.md`で管理する。
 
 - account cardinality: 10k / 100k / benchmarkが安全に進められるgeometric steps
 - physical shards: Lookup 1 / N、users 1 / N、PII 1 / N
@@ -2065,10 +2202,13 @@ Admin fan-out shard数を保存する。D1 account count targetとruntime perfor
 
 external public release / main PR前に、test環境で最小限のmanual checkを1回実行する。初回実装では
 自動performance workflowや全matrix A/B比較を要求しない。30秒warm-up後、identifier discovery / routingを
-25 RPSで5分、Mail OTP full loginを25 LPSで5分実行する。
+50 RPSで5分、production TOTP full loginを25 LPSで5分実行する。実Mail OTP deliveryは少量smokeとして別に確認する。
 
-両scenarioともsuccess rate 99.5%以上を要求し、identifier discovery / routingはp95 750 ms以下、Mail OTP
-full loginはp95 1.5秒以下とする。run中の新routing由来5xx、timeout、D1 overloadedは0件を要求する。
+identifier discovery / routingはsuccess rate 99.9%以上、p95 400 ms以下、p99 750 ms以下を要求する。TOTP
+full loginはsuccess rate 99.5%以上、full-flow p95 5秒以下、TOTP送信からToken完了までのp95 3秒以下とする。
+各単独処理は原則p95 1秒以下、TOTP verifyとTokenはp95 1.5秒以下、すべての単独処理はp99 2秒以下とする。
+run中のdropped iteration、新routing由来5xx、
+timeout、D1 overloadedは0件を要求する。
 
 結果はmanual release checklistへ記録する。次は数値thresholdとは別のhard failureとする。
 
@@ -2079,7 +2219,7 @@ full loginはp95 1.5秒以下とする。run中の新routing由来5xx、timeout�
 - 新routing由来のtimeout / D1 overloaded / 5xxが1件でも発生する。
 
 manual checkが未実行または未達の場合、architecture選択は保持しつつもmain PR / external public releaseは
-blockedにする。D1-only identifier pathがp95 750 msを超え、traceでLookup D1 hopが主要因と確認できた場合だけ、
+blockedにする。D1-only identifier pathがp95 400 msまたはp99 750 msを超え、traceでLookup D1 hopが主要因と確認できた場合だけ、
 per-account KV cacheを新しい設計判断として再検討して同じcheckを再実行する。閾値の変更はmanual checklistに
 理由を残し、後続の包括的なperformance tuningで再評価する。
 
@@ -2096,6 +2236,9 @@ per-account KV cacheを新しい設計判断として再検討して同じcheck�
   resolver contractを使う。
 - account routeはrequest-local + 10分isolate memoryだけをpositive cacheし、miss時はLookup D1 Sessions APIで
   exact readする。v1ではper-account route用Workers KVとaccount route署名を実装しない。
+- 166:A / 167:A / 168:Aとして、account/credential/cold session mirrorは`tenant_core/users`、pre-authは既存DO、
+  Session DOは`tenantId + accountId`を保持する。trusted account IDもHMAC Lookup経由でrouteを再解決し、runtime contextは
+  `TenantMetadataContext`と`AccountDataContext`へ分離する。
 - generationはLookup bucket assignment、per-account route、HMAC keyに分離し、通常のaccount追加でdirectory全体の
   route stateを無効化しない。
 - isolate cacheはrouting hintに限定し、到達先Tenant D1でidentifier / account stateを再確認する。binding不在や
@@ -2136,14 +2279,88 @@ D1 REST APIの`query | raw | import`選択、migration statement分割、capacit
 performance tuning値はspike / benchmark / implementationで決定し、architecture設問にはしない。全監査対象の決定が
 完了しており、新しいcross-cutting conflictが実装中に発見されない限り、追加設問を予定しない。
 
+### Decision follow-up (2026-07-30, resolved)
+
+Phase 5のAuth runtime接続中に新しいcross-cutting conflictが判明した。Cloudflare Service Bindingは初回deploy時に
+target Workerが既に存在する必要がある。AuthからManagementの専用account-provisioning entrypointを呼ぶ一方、
+ManagementはAuth所有`DirectoryConnectorRelay` Durable Objectを参照するため、そのままでは初回deployが循環する。
+Version uploadもbinding targetの存在要件を取り除かない。
+
+| Decision | Options | Recommendation | State |
+| --- | --- | --- | --- |
+| 169: Auth account creation Worker boundary | A: Auth bootstrap deploy without provisioning binding, Management deploy, Auth full redeploy; B: narrow Control allocator and Auth direct writes; C: dedicated provisioning Worker; D: asynchronous Queue | A keeps the approved privilege and ownership boundary | **A approved** |
+| 170: Native SSO device-secret routing | A: DO stores trusted tenant/account hint and users D1 remains authoritative; B: add device-secret HMAC Lookup kind; C: bounded users-shard fan-out; D: disable on tenant-D1 | A matches decisions 166/167 without expanding Lookup schema | **A approved** |
+| 171: account directory publication returns 202 | A: generic retry response; B: Challenge DO operation plus Login UI polling/resume; C: bounded in-request retry then retry response; D: continue before activation | B preserves the activation gate and removes manual retry | **B approved** |
+
+Decision 169:Aとして、Setupの初回deployに限定したbootstrap Auth config、Management deploy、full Auth redeploy、最終
+binding/readiness smokeを一つのoperationとして実装する。通常updateはbootstrap configを使わない。Decision 170:Aとして、
+Native SSO device-secretのDurable Object recordへtrusted `tenantId + accountId` hintを保存し、credential/account authorityは
+`tenant_core/users`に維持する。Decision 171:Bとして、`202`のoperation referenceをChallenge DOへ保持し、Login UIは自動pollingと
+resumeを行う。待機中はspinnerと簡潔なprocessing stateを表示し、activation前accountで認証処理を続行しない。
+
+### Runtime routing follow-up (2026-07-30, resolved)
+
+| Decision | Options | Recommendation | State |
+| --- | --- | --- | --- |
+| 172: discoverable passkey routing | A: tenant hint plus bounded fan-out; B: credential ID HMAC Lookup; C: dedicated routing Durable Object; D: disable username-less passkeys | B keeps exact single-shard routing and avoids user enumeration | **B approved** |
+| 173: email-less anonymous account allocation | A: temporary account only; B: random allocation to the normal users shard pool; C: tenant default then move; D: dedicated anonymous shard | B keeps one account architecture without later data movement | **B approved** |
+| 174: external IdP JIT continuation | A: Auth direct write; B: durable provisioning plus Challenge DO poll/resume; C: temporary continuation token; D: disable JIT | B reuses the activation gate and the approved pending-account UX | **B approved** |
+
+Decision 172:Bでは、discoverable credentialのcredential IDをHMAC Lookupのexact keyとして
+`tenantId + accountId + users/PII route`を解決する。WebAuthn `userHandle`はRP内のcanonical account IDに対応する
+opaqueで安定した値だが、単独のrouting authorityにはしない。Lookup解決後、credential record、`userHandle`、destinationの
+canonical accountが一致することをprimary readで再確認し、cross-tenant/cross-account credentialをfail closedにする。
+Decision 173:Bではemailを持たないanonymous accountも通常の`tenant_core/users` poolへleast-loaded/random candidateで
+固定割当し、専用architectureや後続moveを導入しない。Decision 174:Bではexternal IdP JITもAuthからManagementのdurable
+provisioning operationを開始し、Challenge DOにoperation referenceを保持してLogin UIがspinner付きでpoll/resumeする。
+activation完了前のaccountではsession/token発行へ進まない。
+
+### External IdP token refresh follow-up (2026-07-30, resolved)
+
+Decision 174のruntime/operations reviewで、既存のproactive external access-token refreshがtenant単位で
+`tenant_pii`既定sourceだけを走査していたことが判明した。active PII shard inventoryをBridgeからControl tokenなしで
+取得する限定Management RPC、bounded shard page単位のtenant cursor、active identity限定、同一PII source更新、query失敗時の
+cursor非進行までは実装済みである。ただし、15分Cronで全tenant x 全PII shardを巡回して全linked identityを常時refresh
+する方式はshard数に比例し、100〜1,000 D1規模で期限前更新のSLAと低コスト方針を両立しにくい。
+
+| Decision | Options | Recommendation | State |
+| --- | --- | --- | --- |
+| 175: external provider access-token refresh | A: 利用時にexact account routeでon-demand refreshし、全identity proactive scanを既定無効化; B: shard cursor付きproactive scanを継続; C: on-demandを基本にbackground provider APIを使うaccountだけdurable refresh対象へ登録; D: 現行の全tenant x shard scanを拡張 | A is the lowest-cost scalable baseline; C can be added when a concrete background provider API requires warm tokens | **A approved** |
+
+全identity proactive scanは既定無効とし、保存済みaccess tokenを将来provider APIで利用する処理はexact account routeで
+必要時refreshする。現時点のprovider API利用はlogin callback直後の新しいtokenに限定されるため、未使用のglobal scanを
+on-demand経路とは扱わない。明示的なtenant保守run向けにbounded shard inventory/cursorは保持する。既定の
+`piiShardPageSize = 4`はFree Planの製品制限ではなく1 invocationの保守的なfan-out上限であり、Admin設定から
+`1..32`へ変更できる。Paid Plan等で増やす場合もboundedのままとし、負荷・subrequest・D1 read量を観測して調整する。
+Cloudflare API tokenは引き続きControl以外へ渡さず、BridgeはManagementの固定`tenant_pii` inventory RPCだけを利用する。
+
+### Custom Dynamic Worker activation follow-up (2026-07-31, resolved)
+
+| Decision | Question | Approved result |
+| --- | --- | --- |
+| 176 | Where is the platform-approved manifest read during tenant enable? | **B:** Control DB is authoritative; setup writes a digest-verified runtime projection to Plugin Runner D1 |
+| 177 | Does publication update existing tenants automatically? | **A:** one platform active version; tenant enable pins it; only explicit rollout changes an existing pin |
+| 178 | Who owns provider credential destination/injection metadata? | **A:** manifest declares bounded slots; Admin supplies values; Runner encrypts and host gateway injects |
+
+Setupは承認済みmanifest digest、policy、credential slot、active version pointerのみをRunnerへ投影する。tenant enableは
+Control RPCや生成fileを参照せず、Runner内の検証済みprojectionからserver-side installation IDとartifact pinを決定する。
+Managementはversion digest、R2 key、script名、送信先host、header名を指定できない。custom credential valueはSettings KV、
+Control DB、生成物、Admin response、audit payloadへ保存せず、Runner D1の暗号化configとhost gatewayだけが扱う。
+
+runtime target解決はactive manifest、tenant-pinned artifact、published versionを同時に検証する。built-in ID衝突、missing/revoked
+projection、required credential不足、cross-tenant identity、unknown slot、mapping mismatchはすべてfail closedとする。新versionの
+publicationは既存tenantを暗黙更新せず、明示rolloutだけが旧artifactをretireして新artifactをactive化する。
+
 ## Consistency and security audit (2026-07-29)
 
-全文、旧multi-tenant資料、Phase 0 evidence、現行setup deploy pathを再確認した。製品判断としての未決事項は残っていない。
+全文、旧multi-tenant資料、Phase 0 evidence、当時のsetup deploy pathを再確認し、この監査時点の製品判断は確定した。
+その後のPhase 5 runtime接続で発見したAuth/Management初回Service Binding循環とpending signup UXは、後述の
+2026-07-30追補で判断を保留している。
 次の不整合は本版で修正済みである。
 
 - setupを初回専用に縮退させず、deploy / rollback / secret更新 / release登録を継続する一方、`setup init`のbootstrap例外と
   handoff accepted後のControl Worker single-writer境界を分離した。
-- binding更新を単純なGET/append/PATCHから、version-pinned inherit、settings preservation matrix、Worker-scoped lease /
+- binding更新を単純なGET/append/PATCHから、deployment-fenced `latest` inherit、settings preservation matrix、Worker-scoped lease /
   fencing、newer deployment保護へ強化した。
 - tenant公開gateをLookup / Registryの二者表現から、tenant lifecycle / Runtime Registry / Lookupのsame-generation三者へ
   統一し、direct host/issuer pathと観測済みquarantine denyにも適用した。
@@ -2171,7 +2388,7 @@ performance tuning値はspike / benchmark / implementationで決定し、archite
 Security postureは、以下のvalidationをexternal public release / main PRのblocking gateにする限り妥当と評価する。
 いずれも追加の製品判断ではなく、失敗時は実装修正またはrelease blockとする。
 
-1. 全binding種別とnon-binding settingsのversion-pinned inherit/preservation live API matrix。
+1. 全binding種別とnon-binding settingsのdeployment-fenced `latest` inherit/preservation live API matrix。
 2. setup partial deployとControl Worker reconciliationのlease/fencing競合試験、およびbootstrap handoff改ざん/欠落試験。
 3. discovery OTPのenumeration、replay、rate-limit、delivery side-channel試験。
 4. HMAC active-key switch直前/直後のpartial rolloutとrewrite lock recovery試験。
@@ -2219,7 +2436,7 @@ Tasks:
   `conformance` 環境は触らない。
 - D1 create / query / raw / import の request/response を実測する。
 - Worker settings API で D1 binding append ができることを確認する。
-- version-pinned`type = inherit`でsecret / Service Binding / KV / R2 / DO / dispatch namespace等を値の読み戻しなしに保持し、
+- deployment-fenced `version_id = latest`の`type = inherit`でsecret / Service Binding / KV / R2 / DO / Worker Loader等を値の読み戻しなしに保持し、
   annotations / placement / observability / tail consumerを含むsettings preservation matrixを確認する。
 - settings patch 後に version/deployment がどう扱われるかを確認する。
 - settings update が即 active 化する場合の rollback / safety guard と routing gate を確認する。
@@ -2247,6 +2464,9 @@ Exit criteria:
 Tasks:
 
 - `test`環境のdisposable D1にcore / PII / Lookupの代表migrationを適用する。
+- live harnessはsetupのoperator credential providerを再利用し、ローカルのWrangler OAuth sessionでD1を操作する。
+  accountは`--account-id`、`CLOUDFLARE_ACCOUNT_ID`、Wrangler accountの順で確定して一致を検証し、
+  benchmark専用API tokenをlock、config、証跡、コマンドラインへ保存または受け渡ししない。
 - synthetic account / subject / identifier / credential / routing indexを段階的に投入し、少なくとも10k、100kと、
   そこから先の安全に実行できるgeometric stepを測る。
 - account ID exact、email HMAC exact、external subject HMAC、tenant-scoped account read、account create + routing outbox、
@@ -2262,6 +2482,23 @@ Exit criteria:
 - targetを超えてもcorrectnessが壊れず、補充警告とleast-loaded placementだけが変化する。
 - benchmarkを再実行してdeployment / schema / Cloudflare runtimeの変化に合わせてtargetを更新できる。
 
+Live calibration result (2026-07-31, `test` account):
+
+- Wrangler OAuthのoperator credential providerでcore / PII / Lookupのdisposable D1を作成し、draft `0.4.0`の
+  38 / 6 / 2 migration filesをchecksum検証後に適用した。
+- 10k、100k、200k accountの全段階でexact lookup、tenant read、account create + routing outbox、Admin pagination、
+  5 concurrent writers、index migrationはerror 0だった。200kでもcorrectness failureやD1 overloadedは観測しなかった。
+- database sizeは100kでcore 105,693,184 bytes、PII 118,845,440 bytes、Lookup 211,398,656 bytes、
+  200kでcore 208,130,048 bytes、PII 237,957,120 bytes、Lookup 425,975,808 bytesだった。
+- Cloudflare D1の現行上限はFree planで1 database 500 MB、Workers Paidで10 GBである。Lookupはbenchmark上
+  1 account当たり3 index rowを持ち、200kではFree上限への余裕が小さい。このためv1のenvironment defaultは
+  **`target_account_count = 100000`**とする。これはhard row limitではなく、20% low-watermarkとplannerが使う
+  operational targetである。Paid planでも初期defaultは同じとし、実測とstorage policyを明示変更した環境だけ増やす。
+- harnessが記録した3 databaseの削除成功に加え、Cloudflare D1 inventoryにbenchmark prefixが残っていないことを
+  確認した。raw JSON evidenceはsecret-free local operational evidenceとして`performance/`に保持する。
+
+Cloudflare limit source: <https://developers.cloudflare.com/d1/platform/limits/>.
+
 ### Phase 0c: Minimal manual routing performance gate definition
 
 目的: D1 shard capacityとは別に、新しいLookup / cache / routingが明らかなlatency / error regressionを
@@ -2273,14 +2510,113 @@ Exit criteria:
 Tasks:
 
 - test環境で各scenarioの30秒warm-upを行い、warm-up結果は判定から除外する。
-- identifier discovery / Lookup D1 route resolutionを25 RPSで5分実行し、success rate 99.5%以上、p95 750 ms以下を確認する。
-- Mail OTP full loginを25 LPSで5分実行し、success rate 99.5%以上、full-flow p95 1.5秒以下を確認する。
+- identifier discovery / Lookup D1 route resolutionを50 RPSで5分実行し、success rate 99.9%以上、p95 400 ms以下、p99 750 ms以下を確認する。
+- production TOTP full loginを25 LPSで5分実行し、success rate 99.5%以上、full-flow p95 5秒以下、
+  TOTP送信からToken完了までのp95 3秒以下を確認する。初回Authorize、TOTP start、post-login Authorizeは
+  p95 1秒以下、TOTP verifyとTokenはp95 1.5秒以下、各単独処理p99は2秒以下とする。
+  test専用OTP取得や認証bypassは使わない。Mail OTPは実providerを通す少量smokeを別に残し、メール配送providerの
+  throughputやmailbox取得時間をAuthrim runtimeの持続負荷gateへ混ぜない。
 - 新routing由来の5xx、timeout、D1 overloadedを0件とする。
 - coldまたはsemi-cold requestを各scenarioで3回実行し、latencyと`served_by_region` /
   `served_by_primary`を記録するが、初回は数値gateにしない。
 - result、実行日時、commit、test environment、実行元regionをmanual release checklistへ記録する。
 - identifier discovery未達時はrequest/isolate hit、Lookup D1 query、replica primary recheckをtraceで分離し、
   Lookup D1 hopが主要因の場合だけKV cache設計を再開する。KV追加前にD1 query/index問題を先に修正する。
+- Decision 184 Aとして、active assignment generationとchallenge generationが一致し、current HMAC indexだけを
+  読む通常経路では、OTPのatomic conditional consumeとexact membership queryを同じphysical Lookup D1の1 batchで
+  実行する。stale generationとHMAC dual-readは既存resolverへfail closedでfallbackし、Read Replicationは使わない。
+- Decision 185 Aとして、benchmark clientを含むOIDC authorization consent省略はactiveなClient Trust Policyだけを
+  authorityとする。汎用Settingsの旧`client.consent_required` / `client.first_party`はruntimeで参照せず、API入力も
+  拒否する。Flow editorはこのauthorityを読み取り専用Gateとして表示し、Flow publishからPolicyを変更しない。
+- Decision 186/187として、新しいDO placement方式は導入せず、既存のtenant単位`RegionShardConfigV2`を正とする。
+  `totalShards`、region割合、generation、colocation group、resource IDへ埋め込んだregion/shard、初回`get()`の
+  `locationHint`を維持する。専用Admin Scale画面を管理面とし、汎用Settings v2へ戻さない。Control側のtenant
+  residency policyから許可region集合を導出し、作成・更新・activation時に割合指定を検証する。不許可region、
+  policy欠落、generation不整合はdefault regionへfallbackせずfail closedにする。location hintはbest-effortであり、
+  法的なdata residencyが必要なpolicyではCloudflare DO jurisdictionを別途使う。
+- Decision 188 Aとして、持続負荷はproduction TOTPを使い、実Mail OTP deliveryはbounded smokeで確認する。
+  identifier discovery / Lookupの50 RPS gateは独立して維持するため、TOTPへの変更でLookup性能証跡を省略しない。
+- public tenant candidate presentationだけを1秒・最大1,000件のisolate cacheに保持できる。OTP、identifier、route、
+  Registry authority、tenant lifecycle、binding、secret、in-flight promiseはcacheせず、authoritative tenant primary
+  recheckは毎request実行する。cache keyはenvironment/configとbinding scopeおよびtenantを分離する。
+- `test` run `phase0c-20260731093012-b1396f`は50 RPS・5分の15,000 requestを全件成功し、p95 392.08 ms、
+  p99 743.88 ms、hard error 0でidentifier gateをpassした。Read ReplicationはOFFのままである。Phase 0cは
+  production TOTP sustained runの全measurement window完走をもってCompleteとする。performance未達の調査、
+  実Mail OTP smoke、残るcold/semi-cold観測は`FOLLOW_UP_TASKS.md`の別タスクとする。
+- Control-owned residency projectionと既存`RegionShardConfigV2`の接続を実装済みとする。初期bootstrapは
+  deterministicな`tenant_core/default` sticky routeも作成し、capacity countをidempotentに再計算する。`test`へ
+  deployしたdefault policyはAPAC/ENAM/WEUR/WNAM各1 shard、generation 1として反映された。runtimeはpolicy欠落、
+  不許可region、0%の不許可region key、stale generation、jurisdiction不一致をfail closedにする。
+- Phase 0cのtenant-scoped runnerはsetupのcanonical issuer resolverを再利用する。multi-tenant環境でbase domainを
+  Token endpointとして使わず、primary tenant subdomainを使う。identifier discoveryだけは引き続きshared lookup
+  domainを起点とする。修正後のbounded TOTP smoke `phase0c-totp-20260801100045-e9f0da`は成功し、fixtureを完全に
+  cleanupしたが、cold full flow 10,122.8 msは性能gate証跡として扱わない。
+- Mail OTPのtest限定one-flow診断では、routeから得た`legacyUserId`を再利用しつつauthoritative PII emailを再照合し、
+  stale routeをfail closedにする。session TTL取得の並列化、Token設定cacheの実効化、重複subject read削除を反映した。
+  1件のPII user lookupは1,473 msから656 msへ短縮したがfull flowは18,128 msから22,436 msへ変動したため、
+  単発値を総合改善の証拠にせず、TOTP 25 LPS・5分の固定gateと実Mail OTP smokeを分離する。Read Replicationは
+  引き続き最後の手段とする。
+- Refresh Family DOはcold startで全familyを列挙せず、user keyによるlazy loadと最大1,024件のbounded cacheを使う。
+  Auth Code設定は並列取得し、tenant/shard/family/rotation/code stateはいずれもDurable Storage成功後にのみmemoryへ
+  公開する。token-family indexと遅延audit flushは`waitUntil`でevent lifetimeへ接続する。Session直後読取の省略は
+  account route/binding検証も迂回するため採用せず、fail closedを維持する。
+- 上記をtestへdeployしたrun `phase0c-mail-20260731153414-c4040c`は17,606 msで1 flowを成功し、hard errorは0だった。
+  Session read 945 msとRefresh Family 1,845 msは残るため単発改善とは判定しない。exact-run cleanupのSQLite `LIKE`
+  failureは固定prefix/suffix照合へ修正し、同runのCore/PII/Lookup cleanupを再確認した。
+- Refresh Familyのclient/global shard設定KVはpriorityを維持して並列取得し、同じcold missをcoalesceする。初回tenant /
+  generation / shard metadataとfamilyは1回のmulti-key Durable Storage writeで確定し、malformed configはfail closedにする。
+  global更新と古いin-flight loadの競合はcache epochでfenceする。run `phase0c-mail-20260731154746-0ac28d`では
+  Refresh Familyが1,845 msから1,476 msへ短縮した一方、full flowは19,286 msへ変動したため局所的証拠として扱う。
+  hard errorは0で、exact-run cleanupを完了した。
+- authorization code consume後の署名鍵、access/refresh TTL、authoritative account routeを並列取得し、subject accountと
+  RBAC configも並列化する。mutation順序とPII fail-closedは変更しない。run
+  `phase0c-mail-20260731155340-1820c0`ではToken stepが5,880 msから4,944 ms、内部totalが5,526 msから
+  4,517 msへ短縮し、full flowは17,731 ms、hard error 0だった。単発cold結果のためgate passとは扱わない。
+- `phase0c-sample`は15秒warm-up後に1 LPSを60秒だけ実行する診断用presetであり、release gateではない。k6のduration境界で
+  60または61 iterationになり得るため、その範囲だけを許可し、全件成功、drop / 429 / 5xx / timeout / D1 overload 0を要求する。
+  test OTP endpointはSettings v2やFlowの暗黙設定にせず、setupのtest限定`--test-endpoints enabled` capabilityで明示する。
+- temporary load-test rate profileをstale isolateが認識せず429を返す場合だけ、1秒coalesce付きでauthoritative KVを再読し、
+  fresh profileがより緩い場合だけprecise limiterを再評価する。通常のallowed pathにKV hopは追加しない。response lossで
+  `account_created` outboxがpendingでもaccount/publication lifecycleとcurrent-generation payloadがactiveなら、通常のAdmin
+  directory-removal sagaがcleanupを続行できる。tenant/generation/payload不一致は引き続きfail closedとする。
+- Tokenの任意機能flag群を必須のsigning key / TTL / route / subject / RBAC読取と重ねる。Authorizeはtenant profileと
+  fail-closed security設定を並列化し、SSO設定はOIDC / client / redirect / PKCE検証後にだけ開始してsession I/Oと重ねる。
+  不正requestではSSO用Settings KVを読まず、権限判定、fail-closed、mutation順序は変えない。run
+  `phase0c-mail-20260731173453-c1b92f`は測定60件を全件成功しhard error 0だったが、p50 5,773 ms、p95 8,068.45 ms、
+  p99 10,809.7 msで固定gateには未達だった。Token step p95は直前sampleの3,389.61 msから2,014.63 msへ改善した一方、
+  OTP verifyと2回目Authorizeが変動したためfull-flow改善とは断定しない。Read ReplicationはOFFのままとする。
+- existing environmentのfocused Worker deployは、internal operation kind未指定時も一貫して`worker_redeploy`と解決する。
+  migration release artifactやtenant topologyを再処理せずshared deployment leaseだけを通る。修正後の`ar-auth` focused deployと
+  1-user smokeは成功し、Mail OTP / Client Trust Policy No-consent / Token発行、hard error 0、exact cleanupを確認した。
+  cold full-flow 13,530 msは診断値でありrelease gateには使わない。
+- tenant-D1 session restoreはLookup membership、Core shard/account/revocationを1回のprimary batchで検証し、PII shard metadataを
+  並列検証する。route validationやrevocationを省略するfresh-session shortcutは導入しない。canonical runtime userはaccountを
+  先に確定した後、独立したsubject/profile/contact Core readとPII reference解決だけを並列化し、active publication、tenant、
+  account/user、generation、binding、PII email再確認とprofile優先順を維持する。PII referenceは最大4件のbounded並列とし、
+  profile属性数に比例する同時query増加を防ぐ。
+- `phase0c-mail-20260731184834-61fcf6`は測定61件を全件成功し、drop / 429 / routing 5xx / timeout / D1 overloadは0、
+  measurement-only p50/p95/p99は3,912/4,950/5,308.4 msだった。raw summaryの4,015.5/6,361.5/8,043.25 msはwarm-upを含むため
+  gate値には使わない。evidenceはmode `0600`、通常cleanup成功、4つのactive PII primaryでexact-run残存0を確認した。
+  Read ReplicationはOFFのままで、固定25 LPS・5分gateは未実施である。
+- bounded PII版をManagement/Auth/Tokenへ再deployした最終smoke
+  `phase0c-mail-20260731190554-f5d6b0`も1/1成功、hard error 0、通常cleanup成功、4 PII primaryのexact-run残存0だった。
+  cold total 15,414 msは診断値であり、上記measurement-only sampleを置き換えない。
+- production TOTP one-user runnerはtest inbox、OTP取得endpoint、認証bypassを使わず、signup/options、activation、
+  identifier route、login start/verify、No-consent Client Trust Policy、authorization code、Token交換を通す。activationには
+  許容window内の直前time stepを使い、直後loginが同じstepのreplayになる試験誤差を避ける。run
+  `phase0c-totp-20260801005245-724f20`は1/1成功し、mode `0600` evidence、user/client/settings/machine principalの
+  exact cleanup、Read Replication OFFを確認した。full-flow 10,842.65 msは逐次cold smoke値であり25 LPS gate値ではない。
+  live tailで見つかったraw OAuth query、session/user/code断片ログを除去し、tenant-D1 account contextをconsent評価前に
+  解決した。consent評価失敗はauthorization継続ではなく`temporarily_unavailable`へfail closedに変更し、再smokeでは
+  raw値と`account_data_context_required`の再発がなかった。
+- production TOTP arrival-rate runnerとschema-v4 gateは`totpFullLogin`を正式scenarioとし、旧Mail OTP 25 LPS presetを
+  廃止した。`sample`は16 userを逐次作成し、同じ30秒time stepで再利用せず、1 LPS・10秒を測定する診断profileである。
+  `phase0c-totp-20260801013126-ab264e`は10/10成功、drop / routing 5xx / timeout / D1 overload 0だったが、
+  p50/p95/p99は6,069.97/6,686.58/6,686.58 msだった。schema-v1 evidenceはstep別percentileを持たないため新しい
+  step/TOTP-completion gateには使用せず、full-flow p95 5秒には未達と判定する。このため25 LPS・5分は
+  当該time boxでは実行せず、Phase 0cとmain/public releaseをblockedのままにする。UX操作区間に基づく新thresholdを
+  schema-v4へ固定し、Read ReplicationはOFFを維持する。中断試験で見つかった30秒境界、settings baseline、cleanup診断を
+  修正し、Admin API repair後に残存PII 0、設定/override/client/principal復元を直接確認した。
 
 Exit criteria:
 
@@ -2432,7 +2768,8 @@ Tasks:
 - D1 roleごの`read_replication_mode` desired stateをD1 APIへ反映し、observed mode / jurisdictionを
   reconcileできるようにする。
 - operation lock / idempotency / audit logging を組み込む。
-- Runtime Registry snapshot signing / publishing を Control Worker に実装する。
+- Runtime Registry snapshotのprivate signingをControl Workerのnarrow RPCに実装する。snapshot projection/publishは
+  `ar-management`が担当し、Control WorkerへLookup D1やLookup HMAC keyを配布しない。
 - scheduled reconciler で due operation を再開し、exponential backoff + jitter を適用する。
 - setup deploy に Control Worker を含める。
 - Control Worker deploy / rollback は setup tool の責任として扱い、Control Worker は自己更新しない。
@@ -2444,6 +2781,33 @@ Tasks:
   Cloudflare API call前にoperationを`capability_unavailable`で`blocked`にする。
 - Plugin Runner Worker が必要とする binding / secret desired state を生成できるようにする。
 - Runtime Worker から Plugin Runner Worker への Service Binding desired state を生成できるようにする。
+
+Implementation checkpoint (2026-08-01): per-installation Dynamic Worker binding control state and
+the typed Host Interface resolver are implemented. Management validates the Control plan before
+Runner mutation; Control derives the installation ID and typed tenant-scoped bindings from the active
+registered manifest, while Worker Loader receives only catalog-approved loopback entrypoints. The
+RPC does not accept a Cloudflare path, script name, raw tenant D1 binding, or token.
+
+Plugin manifests now contain strict tenant-scoped `resources[]` entries for dedicated D1, KV and R2.
+Managed creation is always the default. A resource with `allowExisting: true` may instead receive an
+advanced Admin selection containing its provider ID and name. Control records Managed resources as
+`authrim_managed` and existing resources as `external_reference`; only the former may ever request
+provider deletion. Manifest validation, immutable policy publication, desired-state projection,
+Control DB constraints, API/OpenAPI and the collapsed advanced Admin UI are implemented. Provider
+create/adopt verification, pinned D1 migration, host-wrapper binding, readiness-gated Runner
+activation and response-loss reconciliation are implemented.
+
+Decision 191 A separates runtime disablement from resource destruction. Disable retains bindings and
+all provider resources. Only an explicit confirmed Uninstall, or explicit Cancel of failed
+pre-activation provisioning, enters the cleanup state machine: exact installation bindings are
+removed with Worker deployment fencing, a fixed 30-minute quarantine is observed, managed resources
+are deleted, and existing-resource references are detached but never provider-deleted. Cleanup is
+generation-fenced, idempotent, bounded by the standard retry policy, visible in operation status, and
+reinstall allocates a new lifecycle generation. Missing expected binding, provider identity drift,
+cross-tenant ownership, unavailable resource-class credentials, or destructive-operation disablement
+blocks fail closed. Automatic provisioning OFF hands the same operation and fencing state to setup
+CLI/Web, which executes it with Wrangler OAuth without persisting credentials. Local lifecycle
+coverage is complete; live ON/OFF evidence remains the exit criterion.
 
 Exit criteria:
 
@@ -2545,7 +2909,7 @@ Tasks:
 - Cloudflare actual にだけ存在する Worker script は drift warning / review candidate として記録し、mutation 対象にしない。
 - setup/update と Control Worker が共有する Worker-scoped deployment lease を取得し、対象 Worker の
   expected source version と fencing token を固定する。
-- D1 binding append では追加対象だけを具体的に指定し、変更しない既存 binding は version-pinned
+- D1 binding append では追加対象だけを具体的に指定し、変更しない既存 binding は deployment-fenced `latest`
   `{ type: 'inherit', name, version_id }` として継承する。
 - annotations、compatibility date / flags、placement、limits、observability、tail consumers、routes/triggers など、
   binding 以外の Worker settings について preservation matrix と reflected diff を実装する。
@@ -2566,8 +2930,8 @@ Tasks:
   受け付ける。JWKS に private parameter を含めない。
 - runtime resolver が新 binding を見つけ、expected migration state を読めることを smoke test する。
 - smoke は対象 Worker ごとの 3 回連続成功を要求し、成功後に最短 30 秒の stabilization wait を置く。
-- reflected diff で既存 binding 喪失や scope mismatch を検出した場合、previous deployment rollback を 1 回だけ
-  primary として試し、保存済み previous settings restore を 1 回だけ fallback とする。
+- reflected diffで既存binding喪失やscope mismatchを検出した場合、保存済みprevious settingsをfenced
+  `/settings` PATCHで1回だけ復元し、previous Worker versionはdeployしない。
 - generated config validator が不要な `TDB_*` binding の混入を検出できるようにする。
 
 Exit criteria:
@@ -2587,9 +2951,8 @@ Exit criteria:
   誤って上書きまたは rollback しない。
 - append 後も preservation matrix の全対象設定と binding が保持され、`inherit` 元 version が mutation 開始時の
   expected source version と一致する。
-- 既存 binding 喪失を検出した場合、previous deployment rollback が実行され、失敗時は previous settings restore
-  fallback が実行される。
-- rollback primary / fallback の両方が失敗した場合、tenant lifecycle、Runtime Registry route、Lookup rowは`pending`、
+- 既存binding喪失を検出した場合、保存済みprevious settings restoreがfenced PATCHとして実行される。
+- settings restoreが失敗した場合、tenant lifecycle、Runtime Registry route、Lookup rowは`pending`、
   shard は`failed`、D1 / observed bindingは保持され、operationは`blocked`になる。
 - `blocked` operation の manual repair action は inspect / retry step / restore previous settings / cancel /
   quarantine に限定され、すべて audit される。cancelはoperation-specific guardを満たす場合だけ許可する。
@@ -2614,6 +2977,12 @@ Tasks:
 - identifier HMACからvirtual bucketを算出し、active Lookup shard assignment generationから単一physical D1を解決する。
 - Lookup bucket migrationのdual-write / backfill / verify / cutover / old-row quarantine state machineを実装する。
 - least-loaded eligible shard selectionを実装し、選択したaccount routeを固定保存する。
+- tenant placementは`shared_pool | tenant_exclusive`のscopeだけを公開し、両方をelasticに扱う。既定値は
+  `tenant_exclusive`とし、`shared_pool`はtenant作成時の明示選択にする。旧`fixed_single` /
+  `elastic_multi`区分は導入しない。
+- Control-owned policyからtenantごとの`data_role + residency_partition` assigned shard setを解決し、その集合内だけで
+  least-loaded allocationする。shared/exclusive、exclusive owner、role、residency、generation、bindingの不一致は
+  fallbackせずfail closedにする。
 - account allocationはidempotent allocation rowで二重配置を防ぎ、target account countの厳密なglobal reservationは行わない。
 - Tenant Core D1 の pending account + routing outbox、Lookup pending upsert、Tenant Core D1 の
   `active_pending_directory`、Lookup / reservation の active 化と primary read-back、Tenant Core D1 の publication
@@ -2655,6 +3024,12 @@ Tasks:
   active transition 開始後は完了または検証済み full rollback まで lease を保持し、`blocked` でも transition が残る限り
   lease を解放しない。
 - IdP unlink / tenant deletion / user deletion 時の lookup index cleanup を実装する。
+  tenant deletionは、Control署名済み`quarantined` Runtime RegistryとControlの物理shard inventoryを照合し、
+  全bindingを事前検証する。Lookupは`ready | active | draining`の全物理shardを`first-primary` Sessionで走査し、
+  identifier/aliasをdisabled、reservationをreleasedへ遷移してlive rowが0件であることを確認する。その後、割当済み
+  default/users/PII D1をbinding順に処理し、各D1内では全tenant-scoped tableの削除とtenant tombstoneを1つのD1
+  transactionで実行する。D1間ACIDは提供しない。途中失敗はtenantとroute denyを維持し、完了済みshardを含めて
+  同じjobを冪等に自動再開する。
 - Self-service email変更に5分以内のrecent reauthと新email OTPを要求し、authoritative-first identifier replacement、
   primary exact Lookup + Tenant D1検証、他session/token revocation、旧email非同期通知を実装する。新email loginを
   検証できるまで`202 + operation_id`とし、completedを返さない。
@@ -2675,6 +3050,11 @@ Tasks:
   Admin UI は `pending` を provisioning status として表示できる。
 - tenant lifecycle、Runtime Registry route、Lookup row の三者が同一 generation で active の場合だけ routing を許可する。
   host / issuer から直接 tenant を解決する経路にも同じ gate を適用し、観測済み`quarantined` denyはstale cacheより先に評価する。
+- `shared_pool -> tenant_exclusive`のonline migrationを、source-local capture/outbox、bounded backfill、整合性検証、
+  短時間write fence、Lookup/alias/Registry generation cutover、source quarantine、retention後の明示承認付きpurgeで実装する。
+  `tenant_exclusive -> shared_pool`、cross-D1 ACID、post-cutover自動rollbackは初期scopeに含めない。
+- write fenceはraw D1 errorを返さず、専用reasonを持つredacted retryable 503へ変換する。Login UIとAdmin UIは
+  そのreasonだけを同一request/idempotency identityでbounded retryし、他の503を自動再試行しない。
 
 Exit criteria:
 
@@ -2689,12 +3069,19 @@ Exit criteria:
 - HMAC rotationのactive-key switch前後どちらのpartial failureでも、旧identifierを失わず定義済みdual-read/write状態から
   resumeできる。
 - mutation開始後のdirectory rewriteはlease expiryやblocked状態でも別rewriteと並行せず、同じoperationだけがtakeoverできる。
+- shared/exclusive tenantが同一environmentで共存し、allocatorがscope、exclusive owner、assigned set、data role、
+  residency partition、generationの境界を越えない。
+- shared-to-exclusive migration中はsourceがcutoverまでauthoritativeであり、partial role failure、checksum不一致、
+  write-fence drain失敗、route reflection不一致ではtargetをactiveにしない。
+- retention後のsource purgeは明示承認を要求し、co-resident tenant rowとshared physical D1を削除しない。
 
 ### Phase 6: Tenant creation orchestration
 
 Tasks:
 
 - ar-management tenant creation を preallocated slot reservation から shard allocation に置き換える。
+- tenant作成とcloneのplacement既定値を`tenant_exclusive`にし、Admin UIでは「専用データベース」を初期選択する。
+  system adminが明示した場合だけ`shared_pool`を作成する。
 - capacity insufficient 時に Control Worker job を作成する。
 - shard capacity 追加を `data_role` 単位で実行し、tenant creation に必要な `tenant_core` /
   `tenant_pii` capacity を確保する。
@@ -2703,9 +3090,20 @@ Tasks:
 - Admin UI status panel に provisioning step / substep、step status、last attempt、next retry、last error、
   operator action を表示する。
 - tenant active 前の smoke test を追加する。
-- smoke / stabilization 完了後にControl WorkerがRuntime Registry route / Lookup tenant metadataを同じgenerationで
-  active・read-backし、最後に`ar-management`がtenant lifecycleをactive化するsagaを実装する。
+- smoke / stabilization 完了後に`ar-management`がControl署名済みRuntime Registry route / Management所有Lookup tenant
+  metadataを同じgenerationでactive・read-backし、Control route commitのreflection確認後、最後にtenant lifecycleを
+  active化するsagaを実装する。
 - failure cleanup と retry UI を追加する。
+- tenant cloneはpreallocated slotを使わず、同じdurable provisioning operationの
+  `tenant_prepare` stepで実行する。要求受付時のsource DB/KV状態をraw値を保存しない
+  SHA-256 snapshotで固定し、destinationへのcopyと新規signing key生成をLookup activation前に完了する。
+  partial failureはDB行を再試行前に除去し、KVは書込み前のdestination値へ補償する。terminal cleanupは
+  tenant/client/pluginのclone由来KVを全て除去する。
+- tenant deletionは`quarantining` publish/read-back後に30分drainし、`quarantined`へ遷移してからLookup無効化と
+  authoritative shard purgeを行う。Control inventory、署名済みsnapshot、全bindingを事前照合し、各D1内を
+  `first-primary` Session + transactionでpurgeする。schema introspectionはCloudflare予約の`_cf_*` tableを除外し、
+  50 statement以下のbounded batchで実行する。途中失敗は最大3回まで自動再試行し、tenantをsuspended、Runtime
+  Registryをdenyのまま維持する。
 
 Exit criteria:
 
@@ -2724,9 +3122,19 @@ Exit criteria:
 Tasks:
 
 - setup/update を deployment plane として継続し、初回構築後も Worker code deploy / rollback、Worker secret 更新、
-  release artifact の R2 upload と immutable release catalog 登録を実行できるようにする。
+  release artifact の R2 upload、immutable release catalog 登録、全体migration、環境削除、operator provisioningを
+  実行できるようにする。
+- setup CLI/Webに`Automatic provisioning`のON/OFFを追加する。ONでは権限指定済みDashboard link、一時bootstrap token 1個、
+  account限定resource-class child token発行、Control secret登録・検証、bootstrap失効を一つのstate machineで実行する。
+  OFF/SkipではControl Worker tokenを設定せず、Admin operationを`operator_action_required`としてsetupが引き継げるようにする。
+- setup/Web/CLI/Admin/Controlが共通capacity plannerを使い、`minimum | recommended | extra_headroom`の3 profileと、追加する
+  D1/data role/residency/bindingのread-only previewを提供する。raw database/binding名やD1 countは入力させない。
+- setup operator executorとControl Worker executorが同じControl DB operation/step、response-loss reconciliation、
+  migration/binding/smoke/activation contract、deployment lease/fencingを使用する。handoff後も正規operator executorを許可し、
+  legacy direct mutationだけを拒否する。
 - setup/update が使う Cloudflare operator credential は対話中または CI job 中だけの ephemeral credential とし、
-  generated artifact、Control DB、Worker secret、log へ保存しない。永続 Cloudflare API token は Control Worker だけが持つ。
+  generated artifact、Control DB、Worker secret、log へ保存しない。Control Worker tokenはAutomatic provisioning ONの
+  environmentだけが持つ。
 - setup/update と Control Worker は同じ Worker-scoped deployment lease / fencing protocol を使い、同じ script への
   concurrent deploy と binding reconciliation を直列化する。setup/updateは短命credentialとControl DB D1 APIを使う
   typed lease repository、Control Workerはbinding経由の同じrepository contractを使う。複数scriptのleaseは安定順で取得する。
@@ -2759,9 +3167,14 @@ Tasks:
 - 現行の `setup deploy --component <name>` と update の changed-component selection を維持する。ただし対象 Worker と
   dependency closure を capability manifest / deployment graph から算出し、runtime compatibility、secret availability、
   binding preservation、active route generation を事前検証する。Control Worker が運用中に追加した binding は
-  version-pinned inherit で保持する。
+  deployment-fenced `latest` inherit で保持する。
 - `setup init`のinitial Lookup / first shard bootstrapはControl Workerと共有するadapter / validationを使い、handoff recordを
   `pending_verification`にした後、Control Workerのread-only reconciliationが`accepted`にするまで環境をreadyにしない。
+- tenant専用初期shardでは、authoritativeな初期tenant行を`tenant_core/default`へ冪等に作成・primary検証してから
+  signed Runtime Registry snapshotを公開する。seed/検証失敗時はrouteを公開しない。
+- 初回Worker deploy後はactive version IDを含む`workers_deployed` checkpointを保存する。再開時はCloudflareのactive
+  versionとexact matchを検証し、schema、release、tenant D1、Worker traffic mutationを反復しない。Control DB上でhandoffが
+  既に`accepted`ならimmutable evidenceを再登録せず、post-handoff redeploy後のactive version検証からbootstrapを再開する。
 
 Exit criteria:
 
@@ -2774,7 +3187,14 @@ Exit criteria:
   stale fencing時はWorker mutation前にfail closedする。
 - setup/update の終了後、Cloudflare operator credential が生成物、Control DB、Worker secret、log に残らない。
 - `setup init`のbootstrap handoffがControl Workerのactual-state検証後だけ`accepted`になり、accept後のsetupはinitial resource
-  create pathを再実行できない。
+  create pathを再実行できない。ただし正規Control DB operationをclaimするoperator provisioningは継続できる。
+- bootstrap後のUI/secret/runtime-client更新が中断しても、受理済みhandoff evidenceを書き換えず、正確なWorker version
+  checkpointから再開できる。lock/active version不一致は自動adoptせずfail closedにする。
+- Automatic provisioning OFFでControl WorkerにCloudflare API tokenが存在せず、既存routingを維持したまま新規operationが
+  `operator_action_required`になり、setup CLI/Webがtenant再選択なしで同じoperationを完了できる。
+- Automatic provisioning ONではsplit child tokenのaccount/permission/相違性とsecret登録を検証した後だけbootstrapを失効し、
+  response loss/partial failure/cleanup不確定を成功扱いにしない。
+- 3 capacity profileが同じserver-owned planから決まり、tenant/data role/residency/resource cap境界を越えない。
 
 ### Phase 8: Operations, observability, and tests
 
@@ -2787,6 +3207,8 @@ Tasks:
   notification severity は warning-level として `medium`、delivery route は platform scope を使う。
 - retry / blocked / inspect / retry step / restore previous settings / cancel の operator action を Admin UI に追加する。
 - quarantine / cleanup / manual approval の operator action を Admin UI に追加する。
+- active tenant disaster recoveryのsigned deny、固定30分drain、manual Time Travel確認、migration検証、bounded Lookup
+  reprojection、共通binding smoke/stabilization、明示的reactivationを追加する。
 - audit event と internal notification を追加する。
 - destructive operations は disabled by default にする。
 - docs/runbook を追加する。
@@ -2807,6 +3229,11 @@ Exit criteria:
 
 ### Phase 9: External public release gate
 
+Phase 9 implementation is Complete. The task list below records its design-time scope. Initial
+environment Automatic provisioning ON full evidence, real-provider Mail/cold evidence, and the
+consolidated architecture sign-off moved to `FOLLOW_UP_TASKS.md` on 2026-08-02 and are not Phase 9
+exit criteria.
+
 Tasks:
 
 - core / PII / identifier の全 data role で `shard_count > 1` の routing tests を追加する。
@@ -2821,7 +3248,7 @@ Tasks:
   stale route / missing binding / invalid generationでfail closedすることを検証する。
 - email discovery が OTP 検証前に tenant candidate の有無・件数・名称・branding を漏らさず、OTP 検証後だけ
   exact email membership を返すことを検証する。
-- binding append の version-pinned inherit / settings preservation matrix と、setup/update concurrent deploy に対する
+- binding append の deployment-fenced `latest` inherit / settings preservation matrix と、setup/update concurrent deploy に対する
   deployment lease / fencing を test 環境で検証する。
 - create API response loss 後の deterministic-name reconciliation、resource cap、wrong residency / ownership resource の
   adoption 拒否を test 環境で検証する。
@@ -2829,8 +3256,10 @@ Tasks:
   bookmark付きread-after-write、replica not-foundのprimary recheckが仕様通りであることを確認する。
 - cross-shard operation boundaryに従い、single-route read、Admin bounded fan-out、outbox-required mutation、
   async bulk job、forbidden hot-path fan-outのcontract / negative testsを追加する。
-- Phase 0cの25 RPS/LPS・5分manual checkを実行し、固定thresholdとhard failure gateをpassする。
-- external public release / main PR 前の architecture review checklist を追加する。
+- Phase 0cのLookup 50 RPS / production TOTP 25 LPS・5分manual checkを実行する。両方とも実行済みで、
+  TOTP performance未達の調査は別タスクとする。実Mail OTP smokeも別タスクで扱う。
+- external public release / main PR 前のarchitecture review checklistは作成済み。consolidated sign-offは
+  別タスクで実施する。
 
 Exit criteria:
 
@@ -2840,7 +3269,7 @@ Exit criteria:
   同じコードpathを通る。
 - identifier pathはper-account route用Workers KV read/writeを発生させない。
 - security-sensitive readはread replica lagに依存せず、primary/bookmark consistencyでfail closedする。
-- Phase 0cのmanual performance thresholdとhard failure条件をすべてpassしている。
+- Phase 0cの固定manual runが完走し、failed metrics、cleanup、follow-up ownershipが正確に記録されている。
 - external public release 前に OTP anti-enumeration、binding preservation / concurrency、HMAC partial rollout、plugin
   egress SSRF、three-state activation gate の security negative tests が pass している。
 
@@ -2901,6 +3330,8 @@ Control DB restore runbook:
 
 runbook実行、bookmark / timestamp、対象resource、operator、verification resultはaudit eventへ記録する。Time Travelは
 in-place destructive operationなので、quarantineとmanual confirmationなしには実行しない。
+Cloudflare provider primitiveの使い捨てD1実測は`PHASE8_LIVE_EVIDENCE.md`に記録する。この証跡はin-place
+restoreとundo bookmarkを確認するだけであり、上記quarantineからsame-generation reactivationまでの全手順を代替しない。
 
 ## Failure handling
 
@@ -2908,10 +3339,11 @@ in-place destructive operationなので、quarantineとmanual confirmationなし
 | --- | --- | --- |
 | D1 create failed | none | retry operation |
 | migration failed before binding | none | retry/resume or quarantine empty D1 |
+| provisioning failed during/after binding before activation | binding may exist, no authoritative route | require zero assignment/allocation/Runtime Registry references, then use the audited quarantine/drain/cleanup workflow; never delete directly |
 | binding append failed | none | retry reconciliation |
 | some workers not deployed | none if not active | keep shard `provisioning`, retry |
 | smoke failed | none if not active | keep shard `failed`, inspect |
-| rollback primary/fallback both failed | none while three-state gate is pending | keep tenant lifecycle / Runtime Registry / Lookup `pending`, mark shard `failed`, preserve D1 and observed binding state, set operation `blocked` |
+| saved settings rollback failed | none while three-state gate is pending | keep tenant lifecycle / Runtime Registry / Lookup `pending`, mark shard `failed`, preserve D1 and observed binding state, set operation `blocked` |
 | Cloudflare actual Worker not in desired inventory | none | record drift warning/review candidate, do not mutate or allowlist |
 | tenant/lookup/registry publish failed | tenant not active | keep all three states non-routable and retry convergence |
 | Cloudflare API rate limited | none before active | set `waiting_retry`, resume after `next_attempt_at` |
@@ -2921,24 +3353,25 @@ in-place destructive operationなので、quarantineとmanual confirmationなし
 
 ## Security requirements
 
-- Persistent Cloudflare API tokens must be stored as Worker secrets only on Control Worker.
+- Automatic provisioning ONで発行した persistent Cloudflare API tokens は Control Worker secret だけに保存する。
+  OFFではControl WorkerにCloudflare API tokenを保存しない。
 - setup/update may use an operator- or CI-supplied ephemeral Cloudflare credential for deployment-plane operations, but
   must not persist it in generated artifacts, Control DB, Worker secrets, or logs.
 - setup/update deployment coordination must use a typed Control DB lease repository through the D1 API; it must not require
   a public Control Worker endpoint or expose arbitrary SQL, and must fail closed before Worker mutation if coordination fails.
-- `setup init` may additionally create only the initial Lookup/first-shard resources before handoff, using the same
-  deterministic naming, validation, digest, idempotency, and audit contracts as Control Worker. After
-  `bootstrap_handoff = accepted`, setup must be denied tenant/shard create authority by product logic and operator policy.
-- Control Worker must use separate D1, Workers settings / deployment, Workers KV, and R2 API tokens.
+- `setup init` creates the initial Lookup/first-shard resources before handoff. After `bootstrap_handoff = accepted`, setup may
+  continue tenant/shard create, scale-out, retry, and repair only as the common Provisioning Engine operator executor through
+  Control DB operation and lease/fencing. Legacy direct mutation outside that path is denied.
+- Automatic provisioning ONではControl Workerがseparate D1, Workers settings/deployment, Workers KV, R2 API tokensを使う。
 - D1 token must have only the D1 permissions needed for D1 create/query/migration, currently `D1 Write`.
-- Workers token must have only the Worker script permissions needed for `/settings` PATCH, deployment rollback, and
-  dispatch namespace operations, currently `Workers Scripts Write`.
+- Workers token must have only the Worker script permissions needed for `/settings` PATCH, deployment observation/fencing,
+  and Worker Loader binding updates, currently `Workers Scripts Write`. Dispatch Namespace permissions are not required.
 - KV token must have only `Workers KV Storage Write`, and KV namespace operations must use
   `/accounts/{account_id}/storage/kv/namespaces`; the deprecated `/workers/namespaces` route is prohibited.
 - R2 token must have only `Workers R2 Storage Write`.
-- D1 and Workers tokens are baseline requirements. KV and R2 tokens are required only when approved plugin desired state
-  enables the corresponding resource capability; absence must block only that operation as `capability_unavailable`
-  before any Cloudflare mutation.
+- D1 and Workers tokens are ON mode baseline requirements. KV and R2 tokens are created only when approved plugin desired
+  state enables the corresponding resource capability. OFF/Skipまたはtoken absenceはoperationを
+  `operator_action_required`/`capability_unavailable`で止め、別tokenやshared resourceへfallbackしない。
 - A missing resource-class token must never fall back to another persistent token, setup credential, or a broader combined token.
 - Token scope must be limited to the D1, Workers scripts/settings, KV, and R2 actions required for this account.
 - Control Worker must enforce an allowlist of script names from Control DB desired worker inventory before using the
@@ -2998,9 +3431,10 @@ in-place destructive operationなので、quarantineとmanual confirmationなし
   another physical resource for a logical resource already owned by an earlier operation.
 - D1 shard bindings must be attached only to Workers whose capabilities require the corresponding `data_role`.
 - Generated config validation must reject unexpected `TDB_*` bindings on Workers that do not require that `data_role`.
-- Worker `/settings` binding updates must run under the deployment lease/fencing protocol, pin the source version, and use
-  version-pinned `type = inherit` for unchanged bindings. They must apply the settings preservation matrix, reflected diff,
-  and previous deployment/version recording because `/settings` PATCH can become active immediately.
+- Worker `/settings` binding updates must run under the deployment lease/fencing protocol, pin and recheck the immutable
+  expected source deployment, and use `version_id = latest` `type = inherit` for unchanged bindings. The provider rejects
+  immutable inheritance IDs with code `10057`, so callers must also require exactly one new deployment and apply the settings preservation matrix, reflected diff,
+  and previous settings plus deployment/version recording because `/settings` PATCH can become active immediately.
 - setup/update and Control Worker must share the same Worker-scoped deployment lease/fencing protocol. Multi-Worker
   operations must acquire leases in a stable order. A post-patch external deployment must
   never be rolled back as though it were the Control Worker deployment.
@@ -3102,6 +3536,10 @@ in-place destructive operationなので、quarantineとmanual confirmationなし
 - Account routing outbox payloads and logs must not contain raw email or unnecessary PII.
 - Account allocation and Lookup publication must be coordinated by `ar-management` through a narrow Service Binding RPC.
   Account-creating Workers must not receive direct Lookup DB write capability solely for this flow.
+- The Auth-facing account-creation RPC must be a dedicated named entrypoint and must not expose the
+  generic Account Directory publication method. It must authenticate fixed caller/environment/audience
+  props, validate the route email against authoritative PII, and exclude random candidate identifiers
+  from the idempotency request hash.
 - Control Worker must not process per-account allocation or routing outbox delivery on the account creation hot path.
 - Account creation must attempt one immediate routing outbox delivery and must leave a durable pending outbox record for
   `ar-management` scheduled reconciliation after timeout or transient failure.
@@ -3141,16 +3579,25 @@ in-place destructive operationなので、quarantineとmanual confirmationなし
   Previous-key removal requires every authoritative shard checkpoint, count/reference verification, and a seven-day grace.
 - Total Lookup HMAC key loss must disable affected identifier discovery/mutation and rebuild a fresh generation from
   authoritative shards under the directory rewrite lock. Raw identifier or plaintext index fallback is prohibited.
-- Time Travel restore must remain a quarantined manual runbook in v1. Control Worker and Admin UI must not expose a restore
-  RPC, and restored routing must not reactivate before migration, Lookup rebuild, generation, and smoke verification.
+- Time Travel provider mutation must remain a quarantined manual runbook in v1. Control Worker and Admin UI must not expose
+  a Cloudflare restore RPC. Admin may record only a digest of the manually completed restore reference, and restored routing
+  must not reactivate before migration, Lookup rebuild, generation, and smoke verification.
 - Runtime registry snapshot signing private key belongs to Control Worker, not general runtime workers.
 - Runtime Workers must not call Control Worker on login/token hot path.
 
 ## Test plan
 
+CI traceability is maintained in
+`scripts/control-plane/tenant-d1-traceability.json`. The schema-v2 validator requires the exact
+`0/0b/0c/1/2/2b/3/4/5/6/7/8/9` phase sequence and rejects a missing subphase, review perspective,
+test file, or CI command. Backend package tests run through
+`pnpm run test:coverage:api`, UI tests through `pnpm run test:ui`, and live-contract/fixture tests
+through `pnpm run control-plane:test`. The Phase 8 DR fixture intentionally validates the manual
+quarantine/restore/verification contract without adding a Control Worker or Admin UI restore RPC.
+
 Unit tests:
 
-- binding set diff emits version-pinned inherit entries for every unchanged supported binding and rejects unsupported
+- binding set diff emits deployment-fenced `latest` inherit entries for every unchanged supported binding and rejects unsupported
   settings fields instead of dropping them
 - deployment lease/fencing rejects a stale source version and never rolls back a newer concurrent setup/update deployment
 - deterministic resource-create reconciliation adopts exactly one matching owned resource after response loss and rejects
@@ -3315,8 +3762,8 @@ Integration tests with mocked Cloudflare API:
   smoke and same-generation tenant lifecycle / Runtime Registry / Lookup activation
 - cross-store tenant activation failures at each step remain non-routable; Registry/Lookup active with tenant lifecycle
   pending cannot route, and final lifecycle commit is idempotent after response loss
-- binding append preserves secret, Service Binding, KV, R2, Durable Object, dispatch namespace, and non-binding settings
-  through version-pinned inherit/preservation fixtures
+- binding append preserves secret, Service Binding, KV, R2, Durable Object, Worker Loader, and non-binding settings
+  through deployment-fenced `latest` inherit/preservation fixtures
 - setup/update and Control Worker concurrent deployments serialize through the shared lease; stale fencing fails closed and
   a deployment appearing after patch is not rolled back as the Control Worker version
 - setup/update cannot mutate a Worker when Control DB lease acquisition is unavailable or stale and does not need a public
@@ -3348,9 +3795,9 @@ Integration tests with mocked Cloudflare API:
   without raw SQL result or PII
 - smoke requires 3 consecutive successes per target Worker and a minimum 30 second stabilization wait before
   tenant lifecycle / Runtime Registry / Lookup activation
-- reflected settings diff that loses an existing binding triggers previous deployment rollback, with previous settings
-  restore as fallback
-- rollback primary and fallback failures keep tenant lifecycle / Runtime Registry / Lookup pending, mark the shard failed,
+- reflected settings diff that loses an existing binding triggers a fenced saved-settings restore without deploying a
+  previous Worker version
+- saved-settings restore failures keep tenant lifecycle / Runtime Registry / Lookup pending, mark the shard failed,
   preserve D1/observed binding state, and block the operation for manual repair
 - tenant lifecycle / Runtime Registry / Lookup remain non-routable through D1 create / migration / binding / smoke and
   converge to the same active generation only as the final gate
@@ -3460,24 +3907,25 @@ Operational tests:
 - Runtime Registry KV permits a previously observed generation for existing routes for 2 minutes, requires the latest
   generation for new routes, and never permits destructive quarantine work before the 30-minute absolute TTL/drain gate
 - Control Worker rollback keeps Control DB desired state and existing runtime routing intact
-- Worker settings rollback restores the previous deployment when reflected diff detects existing binding loss, and falls
-  back to restoring previous settings if deployment rollback is unavailable
+- Worker settings rollback directly restores saved previous settings while the patched deployment remains fenced and
+  never treats a previous-version deployment as binding restoration
 - blocked operation can be inspected and manually resumed without duplicating Cloudflare resources
 - cleanup operation cannot run before quarantine and manual approval
 - disaster-recovery runbook quarantines the affected D1, performs manual Time Travel restore, rebuilds Lookup projection,
   and verifies migration/binding generations before reactivation
-- live API spike verifies `/settings` PATCH multipart behavior, immediate active deployment behavior, and the complete
-  version-pinned inherit/settings preservation matrix in `test`
-- Phase 0c manual checklist records and passes the fixed discovery and Mail OTP thresholds
+- live API spike verifies `/settings` PATCH multipart behavior, immediate active deployment behavior, immutable inherit ID
+  rejection, and the complete deployment-fenced `latest` inherit/settings preservation matrix in `test`
+- Phase 0c manual checklist records and passes the fixed discovery and production TOTP thresholds plus bounded real Mail OTP smoke
 
 ## Deferred items
 
 These are intentionally not part of the first delivery.
 
 - Migration from existing shared/preallocated environments.
-- Existing tenant/account authoritative data movement between core/PII D1 shards. This does not include the Phase 5
-  online movement of rebuildable Lookup routing projection buckets.
-- Online dual-write / outbox replay for authoritative core/PII shard migration.
+- Arbitrary per-account rebalance, `tenant_exclusive -> shared_pool`, residency repartitioning, and
+  other authoritative core/PII movement not covered by the completed Phase 5
+  `shared_pool -> tenant_exclusive` tenant migration saga.
+- Generalized online dual-write / outbox replay outside the completed bounded Phase 5 migration path.
 - Automatic cleanup without manual approval.
 - Admin UI / Control Worker initiated Time Travel restore and scheduled R2 database exports.
 - Metrics-driven Worker split evaluation by `data_role` / `shard_group` / `deployment_target` for future 1000 万
@@ -3485,6 +3933,9 @@ These are intentionally not part of the first delivery.
 - Tenant-specific external DB / Hyperdrive activation.
 - General-purpose dedicated R2 per tenant outside the approved plugin resource model.
 - Queue-based acceleration for plugin hook outbox delivery.
+
+The actionable follow-up inventory, including trigger conditions and items explicitly removed from
+Phase 9, is maintained in `FOLLOW_UP_TASKS.md`.
 
 ## Not planned
 
@@ -3497,8 +3948,8 @@ These are intentionally not part of the first delivery.
 
 1. Control Worker adapter 実装時に、Phase 0 live API spike の結果どおり `/settings` PATCH を
    `multipart/form-data` の `settings` field で送る。
-2. Control Worker adapter 実装時に、`/settings` PATCH が即 active deployment を作る前提で previous deployment
-   rollback、previous settings restore fallback、post-patch smoke、tenant lifecycle / Runtime Registry / Lookup の
+2. Control Worker adapter 実装時に、`/settings` PATCH が即 active deployment を作る前提で fenced previous
+   settings restore、post-patch smoke、tenant lifecycle / Runtime Registry / Lookup の
    same-generation active gate を実装する。
 3. Runtime Worker adapter 実装時に、Control Worker からの Service Binding RPC 専用 smoke method を用意し、
    対象 Worker ごとに 3 回連続成功するまで active routing publish を禁止する。
@@ -3506,11 +3957,11 @@ These are intentionally not part of the first delivery.
    ±5 秒 clock skew、current/previous verification key rotation を検証する。
 5. Account route resolver実装時に、request-local / 10分isolate cache missがactive virtual bucketの1 Lookup D1だけを
    読み、per-account Workers KVを使わず、cache hitでもTenant D1のidentifier/account-state検証を省略しないことを確認する。
-6. Phase 9でPhase 0cのharnessを使い、test環境のidentifier discoveryを25 RPS・5分、Mail OTP full loginを
-   25 LPS・5分実行し、
-   success rate、p95、routing由来5xx / timeout / D1 overloadedをmanual release checklistへ記録する。
-7. Phase 0 live API spikeを拡張し、secret / Service Binding / KV / R2 / Durable Object / dispatch namespaceと
-   non-binding settingsのversion-pinned inherit/preservation matrixをtest環境で確認する。
+6. Phase 0c harnessによるtest環境のidentifier discovery 50 RPS・5分とproduction TOTP full login
+   25 LPS・5分は実行済み。performance未達の調査と実Mail OTP deliveryの少量smokeはPhase 0-9の
+   exit criterionから外し、`FOLLOW_UP_TASKS.md`で管理する。
+7. Phase 0 live API spikeを拡張し、secret / Service Binding / KV / R2 / Durable Object / Worker Loaderと
+   non-binding settingsのdeployment-fenced `latest` inherit/preservation matrixをtest環境で確認する。
 8. setup/update partial deployとControl Worker binding reconciliationを競合させ、Worker-scoped lease / fencingが
    stale writeとnewer deployment rollbackを防ぐことを確認する。
 
@@ -3536,13 +3987,11 @@ These are intentionally not part of the first delivery.
 - Cloudflare Create Workers KV Namespace API: https://developers.cloudflare.com/api/resources/kv/subresources/namespaces/methods/create/
 - Cloudflare legacy Workers KV namespace API deprecation: https://developers.cloudflare.com/changelog/post/2026-07-15-kv-legacy-namespace-routes-deprecation/
 - Cloudflare Create R2 Bucket API: https://developers.cloudflare.com/api/resources/r2/subresources/buckets/methods/create/
-- Cloudflare Create Dynamic Workers Dispatch Namespace API: https://developers.cloudflare.com/api/resources/workers_for_platforms/subresources/dispatch/subresources/namespaces/methods/create/
 - Cloudflare Workers Smart Placement: https://developers.cloudflare.com/workers/configuration/placement/
 - Cloudflare Workers Web Crypto: https://developers.cloudflare.com/workers/runtime-apis/web-crypto/
 - Cloudflare Workers Cron Triggers: https://developers.cloudflare.com/workers/configuration/cron-triggers/
 - Cloudflare Dynamic Workers: https://developers.cloudflare.com/dynamic-workers/
 - Cloudflare Dynamic Workers bindings: https://developers.cloudflare.com/dynamic-workers/usage/bindings/
 - Cloudflare Dynamic Workers egress control: https://developers.cloudflare.com/dynamic-workers/usage/egress-control/
-- Cloudflare Workers for Platforms user Worker bindings: https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/bindings/
 - Existing preallocated pool design: `private/docs/architecture/tenant-d1-preallocated-pool-design-2026-05-18.md`
 - Existing tenant database registry schema: `migrations/admin/004_admin_tenant_runtime_jobs.sql`

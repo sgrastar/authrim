@@ -72,11 +72,14 @@ import {
   validateLoginUICustomCss,
   validateTrustedRedirectOrigins,
   bumpAuthenticationMethodsCacheRevision,
+  resolveClientTrustPolicy,
 } from '@authrim/ar-lib-core';
 import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
 import { describeRuntimeProfileActivationStatus } from '../../runtime-profile-reference-status';
+import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
+import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
 
 // Module-level logger for settings audit
 const log = createLogger().module('SETTINGS_AUDIT');
@@ -86,6 +89,8 @@ const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryName>([
   'self-service',
 ]);
 const AUTHENTICATION_METHODS_CLIENT_CACHE_CATEGORIES = new Set<CategoryName>(['login-ui']);
+const DEFAULT_HUMAN_VERIFICATION_PROVIDER = 'human-verification-cloudflare-turnstile';
+const HUMAN_VERIFICATION_SETTING_PREFIX = 'authentication-methods.human_verification.';
 
 function settingValue(body: JsonObject, key: string): JsonValue | undefined {
   const set = body.set;
@@ -256,6 +261,24 @@ function hasTenantSettingsPermission(
     return hasAdminPermission(adminAuth.permissions ?? [], required);
   }
   return checkRolePermission(adminAuth.roles, category, 'tenant', action);
+}
+
+function hasClientSettingsPermission(
+  adminAuth: AdminAuthContext | undefined,
+  category: CategoryName,
+  action: 'view' | 'edit'
+): boolean {
+  if (!adminAuth) return false;
+  if (
+    adminAuth.actorType === 'agent' ||
+    adminAuth.actorType === 'machine' ||
+    adminAuth.authMethod === 'machine_access_token'
+  ) {
+    const required =
+      action === 'edit' ? ADMIN_PERMISSIONS.SETTINGS_WRITE : ADMIN_PERMISSIONS.SETTINGS_READ;
+    return hasAdminPermission(adminAuth.permissions ?? [], required);
+  }
+  return checkRolePermission(adminAuth.roles, category, 'client', action);
 }
 
 /**
@@ -880,6 +903,32 @@ async function readScopedSettingsRecord(
   }
 }
 
+function selectedHumanVerificationProvider(settings: Record<string, unknown>): string {
+  const value = settings[`${HUMAN_VERIFICATION_SETTING_PREFIX}provider`];
+  return typeof value === 'string' && BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS.has(value)
+    ? value
+    : DEFAULT_HUMAN_VERIFICATION_PROVIDER;
+}
+
+async function scheduleInheritedHumanVerificationProjection(
+  env: Env,
+  tenantId: string,
+  before: Record<string, unknown>,
+  after: Record<string, unknown>
+): Promise<void> {
+  if (!env.SETTINGS) return;
+  const providers = new Set([
+    selectedHumanVerificationProvider(before),
+    selectedHumanVerificationProvider(after),
+  ]);
+  for (const pluginId of providers) {
+    const override = await env.SETTINGS.get(`plugins:config:${pluginId}:tenant:${tenantId}`);
+    if (override === null) {
+      await markGlobalProviderDesiredRevision(env, pluginId);
+    }
+  }
+}
+
 async function ensureTenantAccountPageEnabled(env: Env, tenantId: string): Promise<void> {
   if (!env.SETTINGS) {
     return;
@@ -964,16 +1013,19 @@ async function getAppLoginClientProfile(
     return null;
   }
 
-  const clientSettings = await readScopedSettingsRecord(env, 'client', {
-    type: 'client',
-    tenantId,
-    id: trimmedClientId,
-  });
+  const [clientSettings, trustPolicy] = await Promise.all([
+    readScopedSettingsRecord(env, 'client', {
+      type: 'client',
+      tenantId,
+      id: trimmedClientId,
+    }),
+    resolveClientTrustPolicy(adapter, tenantId, 'oidc_client', trimmedClientId),
+  ]);
 
   return {
     clientId: client.client_id,
     redirectUris: parseStringArraySetting(client.redirect_uris),
-    firstParty: clientSettings['client.first_party'] === true,
+    firstParty: trustPolicy?.first_party === true,
     appLoginEnabled: clientSettings['client.app_login_enabled'] === true,
   };
 }
@@ -1092,24 +1144,25 @@ async function validateClientAppLoginPatch(
   });
   const effectiveAppLoginEnabled =
     set['client.app_login_enabled'] ?? current['client.app_login_enabled'] ?? false;
-  const effectiveFirstParty = set['client.first_party'] ?? current['client.first_party'] ?? false;
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'settings-v2-app-login', {
+    tenantId,
+  });
+  const trustPolicy = await resolveClientTrustPolicy(adapter, tenantId, 'oidc_client', clientId);
+  const effectiveFirstParty = trustPolicy?.first_party === true;
   if (effectiveAppLoginEnabled === true && effectiveFirstParty !== true) {
     return {
       ok: false,
       status: 400,
       error: 'bad_request',
       message: 'App Login can only be enabled for first-party clients',
-      details: { clientId, requiredSetting: 'client.first_party' },
+      details: { clientId, requiredPolicy: 'client_trust_policy.first_party' },
     };
   }
 
   const disablesAppLogin =
     set['client.app_login_enabled'] === false ||
-    set['client.first_party'] === false ||
     body.disable?.includes('client.app_login_enabled') ||
-    body.disable?.includes('client.first_party') ||
-    body.clear?.includes('client.app_login_enabled') ||
-    body.clear?.includes('client.first_party');
+    body.clear?.includes('client.app_login_enabled');
   if (!disablesAppLogin) {
     return { ok: true };
   }
@@ -1133,6 +1186,16 @@ async function validateClientAppLoginPatch(
   }
 
   return { ok: true };
+}
+
+const DEPRECATED_CLIENT_CONSENT_SETTING_KEYS = new Set([
+  'client.consent_required',
+  'client.first_party',
+]);
+
+function findDeprecatedClientConsentSetting(body: SettingsPatchRequest): string | undefined {
+  const keys = [...Object.keys(body.set ?? {}), ...(body.disable ?? []), ...(body.clear ?? [])];
+  return keys.find((key) => DEPRECATED_CLIENT_CONSENT_SETTING_KEYS.has(key));
 }
 
 async function validatePostLoginRelatedPatch(
@@ -1474,6 +1537,10 @@ settingsV2.patch(
 
       // Get actor from context (set by auth middleware)
       const actor = adminAuth?.userId ?? 'unknown';
+      const authenticationMethodsBefore =
+        category === 'authentication-methods'
+          ? await readScopedSettingsRecord(c.env, category, scope)
+          : null;
 
       const result = await manager.patch(category, scope, body, actor);
 
@@ -1489,6 +1556,20 @@ settingsV2.patch(
       const hasRejections = Object.keys(result.rejected).length > 0;
       const hasApplied =
         result.applied.length > 0 || result.cleared.length > 0 || result.disabled.length > 0;
+      const changedKeys = [...result.applied, ...result.cleared, ...result.disabled];
+
+      if (
+        authenticationMethodsBefore &&
+        changedKeys.some((key) => key.startsWith(HUMAN_VERIFICATION_SETTING_PREFIX))
+      ) {
+        const authenticationMethodsAfter = await readScopedSettingsRecord(c.env, category, scope);
+        await scheduleInheritedHumanVerificationProjection(
+          c.env,
+          tenantId,
+          authenticationMethodsBefore,
+          authenticationMethodsAfter
+        );
+      }
 
       // Return appropriate status
       // 200 OK if anything was applied (even with rejections)
@@ -1572,9 +1653,7 @@ settingsV2.get('/clients/:clientId/settings', async (c) => {
 
   // Security Check 1: Validate user has permission for client settings
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'client', 'view')) {
+  if (!hasClientSettingsPermission(adminAuth, category, 'view')) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view client settings', 403);
   }
 
@@ -1635,9 +1714,7 @@ settingsV2.get('/clients/:clientId/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has permission for this category at client scope
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'client', 'view')) {
+  if (!hasClientSettingsPermission(adminAuth, category, 'view')) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to view client settings', 403);
   }
 
@@ -1682,9 +1759,7 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
 
   // Security Check 1: Validate user has EDIT permission for client settings
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'client', 'edit')) {
+  if (!hasClientSettingsPermission(adminAuth, category, 'edit')) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to edit client settings', 403);
   }
 
@@ -1716,6 +1791,21 @@ settingsV2.patch('/clients/:clientId/settings', async (c) => {
     if (!body.ifMatch) {
       await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    }
+
+    const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+    if (deprecatedConsentSetting) {
+      await recordSettingsAuditFailure(c, {
+        category,
+        scope,
+        reason: 'deprecated_client_consent_setting',
+      });
+      return errorResponse(
+        c,
+        'bad_request',
+        `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+        400
+      );
     }
 
     const appLoginValidation = await validateClientAppLoginPatch(
@@ -1826,9 +1916,7 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
 
   // Security Check 3: Validate user has EDIT permission for this category at client scope
   const adminAuth = c.get('adminAuth');
-  const userRoles = adminAuth?.roles || [];
-
-  if (!checkRolePermission(userRoles, category, 'client', 'edit')) {
+  if (!hasClientSettingsPermission(adminAuth, category, 'edit')) {
     return errorResponse(c, 'forbidden', 'Insufficient permissions to edit client settings', 403);
   }
 
@@ -1859,6 +1947,23 @@ settingsV2.patch('/clients/:clientId/settings/:category', async (c) => {
     if (!body.ifMatch) {
       await recordSettingsAuditFailure(c, { category, scope, reason: 'if_match_required' });
       return errorResponse(c, 'bad_request', 'ifMatch is required for PATCH operations', 400);
+    }
+
+    if (category === 'client') {
+      const deprecatedConsentSetting = findDeprecatedClientConsentSetting(body);
+      if (deprecatedConsentSetting) {
+        await recordSettingsAuditFailure(c, {
+          category,
+          scope,
+          reason: 'deprecated_client_consent_setting',
+        });
+        return errorResponse(
+          c,
+          'bad_request',
+          `${deprecatedConsentSetting} is no longer supported; use Client Trust Policy`,
+          400
+        );
+      }
     }
 
     if (category === 'login-ui') {

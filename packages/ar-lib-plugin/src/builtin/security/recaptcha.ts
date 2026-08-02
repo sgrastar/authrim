@@ -37,7 +37,7 @@ export const ReCaptchaConfigSchema = z.object({
     .default(0.5)
     .describe('Minimum accepted score when widgetMode is score'),
   failurePolicy: TurnstileFailurePolicySchema.default('fail_closed').describe(
-    'When Siteverify is unavailable: fail_closed rejects the authentication request, fail_open allows it'
+    'Siteverify failure always rejects the authentication request'
   ),
   timeoutMs: z
     .number()

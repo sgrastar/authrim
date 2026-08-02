@@ -28,7 +28,7 @@ export const HCaptchaConfigSchema = z.object({
     'How the hCaptcha widget is displayed in Login UI'
   ),
   failurePolicy: TurnstileFailurePolicySchema.default('fail_closed').describe(
-    'When Siteverify is unavailable: fail_closed rejects the authentication request, fail_open allows it'
+    'Siteverify failure always rejects the authentication request'
   ),
   timeoutMs: z
     .number()

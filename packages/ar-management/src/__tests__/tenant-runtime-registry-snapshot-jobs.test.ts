@@ -31,7 +31,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { refreshTenantRuntimeRegistrySnapshots } from '../tenant-runtime-registry-snapshot-jobs';
+import {
+  isTenantRuntimeRegistryRefreshCron,
+  refreshTenantRuntimeRegistrySnapshots,
+} from '../tenant-runtime-registry-snapshot-jobs';
 
 describe('tenant runtime registry snapshot jobs', () => {
   const logger = {
@@ -41,12 +44,31 @@ describe('tenant runtime registry snapshot jobs', () => {
   const snapshotStore = {
     put: vi.fn(async () => undefined),
   };
+  const controlSigner = {
+    getRuntimeRegistrySignerMetadata: vi.fn(async () => ({
+      keyId: 'runtime-registry-a',
+      algorithm: 'EdDSA' as const,
+      type: 'authrim-runtime-registry+jws' as const,
+    })),
+    signRuntimeRegistryPayload: vi.fn(async () => ({
+      keyId: 'runtime-registry-a',
+      algorithm: 'EdDSA' as const,
+      type: 'authrim-runtime-registry+jws' as const,
+      compactJws: 'unused.mock.signature',
+    })),
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([]);
     mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue(null);
     mockPublishTenantRuntimeRegistrySnapshot.mockResolvedValue({});
+  });
+
+  it('uses the existing two-minute scheduled lane only', () => {
+    expect(isTenantRuntimeRegistryRefreshCron('*/2 * * * *')).toBe(true);
+    expect(isTenantRuntimeRegistryRefreshCron('* * * * *')).toBe(false);
+    expect(isTenantRuntimeRegistryRefreshCron('0 */6 * * *')).toBe(false);
   });
 
   it('skips when DB_ADMIN is not configured', async () => {
@@ -81,6 +103,7 @@ describe('tenant runtime registry snapshot jobs', () => {
       {
         DB_ADMIN: 'control',
         TENANT_RUNTIME_REGISTRY: snapshotStore,
+        CONTROL: controlSigner,
         DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
         AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
       } as never,
@@ -98,6 +121,11 @@ describe('tenant runtime registry snapshot jobs', () => {
         snapshotStore,
         deploymentTarget: 'edge-a',
         actorId: 'tenant-runtime-registry-snapshot',
+        externalSigner: expect.objectContaining({
+          keyId: 'runtime-registry-a',
+          algorithm: 'EdDSA',
+          type: 'authrim-runtime-registry+jws',
+        }),
       })
     );
     expect(mockPublishTenantRuntimeRegistrySnapshot).toHaveBeenNthCalledWith(
@@ -127,6 +155,7 @@ describe('tenant runtime registry snapshot jobs', () => {
       {
         DB_ADMIN: 'control',
         TENANT_RUNTIME_REGISTRY: snapshotStore,
+        CONTROL: controlSigner,
       } as never,
       logger
     );
@@ -157,5 +186,27 @@ describe('tenant runtime registry snapshot jobs', () => {
 
     expect(summary).toEqual({ scanned: 1, published: 0, skipped: 1, failed: 0 });
     expect(mockPublishTenantRuntimeRegistrySnapshot).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an active snapshot with less than ten minutes remaining', async () => {
+    mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([
+      { tenant_id: 'tenant-a', role: 'tenant_core', status: 'active' },
+    ]);
+    mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue({
+      expires_at: '2026-05-16T00:09:59.000Z',
+    });
+
+    const summary = await refreshTenantRuntimeRegistrySnapshots(
+      {
+        DB_ADMIN: 'control',
+        TENANT_RUNTIME_REGISTRY: snapshotStore,
+        CONTROL: controlSigner,
+      } as never,
+      logger,
+      { now: new Date('2026-05-16T00:00:00.000Z') }
+    );
+
+    expect(summary).toEqual({ scanned: 1, published: 1, skipped: 0, failed: 0 });
+    expect(mockPublishTenantRuntimeRegistrySnapshot).toHaveBeenCalledTimes(1);
   });
 });

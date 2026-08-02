@@ -89,9 +89,9 @@ paths:
           $ref: '#/components/responses/AuthMethods'
         '400':
           $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '401':
           $ref: '#/components/responses/Error'
       security: []
   /api/auth/discovery:
@@ -108,9 +108,9 @@ paths:
           $ref: '#/components/responses/DiscoveryConfig'
         '400':
           $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '401':
           $ref: '#/components/responses/Error'
       security: []
     post:
@@ -119,8 +119,8 @@ paths:
       operationId: postApiAuthDiscovery
       summary: Resolve a tenant discovery input.
       description:
-        Resolves an email domain, tenant code, tenant slug, invitation token, WAYF choice, or
-        app hint into one or more tenant login candidates.
+        Resolves a tenant code, tenant slug, invitation token, WAYF choice, or app hint into one
+        or more tenant login candidates. Exact-email input uses the dedicated OTP endpoints.
       responses:
         '200':
           $ref: '#/components/responses/Discovery'
@@ -153,6 +153,46 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DiscoveryGrant'
+      security: []
+  /api/auth/discovery/email/start:
+    post:
+      tags:
+        - Frontend Auth Discovery
+      operationId: postApiAuthDiscoveryEmailStart
+      summary: Start exact-email tenant discovery verification.
+      description: Sends a platform-scoped one-time code without querying or disclosing tenant membership.
+      requestBody:
+        $ref: '#/components/requestBodies/DiscoveryEmailStart'
+      responses:
+        '202':
+          $ref: '#/components/responses/DiscoveryEmailStart'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security: []
+  /api/auth/discovery/email/verify:
+    post:
+      tags:
+        - Frontend Auth Discovery
+      operationId: postApiAuthDiscoveryEmailVerify
+      summary: Verify an exact-email tenant discovery code.
+      description: Consumes a one-time code and only then resolves exact email memberships from the Lookup directory.
+      requestBody:
+        $ref: '#/components/requestBodies/DiscoveryEmailVerify'
+      responses:
+        '200':
+          $ref: '#/components/responses/Discovery'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security: []
   /api/auth/discovery/grant/verify:
     post:
@@ -307,6 +347,23 @@ components:
           example:
             tenant_id: tenant_123
             return_to: https://app.example.com/
+    DiscoveryEmailStart:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiscoveryEmailStartRequest'
+          example:
+            email: user@example.com
+    DiscoveryEmailVerify:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiscoveryEmailVerifyRequest'
+          example:
+            challenge_id: discovery-42-00000000-0000-4000-8000-000000000001
+            code: '123456'
     DiscoveryGrantVerify:
       required: true
       content:
@@ -423,7 +480,7 @@ components:
               tenant_id: default
               mode: direct
               discovery_methods:
-                - email_domain
+                - email_exact
                 - tenant_code
               allow_manual_tenant_entry: true
             ui:
@@ -447,7 +504,13 @@ components:
               display_name: Acme
               logo_url: null
               login_url: https://acme.auth.example.com/login
-              source: email_domain
+              source: email_exact
+    DiscoveryEmailStart:
+      description: Tenant discovery verification code accepted for delivery.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiscoveryEmailStartResponse'
     DiscoveryGrant:
       description: Successful JSON response.
       content:
@@ -1233,7 +1296,7 @@ components:
         source:
           type: string
           enum:
-            - email_domain
+            - email_exact
             - tenant_code
             - tenant_slug
             - wayf
@@ -1288,6 +1351,46 @@ components:
         value:
           type: string
           maxLength: 2048
+    DiscoveryEmailStartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+    DiscoveryEmailVerifyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - code
+      properties:
+        challenge_id:
+          type: string
+          maxLength: 128
+        code:
+          type: string
+          pattern: '^\d{6}$'
+    DiscoveryEmailStartResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - challenge_id
+        - expires_in
+        - status
+      properties:
+        challenge_id:
+          type: string
+        expires_in:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+            - code_sent
     DiscoveryResponse:
       oneOf:
         - type: object

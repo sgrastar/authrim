@@ -68,7 +68,7 @@ describe('tenant discovery reindex jobs', () => {
           tenant_id: '__control__',
           status: 'pending',
           config: JSON.stringify({
-            index_kind: 'email_domain',
+            index_kind: 'email_exact',
             previous_key_version: 1,
             current_key_version: 2,
           }),

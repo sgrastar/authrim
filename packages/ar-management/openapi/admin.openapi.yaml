@@ -211,7 +211,6 @@ paths:
       summary: End the current Admin UI session.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
           $ref: '#/components/responses/AdminLogout'
@@ -307,14 +306,32 @@ paths:
         - $ref: '#/components/parameters/Limit'
         - name: search
           in: query
+          description: >-
+            Exact email address or account identifier for sharded tenant-D1 storage. Other storage
+            profiles may also support their documented text search behavior.
           schema:
             type: string
+        - name: cursor
+          in: query
+          description: Opaque signed continuation cursor returned by a sharded tenant-D1 response.
+          schema:
+            type: string
+            maxLength: 16384
       responses:
         '200':
           $ref: '#/components/responses/AdminUserList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
         List canonical runtime users in the current tenant with optional search, verification, PII
-        status, and lifecycle filters.
+        status, and lifecycle filters. Sharded tenant-D1 storage uses bounded fan-out and an opaque
+        cursor. Exact identifier search resolves one account route through Lookup instead of
+        scanning all shards. A cursor whose signed shard-set generation is stale returns
+        `cursor_stale`; clients should restart from the first page.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -324,17 +341,51 @@ paths:
       summary: Create an end user.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/AccountCreationIdempotencyKey'
       requestBody:
         $ref: '#/components/requestBodies/AdminUserCreate'
       responses:
         '201':
           $ref: '#/components/responses/AdminUser'
+        '202':
+          $ref: '#/components/responses/AdminUserCreationPending'
         '400':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       description: >-
-        Create User in the Users area. The request body is JSON unless the detailed schema for this
-        operation states otherwise.
+        Allocate an account route and create a user in the selected tenant. Returns 201 only after
+        Lookup directory publication is active. A transient publication delay returns 202 with a
+        durable operation identifier that can be resumed by retrying the same request and
+        Idempotency-Key.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/operations/{operationId}':
+    get:
+      tags:
+        - Users
+      summary: Get an account creation operation.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminUserCreationOperation'
+        '404':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Return the current state of an account creation operation owned by the authenticated
+        administrator in the selected tenant. Unknown, cross-tenant, and differently owned
+        operations all return 404.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -395,6 +446,106 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/users/{id}/identifier-replacements':
+    get:
+      tags:
+        - Users
+      summary: List email replacement operations for an end user.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Tenant- and account-scoped operation status without identifier values.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations]
+                properties:
+                  operations:
+                    type: array
+                    maxItems: 20
+                    items:
+                      type: object
+                      required:
+                        - operation_id
+                        - authority
+                        - state
+                        - attention_required
+                        - error_code
+                        - created_at
+                        - updated_at
+                        - completed_at
+                      properties:
+                        operation_id:
+                          type: string
+                        authority:
+                          type: string
+                          enum: [self_service, admin, scim, external_idp]
+                        state:
+                          type: string
+                        attention_required:
+                          type: boolean
+                        error_code:
+                          type: [string, 'null']
+                          description: Fixed operator-facing code; internal failure details are omitted.
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+                        completed_at:
+                          type: [integer, 'null']
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Return at most 10 recent email replacement operations for the selected tenant and account.
+        Raw identifiers, blind indexes, binding references, and internal errors are never returned.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/identifier-replacements/{operationId}/resume':
+    post:
+      tags:
+        - Users
+      summary: Resume a blocked email replacement operation.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^identifier-replacement:[a-f0-9-]{36}$'
+      responses:
+        '200':
+          description: Resume was accepted and automatic forward repair was attempted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operation_id, state, attention_required]
+                properties:
+                  operation_id:
+                    type: string
+                  state:
+                    type: string
+                  attention_required:
+                    type: boolean
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      description: >-
+        Atomically requeue only a blocked forward-repair operation in the selected tenant and
+        account, then invoke the same idempotent coordinator used by automatic recovery. Other
+        states and cross-scope identifiers return a fixed conflict response.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/users/{id}/totp/reset':
     post:
       tags:
@@ -420,7 +571,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/TenantDisasterRecoveryIdempotencyKey'
       requestBody:
         $ref: '#/components/requestBodies/AdminUserSuspend'
       responses:
@@ -440,7 +591,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/TenantDisasterRecoveryIdempotencyKey'
       requestBody:
         $ref: '#/components/requestBodies/AdminUserLock'
       responses:
@@ -1441,6 +1592,15 @@ paths:
       responses:
         '201':
           $ref: '#/components/responses/Tenant'
+        '202':
+          description: Tenant creation was accepted for asynchronous Control Worker provisioning.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Tenant'
+                  - type: object
+                    required: [provisioning]
       description: >-
         Create a tenant as a platform-level administrator. The server assigns lifecycle state,
         default status, and timestamps; callers provide only the tenant identifier and display
@@ -1494,6 +1654,143 @@ paths:
       description: >-
         Queue asynchronous tenant deletion. The tenant is moved out of the active lifecycle
         immediately and the background deletion job removes tenant data later.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/provisioning':
+    get:
+      tags: [Tenants]
+      summary: Get tenant provisioning status.
+      description: >-
+        Returns the Management-owned tenant creation saga and redacted Control Worker capacity
+        operation steps. Reading this endpoint also nudges runnable work, while the scheduled
+        processor remains the durable execution path.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantProvisioningOperation'
+        '404':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/placement-migrations':
+    post:
+      tags: [Tenants]
+      summary: Start online migration to physically isolated tenant databases.
+      description: >-
+        Starts the forward-recoverable shared-pool to tenant-exclusive migration. The source
+        remains authoritative until the bounded cutover steps begin. The target placement is
+        fixed by the server and this endpoint accepts no request body.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      responses:
+        '202':
+          $ref: '#/components/responses/TenantPlacementMigrationOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/placement-migrations/latest':
+    get:
+      tags: [Tenants]
+      summary: Get the latest tenant placement migration.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantPlacementMigrationOperation'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/placement-migrations/{operationId}':
+    get:
+      tags: [Tenants]
+      summary: Get tenant placement migration status.
+      description: Returns Management saga steps and the redacted Control Worker operation view.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantPlacementMigrationOperation'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/placement-migrations/{operationId}/cancel':
+    post:
+      tags: [Tenants]
+      summary: Cancel a pre-cutover tenant placement migration.
+      description: Cancellation is rejected after route cutover has started.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantPlacementMigrationOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/tenants/{id}/placement-migrations/{operationId}/approve-purge':
+    post:
+      tags: [Tenants]
+      summary: Approve quarantined source tenant data purge.
+      description: >-
+        Records explicit purge approval after the Control Worker retention gate has expired. Only
+        rows owned by the migrated tenant are eligible for the later purge operation.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/RequiredIdempotencyKey'
+      responses:
+        '200':
+          $ref: '#/components/responses/TenantPlacementMigrationOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1665,6 +1962,8 @@ paths:
       responses:
         '201':
           $ref: '#/components/responses/TenantClone'
+        '202':
+          $ref: '#/components/responses/TenantCloneProvisioning'
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -1697,10 +1996,12 @@ paths:
         The source tenant must be active. Stored secret settings and credential hashes are copied
         only when explicitly requested. End-user accounts and their role assignments are never
         copied. This operation is platform-admin scoped and does not use X-Tenant-Id to identify
-        the destination. The destination remains in provisioning state until all selected
-        resources, clone-preparation audit evidence, and a fresh signing-key rotation succeed. A
-        success audit event is written after activation; failure to write it triggers compensating
-        rollback. The required Idempotency-Key is retained for 15 minutes. Synchronous work is
+        the destination. With tenant D1 storage, the endpoint returns 202 and the durable
+        provisioning operation performs clone preparation before Lookup activation. The
+        destination remains non-routable and in provisioning state until all selected resources,
+        clone-preparation audit evidence, and a fresh signing-key rotation succeed. A success audit
+        event is written after activation. The required Idempotency-Key is retained for 15 minutes.
+        Synchronous work is
         limited to an estimated 40 database queries and 10 KV records, with a 256 KiB limit per
         selected KV value; callers can reduce selected categories when a limit is exceeded. Machine
         callers additionally require
@@ -7213,7 +7514,9 @@ paths:
         - Consent
       operationId: putApiAdminClientTrustPolicies
       summary: Upsert a client trust policy.
-      description: Creates or updates trust settings for an OIDC client or SAML SP.
+      description: >-
+        Creates or updates the authoritative trust settings for an OIDC client or SAML SP.
+        An OIDC target must already exist in the current tenant.
       requestBody:
         required: true
         content:
@@ -7262,6 +7565,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -13295,6 +13600,1320 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/plugins/provider-projection/status:
+    get:
+      tags:
+        - Plugins
+      operationId: getApiAdminPlatformPluginsProviderProjectionStatus
+      summary: Get platform provider settings rollout status.
+      description: >-
+        Returns the latest durable inherited-configuration rollout for each built-in notification
+        or human-verification provider. This platform-wide status is restricted to system admins.
+      responses:
+        '200':
+          description: Latest provider rollout jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - jobs
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdminProviderProjectionJob'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/plugins/{id}/rollout:
+    post:
+      tags:
+        - Plugins
+      operationId: postApiAdminPlatformPluginRollout
+      summary: Process one bounded custom Dynamic Worker plugin rollout batch.
+      description: >-
+        Starts or resumes a rollout to the platform active immutable plugin version. The same
+        Idempotency-Key resumes the same server-owned cursor. A batch size of one can be used as the
+        first observed batch; a dedicated canary tenant is not required.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9._-]{0,127}$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [batch_size]
+              properties:
+                batch_size:
+                  type: integer
+                  minimum: 1
+                  maximum: 25
+                  default: 1
+      responses:
+        '200':
+          description: Bounded rollout batch result, resumable aggregate status, and audit ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminDynamicPluginRolloutBatch'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/read-replication:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformReadReplication
+      summary: Get environment read replication status.
+      description: >-
+        Returns the desired mode and aggregate convergence state for eligible Lookup and tenant D1
+        databases. This platform-wide operation is restricted to system administrators.
+      responses:
+        '200':
+          description: Current read replication policy and convergence status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [readReplication]
+                properties:
+                  readReplication:
+                    $ref: '#/components/schemas/AdminReadReplicationStatus'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Database Connections
+      operationId: putApiAdminPlatformReadReplication
+      summary: Set environment read replication mode.
+      description: >-
+        Starts an asynchronous environment-wide rollout for all eligible Lookup and tenant D1
+        databases. Control and Plugin Runner databases are never included.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '202':
+          description: Rollout accepted or an idempotent rollout returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [readReplication, auditId]
+                properties:
+                  readReplication:
+                    $ref: '#/components/schemas/AdminReadReplicationStatus'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/lookup-hmac/rotations:
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneLookupHmacRotation
+      summary: Start or resume a Lookup HMAC key rotation.
+      description: >-
+        Registers public metadata for one candidate blind-index HMAC key. Raw key material is never
+        accepted by this API. Setup deploys the candidate through Worker secrets and resumes the
+        same operation with the Idempotency-Key header.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [candidate]
+              properties:
+                candidate:
+                  $ref: '#/components/schemas/AdminLookupHmacKeyMetadata'
+      responses:
+        '202':
+          description: Rotation registered or idempotently resumed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [rotation, auditId]
+                properties:
+                  rotation:
+                    $ref: '#/components/schemas/AdminLookupHmacRotation'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/lookup-hmac/rotations/{operationId}':
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneLookupHmacRotation
+      summary: Inspect one Lookup HMAC key rotation.
+      description: Returns redacted state and public key metadata for one environment-scoped rotation.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '200':
+          description: Current Lookup HMAC rotation state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [rotation]
+                properties:
+                  rotation:
+                    $ref: '#/components/schemas/AdminLookupHmacRotation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/lookup-hmac/rotations/{operationId}/verifications/{phase}':
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneLookupHmacRotationVerification
+      summary: Inspect deployment evidence for a Lookup HMAC rotation.
+      description: >-
+        Returns bounded per-phase aggregate evidence. Distribution proves the fixed non-PII test
+        vector on every target; generation proves every target observed the signed active state.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: phase
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [distribution, generation]
+      responses:
+        '200':
+          description: Exact target-set verification status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status:
+                    $ref: '#/components/schemas/AdminLookupHmacVerificationStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/lookup-hmac/rotations/{operationId}/activate':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneLookupHmacRotationActivate
+      summary: Activate a verified Lookup HMAC candidate generation.
+      description: >-
+        Advances to signed dual-write only after Control has exact successful distribution evidence
+        for every runtime target. The request is fenced and audited before mutation.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLookupHmacRotationMutationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminLookupHmacRotationMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/lookup-hmac/rotations/{operationId}/observe-generation':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneLookupHmacRotationObserveGeneration
+      summary: Confirm that every target observed the active Lookup HMAC generation.
+      description: >-
+        Advances to resumable dual-read and reindex only after exact signed-generation evidence from
+        every target. The request is fenced and audited before mutation.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLookupHmacRotationMutationRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminLookupHmacRotationMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/capacity/preview:
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneCapacityPreview
+      summary: Preview a server-owned D1 capacity plan.
+      description: >-
+        Calculates the exact D1 databases, data roles, residency partitions, migrations, and Worker
+        scripts that one capacity profile would add. Resource names and binding names are generated
+        by Control and cannot be supplied by the administrator. This endpoint does not mutate state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminControlCapacityProfileRequest'
+      responses:
+        '200':
+          description: Server-owned capacity preview.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [preview]
+                properties:
+                  preview:
+                    $ref: '#/components/schemas/AdminControlCapacityProvisioningPreview'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/capacity/requests:
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneCapacityRequest
+      summary: Request a server-owned D1 capacity plan.
+      description: >-
+        Recomputes and records the selected capacity profile as canonical Control DB operations.
+        Control executes them automatically when provisioning is enabled; otherwise setup can claim
+        the same operations as the fenced operator executor. The request is human-platform-admin
+        only, idempotent, and audited before mutation.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminControlCapacityProfileRequest'
+      responses:
+        '202':
+          description: Canonical capacity operations accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [result, auditId]
+                properties:
+                  result:
+                    $ref: '#/components/schemas/AdminControlCapacityProvisioningResult'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/provisioning-authority:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneProvisioningAuthority
+      summary: Inspect the active provisioning executor.
+      description: >-
+        Returns secret-free Automatic provisioning capability and token ownership metadata for the
+        environment. When Control cannot execute automatically, setup_operator is reported as the
+        executor for canonical Control DB operations.
+      responses:
+        '200':
+          description: Provisioning authority status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [authority]
+                properties:
+                  authority:
+                    $ref: '#/components/schemas/AdminControlProvisioningAuthority'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/operations/{operationId}':
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneOperation
+      summary: Inspect one control-plane provisioning operation.
+      description: >-
+        Returns an environment-scoped, redacted operation, its ordered step status, and the actions
+        currently permitted by Control guards. This read-only endpoint does not mutate resources.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '200':
+          description: Provisioning operation status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operation]
+                properties:
+                  operation:
+                    $ref: '#/components/schemas/AdminControlProvisioningOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/operations/{operationId}/retry-step':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneOperationRetryStep
+      summary: Retry one blocked provisioning step.
+      description: >-
+        Starts a new two-hour retry window for a blocked D1 creation or migration step. The action
+        is environment-scoped, idempotent, restricted to a human platform administrator, and
+        audited before Control changes operation state. Other operation kinds and steps are rejected.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stepKey]
+              properties:
+                stepKey:
+                  type: string
+                  enum: [create_d1, apply_migrations]
+      responses:
+        '200':
+          description: Retry accepted and operation made runnable.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operation, auditId]
+                properties:
+                  operation:
+                    $ref: '#/components/schemas/AdminControlProvisioningOperation'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/operations/{operationId}/cancel':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneOperationCancel
+      summary: Cancel one blocked provisioning operation.
+      description: >-
+        Cancels a blocked shard provisioning operation only while no allocation, runtime route,
+        Worker binding reconciliation, or deployment lease refers to the shard. Existing D1 and
+        observed provider state are retained. The action is environment-scoped, idempotent,
+        restricted to a human platform administrator, and audited before Control changes state.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '200':
+          description: Operation canceled while provider resources were retained.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operation, auditId]
+                properties:
+                  operation:
+                    $ref: '#/components/schemas/AdminControlProvisioningOperation'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/operations/{operationId}/restore-previous-settings':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneOperationRestorePreviousSettings
+      summary: Restore saved Worker settings after rollback failure.
+      description: >-
+        Requeues only Worker binding reconciliations that are blocked because both automatic
+        rollback mechanisms failed and that retain a Control-owned previous-settings snapshot.
+        The settings are not returned to the caller. Control defers provider mutation to its
+        fenced Worker reconciliation loop, which rejects a newer active deployment and verifies
+        reflected settings. The action is environment-scoped, idempotent, restricted to a human
+        platform administrator, and audited before Control changes state.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '200':
+          description: Restore was accepted for fenced asynchronous reconciliation.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [operation, auditId]
+                properties:
+                  operation:
+                    $ref: '#/components/schemas/AdminControlProvisioningOperation'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/tenant-recovery:
+    post:
+      tags: [Database Connections]
+      operationId: postApiAdminPlatformControlPlaneTenantRecovery
+      summary: Start active-tenant disaster recovery.
+      description: >-
+        Publishes a signed fail-closed route deny and starts the fixed drain period for one active
+        tenant. D1 Time Travel restore remains an explicit operator action. Requires a human platform
+        administrator and durable audit evidence.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tenantId, confirmation]
+              properties:
+                tenantId:
+                  type: string
+                confirmation:
+                  type: string
+                  description: Must equal `START_TENANT_RECOVERY:{tenantId}`.
+      responses:
+        '202':
+          description: Recovery started and signed deny publication was observed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [recovery, auditId]
+                properties:
+                  recovery:
+                    $ref: '#/components/schemas/AdminTenantDisasterRecovery'
+                  auditId:
+                    type: string
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/tenant-recovery/{operationId}':
+    get:
+      tags: [Database Connections]
+      operationId: getApiAdminPlatformControlPlaneTenantRecoveryByOperationId
+      summary: Get active-tenant disaster-recovery progress.
+      parameters:
+        - $ref: '#/components/parameters/TenantDisasterRecoveryOperationId'
+      responses:
+        '200':
+          description: Secret-free recovery state and bounded progress.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [recovery]
+                properties:
+                  recovery:
+                    $ref: '#/components/schemas/AdminTenantDisasterRecovery'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/tenant-recovery/{operationId}/confirm-restore':
+    post:
+      tags: [Database Connections]
+      operationId: postApiAdminPlatformControlPlaneTenantRecoveryConfirmRestore
+      summary: Confirm completion of the manual in-place D1 restore.
+      description: >-
+        Stores only a SHA-256 digest of the operator restore reference. The raw reference is never
+        returned or retained by Control.
+      parameters:
+        - $ref: '#/components/parameters/TenantDisasterRecoveryOperationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [restoreReference, restoredAt, confirmation]
+              properties:
+                restoreReference:
+                  type: string
+                  minLength: 1
+                  maxLength: 512
+                  writeOnly: true
+                restoredAt:
+                  type: integer
+                  format: int64
+                confirmation:
+                  type: string
+                  description: Must equal `RESTORE_COMPLETED:{tenantId}`.
+      responses:
+        '202':
+          description: Restore evidence accepted; migration verification can proceed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery, auditId]
+                properties:
+                  recovery: { $ref: '#/components/schemas/AdminTenantDisasterRecovery' }
+                  auditId: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/tenant-recovery/{operationId}/verify':
+    post:
+      tags: [Database Connections]
+      operationId: postApiAdminPlatformControlPlaneTenantRecoveryVerify
+      summary: Verify restored D1 migration release and checksums.
+      description: >-
+        The only externally triggerable verification stage is `migration`. Lookup reprojection and
+        binding smoke are bounded internal jobs and cannot be marked successful through this API.
+      parameters:
+        - $ref: '#/components/parameters/TenantDisasterRecoveryOperationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stage]
+              properties:
+                stage:
+                  type: string
+                  const: migration
+      responses:
+        '202':
+          description: Migration evidence verified; Lookup reprojection is scheduled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery, auditId]
+                properties:
+                  recovery: { $ref: '#/components/schemas/AdminTenantDisasterRecovery' }
+                  auditId: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/tenant-recovery/{operationId}/reactivate':
+    post:
+      tags: [Database Connections]
+      operationId: postApiAdminPlatformControlPlaneTenantRecoveryReactivate
+      summary: Explicitly reactivate a fully verified recovered tenant.
+      description: >-
+        Publishes the same pinned physical route generation as active only after migration,
+        Lookup reprojection, reflected Worker bindings, three private smoke successes, and the
+        stabilization interval have completed.
+      parameters:
+        - $ref: '#/components/parameters/TenantDisasterRecoveryOperationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmation]
+              properties:
+                confirmation:
+                  type: string
+                  description: Must equal `REACTIVATE_RECOVERED_TENANT:{tenantId}`.
+      responses:
+        '200':
+          description: Signed active route publication was observed and recovery succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recovery, auditId]
+                properties:
+                  recovery: { $ref: '#/components/schemas/AdminTenantDisasterRecovery' }
+                  auditId: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/shard-cleanup:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneShardCleanup
+      summary: List retired tenant D1 shards and cleanup progress.
+      description: >-
+        Returns at most 100 environment-scoped inactive shards with quarantine, drain, binding
+        removal, D1 deletion, and destructive-operation gate status. This endpoint is read-only and
+        is restricted to platform administrators.
+      responses:
+        '200':
+          description: Inactive shard cleanup candidates.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, count]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/AdminShardCleanupCandidate'
+                  count:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/shard-cleanup/{shardId}':
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneShardCleanupById
+      summary: Inspect one retired tenant D1 shard cleanup.
+      parameters:
+        - $ref: '#/components/parameters/AdminShardCleanupShardId'
+      responses:
+        '200':
+          description: Inactive shard cleanup status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [candidate]
+                properties:
+                  candidate:
+                    $ref: '#/components/schemas/AdminShardCleanupCandidate'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/shard-cleanup/{shardId}/quarantine':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneShardQuarantine
+      summary: Quarantine a retired tenant D1 shard.
+      description: >-
+        Starts the signed Registry deny publication and minimum 30-minute drain. Allocation and
+        runtime route guards reject new references immediately. The request is human-only,
+        idempotent, and audited before Control state changes.
+      parameters:
+        - $ref: '#/components/parameters/AdminShardCleanupShardId'
+        - $ref: '#/components/parameters/AdminControlPlaneIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '202':
+          $ref: '#/components/responses/AdminShardCleanupMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/shard-cleanup/{shardId}/retry-quarantine':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneShardQuarantineRetry
+      summary: Retry a blocked shard quarantine.
+      parameters:
+        - $ref: '#/components/parameters/AdminShardCleanupShardId'
+        - $ref: '#/components/parameters/AdminControlPlaneIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [quarantineOperationId]
+              properties:
+                quarantineOperationId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '202':
+          $ref: '#/components/responses/AdminShardCleanupMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/shard-cleanup/{shardId}/approve':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneShardCleanupApprove
+      summary: Approve binding removal and optional physical D1 deletion.
+      description: >-
+        Records manual approval only after signed deny publication, the drain interval, and zero
+        authoritative references are verified. Physical deletion additionally requires the
+        server-side destructive-operation gate. Approval is human-only, idempotent, and audited.
+      parameters:
+        - $ref: '#/components/parameters/AdminShardCleanupShardId'
+        - $ref: '#/components/parameters/AdminControlPlaneIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminShardCleanupApprovalRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/AdminShardCleanupMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/shard-cleanup/{shardId}/retry-cleanup':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneShardCleanupRetry
+      summary: Retry a blocked shard cleanup.
+      parameters:
+        - $ref: '#/components/parameters/AdminShardCleanupShardId'
+        - $ref: '#/components/parameters/AdminControlPlaneIdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [cleanupOperationId]
+              properties:
+                cleanupOperationId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '202':
+          $ref: '#/components/responses/AdminShardCleanupMutation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/control-plane/drift-findings:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneDriftFindings
+      summary: List active Worker inventory drift findings.
+      description: >-
+        Returns redacted, environment-scoped review candidates for Cloudflare Workers that exist in
+        provider inventory but not in Authrim desired inventory. This endpoint never adopts, deletes,
+        or changes a Worker.
+      responses:
+        '200':
+          description: Active Worker inventory drift findings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, count]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/AdminWorkerInventoryDriftFinding'
+                  count:
+                    type: integer
+                    minimum: 0
+                    maximum: 100
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/drift-findings/{findingId}/review':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneDriftFindingReview
+      summary: Record an operator review disposition for a Worker drift finding.
+      description: >-
+        Marks an active finding as reviewed or dismissed and writes Management and Control audit
+        evidence. The operation does not mutate Cloudflare Worker inventory or desired state.
+      parameters:
+        - name: findingId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+            pattern: '^drift:[a-zA-Z0-9._:-]+:actual_only:[a-zA-Z0-9._-]+$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [disposition]
+              properties:
+                disposition:
+                  type: string
+                  enum: [reviewed, dismissed]
+      responses:
+        '200':
+          description: Review disposition recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [finding, auditId]
+                properties:
+                  finding:
+                    $ref: '#/components/schemas/AdminWorkerInventoryDriftFinding'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/platform/plugins/{id}':
     get:
       tags:
@@ -13513,11 +15132,13 @@ paths:
       operationId: postApiAdminPlatformPluginsByIdTestEmail
       summary: Send a platform plugin test email.
       description: >-
-        Sends a test email through a built-in email notifier plugin using resolved platform
-        configuration plus optional request overrides. Invalid plugin type/configuration returns
-        400; provider failures return 502.
+        Sends a test email through the selected materialized Plugin Runner installation using saved
+        platform configuration. Invalid plugin type/configuration returns 400; a durable pending
+        delivery returns 202 and a permanent provider failure returns 502.
       responses:
         '200':
+          $ref: '#/components/responses/AdminPluginTestEmail'
+        '202':
           $ref: '#/components/responses/AdminPluginTestEmail'
         '400':
           $ref: '#/components/responses/Error'
@@ -14231,6 +15852,36 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+    delete:
+      tags:
+        - Plugins
+      operationId: deleteApiAdminPluginsByIdConfig
+      summary: Reset tenant plugin configuration.
+      description: >-
+        Remove the current tenant override, return to inherited platform configuration, and
+        automatically schedule durable reprojection for built-in notification and human-verification
+        providers.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPluginConfig'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Plugin identifier.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/plugins/{id}/disable':
     put:
       tags:
@@ -14269,9 +15920,13 @@ paths:
       summary: Enable a tenant plugin.
       description: >-
         Enable a plugin for the current tenant after verifying that all required configuration
-        fields are present.
+        fields are present. Dynamic Worker plugins with dedicated resources return 202 while the
+        Control Worker provisions and verifies those resources; the plugin remains disabled until
+        the activation gate is ready.
       responses:
         '200':
+          $ref: '#/components/responses/AdminPluginToggle'
+        '202':
           $ref: '#/components/responses/AdminPluginToggle'
         '400':
           $ref: '#/components/responses/Error'
@@ -14291,7 +15946,44 @@ paths:
             type: string
           description: Plugin identifier.
       requestBody:
-        $ref: '#/components/requestBodies/AdminPluginTenantScope'
+        $ref: '#/components/requestBodies/AdminPluginEnable'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/plugins/{id}/uninstall':
+    post:
+      tags:
+        - Plugins
+      operationId: postApiAdminPluginsByIdUninstall
+      summary: Uninstall a tenant Dynamic Worker plugin.
+      description: >-
+        Disables the tenant plugin immediately, removes only its generated host bindings, waits for
+        the fixed 30-minute quarantine, deletes Authrim-managed Cloudflare resources, and detaches
+        existing resources without deleting them. Cleanup runs as a Control DB operation.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminPluginUninstall'
+        '202':
+          $ref: '#/components/responses/AdminPluginUninstall'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Dynamic Worker plugin identifier.
+      requestBody:
+        $ref: '#/components/requestBodies/AdminPluginUninstall'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -14360,10 +16052,12 @@ paths:
       operationId: postApiAdminPluginsByIdTestEmail
       summary: Send a tenant plugin test email.
       description: >-
-        Send a test email through a configured built-in email notifier plugin and return provider
-        delivery metadata.
+        Send a test email through a configured built-in email notifier plugin and return only the
+        normalized delivery reference. Provider response bodies are not exposed.
       responses:
         '200':
+          $ref: '#/components/responses/AdminPluginTestEmail'
+        '202':
           $ref: '#/components/responses/AdminPluginTestEmail'
         '400':
           $ref: '#/components/responses/Error'
@@ -18525,7 +20219,9 @@ paths:
         - Settings - Rate Limits
       operationId: putApiAdminSettingsRateLimitsProfileOverride
       summary: Set global rate limit profile override
-      description: Sets all rate-limited endpoints to use the selected profile until the override is cleared.
+      description: >-
+        Sets all rate-limited endpoints to use the selected profile after runtime cache propagation.
+        The loadTest profile always expires automatically; callers may select a 60-3600 second TTL.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsRateLimitProfileOverrideUpdate'
@@ -19733,8 +21429,9 @@ paths:
       operationId: postApiAdminTenantsByIdProvisioningCleanup
       summary: Clean up failed tenant provisioning
       description: >-
-        Removes a failed tenant D1 provisioning draft while preserving the contaminated slot for
-        reset.
+        Cancels a pre-activation Control provisioning operation, removes the failed tenant draft,
+        and releases any uncommitted route allocation. Cleanup is rejected after Lookup activation
+        may have become externally visible.
       responses:
         '200':
           $ref: '#/components/responses/TenantProvisioningCleanup'
@@ -19743,6 +21440,10 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -19760,16 +21461,20 @@ paths:
       operationId: postApiAdminTenantsByIdProvisioningRetry
       summary: Retry failed tenant provisioning
       description: >-
-        Retries tenant D1 pool provisioning for a tenant in provisioning_failed state after its slot
-        has been reset.
+        Requeues a blocked Control provisioning operation. The operation retains its idempotency,
+        release pins, completed steps, and retry history.
       responses:
-        '200':
+        '202':
           $ref: '#/components/responses/TenantProvisioningRetry'
         '400':
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -27374,7 +29079,9 @@ paths:
         - Logging - Notifications
       operationId: getApiAdminNotifications
       summary: List notification center events
-      description: List notification center events with filters and grouped summary metadata.
+      description: >-
+        List notification center events with filters and grouped summary metadata. Platform results
+        can include control_plane_drift events emitted for unknown Worker inventory.
       x-authrim-route-coverage: inferred-from-source
       responses:
         '200':
@@ -28600,6 +30307,26 @@ components:
       name: authrim_admin_session
       description: Admin UI session cookie for browser usage.
   parameters:
+    TenantDisasterRecoveryOperationId:
+      name: operationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+        pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      description: Deterministic active-tenant disaster-recovery operation identifier.
+    TenantDisasterRecoveryIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+        pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      description: Stable replay-protection key for one recovery operator action.
     AgentGrantId:
       name: id
       in: path
@@ -28622,6 +30349,15 @@ components:
       schema:
         type: string
       description: Idempotency key for state-changing operations that support replay protection.
+    AccountCreationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: Stable replay-protection key for one account creation request.
     RequiredIdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -28670,6 +30406,24 @@ components:
       required: true
       schema:
         type: string
+    AdminShardCleanupShardId:
+      name: shardId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+    AdminControlPlaneIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+        pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
   requestBodies:
     JsonObject:
       required: true
@@ -28812,6 +30566,7 @@ components:
               value:
                 id: acme
                 name: Acme Corp
+                isolation_policy: tenant_exclusive
             withTenantCode:
               summary: Create a tenant with an explicit tenant code.
               value:
@@ -28819,6 +30574,7 @@ components:
                 tenant_code: acme
                 name: Acme Corp
                 description: Production tenant for Acme Corp.
+                isolation_policy: tenant_exclusive
     AdminFlowCreate:
       required: true
       content:
@@ -29413,9 +31169,11 @@ components:
           schema:
             $ref: '#/components/schemas/ExternalTokenRefreshConfigUpdateRequest'
           example:
-            enabled: true
-            interval_minutes: 15
-            batch_size: 100
+            enabled: false
+            refreshThresholdSeconds: 3600
+            batchSize: 100
+            scheduledTenantBatchSize: 100
+            piiShardPageSize: 4
     FieldMappingAttributeFieldCreate:
       required: true
       content:
@@ -29979,6 +31737,29 @@ components:
             $ref: '#/components/schemas/AdminPluginTenantScopeRequest'
           example:
             tenant_id: default
+    AdminPluginEnable:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPluginEnableRequest'
+          example:
+            tenant_id: default
+            resource_selections:
+              - logical_resource_id: plugin_cache
+                mode: existing
+                provider_resource_id: 4ef60e8d359f4eb59b0af5cfadf02af1
+                provider_name: existing-plugin-cache
+    AdminPluginUninstall:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPluginUninstallRequest'
+          example:
+            tenant_id: default
+            idempotency_key: admin-plugin-uninstall:019c4b08-8d71-7000-8000-000000000001
+            confirmation: UNINSTALL
     AdminPluginTestEmail:
       required: true
       content:
@@ -30603,6 +32384,7 @@ components:
             $ref: '#/components/schemas/AdminSettingsRateLimitProfileOverrideUpdateRequest'
           example:
             profile: loadTest
+            expires_in: 1200
     AdminSettingsRefreshTokenShardingUpdate:
       required: true
       content:
@@ -32630,6 +34412,32 @@ components:
             priority: 20
             is_active: true
   responses:
+    AdminLookupHmacRotationMutation:
+      description: Lookup HMAC rotation state after the audited fenced transition.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [rotation, auditId]
+            properties:
+              rotation:
+                $ref: '#/components/schemas/AdminLookupHmacRotation'
+              auditId:
+                type: string
+    AdminShardCleanupMutation:
+      description: Inactive shard state after the audited asynchronous transition was accepted.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [candidate, auditId]
+            properties:
+              candidate:
+                $ref: '#/components/schemas/AdminShardCleanupCandidate'
+              auditId:
+                type: string
     AdminAgentGrantInvalidation:
       description: Grant state and token-family revocation outbox were committed atomically.
       content:
@@ -33062,6 +34870,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminUserResponse'
+    AdminUserCreationPending:
+      description: Account data is durable but Lookup directory publication is still pending.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminUserCreationPendingResponse'
+    AdminUserCreationOperation:
+      description: Current account creation operation state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminUserCreationOperationResponse'
     AdminUserDetail:
       description: Admin end-user detail response.
       content:
@@ -33910,21 +35730,33 @@ components:
                 is_default: false
                 created_at: 1770000000
                 updated_at: 1770000000
-            tenantD1Pool:
-              summary: Tenant created with a preallocated tenant D1 slot.
+            tenantD1ControlPlane:
+              summary: Tenant accepted for asynchronous Control Worker provisioning.
               value:
                 id: acme
                 tenant_code: acme
                 name: Acme Corp
                 description: Production tenant for Acme Corp.
-                lifecycle_state: active
+                isolation_policy: tenant_exclusive
+                lifecycle_state: provisioning
                 is_default: false
                 created_at: 1770000000
                 updated_at: 1770000000
                 provisioning:
-                  mode: tenant-d1-preallocated-pool
-                  slot_id: slot_01HQ0X9Q7Y2T6J4ZC8M3N2P1A0
-                  smoke_test: passed
+                  operation_id: tenant_create_018f3f7c85b07c5da6b61c3a6e6b9e01
+                  tenant_id: acme
+                  operation_kind: create
+                  isolation_policy: tenant_exclusive
+                  status: queued
+                  current_step: request_accepted
+                  attempt_count: 0
+                  next_attempt_at: null
+                  last_error_code: null
+                  created_at: 1770000000
+                  updated_at: 1770000000
+                  completed_at: null
+                  capacity_operation_ids: {}
+                  steps: []
     TenantInventory:
       description: Tenant inventory detail response.
       content:
@@ -33940,10 +35772,6 @@ components:
             is_default: false
             created_at: 1770000000
             updated_at: 1770000000
-            provisioning_status: active
-            provisioning_error: null
-            provisioning_slot_id: null
-            provisioning_updated_at: null
     TenantList:
       description: Tenant inventory response.
       content:
@@ -33960,10 +35788,6 @@ components:
                 is_default: true
                 created_at: 1770000000
                 updated_at: 1770000000
-                provisioning_status: active
-                provisioning_error: null
-                provisioning_slot_id: null
-                provisioning_updated_at: null
               - id: acme
                 tenant_code: acme
                 name: Acme Corp
@@ -33972,20 +35796,7 @@ components:
                 is_default: false
                 created_at: 1770003600
                 updated_at: 1770003600
-                provisioning_status: active
-                provisioning_error: null
-                provisioning_slot_id: null
-                provisioning_updated_at: null
             total: 2
-            tenant_d1_pool:
-              enabled: true
-              capacity: 24
-              available_slots: 8
-              reserved_slots: 0
-              assigned_slots: 16
-              pending_binding_slots: 0
-              unavailable_slots: 0
-              reset_required_slots: 0
             single_tenant_mode: false
             single_tenant_reason: null
     TenantDeleteAccepted:
@@ -34010,6 +35821,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/TenantCloneResponse'
+    TenantCloneProvisioning:
+      description: Accepted asynchronous tenant D1 clone operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantCloneProvisioningResponse'
     TenantVanityDomainList:
       description: Tenant vanity domain list response.
       content:
@@ -34520,6 +36337,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminPluginToggleResponse'
+    AdminPluginUninstall:
+      description: Dynamic Worker plugin uninstall operation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminPluginUninstallResponse'
     AdminPluginHealth:
       description: Plugin health response.
       content:
@@ -37010,13 +38833,14 @@ components:
           example:
             success: true
             profile_override: loadTest
+            expires_in: 1200
             effective_config:
               maxRequests: 1000000
               windowSeconds: 60
             kv_key: rate_limit_profile_override
             note: >-
-              All rate-limited endpoints now using "loadTest" profile. Changes refresh asynchronously
-              and may take up to a few minutes to apply across active isolates.
+              All rate-limited endpoints will use "loadTest" after their runtime caches refresh.
+              Changes may take up to a few minutes to apply across active isolates.
             warning: Load test profile is active. Remember to clear override after testing!
     AdminSettingsRateLimitProfileOverrideClear:
       description: Global rate limit profile override cleared.
@@ -37813,27 +39637,40 @@ components:
           example:
             status: cleaned
             tenant_id: acme
-            slot_id: slot-0001
+            operation_id: tenant_create_018f3f7c85b07c5da6b61c3a6e6b9e01
     TenantProvisioningRetry:
       description: Tenant provisioning retry response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/Tenant'
+            $ref: '#/components/schemas/TenantProvisioningOperation'
           example:
-            id: acme
-            tenant_code: acme
-            name: Acme Corp
-            description: Production tenant for Acme Corp.
-            lifecycle_state: active
-            is_default: false
+            operation_id: tenant_create_018f3f7c85b07c5da6b61c3a6e6b9e01
+            tenant_id: acme
+            operation_kind: create
+            isolation_policy: tenant_exclusive
+            status: queued
+            current_step: request_accepted
+            attempt_count: 1
+            next_attempt_at: null
+            last_error_code: null
             created_at: 1770000000
             updated_at: 1770000000
-            provisioning:
-              mode: tenant-d1-preallocated-pool
-              slot_id: slot-0001
-              smoke_test: passed
-              retry: succeeded
+            completed_at: null
+            capacity_operation_ids: {}
+            steps: []
+    TenantProvisioningOperation:
+      description: Redacted asynchronous tenant provisioning status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantProvisioningOperation'
+    TenantPlacementMigrationOperation:
+      description: Redacted online tenant placement migration status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TenantPlacementMigrationOperation'
     TenantRuntimeProfiles:
       description: Tenant runtime profile resolution response.
       content:
@@ -43376,13 +45213,59 @@ components:
         lifecycle_state: active
     AdminUserResponse:
       type: object
+      additionalProperties: false
       required:
         - user
       properties:
         user:
-          oneOf:
-            - $ref: '#/components/schemas/AdminUser'
-            - type: 'null'
+          $ref: '#/components/schemas/AdminUser'
+    AdminUserCreationPendingResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - state
+        - operation_id
+        - status_url
+      properties:
+        status:
+          type: string
+          const: pending
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        state:
+          $ref: '#/components/schemas/AccountCreationOperationState'
+        status_url:
+          type: string
+          pattern: ^/api/admin/users/operations/
+    AccountCreationOperationState:
+      type: string
+      enum:
+        - preparing
+        - reserved
+        - writing
+        - directory_pending
+        - succeeded
+        - blocked
+        - canceled
+    AdminUserCreationOperationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - state
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        state:
+          $ref: '#/components/schemas/AccountCreationOperationState'
+        user_id:
+          type: string
+          description: Present only when state is succeeded.
     AdminUserDetailResponse:
       allOf:
         - $ref: '#/components/schemas/AdminUserResponse'
@@ -43513,7 +45396,34 @@ components:
           items:
             $ref: '#/components/schemas/AdminUser'
         pagination:
-          $ref: '#/components/schemas/Pagination'
+          $ref: '#/components/schemas/AdminUserPagination'
+    AdminUserPagination:
+      oneOf:
+        - $ref: '#/components/schemas/Pagination'
+        - type: object
+          additionalProperties: false
+          required:
+            - mode
+            - limit
+            - nextCursor
+            - hasNext
+          properties:
+            mode:
+              type: string
+              enum:
+                - cursor
+                - exact
+            limit:
+              type: integer
+              minimum: 1
+              maximum: 100
+            nextCursor:
+              type:
+                - string
+                - 'null'
+              maxLength: 16384
+            hasNext:
+              type: boolean
     AdminDeleteResult:
       type: object
       additionalProperties: false
@@ -46043,10 +47953,20 @@ components:
         description:
           type: string
           maxLength: 500
+        isolation_policy:
+          type: string
+          enum:
+            - shared_pool
+            - tenant_exclusive
+          default: tenant_exclusive
+          description: >-
+            Physical tenant data placement. Shared pool databases may host multiple tenants;
+            tenant-exclusive databases accept only this tenant. Both modes expand automatically.
       example:
         id: acme
         name: Acme Corp
         description: Production tenant for Acme Corp.
+        isolation_policy: tenant_exclusive
     TenantUpdate:
       type: object
       additionalProperties: false
@@ -46112,6 +48032,354 @@ components:
           type: boolean
         idempotent_replay:
           type: boolean
+    TenantProvisioningStep:
+      type: object
+      additionalProperties: false
+      required:
+        - step_key
+        - status
+        - attempt_count
+        - next_attempt_at
+        - last_error_code
+        - observed_resource_id
+        - started_at
+        - completed_at
+        - updated_at
+      properties:
+        step_key:
+          type: string
+          enum:
+            - request_accepted
+            - capacity_check
+            - reserve_default_route
+            - tenant_seed
+            - registry_publish
+            - tenant_smoke
+            - tenant_prepare
+            - lookup_activate
+            - tenant_active
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, blocked, succeeded, skipped, canceled, rolled_back]
+        attempt_count:
+          type: integer
+          minimum: 0
+        next_attempt_at:
+          type: [integer, 'null']
+          format: int64
+        last_error_code:
+          type: [string, 'null']
+        observed_resource_id:
+          type: [string, 'null']
+        progress_current:
+          type: [integer, 'null']
+          minimum: 0
+        progress_total:
+          type: [integer, 'null']
+          minimum: 0
+        started_at:
+          type: [integer, 'null']
+          format: int64
+        completed_at:
+          type: [integer, 'null']
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    TenantProvisioningCapacityOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - data_role
+        - operation_id
+        - status
+        - attempt_count
+        - next_attempt_at
+        - last_error_code
+        - updated_at
+        - steps
+      properties:
+        data_role:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        operation_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, blocked, succeeded, canceled]
+        attempt_count:
+          type: integer
+          minimum: 0
+        next_attempt_at:
+          type: [integer, 'null']
+          format: int64
+        last_error_code:
+          type: [string, 'null']
+        updated_at:
+          type: integer
+          format: int64
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantProvisioningStep'
+    TenantProvisioningOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - tenant_id
+        - operation_kind
+        - source_tenant_id
+        - isolation_policy
+        - status
+        - current_step
+        - attempt_count
+        - next_attempt_at
+        - last_error_code
+        - created_at
+        - updated_at
+        - completed_at
+        - preparation_result
+        - capacity_operation_ids
+        - steps
+      properties:
+        mode:
+          type: string
+          enum: [control-plane]
+        operation_id:
+          type: string
+        tenant_id:
+          type: string
+        operation_kind:
+          type: string
+          enum: [create, clone]
+        source_tenant_id:
+          type: [string, 'null']
+        isolation_policy:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, blocked, succeeded, canceled]
+        current_step:
+          type: string
+        attempt_count:
+          type: integer
+          minimum: 0
+        next_attempt_at:
+          type: [integer, 'null']
+          format: int64
+        last_error_code:
+          type: [string, 'null']
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        completed_at:
+          type: [integer, 'null']
+          format: int64
+        preparation_result:
+          type: [object, 'null']
+          additionalProperties: true
+        capacity_operation_ids:
+          type: object
+          additionalProperties:
+            type: string
+        capacity_operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantProvisioningCapacityOperation'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantProvisioningStep'
+    TenantPlacementMigrationStep:
+      type: object
+      additionalProperties: false
+      required: [step, status]
+      properties:
+        step:
+          type: string
+          enum:
+            - wait_control
+            - begin_route_cutover
+            - prepare_lookup
+            - prepare_alias
+            - commit_control
+            - publish_registry
+            - activate_alias
+            - activate_lookup
+            - verify_routes
+            - finalize_source
+            - complete
+        status:
+          type: string
+          enum: [pending, running, waiting_retry, blocked, canceled, completed]
+    TenantPlacementMigrationControlShard:
+      type: object
+      additionalProperties: true
+      required:
+        - dataRole
+        - residencyPolicyId
+        - residencyPartition
+        - sourceShardId
+        - sourceAssignmentGeneration
+        - targetShardId
+        - target
+        - state
+      properties:
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        residencyPolicyId:
+          type: string
+        residencyPartition:
+          type: string
+        sourceShardId:
+          type: string
+        sourceAssignmentGeneration:
+          type: integer
+          minimum: 1
+        targetShardId:
+          type: [string, 'null']
+        target:
+          type: [object, 'null']
+          additionalProperties: true
+        state:
+          type: string
+    TenantPlacementMigrationControlView:
+      type: object
+      additionalProperties: true
+      required:
+        - operationId
+        - tenantId
+        - state
+        - sourceIsolationPolicy
+        - targetIsolationPolicy
+        - sourcePolicyGeneration
+        - targetPolicyGeneration
+        - writeFenceState
+        - routeCutoverStarted
+        - canCancel
+        - canApprovePurge
+        - shards
+      properties:
+        operationId:
+          type: string
+        tenantId:
+          type: string
+        state:
+          type: string
+        sourceIsolationPolicy:
+          type: string
+          const: shared_pool
+        targetIsolationPolicy:
+          type: string
+          const: tenant_exclusive
+        sourcePolicyGeneration:
+          type: integer
+          minimum: 1
+        targetPolicyGeneration:
+          type: integer
+          minimum: 2
+        writeFenceState:
+          type: string
+          enum: [inactive, requested, active, released]
+        routeCutoverStarted:
+          type: boolean
+        canCancel:
+          type: boolean
+        canApprovePurge:
+          type: boolean
+        sourceRetentionExpiresAt:
+          type: [integer, 'null']
+          format: int64
+        lastErrorCode:
+          type: [string, 'null']
+        shards:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantPlacementMigrationControlShard'
+    TenantPlacementMigrationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operation_id
+        - tenant_id
+        - target_isolation_policy
+        - status
+        - current_step
+        - attempt_count
+        - next_attempt_at
+        - last_error_code
+        - lookup_progress
+        - steps
+        - created_at
+        - started_at
+        - completed_at
+        - updated_at
+        - control_status
+        - control
+      properties:
+        operation_id:
+          type: string
+        tenant_id:
+          type: string
+        target_isolation_policy:
+          type: string
+          const: tenant_exclusive
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, blocked, succeeded, canceled]
+        current_step:
+          type: string
+        attempt_count:
+          type: integer
+          minimum: 0
+        next_attempt_at:
+          type: [integer, 'null']
+          format: int64
+        last_error_code:
+          type: [string, 'null']
+        lookup_progress:
+          type: object
+          additionalProperties: false
+          required: [prepared_rows, activated_rows, verified_rows]
+          properties:
+            prepared_rows:
+              type: integer
+              minimum: 0
+            activated_rows:
+              type: integer
+              minimum: 0
+            verified_rows:
+              type: integer
+              minimum: 0
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantPlacementMigrationStep'
+        created_at:
+          type: integer
+          format: int64
+        started_at:
+          type: [integer, 'null']
+          format: int64
+        completed_at:
+          type: [integer, 'null']
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+        control_status:
+          type: string
+          enum: [available, unavailable]
+        control:
+          oneOf:
+            - $ref: '#/components/schemas/TenantPlacementMigrationControlView'
+            - type: 'null'
     Tenant:
       type: object
       description: 'Tenant row returned by create, update, set-default, and other tenant mutation operations.'
@@ -46121,6 +48389,7 @@ components:
         - tenant_code
         - name
         - description
+        - isolation_policy
         - lifecycle_state
         - is_default
         - created_at
@@ -46136,6 +48405,10 @@ components:
           type:
             - string
             - 'null'
+        isolation_policy:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+          description: Physical placement scope. Both modes expand automatically.
         lifecycle_state:
           $ref: '#/components/schemas/TenantLifecycleState'
         is_default:
@@ -46149,27 +48422,14 @@ components:
           format: int64
           description: Unix timestamp in seconds.
         provisioning:
-          type: object
-          additionalProperties: false
-          description: Present on tenant D1 pool create and provisioning retry responses.
-          properties:
-            mode:
-              type: string
-            slot_id:
-              type: string
-            smoke_test:
-              type: string
-              enum:
-                - passed
-            retry:
-              type: string
-              enum:
-                - succeeded
+          description: Present when tenant creation is accepted for asynchronous Control provisioning.
+          $ref: '#/components/schemas/TenantProvisioningOperation'
       example:
         id: acme
         tenant_code: acme
         name: Acme Corp
         description: Production tenant for Acme Corp.
+        isolation_policy: tenant_exclusive
         lifecycle_state: active
         is_default: false
         created_at: 1770000000
@@ -46177,22 +48437,19 @@ components:
     TenantInventoryItem:
       type: object
       description: >-
-        Tenant inventory row returned by list and detail endpoints, including provisioning metadata
-        derived from the tenant D1 pool when that mode is enabled.
+        Tenant inventory row returned by list and detail endpoints. Provisioning progress is exposed
+        by the dedicated tenant provisioning operation endpoint.
       additionalProperties: false
       required:
         - id
         - tenant_code
         - name
         - description
+        - isolation_policy
         - lifecycle_state
         - is_default
         - created_at
         - updated_at
-        - provisioning_status
-        - provisioning_error
-        - provisioning_slot_id
-        - provisioning_updated_at
       properties:
         id:
           type: string
@@ -46204,6 +48461,9 @@ components:
           type:
             - string
             - 'null'
+        isolation_policy:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
         lifecycle_state:
           $ref: '#/components/schemas/TenantLifecycleState'
         is_default:
@@ -46216,75 +48476,22 @@ components:
           type: integer
           format: int64
           description: Unix timestamp in seconds.
-        provisioning_status:
-          type: string
-          enum:
-            - active
-            - inactive
-            - provisioning_failed
-        provisioning_error:
-          type:
-            - string
-            - 'null'
-        provisioning_slot_id:
-          type:
-            - string
-            - 'null'
-        provisioning_updated_at:
-          type:
-            - integer
-            - 'null'
-          format: int64
-          description: Unix timestamp in seconds when provisioning metadata was last updated.
       example:
         id: acme
         tenant_code: acme
         name: Acme Corp
         description: Production tenant for Acme Corp.
+        isolation_policy: tenant_exclusive
         lifecycle_state: active
         is_default: false
         created_at: 1770000000
         updated_at: 1770000000
-        provisioning_status: active
-        provisioning_error: null
-        provisioning_slot_id: null
-        provisioning_updated_at: null
-    TenantD1PoolStatus:
-      type: object
-      additionalProperties: false
-      required:
-        - enabled
-      properties:
-        enabled:
-          type: boolean
-        capacity:
-          type: integer
-          minimum: 0
-        available_slots:
-          type: integer
-          minimum: 0
-        reserved_slots:
-          type: integer
-          minimum: 0
-        assigned_slots:
-          type: integer
-          minimum: 0
-        pending_binding_slots:
-          type: integer
-          minimum: 0
-        unavailable_slots:
-          type: integer
-          minimum: 0
-        reset_required_slots:
-          type: integer
-          minimum: 0
     TenantListResponse:
       type: object
       additionalProperties: false
       required:
         - tenants
         - total
-        - tenant_d1_pool
         - single_tenant_mode
         - single_tenant_reason
       properties:
@@ -46295,8 +48502,6 @@ components:
         total:
           type: integer
           minimum: 0
-        tenant_d1_pool:
-          $ref: '#/components/schemas/TenantD1PoolStatus'
         single_tenant_mode:
           type: boolean
         single_tenant_reason:
@@ -46313,13 +48518,7 @@ components:
             is_default: true
             created_at: 1770000000
             updated_at: 1770000000
-            provisioning_status: active
-            provisioning_error: null
-            provisioning_slot_id: null
-            provisioning_updated_at: null
         total: 1
-        tenant_d1_pool:
-          enabled: false
         single_tenant_mode: false
         single_tenant_reason: null
     TenantDeleteAccepted:
@@ -46506,6 +48705,29 @@ components:
             warnings:
               type: array
               items: { type: string }
+    TenantCloneProvisioningResponse:
+      allOf:
+        - $ref: '#/components/schemas/Tenant'
+        - type: object
+          required:
+            - source_tenant_id
+            - source_tenant_name
+            - copy
+            - provisioning
+          properties:
+            source_tenant_id:
+              type: string
+            source_tenant_name:
+              type: string
+            copy:
+              type: object
+              additionalProperties:
+                type: boolean
+            provisioning:
+              allOf:
+                - $ref: '#/components/schemas/TenantProvisioningOperation'
+                - type: object
+                  required: [mode]
     TenantVanityDomainStatus:
       type: string
       enum:
@@ -50318,17 +52540,61 @@ components:
               format: uri
     ExternalTokenRefreshConfigUpdateRequest:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       description: Configuration body forwarded to the External IdP Bridge token refresh endpoint.
+      properties:
+        enabled:
+          type: boolean
+          description: Enables proactive scheduled scanning. Exact manual runs remain available.
+        refreshThresholdSeconds:
+          type: integer
+          minimum: 1
+        batchSize:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        scheduledTenantBatchSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        piiShardPageSize:
+          type: integer
+          minimum: 1
+          maximum: 32
+          description: Maximum PII shards scanned for one tenant in a refresh step.
     ExternalTokenRefreshConfigResponse:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required:
         - config
       properties:
         config:
           type: object
-          additionalProperties: true
+          additionalProperties: false
+          required:
+            - enabled
+            - refreshThresholdSeconds
+            - batchSize
+            - scheduledTenantBatchSize
+            - piiShardPageSize
+          properties:
+            enabled:
+              type: boolean
+            refreshThresholdSeconds:
+              type: integer
+              minimum: 1
+            batchSize:
+              type: integer
+              minimum: 1
+              maximum: 1000
+            scheduledTenantBatchSize:
+              type: integer
+              minimum: 1
+              maximum: 100
+            piiShardPageSize:
+              type: integer
+              minimum: 1
+              maximum: 32
         runtime_status:
           type: string
     ExternalTokenRefreshRunResponse:
@@ -53633,6 +55899,63 @@ components:
           type: array
           items:
             type: string
+        provisioning:
+          type: object
+          additionalProperties: false
+          required: [operationId, state]
+          properties:
+            operationId:
+              type: string
+            state:
+              type: string
+              enum: [pending, blocked]
+        backendKind:
+          type: string
+          enum: [dynamic_worker]
+          description: Present for operator-approved custom Dynamic Worker plugins.
+        capabilityManifestDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        activeVersionDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Digest of the immutable code and policy version selected for new rollouts.
+        credentialSlots:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required: [configKey, required]
+            properties:
+              configKey:
+                type: string
+              required:
+                type: boolean
+        resources:
+          type: array
+          maxItems: 16
+          description: >-
+            Tenant-scoped resource requirements declared by an operator-approved Dynamic Worker
+            plugin. Authrim-managed provisioning is the default; allowExisting controls whether an
+            existing Cloudflare resource may be selected during enablement.
+          items:
+            type: object
+            additionalProperties: false
+            required: [logicalResourceId, binding, kind, access, allowExisting]
+            properties:
+              logicalResourceId:
+                type: string
+              binding:
+                type: string
+              kind:
+                type: string
+                enum: [d1, kv_namespace, r2_bucket]
+              access:
+                type: string
+                enum: [read_only, read_write]
+              allowExisting:
+                type: boolean
       example:
         id: email.smtp
         name: SMTP Email Provider
@@ -53641,6 +55964,54 @@ components:
         configured: true
         configSource: kv
         missingRequiredFields: []
+    AdminDynamicPluginRolloutBatch:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - pluginId
+        - targetVersionDigest
+        - state
+        - cursorInstallationId
+        - processedThisBatch
+        - succeededCount
+        - blockedCount
+        - failedCount
+        - hasMore
+        - lastErrorCode
+        - auditId
+      properties:
+        operationId:
+          type: string
+        pluginId:
+          type: string
+        targetVersionDigest:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        state:
+          type: string
+          enum: [running, completed, completed_with_errors, blocked]
+        cursorInstallationId:
+          type: [string, 'null']
+        processedThisBatch:
+          type: integer
+          minimum: 0
+          maximum: 25
+        succeededCount:
+          type: integer
+          minimum: 0
+        blockedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        hasMore:
+          type: boolean
+        lastErrorCode:
+          type: [string, 'null']
+        auditId:
+          type: string
     AdminPluginListResponse:
       type: object
       additionalProperties: false
@@ -53655,6 +56026,860 @@ components:
         total:
           type: integer
           minimum: 0
+    AdminProviderProjectionJob:
+      type: object
+      additionalProperties: false
+      required:
+        - pluginId
+        - revision
+        - status
+        - total
+        - processed
+        - succeeded
+        - skipped
+        - failed
+        - lastErrorCode
+        - updatedAt
+      properties:
+        pluginId:
+          type: string
+        revision:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+            - superseded
+        total:
+          type: integer
+          minimum: 0
+        processed:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        lastErrorCode:
+          type:
+            - string
+            - 'null'
+        updatedAt:
+          type: integer
+          format: int64
+    AdminReadReplicationStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - environmentId
+        - desiredMode
+        - aggregateStatus
+        - operationId
+        - operationStatus
+        - eligiblePolicyCount
+        - convergedPolicyCount
+        - failedPolicyCount
+        - targetCount
+        - convergedTargetCount
+        - pendingTargetCount
+        - failedTargetCount
+        - updatedAt
+      properties:
+        environmentId:
+          type: string
+        desiredMode:
+          type: string
+          enum: [disabled, enabled]
+        aggregateStatus:
+          type: string
+          enum: [off, on, updating, attention_required]
+        operationId:
+          type: [string, 'null']
+        operationStatus:
+          type: [string, 'null']
+          enum: [queued, applying, verifying, attention_required, succeeded, blocked, null]
+        eligiblePolicyCount:
+          type: integer
+          minimum: 0
+        convergedPolicyCount:
+          type: integer
+          minimum: 0
+        failedPolicyCount:
+          type: integer
+          minimum: 0
+        targetCount:
+          type: integer
+          minimum: 0
+        convergedTargetCount:
+          type: integer
+          minimum: 0
+        pendingTargetCount:
+          type: integer
+          minimum: 0
+        failedTargetCount:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: integer
+          format: int64
+    AdminWorkerInventoryDriftFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - findingId
+        - environmentId
+        - workerScriptName
+        - findingKind
+        - severity
+        - reviewState
+        - notificationState
+        - firstObservedAt
+        - lastObservedAt
+        - resolvedAt
+        - notifiedAt
+      properties:
+        findingId:
+          type: string
+          pattern: '^drift:[a-zA-Z0-9._:-]+:actual_only:[a-zA-Z0-9._-]+$'
+        environmentId:
+          type: string
+        workerScriptName:
+          type: string
+        findingKind:
+          type: string
+          const: actual_only
+        severity:
+          type: string
+          const: warning
+        reviewState:
+          type: string
+          enum: [unreviewed, reviewed, dismissed]
+        notificationState:
+          type: string
+          enum: [pending, acknowledged]
+        firstObservedAt:
+          type: integer
+          format: int64
+        lastObservedAt:
+          type: integer
+          format: int64
+        resolvedAt:
+          type: 'null'
+        notifiedAt:
+          type: [integer, 'null']
+          format: int64
+    AdminLookupHmacKeyMetadata:
+      type: object
+      additionalProperties: false
+      required: [generation, keyId, slot, fingerprint]
+      properties:
+        generation:
+          type: integer
+          minimum: 1
+        keyId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        slot:
+          type: string
+          enum: [A, B]
+        fingerprint:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA-256 fingerprint of the key material; never the key itself.
+    AdminLookupHmacRotation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - state
+        - source
+        - candidate
+        - checkpoint
+        - sourceRowCount
+        - currentRowCount
+        - verificationAttemptCount
+        - graceExpiresAt
+        - ownerId
+        - fencingToken
+        - leaseExpiresAt
+        - mutationStarted
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+        state:
+          type: string
+          enum:
+            - planned
+            - distributing
+            - activation_dual_write
+            - dual_read
+            - reindexing
+            - verifying
+            - grace
+            - complete
+            - blocked
+        source:
+          $ref: '#/components/schemas/AdminLookupHmacKeyMetadata'
+        candidate:
+          $ref: '#/components/schemas/AdminLookupHmacKeyMetadata'
+        checkpoint:
+          type: object
+          additionalProperties: true
+        sourceRowCount:
+          type: [integer, 'null']
+          minimum: 0
+        currentRowCount:
+          type: [integer, 'null']
+          minimum: 0
+        verificationAttemptCount:
+          type: integer
+          minimum: 0
+        graceExpiresAt:
+          type: [integer, 'null']
+          format: int64
+        ownerId:
+          type: [string, 'null']
+        fencingToken:
+          type: integer
+          minimum: 1
+        leaseExpiresAt:
+          type: [integer, 'null']
+          format: int64
+        mutationStarted:
+          type: boolean
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 1
+    AdminLookupHmacVerificationStatus:
+      type: object
+      additionalProperties: false
+      required: [phase, expected, succeeded, failed, pending, complete]
+      properties:
+        phase:
+          type: string
+          enum: [distribution, generation]
+        expected:
+          type: integer
+          minimum: 1
+        succeeded:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        pending:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        complete:
+          type: boolean
+    AdminLookupHmacRotationMutationRequest:
+      type: object
+      additionalProperties: false
+      required: [fencingToken]
+      properties:
+        fencingToken:
+          type: integer
+          minimum: 1
+    AdminShardCleanupBinding:
+      type: object
+      additionalProperties: false
+      required: [workerScriptName, bindingRef, state, lastErrorCode, updatedAt]
+      properties:
+        workerScriptName:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+        bindingRef:
+          type: string
+          pattern: '^TDB_[A-Z0-9_]{1,123}$'
+        state:
+          type: string
+          enum: [pending, removing, removed, blocked]
+        lastErrorCode:
+          type: [string, 'null']
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 1
+    AdminShardCleanupCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - environmentId
+        - shardId
+        - dataRole
+        - residencyPartition
+        - bindingRef
+        - databaseId
+        - databaseName
+        - shardStatus
+        - quarantineOperationId
+        - quarantineState
+        - quarantineOperationState
+        - denyRegistryGeneration
+        - drainNotBefore
+        - registryVerifiedAt
+        - referencesVerifiedAt
+        - cleanupOperationId
+        - cleanupState
+        - exportMode
+        - deleteDatabase
+        - destructiveOperationsEnabled
+        - availableActions
+        - bindings
+        - lastErrorCode
+        - createdAt
+        - updatedAt
+      properties:
+        environmentId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        shardId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        residencyPartition:
+          type: string
+          minLength: 1
+          maxLength: 128
+        bindingRef:
+          type: string
+          pattern: '^TDB_[A-Z0-9_]{1,123}$'
+        databaseId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        databaseName:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]*$'
+        shardStatus:
+          type: string
+          enum: [failed, retired, deleting, deleted]
+        quarantineOperationId:
+          type: [string, 'null']
+        quarantineState:
+          type: string
+          enum: [none, quarantining, quarantined]
+        quarantineOperationState:
+          type: [string, 'null']
+          enum: [draining, ready_for_cleanup, blocked, canceled, null]
+        denyRegistryGeneration:
+          type: [integer, 'null']
+          minimum: 1
+        drainNotBefore:
+          type: [integer, 'null']
+          format: int64
+        registryVerifiedAt:
+          type: [integer, 'null']
+          format: int64
+        referencesVerifiedAt:
+          type: [integer, 'null']
+          format: int64
+        cleanupOperationId:
+          type: [string, 'null']
+        cleanupState:
+          type: [string, 'null']
+          enum:
+            - approved
+            - removing_bindings
+            - deleting_database
+            - verifying_absence
+            - succeeded
+            - blocked
+            - null
+        exportMode:
+          type: [string, 'null']
+          enum: [skipped, manual_verified, null]
+        deleteDatabase:
+          type: [boolean, 'null']
+        destructiveOperationsEnabled:
+          type: boolean
+        availableActions:
+          type: array
+          uniqueItems: true
+          maxItems: 4
+          items:
+            type: string
+            enum: [quarantine, retry_quarantine, approve_cleanup, retry_cleanup]
+        bindings:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/AdminShardCleanupBinding'
+        lastErrorCode:
+          type: [string, 'null']
+        createdAt:
+          type: integer
+          format: int64
+          minimum: 1
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 1
+    AdminShardCleanupApprovalRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - quarantineOperationId
+        - confirmation
+        - exportMode
+        - exportEvidenceId
+        - deleteDatabase
+      properties:
+        quarantineOperationId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        confirmation:
+          type: string
+          const: DELETE_RETIRED_TENANT_SHARD
+        exportMode:
+          type: string
+          enum: [skipped, manual_verified]
+        exportEvidenceId:
+          type: [string, 'null']
+          maxLength: 256
+        deleteDatabase:
+          type: boolean
+    AdminControlCapacityProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [profile, scope, tenantId]
+      properties:
+        profile:
+          type: string
+          enum: [minimum, recommended, extra_headroom]
+        scope:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+        tenantId:
+          type: [string, 'null']
+          maxLength: 128
+          description: Required for tenant_exclusive and null for shared_pool.
+    AdminControlCapacityProvisioningTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - unitKey
+        - unitIndex
+        - workerScripts
+        - operationId
+        - environmentId
+        - dataRole
+        - residencyPolicyId
+        - residencyPartition
+        - logicalShardId
+        - databaseName
+        - bindingRef
+        - readReplicationMode
+        - migrationStreamId
+      properties:
+        unitKey:
+          type: string
+        unitIndex:
+          type: integer
+          minimum: 1
+        workerScripts:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        operationId:
+          type: string
+        environmentId:
+          type: string
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        residencyPolicyId:
+          type: string
+        residencyPartition:
+          type: string
+        logicalShardId:
+          type: string
+        databaseName:
+          type: string
+        bindingRef:
+          type: string
+        readReplicationMode:
+          type: string
+          enum: [enabled, disabled]
+        migrationStreamId:
+          type: string
+          enum: [d1-core, d1-pii]
+    AdminControlCapacityProvisioningPreview:
+      type: object
+      additionalProperties: false
+      required:
+        - profile
+        - scope
+        - tenantId
+        - dryRun
+        - available
+        - reasonCode
+        - capacityUnitsAdded
+        - d1DatabasesAdded
+        - projectedEnvironmentD1Count
+        - targets
+      properties:
+        profile:
+          type: string
+          enum: [minimum, recommended, extra_headroom]
+        scope:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+        tenantId:
+          type: [string, 'null']
+          maxLength: 128
+        dryRun:
+          type: boolean
+          const: true
+        available:
+          type: boolean
+        reasonCode:
+          type: [string, 'null']
+          enum: [capacity_profile_unavailable, environment_d1_limit, null]
+        capacityUnitsAdded:
+          type: integer
+          minimum: 0
+        d1DatabasesAdded:
+          type: integer
+          minimum: 0
+        projectedEnvironmentD1Count:
+          type: integer
+          minimum: 0
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminControlCapacityProvisioningTarget'
+    AdminControlProvisioningOperationSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - status
+        - attemptCount
+        - nextAttemptAt
+        - lastErrorCode
+        - createdAt
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, succeeded, blocked, canceled]
+        attemptCount:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: [integer, 'null']
+          format: int64
+        lastErrorCode:
+          type: [string, 'null']
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+    AdminControlCapacityProvisioningResult:
+      type: object
+      additionalProperties: false
+      required: [preview, operations]
+      properties:
+        preview:
+          $ref: '#/components/schemas/AdminControlCapacityProvisioningPreview'
+        operations:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/AdminControlProvisioningOperationSummary'
+    AdminTenantDisasterRecoveryLookupProgress:
+      type: object
+      additionalProperties: false
+      required:
+        - stage
+        - targetIndex
+        - afterCreatedAt
+        - afterId
+        - afterRowId
+        - projectedRows
+        - verifiedRows
+        - registryDigestPinned
+        - leaseActive
+      properties:
+        stage:
+          type: string
+          enum: [cleanup, account_id, email_exact, external_core, external_pii, verify]
+        targetIndex: { type: integer, minimum: 0, maximum: 4096 }
+        afterCreatedAt: { type: integer, minimum: 0, format: int64 }
+        afterId: { type: string }
+        afterRowId: { type: integer, minimum: 0, format: int64 }
+        projectedRows: { type: integer, minimum: 0, format: int64 }
+        verifiedRows: { type: integer, minimum: 0, format: int64 }
+        registryDigestPinned: { type: boolean }
+        leaseActive: { type: boolean }
+    AdminTenantDisasterRecoveryTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - shardId
+        - dataRole
+        - residencyPartition
+        - assignmentGeneration
+        - shardGeneration
+        - bindingRef
+        - providerDatabaseId
+        - migrationStreamId
+        - releaseId
+        - manifestDigest
+        - restoreConfirmedAt
+        - migrationVerifiedAt
+        - lookupReprojectedAt
+        - bindingSmokeVerifiedAt
+      properties:
+        shardId: { type: string }
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        residencyPartition: { type: string }
+        assignmentGeneration: { type: integer, minimum: 1 }
+        shardGeneration: { type: integer, minimum: 1 }
+        bindingRef: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
+        providerDatabaseId: { type: string }
+        migrationStreamId: { type: string, enum: [d1-core, d1-pii] }
+        releaseId: { type: string }
+        manifestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
+        restoreConfirmedAt: { type: [integer, 'null'], format: int64 }
+        migrationVerifiedAt: { type: [integer, 'null'], format: int64 }
+        lookupReprojectedAt: { type: [integer, 'null'], format: int64 }
+        bindingSmokeVerifiedAt: { type: [integer, 'null'], format: int64 }
+    AdminTenantDisasterRecovery:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - environmentId
+        - tenantId
+        - state
+        - pinnedRouteGeneration
+        - denyRuntimeGeneration
+        - denyRegistryGeneration
+        - denyObservedAt
+        - drainNotBefore
+        - restoreReferenceRecorded
+        - restoredAt
+        - migrationVerifiedAt
+        - lookupReprojectedAt
+        - lookupReprojection
+        - bindingSmokeVerifiedAt
+        - reactivatedRuntimeGeneration
+        - reactivatedAt
+        - lastErrorCode
+        - canCancel
+        - canConfirmRestore
+        - canVerify
+        - canReactivate
+        - targets
+        - createdAt
+        - updatedAt
+      properties:
+        operationId: { type: string }
+        environmentId: { type: string }
+        tenantId: { type: string }
+        state:
+          type: string
+          enum:
+            - publishing_deny
+            - draining
+            - operator_restore_required
+            - verifying_restore
+            - reprojecting_lookup
+            - smoke_verifying
+            - ready_for_reactivation
+            - reactivating
+            - succeeded
+            - blocked
+            - canceled
+        pinnedRouteGeneration: { type: integer, minimum: 1 }
+        denyRuntimeGeneration: { type: [integer, 'null'], format: int64 }
+        denyRegistryGeneration: { type: [integer, 'null'], format: int64 }
+        denyObservedAt: { type: [integer, 'null'], format: int64 }
+        drainNotBefore: { type: [integer, 'null'], format: int64 }
+        restoreReferenceRecorded: { type: boolean }
+        restoredAt: { type: [integer, 'null'], format: int64 }
+        migrationVerifiedAt: { type: [integer, 'null'], format: int64 }
+        lookupReprojectedAt: { type: [integer, 'null'], format: int64 }
+        lookupReprojection:
+          $ref: '#/components/schemas/AdminTenantDisasterRecoveryLookupProgress'
+        bindingSmokeVerifiedAt: { type: [integer, 'null'], format: int64 }
+        reactivatedRuntimeGeneration: { type: [integer, 'null'], format: int64 }
+        reactivatedAt: { type: [integer, 'null'], format: int64 }
+        lastErrorCode: { type: [string, 'null'] }
+        canCancel: { type: boolean }
+        canConfirmRestore: { type: boolean }
+        canVerify: { type: boolean }
+        canReactivate: { type: boolean }
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/AdminTenantDisasterRecoveryTarget'
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    AdminControlProvisioningAuthority:
+      type: object
+      additionalProperties: false
+      required:
+        - automaticProvisioningEnabled
+        - tokenOwnership
+        - capabilityState
+        - automaticExecutionAvailable
+        - activeExecutor
+      properties:
+        automaticProvisioningEnabled:
+          type: boolean
+        tokenOwnership:
+          type: string
+          enum: [none, user, account]
+        capabilityState:
+          type: string
+          enum: [disabled, pending, ready, blocked]
+        automaticExecutionAvailable:
+          type: boolean
+        activeExecutor:
+          type: string
+          enum: [control, setup_operator]
+    AdminControlProvisioningOperationStep:
+      type: object
+      additionalProperties: false
+      required:
+        - stepKey
+        - displayOrder
+        - status
+        - attemptCount
+        - nextAttemptAt
+        - lastErrorCode
+        - observedResourceId
+        - progressCurrent
+        - progressTotal
+        - startedAt
+        - completedAt
+        - updatedAt
+      properties:
+        stepKey:
+          type: string
+        displayOrder:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, succeeded, blocked, canceled, skipped, rolled_back]
+        attemptCount:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: [integer, 'null']
+          format: int64
+        lastErrorCode:
+          type: [string, 'null']
+        observedResourceId:
+          type: [string, 'null']
+        progressCurrent:
+          type: [integer, 'null']
+          minimum: 0
+        progressTotal:
+          type: [integer, 'null']
+          minimum: 0
+        startedAt:
+          type: [integer, 'null']
+          format: int64
+        completedAt:
+          type: [integer, 'null']
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+    AdminControlProvisioningOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - operationKind
+        - status
+        - attemptCount
+        - nextAttemptAt
+        - lastErrorCode
+        - createdAt
+        - updatedAt
+        - availableActions
+        - steps
+      properties:
+        operationId:
+          type: string
+        operationKind:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, succeeded, blocked, canceled]
+        attemptCount:
+          type: integer
+          minimum: 0
+        nextAttemptAt:
+          type: [integer, 'null']
+          format: int64
+        lastErrorCode:
+          type: [string, 'null']
+        createdAt:
+          type: integer
+          format: int64
+        updatedAt:
+          type: integer
+          format: int64
+        availableActions:
+          type: array
+          uniqueItems: true
+          maxItems: 4
+          items:
+            type: string
+            enum:
+              - retry_create_d1
+              - retry_apply_migrations
+              - retry_reconcile_worker_bindings
+              - restore_previous_settings
+              - cancel
+        steps:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/AdminControlProvisioningOperationStep'
     AdminPluginDetailResponse:
       type: object
       additionalProperties: false
@@ -53690,6 +56915,7 @@ components:
         - source
         - configured
         - missingRequiredFields
+        - hasTenantOverride
       properties:
         pluginId:
           type: string
@@ -53708,6 +56934,14 @@ components:
           type: boolean
         missingRequiredFields:
           type: array
+          items:
+            type: string
+        hasTenantOverride:
+          type: boolean
+        configuredFields:
+          type: array
+          maxItems: 16
+          description: Secret field names configured in Plugin Runner; values are never returned.
           items:
             type: string
     AdminPluginConfigUpdateRequest:
@@ -53767,6 +57001,122 @@ components:
           type: string
       example:
         tenant_id: default
+    AdminPluginEnableRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        tenant_id:
+          type: string
+          maxLength: 256
+        resource_selections:
+          type: array
+          maxItems: 16
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - logical_resource_id
+              - mode
+              - provider_resource_id
+              - provider_name
+            properties:
+              logical_resource_id:
+                type: string
+                pattern: '^[a-z0-9][a-z0-9._-]{0,127}$'
+              mode:
+                type: string
+                enum: [existing]
+              provider_resource_id:
+                type: string
+                pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$'
+              provider_name:
+                type: string
+                pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$'
+      example:
+        tenant_id: default
+        resource_selections: []
+    AdminPluginUninstallRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, idempotency_key, confirmation]
+      properties:
+        tenant_id:
+          type: string
+          maxLength: 256
+        idempotency_key:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        confirmation:
+          type: string
+          enum: [UNINSTALL]
+    AdminPluginResourceCleanup:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - environmentId
+        - pluginInstallationId
+        - tenantId
+        - pluginId
+        - sourceOperationId
+        - lifecycleGeneration
+        - reason
+        - state
+        - drainNotBefore
+        - managedResourceCount
+        - detachedResourceCount
+        - lastErrorCode
+        - createdAt
+        - updatedAt
+        - completedAt
+      properties:
+        operationId: { type: string }
+        environmentId: { type: string }
+        pluginInstallationId: { type: string }
+        tenantId: { type: string }
+        pluginId: { type: string }
+        sourceOperationId: { type: string }
+        lifecycleGeneration: { type: integer, minimum: 1 }
+        reason:
+          type: string
+          enum: [uninstall, canceled_pre_activation]
+        state:
+          type: string
+          enum:
+            - requested
+            - removing_bindings
+            - quarantined
+            - deleting_resources
+            - verifying_absence
+            - succeeded
+            - blocked
+        drainNotBefore:
+          type: [integer, 'null']
+        managedResourceCount: { type: integer, minimum: 0 }
+        detachedResourceCount: { type: integer, minimum: 0 }
+        lastErrorCode:
+          type: [string, 'null']
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+        completedAt:
+          type: [integer, 'null']
+    AdminPluginUninstallResponse:
+      type: object
+      additionalProperties: false
+      required: [success, pluginId, tenantId, enabled, cleanup]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        pluginId: { type: string }
+        tenantId: { type: string }
+        enabled:
+          type: boolean
+          enum: [false]
+        cleanup:
+          oneOf:
+            - $ref: '#/components/schemas/AdminPluginResourceCleanup'
+            - type: 'null'
     AdminPluginToggleResponse:
       type: object
       additionalProperties: false
@@ -53775,6 +57125,9 @@ components:
         - pluginId
         - tenantId
         - enabled
+        - configSource
+        - configured
+        - missingRequiredFields
       properties:
         success:
           type: boolean
@@ -53788,6 +57141,28 @@ components:
             - 'null'
         enabled:
           type: boolean
+        configSource:
+          type: string
+          enum: [kv, env, default]
+        configured:
+          type: boolean
+        missingRequiredFields:
+          type: array
+          items:
+            type: string
+        provisioning:
+          type: object
+          additionalProperties: false
+          required: [operationId, state, kind]
+          properties:
+            operationId:
+              type: string
+            state:
+              type: string
+              enum: [pending, blocked]
+            kind:
+              type: string
+              enum: [provisioning, cleanup]
     AdminPluginHealthResponse:
       type: object
       additionalProperties: false
@@ -53838,14 +57213,9 @@ components:
           format: email
         tenant_id:
           type: string
-        config:
-          type: object
-          additionalProperties: true
       example:
         to: admin@example.com
         tenant_id: default
-        config:
-          from: no-reply@example.com
     AdminPluginTestEmailResponse:
       type: object
       additionalProperties: false
@@ -53855,7 +57225,7 @@ components:
         - tenantId
         - to
         - messageId
-        - providerResponse
+        - deliveryState
       properties:
         success:
           type: boolean
@@ -53874,16 +57244,11 @@ components:
           type:
             - string
             - 'null'
-        providerResponse:
-          oneOf:
-            - type: object
-              additionalProperties: true
-            - type: array
-              items: {}
-            - type: string
-            - type: number
-            - type: boolean
-            - type: 'null'
+        deliveryState:
+          type: string
+          enum:
+            - delivered
+            - pending
     PiiPartitionStatsResponse:
       type: object
       additionalProperties: false
@@ -58240,6 +61605,14 @@ components:
             - loginStart
             - sendChallenge
             - loadTest
+        expires_in:
+          type: integer
+          minimum: 60
+          maximum: 3600
+          default: 900
+          description: >-
+            Automatic expiration in seconds. Supported only when profile is loadTest; loadTest
+            defaults to 900 seconds when omitted.
       additionalProperties: false
     AdminSettingsRateLimitProfileOverrideResponse:
       type: object
@@ -58264,6 +61637,10 @@ components:
           type: boolean
         profile_override:
           type: string
+        expires_in:
+          type:
+            - integer
+            - 'null'
         effective_config:
           $ref: '#/components/schemas/AdminSettingsLimitPair'
         kv_key:
@@ -58445,6 +61822,39 @@ components:
         force:
           type: boolean
       additionalProperties: false
+    AdminSettingsRegionResidencyProjection:
+      type: object
+      description: Server-owned residency boundary that constrains region shard placement.
+      required:
+        - version
+        - residencyPolicyId
+        - residencyPartition
+        - policyGeneration
+        - allowedRegions
+        - jurisdiction
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        residencyPolicyId:
+          type: string
+        residencyPartition:
+          type: string
+        policyGeneration:
+          type: integer
+          minimum: 1
+        allowedRegions:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [apac, weur, eeur, enam, wnam, oc, afr, me]
+        jurisdiction:
+          type: string
+          nullable: true
+          enum: [eu, fedramp]
+      additionalProperties: false
     AdminSettingsRegionShardsBase:
       type: object
       properties:
@@ -58473,6 +61883,8 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/AdminSettingsRegionGroup'
+        residency:
+          $ref: '#/components/schemas/AdminSettingsRegionResidencyProjection'
         validation:
           $ref: '#/components/schemas/AdminSettingsRegionValidation'
       additionalProperties: false
@@ -58503,6 +61915,8 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/AdminSettingsRegionGroup'
+        residency:
+          $ref: '#/components/schemas/AdminSettingsRegionResidencyProjection'
         validation:
           $ref: '#/components/schemas/AdminSettingsRegionValidation'
         note:
@@ -58520,10 +61934,11 @@ components:
           properties:
             totalShards:
               type: integer
-            regionDistribution:
-              type: object
-              additionalProperties:
-                type: number
+            allowedRegions:
+              type: array
+              items:
+                type: string
+                enum: [apac, weur, eeur, enam, wnam, oc, afr, me]
             regions:
               type: object
               additionalProperties: true
@@ -58548,6 +61963,8 @@ components:
           type: integer
         reason:
           type: string
+        residency:
+          $ref: '#/components/schemas/AdminSettingsRegionResidencyProjection'
         note:
           type: string
       additionalProperties: false
@@ -58572,6 +61989,8 @@ components:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/AdminSettingsRegionGroup'
+        residency:
+          $ref: '#/components/schemas/AdminSettingsRegionResidencyProjection'
         recommendation:
           type: string
       additionalProperties: false
@@ -59535,6 +62954,10 @@ components:
         email_sent: true
     TenantProvisioningCleanupResponse:
       type: object
+      required:
+        - status
+        - tenant_id
+        - operation_id
       properties:
         status:
           type: string
@@ -59542,10 +62965,8 @@ components:
             - cleaned
         tenant_id:
           type: string
-        slot_id:
-          type:
-            - string
-            - 'null'
+        operation_id:
+          type: string
       additionalProperties: false
     TenantRuntimeProfilesResponse:
       type: object
@@ -64396,6 +67817,19 @@ components:
           example: tenant_123
         category:
           type: string
+          enum:
+            - storage_registry_security
+            - storage_registry_health
+            - tenant_database_stats
+            - tenant_database_health
+            - control_plane_drift
+            - logging_destination_health
+            - logging_delivery_failure
+            - logging_fallback_used
+            - logging_dlq_backlog
+            - logging_quota_warning
+            - logging_repair_job_status
+            - notification_delivery_failure
           example: storage_registry_health
         event_type:
           type: string

@@ -25,6 +25,33 @@ const adminPlugins = {
 	admin_plugins_missing_required_configuration: 'required configurationが不足しています',
 	admin_plugins_required: 'Required: {fields}',
 	admin_plugins_capabilities: 'Capabilities',
+	admin_plugins_resource_advanced: '高度なリソース設定',
+	admin_plugins_resource_managed_default:
+		'既定ではAuthrimが必要なリソースを作成して管理します。既存のCloudflareリソースを再利用する場合だけ変更してください。',
+	admin_plugins_use_existing_resource: '既存のCloudflareリソースを使用',
+	admin_plugins_provider_resource_id: 'CloudflareリソースID',
+	admin_plugins_provider_resource_name: 'Cloudflareリソース名',
+	admin_plugins_existing_resource_required:
+		'選択した既存リソースごとにCloudflareリソースIDと名前の両方を入力してください。',
+	admin_plugins_existing_resource_retained:
+		'Authrimはこのリソースを検証してbindingしますが、Cloudflare上の実体は削除しません。',
+	admin_plugins_uninstall: 'リソースをアンインストール',
+	admin_plugins_uninstalling: 'クリーンアップを開始中...',
+	admin_plugins_uninstall_confirm:
+		'このプラグインを無効化し、Authrim管理のCloudflareリソースを30分の隔離後に削除しますか？既存リソースは切り離して保持します。',
+	admin_plugins_uninstall_requested: 'リソースのクリーンアップを開始しました。',
+	admin_plugins_cleanup_title: 'リソースのクリーンアップ',
+	admin_plugins_cleanup_pending: 'bindingを削除し、30分の隔離後にクリーンアップします。',
+	admin_plugins_cleanup_complete: '管理対象リソースを削除し、既存リソースは保持しました。',
+	admin_plugins_cleanup_blocked: 'リソースのクリーンアップに管理者の確認が必要です。',
+	admin_plugins_provisioning_title: 'リソースのプロビジョニング',
+	admin_plugins_provisioning_pending: 'プラグイン用リソースを作成・検証しています。',
+	admin_plugins_provisioning_activation:
+		'リソースの準備が完了しました。プラグインを有効化しています。',
+	admin_plugins_provisioning_blocked:
+		'プロビジョニングが停止したため、プラグインは無効のままです。',
+	admin_plugins_provisioning_operation: 'Operation',
+	admin_plugins_provisioning_open: 'Operationの詳細を開く',
 	admin_plugins_author: 'Author',
 	admin_plugins_documentation: 'Documentation',
 	admin_plugins_configuration: 'Configuration',
@@ -51,7 +78,18 @@ const adminPlugins = {
 	admin_plugins_recipient_required: 'recipient email addressを入力してください',
 	admin_plugins_test_email_sent: 'test emailを送信しました',
 	admin_plugins_test_email_sent_with_id: 'test emailを送信しました ({messageId})',
+	admin_plugins_test_email_pending: 'test emailを再試行queueに登録しました',
+	admin_plugins_test_email_pending_with_id: 'test emailを再試行queueに登録しました ({messageId})',
 	admin_plugins_test_email_failed: 'test emailを送信できませんでした',
+	admin_plugins_provider_projection_title: 'Provider設定の反映',
+	admin_plugins_provider_projection_running:
+		'{count}件のprovider設定をtenantへ反映中です ({processed}/{total})。',
+	admin_plugins_provider_projection_failed:
+		'{count}件のprovider設定反映に確認が必要です。runtimeはfail closedを維持します。',
+	admin_plugins_provider_projection_complete: 'Provider設定は同期済みです。',
+	admin_plugins_provider_projection_pending: '待機中',
+	admin_plugins_provider_projection_processing: '処理中',
+	admin_plugins_provider_projection_status_failed: '失敗',
 	admin_plugins_category_authentication: 'Authentication',
 	admin_plugins_category_mfa: 'Multi-Factor Authentication',
 	admin_plugins_category_integration: 'Integration',

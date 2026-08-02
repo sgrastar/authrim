@@ -2,6 +2,7 @@ import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 const MAX_ADMIN_API_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_TENANT_PLACEMENT_WRITE_FENCE_WAIT_MS = 30_000;
 const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 function shouldAttachIdempotencyKey(method?: string): boolean {
@@ -81,7 +82,7 @@ export async function adminFetch(
 		...rest
 	} = options;
 
-	const response = await fetch(input, {
+	const request: RequestInit = {
 		...rest,
 		credentials: rest.credentials ?? 'include',
 		headers: buildAdminHeaders(headers, {
@@ -90,7 +91,46 @@ export async function adminFetch(
 			skipTenantHeader,
 			method: rest.method
 		})
-	});
+	};
+	const deadline = Date.now() + MAX_TENANT_PLACEMENT_WRITE_FENCE_WAIT_MS;
+	const replayable =
+		typeof ReadableStream === 'undefined' || !(request.body instanceof ReadableStream);
+	let response: Response;
+	while (true) {
+		response = await fetch(input, request);
+		if (response.status !== 503 || !replayable) break;
+		const body = (await response
+			.clone()
+			.json()
+			.catch(() => null)) as { error?: unknown; extensions?: Record<string, unknown> } | null;
+		if (
+			body?.error !== 'temporarily_unavailable' ||
+			body.extensions?.reason !== 'tenant_placement_write_fence' ||
+			body.extensions?.retryable !== true
+		) {
+			break;
+		}
+		const configuredDelay = Number(body.extensions.retry_after_ms);
+		const delay = Math.min(
+			2000,
+			Math.max(250, Number.isFinite(configuredDelay) ? configuredDelay : 500)
+		);
+		if (Date.now() + delay >= deadline) break;
+		await new Promise<void>((resolve, reject) => {
+			const complete = () => {
+				request.signal?.removeEventListener('abort', abort);
+				resolve();
+			};
+			const timer = globalThis.setTimeout(complete, delay);
+			const abort = () => {
+				globalThis.clearTimeout(timer);
+				request.signal?.removeEventListener('abort', abort);
+				reject(new DOMException('Admin request was cancelled', 'AbortError'));
+			};
+			if (request.signal?.aborted) return abort();
+			request.signal?.addEventListener('abort', abort, { once: true });
+		});
+	}
 
 	const contentLength = response.headers.get('content-length');
 	if (contentLength) {

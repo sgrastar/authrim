@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { AuthrimPlugin, HealthStatus } from '../../core/types';
 import { secretField } from '../../core/security';
 
-export const TurnstileFailurePolicySchema = z.enum(['fail_closed', 'fail_open']);
+export const TurnstileFailurePolicySchema = z.literal('fail_closed');
 
 export const CloudflareTurnstileConfigSchema = z.object({
   siteKey: z
@@ -27,7 +27,7 @@ export const CloudflareTurnstileConfigSchema = z.object({
     .optional()
     .describe('Expected hostname returned by Siteverify. Leave blank to skip hostname matching.'),
   failurePolicy: TurnstileFailurePolicySchema.default('fail_closed').describe(
-    'When Siteverify is unavailable: fail_closed rejects the authentication request, fail_open allows it'
+    'Siteverify failure always rejects the authentication request'
   ),
   timeoutMs: z
     .number()

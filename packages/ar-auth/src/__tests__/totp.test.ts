@@ -20,6 +20,10 @@ const {
   mockValidateRegistrationFieldSubmissionFromEnv,
   mockPersistRegistrationFieldValuesFromEnv,
   mockBuildCanonicalProfileRuntimeUserFields,
+  mockTotpLogWarn,
+  mockResolveAccountDataContextFromHono,
+  mockResolveTenantD1EmailAccountRoute,
+  mockUsesTenantD1AccountStorage,
 } = vi.hoisted(() => {
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -78,6 +82,10 @@ const {
       piiFields: {},
       sensitiveValues: {},
     }),
+    mockTotpLogWarn: vi.fn(),
+    mockResolveAccountDataContextFromHono: vi.fn(),
+    mockResolveTenantD1EmailAccountRoute: vi.fn(),
+    mockUsesTenantD1AccountStorage: vi.fn(),
   };
 });
 
@@ -88,8 +96,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getSessionStoreForNewSession: mockGetSessionStoreForNewSession,
     getTenantIdFromContext: mockGetTenantIdFromContext,
+    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
@@ -99,6 +109,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
+        warn: mockTotpLogWarn,
       }),
     }),
   };
@@ -113,6 +124,15 @@ vi.mock('../registration-field-utils', () => ({
   persistRegistrationFieldValuesFromEnv: mockPersistRegistrationFieldValuesFromEnv,
   buildCanonicalProfileRuntimeUserFields: mockBuildCanonicalProfileRuntimeUserFields,
 }));
+
+vi.mock('../account-provisioning', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-provisioning')>();
+  return {
+    ...actual,
+    resolveTenantD1EmailAccountRoute: mockResolveTenantD1EmailAccountRoute,
+    usesTenantD1AccountStorage: mockUsesTenantD1AccountStorage,
+  };
+});
 
 import {
   encryptValue,
@@ -197,6 +217,12 @@ describe('TOTP login handlers', () => {
       piiFields: {},
       sensitiveValues: {},
     });
+    mockResolveAccountDataContextFromHono.mockResolvedValue({
+      accountId: 'account:user-001',
+      legacyUserId: 'user-001',
+    });
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValue('not_required');
+    mockUsesTenantD1AccountStorage.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -437,6 +463,8 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts a login challenge without exposing unknown identifiers', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValueOnce('not_found');
     const app = createApp();
     const responsePromise = app.request(
       '/api/auth/totp/login/start',
@@ -458,6 +486,12 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(200);
     expect(body.challenge_id).toEqual(expect.any(String));
     expect(body.expires_in).toBe(300);
+    expect(mockResolveTenantD1EmailAccountRoute).toHaveBeenCalledWith(
+      expect.anything(),
+      'unknown@example.com'
+    );
+    expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
     expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'totp_login',
@@ -467,6 +501,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts reauthentication from the bound OAuth challenge without exposing an identifier', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
       tenantId: 'default',
       type: 'reauth',
@@ -492,6 +527,10 @@ describe('TOTP login handlers', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
     expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
     expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -541,6 +580,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('verifies a TOTP code and creates an otp/totp session', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     const app = createApp();
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
     const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
@@ -599,6 +639,10 @@ describe('TOTP login handlers', () => {
     };
 
     expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
     expect(body).toMatchObject({
       success: true,
       sessionId: 'g1:apac:3:session_new',
@@ -622,6 +666,34 @@ describe('TOTP login handlers', () => {
       'default'
     );
     expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
+  });
+
+  it('fails closed before reading credentials when the account route is missing', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockResolveAccountDataContextFromHono.mockRejectedValueOnce(
+      new Error('account_data_route_not_found')
+    );
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'identifier-hash',
+    });
+
+    const response = await post(
+      '/api/auth/totp/login/verify',
+      { challenge_id: 'challenge-001', code: '123456' },
+      undefined,
+      true
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+    expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: 'credential_not_found' }),
+      })
+    );
   });
 
   it('continues an authorization challenge after a successful TOTP login', async () => {
@@ -961,6 +1033,7 @@ describe('TOTP login handlers', () => {
         sourceRef: 'direct_auth_totp',
       })
     );
+    expect(mockCreateAuthContextFromHono).toHaveBeenCalled();
     expect(mockChallengeStore.deleteChallengeRpc).toHaveBeenCalledWith(
       'totp_signup:signup-challenge'
     );

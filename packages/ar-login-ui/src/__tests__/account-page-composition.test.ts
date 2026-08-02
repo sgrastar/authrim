@@ -20,4 +20,12 @@ describe('Account Page published composition', () => {
 		expect(source).toContain('min-height: 100dvh');
 		expect(source).not.toContain('min-height: 100vh');
 	});
+
+	it('connects identifier replacement to reauthentication and bounded status polling', () => {
+		expect(source).toContain("{ type: 'change-email'; email: string }");
+		expect(source).toContain("requestReauth({ type: 'change-email', email: email.trim() })");
+		expect(source).toContain('accountAPI.completeIdentifierReplacement(');
+		expect(source).toContain('attempt < 120 && generation === emailChangePollGeneration');
+		expect(source).toContain('emailChangePollGeneration += 1');
+	});
 });

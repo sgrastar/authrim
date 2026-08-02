@@ -9,6 +9,7 @@ export type InternalNotificationEventCategory =
   | 'storage_registry_health'
   | 'tenant_database_stats'
   | 'tenant_database_health'
+  | 'control_plane_drift'
   | 'logging_destination_health'
   | 'logging_delivery_failure'
   | 'logging_fallback_used'

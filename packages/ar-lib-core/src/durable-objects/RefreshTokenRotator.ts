@@ -31,8 +31,10 @@ import type { Env } from '../types/env';
 import { createAuditLog } from '../utils/audit-log';
 import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger, type Logger } from '../utils/logger';
+import { isValidTenantIdentifier } from '../utils/tenant-request-policy';
 
 const MAX_ROTATOR_JSON_BODY_BYTES = 512 * 1024;
+const MAX_FAMILY_CACHE_ENTRIES = 1024;
 
 /**
  * Token Family V2 - Minimal state for high-performance rotation
@@ -144,7 +146,7 @@ function normalizeResourceAudience(value: unknown): string | string[] | undefine
  * - fetch() handler is maintained for backward compatibility and debugging
  */
 export class RefreshTokenRotator extends DurableObject<Env> {
-  private families: Map<string, TokenFamilyV2> = new Map(); // userId → family
+  private families: Map<string, TokenFamilyV2> = new Map(); // Bounded hot cache: userId -> family
   private initialized: boolean = false;
   private readonly log: Logger = createLogger().module('RefreshTokenRotator');
 
@@ -178,42 +180,44 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    */
   private async initializeStateBlocking(): Promise<void> {
     try {
-      // Load all families from granular storage
-      const familyEntries = await this.ctx.storage.list<TokenFamilyV2>({
-        prefix: STORAGE_PREFIX.FAMILY,
-      });
-
-      for (const [key, family] of familyEntries) {
-        const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
-        this.families.set(userId, family);
+      // Family state is loaded lazily by user. Cold start cost must not grow with the shard size.
+      const [storedGeneration, storedShardIndex, storedTenantId] = await Promise.all([
+        this.ctx.storage.get<number>(`${STORAGE_PREFIX.META}generation`),
+        this.ctx.storage.get<number>(`${STORAGE_PREFIX.META}shardIndex`),
+        this.ctx.storage.get<string>(`${STORAGE_PREFIX.META}tenantId`),
+      ]);
+      if ((storedGeneration === undefined) !== (storedShardIndex === undefined)) {
+        throw new Error('refresh_token_rotator_metadata_incomplete');
       }
-
-      // Load sharding metadata
-      const storedGeneration = await this.ctx.storage.get<number>(
-        `${STORAGE_PREFIX.META}generation`
-      );
-      const storedShardIndex = await this.ctx.storage.get<number>(
-        `${STORAGE_PREFIX.META}shardIndex`
-      );
+      if (
+        (storedGeneration !== undefined &&
+          (!Number.isSafeInteger(storedGeneration) || storedGeneration < 1)) ||
+        (storedShardIndex !== undefined &&
+          (!Number.isSafeInteger(storedShardIndex) || storedShardIndex < 0))
+      ) {
+        throw new Error('refresh_token_rotator_metadata_invalid');
+      }
       if (storedGeneration !== undefined) {
         this.generation = storedGeneration;
       }
       if (storedShardIndex !== undefined) {
         this.shardIndex = storedShardIndex;
       }
-      const storedTenantId = await this.ctx.storage.get<string>(`${STORAGE_PREFIX.META}tenantId`);
+      if (storedTenantId !== undefined && !isValidTenantIdentifier(storedTenantId)) {
+        throw new Error('refresh_token_rotator_tenant_metadata_invalid');
+      }
       if (storedTenantId) {
         this.tenantId = storedTenantId;
       }
 
-      this.log.info('Loaded families from Durable Storage', {
-        count: this.families.size,
+      this.log.info('Loaded rotator metadata from Durable Storage', {
         generation: this.generation,
         shardIndex: this.shardIndex,
         tenantId: this.tenantId ?? undefined,
       });
     } catch (error) {
       this.log.error('Failed to initialize', {}, error as Error);
+      throw error;
     }
 
     this.initialized = true;
@@ -296,9 +300,11 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   }> {
     await this.initializeState();
     const now = Date.now();
+    const storedFamilies = await this.listStoredFamilies();
     let activeFamilies = 0;
 
-    for (const family of this.families.values()) {
+    for (const [key, family] of storedFamilies.entries()) {
+      this.validateStoredFamily(key.substring(STORAGE_PREFIX.FAMILY.length), family);
       if (family.expires_at > now) {
         activeFamilies++;
       }
@@ -308,7 +314,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       status: 'ok',
       version: 'v2',
       families: {
-        total: this.families.size,
+        total: storedFamilies.size,
         active: activeFamilies,
       },
       timestamp: now,
@@ -344,12 +350,58 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     return `${STORAGE_PREFIX.FAMILY}${userId}`;
   }
 
+  private cacheFamily(userId: string, family: TokenFamilyV2): void {
+    this.families.delete(userId);
+    this.families.set(userId, family);
+    while (this.families.size > MAX_FAMILY_CACHE_ENTRIES) {
+      const oldestUserId = this.families.keys().next().value as string | undefined;
+      if (!oldestUserId) break;
+      this.families.delete(oldestUserId);
+    }
+  }
+
+  private validateStoredFamily(userId: string, family: TokenFamilyV2): void {
+    if (
+      !family ||
+      this.tenantId === null ||
+      family.user_id !== userId ||
+      !family.tenant_id ||
+      family.tenant_id !== this.tenantId ||
+      !family.client_id ||
+      !Number.isSafeInteger(family.version) ||
+      family.version < 1 ||
+      !family.last_jti ||
+      !Number.isFinite(family.expires_at)
+    ) {
+      throw new Error('refresh_token_family_storage_invalid');
+    }
+  }
+
+  private async loadFamily(userId: string): Promise<TokenFamilyV2 | null> {
+    const cached = this.families.get(userId);
+    if (cached) {
+      this.validateStoredFamily(userId, cached);
+      this.cacheFamily(userId, cached);
+      return cached;
+    }
+    const stored = await this.ctx.storage.get<TokenFamilyV2>(this.buildFamilyKey(userId));
+    if (!stored) return null;
+    this.validateStoredFamily(userId, stored);
+    this.cacheFamily(userId, stored);
+    return stored;
+  }
+
+  private async listStoredFamilies(): Promise<Map<string, TokenFamilyV2>> {
+    return this.ctx.storage.list<TokenFamilyV2>({ prefix: STORAGE_PREFIX.FAMILY });
+  }
+
   /**
    * Save family to storage
    */
   private async saveFamily(userId: string, family: TokenFamilyV2): Promise<void> {
     const key = this.buildFamilyKey(userId);
     await this.ctx.storage.put(key, family);
+    this.cacheFamily(userId, family);
   }
 
   /**
@@ -358,6 +410,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   private async deleteFamily(userId: string): Promise<void> {
     const key = this.buildFamilyKey(userId);
     await this.ctx.storage.delete(key);
+    this.families.delete(userId);
   }
 
   /**
@@ -382,7 +435,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
   private async setTenantId(tenantId: string): Promise<void> {
     const normalized = tenantId.trim();
-    if (!normalized) {
+    if (!isValidTenantIdentifier(normalized)) {
       throw new Error('invalid_request: tenantId is required');
     }
 
@@ -391,8 +444,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     }
 
     if (!this.tenantId) {
-      this.tenantId = normalized;
       await this.ctx.storage.put(`${STORAGE_PREFIX.META}tenantId`, normalized);
+      this.tenantId = normalized;
     }
   }
 
@@ -422,17 +475,43 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     allowedScope: string;
   }> {
     await this.initializeState();
-    await this.setTenantId(request.tenantId);
+    if (
+      !request.jti.trim() ||
+      !request.userId.trim() ||
+      !request.clientId.trim() ||
+      !Number.isSafeInteger(request.ttl) ||
+      request.ttl < 1
+    ) {
+      throw new Error('invalid_request: Invalid refresh token family input');
+    }
+    const normalizedTenantId = request.tenantId.trim();
+    if (!isValidTenantIdentifier(normalizedTenantId)) {
+      throw new Error('invalid_request: tenantId is required');
+    }
+    if (this.tenantId && this.tenantId !== normalizedTenantId) {
+      throw new Error('invalid_request: Tenant mismatch');
+    }
 
-    // V3: Store sharding metadata if provided (first call sets it)
+    // Validate sharding metadata before composing the first atomic write.
     const v3Request = request as CreateFamilyRequestV3;
+    if ((v3Request.generation === undefined) !== (v3Request.shardIndex === undefined)) {
+      throw new Error('invalid_request: Incomplete refresh token shard metadata');
+    }
     if (v3Request.generation !== undefined && v3Request.shardIndex !== undefined) {
-      if (this.generation === null && this.shardIndex === null) {
-        this.generation = v3Request.generation;
-        this.shardIndex = v3Request.shardIndex;
-        // Persist sharding metadata
-        await this.ctx.storage.put(`${STORAGE_PREFIX.META}generation`, this.generation);
-        await this.ctx.storage.put(`${STORAGE_PREFIX.META}shardIndex`, this.shardIndex);
+      if (
+        !Number.isSafeInteger(v3Request.generation) ||
+        v3Request.generation < 1 ||
+        !Number.isSafeInteger(v3Request.shardIndex) ||
+        v3Request.shardIndex < 0
+      ) {
+        throw new Error('invalid_request: Invalid refresh token shard metadata');
+      }
+      if (
+        this.generation !== null &&
+        this.shardIndex !== null &&
+        (this.generation !== v3Request.generation || this.shardIndex !== v3Request.shardIndex)
+      ) {
+        throw new Error('invalid_request: Refresh token shard metadata mismatch');
       }
     }
 
@@ -440,7 +519,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const expiresAt = now + request.ttl * 1000;
     const resourceAudience = normalizeResourceAudience(request.resourceAudience);
     const family: TokenFamilyV2 = {
-      tenant_id: request.tenantId,
+      tenant_id: normalizedTenantId,
       version: 1,
       last_jti: request.jti,
       last_used_at: now,
@@ -451,9 +530,30 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       ...(resourceAudience && { resource_aud: resourceAudience }),
     };
 
-    // Store in memory and persistent storage
-    this.families.set(request.userId, family);
-    await this.saveFamily(request.userId, family);
+    const writes: Record<string, unknown> = {
+      [this.buildFamilyKey(request.userId)]: family,
+    };
+    if (!this.tenantId) {
+      writes[`${STORAGE_PREFIX.META}tenantId`] = normalizedTenantId;
+    }
+    if (
+      this.generation === null &&
+      this.shardIndex === null &&
+      v3Request.generation !== undefined &&
+      v3Request.shardIndex !== undefined
+    ) {
+      writes[`${STORAGE_PREFIX.META}generation`] = v3Request.generation;
+      writes[`${STORAGE_PREFIX.META}shardIndex`] = v3Request.shardIndex;
+    }
+
+    // The first family and its routing metadata become durable together.
+    await this.ctx.storage.put(writes);
+    this.tenantId = normalizedTenantId;
+    if (v3Request.generation !== undefined && v3Request.shardIndex !== undefined) {
+      this.generation = v3Request.generation;
+      this.shardIndex = v3Request.shardIndex;
+    }
+    this.cacheFamily(request.userId, family);
 
     // Audit log (non-critical, fire-and-forget - no await needed)
     void this.logToD1({
@@ -490,7 +590,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     await this.initializeState();
     await this.setTenantId(request.tenantId);
 
-    const family = this.families.get(request.userId);
+    const family = await this.loadFamily(request.userId);
 
     // Family not found
     if (!family) {
@@ -510,7 +610,6 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const now = Date.now();
     if (family.expires_at <= now) {
       // Cleanup expired family
-      this.families.delete(request.userId);
       await this.deleteFamily(request.userId);
 
       await this.logToD1({
@@ -534,7 +633,6 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       });
 
       // Revoke entire family
-      this.families.delete(request.userId);
       await this.deleteFamily(request.userId);
 
       // CRITICAL: Log synchronously for audit trail
@@ -570,7 +668,6 @@ export class RefreshTokenRotator extends DurableObject<Env> {
       });
 
       // Revoke entire family as precaution
-      this.families.delete(request.userId);
       await this.deleteFamily(request.userId);
 
       // CRITICAL: Log synchronously for audit trail
@@ -606,14 +703,15 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     const newVersion = family.version + 1;
     const newJti = this.generateJti();
 
-    // Update family
-    family.version = newVersion;
-    family.last_jti = newJti;
-    family.last_used_at = now;
+    const updatedFamily: TokenFamilyV2 = {
+      ...family,
+      version: newVersion,
+      last_jti: newJti,
+      last_used_at: now,
+    };
 
-    // Persist
-    this.families.set(request.userId, family);
-    await this.saveFamily(request.userId, family);
+    // Keep the prior cached family authoritative if the durable write fails.
+    await this.saveFamily(request.userId, updatedFamily);
 
     // Audit log (non-critical, fire-and-forget - no await needed)
     void this.logToD1({
@@ -628,9 +726,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     return {
       newVersion,
       newJti,
-      expiresIn: Math.floor((family.expires_at - now) / 1000),
-      allowedScope: request.requestedScope || family.allowed_scope,
-      ...(family.resource_aud && { resourceAudience: family.resource_aud }),
+      expiresIn: Math.floor((updatedFamily.expires_at - now) / 1000),
+      allowedScope: request.requestedScope || updatedFamily.allowed_scope,
+      ...(updatedFamily.resource_aud && { resourceAudience: updatedFamily.resource_aud }),
     };
   }
 
@@ -640,13 +738,11 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async revokeFamily(userId: string, reason?: string): Promise<void> {
     await this.initializeState();
 
-    const family = this.families.get(userId);
+    const family = await this.loadFamily(userId);
     if (!family) {
       return; // Already revoked or doesn't exist
     }
 
-    // Remove from memory and storage
-    this.families.delete(userId);
     await this.deleteFamily(userId);
 
     // CRITICAL: Log synchronously
@@ -665,7 +761,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
    */
   async getFamily(userId: string): Promise<TokenFamilyV2 | null> {
     await this.initializeState();
-    return this.families.get(userId) || null;
+    return this.loadFamily(userId);
   }
 
   /**
@@ -675,11 +771,13 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   async revokeByJti(jti: string, reason?: string): Promise<boolean> {
     await this.initializeState();
 
-    // Find family with matching last_jti
-    for (const [userId, family] of this.families.entries()) {
+    // JTI-only revocation is uncommon and cannot derive the user key from legacy state.
+    const storedFamilies = await this.listStoredFamilies();
+    for (const [key, family] of storedFamilies.entries()) {
       if (family.last_jti === jti) {
+        const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
+        this.validateStoredFamily(userId, family);
         // Revoke the entire family (as per OAuth best practice)
-        this.families.delete(userId);
         await this.deleteFamily(userId);
 
         await this.logCritical({
@@ -717,8 +815,11 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     let notFound = 0;
 
     // Build JTI to userId mapping for efficient lookup
+    const storedFamilies = await this.listStoredFamilies();
     const jtiToUserMap = new Map<string, string>();
-    for (const [userId, family] of this.families.entries()) {
+    for (const [key, family] of storedFamilies.entries()) {
+      const userId = key.substring(STORAGE_PREFIX.FAMILY.length);
+      this.validateStoredFamily(userId, family);
       jtiToUserMap.set(family.last_jti, userId);
     }
 
@@ -726,9 +827,8 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     for (const jti of jtis) {
       const userId = jtiToUserMap.get(jti);
       if (userId) {
-        const family = this.families.get(userId);
+        const family = storedFamilies.get(this.buildFamilyKey(userId));
         if (family) {
-          this.families.delete(userId);
           await this.deleteFamily(userId);
 
           // Audit log (non-blocking for batch operations)
@@ -761,7 +861,7 @@ export class RefreshTokenRotator extends DurableObject<Env> {
   ): Promise<{ valid: boolean; family?: TokenFamilyV2 }> {
     await this.initializeState();
 
-    const family = this.families.get(userId);
+    const family = await this.loadFamily(userId);
     if (!family) {
       return { valid: false };
     }
@@ -817,9 +917,11 @@ export class RefreshTokenRotator extends DurableObject<Env> {
     }
 
     this.flushScheduled = true;
-    setTimeout(() => {
-      void this.flushAuditLogs();
-    }, this.AUDIT_FLUSH_DELAY);
+    this.ctx.waitUntil(
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, this.AUDIT_FLUSH_DELAY);
+      }).then(() => this.flushAuditLogs())
+    );
   }
 
   /**
@@ -1119,27 +1221,9 @@ export class RefreshTokenRotator extends DurableObject<Env> {
 
       // GET /status - Health check
       if (path === '/status' && request.method === 'GET') {
-        const now = Date.now();
-        let activeFamilies = 0;
-
-        for (const family of this.families.values()) {
-          if (family.expires_at > now) {
-            activeFamilies++;
-          }
-        }
-
-        return new Response(
-          JSON.stringify({
-            status: 'ok',
-            version: 'v2',
-            families: {
-              total: this.families.size,
-              active: activeFamilies,
-            },
-            timestamp: now,
-          }),
-          { headers: { 'Content-Type': 'application/json' } }
-        );
+        return new Response(JSON.stringify(await this.getStatusRpc()), {
+          headers: { 'Content-Type': 'application/json' },
+        });
       }
 
       return new Response('Not Found', { status: 404 });

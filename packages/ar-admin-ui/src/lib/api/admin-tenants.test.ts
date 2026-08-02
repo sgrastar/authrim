@@ -12,6 +12,7 @@ describe('adminTenantsAPI', () => {
 			tenant_code: 'destination',
 			name: 'Destination',
 			description: null,
+			isolation_policy: 'tenant_exclusive',
 			lifecycle_state: 'active',
 			is_default: false,
 			created_at: 1,
@@ -87,6 +88,65 @@ describe('adminTenantsAPI', () => {
 		);
 	});
 
+	it('accepts an asynchronous tenant D1 clone operation', async () => {
+		const response = {
+			id: 'destination',
+			tenant_code: 'destination',
+			name: 'Destination',
+			description: null,
+			isolation_policy: 'tenant_exclusive',
+			lifecycle_state: 'provisioning',
+			is_default: false,
+			created_at: 1,
+			updated_at: 1,
+			source_tenant_id: 'source',
+			source_tenant_name: 'Source',
+			copy: {
+				settings: true,
+				secret_settings: false,
+				clients: false,
+				client_credentials: false,
+				roles: true,
+				admin_access: false,
+				webhooks: false,
+				webhook_secrets: false
+			},
+			provisioning: {
+				mode: 'control-plane',
+				operation_id: 'tenant_clone_destination',
+				tenant_id: 'destination',
+				operation_kind: 'clone',
+				source_tenant_id: 'source',
+				isolation_policy: 'tenant_exclusive',
+				status: 'queued',
+				current_step: 'request_accepted',
+				attempt_count: 0,
+				next_attempt_at: null,
+				last_error_code: null,
+				created_at: 1,
+				updated_at: 1,
+				completed_at: null,
+				preparation_result: null,
+				capacity_operation_ids: {},
+				steps: []
+			}
+		} satisfies CloneTenantResponse;
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify(response), {
+				status: 202,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		await expect(
+			adminTenantsAPI.clone('source', {
+				id: 'destination',
+				name: 'Destination',
+				copy: response.copy
+			})
+		).resolves.toEqual(response);
+	});
+
 	it('surfaces clone API errors', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 			new Response(JSON.stringify({ error_description: 'Source tenant must be active' }), {
@@ -111,5 +171,48 @@ describe('adminTenantsAPI', () => {
 				}
 			})
 		).rejects.toThrow('Source tenant must be active');
+	});
+
+	it('starts placement migration with a caller-generated idempotency key', async () => {
+		const operation = {
+			operation_id: 'tenant-placement:abc',
+			tenant_id: 'tenant a',
+			target_isolation_policy: 'tenant_exclusive',
+			status: 'queued',
+			current_step: 'wait_control',
+			attempt_count: 0,
+			next_attempt_at: null,
+			last_error_code: null,
+			lookup_progress: { prepared_rows: 0, activated_rows: 0, verified_rows: 0 },
+			steps: [],
+			created_at: 1,
+			started_at: null,
+			completed_at: null,
+			updated_at: 1,
+			control_status: 'available',
+			control: null
+		};
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify(operation), {
+				status: 202,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		const idempotencyKey = '00000000-0000-4000-8000-000000000001';
+		await expect(
+			adminTenantsAPI.startPlacementMigration('tenant a', idempotencyKey)
+		).resolves.toEqual(operation);
+		expect(fetchMock.mock.calls[0]?.[0]).toContain(
+			'/api/admin/tenants/tenant%20a/placement-migrations'
+		);
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('Idempotency-Key')).toBe(
+			idempotencyKey
+		);
+	});
+
+	it('treats a missing latest placement migration as an empty state', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+		await expect(adminTenantsAPI.latestPlacementMigration('tenant-a')).resolves.toBeNull();
 	});
 });

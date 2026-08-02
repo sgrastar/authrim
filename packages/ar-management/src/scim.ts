@@ -34,6 +34,7 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
+  type CanonicalRuntimeUserWriteInput,
   type IdentityAccountRow,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
@@ -45,9 +46,26 @@ import {
   persistCustomClaimWrite,
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  ensureDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
+import {
+  AccountCreationOperationRepository,
+  hashAccountCreationRequest,
+} from './account-creation-operation';
+import {
+  executeDurableInitialAccountDirectoryWrite,
+  resolveInitialAccountDirectoryWriteTargets,
+  type DurableInitialAccountDirectoryWriteResult,
+} from './account-directory-producer';
+import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
+import {
+  attemptImmediateAccountDirectoryRemovals,
+  eraseAccountPiiAfterDirectoryRemovalPrepared,
+  markAccountDirectoryRemovalsReady,
+  prepareAccountDirectoryRemoval,
+} from './account-directory-removal-producer';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -90,21 +108,10 @@ function createCanonicalProjectionRepository(
   );
 }
 
-async function maybeCreateCanonicalRuntimeUser(
-  c: Context<{ Bindings: Env }>,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter,
-  tenantId: string,
-  userId: string,
+function canonicalScimRuntimeUser(
   internalUser: Partial<InternalUser>
-): Promise<void> {
-  const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId),
-    piiAdapter
-  );
-  await writer.createFromRuntimeUser({
-    userId,
-    tenantId,
+): Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> {
+  return {
     active: internalUser.active === undefined ? true : internalUser.active !== 0,
     emailVerified: Boolean(internalUser.email_verified),
     phoneNumberVerified: Boolean(internalUser.phone_number_verified),
@@ -151,7 +158,7 @@ async function maybeCreateCanonicalRuntimeUser(
       zoneinfo: internalUser.zoneinfo,
       locale: internalUser.locale,
     },
-  });
+  };
 }
 
 async function maybeSyncCanonicalRuntimeUser(
@@ -316,6 +323,123 @@ async function persistScimCustomClaimWrite(
     tenantId,
     userId,
   });
+}
+
+const SCIM_ACCOUNT_CREATION_OPERATION_SCHEMA =
+  'urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation';
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function scimActorId(c: ScimContext): Promise<string> {
+  const authorization = c.req.header('Authorization');
+  const match = authorization?.match(/^Bearer ([^\s]+)$/u);
+  if (!match) throw new Error('scim_account_actor_unavailable');
+  return `scim-token:${await sha256Hex(match[1])}`;
+}
+
+function explicitScimIdempotencyKey(c: ScimContext): string | null {
+  const header = c.req.header('Idempotency-Key');
+  if (header === undefined) return null;
+  const value = header.trim();
+  if (
+    value.length < 8 ||
+    value.length > 128 ||
+    // eslint-disable-next-line no-control-regex -- reject header control bytes before persistence
+    /[\x00-\x1f\x7f]/u.test(value)
+  ) {
+    throw new Error('scim_account_idempotency_key_invalid');
+  }
+  return value;
+}
+
+type ScimAccountCreationSource = { kind: 'single' } | { kind: 'bulk'; bulkId: string };
+
+type ValidScimCustomClaimWrite = Extract<
+  Awaited<ReturnType<typeof validateScimCustomClaimWrite>>,
+  { ok: true }
+>;
+
+async function executeScimAccountCreation(
+  c: ScimContext,
+  tenantId: string,
+  scimUser: Partial<ScimUser>,
+  internalUser: Partial<InternalUser>,
+  customFieldValidation: ValidScimCustomClaimWrite,
+  source: ScimAccountCreationSource
+): Promise<DurableInitialAccountDirectoryWriteResult> {
+  const requestHash = await hashAccountCreationRequest({ source, user: scimUser });
+  const explicitKey = source.kind === 'single' ? explicitScimIdempotencyKey(c) : null;
+  const idempotencyKey = explicitKey ?? `scim-create:${requestHash}`;
+  const actorId = await scimActorId(c);
+  const candidateUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const operationRepository = new AccountCreationOperationRepository(
+    createAuthContextFromHono(c, tenantId).coreAdapter
+  );
+  const externalId =
+    typeof scimUser.externalId === 'string' && scimUser.externalId.trim()
+      ? scimUser.externalId.trim()
+      : null;
+
+  return executeDurableInitialAccountDirectoryWrite(
+    c.env,
+    {
+      tenantId,
+      actorId,
+      idempotencyKey,
+      requestHash,
+      candidateOperationId: `account-create-${crypto.randomUUID()}`,
+      candidateUserId,
+      email: typeof internalUser.email === 'string' ? internalUser.email : null,
+      externalSubject: externalId
+        ? { issuer: `urn:authrim:scim:${tenantId}`, subject: externalId }
+        : null,
+      residencyPolicyId: c.env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
+      residencyPartition: 'default',
+    },
+    {
+      operationRepository,
+      async writeAuthoritative(context) {
+        const { userId } = await writeCanonicalAccountAuthoritative({
+          publication: context.publication,
+          tenantCoreUsers: context.tenantCoreUsers,
+          tenantPii: context.tenantPii,
+          runtimeUser: canonicalScimRuntimeUser(internalUser),
+        });
+        await persistCustomClaimWrite({
+          db: context.tenantCoreUsers,
+          dbPii: context.tenantPii,
+          tenantId,
+          userId,
+          validation: customFieldValidation,
+        });
+        await syncUserLifecycleState({
+          db: context.tenantCoreUsers,
+          dbPii: context.tenantPii,
+          schemaDb: customClaimSources.schemaDb,
+          stateDb: context.tenantCoreUsers,
+          tenantId,
+          userId,
+        });
+      },
+    }
+  );
+}
+
+function scimAccountCreationPending(baseUrl: string, operationId: string): Record<string, unknown> {
+  return {
+    schemas: [SCIM_ACCOUNT_CREATION_OPERATION_SCHEMA],
+    id: operationId,
+    status: 'directory_pending',
+    operationId,
+    meta: {
+      resourceType: 'AccountCreationOperation',
+      location: `${baseUrl}/scim/v2/Operations/${encodeURIComponent(operationId)}`,
+    },
+  };
 }
 
 async function fetchCanonicalUsers(
@@ -657,7 +781,7 @@ function getBaseUrl(c: ScimContext): string {
  */
 function scimError(
   c: ScimContext,
-  status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500 | 503,
   detail: string,
   scimType?: ScimErrorType,
   extensions?: Record<string, unknown>
@@ -1415,6 +1539,43 @@ app.get('/Users/:id', async (c) => {
 });
 
 /**
+ * GET /scim/v2/Operations/{id} - Read one account creation operation.
+ */
+app.get('/Operations/:id', async (c) => {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const actorId = await scimActorId(c);
+    const operation = await new AccountCreationOperationRepository(
+      createAuthContextFromHono(c, tenantId).coreAdapter
+    ).findForActor({ tenantId, actorId, operationId: c.req.param('id')! });
+    if (!operation) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const baseUrl = getBaseUrl(c);
+    return c.json({
+      ...scimAccountCreationPending(baseUrl, operation.operationId),
+      status: operation.status,
+      ...(operation.status === 'succeeded'
+        ? {
+            userId: operation.userId,
+            resourceLocation: `${baseUrl}/scim/v2/Users/${encodeURIComponent(operation.userId)}`,
+          }
+        : {}),
+    });
+  } catch (error) {
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM account creation operation error', { action: 'get_operation' }, error as Error);
+    if (
+      error instanceof Error &&
+      /^(account_creation_(tenant|actor|operation)_id_invalid)$/u.test(error.message)
+    ) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    return scimError(c, 500, 'Internal server error');
+  }
+});
+
+/**
  * POST /scim/v2/Users - Create new user
  * PII/Non-PII DB separation: Insert into both Core and PII DBs
  */
@@ -1423,11 +1584,7 @@ app.post('/Users', async (c) => {
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const coreAdapter = authCtx.coreAdapter;
-    const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
-    const piiAdapter = piiCtx?.defaultPiiAdapter ?? null;
-    if (!piiAdapter) {
+    if (!hasPIIDatabase(c)) {
       return scimError(c, 500, 'Configured PII store is not available');
     }
 
@@ -1438,28 +1595,6 @@ app.post('/Users', async (c) => {
     }
     if (hasScimPasswordCredential(scimUser)) {
       return scimPasswordUnsupportedError(c);
-    }
-
-    // Check for duplicate userName or email in PII DB via Adapter
-    const primaryEmail =
-      scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
-
-    if (primaryEmail) {
-      const existing = await piiAdapter.queryOne<{ id: string }>(
-        `SELECT owner_id as id
-           FROM identity_sensitive_values
-          WHERE tenant_id = ?
-            AND owner_type = 'runtime_user'
-            AND value_key = 'email'
-            AND value_json = ?
-            AND lifecycle_state = 'active'
-          LIMIT 1`,
-        [tenantId, JSON.stringify(primaryEmail)]
-      );
-
-      if (existing) {
-        return scimError(c, 409, 'User with this email already exists', 'uniqueness');
-      }
     }
 
     // Convert SCIM user to internal format
@@ -1475,55 +1610,42 @@ app.post('/Users', async (c) => {
       );
     }
 
-    // Generate ID
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-
     // Set defaults
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
-    try {
-      await maybeCreateCanonicalRuntimeUser(
-        c,
-        coreAdapter,
-        piiAdapter,
-        tenantId,
-        userId,
-        internalUser
+    const result = await executeScimAccountCreation(
+      c,
+      tenantId,
+      scimUser,
+      internalUser,
+      customFieldValidation,
+      { kind: 'single' }
+    );
+    if (result.delivery.status === 202) {
+      c.header(
+        'Location',
+        `${baseUrl}/scim/v2/Operations/${encodeURIComponent(result.operation.operationId)}`
       );
-      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-    } catch (customFieldError) {
-      const log = getLogger(c).module('SCIM');
-      log.error(
-        'SCIM create canonical/custom claim persistence failed',
-        { action: 'create_user' },
-        customFieldError as Error
-      );
-
-      try {
-        await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
-      } catch (cleanupError) {
-        log.error(
-          'SCIM create rollback failed after custom claim persistence error',
-          { action: 'create_user' },
-          cleanupError as Error
-        );
-      }
-
-      throw customFieldError;
+      logScimAudit(c, 'scim.user.create', 'scim_user', result.operation.userId, {
+        externalId: scimUser.externalId,
+        operationId: result.operation.operationId,
+        status: 'directory_pending',
+      });
+      return c.json(scimAccountCreationPending(baseUrl, result.operation.operationId), 202);
     }
 
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
+    const targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      ensureDatabaseAdapter(targets.tenantCoreUsers, 'scim-user-create-result-core'),
+      tenantId,
+      new CanonicalSensitiveValueResolver(
+        ensureDatabaseAdapter(targets.tenantPii, 'scim-user-create-result-pii')
+      )
     );
 
-    // Fetch created user from the configured runtime source.
-    const createdUser = await fetchUserWithPII(userId, {
+    const createdUser = await fetchUserWithPII(result.operation.userId, {
       canonicalProjectionRepository,
-      includeInactive: true,
     });
 
     if (!createdUser) {
@@ -1536,14 +1658,34 @@ app.post('/Users', async (c) => {
     c.header('Location', responseUser.meta.location);
 
     // Audit log (non-blocking)
-    logScimAudit(c, 'scim.user.create', 'scim_user', userId, {
+    logScimAudit(c, 'scim.user.create', 'scim_user', result.operation.userId, {
       externalId: scimUser.externalId,
+      operationId: result.operation.operationId,
     });
 
     return c.json(responseUser, 201);
   } catch (error) {
     const log = getLogger(c).module('SCIM');
     log.error('SCIM create user error', { action: 'create_user' }, error as Error);
+    if (error instanceof Error) {
+      if (error.message === 'scim_account_idempotency_key_invalid') {
+        return scimError(
+          c,
+          400,
+          'Idempotency-Key must contain 8 to 128 safe characters',
+          'invalidValue'
+        );
+      }
+      if (
+        error.message === 'account_creation_operation_idempotency_conflict' ||
+        error.message === 'directory_identifier_reservation_conflict'
+      ) {
+        return scimError(c, 409, 'User identifier already exists', 'uniqueness');
+      }
+      if (error.message === 'control_account_allocation_capacity_unavailable') {
+        return scimError(c, 503, 'Account storage capacity is temporarily unavailable');
+      }
+    }
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1789,6 +1931,12 @@ app.delete('/Users/:id', async (c) => {
 
     const now = Date.now();
     const retentionDays = 90; // GDPR retention period
+    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+      tenantId,
+      userId,
+      core: coreAdapter,
+      pii: piiAdapter,
+    });
 
     // Step 1: Create tombstone record in PII DB for GDPR audit trail
     if (piiAdapter) {
@@ -1809,7 +1957,15 @@ app.delete('/Users/:id', async (c) => {
         });
     }
 
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      piiAdapter,
+      { tenantId, userId },
+      Math.floor(now / 1000)
+    );
+
     await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
+    await markAccountDirectoryRemovalsReady(coreAdapter, directoryRemovals);
+    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -2306,7 +2462,7 @@ app.delete('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const { coreAdapter } = createAdaptersFromContext(c);
 
     // Check if group exists
     const existingGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -2602,6 +2758,27 @@ async function processOperation(
     };
   }
 
+  if (
+    method === 'POST' &&
+    (typeof bulkId !== 'string' ||
+      bulkId.length < 1 ||
+      bulkId.length > 128 ||
+      // eslint-disable-next-line no-control-regex -- bulkId is persisted in the derived operation hash
+      /[\x00-\x1f\x7f]/u.test(bulkId))
+  ) {
+    return {
+      method,
+      bulkId,
+      status: '400',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '400',
+        detail: 'POST operations require a valid bulkId',
+        scimType: 'invalidValue',
+      },
+    };
+  }
+
   if (['PUT', 'PATCH', 'DELETE'].includes(method) && !resourceId) {
     return {
       method,
@@ -2738,36 +2915,6 @@ async function processUserOperation(
         return scimPasswordUnsupportedBulkResponse('POST', bulkId);
       }
 
-      // Check for duplicate email
-      const primaryEmail =
-        scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
-      if (primaryEmail) {
-        const existing = await piiAdapter.queryOne<{ id: string }>(
-          `SELECT owner_id as id
-             FROM identity_sensitive_values
-            WHERE tenant_id = ?
-              AND owner_type = 'runtime_user'
-              AND value_key = 'email'
-              AND value_json = ?
-              AND lifecycle_state = 'active'
-            LIMIT 1`,
-          [tenantId, JSON.stringify(primaryEmail)]
-        );
-        if (existing) {
-          return {
-            method: 'POST',
-            bulkId,
-            status: '409',
-            response: {
-              schemas: [SCIM_SCHEMAS.ERROR],
-              status: '409',
-              detail: 'User with this email already exists',
-              scimType: 'uniqueness',
-            },
-          };
-        }
-      }
-
       // Convert and create
       const internalUser = scimToUser(scimUser);
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
@@ -2785,32 +2932,89 @@ async function processUserOperation(
           },
         };
       }
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const now = new Date().toISOString();
       internalUser.created_at = now;
       internalUser.updated_at = now;
       if (!internalUser.email_verified) internalUser.email_verified = 0;
       if (internalUser.active === undefined) internalUser.active = 1;
 
-      await maybeCreateCanonicalRuntimeUser(
-        c,
-        coreAdapter,
-        piiAdapter,
-        tenantId,
-        userId,
-        internalUser
-      );
-      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+      let result: DurableInitialAccountDirectoryWriteResult;
+      try {
+        result = await executeScimAccountCreation(
+          c,
+          tenantId,
+          scimUser,
+          internalUser,
+          customFieldValidation,
+          { kind: 'bulk', bulkId: bulkId! }
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message === 'account_creation_operation_idempotency_conflict' ||
+            error.message === 'directory_identifier_reservation_conflict')
+        ) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '409',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '409',
+              detail: 'User identifier already exists',
+              scimType: 'uniqueness',
+            },
+          };
+        }
+        if (
+          error instanceof Error &&
+          error.message === 'control_account_allocation_capacity_unavailable'
+        ) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Account storage capacity is temporarily unavailable',
+            },
+          };
+        }
+        throw error;
+      }
+      const userId = result.operation.userId;
 
       // Store bulkId mapping for cross-references
       if (bulkId) {
         bulkIdMap.set(bulkId, userId);
       }
 
-      // Fetch created user from the configured runtime source.
+      if (result.delivery.status === 202) {
+        return {
+          method: 'POST',
+          bulkId,
+          location: `${baseUrl}/scim/v2/Operations/${encodeURIComponent(
+            result.operation.operationId
+          )}`,
+          status: '202',
+          response: scimAccountCreationPending(baseUrl, result.operation.operationId) as Record<
+            string,
+            unknown
+          >,
+        };
+      }
+
+      const targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+      const createdProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+        ensureDatabaseAdapter(targets.tenantCoreUsers, 'scim-bulk-user-create-result-core'),
+        tenantId,
+        new CanonicalSensitiveValueResolver(
+          ensureDatabaseAdapter(targets.tenantPii, 'scim-bulk-user-create-result-pii')
+        )
+      );
       const createdUser = await fetchUserWithPII(userId, {
-        canonicalProjectionRepository,
-        includeInactive: true,
+        canonicalProjectionRepository: createdProjectionRepository,
       });
       const responseUser = createdUser
         ? userToScim(createdUser, { baseUrl, includeGroups: false })

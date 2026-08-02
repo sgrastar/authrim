@@ -1,0 +1,31 @@
+{
+  "name": "@authrim/ar-control",
+  "version": "0.4.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    "./bootstrap-handoff": {
+      "types": "./src/bootstrap-handoff.ts",
+      "default": "./src/bootstrap-handoff.ts"
+    }
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-control --mode=auto --concurrency=1",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@authrim/ar-lib-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "@types/node": "^22.19.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.110.0"
+  }
+}

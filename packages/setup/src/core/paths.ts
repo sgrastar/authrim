@@ -71,11 +71,16 @@ export interface KeyFilePaths {
   objectEncryptionRootKey: string;
   otpHmacSecret: string;
   loggingCursorHmacSecret: string;
+  lookupHmacKeySlotA: string;
   pluginEncryptionKey: string;
+  pluginMutationHmacKey: string;
   agentElevationEncryptionKey: string;
   tenantRuntimeRegistrySigningPrivateJwk: string;
   tenantRuntimeRegistryVerifyingPublicJwks: string;
   tenantRuntimeRegistrySigningKeyId: string;
+  smokeRpcSigningJwkSlotA: string;
+  smokeRpcSigningJwkSlotB: string;
+  controlSmokeVerifyingPublicJwks: string;
   setupToken: string;
   metadata: string;
   emailFrom: string;
@@ -218,7 +223,9 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
     objectEncryptionRootKey: join(keysDir, 'object_encryption_root_key.txt'),
     otpHmacSecret: join(keysDir, 'otp_hmac_secret.txt'),
     loggingCursorHmacSecret: join(keysDir, 'logging_cursor_hmac_secret.txt'),
+    lookupHmacKeySlotA: join(keysDir, 'lookup_hmac_key_slot_a.txt'),
     pluginEncryptionKey: join(keysDir, 'plugin_encryption_key.txt'),
+    pluginMutationHmacKey: join(keysDir, 'plugin_mutation_hmac_key.txt'),
     agentElevationEncryptionKey: join(keysDir, 'agent_elevation_encryption_key.txt'),
     tenantRuntimeRegistrySigningPrivateJwk: join(
       keysDir,
@@ -229,6 +236,9 @@ function getKeyFilePaths(keysDir: string): KeyFilePaths {
       'tenant_runtime_registry_verify.jwks.json'
     ),
     tenantRuntimeRegistrySigningKeyId: join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+    smokeRpcSigningJwkSlotA: join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+    smokeRpcSigningJwkSlotB: join(keysDir, 'smoke_rpc_signing_jwk_slot_b.private.jwk.json'),
+    controlSmokeVerifyingPublicJwks: join(keysDir, 'control_smoke_verify.jwks.json'),
     setupToken: join(keysDir, 'setup_token.txt'),
     metadata: join(keysDir, 'metadata.json'),
     emailFrom: join(keysDir, 'email_from.txt'),

@@ -237,8 +237,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   private async initializeStateBlocking(): Promise<void> {
     // Load configuration from KV (with env/default fallback)
     try {
-      this.CODE_TTL = await this.configManager.getAuthCodeTTL();
-      this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+      [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
+        this.configManager.getAuthCodeTTL(),
+        this.configManager.getMaxCodesPerUser(),
+      ]);
       this.log.info('Loaded config from KV', {
         codeTTL: this.CODE_TTL,
         maxCodesPerUser: this.MAX_CODES_PER_USER,
@@ -378,8 +380,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     this.configManager.clearCache();
 
     // Reload configuration from KV
-    this.CODE_TTL = await this.configManager.getAuthCodeTTL();
-    this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+    [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
+      this.configManager.getAuthCodeTTL(),
+      this.configManager.getMaxCodesPerUser(),
+    ]);
 
     this.log.info('Config reloaded', {
       codeTTL: { previous: previousTTL, current: this.CODE_TTL },
@@ -567,14 +571,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       createdAt: now,
     };
 
-    // Store in memory
-    this.codes.set(request.code, authCode);
-
-    // Increment user code counter for O(1) DDoS protection
-    this.incrementUserCodeCount(request.userId);
-
     // Persist to Durable Storage - O(1) individual key
     await this.actorCtx.storage.put(this.buildCodeKey(request.code), authCode);
+
+    // Publish only durably stored codes to the hot cache and DDoS counter.
+    this.codes.set(request.code, authCode);
+    this.incrementUserCodeCount(request.userId);
 
     return {
       success: true,
@@ -716,21 +718,19 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
 
     // Mark as used ATOMICALLY
     // Durable Objects guarantee strong consistency, so this is atomic
-    stored.used = true;
-
-    // Register issued token JTIs in the same atomic operation (DO hop optimization)
-    // This allows replay attack detection and token revocation without a separate DO call
-    if (request.accessTokenJti) {
-      stored.issuedAccessTokenJti = request.accessTokenJti;
-    }
-    if (request.refreshTokenJti) {
-      stored.issuedRefreshTokenJti = request.refreshTokenJti;
-    }
-
-    this.codes.set(request.code, stored);
+    const consumed: AuthorizationCode = {
+      ...stored,
+      used: true,
+      ...(request.accessTokenJti ? { issuedAccessTokenJti: request.accessTokenJti } : {}),
+      ...(request.refreshTokenJti ? { issuedRefreshTokenJti: request.refreshTokenJti } : {}),
+    };
 
     // Persist to Durable Storage - O(1) individual key
-    await this.actorCtx.storage.put(this.buildCodeKey(request.code), stored);
+    await this.actorCtx.storage.put(this.buildCodeKey(request.code), consumed);
+
+    // Publish the consumed state only after the one-time marker is durable.
+    this.codes.set(request.code, consumed);
+    stored = consumed;
 
     // Return authorization data
     return {
@@ -1032,8 +1032,10 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
           this.configManager.clearCache();
 
           // Reload configuration from KV
-          this.CODE_TTL = await this.configManager.getAuthCodeTTL();
-          this.MAX_CODES_PER_USER = await this.configManager.getMaxCodesPerUser();
+          [this.CODE_TTL, this.MAX_CODES_PER_USER] = await Promise.all([
+            this.configManager.getAuthCodeTTL(),
+            this.configManager.getMaxCodesPerUser(),
+          ]);
 
           this.log.info('Config reloaded via fetch', {
             codeTTL: { previous: previousTTL, current: this.CODE_TTL },

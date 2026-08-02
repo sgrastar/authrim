@@ -55,7 +55,6 @@ export interface EnqueueTenantDiscoveryReindexJobOptions {
 const DEFAULT_REINDEX_JOB_LIMIT = 3;
 const CONTROL_TENANT_ID = '__control__';
 const DISCOVERY_INDEX_KINDS: TenantDiscoveryIndexKind[] = [
-  'email_domain',
   'email_exact',
   'external_subject',
   'global_subject',

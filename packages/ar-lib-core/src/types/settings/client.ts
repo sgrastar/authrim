@@ -22,9 +22,7 @@ export interface ClientSettings {
   'client.par_required': boolean;
   'client.dpop_required': boolean;
 
-  // Consent Settings
-  'client.consent_required': boolean;
-  'client.first_party': boolean;
+  // App Login Settings (first-party authority lives in Client Trust Policy)
   'client.app_login_enabled': boolean;
 
   // SSO Override
@@ -189,24 +187,6 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     label: 'DPoP Required',
     description: 'Require DPoP for this client',
     visibility: 'public',
-  },
-  'client.consent_required': {
-    key: 'client.consent_required',
-    type: 'boolean',
-    default: true,
-    envKey: 'CLIENT_CONSENT_REQUIRED',
-    label: 'Consent Required',
-    description: 'Require user consent for this client',
-    visibility: 'public',
-  },
-  'client.first_party': {
-    key: 'client.first_party',
-    type: 'boolean',
-    default: false,
-    envKey: 'CLIENT_FIRST_PARTY',
-    label: 'First Party App',
-    description: 'Mark this client as a first-party application',
-    visibility: 'admin',
   },
   'client.app_login_enabled': {
     key: 'client.app_login_enabled',
@@ -856,8 +836,6 @@ export const CLIENT_DEFAULTS: ClientSettings = {
   'client.pkce_required': false,
   'client.par_required': false,
   'client.dpop_required': false,
-  'client.consent_required': true,
-  'client.first_party': false,
   'client.app_login_enabled': false,
   'client.sso_enabled': false,
   'client.refresh_token_rotation': true,

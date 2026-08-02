@@ -139,6 +139,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         ),
       },
     })),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      if (!mocks.emailNotifierEnabled) {
+        throw new Error('notification_delivery_provider_order_unavailable');
+      }
+      const result = await mocks.emailNotifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
   };
 });
 
@@ -1084,7 +1095,7 @@ describe('directory password login handler', () => {
     );
   });
 
-  it('does not store an email-code challenge when no email notifier is configured', async () => {
+  it('does not call a provider when no materialized provider order is configured', async () => {
     const tokenHash = await testMigrationTokenHash('tenant-a', 'migration-email-token');
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
       id: 'damt_email_1',
@@ -1114,7 +1125,8 @@ describe('directory password login handler', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    // The undisclosed, TTL-bound challenge is committed before any provider execution.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledOnce();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 

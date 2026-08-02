@@ -124,6 +124,163 @@ Deploy an existing configured environment.
 npx @authrim/setup deploy --env prod --yes
 ```
 
+Setup remains Authrim's release and deployment plane after the initial deployment. It owns version
+updates, Worker deployment and rollback, whole-environment migrations, Control Worker updates,
+environment deletion, and operator-driven D1 provisioning or repair. The Control Worker does not
+update or delete itself.
+
+For tenant-D1 environments, the interactive CLI and Web setup offer `Automatic provisioning`:
+
+- **On:** setup opens a Cloudflare Dashboard link prefilled with only API-token creation permission.
+  Enter the resulting one-time bootstrap token once. Setup creates distinct account-scoped D1 and
+  Workers Scripts tokens and, when the enabled capability requires them, separate KV and R2 tokens.
+  Before registering a child secret, setup verifies that the token can list only its own resource
+  class and that Cloudflare rejects the other D1, Workers Scripts, KV, and R2 list endpoints with
+  `401` or `403`. Transport errors and other provider responses are not accepted as denial evidence.
+  Setup then registers the values directly as Control Worker secrets and revokes the bootstrap token.
+  Dashboard authentication is separate from Wrangler OAuth and may require another login.
+- **Off / Skip:** no Cloudflare API token is stored on the Control Worker. Setup continues to use the
+  operator's Wrangler OAuth session to execute canonical pending Control DB operations. Existing
+  routing remains active; new automatic provisioning fails closed as `operator_action_required`.
+
+An existing tenant-D1 environment can be switched from Off to On from its environment Overview in
+Web setup. The same one-time bootstrap flow is used; authority remains pending until the common
+deployment path succeeds and the scoped child tokens are registered. The CLI delays opening the
+token template and accepting the token until Worker deployment is ready. If Web preparation or
+deployment fails after a token was entered, setup immediately attempts to revoke that bootstrap
+token through its loopback-only cleanup route; an unconfirmed revocation is reported as a required
+Dashboard cleanup rather than success.
+
+Before issuing child tokens, setup also revokes every other user- or account-owned token with the
+same deterministic bootstrap name. This cleans up unused tokens created by an earlier Dashboard
+attempt while preserving unrelated operator credentials. Failure to confirm this cleanup blocks the
+bootstrap before any child token or Control secret is created.
+
+Bootstrap and generated child token values are never written to `.authrim`, `.authrim-key`, config,
+lock files, Control DB, generated artifacts, logs, audit payloads, command arguments, or Web
+responses. CI and advanced operators may use the documented split-token environment fallback; D1
+and Workers tokens must remain distinct and account-scoped.
+
+Custom Dynamic Worker plugins use Cloudflare's Worker Loader binding on the Workers Paid plan; they
+do not require Workers for Platforms or a Dispatch Namespace. The capability is disabled by default
+and can be enabled with `features.pluginDynamicWorkers.enabled = true`. Enabling it also requires R2
+bundle storage. Built-in notification and human-verification providers continue to run in-process
+without a Worker Loader; a configured Dynamic Worker plugin never falls back to in-process
+execution when the loader, bundle, or paid capability is unavailable.
+
+Each custom plugin manifest must also declare `credentials` (an empty array is valid). A credential
+slot contains `configKey`, `required`, `destinationHost`, `injectionKind`, and `injectionName`.
+`destinationHost` must be an exact host in `egressAllowedHosts`; wildcard-only credential injection,
+reserved/forwarding headers, and built-in plugin IDs are rejected. The manifest contains no values.
+Setup publishes each immutable code-and-policy version and one platform active version pointer into
+Plugin Runner D1. Tenant enable pins that version. Later setup publication affects new installations
+only until an explicit tenant rollout or bounded platform rollout is requested. A platform rollout
+uses a resumable server-owned cursor and processes at most 25 enabled tenant installations per call.
+The first call may use a batch size of one as an observed first batch; a dedicated canary tenant or
+environment is not required.
+
+The manifest must also declare `hostInterfaces` and `resources` (empty arrays are valid). Host
+interfaces use versioned IDs from Authrim's typed catalog; arbitrary RPC methods and raw Authrim D1
+bindings are rejected. A dedicated resource uses this shape:
+
+```json
+{
+  "schemaVersion": 1,
+  "logicalResourceId": "plugin_cache",
+  "binding": "PLUGIN_CACHE",
+  "kind": "kv_namespace",
+  "scope": "tenant",
+  "access": "read_write",
+  "provisioning": { "defaultMode": "managed", "allowExisting": true },
+  "migrationStream": null
+}
+```
+
+Managed provisioning is the normal path and requires no tenant administrator input. When
+`allowExisting` is true, the Admin UI exposes a collapsed advanced option to select an existing
+Cloudflare resource by both ID and name. Authrim verifies and binds that reference but does not delete
+the underlying provider resource. D1 resources require a non-null approved `migrationStream`.
+
+Admin submits tenant credential values to the narrow Plugin Runner RPC. Values are encrypted in
+Plugin Runner D1 and injected only by the host outbound gateway. They are not stored in Settings KV,
+Control DB, generated files, setup output, logs, audit payloads, or Dynamic Worker bindings.
+
+Both execution modes use the same Control DB desired state, operation steps, deterministic naming,
+capacity planner, migration checksums, binding-preservation rules, retry policy, and fenced leases.
+Post-handoff setup execution is supported only through that canonical operation path; the legacy
+tenant-D1 direct mutation path remains rejected.
+
+Plugin resource bindings are also part of the generated deployment state. Setup projects only
+Control DB resources in `ready` or `active` state into the Plugin Runner Wrangler configuration and
+uses fixed `PRES_D1_*`, `PRES_KV_*`, and `PRES_R2_*` binding families. A normal deploy therefore
+preserves managed plugin resources. Cleanup changes them to `deleting`, removes the live bindings,
+and refreshes the focused generated artifact so a later deploy cannot recreate quarantined
+bindings. Local validation checks the Runner-only binding shape without network access;
+`--live-cloudflare` additionally verifies exact Control desired identity and Cloudflare inventory.
+
+Pending operations are shown first in Web setup. The CLI executes the same server-owned operation;
+it accepts an operation ID but no tenant, database, binding, role, residency, or capacity override:
+
+```bash
+npx @authrim/setup control-provision --env test --dry-run
+npx @authrim/setup control-provision --env test --operation-id <operation-id> --yes
+```
+
+The command advances the authoritative operation one provider step at a time: deterministic D1
+creation, the pinned migration release, then the capability-derived Worker binding patch. In Off
+mode, the Control Worker needs no Cloudflare API token to finish the private Service Binding smoke,
+30-second stabilization, final runtime-version check, and activation. A response-lost binding PATCH
+is reconciled from the fenced deployment evidence and is not issued a second time.
+
+An active-tenant disaster recovery operation also appears in the same pending list when Automatic
+provisioning is Off. Setup receives the tenant and the complete server-owned binding target set; it
+does not ask for databases, roles, residencies, or binding names. The common binding executor rejects
+an incomplete target set, uses the same deployment lease/fencing, and hands the operation back to
+Control for smoke, stabilization, and explicit Admin reactivation. Time Travel itself remains a
+manual Cloudflare operator action and is not executed by setup.
+
+Plugin **Disable** is non-destructive: bindings and dedicated resources remain available for a later
+re-enable. An explicitly confirmed Admin **Uninstall**, or explicit Cancel before activation,
+creates a canonical cleanup operation. Automatic provisioning On lets Control execute it; Off hands
+the same operation to the pending-operation-first setup CLI/Web flow. Cleanup removes only the
+installation's derived bindings, waits 30 minutes, deletes only Authrim-managed resources, and
+detaches existing-resource references without provider deletion. Setup may be closed during the
+drain; reopening it shows the same operation and resumes after the recorded deadline. Raw provider
+identities are server-owned and cannot be edited from setup.
+
+When setup is asked to add capacity, CLI and Web use the same server-owned plan and offer only:
+
+- **Minimum:** add the smallest valid capacity unit that resolves the current shortage.
+- **Recommended (default):** include current use, low-watermark, in-flight allocations, and target
+  capacity.
+- **Extra headroom:** add one spare capacity unit to the recommended plan.
+
+The preview lists the exact D1 count, data role, residency partition, and Worker bindings for every
+unit. Operators select a tenant-exclusive tenant or the environment shared pool; they do not edit raw
+database names, binding names, database IDs, data roles, residencies, or D1 counts. Plans that exceed
+tenant policy, Authrim resource caps, or the Cloudflare account limit are unavailable.
+
+CLI and Web create the same short-lived setup machine principal only around each preview or request
+and remove both the Admin D1 principal and local key files before reporting success. Bootstrap,
+action, and cleanup failures are reported separately; an uncertain cleanup is never treated as a
+successful capacity operation. The complete bootstrap/action/cleanup interval holds the existing
+per-environment setup operation lock, so CLI, Web, deploy, update, and delete cannot race the fixed
+ephemeral principal or its local key files. Concurrent Web submissions are queued before acquiring
+that cross-process lock.
+
+Preview or request the same profiles from the CLI without exposing physical resource inputs:
+
+```bash
+npx @authrim/setup control-provision --env test --scope shared_pool \
+  --capacity-profile recommended --dry-run
+npx @authrim/setup control-provision --env test --scope tenant_exclusive \
+  --tenant-id <tenant-id> --capacity-profile extra_headroom --yes
+```
+
+Without `--yes`, tenant-exclusive mode selects from the active server-owned tenant placement
+policies. Non-interactive execution requires `--tenant-id`; it never infers an owner or falls back to
+the shared pool.
+
 This command permits an initial deployment or a same-product-version redeploy. If the repository
 product version differs from the deployed lock, it stops and directs the operator to `update`; product
 upgrades cannot bypass the schema-first release state machine through CLI deploy, component upgrade,
@@ -150,7 +307,8 @@ versioned schema evidence in the environment lock and deploys the resulting bind
 and PII streams are supported; a target without a published release stream (including MySQL today) is
 rejected. Use `--dry-run` to validate the candidate without changing local or Cloudflare state.
 
-Topology commands (`tenant-db`, `tenant-db-pool-expand`, `r2-provision`, and
+The legacy `tenant-db` command is limited to non-Control topologies and is rejected for managed
+tenant-D1 environments after Control bootstrap. Topology commands (`tenant-db`, `r2-provision`, and
 `external-db-register`) persist a durable preparation/deployment journal in the environment lock before
 publishing Worker bindings. Configuration-changing topology commands also stage the new configuration
 and checksum in that journal before atomically replacing `config.json`; an interrupted replacement is
@@ -268,11 +426,9 @@ npx @authrim/setup config --config .authrim/prod/config.json --validate
 | `r2-provision`          | Create R2 buckets and immediately deploy their bindings.  |
 | `external-db-register`  | Register migrated external DBs and deploy their bindings. |
 | `upgrade`               | Upgrade a single Worker or UI component.                  |
+| `control-provision`     | Execute a pending canonical Control operation.            |
 | `tenant-db`             | Create tenant-specific D1 databases for one tenant.       |
 | `tenant-db-migrate-all` | Run migrations for generated tenant D1 databases.         |
-| `tenant-db-pool-expand` | Add preallocated tenant D1 slots.                         |
-| `tenant-db-pool-status` | Show tenant D1 pool capacity.                             |
-| `tenant-db-slot-reset`  | Reset a failed tenant D1 slot.                            |
 | `migrate`               | Migrate legacy files into `.authrim/{env}/`.              |
 | `migrate-status`        | Show migration status and recommendation.                 |
 

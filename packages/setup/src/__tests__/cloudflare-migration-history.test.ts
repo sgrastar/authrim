@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AUTHRIM_MIGRATION_HISTORY_SQL } from '@authrim/ar-lib-core/control-plane';
 
 const execaMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
@@ -13,8 +14,10 @@ vi.mock('execa', () => ({
 import {
   calculateD1MigrationChecksum,
   collectManifestMigrationChecksumEvidence,
+  executeD1Batch,
   getD1MigrationStatus,
   runD1Migrations,
+  shouldRefreshD1OAuthCredential,
 } from '../core/cloudflare.js';
 import {
   DRAFT_RELEASE_MANIFEST_FILENAME,
@@ -25,6 +28,7 @@ describe('D1 migration history safety', () => {
   const tempDirs: string[] = [];
   const originalAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const originalApiToken = process.env.CLOUDFLARE_API_TOKEN;
+  const originalD1ApiToken = process.env.CLOUDFLARE_D1_API_TOKEN;
 
   beforeEach(() => {
     execaMock.mockReset();
@@ -32,6 +36,7 @@ describe('D1 migration history safety', () => {
     vi.stubGlobal('fetch', fetchMock);
     delete process.env.CLOUDFLARE_ACCOUNT_ID;
     delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CLOUDFLARE_D1_API_TOKEN;
   });
 
   afterEach(() => {
@@ -48,6 +53,11 @@ describe('D1 migration history safety', () => {
     } else {
       process.env.CLOUDFLARE_API_TOKEN = originalApiToken;
     }
+    if (originalD1ApiToken === undefined) {
+      delete process.env.CLOUDFLARE_D1_API_TOKEN;
+    } else {
+      process.env.CLOUDFLARE_D1_API_TOKEN = originalD1ApiToken;
+    }
     vi.unstubAllGlobals();
   });
 
@@ -59,6 +69,120 @@ describe('D1 migration history safety', () => {
     writeFileSync(path, 'CREATE TABLE existing_schema (id TEXT PRIMARY KEY);');
     return { directory, filename, path };
   }
+
+  it('executes D1 statements as one strict provider batch', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [
+          { success: true, results: [] },
+          { success: true, results: [{ id: 'row-1' }] },
+        ],
+      }),
+    });
+    const batch = [
+      { sql: 'CREATE TABLE record (id TEXT PRIMARY KEY)' },
+      { sql: 'SELECT id FROM record WHERE id = ?', params: ['row-1'] },
+    ] as const;
+
+    await expect(executeD1Batch('11111111-1111-1111-1111-111111111111', batch)).resolves.toEqual([
+      { success: true, results: [] },
+      { success: true, results: [{ id: 'row-1' }] },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/d1/database/11111111-1111-1111-1111-111111111111/query',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ batch }),
+      })
+    );
+  });
+
+  it('rejects partial D1 batch success and malformed identifiers', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [{ success: false, results: [] }],
+      }),
+    });
+    await expect(
+      executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }])
+    ).rejects.toThrow('cloudflare_d1_batch_unsuccessful');
+    await expect(executeD1Batch('../database', [{ sql: 'SELECT 1' }])).rejects.toThrow(
+      'invalid_d1_database_id'
+    );
+  });
+
+  it('prefers the split D1 token for typed D1 batches', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'generic-token';
+    process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, result: [{ success: true, results: [] }] }),
+    });
+
+    await executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer d1-token' }),
+      })
+    );
+  });
+
+  it('refreshes only an OAuth credential once for an authentication rejection', async () => {
+    expect(shouldRefreshD1OAuthCredential({ status: 401, source: 'oauth', attempt: 1 })).toBe(true);
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'oauth', attempt: 1 })).toBe(true);
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'oauth', attempt: 2 })).toBe(
+      false
+    );
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'env', attempt: 1 })).toBe(false);
+    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'd1_env', attempt: 1 })).toBe(
+      false
+    );
+  });
+
+  it('does not retry an explicit D1 token after a permission rejection', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+
+    await expect(
+      executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }])
+    ).rejects.toThrow('cloudflare_d1_batch_failed:403');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicit target account without repeating Wrangler account discovery', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, result: [{ success: true, results: [] }] }),
+    });
+
+    await executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }], {
+      accountId: 'fedcba9876543210fedcba9876543210',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/accounts/fedcba9876543210fedcba9876543210/'),
+      expect.any(Object)
+    );
+    expect(execaMock).not.toHaveBeenCalled();
+  });
 
   it('extracts noisy Wrangler JSON and skips an already applied migration', async () => {
     const fixture = createMigrationFixture();
@@ -149,7 +273,7 @@ describe('D1 migration history safety', () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sql: 'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;',
+          sql: AUTHRIM_MIGRATION_HISTORY_SQL,
         }),
       }
     );

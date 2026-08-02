@@ -14,6 +14,7 @@ import {
   getTenantIdFromContext,
   createPIIContextFromHono,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   hasPIIDatabase,
   generateId,
   type DatabaseAdapter,
@@ -41,6 +42,8 @@ import {
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
   buildTenantSystemSettingsKey,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextByIdentifierFromHono,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -66,6 +69,13 @@ import {
 } from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import {
+  attemptImmediateAccountDirectoryRemovals,
+  eraseAccountPiiAfterDirectoryRemovalPrepared,
+  markAccountDirectoryRemovalsReady,
+  prepareAccountDirectoryRemoval,
+} from './account-directory-removal-producer';
+import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -202,12 +212,17 @@ export {
   adminUsersListHandler,
   adminUserGetHandler,
   adminUserCreateHandler,
+  adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
 } from './admin-users';
+export {
+  adminUserIdentifierReplacementsHandler,
+  adminUserIdentifierReplacementResumeHandler,
+} from './admin-identifier-replacements';
 export {
   adminClientCreateHandler,
   adminClientsListHandler,
@@ -1223,8 +1238,19 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     let retentionUntil = nowTs + 90 * 24 * 60 * 60;
     let tombstoneId: string | null = null;
 
+    if (!hasPIIDatabase(c)) {
+      throw new Error('account_directory_removal_pii_unavailable');
+    }
+    const removalPiiContext = createPIIContextFromHono(c, tenantId);
+    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+      tenantId,
+      userId,
+      core: authCtx.coreAdapter,
+      pii: removalPiiContext.defaultPiiAdapter,
+    });
+
     if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiCtx = removalPiiContext;
       const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
         tenantId,
         userId,
@@ -1254,6 +1280,11 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
         tombstoneId = existingTombstone.id;
         retentionUntil = existingTombstone.retention_until;
       }
+      await eraseAccountPiiAfterDirectoryRemovalPrepared(
+        piiCtx.defaultPiiAdapter,
+        { tenantId, userId },
+        nowTs
+      );
       await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
         tenantId,
         userId,
@@ -1281,6 +1312,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     ]);
 
     await runtimeUsers.deleteUser(userId);
+    await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
+    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
@@ -2664,8 +2697,49 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
+    const createUser = body.create_user !== false;
+    const tenantD1 =
+      getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
+    let routedLegacyUserId: string | null = null;
+
+    if (tenantD1) {
+      try {
+        const accountData = await timeManagementRequestDiagnosticOperation(
+          c,
+          'mg_otp_route_lookup',
+          () =>
+            resolveAccountDataContextByIdentifierFromHono(c, {
+              indexKind: 'email_exact',
+              identifier: email.toLowerCase(),
+            })
+        );
+        routedLegacyUserId = accountData.legacyUserId;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'account_data_route_not_found') {
+          if (!createUser) {
+            return c.json(
+              {
+                error: 'invalid_request',
+                error_description: 'User does not exist and create_user is false',
+              },
+              404
+            );
+          }
+          return c.json(
+            {
+              error: 'conflict',
+              error_description:
+                'Tenant D1 test users must be provisioned before generating an email code',
+            },
+            409
+          );
+        }
+        throw error;
+      }
+    }
+
     const piiCtx = createPIIContextFromHono(c, tenantId);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const runtimeUsers = new CanonicalRuntimeUserStore({
       coreAdapter: authCtx.coreAdapter,
       piiAdapter: piiCtx.defaultPiiAdapter,
@@ -2675,9 +2749,18 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     let userEmail: string | null = null;
     let userName: string | null = null;
 
-    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase(), {
-      includeInactive: true,
-    });
+    const routedUser = await timeManagementRequestDiagnosticOperation(
+      c,
+      'mg_otp_user_lookup',
+      () =>
+        routedLegacyUserId
+          ? runtimeUsers.findById(routedLegacyUserId, { includeInactive: true })
+          : runtimeUsers.findByEmail(email.toLowerCase(), { includeInactive: true })
+    );
+    const existingUser =
+      routedLegacyUserId && routedUser?.email?.toLowerCase() !== email.toLowerCase()
+        ? null
+        : routedUser;
     if (existingUser) {
       userId = existingUser.id;
       userEmail = existingUser.email;
@@ -2685,8 +2768,6 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // create_user option: if false, don't create new user (for benchmarks with pre-seeded users)
-    const createUser = body.create_user !== false;
-
     if (!userId) {
       if (!createUser) {
         return c.json(
@@ -2733,27 +2814,34 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
     // Parallelize independent operations: hash computations + DO stub retrieval
-    const [codeHash, emailHash, challengeStore] = await Promise.all([
-      hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
-      hashEmail(email.toLowerCase()),
-      getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
-    ]);
+    const [codeHash, emailHash, challengeStore] = await timeManagementRequestDiagnosticOperation(
+      c,
+      'mg_otp_challenge_prepare',
+      () =>
+        Promise.all([
+          hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
+          hashEmail(email.toLowerCase()),
+          getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
+        ])
+    );
 
-    await challengeStore.storeChallengeRpc({
-      id: `email_code:${otpSessionId}`,
-      tenantId: getTenantIdFromContext(c),
-      type: 'email_code',
-      userId: userId as string,
-      challenge: codeHash,
-      ttl: EMAIL_CODE_TTL,
-      email: email.toLowerCase(),
-      metadata: {
-        email_hash: emailHash,
-        otp_session_id: otpSessionId,
-        issued_at: issuedAt,
-        purpose: 'login',
-      },
-    });
+    await timeManagementRequestDiagnosticOperation(c, 'mg_otp_challenge_store', () =>
+      challengeStore.storeChallengeRpc({
+        id: `email_code:${otpSessionId}`,
+        tenantId: getTenantIdFromContext(c),
+        type: 'email_code',
+        userId: userId as string,
+        challenge: codeHash,
+        ttl: EMAIL_CODE_TTL,
+        email: email.toLowerCase(),
+        metadata: {
+          email_hash: emailHash,
+          otp_session_id: otpSessionId,
+          issued_at: issuedAt,
+          purpose: 'login',
+        },
+      })
+    );
 
     const log = getLogger(c).module('ADMIN');
     log.info('Created test email code for user', {

@@ -112,7 +112,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -170,7 +170,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -210,7 +210,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -463,7 +463,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'first',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -724,7 +724,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'first',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -876,7 +876,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'first',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -934,7 +934,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'first',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -973,7 +973,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -1006,7 +1006,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,

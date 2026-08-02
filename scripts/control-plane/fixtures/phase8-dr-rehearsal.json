@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "scenarioId": "tenant-d1-manual-time-travel-recovery",
+  "recoveryMode": "manual_cloudflare_time_travel",
+  "automaticRestoreRpc": false,
+  "steps": [
+    {
+      "id": "quarantine_shard",
+      "actor": "control_worker",
+      "proofs": ["allocation_blocked", "activation_blocked", "route_resurrection_blocked"]
+    },
+    {
+      "id": "publish_signed_deny_generation",
+      "actor": "control_worker",
+      "proofs": ["registry_signature_verified", "latest_generation_observed"]
+    },
+    {
+      "id": "drain_runtime_snapshots",
+      "actor": "control_worker",
+      "minimumSeconds": 1800,
+      "proofs": ["direct_route_smoke_denied", "identifier_route_smoke_denied"]
+    },
+    {
+      "id": "restore_d1",
+      "actor": "cloudflare_operator",
+      "manualConfirmationRequired": true,
+      "proofs": ["target_database_verified", "restore_bookmark_or_timestamp_recorded"]
+    },
+    {
+      "id": "verify_migrations",
+      "actor": "control_worker",
+      "proofs": [
+        "release_id_verified",
+        "manifest_checksum_verified",
+        "migration_generation_verified"
+      ]
+    },
+    {
+      "id": "rebuild_lookup_projection",
+      "actor": "control_worker",
+      "proofs": [
+        "authoritative_source_used",
+        "route_counts_verified",
+        "reference_integrity_verified"
+      ]
+    },
+    {
+      "id": "verify_runtime_binding",
+      "actor": "control_worker",
+      "proofs": ["binding_identity_verified", "runtime_smoke_verified", "generation_match_verified"]
+    },
+    {
+      "id": "reactivate_route",
+      "actor": "control_worker",
+      "proofs": [
+        "tenant_lifecycle_active",
+        "registry_active",
+        "lookup_active",
+        "same_generation_verified"
+      ]
+    }
+  ],
+  "auditEvidence": [
+    "operation_id",
+    "environment_id",
+    "resource_id",
+    "operator_id",
+    "restore_bookmark_or_timestamp",
+    "verification_result"
+  ],
+  "prohibitedEvidence": [
+    "api_token",
+    "authorization_header",
+    "raw_provider_response",
+    "raw_email",
+    "sql_text"
+  ]
+}

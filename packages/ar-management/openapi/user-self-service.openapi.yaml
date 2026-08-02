@@ -244,6 +244,116 @@ paths:
                   type: string
                   pattern: '^(?:[0-9]{6}|[0-9]{8})$'
       security: *accountSession
+  /api/account/identifier-replacements/start:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountIdentifierReplacementsStart
+      summary: Start an email address replacement.
+      description: Requires authentication within the last five minutes and sends a one-time code to the new address.
+      responses:
+        '202':
+          description: Verification challenge accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - challenge_id
+                  - expires_in
+                properties:
+                  challenge_id:
+                    type: string
+                  expires_in:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 320
+      security: *accountSession
+  /api/account/identifier-replacements/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountIdentifierReplacementsComplete
+      summary: Verify and apply an email address replacement.
+      description: Consumes the new-address code, creates a durable replacement operation, and returns only after completion or durable forward repair handoff.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '202':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - challenge_id
+                - code
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      security: *accountSession
+  /api/account/identifier-replacements/{id}:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountIdentifierReplacement
+      summary: Read the current user's email replacement operation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
   /api/account/operations:
     get:
       tags:
@@ -1138,6 +1248,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AccountOperationsResponse'
+    IdentifierReplacementOperation:
+      description: Durable identifier replacement operation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentifierReplacementOperationResponse'
     AccountConsents:
       description: Account Page consent confirmation response.
       content:
@@ -1748,6 +1864,46 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AccountOperation'
+    IdentifierReplacementOperationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operation
+      properties:
+        operation:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - state
+          properties:
+            id:
+              type: string
+            state:
+              type: string
+              enum:
+                - processing
+                - directory_pending
+                - authoritative_switch_pending
+                - authoritative_switched
+                - revocation_pending
+                - completed
+                - blocked_forward_repair
+                - canceled
+            status_url:
+              type: string
+            error_code:
+              type:
+                - string
+                - 'null'
+            created_at:
+              type: integer
+            updated_at:
+              type: integer
+            completed_at:
+              type:
+                - integer
+                - 'null'
     AccountStatementConsent:
       type: object
       required:

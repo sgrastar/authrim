@@ -12,6 +12,7 @@ const adminExternalTokenRefresh = {
 	admin_external_token_refresh_threshold_seconds: 'Refresh threshold seconds',
 	admin_external_token_refresh_token_batch_size: 'Token batch size',
 	admin_external_token_refresh_scheduled_tenant_batch_size: 'Scheduled tenant batch size',
+	admin_external_token_refresh_pii_shard_page_size: 'PII shards per tenant step',
 	admin_external_token_refresh_saving: 'Saving...',
 	admin_external_token_refresh_save_settings: 'Save Settings',
 	admin_external_token_refresh_recent_runs: 'Recent Runs',

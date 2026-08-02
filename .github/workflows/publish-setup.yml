@@ -28,7 +28,8 @@ jobs:
           cache: 'pnpm'
 
       - name: Update npm for OIDC trusted publishing
-        run: npm install -g npm@11.5.1
+        # Pin the npm CLI source to the commit that publishes npm 11.5.1.
+        run: npm install -g https://github.com/npm/cli.git#5bcdc023fc022499cb6fc2ca31cb1c7d76e0d46c
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

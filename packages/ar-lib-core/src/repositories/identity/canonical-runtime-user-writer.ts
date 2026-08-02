@@ -6,6 +6,7 @@ import {
   type CreateProfileAttributeValueInput,
   type IdentityLifecycleState,
 } from './canonical-identity';
+import type { AccountDirectoryPublication } from '../../services/lookup-directory/publication';
 import {
   encodeCanonicalSensitiveValueRef,
   type CanonicalSensitiveUserField,
@@ -99,40 +100,44 @@ export class CanonicalRuntimeUserWriter {
   ) {}
 
   async createFromRuntimeUser(
-    input: CanonicalRuntimeUserWriteInput
+    input: CanonicalRuntimeUserWriteInput,
+    directoryPublication?: AccountDirectoryPublication
   ): Promise<CanonicalRuntimeUserWriteResult> {
     const lifecycleState = toLifecycleState(input.active);
-    const graph = await this.repository.createIdentityGraph({
-      subject: {
-        id: `subject:${input.userId}`,
-        tenant_id: input.tenantId,
-        subject_type: input.userType === 'm2m' ? 'service_account' : 'person',
-        lifecycle_state: lifecycleState,
-        display_label: null,
+    const graph = await this.repository.createIdentityGraph(
+      {
+        subject: {
+          id: `subject:${input.userId}`,
+          tenant_id: input.tenantId,
+          subject_type: input.userType === 'm2m' ? 'service_account' : 'person',
+          lifecycle_state: lifecycleState,
+          display_label: null,
+        },
+        account: {
+          id: `account:${input.userId}`,
+          tenant_id: input.tenantId,
+          account_type: accountTypeFromUserType(input.userType),
+          lifecycle_state: lifecycleState,
+          legacy_user_id: input.userId,
+          display_label: null,
+          metadata: buildAccountMetadata(input),
+        },
+        link: {
+          id: `subject-account-link:${input.userId}`,
+          tenant_id: input.tenantId,
+          lifecycle_state: lifecycleState,
+          source_ref: input.sourceRef ?? null,
+        },
+        profile: {
+          id: `profile:${input.userId}`,
+          tenant_id: input.tenantId,
+          lifecycle_state: lifecycleState,
+          locale: null,
+          zoneinfo: null,
+        },
       },
-      account: {
-        id: `account:${input.userId}`,
-        tenant_id: input.tenantId,
-        account_type: accountTypeFromUserType(input.userType),
-        lifecycle_state: lifecycleState,
-        legacy_user_id: input.userId,
-        display_label: null,
-        metadata: buildAccountMetadata(input),
-      },
-      link: {
-        id: `subject-account-link:${input.userId}`,
-        tenant_id: input.tenantId,
-        lifecycle_state: lifecycleState,
-        source_ref: input.sourceRef ?? null,
-      },
-      profile: {
-        id: `profile:${input.userId}`,
-        tenant_id: input.tenantId,
-        lifecycle_state: lifecycleState,
-        locale: null,
-        zoneinfo: null,
-      },
-    });
+      directoryPublication
+    );
 
     let profileAttributeCount = 0;
     let contactPointCount = 0;

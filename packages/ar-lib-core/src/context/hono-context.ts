@@ -45,6 +45,10 @@ import {
 } from '../repositories/pii';
 import { MapRequestScopedCache } from './types';
 import type { ResolvedUserStoreRuntimeSources } from '../services/user-store-runtime-sources';
+import {
+  getAccountDataContextFromHono,
+  getTenantMetadataContextFromHono,
+} from '../services/runtime-data-context';
 
 function getTenantIdFromHonoContext(c: HonoContext<{ Bindings: Env }>): string | undefined {
   // Hono's generic context type does not know about middleware-injected values.
@@ -85,10 +89,11 @@ export function resolveOptionalCoreAdapterFromHono(
   partition: string = 'core'
 ): DatabaseAdapter | null {
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
   const runtimeSource =
     partition === 'policy' || partition === 'rebac'
-      ? (runtimeSources?.policyDb ?? runtimeSources?.coreDb)
-      : runtimeSources?.coreDb;
+      ? (tenantMetadata?.coreDb ?? runtimeSources?.policyDb ?? runtimeSources?.coreDb)
+      : (tenantMetadata?.coreDb ?? runtimeSources?.coreDb);
   return ensureOptionalDatabaseAdapter(runtimeSource ?? c.env.DB ?? null, partition);
 }
 
@@ -111,7 +116,14 @@ export function createAuthContextFromHono(
 ): AuthContext {
   const resolvedTenantId = resolveRequiredTenantId(c, tenantId, 'createAuthContextFromHono');
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
-  const coreAdapter = ensureDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB, 'core');
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (tenantMetadata && tenantMetadata.tenantId !== resolvedTenantId) {
+    throw new Error('tenant_metadata_context_conflict');
+  }
+  const coreAdapter = ensureDatabaseAdapter(
+    tenantMetadata?.coreDb ?? runtimeSources?.coreDb ?? c.env.DB,
+    'core'
+  );
 
   return {
     tenantId: resolvedTenantId,
@@ -128,6 +140,44 @@ export function createAuthContextFromHono(
     honoContext: c,
     userCacheScope: runtimeSources?.userCacheScope,
     piiCacheMode: runtimeSources?.piiCacheMode,
+  };
+}
+
+/**
+ * Create an AuthContext for account-scoped core data.
+ * Tenant-D1 callers must resolve and attach AccountDataContext first.
+ */
+export function createAccountAuthContextFromHono(
+  c: HonoContext<{ Bindings: Env }>,
+  tenantId?: string
+): AuthContext {
+  const resolvedTenantId = resolveRequiredTenantId(c, tenantId, 'createAccountAuthContextFromHono');
+  const accountData = getAccountDataContextFromHono(c);
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (accountData && accountData.tenantId !== resolvedTenantId) {
+    throw new Error('account_data_context_conflict');
+  }
+  if (tenantMetadata?.storageProfileId !== 'builtin:storage:tenant-d1') {
+    return createAuthContextFromHono(c, resolvedTenantId);
+  }
+  if (!accountData) throw new Error('account_data_context_required');
+
+  const coreAdapter = ensureDatabaseAdapter(accountData.coreDb, 'account-core');
+  return {
+    tenantId: resolvedTenantId,
+    repositories: {
+      client: new ClientRepository(coreAdapter, resolvedTenantId),
+      session: new SessionRepository(coreAdapter, resolvedTenantId),
+      passkey: new PasskeyRepository(coreAdapter, resolvedTenantId),
+      totp: new TotpCredentialRepository(coreAdapter, resolvedTenantId),
+      role: new RoleRepository(coreAdapter, resolvedTenantId),
+      sessionClient: new SessionClientRepository(coreAdapter, resolvedTenantId),
+    },
+    coreAdapter,
+    cache: new MapRequestScopedCache(),
+    honoContext: c,
+    userCacheScope: accountData.userCacheScope,
+    piiCacheMode: accountData.piiCacheMode,
   };
 }
 
@@ -151,13 +201,24 @@ export function createPIIContextFromHono(
 ): PIIContext {
   const resolvedTenantId = resolveRequiredTenantId(c, tenantId, 'createPIIContextFromHono');
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
-  const piiSource = runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
+  const accountData = getAccountDataContextFromHono(c);
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (accountData && accountData.tenantId !== resolvedTenantId) {
+    throw new Error('account_data_context_conflict');
+  }
+  if (tenantMetadata?.storageProfileId === 'builtin:storage:tenant-d1' && !accountData) {
+    throw new Error('account_data_context_required');
+  }
+  const piiSource = accountData?.piiDb ?? runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
 
   if (!piiSource) {
     throw new Error('PII database is not configured. Cannot create PIIContext.');
   }
 
-  const coreAdapter = ensureDatabaseAdapter(runtimeSources?.coreDb ?? c.env.DB, 'core');
+  const coreAdapter = ensureDatabaseAdapter(
+    accountData?.coreDb ?? runtimeSources?.coreDb ?? c.env.DB,
+    'core'
+  );
   const piiAdapter = ensureDatabaseAdapter(piiSource, 'pii');
 
   // Create partition router with default PII adapter
@@ -176,8 +237,8 @@ export function createPIIContextFromHono(
     coreAdapter,
     cache: new MapRequestScopedCache(),
     honoContext: c,
-    userCacheScope: runtimeSources?.userCacheScope,
-    piiCacheMode: runtimeSources?.piiCacheMode,
+    userCacheScope: accountData?.userCacheScope ?? runtimeSources?.userCacheScope,
+    piiCacheMode: accountData?.piiCacheMode ?? runtimeSources?.piiCacheMode,
     piiRepositories: {
       tombstone: new TombstoneRepository(piiAdapter),
       identifier: new SubjectIdentifierRepository(piiAdapter),
@@ -203,7 +264,18 @@ export function createPIIContextFromHono(
 export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
   const c = authCtx.honoContext as HonoContext<{ Bindings: Env }>;
   const runtimeSources = getRuntimeUserStoreSourcesFromHonoContext(c);
-  const piiSource = runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
+  const accountData = getAccountDataContextFromHono(c);
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (accountData && accountData.tenantId !== authCtx.tenantId) {
+    throw new Error('account_data_context_conflict');
+  }
+  if (tenantMetadata?.storageProfileId === 'builtin:storage:tenant-d1' && !accountData) {
+    throw new Error('account_data_context_required');
+  }
+  if (tenantMetadata?.storageProfileId === 'builtin:storage:tenant-d1') {
+    return createPIIContextFromHono(c, authCtx.tenantId);
+  }
+  const piiSource = accountData?.piiDb ?? runtimeSources?.piiDb ?? c.env.DB_PII ?? c.env.DB;
   if (!piiSource) {
     throw new Error('PII database is not configured. Cannot elevate to PIIContext.');
   }
@@ -236,5 +308,15 @@ export function elevateToPIIContext(authCtx: AuthContext): PIIContext {
  * @returns True if DB_PII is configured
  */
 export function hasPIIDatabase(c: HonoContext<{ Bindings: Env }>): boolean {
-  return !!(getRuntimeUserStoreSourcesFromHonoContext(c)?.piiDb ?? c.env.DB_PII ?? c.env.DB);
+  const accountData = getAccountDataContextFromHono(c);
+  const tenantMetadata = getTenantMetadataContextFromHono(c);
+  if (tenantMetadata?.storageProfileId === 'builtin:storage:tenant-d1') {
+    return !!accountData?.piiDb;
+  }
+  return !!(
+    accountData?.piiDb ??
+    getRuntimeUserStoreSourcesFromHonoContext(c)?.piiDb ??
+    c.env.DB_PII ??
+    c.env.DB
+  );
 }

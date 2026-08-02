@@ -31,9 +31,8 @@ export interface TenantDatabaseRegistryKey {
  * Runtime-facing database assignment.
  *
  * This table is the source of truth used by workers to resolve the active
- * database binding for a tenant. It intentionally does not model free capacity.
- * Preallocated-but-unassigned D1 capacity lives in `tenant_database_slots` and
- * is managed by setup/ar-management before a registry row is activated.
+ * database binding for a tenant. It intentionally does not model free capacity;
+ * desired resources, placement ownership, and capacity are controlled by the Control Worker.
  */
 export interface TenantDatabaseRegistryRow extends Required<TenantDatabaseRegistryKey> {
   provider: TenantDatabaseProvider;
@@ -590,6 +589,66 @@ export class TenantDatabaseRegistryRepository {
       throw new Error('tenant_runtime_cache_generation_upsert_failed');
     }
     return saved;
+  }
+
+  async getRuntimeCacheGeneration(
+    tenantId: string,
+    cacheNamespace: TenantRuntimeCacheNamespace
+  ): Promise<TenantRuntimeCacheGenerationRow | null> {
+    return this.adapter.queryOne<TenantRuntimeCacheGenerationRow>(
+      `SELECT * FROM tenant_runtime_cache_generations
+        WHERE tenant_id = ? AND cache_namespace = ?`,
+      [tenantId, cacheNamespace]
+    );
+  }
+
+  async compareAndSetRuntimeCacheGeneration(
+    input: TenantRuntimeCacheGenerationInput,
+    expected: TenantRuntimeCacheGenerationRow | null
+  ): Promise<boolean> {
+    const now = nowIso();
+    if (!expected) {
+      const inserted = await this.adapter.execute(
+        `INSERT OR IGNORE INTO tenant_runtime_cache_generations (
+           tenant_id, cache_namespace, generation, updated_at, updated_by, metadata_json
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          input.tenant_id,
+          input.cache_namespace,
+          input.generation,
+          now,
+          input.updated_by ?? null,
+          input.metadata_json ?? null,
+        ]
+      );
+      return inserted.rowsAffected === 1;
+    }
+
+    const updated = await this.adapter.execute(
+      `UPDATE tenant_runtime_cache_generations
+          SET generation = ?, updated_at = ?, updated_by = ?, metadata_json = ?
+        WHERE tenant_id = ? AND cache_namespace = ?
+          AND generation = ? AND updated_at = ? AND metadata_json IS ?`,
+      [
+        input.generation,
+        now,
+        input.updated_by ?? null,
+        input.metadata_json ?? null,
+        input.tenant_id,
+        input.cache_namespace,
+        expected.generation,
+        expected.updated_at,
+        expected.metadata_json,
+      ]
+    );
+    return updated.rowsAffected === 1;
+  }
+
+  async commitRuntimeCacheGenerationPublication(
+    input: TenantRuntimeCacheGenerationInput,
+    expected: TenantRuntimeCacheGenerationRow | null
+  ): Promise<boolean> {
+    return this.compareAndSetRuntimeCacheGeneration(input, expected);
   }
 
   async upsertRuntimeRegistrySnapshot(

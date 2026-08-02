@@ -1,0 +1,24 @@
+{
+	"schemaVersion": 1,
+	"packageName": "@authrim/ar-admin-ui",
+	"worker": "ar-admin-ui",
+	"requiredDataRoles": [],
+	"bindings": [],
+	"secrets": [
+		{
+			"name": "ADMIN_UI_BFF_CLIENT_ID",
+			"capability": "admin_bff.client.authenticate",
+			"required": true
+		},
+		{
+			"name": "ADMIN_UI_BFF_KEY_ID",
+			"capability": "admin_bff.key.select",
+			"required": true
+		},
+		{
+			"name": "ADMIN_UI_BFF_PRIVATE_KEY_PEM",
+			"capability": "admin_bff.assertion.sign",
+			"required": true
+		}
+	]
+}

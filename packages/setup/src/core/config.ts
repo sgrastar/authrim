@@ -289,11 +289,27 @@ export const EmailFeatureSchema = z.object({
   verificationProtocolOriginTrial: EmailVerificationOriginTrialConfigSchema.optional(),
 });
 
-export const FeaturesConfigSchema = z.object({
-  queue: QueueFeatureSchema.default({}),
-  r2: R2FeatureSchema.default({}),
-  email: EmailFeatureSchema.default({}),
-});
+export const FeaturesConfigSchema = z
+  .object({
+    queue: QueueFeatureSchema.default({}),
+    r2: R2FeatureSchema.default({}),
+    email: EmailFeatureSchema.default({}),
+    /** Enable custom plugin execution through the paid Dynamic Workers Worker Loader. */
+    pluginDynamicWorkers: z
+      .object({
+        enabled: z.boolean().default(false),
+      })
+      .default({}),
+  })
+  .superRefine((features, context) => {
+    if (features.pluginDynamicWorkers.enabled && !features.r2.enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pluginDynamicWorkers', 'enabled'],
+        message: 'Dynamic Worker plugins require R2 bundle storage',
+      });
+    }
+  });
 
 // =============================================================================
 // Keys Configuration
@@ -365,13 +381,12 @@ export const DatabaseConfigSchema = z.object({
   pii: DatabaseLocationSchema.default({}),
 });
 
-export const TenantD1ConfigSchema = z.object({
-  /**
-   * Number of tenant D1 slots to pre-create during initial setup.
-   * Each slot creates one core D1 and one PII D1.
-   */
-  preallocatedSlots: z.number().int().min(1).max(500).default(3),
-});
+export const TenantD1ConfigSchema = z
+  .object({
+    /** Allow Control Worker to execute provisioning with scoped Cloudflare API tokens. */
+    automaticProvisioning: z.boolean().default(false),
+  })
+  .strict();
 
 // =============================================================================
 // Runtime Profile Configuration
@@ -402,7 +417,7 @@ export const ProfileDefaultsConfigSchema = z.object({
    * - builtin:storage:eu-pii-split
    * - builtin:storage:external-postgres
    */
-  storage: ProfileIdSchema.default('builtin:storage:shared-d1'),
+  storage: ProfileIdSchema.default('builtin:storage:tenant-d1'),
   /** Environment default audit profile ID */
   audit: AuditProfileIdSchema.default('builtin:audit:standard'),
   /** Environment default residency profile ID */
@@ -715,7 +730,7 @@ export const AuthrimConfigSchema = z.object({
   /** Database configuration (D1 location/jurisdiction) */
   database: DatabaseConfigSchema.default({}),
 
-  /** Tenant D1 preallocated pool configuration */
+  /** Tenant D1 Control-plane bootstrap configuration */
   tenantD1: TenantD1ConfigSchema.default({}),
 
   /** Runtime profile defaults and registry backend selection */

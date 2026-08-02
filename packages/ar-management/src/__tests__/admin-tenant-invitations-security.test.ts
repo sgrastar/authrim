@@ -32,6 +32,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     createAuditLogFromContext: mocks.audit,
     getRequiredPluginContext: () => ({ registry: { getNotifier: mocks.getNotifier } }),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const notifier = mocks.getNotifier('email');
+      if (!notifier) throw new Error('notification_delivery_provider_order_unavailable');
+      const result = await notifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
     getLogger: () => ({ module: () => ({ warn: mocks.logWarn, error: mocks.logError }) }),
     createErrorResponse: (
       c: { json: (body: unknown, status?: number) => Response },
@@ -266,12 +276,12 @@ describe('tenant invitation security behavior', () => {
   });
 
   it.each([
-    [null, 'not configured'],
-    [{ send: vi.fn(async () => ({ success: false, error: 'provider rejected' })) }, 'Failed'],
-    [{ send: vi.fn(async () => Promise.reject(new Error('provider unavailable'))) }, 'delivery'],
+    [null],
+    [{ send: vi.fn(async () => ({ success: false, error: 'provider rejected' })) }],
+    [{ send: vi.fn(async () => Promise.reject(new Error('provider unavailable'))) }],
   ])(
     'keeps the stored invitation usable when optional email delivery is unavailable',
-    async (notifier, warning) => {
+    async (notifier) => {
       mocks.getNotifier.mockReturnValue(notifier);
       const response = await app().request(
         '/tenants/tenant-a/invitations',
@@ -285,7 +295,9 @@ describe('tenant invitation security behavior', () => {
       expect(response.status).toBe(201);
       expect(await response.json()).toMatchObject({ email_sent: false });
       expect(mocks.logWarn).toHaveBeenCalledWith(
-        expect.stringContaining(warning),
+        expect.stringMatching(
+          /Invitation email delivery failed|Failed to enqueue invitation email/u
+        ),
         expect.anything()
       );
       expect(mocks.audit).toHaveBeenCalled();

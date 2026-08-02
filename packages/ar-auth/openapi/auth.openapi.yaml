@@ -344,6 +344,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/PasskeyRegisterOptions'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
   /api/auth/passkeys/register/verify:
     post:
       tags:
@@ -384,6 +386,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/EmailCodeSend'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
   /api/auth/email-codes/verify:
     post:
       tags:
@@ -448,6 +452,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/TotpSignupActivate'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
   /api/auth/directory-password/login:
@@ -680,6 +686,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AnonLoginVerify'
+        '202':
+          $ref: '#/components/responses/AnonymousLoginPending'
   /api/auth/upgrade:
     post:
       tags:
@@ -1202,6 +1210,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -1210,6 +1220,30 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeSend'
+  /api/v1/auth/account-provisioning/status:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthAccountProvisioningStatus
+      summary: Read asynchronous account provisioning status.
+      description: >
+        Reads the tenant-bound operation referenced by an opaque, short-lived resume token. The
+        response never exposes operation, account, user, shard, or binding identifiers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountProvisioningStatusRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountProvisioningStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/verify:
     post:
       tags:
@@ -1362,6 +1396,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DirectPasskeyStart'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -2974,6 +3010,26 @@ components:
             attempt_id: attempt_123
             expires_in: 300
             masked_email: u***r@example.com
+    AccountProvisioningAccepted:
+      description: Account creation is durable but its active Lookup route is not ready yet.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountProvisioningAcceptedResponse'
+    AnonymousLoginPending:
+      description: Anonymous account routing is being created or an expired route is being released.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/AccountProvisioningAcceptedResponse'
+              - $ref: '#/components/schemas/AnonymousCredentialRecyclingResponse'
+    AccountProvisioningStatus:
+      description: Public status for an opaque account-provisioning resume token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountProvisioningStatusResponse'
     DirectLogout:
       description: Successful JSON response.
       content:
@@ -5064,6 +5120,78 @@ components:
             - expires_in
             - masked_email
         - $ref: '#/components/schemas/DirectAuthArtifactResponse'
+    AccountProvisioningAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - provisioning_token
+        - status_endpoint
+        - retry_after_ms
+        - expires_in
+      properties:
+        status:
+          type: string
+          const: provisioning
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        status_endpoint:
+          type: string
+          const: /api/v1/auth/account-provisioning/status
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 600
+    AccountProvisioningStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - provisioning_token
+      properties:
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+    AnonymousCredentialRecyclingResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - restart_required
+        - retry_after_ms
+      properties:
+        status:
+          type: string
+          const: anonymous_credential_recycling
+        restart_required:
+          type: boolean
+          const: true
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+    AccountProvisioningStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - ready
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+        restart_required:
+          type: boolean
+          description: When true, start a fresh anonymous-login challenge after provisioning is ready.
     DirectEmailCodeVerifyRequest:
       type: object
       properties:

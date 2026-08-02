@@ -15,6 +15,7 @@ function createRecord(overrides: Partial<SessionPersistenceRecord> = {}): Sessio
   return {
     id: 'sess_123',
     userId: 'user_123',
+    accountId: 'account:user_123',
     expiresAt: 1_800_000_000_000,
     createdAt: 1_700_000_000_000,
     ...overrides,
@@ -290,6 +291,7 @@ describe('session-persistence', () => {
       id: 'sess_123',
       tenantId: 'tenant-a',
       userId: 'user_123',
+      accountId: 'account:user_123',
       expiresAt: 1_800_000_000_000,
       createdAt: 1_700_000_000_000,
     });
@@ -347,6 +349,7 @@ describe('session-persistence', () => {
         id: 'sess_a',
         tenantId: 'tenant-a',
         userId: 'shared-user',
+        accountId: 'account:shared-user',
         expiresAt: 1_800_000_000_000,
         createdAt: 1_700_000_000_000,
       },

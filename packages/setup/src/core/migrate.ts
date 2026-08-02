@@ -653,6 +653,7 @@ async function migrateEnvironment(
           env,
           dryRun: false,
           onProgress,
+          validateCapabilities: false,
         });
 
         if (wranglerResult.success) {

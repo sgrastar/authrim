@@ -25,6 +25,10 @@ const mocks = vi.hoisted(() => ({
   createAuditLog: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
+  createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+  resolveAccountDataContextByIdentifierFromHono: vi.fn(),
+  resolveAccountDataContextFromHono: vi.fn(),
+  provisionTenantD1EmailAccount: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -33,7 +37,15 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    getTenantMetadataContextFromHono: vi.fn((c) =>
+      c.env.__TENANT_D1
+        ? { tenantId: 'tenant-1', storageProfileId: 'builtin:storage:tenant-d1' }
+        : undefined
+    ),
+    resolveAccountDataContextByIdentifierFromHono:
+      mocks.resolveAccountDataContextByIdentifierFromHono,
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
+    createAccountAuthContextFromHono: mocks.createAccountAuthContextFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     CanonicalRuntimeUserStore: class {
       findByEmail = mocks.findByEmail;
@@ -49,6 +61,16 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getRequiredPluginContext: vi.fn(() => ({
       registry: { getNotifier: mocks.getNotifier },
     })),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const notifier = mocks.getNotifier('email');
+      if (!notifier) throw new Error('notification_delivery_provider_order_unavailable');
+      const result = await notifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
     getSessionStoreForNewSession: vi.fn(async () => ({
       stub: { createSessionRpc: mocks.createSessionRpc },
       sessionId: 'session-1',
@@ -86,6 +108,14 @@ vi.mock('../registration-field-utils', () => ({
 vi.mock('../issuer', () => ({
   getRequestIssuer: vi.fn(() => 'https://auth.example.com'),
 }));
+
+vi.mock('../account-provisioning', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-provisioning')>();
+  return {
+    ...actual,
+    provisionTenantD1EmailAccount: mocks.provisionTenantD1EmailAccount,
+  };
+});
 
 import { emailCodeSendHandler, emailCodeVerifyHandler } from '../email-code';
 
@@ -154,6 +184,7 @@ describe('email code handlers through HTTP', () => {
     vi.useFakeTimers();
     vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000000');
     for (const mock of Object.values(mocks)) mock.mockReset();
+    mocks.createAccountAuthContextFromHono.mockReturnValue({ coreAdapter: {} });
     mocks.incrementRpc.mockResolvedValue({ allowed: true, retryAfter: 0 });
     mocks.findByEmail.mockResolvedValue({
       id: 'user-1',
@@ -185,6 +216,13 @@ describe('email code handlers through HTTP', () => {
     mocks.persistRegistrationFields.mockResolvedValue(undefined);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({});
+    mocks.resolveAccountDataContextFromHono.mockResolvedValue({});
+    mocks.provisionTenantD1EmailAccount.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:new-user-1',
+      userId: 'new-user-1',
+    });
   });
 
   afterEach(() => {
@@ -261,7 +299,10 @@ describe('email code handlers through HTTP', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ success: true, messageId: 'message-1' });
+      expect(await response.json()).toMatchObject({
+        success: true,
+        messageId: 'email-code:00000000-0000-4000-8000-000000000000',
+      });
       expect(mocks.storeChallengeRpc).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId: 'tenant-1',
@@ -317,6 +358,51 @@ describe('email code handlers through HTTP', () => {
           metadata: expect.objectContaining({ custom_fields: { department: 'Security' } }),
         })
       );
+    });
+
+    it('returns 202 and does not create an OTP while tenant-D1 publication is pending', async () => {
+      mocks.resolveAccountDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
+        status: 'pending',
+        response: Response.json(
+          {
+            status: 'provisioning',
+            provisioning_token: 'A'.repeat(43),
+            status_endpoint: '/api/v1/auth/account-provisioning/status',
+            retry_after_ms: 500,
+          },
+          { status: 202 }
+        ),
+      });
+
+      const response = await post(
+        '/send',
+        { email: 'new@example.com', name: 'New User' },
+        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true }
+      );
+
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ status: 'provisioning' });
+      expect(mocks.provisionTenantD1EmailAccount).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          flow: 'email_code',
+          email: 'new@example.com',
+          runtimeUser: expect.objectContaining({
+            sourceRef: 'auth:email_code',
+            sensitiveValues: expect.objectContaining({
+              email: 'new@example.com',
+              name: 'New User',
+            }),
+          }),
+        })
+      );
+      expect(mocks.syncUser).not.toHaveBeenCalled();
+      expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
+      expect(mocks.notifierSend).not.toHaveBeenCalled();
     });
 
     it('returns a generic error when no notifier is configured', async () => {
@@ -439,6 +525,13 @@ describe('email code handlers through HTTP', () => {
 
         expect(response.status).toBe(400);
         expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+        expect(mocks.warn).toHaveBeenCalledWith(
+          'Canonical runtime user unavailable after account route resolution',
+          expect.objectContaining({
+            action: 'email_code_verify_user_read',
+            runtimeUserState: runtimeUser ? 'inactive' : 'missing',
+          })
+        );
       }
     );
 
@@ -478,6 +571,55 @@ describe('email code handlers through HTTP', () => {
           ipAddress: '192.0.2.20',
         })
       );
+    });
+
+    it('resolves the challenge account route before tenant-D1 user reads', async () => {
+      const response = await post(
+        '/verify',
+        { code: '123456', email: 'user@example.com' },
+        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        cookie
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+        expect.anything(),
+        'account:user-1'
+      );
+      expect(mocks.createAccountAuthContextFromHono).toHaveBeenCalledWith(
+        expect.anything(),
+        'tenant-1'
+      );
+      expect(mocks.findById).toHaveBeenCalledWith('user-1', { includeInactive: true });
+    });
+
+    it('fails closed when the consumed challenge cannot resolve a tenant-D1 account route', async () => {
+      mocks.resolveAccountDataContextFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+
+      const response = await post(
+        '/verify',
+        { code: '123456', email: 'user@example.com' },
+        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        cookie
+      );
+
+      expect(response.status).toBe(500);
+      expect(mocks.findById).not.toHaveBeenCalled();
+      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not add account routing to the standard storage verification path', async () => {
+      const response = await post(
+        '/verify',
+        { code: '123456', email: 'user@example.com' },
+        { OTP_HMAC_SECRET: 'private-secret' },
+        cookie
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.resolveAccountDataContextFromHono).not.toHaveBeenCalled();
     });
 
     it('continues login when optional custom-field persistence fails', async () => {

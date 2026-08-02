@@ -1,7 +1,23 @@
 import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { webcrypto } from 'node:crypto';
+import {
+  buildPolicyConstrainedRegionShardConfig,
+  buildRegionShardConfigKvKey,
+  validateRegionShardResidencyStrict,
+  type RegionShardConfigV2,
+  type RegionShardResidencyProjection,
+} from '@authrim/ar-lib-core/utils/region-sharding';
+import {
+  signRuntimeRegistrySnapshotPayloadJws,
+  verifyRuntimeRegistrySnapshotPayloadJws,
+} from '@authrim/ar-lib-core/services/tenant-runtime-registry-snapshot';
+import {
+  deriveControlRegionShardAllowedRegions,
+  type ControlRegionShardJurisdiction,
+  type ControlRegionShardLocationHint,
+} from '@authrim/ar-lib-core/control-plane';
 import type { AuthrimConfig } from './config.js';
 import type { AuthrimLock } from './lock.js';
 import {
@@ -16,35 +32,155 @@ import {
   executeD1Migration,
   findMigrationsRoot,
   getKVKeyByNamespaceId,
+  getOptionalKVKeyByNamespaceId,
   putKVKeyByNamespaceId,
   queryD1Rows,
   runD1Migrations,
-  type D1CreateOptions,
 } from './cloudflare.js';
 import {
   buildTenantDatabaseAdminJobSql,
-  buildTenantDatabaseSlotPlan,
-  buildTenantDatabaseSlotPlans,
   buildTenantDatabaseRegistrySql,
-  DEFAULT_TENANT_D1_PREALLOCATED_SLOTS,
   getLatestMigrationVersionFromDirectory,
   getLatestMigrationVersionFromFilenames,
   signTenantDatabaseRegistryResources,
-  type TenantDatabaseRole,
   type TenantDatabaseRegistryResourceInput,
 } from './tenant-database.js';
 
 const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
-const RUNTIME_REGISTRY_SNAPSHOT_VERSION = 1;
-const RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM = 'Ed25519';
-const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 7 * 24 * 60 * 60;
+const RUNTIME_REGISTRY_SNAPSHOT_VERSION = 2;
+const RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM = 'EdDSA';
+const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
+const RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 type TenantD1BootstrapResource = TenantDatabaseRegistryResourceInput & {
   databaseName: string;
   binding: string;
   databaseId: string;
   schemaVersion: number;
+  shardGroup: string;
 };
+
+export type InitialControlPlaneResourceRole =
+  | 'lookup'
+  | 'tenant_core/default'
+  | 'tenant_core/users'
+  | 'tenant_pii';
+
+export interface InitialControlPlaneResourcePlan {
+  role: InitialControlPlaneResourceRole;
+  binding: string;
+  databaseName: string;
+  databaseId: string;
+  operationId: string;
+  desiredResourceId: string;
+  observedResourceId: string;
+  shardId: string | null;
+  lookupShardId: string | null;
+  logicalShardId: string;
+  ownershipFingerprint: string;
+  migrationStreamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  releaseId: string;
+  manifestDigest: string;
+  migrationFiles: Array<{ path: string; checksum: string }>;
+}
+
+const INITIAL_TENANT_SHARD_DEFINITIONS = [
+  {
+    role: 'tenant_core/default',
+    binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+    nameRole: 'default',
+    streamId: 'd1-core',
+  },
+  {
+    role: 'tenant_core/users',
+    binding: 'TDB_USERS_BOOTSTRAP_CORE',
+    nameRole: 'users',
+    streamId: 'd1-core',
+  },
+  {
+    role: 'tenant_pii',
+    binding: 'TDB_PII_BOOTSTRAP_PII',
+    nameRole: 'pii',
+    streamId: 'd1-pii',
+  },
+] as const;
+
+function bootstrapDigest(value: string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function bootstrapDatabaseName(env: string, nameRole: string): string {
+  const normalizedEnv = env
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .slice(0, 24);
+  if (!normalizedEnv) throw new Error('initial_control_plane_environment_invalid');
+  return `authrim-${normalizedEnv}-${nameRole}-bootstrap`;
+}
+
+export function buildInitialControlPlaneResourcePlans(input: {
+  env: string;
+  lock: AuthrimLock;
+  release: ReleaseMigrationManifest;
+  releaseDraft?: boolean;
+}): InitialControlPlaneResourcePlan[] {
+  const manifestDigest = calculateReleaseManifestChecksum(input.release);
+  const releaseId = input.releaseDraft
+    ? `${input.release.productVersion}-draft.${manifestDigest.slice(0, 12)}`
+    : input.release.productVersion;
+  const definitions: Array<{
+    role: InitialControlPlaneResourceRole;
+    binding: string;
+    databaseName: string;
+    streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  }> = [
+    {
+      role: 'lookup',
+      binding: 'LOOKUP_DB',
+      databaseName: input.lock.d1.LOOKUP_DB?.name ?? '',
+      streamId: 'd1-lookup',
+    },
+    ...INITIAL_TENANT_SHARD_DEFINITIONS.map((definition) => ({
+      role: definition.role,
+      binding: definition.binding,
+      databaseName:
+        input.lock.d1[definition.binding]?.name ??
+        bootstrapDatabaseName(input.env, definition.nameRole),
+      streamId: definition.streamId,
+    })),
+  ];
+
+  return definitions.map((definition) => {
+    const locked = input.lock.d1[definition.binding];
+    if (!locked || !locked.id || !locked.name || locked.name !== definition.databaseName) {
+      throw new Error(`initial_control_plane_binding_missing:${definition.binding}`);
+    }
+    const stream = input.release.streams.find((candidate) => candidate.id === definition.streamId);
+    if (!stream || stream.files.length === 0) {
+      throw new Error(`release_migration_stream_not_found:${definition.streamId}`);
+    }
+    const digest = bootstrapDigest(`${input.env}\0${definition.role}\0${definition.databaseName}`);
+    return {
+      role: definition.role,
+      binding: definition.binding,
+      databaseName: definition.databaseName,
+      databaseId: locked.id,
+      operationId: `op_bootstrap_${digest.slice(0, 32)}`,
+      desiredResourceId: `d1_bootstrap_${digest.slice(0, 32)}`,
+      observedResourceId: `observed_bootstrap_${digest.slice(0, 32)}`,
+      shardId: definition.role === 'lookup' ? null : `shard_bootstrap_${digest.slice(0, 32)}`,
+      lookupShardId:
+        definition.role === 'lookup' ? `lookup_bootstrap_${digest.slice(0, 32)}` : null,
+      logicalShardId: `bootstrap:${definition.role}:default`,
+      ownershipFingerprint: digest,
+      migrationStreamId: definition.streamId,
+      releaseId,
+      manifestDigest,
+      migrationFiles: stream.files.map((file) => ({ path: file.path, checksum: file.checksum })),
+    };
+  });
+}
 
 type RuntimeRegistryPrivateJwk = {
   kty?: string;
@@ -64,7 +200,6 @@ export interface TenantD1BootstrapResult {
   createdCount?: number;
   migratedCount?: number;
   publishedSnapshot?: boolean;
-  updatedSlots?: number;
   error?: string;
 }
 
@@ -73,8 +208,6 @@ export interface TenantD1TopologyIssue {
   reason: 'missing_binding' | 'schema_not_registered';
   targetId?: string;
 }
-
-type TenantD1DeploymentSlotState = 'pending_binding' | 'unavailable';
 
 interface RuntimeSnapshotStore {
   tenantId: string;
@@ -105,6 +238,8 @@ interface RuntimeSnapshot {
   snapshotScope: 'tenant';
   deploymentTarget: string;
   runtimeGeneration: number;
+  routeStatus: 'active';
+  quarantineDenyGeneration: number;
   storageProfileId: string;
   publishedAt: string;
   expiresAt: string;
@@ -127,8 +262,184 @@ function tenantIdForConfig(config: AuthrimConfig): string {
   return config.tenant?.name?.trim() || 'default';
 }
 
-function preallocatedSlotCountForConfig(config: AuthrimConfig): number {
-  return config.tenantD1?.preallocatedSlots ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+interface InitialTenantRegionPolicyRow extends Record<string, unknown> {
+  residency_policy_id: string;
+  residency_partition: string;
+  policy_generation: number | string;
+  policy_updated_at: number | string;
+  jurisdiction: string | null;
+  location_hint: string | null;
+  data_role: string;
+  shard_id: string;
+  selected_shard_id: string;
+}
+
+const INITIAL_TENANT_DATA_ROLES = new Set([
+  'tenant_core/default',
+  'tenant_core/users',
+  'tenant_pii',
+]);
+
+function parseControlRegionPlacement(row: InitialTenantRegionPolicyRow): {
+  jurisdiction: ControlRegionShardJurisdiction;
+  locationHint: ControlRegionShardLocationHint;
+} {
+  if (row.jurisdiction !== null && row.jurisdiction !== 'eu' && row.jurisdiction !== 'fedramp') {
+    throw new Error('initial_tenant_region_jurisdiction_invalid');
+  }
+  if (
+    row.location_hint !== null &&
+    !['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc'].includes(row.location_hint)
+  ) {
+    throw new Error('initial_tenant_region_location_hint_invalid');
+  }
+  return {
+    jurisdiction: row.jurisdiction,
+    locationHint: row.location_hint as ControlRegionShardLocationHint,
+  };
+}
+
+function sameResidencyProjection(
+  observed: RegionShardResidencyProjection | undefined,
+  expected: RegionShardResidencyProjection
+): boolean {
+  return (
+    observed?.version === expected.version &&
+    observed.residencyPolicyId === expected.residencyPolicyId &&
+    observed.residencyPartition === expected.residencyPartition &&
+    observed.policyGeneration === expected.policyGeneration &&
+    observed.jurisdiction === expected.jurisdiction &&
+    observed.allowedRegions.length === expected.allowedRegions.length &&
+    observed.allowedRegions.every((region) => expected.allowedRegions.includes(region))
+  );
+}
+
+export async function ensureInitialTenantRegionShardConfig(input: {
+  environmentId: string;
+  tenantId: string;
+  controlDatabaseName: string;
+  configNamespaceId: string;
+  query?: typeof queryD1Rows;
+  getOptionalKv?: typeof getOptionalKVKeyByNamespaceId;
+  putKv?: typeof putKVKeyByNamespaceId;
+}): Promise<{ created: boolean; config: RegionShardConfigV2 }> {
+  const tenantIdSql = sqlString(input.tenantId);
+  const environmentIdSql = sqlString(input.environmentId);
+  const rows = await (input.query ?? queryD1Rows)<InitialTenantRegionPolicyRow>(
+    input.controlDatabaseName,
+    `SELECT allocation.residency_policy_id, allocation.residency_partition,
+            policy.policy_generation, policy.updated_at AS policy_updated_at,
+            partition.jurisdiction, partition.location_hint,
+            assignment.data_role, assignment.shard_id, allocation.selected_shard_id
+       FROM control_tenant_default_allocations allocation
+       JOIN control_tenant_placement_policies policy
+         ON policy.environment_id = allocation.environment_id
+        AND policy.tenant_id = allocation.tenant_id
+        AND policy.policy_state = 'active'
+       JOIN control_residency_partitions partition
+         ON partition.environment_id = allocation.environment_id
+        AND partition.residency_policy_id = allocation.residency_policy_id
+        AND partition.residency_partition = allocation.residency_partition
+        AND partition.status = 'active'
+       JOIN control_tenant_shard_assignments assignment
+         ON assignment.environment_id = allocation.environment_id
+        AND assignment.tenant_id = allocation.tenant_id
+        AND assignment.residency_policy_id = allocation.residency_policy_id
+        AND assignment.residency_partition = allocation.residency_partition
+        AND assignment.assignment_state = 'active'
+      WHERE allocation.environment_id = ${environmentIdSql}
+        AND allocation.tenant_id = ${tenantIdSql}
+        AND allocation.reservation_state = 'committed'
+      ORDER BY assignment.data_role;`
+  );
+  const first = rows[0];
+  const roles = new Set(rows.map((row) => row.data_role));
+  if (
+    !first ||
+    rows.length !== INITIAL_TENANT_DATA_ROLES.size ||
+    roles.size !== INITIAL_TENANT_DATA_ROLES.size ||
+    [...roles].some((role) => !INITIAL_TENANT_DATA_ROLES.has(role)) ||
+    rows.some(
+      (row) =>
+        row.residency_policy_id !== first.residency_policy_id ||
+        row.residency_partition !== first.residency_partition ||
+        Number(row.policy_generation) !== Number(first.policy_generation) ||
+        row.jurisdiction !== first.jurisdiction ||
+        row.location_hint !== first.location_hint
+    ) ||
+    rows.some(
+      (row) => row.data_role === 'tenant_core/default' && row.shard_id !== row.selected_shard_id
+    )
+  ) {
+    throw new Error('initial_tenant_region_control_topology_incomplete');
+  }
+  const policyGeneration = Number(first.policy_generation);
+  const policyUpdatedAt = Number(first.policy_updated_at);
+  if (
+    !Number.isSafeInteger(policyGeneration) ||
+    policyGeneration < 1 ||
+    !Number.isSafeInteger(policyUpdatedAt) ||
+    policyUpdatedAt < 1
+  ) {
+    throw new Error('initial_tenant_region_policy_generation_invalid');
+  }
+  const placement = parseControlRegionPlacement(first);
+  const residency: RegionShardResidencyProjection = {
+    version: 1,
+    residencyPolicyId: first.residency_policy_id,
+    residencyPartition: first.residency_partition,
+    policyGeneration,
+    allowedRegions: deriveControlRegionShardAllowedRegions(placement),
+    jurisdiction: placement.jurisdiction,
+  };
+  const expected = buildPolicyConstrainedRegionShardConfig({
+    residency,
+    now: policyUpdatedAt * 1000,
+    updatedBy: 'setup:control-residency-policy',
+  });
+  const key = buildRegionShardConfigKvKey(input.tenantId);
+  const existingText = await (input.getOptionalKv ?? getOptionalKVKeyByNamespaceId)(
+    input.configNamespaceId,
+    key
+  );
+  if (existingText !== null) {
+    let existing: RegionShardConfigV2;
+    try {
+      existing = JSON.parse(existingText) as RegionShardConfigV2;
+      validateRegionShardResidencyStrict(existing);
+    } catch {
+      throw new Error('initial_tenant_region_config_invalid');
+    }
+    if (!sameResidencyProjection(existing.residency, residency)) {
+      throw new Error('initial_tenant_region_config_policy_stale');
+    }
+    return { created: false, config: existing };
+  }
+  await (input.putKv ?? putKVKeyByNamespaceId)(
+    input.configNamespaceId,
+    key,
+    JSON.stringify(expected)
+  );
+  return { created: true, config: expected };
+}
+
+function registryResourceFromInitialPlan(input: {
+  plan: InitialControlPlaneResourcePlan;
+  schemaVersion: number;
+}): TenantD1BootstrapResource {
+  if (input.plan.role === 'lookup') {
+    throw new Error('initial_control_plane_lookup_not_tenant_store');
+  }
+  return {
+    role: input.plan.role === 'tenant_pii' ? 'tenant_pii' : 'tenant_core',
+    shardGroup: input.plan.role === 'tenant_core/users' ? 'users' : 'default',
+    databaseName: input.plan.databaseName,
+    binding: input.plan.binding,
+    generation: 1,
+    databaseId: input.plan.databaseId,
+    schemaVersion: input.schemaVersion,
+    status: 'active',
+  };
 }
 
 /**
@@ -146,39 +457,33 @@ export function inspectTenantD1Topology(input: {
   if (!isTenantD1Profile(input.config)) return [];
 
   const manifestChecksum = calculateReleaseManifestChecksum(input.manifest);
-  const slotPlans = buildTenantDatabaseSlotPlans({
-    env: input.env,
-    slots: preallocatedSlotCountForConfig(input.config),
-  });
   const issues: TenantD1TopologyIssue[] = [];
 
-  for (const slot of slotPlans) {
-    for (const resource of slot.resources) {
-      const locked = input.lock.d1[resource.binding];
-      if (!locked) {
-        issues.push({ binding: resource.binding, reason: 'missing_binding' });
-        continue;
-      }
+  for (const resource of INITIAL_TENANT_SHARD_DEFINITIONS) {
+    const locked = input.lock.d1[resource.binding];
+    if (!locked) {
+      issues.push({ binding: resource.binding, reason: 'missing_binding' });
+      continue;
+    }
 
-      const target = buildTenantD1ReleaseMigrationTarget({
+    const target = buildTenantD1ReleaseMigrationTarget({
+      binding: resource.binding,
+      databaseId: locked.id,
+      databaseName: locked.name,
+      role: resource.role === 'tenant_pii' ? 'tenant_pii' : 'tenant_core',
+    });
+    const state = input.lock.schemaTargets?.[target.id];
+    if (
+      !state ||
+      state.productVersion !== input.productVersion ||
+      state.manifestChecksum !== manifestChecksum ||
+      state.streamId !== target.streamId
+    ) {
+      issues.push({
         binding: resource.binding,
-        databaseId: locked.id,
-        databaseName: locked.name,
-        role: resource.role,
+        reason: 'schema_not_registered',
+        targetId: target.id,
       });
-      const state = input.lock.schemaTargets?.[target.id];
-      if (
-        !state ||
-        state.productVersion !== input.productVersion ||
-        state.manifestChecksum !== manifestChecksum ||
-        state.streamId !== target.streamId
-      ) {
-        issues.push({
-          binding: resource.binding,
-          reason: 'schema_not_registered',
-          targetId: target.id,
-        });
-      }
     }
   }
 
@@ -193,17 +498,6 @@ function countValue(row: CountRow | undefined): number {
   if (typeof row?.count === 'number') return row.count;
   if (typeof row?.count === 'string') return Number.parseInt(row.count, 10) || 0;
   return 0;
-}
-
-function databaseOptionsForRole(
-  config: AuthrimConfig,
-  role: TenantDatabaseRegistryResourceInput['role']
-): D1CreateOptions | undefined {
-  return role === 'tenant_core' ? config.database?.core : config.database?.pii;
-}
-
-function base64UrlEncode(input: ArrayBuffer): string {
-  return Buffer.from(input).toString('base64url');
 }
 
 function canonicalizeJson(value: unknown): string {
@@ -246,18 +540,24 @@ function createSnapshotSigningPayload(snapshot: RuntimeSnapshot): Uint8Array {
 async function signSnapshot(
   snapshot: RuntimeSnapshot,
   keysDir: string,
-  signedAt: string
+  signedAt: string,
+  activeKey?: { slot: 'A' | 'B'; keyId: string }
 ): Promise<RuntimeSnapshot> {
-  const privateJwkText = await readFile(
-    join(keysDir, 'tenant_runtime_registry_signing_private.jwk.json'),
-    'utf-8'
-  );
+  const privateKeyFile =
+    activeKey?.slot === 'B'
+      ? 'runtime_registry_signing_jwk_slot_b.private.jwk.json'
+      : 'tenant_runtime_registry_signing_private.jwk.json';
+  const privateJwkText = await readFile(join(keysDir, privateKeyFile), 'utf-8');
   const privateJwk = JSON.parse(privateJwkText) as RuntimeRegistryPrivateJwk;
   const keyIdFromFile = await readFile(
     join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
     'utf-8'
   ).catch(() => '');
-  const keyId = keyIdFromFile.trim() || privateJwk.kid || null;
+  const reflectedKeyId = keyIdFromFile.trim();
+  if (activeKey && reflectedKeyId && reflectedKeyId !== activeKey.keyId) {
+    throw new Error('runtime_registry_snapshot_signing_key_id_file_mismatch');
+  }
+  const keyId = activeKey?.keyId ?? (reflectedKeyId || privateJwk.kid || null);
   if (
     privateJwk.kty !== 'OKP' ||
     privateJwk.crv !== 'Ed25519' ||
@@ -269,24 +569,33 @@ async function signSnapshot(
     throw new Error('runtime_registry_snapshot_signing_key_id_required');
   }
 
-  const cryptoKey = await webcrypto.subtle.importKey(
-    'jwk',
+  const payload = createSnapshotSigningPayload(snapshot);
+  const signature = await signRuntimeRegistrySnapshotPayloadJws({
+    payload,
     privateJwk,
-    RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
-    false,
-    ['sign']
-  );
-  const signature = await webcrypto.subtle.sign(
-    RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
-    cryptoKey,
-    createSnapshotSigningPayload(snapshot)
-  );
+    keyId,
+  });
+  if (
+    !(await verifyRuntimeRegistrySnapshotPayloadJws({
+      token: signature,
+      payload,
+      keys: [
+        {
+          publicJwk: { ...privateJwk, d: undefined, key_ops: ['verify'] },
+          keyId,
+        },
+      ],
+      expectedKeyId: keyId,
+    }))
+  ) {
+    throw new Error('runtime_registry_snapshot_signing_self_verification_failed');
+  }
 
   return {
     ...snapshot,
     metadata: {
       ...snapshot.metadata,
-      signature: base64UrlEncode(signature),
+      signature,
       signatureKeyId: keyId,
       signatureAlgorithm: RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
       signedAt,
@@ -322,7 +631,7 @@ function buildRuntimeSnapshot(input: {
     generation: resource.generation,
     runtimeGeneration,
     schemaVersion: resource.schemaVersion,
-    shardGroup: 'default',
+    shardGroup: resource.shardGroup,
     shardIndex: 0,
     shardCount: 1,
     shardKeyStrategy: 'none',
@@ -345,6 +654,8 @@ function buildRuntimeSnapshot(input: {
     snapshotScope: 'tenant',
     deploymentTarget: 'default',
     runtimeGeneration,
+    routeStatus: 'active',
+    quarantineDenyGeneration: 0,
     storageProfileId: input.storageProfileId,
     publishedAt,
     expiresAt,
@@ -380,216 +691,24 @@ async function executeAdminSql(input: {
   }
 }
 
-function buildTenantDatabaseSlotsSql(input: {
-  lock: AuthrimLock;
-  env: string;
-  slotCount: number;
-  assignedTenantId: string;
-  assignedSlotNumber: number;
-}): string {
-  const now = Math.floor(Date.now() / 1000);
-  const statements: string[] = [];
-  const protectedStates = "'assigned', 'reserved', 'reset_required', 'retired'";
-  for (const slot of buildTenantDatabaseSlotPlans({ env: input.env, slots: input.slotCount })) {
-    const core = slot.resources.find((resource) => resource.role === 'tenant_core');
-    const pii = slot.resources.find((resource) => resource.role === 'tenant_pii');
-    if (!core || !pii) {
-      throw new Error(`tenant_database_slot_plan_missing_roles:${slot.slotId}`);
-    }
-    const lockedCore = input.lock.d1[core.binding];
-    const lockedPii = input.lock.d1[pii.binding];
-    if (!lockedCore || !lockedPii) {
-      throw new Error(`tenant_database_slot_lock_missing:${slot.slotId}`);
-    }
-    const state = slot.slotNumber === input.assignedSlotNumber ? 'assigned' : 'available';
-    const assignedTenantId =
-      slot.slotNumber === input.assignedSlotNumber ? sqlString(input.assignedTenantId) : 'NULL';
-    const assignedAt = slot.slotNumber === input.assignedSlotNumber ? String(now) : 'NULL';
-    statements.push(`INSERT INTO tenant_database_slots (
-  slot_id, slot_number, core_binding_ref, pii_binding_ref,
-  core_database_name, pii_database_name, core_database_id, pii_database_id,
-  state, assigned_tenant_id, reserved_by, reserved_at, assigned_at, created_at, updated_at
-) VALUES (
-  '${slot.slotId}', ${slot.slotNumber}, '${core.binding}', '${pii.binding}',
-  '${lockedCore.name}', '${lockedPii.name}', '${lockedCore.id}', '${lockedPii.id}',
-  '${state}', ${assignedTenantId}, NULL, NULL, ${assignedAt}, ${now}, ${now}
-) ON CONFLICT(slot_id) DO UPDATE SET
-  core_binding_ref = excluded.core_binding_ref,
-  pii_binding_ref = excluded.pii_binding_ref,
-  core_database_name = excluded.core_database_name,
-  pii_database_name = excluded.pii_database_name,
-  core_database_id = excluded.core_database_id,
-  pii_database_id = excluded.pii_database_id,
-  state = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.state
-    ELSE excluded.state
-  END,
-  assigned_tenant_id = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.assigned_tenant_id
-    ELSE excluded.assigned_tenant_id
-  END,
-  reserved_by = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.reserved_by
-    ELSE excluded.reserved_by
-  END,
-  reserved_at = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.reserved_at
-    ELSE excluded.reserved_at
-  END,
-  assigned_at = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.assigned_at
-    ELSE excluded.assigned_at
-  END,
-  updated_at = excluded.updated_at;`);
-  }
-  return statements.join('\n\n');
-}
-
-export function buildTenantDatabaseSlotDeploymentStateSql(input: {
-  lock: AuthrimLock;
-  env: string;
-  slotCount: number;
-  state: TenantD1DeploymentSlotState;
-  stage: string;
-  errorCode?: string | null;
-}): string {
-  const now = Math.floor(Date.now() / 1000);
-  const statements: string[] = [];
-  const protectedStates = "'assigned', 'reserved', 'reset_required', 'retired'";
-  const stateSql = sqlString(input.state);
-  const stageSql = sqlString(input.stage);
-  const errorCodeSql = input.errorCode ? sqlString(input.errorCode.slice(0, 500)) : 'NULL';
-
-  for (const slot of buildTenantDatabaseSlotPlans({ env: input.env, slots: input.slotCount })) {
-    const core = slot.resources.find((resource) => resource.role === 'tenant_core');
-    const pii = slot.resources.find((resource) => resource.role === 'tenant_pii');
-    if (!core || !pii) {
-      throw new Error(`tenant_database_slot_plan_missing_roles:${slot.slotId}`);
-    }
-    const lockedCore = input.lock.d1[core.binding];
-    const lockedPii = input.lock.d1[pii.binding];
-    if (!lockedCore || !lockedPii) {
-      throw new Error(`tenant_database_slot_lock_missing:${slot.slotId}`);
-    }
-    const slotIdSql = sqlString(slot.slotId);
-    const auditIdSql = sqlString(`tenant-d1-slot:${input.stage}:${slot.slotId}:${now}`);
-
-    statements.push(`INSERT INTO tenant_database_slots (
-  slot_id, slot_number, core_binding_ref, pii_binding_ref,
-  core_database_name, pii_database_name, core_database_id, pii_database_id,
-  state, assigned_tenant_id, reserved_by, reserved_at, assigned_at, created_at, updated_at
-) VALUES (
-  ${slotIdSql}, ${slot.slotNumber}, ${sqlString(core.binding)}, ${sqlString(pii.binding)},
-  ${sqlString(lockedCore.name)}, ${sqlString(lockedPii.name)}, ${sqlString(lockedCore.id)}, ${sqlString(lockedPii.id)},
-  ${stateSql}, NULL, NULL, NULL, NULL, ${now}, ${now}
-) ON CONFLICT(slot_id) DO UPDATE SET
-  core_binding_ref = excluded.core_binding_ref,
-  pii_binding_ref = excluded.pii_binding_ref,
-  core_database_name = excluded.core_database_name,
-  pii_database_name = excluded.pii_database_name,
-  core_database_id = excluded.core_database_id,
-  pii_database_id = excluded.pii_database_id,
-  state = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.state
-    ELSE excluded.state
-  END,
-  assigned_tenant_id = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.assigned_tenant_id
-    ELSE NULL
-  END,
-  reserved_by = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.reserved_by
-    ELSE NULL
-  END,
-  reserved_at = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.reserved_at
-    ELSE NULL
-  END,
-  assigned_at = CASE
-    WHEN tenant_database_slots.state IN (${protectedStates})
-    THEN tenant_database_slots.assigned_at
-    ELSE NULL
-  END,
-  updated_at = excluded.updated_at;
-
-INSERT INTO tenant_database_slot_audit_events (
-  id, tenant_id, slot_id, stage, actor, result, error_code, request_id, metadata_json, created_at
-) VALUES (
-  ${auditIdSql}, NULL, ${slotIdSql}, ${stageSql}, 'setup', 'failed', ${errorCodeSql}, NULL,
-  ${sqlString(JSON.stringify({ state: input.state }))}, ${now}
-) ON CONFLICT(id) DO NOTHING;`);
-  }
-
-  return statements.join('\n\n');
-}
-
-function registryResourceFromSlot(input: {
-  lock: AuthrimLock;
-  env: string;
-  slotNumber: number;
-  role: TenantDatabaseRole;
-  generation: number;
-  schemaVersion: number;
-}): TenantD1BootstrapResource {
-  const slot = buildTenantDatabaseSlotPlan({ env: input.env, slotNumber: input.slotNumber });
-  const resource = slot.resources.find((candidate) => candidate.role === input.role);
-  if (!resource) {
-    throw new Error(`tenant_database_slot_role_missing:${slot.slotId}:${input.role}`);
-  }
-  const locked = input.lock.d1[resource.binding];
-  if (!locked) {
-    throw new Error(`tenant_database_slot_binding_missing:${resource.binding}`);
-  }
-  return {
-    role: resource.role,
-    databaseName: locked.name,
-    binding: resource.binding,
-    generation: input.generation,
-    databaseId: locked.id,
-    schemaVersion: input.schemaVersion,
-    status: 'active',
-  };
-}
-
 async function verifyInitialTenantD1Bootstrap(input: {
   adminDbName: string;
   runtimeRegistryNamespaceId: string;
   tenantId: string;
-  slotId: string;
   coreDatabaseName: string;
+  resources: readonly TenantD1BootstrapResource[];
 }): Promise<void> {
   const tenantIdSql = sqlString(input.tenantId);
-  const slotIdSql = sqlString(input.slotId);
-  const [slotRow] = await queryD1Rows<CountRow>(
-    input.adminDbName,
-    `SELECT COUNT(*) AS count
-       FROM tenant_database_slots
-      WHERE slot_id = ${slotIdSql}
-        AND state = 'assigned'
-        AND assigned_tenant_id = ${tenantIdSql};`
-  );
-  if (countValue(slotRow) !== 1) {
-    throw new Error('initial_tenant_d1_slot_assignment_verification_failed');
-  }
-
   const [pointerRow] = await queryD1Rows<CountRow>(
     input.adminDbName,
     `SELECT COUNT(*) AS count
        FROM tenant_database_active_pointers
       WHERE tenant_id = ${tenantIdSql}
-        AND role IN ('tenant_core', 'tenant_pii')
+        AND ((role = 'tenant_core' AND shard_group IN ('default', 'users'))
+          OR (role = 'tenant_pii' AND shard_group = 'default'))
         AND status = 'active';`
   );
-  if (countValue(pointerRow) !== 2) {
+  if (countValue(pointerRow) !== 3) {
     throw new Error('initial_tenant_d1_active_pointer_verification_failed');
   }
 
@@ -609,12 +728,41 @@ async function verifyInitialTenantD1Bootstrap(input: {
     buildSnapshotKey(input.tenantId)
   );
   const snapshot = JSON.parse(snapshotText) as Partial<RuntimeSnapshot>;
+  const expectedStores = new Map(
+    input.resources.map((resource) => [`${resource.role}:${resource.shardGroup}`, resource])
+  );
   if (
+    snapshot.version !== RUNTIME_REGISTRY_SNAPSHOT_VERSION ||
     snapshot.tenantId !== input.tenantId ||
+    snapshot.snapshotScope !== 'tenant' ||
+    snapshot.routeStatus !== 'active' ||
     snapshot.storageProfileId !== TENANT_D1_STORAGE_PROFILE_ID ||
     !Array.isArray(snapshot.stores) ||
-    snapshot.stores.length < 2
+    snapshot.stores.length !== expectedStores.size ||
+    snapshot.metadata?.storeCount !== expectedStores.size
   ) {
+    throw new Error('initial_tenant_d1_runtime_snapshot_smoke_failed');
+  }
+  const observedStoreKeys = new Set<string>();
+  for (const store of snapshot.stores) {
+    const key = `${store.role}:${store.shardGroup}`;
+    const expected = expectedStores.get(key);
+    if (
+      !expected ||
+      observedStoreKeys.has(key) ||
+      store.tenantId !== input.tenantId ||
+      store.bindingRef !== expected.binding ||
+      store.databaseId !== expected.databaseId ||
+      store.databaseName !== expected.databaseName ||
+      store.generation !== expected.generation ||
+      store.status !== 'active' ||
+      store.healthStatus !== 'active'
+    ) {
+      throw new Error('initial_tenant_d1_runtime_snapshot_smoke_failed');
+    }
+    observedStoreKeys.add(key);
+  }
+  if (observedStoreKeys.size !== expectedStores.size) {
     throw new Error('initial_tenant_d1_runtime_snapshot_smoke_failed');
   }
 }
@@ -630,31 +778,41 @@ export async function ensureInitialTenantD1Resources(input: {
   if (!isTenantD1Profile(input.config)) {
     return { success: true, skipped: true };
   }
-
-  const slotCount = preallocatedSlotCountForConfig(input.config);
-  const slotPlans = buildTenantDatabaseSlotPlans({ env: input.env, slots: slotCount });
   let createdCount = 0;
 
   try {
-    input.onProgress?.(`🔧 Ensuring preallocated tenant D1 slots exist (${slotCount} slots)...`);
-    for (const slot of slotPlans) {
-      for (const resource of slot.resources) {
-        const existing = input.lock.d1[resource.binding];
-        if (existing) {
-          input.onProgress?.(`  ✓ ${resource.binding} already locked`);
-          continue;
+    if (!input.release) throw new Error('initial_control_plane_release_required');
+    const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
+    if (!controlDatabaseName) throw new Error('control_database_name_required');
+    const [handoff] = await queryD1Rows<{ state: string }>(
+      controlDatabaseName,
+      `SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ${sqlString(input.env)}`
+    );
+    if (handoff?.state === 'accepted') {
+      return { success: true, skipped: true };
+    }
+    if (handoff?.state === 'blocked') {
+      throw new Error(`initial_control_plane_handoff_${handoff.state}`);
+    }
+
+    input.onProgress?.('🔧 Ensuring initial Control-plane tenant shards exist (3 D1)...');
+    for (const definition of INITIAL_TENANT_SHARD_DEFINITIONS) {
+      const existing = input.lock.d1[definition.binding];
+      if (existing) {
+        const expectedName = bootstrapDatabaseName(input.env, definition.nameRole);
+        if (existing.name !== expectedName) {
+          throw new Error(`initial_control_plane_binding_conflict:${definition.binding}`);
         }
-        const database = await createD1Database(
-          resource.databaseName,
-          databaseOptionsForRole(input.config, resource.role)
-        );
-        input.lock.d1[resource.binding] = {
-          id: database.id,
-          name: database.name,
-        };
-        createdCount += 1;
-        input.onProgress?.(`  ✓ ${resource.binding} -> ${database.name}`);
+        input.onProgress?.(`  ✓ ${definition.binding} already locked`);
+        continue;
       }
+      const database = await createD1Database(
+        bootstrapDatabaseName(input.env, definition.nameRole),
+        definition.role === 'tenant_pii' ? input.config.database?.pii : input.config.database?.core
+      );
+      input.lock.d1[definition.binding] = { id: database.id, name: database.name };
+      createdCount += 1;
+      input.onProgress?.(`  ✓ ${definition.binding} -> ${database.name}`);
     }
 
     const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress);
@@ -664,98 +822,58 @@ export async function ensureInitialTenantD1Resources(input: {
       );
     }
 
-    for (const slot of slotPlans) {
-      for (const resource of slot.resources) {
-        const locked = input.lock.d1[resource.binding];
-        if (!locked) {
-          throw new Error(`tenant_d1_slot_binding_missing:${resource.binding}`);
-        }
-        const migrationPath =
-          resource.role === 'tenant_core' ? migrationsRoot.path : join(migrationsRoot.path, 'pii');
-        const streamId = resource.role === 'tenant_core' ? 'd1-core' : 'd1-pii';
-        const stream = input.release?.manifest.streams.find(
-          (candidate) => candidate.id === streamId
+    const plans = buildInitialControlPlaneResourcePlans({
+      env: input.env,
+      lock: input.lock,
+      release: input.release.manifest,
+      releaseDraft: input.release.draft,
+    });
+    for (const plan of plans.filter((candidate) => candidate.role !== 'lookup')) {
+      const migrationPath =
+        plan.role === 'tenant_pii' ? join(migrationsRoot.path, 'pii') : migrationsRoot.path;
+      const result = await runD1Migrations(plan.databaseName, migrationPath, input.onProgress, {
+        manifestFiles: plan.migrationFiles,
+        releaseVersion: plan.releaseId,
+        backfillLegacyChecksums: input.release.draft === false,
+      });
+      if (!result.success) {
+        throw new Error(
+          `${plan.role} tenant D1 migration failed for ${plan.binding}: ${result.error}`
         );
-        if (input.release && !stream) {
-          throw new Error(`release_migration_stream_not_found:${streamId}`);
-        }
-        const result = stream
-          ? await runD1Migrations(locked.name, migrationPath, input.onProgress, {
-              manifestFiles: stream.files,
-              releaseVersion: input.release?.manifest.productVersion,
-              backfillLegacyChecksums: input.release?.draft === false,
-            })
-          : await runD1Migrations(locked.name, migrationPath, input.onProgress);
-        if (!result.success) {
-          throw new Error(
-            `${resource.role} tenant D1 migration failed for ${resource.binding}: ${result.error}`
-          );
-        }
       }
+      const lastFilename = plan.migrationFiles.at(-1)?.path;
+      if (!lastFilename) throw new Error('initial_control_plane_migration_files_empty');
+      await executeD1Command(
+        plan.databaseName,
+        `INSERT INTO authrim_control_plane_shard_metadata (
+           singleton_id, binding_ref, data_role, residency_partition, migration_generation,
+           release_id, manifest_digest, expected_file_count, last_filename, updated_at
+         ) VALUES (
+           1, ${sqlString(plan.binding)}, ${sqlString(plan.role)}, 'default', 1,
+           ${sqlString(plan.releaseId)}, ${sqlString(plan.manifestDigest)},
+           ${plan.migrationFiles.length}, ${sqlString(lastFilename)}, ${Math.floor(Date.now() / 1000)}
+         ) ON CONFLICT(singleton_id) DO UPDATE SET
+           binding_ref = excluded.binding_ref,
+           data_role = excluded.data_role,
+           residency_partition = excluded.residency_partition,
+           migration_generation = excluded.migration_generation,
+           release_id = excluded.release_id,
+           manifest_digest = excluded.manifest_digest,
+           expected_file_count = excluded.expected_file_count,
+           last_filename = excluded.last_filename,
+           updated_at = excluded.updated_at;`
+      );
     }
-
-    const initialSlot = buildTenantDatabaseSlotPlan({ env: input.env, slotNumber: 1 });
-    const initialCore = initialSlot.resources.find((resource) => resource.role === 'tenant_core');
-    const initialCoreDatabase = initialCore ? input.lock.d1[initialCore.binding]?.name : undefined;
-    if (!initialCoreDatabase) {
-      throw new Error('initial_tenant_d1_slot_core_missing');
-    }
-    input.onProgress?.(`🔧 Ensuring initial tenant exists in ${initialCoreDatabase}...`);
-    await executeD1Command(initialCoreDatabase, buildInitialTenantBootstrapSql(input.config));
 
     return {
       success: true,
       createdCount,
-      migratedCount: slotPlans.reduce((count, slot) => count + slot.resources.length, 0),
+      migratedCount: plans.length - 1,
     };
   } catch (error) {
     return {
       success: false,
       createdCount,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-export async function markTenantD1SlotsDeploymentState(input: {
-  env: string;
-  config: AuthrimConfig;
-  lock: AuthrimLock;
-  state: TenantD1DeploymentSlotState;
-  stage: string;
-  errorCode?: string | null;
-  onProgress?: (message: string) => void;
-}): Promise<TenantD1BootstrapResult> {
-  if (!isTenantD1Profile(input.config)) {
-    return { success: true, skipped: true };
-  }
-
-  const adminDbName = input.lock.d1.DB_ADMIN?.name;
-  if (!adminDbName) {
-    return { success: false, error: 'DB_ADMIN is missing from the lock file' };
-  }
-
-  try {
-    const slotCount = preallocatedSlotCountForConfig(input.config);
-    input.onProgress?.(
-      `Marking tenant D1 slots ${input.state} after ${input.stage} (${slotCount} slots)...`
-    );
-    await executeAdminSql({
-      adminDbName,
-      tenantId: tenantIdForConfig(input.config),
-      sql: buildTenantDatabaseSlotDeploymentStateSql({
-        lock: input.lock,
-        env: input.env,
-        slotCount,
-        state: input.state,
-        stage: input.stage,
-        errorCode: input.errorCode,
-      }),
-    });
-    return { success: true, updatedSlots: slotCount };
-  } catch (error) {
-    return {
-      success: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -776,6 +894,8 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
 
   const tenantId = tenantIdForConfig(input.config);
   const adminDbName = input.lock.d1.DB_ADMIN?.name;
+  const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
+  const configNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
   const runtimeRegistryNamespaceId = input.lock.kv.TENANT_RUNTIME_REGISTRY?.id;
   if (!adminDbName) {
     return { success: false, error: 'DB_ADMIN is missing from the lock file' };
@@ -783,9 +903,20 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
   if (!runtimeRegistryNamespaceId) {
     return { success: false, error: 'TENANT_RUNTIME_REGISTRY KV is missing from the lock file' };
   }
+  if (!controlDatabaseName) {
+    return { success: false, error: 'CONTROL_DB is missing from the lock file' };
+  }
+  if (!configNamespaceId) {
+    return { success: false, error: 'AUTHRIM_CONFIG KV is missing from the lock file' };
+  }
 
   try {
-    const slotCount = preallocatedSlotCountForConfig(input.config);
+    await ensureInitialTenantRegionShardConfig({
+      environmentId: input.env,
+      tenantId,
+      controlDatabaseName,
+      configNamespaceId,
+    });
     const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress);
     if (!migrationsRoot.path) {
       throw new Error(
@@ -794,7 +925,12 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
     }
     const migrationsRootPath = migrationsRoot.path;
 
-    const assignedSlotNumber = 1;
+    if (!input.release) throw new Error('initial_control_plane_release_required');
+    const plans = buildInitialControlPlaneResourcePlans({
+      env: input.env,
+      lock: input.lock,
+      release: input.release,
+    }).filter((plan) => plan.role !== 'lookup');
     const coreStream = input.release?.streams.find((stream) => stream.id === 'd1-core');
     const piiStream = input.release?.streams.find((stream) => stream.id === 'd1-pii');
     const coreSchemaVersion = coreStream
@@ -803,24 +939,26 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
     const piiSchemaVersion = piiStream
       ? getLatestMigrationVersionFromFilenames(piiStream.files.map((file) => file.path))
       : getLatestMigrationVersionFromDirectory(join(migrationsRootPath, 'pii'));
-    const resources: TenantD1BootstrapResource[] = [
-      registryResourceFromSlot({
-        lock: input.lock,
-        env: input.env,
-        slotNumber: assignedSlotNumber,
-        role: 'tenant_core',
-        generation: 1,
-        schemaVersion: coreSchemaVersion,
-      }),
-      registryResourceFromSlot({
-        lock: input.lock,
-        env: input.env,
-        slotNumber: assignedSlotNumber,
-        role: 'tenant_pii',
-        generation: 1,
-        schemaVersion: piiSchemaVersion,
-      }),
-    ];
+    const resources = plans.map((plan) =>
+      registryResourceFromInitialPlan({
+        plan,
+        schemaVersion: plan.role === 'tenant_pii' ? piiSchemaVersion : coreSchemaVersion,
+      })
+    );
+    const defaultCoreResource = resources.find(
+      (resource) => resource.role === 'tenant_core' && resource.shardGroup === 'default'
+    );
+    if (!defaultCoreResource) {
+      throw new Error('initial_tenant_d1_default_core_resource_missing');
+    }
+
+    input.onProgress?.(
+      `🔧 Ensuring initial tenant exists in ${defaultCoreResource.databaseName}...`
+    );
+    await executeD1Command(
+      defaultCoreResource.databaseName,
+      buildInitialTenantBootstrapSql(input.config)
+    );
     const registryResources = signTenantDatabaseRegistryResources({
       tenantId,
       signatureConfig: null,
@@ -868,13 +1006,7 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
     await executeAdminSql({
       adminDbName,
       tenantId,
-      sql: `${buildTenantDatabaseSlotsSql({
-        lock: input.lock,
-        env: input.env,
-        slotCount,
-        assignedTenantId: tenantId,
-        assignedSlotNumber,
-      })}\n\n${registrySql}\n\n${jobSql}`,
+      sql: `${registrySql}\n\n${jobSql}`,
     });
 
     const signedAt = new Date().toISOString();
@@ -886,12 +1018,23 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
         now: new Date(signedAt),
       }),
       input.keysDir,
-      signedAt
+      signedAt,
+      input.lock.controlKeyState?.runtimeRegistry
+        ? {
+            slot: input.lock.controlKeyState.runtimeRegistry.activeSlot,
+            keyId: input.lock.controlKeyState.runtimeRegistry.activeKeyId,
+          }
+        : undefined
     );
     const generation = {
       runtimeGeneration: snapshot.runtimeGeneration,
+      routeStatus: snapshot.routeStatus,
+      quarantineDenyGeneration: snapshot.quarantineDenyGeneration,
       publishedAt: snapshot.publishedAt,
-      expiresAt: snapshot.expiresAt,
+      expiresAt: addSeconds(
+        new Date(snapshot.publishedAt),
+        RUNTIME_REGISTRY_GENERATION_TTL_SECONDS
+      ).toISOString(),
     };
     await putKVKeyByNamespaceId(
       runtimeRegistryNamespaceId,
@@ -903,7 +1046,7 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
       runtimeRegistryNamespaceId,
       buildGenerationKey(tenantId),
       JSON.stringify(generation),
-      { expirationTtl: RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS }
+      { expirationTtl: RUNTIME_REGISTRY_GENERATION_TTL_SECONDS }
     );
 
     input.onProgress?.(`🔎 Verifying initial tenant D1 bootstrap (${tenantId})...`);
@@ -911,9 +1054,8 @@ export async function publishInitialTenantD1RuntimeSnapshot(input: {
       adminDbName,
       runtimeRegistryNamespaceId,
       tenantId,
-      slotId: buildTenantDatabaseSlotPlan({ env: input.env, slotNumber: assignedSlotNumber })
-        .slotId,
-      coreDatabaseName: resources.find((resource) => resource.role === 'tenant_core')!.databaseName,
+      coreDatabaseName: defaultCoreResource.databaseName,
+      resources,
     });
 
     input.onProgress?.(`  ✅ Initial tenant D1 runtime snapshot published: ${tenantId}`);

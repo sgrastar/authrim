@@ -1,7 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
+import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+
+const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
+  residency: {
+    version: 1,
+    residencyPolicyId: 'test-residency',
+    residencyPartition: 'default',
+    policyGeneration: 1,
+    allowedRegions: ['apac'],
+    jurisdiction: null,
+  },
+  totalShards: 1,
+  now: 1,
+  updatedBy: 'test',
+});
 
 // Mock getClient and getClientCached at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
@@ -23,8 +38,14 @@ vi.mock('@authrim/ar-lib-core', async () => {
 class MockKVNamespace {
   private store: Map<string, string> = new Map();
 
-  async get(key: string): Promise<string | null> {
-    return this.store.get(key) || null;
+  constructor(initial: Record<string, string> = {}) {
+    for (const [key, value] of Object.entries(initial)) this.store.set(key, value);
+  }
+
+  async get<T = string>(key: string, options?: { type?: string }): Promise<T | null> {
+    const value = this.store.get(key);
+    if (value === undefined) return null;
+    return (options?.type === 'json' ? JSON.parse(value) : value) as T;
   }
 
   async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
@@ -45,18 +66,35 @@ class MockKVNamespace {
  * Mock D1 Database
  */
 function createMockDB() {
-  const mockStatement = {
-    bind: vi.fn().mockReturnThis(),
-    first: vi.fn().mockResolvedValue(null),
-    all: vi.fn().mockResolvedValue({ results: [] }),
-    run: vi.fn().mockResolvedValue({ success: true }),
-  };
+  const trustPolicies = new Map<string, Record<string, unknown>>();
+  const prepare = vi.fn((sql: string) => {
+    let boundParams: unknown[] = [];
+    const statement = {
+      bind: vi.fn((...params: unknown[]) => {
+        boundParams = params;
+        return statement;
+      }),
+      first: vi.fn().mockResolvedValue(null),
+      all: vi.fn(async () => {
+        if (sql.includes('FROM client_trust_policies')) {
+          const [tenantId, targetType, targetId] = boundParams.map(String);
+          const policy = trustPolicies.get(`${tenantId}:${targetType}:${targetId}`);
+          return { results: policy ? [policy] : [] };
+        }
+        return { results: [] };
+      }),
+      run: vi.fn().mockResolvedValue({ success: true }),
+    };
+    return statement;
+  });
 
   return {
-    prepare: vi.fn().mockReturnValue(mockStatement),
+    prepare,
     batch: vi.fn().mockResolvedValue([]),
-    _mockStatement: mockStatement,
-  } as unknown as D1Database;
+    _trustPolicies: trustPolicies,
+  } as unknown as D1Database & {
+    _trustPolicies: Map<string, Record<string, unknown>>;
+  };
 }
 
 /**
@@ -243,6 +281,28 @@ async function configureClientSettings(
   );
 }
 
+function configureClientTrustPolicy(
+  env: Env,
+  input: {
+    clientId?: string;
+    firstParty?: boolean;
+    trusted?: boolean;
+    skipAuthorizationConsent?: boolean;
+  } = {}
+) {
+  const clientId = input.clientId ?? 'test-client';
+  const db = env.DB as unknown as {
+    _trustPolicies: Map<string, Record<string, unknown>>;
+  };
+  db._trustPolicies.set(`default:oidc_client:${clientId}`, {
+    target_type: 'oidc_client',
+    target_id: clientId,
+    first_party: input.firstParty === false ? 0 : 1,
+    trusted: input.trusted === false ? 0 : 1,
+    skip_authorization_consent: input.skipAuthorizationConsent === false ? 0 : 1,
+  });
+}
+
 async function configureTenantOauthSettings(env: Env, settings: Record<string, unknown>) {
   await (env.SETTINGS as unknown as MockKVNamespace).put(
     'settings:tenant:default:oauth',
@@ -267,7 +327,9 @@ function createMockEnv(): Env {
     NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
     CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,
     SETTINGS: new MockKVNamespace() as unknown as KVNamespace,
-    AUTHRIM_CONFIG: new MockKVNamespace() as unknown as KVNamespace,
+    AUTHRIM_CONFIG: new MockKVNamespace({
+      'region_shard_config:default': JSON.stringify(TEST_REGION_CONFIG),
+    }) as unknown as KVNamespace,
     DB: createMockDB(),
     AVATARS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
@@ -697,9 +759,7 @@ describe('Authorization Handler', () => {
     });
 
     it('resumes a server-side PAR authorization transaction after login without reusing request_uri', async () => {
-      await configureClientSettings(env, {
-        'client.consent_required': false,
-      });
+      configureClientTrustPolicy(env);
       await (env.SETTINGS as unknown as MockKVNamespace).put(
         'system_settings',
         JSON.stringify({ fapi: { enabled: true } })
@@ -796,9 +856,7 @@ describe('Authorization Handler', () => {
     });
 
     it('atomically consumes a restored PAR request_uri after authentication', async () => {
-      await configureClientSettings(env, {
-        'client.consent_required': false,
-      });
+      configureClientTrustPolicy(env);
       const requestUri = 'urn:ietf:params:oauth:request_uri:par_after_login';
       const parStore = createMockPARRequestStore({
         client_id: 'test-client',
@@ -1052,6 +1110,7 @@ describe('Authorization Handler', () => {
 
     it('should reject unsupported code_challenge_method', async () => {
       const codeChallenge = 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM';
+      const settingsGet = vi.spyOn(env.SETTINGS as unknown as MockKVNamespace, 'get');
       const response = await app.request(
         `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=${codeChallenge}&code_challenge_method=plain`,
         { method: 'GET' },
@@ -1063,6 +1122,9 @@ describe('Authorization Handler', () => {
       const redirectUrl = new URL(location!, 'https://example.com');
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
       expect(redirectUrl.searchParams.get('error_description')).toContain('S256');
+      const settingsKeys = settingsGet.mock.calls.map(([key]) => key);
+      expect(settingsKeys).not.toContain('settings:client:default:test-client:client');
+      expect(settingsKeys).not.toContain('settings:tenant:default:oauth');
     });
 
     it('should reject invalid code_challenge format', async () => {
@@ -1364,8 +1426,8 @@ describe('Authorization Handler', () => {
         env.UI_URL = 'https://login.example.com';
         await configureClientSettings(env, {
           'client.sso_enabled': ssoEnabled,
-          'client.consent_required': false,
         });
+        configureClientTrustPolicy(env);
         seedSession(env);
 
         const response = await app.request(
@@ -1398,8 +1460,8 @@ describe('Authorization Handler', () => {
     it('issues an authorization code for an existing SSO session when consent is not required', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
       const authCodeStore = getAuthCodeStore(env);
 
@@ -1442,9 +1504,7 @@ describe('Authorization Handler', () => {
       await configureTenantOauthSettings(env, {
         'oauth.sso_enabled': true,
       });
-      await configureClientSettings(env, {
-        'client.consent_required': false,
-      });
+      configureClientTrustPolicy(env);
       seedSession(env);
 
       const response = await app.request(
@@ -1466,9 +1526,7 @@ describe('Authorization Handler', () => {
     });
 
     it('issues an authorization code for a confirmed login even when SSO is disabled', async () => {
-      await configureClientSettings(env, {
-        'client.consent_required': false,
-      });
+      configureClientTrustPolicy(env);
       getChallengeMap(env).set('confirm_login', {
         id: 'confirm_login',
         tenantId: 'default',
@@ -1563,9 +1621,7 @@ describe('Authorization Handler', () => {
         scope: 'openid profile email',
         token_endpoint_auth_method: 'client_secret_basic',
       });
-      await configureClientSettings(env, {
-        'client.consent_required': false,
-      });
+      configureClientTrustPolicy(env);
       seedSession(env);
       const authCodeStore = getAuthCodeStore(env);
 
@@ -1602,8 +1658,8 @@ describe('Authorization Handler', () => {
     it('issues a handoff token for prompt=none SSO without returning an authorization code', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
 
       const response = await app.request(
@@ -1664,6 +1720,31 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('handoff_token')).toBeNull();
     });
 
+    it('does not let deprecated Settings v2 flags bypass the authoritative trust policy', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+        'client.first_party': true,
+        'client.consent_required': false,
+      });
+      seedSession(env);
+
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=settings-v2-state&prompt=none',
+        {
+          method: 'GET',
+          headers: {
+            Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}`,
+          },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!);
+      expect(redirectUrl.searchParams.get('error')).toBe('consent_required');
+      expect(redirectUrl.searchParams.get('code')).toBeNull();
+    });
+
     it('ignores caller-supplied consent confirmation flags', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
@@ -1691,8 +1772,8 @@ describe('Authorization Handler', () => {
     it('rejects response_type=none when the tenant profile does not allow session-check responses', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',
         client_secret: 'test-secret',
@@ -1815,8 +1896,8 @@ describe('Authorization Handler', () => {
     it('rejects clients that require DPoP binding when no proof is supplied', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
       mockGetClient.mockResolvedValue({
         client_id: 'test-client',
@@ -2418,8 +2499,8 @@ describe('Authorization Handler', () => {
       env.ENABLE_RAR = 'true';
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
       const authCodeStore = getAuthCodeStore(env);
       const authorizationDetails = encodeURIComponent(
@@ -2465,8 +2546,8 @@ describe('Authorization Handler', () => {
       env.ENABLE_RAR = 'true';
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
       const authCodeStore = getAuthCodeStore(env);
       const authorizationDetails = JSON.stringify([
@@ -2515,8 +2596,8 @@ describe('Authorization Handler', () => {
     it('preserves security-sensitive authorization parameters from PAR', async () => {
       await configureClientSettings(env, {
         'client.sso_enabled': true,
-        'client.consent_required': false,
       });
+      configureClientTrustPolicy(env);
       seedSession(env);
       const requestUri = 'urn:ietf:params:oauth:request_uri:par_security_parameters';
       env.PAR_REQUEST_STORE = createMockPARRequestStore({

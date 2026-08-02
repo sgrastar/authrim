@@ -24,6 +24,8 @@ import {
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
   DIAGNOSTIC_FLOW_ID_HEADER,
+  getCachedAuthCorePersistenceContextFromEnv,
+  resolveAccountDataContextByIdentifier,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -184,7 +186,10 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       },
     });
   } catch (error) {
-    log.error('Backchannel logout error', {}, error as Error);
+    log.error('Backchannel logout error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      stage: logoutTokenValidated ? 'session_invalidation' : 'token_validation',
+    });
 
     if (diagnosticLogger) {
       const validationError = logoutTokenValidated
@@ -410,24 +415,55 @@ async function invalidateUserSessions(
 
   // Find linked identities for this provider and subject
   if (claims.sub) {
-    const identities = await findLinkedIdentitiesByProviderSub(
-      env,
-      tenantId,
-      providerId,
-      claims.sub
-    );
+    let accountContext:
+      | Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>
+      | undefined;
+    const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
+    const tenantD1 = persistence.storageProfileId === 'builtin:storage:tenant-d1';
+    if (tenantD1) {
+      try {
+        accountContext = await resolveAccountDataContextByIdentifier(env, {
+          tenantId,
+          indexKind: 'external_subject',
+          identifier: { issuer: providerId, subject: claims.sub },
+        });
+      } catch (error) {
+        if (!(error instanceof Error && error.message === 'account_data_route_not_found')) {
+          throw error;
+        }
+      }
+    }
+    const identities = tenantD1
+      ? accountContext
+        ? await findLinkedIdentitiesByProviderSub(
+            env,
+            tenantId,
+            providerId,
+            claims.sub,
+            accountContext.piiDb
+          )
+        : []
+      : await findLinkedIdentitiesByProviderSub(env, tenantId, providerId, claims.sub);
 
     for (const identity of identities) {
       identitiesAffected++;
 
       // Mark the linked identity as requiring re-authentication
       // We do this by clearing the tokens
-      await updateLinkedIdentity(env, identity.tenantId, identity.id, {
-        tokens: {
-          access_token: '', // Clear tokens
-          token_type: 'Bearer',
-        },
-      });
+      const updates = {
+        clearTokens: true,
+      };
+      if (accountContext) {
+        await updateLinkedIdentity(
+          env,
+          identity.tenantId,
+          identity.id,
+          updates,
+          accountContext.piiDb
+        );
+      } else {
+        await updateLinkedIdentity(env, identity.tenantId, identity.id, updates);
+      }
     }
   }
 

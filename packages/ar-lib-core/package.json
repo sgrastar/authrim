@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
     },
+    "./control-plane": {
+      "import": "./dist/services/control-plane/index.js",
+      "types": "./src/services/control-plane/index.ts",
+      "default": "./src/services/control-plane/index.ts"
+    },
     "./utils/*": {
       "import": "./dist/utils/*.js",
       "default": "./src/utils/*.ts"

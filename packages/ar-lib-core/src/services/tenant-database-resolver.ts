@@ -19,6 +19,8 @@ import {
   loadTenantRuntimeRegistryVerificationKeysFromEnv,
   verifyTenantRuntimeRegistrySnapshotSignature,
   type TenantRuntimeRegistrySnapshot,
+  type TenantRuntimeRegistryGenerationDocument,
+  type TenantRuntimeRegistryRouteStatus,
   type TenantRuntimeRegistryStoreSnapshot,
   type RuntimeRegistrySnapshotVerificationEnv,
 } from './tenant-runtime-registry-snapshot';
@@ -31,6 +33,7 @@ export type TenantDatabaseResolverErrorCode =
   | 'missing_snapshot'
   | 'expired_snapshot'
   | 'invalid_snapshot_signature'
+  | 'quarantined_route'
   | 'missing_active_pointer'
   | 'missing_registry_row'
   | 'invalid_registry_signature'
@@ -111,8 +114,14 @@ const tenantDatabaseResolverMemoryCache = new Map<
 >();
 const tenantRuntimeGenerationMemoryCache = new Map<
   string,
-  { generation: number; expiresAt: number }
+  { state: RuntimeGenerationState; expiresAt: number }
 >();
+
+interface RuntimeGenerationState {
+  runtimeGeneration: number;
+  routeStatus: TenantRuntimeRegistryRouteStatus;
+  quarantineDenyGeneration: number;
+}
 
 export function clearTenantDatabaseResolverMemoryCache(): void {
   tenantDatabaseResolverMemoryCache.clear();
@@ -279,14 +288,79 @@ function buildRequestCacheKey(
   ].join(':');
 }
 
-function parseRuntimeGeneration(value: string | null): number | null {
+function isRuntimeRegistryRouteStatus(value: unknown): value is TenantRuntimeRegistryRouteStatus {
+  return (
+    value === 'active' ||
+    value === 'quarantining' ||
+    value === 'quarantined' ||
+    value === 'disabled'
+  );
+}
+
+function parseRuntimeGeneration(value: string | null): RuntimeGenerationState | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as { runtimeGeneration?: unknown };
-    return typeof parsed.runtimeGeneration === 'number' ? parsed.runtimeGeneration : null;
+    const parsed = JSON.parse(value) as Partial<TenantRuntimeRegistryGenerationDocument>;
+    if (
+      !Number.isSafeInteger(parsed.runtimeGeneration) ||
+      (parsed.runtimeGeneration as number) < 1
+    ) {
+      return null;
+    }
+    const routeStatus = parsed.routeStatus ?? 'active';
+    const quarantineDenyGeneration = parsed.quarantineDenyGeneration ?? 0;
+    if (
+      !isRuntimeRegistryRouteStatus(routeStatus) ||
+      !Number.isSafeInteger(quarantineDenyGeneration) ||
+      quarantineDenyGeneration < 0 ||
+      (routeStatus !== 'active' && quarantineDenyGeneration < 1)
+    ) {
+      return null;
+    }
+    return {
+      runtimeGeneration: parsed.runtimeGeneration as number,
+      routeStatus,
+      quarantineDenyGeneration,
+    };
   } catch {
     return null;
   }
+}
+
+function createQuarantinedRouteError(
+  tenantId: string,
+  routeStatus: Exclude<TenantRuntimeRegistryRouteStatus, 'active'>,
+  quarantineDenyGeneration: number
+): TenantDatabaseResolverError {
+  return new TenantDatabaseResolverError(
+    'quarantined_route',
+    `Tenant database route is unavailable: ${routeStatus}`,
+    { tenantId, routeStatus, quarantineDenyGeneration }
+  );
+}
+
+async function assertRuntimeRouteAvailable(
+  env: TenantDatabaseResolverEnv,
+  cacheKey: string,
+  tenantId: string,
+  deploymentTarget: string | null,
+  generationCacheTtlMs: number
+): Promise<RuntimeGenerationState | null> {
+  if (!env.TENANT_RUNTIME_REGISTRY) return null;
+  const generationKey = buildTenantRuntimeRegistryGenerationKey(
+    tenantId,
+    deploymentTarget ?? 'default'
+  );
+  const state = await getRuntimeGeneration(
+    env.TENANT_RUNTIME_REGISTRY,
+    generationKey,
+    generationCacheTtlMs
+  );
+  if (state && state.routeStatus !== 'active') {
+    tenantDatabaseResolverMemoryCache.delete(cacheKey);
+    throw createQuarantinedRouteError(tenantId, state.routeStatus, state.quarantineDenyGeneration);
+  }
+  return state;
 }
 
 async function getMemoryCachedTenantDatabase(
@@ -307,12 +381,12 @@ async function getMemoryCachedTenantDatabase(
       tenantId,
       deploymentTarget ?? 'default'
     );
-    const generation = await getRuntimeGeneration(
+    const state = await getRuntimeGeneration(
       env.TENANT_RUNTIME_REGISTRY,
       generationKey,
       generationCacheTtlMs
     );
-    if (generation !== null && generation !== cached.value.runtimeGeneration) {
+    if (state !== null && state.runtimeGeneration !== cached.value.runtimeGeneration) {
       tenantDatabaseResolverMemoryCache.delete(cacheKey);
       return null;
     }
@@ -324,23 +398,23 @@ async function getRuntimeGeneration(
   generationStore: TenantRuntimeRegistryGenerationStore,
   generationKey: string,
   ttlMs: number
-): Promise<number | null> {
+): Promise<RuntimeGenerationState | null> {
   const cached = tenantRuntimeGenerationMemoryCache.get(generationKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.generation;
+    return cached.state;
   }
   if (cached) {
     tenantRuntimeGenerationMemoryCache.delete(generationKey);
   }
 
-  const generation = parseRuntimeGeneration(await generationStore.get(generationKey));
-  if (generation !== null && ttlMs > 0) {
+  const state = parseRuntimeGeneration(await generationStore.get(generationKey));
+  if (state !== null && ttlMs > 0) {
     tenantRuntimeGenerationMemoryCache.set(generationKey, {
-      generation,
+      state,
       expiresAt: Date.now() + ttlMs,
     });
   }
-  return generation;
+  return state;
 }
 
 function setMemoryCachedTenantDatabase(
@@ -388,7 +462,14 @@ function parseRuntimeRegistrySnapshot(value: string | null): TenantRuntimeRegist
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as TenantRuntimeRegistrySnapshot;
-    if (parsed.version !== RUNTIME_REGISTRY_SNAPSHOT_VERSION || !Array.isArray(parsed.stores)) {
+    if (
+      parsed.version !== RUNTIME_REGISTRY_SNAPSHOT_VERSION ||
+      !Array.isArray(parsed.stores) ||
+      !isRuntimeRegistryRouteStatus(parsed.routeStatus) ||
+      !Number.isSafeInteger(parsed.quarantineDenyGeneration) ||
+      parsed.quarantineDenyGeneration < 0 ||
+      (parsed.routeStatus !== 'active' && parsed.quarantineDenyGeneration < 1)
+    ) {
       return null;
     }
     return parsed;
@@ -521,7 +602,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
     options.tenantId,
     expectedDeploymentTarget
   );
-  let lightweightGeneration: number | null = null;
+  let lightweightGeneration: RuntimeGenerationState | null = null;
   try {
     lightweightGeneration = parseRuntimeGeneration(
       await env.TENANT_RUNTIME_REGISTRY.get(generationKey)
@@ -529,7 +610,17 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   } catch {
     return { status: 'invalid' };
   }
-  if (lightweightGeneration === null || lightweightGeneration !== snapshot.runtimeGeneration) {
+  if (lightweightGeneration && lightweightGeneration.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      lightweightGeneration.routeStatus,
+      lightweightGeneration.quarantineDenyGeneration
+    );
+  }
+  if (
+    lightweightGeneration === null ||
+    lightweightGeneration.runtimeGeneration !== snapshot.runtimeGeneration
+  ) {
     return { status: 'invalid' };
   }
   let signatureStatus: Awaited<ReturnType<typeof verifyTenantRuntimeRegistrySnapshotSignature>>;
@@ -557,6 +648,13 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       runtimeGeneration: snapshot.runtimeGeneration,
     });
     return { status: 'invalid' };
+  }
+  if (snapshot.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      snapshot.routeStatus,
+      snapshot.quarantineDenyGeneration
+    );
   }
   const expiresAt = new Date(snapshot.expiresAt).getTime();
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { status: 'expired' };
@@ -702,6 +800,13 @@ export async function resolveTenantDatabaseSourceFromRegistry(
   const shardIndex = options.shardIndex ?? 0;
   const deploymentTarget = getDeploymentTarget(env, options);
   const cacheKey = buildRequestCacheKey(options, deploymentTarget);
+  await assertRuntimeRouteAvailable(
+    env,
+    cacheKey,
+    options.tenantId,
+    deploymentTarget,
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+  );
   const cached = options.requestCache?.get(cacheKey);
   if (cached) {
     return cached;

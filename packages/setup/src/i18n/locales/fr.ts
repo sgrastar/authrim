@@ -803,12 +803,7 @@ const fr: Translations = {
     'Un D1 core et un D1 PII pour tout le déploiement. Coût de configuration minimal et chemin par défaut.',
   'web.db.tenantD1Title': 'D1 par tenant',
   'web.db.tenantD1Desc':
-    "Une paire D1 core/PII par tenant. Nécessite le provisionnement de la base de données du tenant avant l'activation.",
-  'web.db.preallocatedSlotsTitle': 'Slots de tenant préalloués',
-  'web.db.preallocatedSlotsDesc':
-    'Chaque slot de tenant crée deux bases de données D1 : core et PII.',
-  'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp': 'La valeur par défaut est 3. Le maximum est de 500 slots.',
+    'Initialise le plan de contrôle et les shards initiaux ; la capacité suivante est créée automatiquement.',
 
   // Web UI Email
   'web.email.title': "Fournisseur d'Email",

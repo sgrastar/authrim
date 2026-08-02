@@ -1,4 +1,9 @@
-import type { DatabaseAdapter, TransactionContext } from '../../db/adapter';
+import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db/adapter';
+import {
+  accountDirectoryOutboxId,
+  validateAccountDirectoryPublication,
+  type AccountDirectoryPublication,
+} from '../../services/lookup-directory/publication';
 import { generateId, getCurrentTimestamp } from '../base';
 
 export type IdentitySubjectType = 'person' | 'service_account' | 'agent' | string;
@@ -80,6 +85,8 @@ export interface IdentityAccountRow {
   primary_subject_id: string | null;
   display_label: string | null;
   metadata_json: string | null;
+  directory_publication_state: 'pending' | 'active_pending_directory' | 'active' | 'disabled';
+  account_route_generation: number;
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
@@ -322,6 +329,8 @@ export interface CreateIdentityAccountInput {
   primary_subject_id?: string | null;
   display_label?: string | null;
   metadata?: JsonObject | null;
+  directory_publication_state?: IdentityAccountRow['directory_publication_state'];
+  account_route_generation?: number;
 }
 
 export interface CreateSubjectAccountLinkInput {
@@ -591,43 +600,207 @@ export class CanonicalIdentityRepository {
   }
 
   async createIdentityGraph(
-    input: CreateCanonicalIdentityGraphInput
+    input: CreateCanonicalIdentityGraphInput,
+    directoryPublication?: AccountDirectoryPublication
   ): Promise<CanonicalIdentityGraph> {
-    return this.adapter.transaction(async (tx) => {
-      const subject = await this.insertSubject(tx, input.subject ?? {});
-      const account = await this.insertAccount(tx, {
-        ...(input.account ?? {}),
-        primary_subject_id: subject.id,
+    const publication = directoryPublication
+      ? await validateAccountDirectoryPublication(directoryPublication)
+      : null;
+    if (
+      publication &&
+      (input.account?.id !== publication.accountId ||
+        resolveTenantId(this.tenantId, input.account?.tenant_id) !== publication.tenantId)
+    ) {
+      throw new Error('directory_publication_account_mismatch');
+    }
+    const now = getCurrentTimestamp();
+    const subjectInput = input.subject ?? {};
+    const accountInput = input.account ?? {};
+    const linkInput = input.link ?? {};
+    const subjectId = subjectInput.id ?? generateId();
+    const accountId = accountInput.id ?? generateId();
+    const subject: IdentitySubjectRow = {
+      id: subjectId,
+      tenant_id: resolveTenantId(this.tenantId, subjectInput.tenant_id),
+      subject_type: subjectInput.subject_type ?? 'person',
+      lifecycle_state: subjectInput.lifecycle_state ?? 'active',
+      display_label: subjectInput.display_label ?? null,
+      primary_account_id: accountId,
+      risk_tier: subjectInput.risk_tier ?? null,
+      assurance_level: subjectInput.assurance_level ?? null,
+      metadata_json: encodeJson(subjectInput.metadata),
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+    const account: IdentityAccountRow = {
+      id: accountId,
+      tenant_id: resolveTenantId(this.tenantId, accountInput.tenant_id),
+      account_type: accountInput.account_type ?? 'user',
+      lifecycle_state: accountInput.lifecycle_state ?? 'active',
+      legacy_user_id: accountInput.legacy_user_id ?? null,
+      primary_subject_id: subjectId,
+      display_label: accountInput.display_label ?? null,
+      metadata_json: encodeJson(accountInput.metadata),
+      directory_publication_state: accountInput.directory_publication_state ?? 'pending',
+      account_route_generation: accountInput.account_route_generation ?? 1,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+    if (publication) {
+      if (account.directory_publication_state !== 'pending') {
+        throw new Error('directory_account_prepare_failed');
+      }
+      account.account_route_generation = publication.routeProjection.accountRouteGeneration;
+    }
+    const link: SubjectAccountLinkRow = {
+      id: linkInput.id ?? generateId(),
+      tenant_id: resolveTenantId(this.tenantId, linkInput.tenant_id),
+      subject_id: subjectId,
+      account_id: accountId,
+      link_type: linkInput.link_type ?? 'primary',
+      lifecycle_state: linkInput.lifecycle_state ?? 'active',
+      source_ref: linkInput.source_ref ?? null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+    };
+    const profileInput = input.profile;
+    const profile: ProfileRow | null = profileInput
+      ? {
+          id: profileInput.id ?? generateId(),
+          tenant_id: resolveTenantId(this.tenantId, profileInput.tenant_id),
+          subject_id: subjectId,
+          profile_type: profileInput.profile_type ?? 'person',
+          lifecycle_state: profileInput.lifecycle_state ?? 'active',
+          locale: profileInput.locale ?? null,
+          zoneinfo: profileInput.zoneinfo ?? null,
+          display_name_ref: profileInput.display_name_ref ?? null,
+          metadata_json: encodeJson(profileInput.metadata),
+          created_at: now,
+          updated_at: now,
+          deleted_at: null,
+        }
+      : null;
+    const statements: PreparedStatement[] = [
+      {
+        sql: `INSERT INTO identity_subjects (
+          id, tenant_id, subject_type, lifecycle_state, display_label, primary_account_id,
+          risk_tier, assurance_level, metadata_json, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          subject.id,
+          subject.tenant_id,
+          subject.subject_type,
+          subject.lifecycle_state,
+          subject.display_label,
+          subject.risk_tier,
+          subject.assurance_level,
+          subject.metadata_json,
+          subject.created_at,
+          subject.updated_at,
+          subject.deleted_at,
+        ],
+      },
+      {
+        sql: `INSERT INTO identity_accounts (
+          id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
+          display_label, metadata_json, directory_publication_state, account_route_generation,
+          created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          account.id,
+          account.tenant_id,
+          account.account_type,
+          account.lifecycle_state,
+          account.legacy_user_id,
+          account.primary_subject_id,
+          account.display_label,
+          account.metadata_json,
+          account.directory_publication_state,
+          account.account_route_generation,
+          account.created_at,
+          account.updated_at,
+          account.deleted_at,
+        ],
+      },
+      {
+        sql: `INSERT INTO subject_account_links (
+          id, tenant_id, subject_id, account_id, link_type, lifecycle_state, source_ref,
+          created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          link.id,
+          link.tenant_id,
+          link.subject_id,
+          link.account_id,
+          link.link_type,
+          link.lifecycle_state,
+          link.source_ref,
+          link.created_at,
+          link.updated_at,
+          link.deleted_at,
+        ],
+      },
+      {
+        sql: `UPDATE identity_subjects
+                 SET primary_account_id = ?, updated_at = ?
+               WHERE id = ? AND tenant_id = ?`,
+        params: [accountId, now, subjectId, this.tenantId],
+      },
+    ];
+    if (profile) {
+      statements.push({
+        sql: `INSERT INTO profiles (
+          id, tenant_id, subject_id, profile_type, lifecycle_state, locale, zoneinfo,
+          display_name_ref, metadata_json, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          profile.id,
+          profile.tenant_id,
+          profile.subject_id,
+          profile.profile_type,
+          profile.lifecycle_state,
+          profile.locale,
+          profile.zoneinfo,
+          profile.display_name_ref,
+          profile.metadata_json,
+          profile.created_at,
+          profile.updated_at,
+          profile.deleted_at,
+        ],
       });
-      const link = await this.insertSubjectAccountLink(tx, {
-        ...(input.link ?? {}),
-        subject_id: subject.id,
-        account_id: account.id,
+    }
+    if (publication) {
+      const outboxNow = Math.floor(now / 1000);
+      statements.push({
+        sql: `INSERT INTO account_routing_outbox (
+          outbox_id, tenant_id, account_id, event_kind, route_generation,
+          route_schema_version, hmac_key_generation, payload_json, status,
+          attempt_count, created_at, updated_at
+        ) VALUES (?, ?, ?, 'account_created', ?, ?, ?, ?, 'prepared', 0, ?, ?)`,
+        params: [
+          accountDirectoryOutboxId(publication.operationId),
+          publication.tenantId,
+          publication.accountId,
+          publication.routeProjection.accountRouteGeneration,
+          publication.routeProjection.schemaVersion,
+          Math.max(...publication.indexes.map((index) => index.hmacKeyGeneration)),
+          JSON.stringify(publication),
+          outboxNow,
+          outboxNow,
+        ],
       });
-
-      const updatedSubject = {
-        ...subject,
-        primary_account_id: account.id,
-        updated_at: getCurrentTimestamp(),
-      };
-      await tx.execute(
-        `UPDATE identity_subjects
-            SET primary_account_id = ?, updated_at = ?
-          WHERE id = ? AND tenant_id = ?`,
-        [updatedSubject.primary_account_id, updatedSubject.updated_at, subject.id, this.tenantId]
-      );
-
-      const profile = input.profile
-        ? await this.insertProfile(tx, { ...input.profile, subject_id: subject.id })
-        : null;
-
-      return {
-        subject: updatedSubject,
-        account,
-        link,
-        profile,
-      };
-    });
+    }
+    const results = await this.adapter.batch(statements);
+    if (
+      results.length !== statements.length ||
+      results.some((result) => !result.success || result.rowsAffected !== 1)
+    ) {
+      throw new Error('canonical_identity_graph_batch_failed');
+    }
+    return { subject, account, link, profile };
   }
 
   async createSubject(input: CreateIdentitySubjectInput): Promise<IdentitySubjectRow> {
@@ -1708,6 +1881,8 @@ export class CanonicalIdentityRepository {
       primary_subject_id: input.primary_subject_id ?? null,
       display_label: input.display_label ?? null,
       metadata_json: encodeJson(input.metadata),
+      directory_publication_state: input.directory_publication_state ?? 'pending',
+      account_route_generation: input.account_route_generation ?? 1,
       created_at: now,
       updated_at: now,
       deleted_at: null,
@@ -1716,8 +1891,9 @@ export class CanonicalIdentityRepository {
     await executor.execute(
       `INSERT INTO identity_accounts (
         id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
-        display_label, metadata_json, created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        display_label, metadata_json, directory_publication_state, account_route_generation,
+        created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.tenant_id,
@@ -1727,6 +1903,8 @@ export class CanonicalIdentityRepository {
         row.primary_subject_id,
         row.display_label,
         row.metadata_json,
+        row.directory_publication_state,
+        row.account_route_generation,
         row.created_at,
         row.updated_at,
         row.deleted_at,

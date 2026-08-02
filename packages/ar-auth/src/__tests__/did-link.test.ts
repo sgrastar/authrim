@@ -46,6 +46,13 @@ const mockLinkedIdentityRepo = vi.hoisted(() => ({
 }));
 
 const mockResolveDID = vi.hoisted(() => vi.fn());
+const mockPiiAdapter = vi.hoisted(() => ({
+  queryOne: vi.fn(),
+  batch: vi.fn(),
+}));
+const mockCoreAdapter = vi.hoisted(() => ({
+  queryOne: vi.fn(),
+}));
 
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -57,9 +64,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
       stub: mockSessionStoreStub,
     })),
     resolveDID: mockResolveDID,
-    D1Adapter: class {
-      constructor() {}
-    },
+    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mockPiiAdapter })),
+    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mockCoreAdapter })),
+    validateAccountDirectoryPublication: vi.fn((value) => value),
     LinkedIdentityRepository: class {
       constructor() {}
       findByProviderUser = mockLinkedIdentityRepo.findByProviderUser;
@@ -165,6 +172,20 @@ describe('DID Link Management', () => {
     mockLinkedIdentityRepo.findByUserId.mockReset();
     mockLinkedIdentityRepo.createLinkedIdentity.mockReset();
     mockLinkedIdentityRepo.unlink.mockReset();
+    mockPiiAdapter.queryOne.mockReset().mockResolvedValue(null);
+    mockPiiAdapter.batch.mockReset().mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+    mockCoreAdapter.queryOne.mockReset().mockResolvedValue({
+      payload_json: JSON.stringify({
+        tenantId: 'default',
+        accountId: 'account:user-123',
+        routeProjection: {
+          schemaVersion: 1,
+          accountRouteGeneration: 1,
+          residencyPolicyId: 'default-policy',
+          targets: [],
+        },
+      }),
+    });
   });
 
   describe('didRegisterChallengeHandler', () => {
@@ -463,6 +484,44 @@ describe('DID Link Management', () => {
         const data = (await response.json()) as ApiResponse;
         expect(data.success).toBe(true);
         expect(data.did).toBe('did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH');
+      });
+
+      it('adopts a completed unlink after the link row has already been removed', async () => {
+        const did = 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH';
+        const c = createMockContext({
+          params: { did: encodeURIComponent(did) },
+          cookies: { authrim_session: 'valid-session' },
+        });
+        mockSessionStoreStub.getSessionRpc.mockResolvedValue({ userId: 'user-123' } as Session);
+        mockLinkedIdentityRepo.findByProviderUser.mockResolvedValue(null);
+        mockPiiAdapter.queryOne.mockImplementation(async (_sql, params) => ({
+          tenant_id: 'default',
+          account_id: 'account:user-123',
+          user_id: 'user-123',
+          issuer_sha256: await (async () => {
+            const value = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('did'));
+            return Array.from(new Uint8Array(value), (byte) =>
+              byte.toString(16).padStart(2, '0')
+            ).join('');
+          })(),
+          subject_sha256: await (async () => {
+            const value = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(did));
+            return Array.from(new Uint8Array(value), (byte) =>
+              byte.toString(16).padStart(2, '0')
+            ).join('');
+          })(),
+          state: 'completed',
+          operation_id: params?.[0],
+        }));
+
+        const response = await didUnlinkHandler(c);
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual(
+          expect.objectContaining({ success: true, cleanup_pending: false })
+        );
+        expect(mockPiiAdapter.batch).not.toHaveBeenCalled();
+        expect(mockCoreAdapter.queryOne).not.toHaveBeenCalled();
       });
 
       it('should store correct linked identity data', async () => {

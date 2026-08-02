@@ -207,6 +207,7 @@ export function resolveUiDeploymentSettings(
   const useRelativeApi = sameOrigin || needsProxy;
 
   const uiEnv: UiEnvConfig = {
+    PUBLIC_AUTHRIM_ENVIRONMENT_NAME: env,
     PUBLIC_API_BASE_URL: useRelativeApi ? '' : apiBaseUrl,
     PUBLIC_API_PROXY_BACKEND_URL: needsProxy ? runtimeApiBackendUrl : undefined,
     API_BACKEND_URL: needsProxy ? runtimeApiBackendUrl : DISABLED_API_BACKEND_URL,

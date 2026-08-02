@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Note: The .ts extension is required for vitest to correctly resolve the module
 import {
   generateUserId,
+  isCanonicalAccountIdForUser,
+  isValidPersistedUserId,
   isValidUserId,
   getUserIdFormatFromSettings,
   generateUserIdFromSettings,
@@ -106,6 +108,34 @@ describe('ID Generation Utilities', () => {
 
     it('should reject empty string', () => {
       expect(isValidUserId('')).toBe(false);
+    });
+  });
+
+  describe('persisted runtime ID contract', () => {
+    it('accepts every configured producer output and its canonical account ID', () => {
+      for (const format of ['nanoid', 'uuid'] as const) {
+        for (let index = 0; index < 256; index += 1) {
+          const userId = generateUserId(format);
+          expect(isValidPersistedUserId(userId)).toBe(true);
+          expect(isCanonicalAccountIdForUser(`account:${userId}`, userId)).toBe(true);
+        }
+      }
+    });
+
+    it('accepts legacy IDs, UUIDs, and NanoIDs beginning with URL-safe symbols', () => {
+      expect(isValidPersistedUserId('legacy-user.1')).toBe(true);
+      expect(isValidPersistedUserId('550e8400-e29b-41d4-a716-446655440000')).toBe(true);
+      expect(isValidPersistedUserId('_12345678901234567890')).toBe(true);
+      expect(isValidPersistedUserId('-12345678901234567890')).toBe(true);
+    });
+
+    it('rejects malformed symbol-leading IDs and mismatched account IDs', () => {
+      expect(isValidPersistedUserId('_not-a-canonical-nanoid')).toBe(false);
+      expect(isValidPersistedUserId('bad/id')).toBe(false);
+      expect(
+        isCanonicalAccountIdForUser('account:_12345678901234567890', '_12345678901234567890')
+      ).toBe(true);
+      expect(isCanonicalAccountIdForUser('account:other', '_12345678901234567890')).toBe(false);
     });
   });
 

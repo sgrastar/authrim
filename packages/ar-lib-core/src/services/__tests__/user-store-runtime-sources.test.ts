@@ -59,6 +59,10 @@ async function generateEd25519Jwks(kid = 'runtime-registry-key-1') {
   const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey;
   privateJwk.kid = kid;
   publicJwk.kid = kid;
+  privateJwk.alg = 'EdDSA';
+  privateJwk.use = 'sig';
+  publicJwk.alg = 'EdDSA';
+  publicJwk.use = 'sig';
   return { privateJwk, publicJwk };
 }
 
@@ -408,11 +412,13 @@ describe('resolveUserStoreRuntimeSourcesFromEnv', () => {
     const { privateJwk, publicJwk } = await generateEd25519Jwks();
     const snapshot = await signTenantRuntimeRegistrySnapshot(
       {
-        version: 1,
+        version: 2,
         tenantId: 'tenant-a',
         snapshotScope: 'tenant',
         deploymentTarget: 'default',
         runtimeGeneration: 7,
+        routeStatus: 'active',
+        quarantineDenyGeneration: 0,
         storageProfileId: TENANT_D1_STORAGE_PROFILE_ID,
         publishedAt: '2026-05-16T00:00:00.000Z',
         expiresAt: '2099-05-16T00:30:00.000Z',
@@ -482,6 +488,8 @@ describe('resolveUserStoreRuntimeSourcesFromEnv', () => {
       TENANT_RUNTIME_REGISTRY: createMockKV({
         'tenant:tenant-a:runtime-registry:generation:tenant:default': JSON.stringify({
           runtimeGeneration: 7,
+          routeStatus: 'active',
+          quarantineDenyGeneration: 0,
           publishedAt: '2026-05-16T00:00:00.000Z',
           expiresAt: '2099-05-16T00:30:00.000Z',
         }),

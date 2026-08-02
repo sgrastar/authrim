@@ -83,6 +83,23 @@ function expectedAdminUiApiMode(config: AuthrimConfig): string {
   return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
 
+describe('Control automatic provisioning vars', () => {
+  it('generates an explicit fail-closed off value by default', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]!) as AuthrimConfig;
+    expect(generateEnvVars('ar-control', config, WORKERS_SUBDOMAIN)).toMatchObject({
+      AUTHRIM_AUTOMATIC_PROVISIONING: 'false',
+    });
+  });
+
+  it('enables the Control executor only when setup selected it', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]!) as AuthrimConfig;
+    config.tenantD1 = { automaticProvisioning: true };
+    expect(generateEnvVars('ar-control', config, WORKERS_SUBDOMAIN)).toMatchObject({
+      AUTHRIM_AUTOMATIC_PROVISIONING: 'true',
+    });
+  });
+});
+
 // =============================================================================
 // deriveAllowedOrigins — 27 tests
 // =============================================================================

@@ -38,6 +38,10 @@ import {
   createSessionPersistenceAdapter,
   type SessionPersistenceAdapter,
 } from '../services/session-persistence';
+import {
+  resolveAccountCoreDataContext,
+  resolveSessionAccountCoreDataContext,
+} from '../services/runtime-data-context';
 
 const log = createLogger().module('DO-SESSION-STORE');
 
@@ -48,6 +52,7 @@ export interface Session {
   id: string;
   tenantId?: string;
   userId: string;
+  accountId: string;
   expiresAt: number;
   createdAt: number;
   data?: SessionData;
@@ -92,6 +97,7 @@ export interface SessionResponse {
   id: string;
   tenantId?: string;
   userId: string;
+  accountId: string;
   expiresAt: number;
   createdAt: number;
   data?: SessionData; // Include session data for OIDC conformance (authTime etc.)
@@ -101,6 +107,14 @@ export interface SessionResponse {
  * Storage key prefix for sessions
  */
 const SESSION_KEY_PREFIX = 'session:';
+const SESSION_ROUTE_KEY_PREFIX = 'session-route:';
+const SAFE_ROUTE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+
+interface SessionRouteHint {
+  tenantId: string;
+  accountId: string;
+  expiresAt: number;
+}
 
 /**
  * Storage key prefix for tombstones (deleted session markers)
@@ -260,6 +274,46 @@ export class SessionStore extends DurableObject<Env> {
     return `${SESSION_KEY_PREFIX}${sessionId}`;
   }
 
+  private buildSessionRouteKey(sessionId: string): string {
+    return `${SESSION_ROUTE_KEY_PREFIX}${sessionId}`;
+  }
+
+  private routeForSession(session: Session): SessionRouteHint {
+    const tenantId = this.requireTenantId(session.tenantId, 'Session route');
+    const expectedAccountId = `account:${session.userId}`;
+    if (
+      !SAFE_ROUTE_ID.test(tenantId) ||
+      !SAFE_ROUTE_ID.test(expectedAccountId) ||
+      session.accountId !== expectedAccountId ||
+      !Number.isSafeInteger(session.expiresAt) ||
+      session.expiresAt < 1
+    ) {
+      throw new Error('session_identity_invalid');
+    }
+    return {
+      tenantId,
+      accountId: session.accountId,
+      expiresAt: session.expiresAt,
+    };
+  }
+
+  private async getSessionRoute(sessionId: string): Promise<SessionRouteHint | null> {
+    const route = await this.actorCtx.storage.get<SessionRouteHint>(
+      this.buildSessionRouteKey(sessionId)
+    );
+    if (!route) return null;
+    if (
+      !SAFE_ROUTE_ID.test(route.tenantId ?? '') ||
+      !SAFE_ROUTE_ID.test(route.accountId ?? '') ||
+      !route.accountId.startsWith('account:') ||
+      !Number.isSafeInteger(route.expiresAt) ||
+      route.expiresAt < 1
+    ) {
+      throw new Error('session_route_hint_invalid');
+    }
+    return route;
+  }
+
   /**
    * Build storage key for a tombstone
    */
@@ -272,10 +326,14 @@ export class SessionStore extends DurableObject<Env> {
    * Tombstones prevent D1 fallback from returning stale sessions after deletion
    * This is critical for OIDC RP-Initiated Logout security
    */
-  private async createTombstone(sessionId: string): Promise<void> {
+  private async createTombstone(
+    sessionId: string,
+    route: SessionRouteHint | null = null
+  ): Promise<void> {
+    const now = Date.now();
     const tombstone: Tombstone = {
-      deletedAt: Date.now(),
-      expiresAt: Date.now() + TOMBSTONE_TTL_MS,
+      deletedAt: now,
+      expiresAt: Math.max(now + TOMBSTONE_TTL_MS, route?.expiresAt ?? 0),
     };
     await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
     log.debug('Created tombstone for session', { sessionId });
@@ -284,14 +342,16 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * Create tombstones for multiple deleted sessions (batch)
    */
-  private async createTombstonesBatch(sessionIds: string[]): Promise<void> {
+  private async createTombstonesBatch(
+    sessionIds: string[],
+    routes: ReadonlyMap<string, SessionRouteHint | null>
+  ): Promise<void> {
     if (sessionIds.length === 0) return;
 
     const now = Date.now();
-    const expiresAt = now + TOMBSTONE_TTL_MS;
-
     // Create tombstones individually (actor abstraction doesn't support batch put)
     for (const sessionId of sessionIds) {
+      const expiresAt = Math.max(now + TOMBSTONE_TTL_MS, routes.get(sessionId)?.expiresAt ?? 0);
       await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), {
         deletedAt: now,
         expiresAt,
@@ -372,7 +432,10 @@ export class SessionStore extends DurableObject<Env> {
       if (session.expiresAt <= now) {
         this.sessionCache.delete(sessionId);
         // Delete from Durable Storage
-        await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
+        await this.actorCtx.storage.deleteMany([
+          this.buildSessionKey(sessionId),
+          this.buildSessionRouteKey(sessionId),
+        ]);
         cleanedSessions++;
       }
     }
@@ -384,9 +447,19 @@ export class SessionStore extends DurableObject<Env> {
 
     for (const [key, session] of storedSessions) {
       if (session.expiresAt <= now) {
-        await this.actorCtx.storage.delete(key);
+        await this.actorCtx.storage.deleteMany([key, this.buildSessionRouteKey(session.id)]);
         cleanedSessions++;
       }
+    }
+
+    const storedRoutes = await this.actorCtx.storage.list<SessionRouteHint>({
+      prefix: SESSION_ROUTE_KEY_PREFIX,
+    });
+    const expiredRouteKeys = Array.from(storedRoutes.entries())
+      .filter(([, route]) => route.expiresAt <= now)
+      .map(([key]) => key);
+    if (expiredRouteKeys.length > 0) {
+      await this.actorCtx.storage.deleteMany(expiredRouteKeys);
     }
 
     // Clean expired tombstones
@@ -456,13 +529,21 @@ export class SessionStore extends DurableObject<Env> {
       return null;
     }
 
-    const persistence = await this.ensureSessionPersistence();
+    const route = await this.getSessionRoute(sessionId);
+    const persistence = await this.persistenceForRoute(route);
     if (!persistence) {
       return null;
     }
 
     try {
       const result = await persistence.loadSession(sessionId, Date.now());
+      if (
+        result &&
+        route &&
+        (result.tenantId !== route.tenantId || result.accountId !== route.accountId)
+      ) {
+        throw new Error('session_persistence_route_mismatch');
+      }
       return result;
     } catch (error) {
       log.error('Persistence load error', { sessionId }, error as Error);
@@ -470,14 +551,37 @@ export class SessionStore extends DurableObject<Env> {
     }
   }
 
-  private async getUserSessionsRevokedAfter(userId: string): Promise<number | null> {
+  private async getUserSessionsRevokedAfter(session: Session): Promise<number | null> {
     const now = Date.now();
+    const userId = session.userId;
     const cached = this.userSessionRevocationCache.get(userId);
     if (cached && now - cached.checkedAtMs < USER_SESSION_REVOCATION_CACHE_TTL_MS) {
       return cached.revokedAfterMs;
     }
 
-    const persistence = await this.ensureSessionPersistence();
+    const context = await this.ensurePersistenceContext();
+    if (
+      context.transientAuth?.sessionColdPersistence !== 'disabled' &&
+      context.storageProfileId === 'builtin:storage:tenant-d1'
+    ) {
+      const route = this.routeForSession(session);
+      const resolved = await resolveSessionAccountCoreDataContext(this.env, {
+        tenantId: route.tenantId,
+        accountId: route.accountId,
+        userId,
+        nowMs: now,
+      });
+      if (resolved.tenantId !== route.tenantId || resolved.accountId !== route.accountId) {
+        throw new Error('session_account_route_mismatch');
+      }
+      this.userSessionRevocationCache.set(userId, {
+        revokedAfterMs: resolved.revokedAfterMs,
+        checkedAtMs: now,
+      });
+      return resolved.revokedAfterMs;
+    }
+
+    const persistence = await this.persistenceForRoute(this.routeForSession(session));
     if (!persistence) {
       return null;
     }
@@ -488,19 +592,43 @@ export class SessionStore extends DurableObject<Env> {
       return revokedAfterMs;
     } catch (error) {
       log.error('Session revocation epoch lookup error', { userId }, error as Error);
-      return null;
+      throw new Error('session_revocation_epoch_unavailable');
     }
   }
 
   private async isRevokedByUserEpoch(session: Session): Promise<boolean> {
-    const revokedAfterMs = await this.getUserSessionsRevokedAfter(session.userId);
+    const revokedAfterMs = await this.getUserSessionsRevokedAfter(session);
     return revokedAfterMs !== null && session.createdAt <= revokedAfterMs;
   }
 
   private async dropRevokedSession(session: Session): Promise<void> {
     this.sessionCache.delete(session.id);
-    await this.actorCtx.storage.delete(this.buildSessionKey(session.id));
-    await this.createTombstone(session.id);
+    const route = this.routeForSession(session);
+    await this.actorCtx.storage.deleteMany([
+      this.buildSessionKey(session.id),
+      this.buildSessionRouteKey(session.id),
+    ]);
+    await this.createTombstone(session.id, route);
+  }
+
+  private waitUntilPersistence(
+    operation: Promise<void>,
+    message: string,
+    metadata: Record<string, unknown>
+  ): void {
+    this.ctx.waitUntil(
+      operation.catch((error) => {
+        log.error(message, metadata, error as Error);
+      })
+    );
+  }
+
+  private async persistSessionAndRoute(session: Session): Promise<void> {
+    const route = this.routeForSession(session);
+    await this.ctx.storage.transaction(async (transaction) => {
+      await transaction.put(this.buildSessionRouteKey(session.id), route);
+      await transaction.put(this.buildSessionKey(session.id), session);
+    });
   }
 
   /**
@@ -508,7 +636,7 @@ export class SessionStore extends DurableObject<Env> {
    * Uses retry logic with exponential backoff for reliability
    */
   private async saveToPersistence(session: Session): Promise<void> {
-    const persistence = await this.ensureSessionPersistence();
+    const persistence = await this.persistenceForRoute(this.routeForSession(session));
     if (!persistence) {
       return;
     }
@@ -519,6 +647,7 @@ export class SessionStore extends DurableObject<Env> {
           id: session.id,
           tenantId: session.tenantId,
           userId: session.userId,
+          accountId: session.accountId,
           expiresAt: session.expiresAt,
           createdAt: session.createdAt,
         }),
@@ -531,8 +660,11 @@ export class SessionStore extends DurableObject<Env> {
    * Delete session from cold persistence
    * Uses retry logic with exponential backoff for reliability
    */
-  private async deleteFromPersistence(sessionId: string): Promise<void> {
-    const persistence = await this.ensureSessionPersistence();
+  private async deleteFromPersistence(
+    sessionId: string,
+    route: SessionRouteHint | null
+  ): Promise<void> {
+    const persistence = await this.persistenceForRoute(route);
     if (!persistence) {
       return;
     }
@@ -560,7 +692,10 @@ export class SessionStore extends DurableObject<Env> {
       }
       // Cleanup expired session
       this.sessionCache.delete(sessionId);
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
+      await this.actorCtx.storage.deleteMany([
+        this.buildSessionKey(sessionId),
+        this.buildSessionRouteKey(sessionId),
+      ]);
       return null;
     }
 
@@ -577,7 +712,10 @@ export class SessionStore extends DurableObject<Env> {
         return storedSession;
       }
       // Cleanup expired session
-      await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
+      await this.actorCtx.storage.deleteMany([
+        this.buildSessionKey(sessionId),
+        this.buildSessionRouteKey(sessionId),
+      ]);
       return null;
     }
 
@@ -623,20 +761,21 @@ export class SessionStore extends DurableObject<Env> {
       id: sessionId,
       tenantId: resolvedTenantId,
       userId,
+      accountId: `account:${userId}`,
       expiresAt: Date.now() + ttl * 1000,
       createdAt: Date.now(),
       data,
     };
 
-    // 1. Store in memory cache (hot)
+    // 1. Commit the route and session together so neither can expose partial state.
+    await this.persistSessionAndRoute(session);
+
+    // 3. Promote only a durably stored session to the hot cache.
     this.sessionCache.set(sessionId, session);
 
-    // 2. Persist to Durable Storage (individual key - O(1))
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
-    // 3. Persist to cold storage (backup & audit) - async, don't wait
-    this.saveToPersistence(session).catch((error) => {
-      log.error('Failed to save to persistence', { sessionId }, error as Error);
+    // 4. Persist to cold storage (backup & audit) without shortening the DO event lifetime.
+    this.waitUntilPersistence(this.saveToPersistence(session), 'Failed to save to persistence', {
+      sessionId,
     });
 
     return session;
@@ -652,6 +791,14 @@ export class SessionStore extends DurableObject<Env> {
    * from being loaded via D1 fallback (OIDC RP-Initiated Logout protection)
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
+    let route: SessionRouteHint | null = null;
+    let routeReadFailed = false;
+    try {
+      route = await this.getSessionRoute(sessionId);
+    } catch {
+      routeReadFailed = true;
+    }
+
     // 1. Remove from memory cache
     const hadSession = this.sessionCache.has(sessionId);
     this.sessionCache.delete(sessionId);
@@ -667,7 +814,9 @@ export class SessionStore extends DurableObject<Env> {
     // when it should fail with login_required (OIDC RP-Initiated Logout)
     let persistenceDeleteFailed = false;
     try {
-      await this.deleteFromPersistence(sessionId);
+      if (routeReadFailed) throw new Error('session_route_hint_invalid');
+      await this.deleteFromPersistence(sessionId, route);
+      await this.actorCtx.storage.delete(this.buildSessionRouteKey(sessionId));
     } catch (error) {
       log.error('Failed to delete from persistence', { sessionId }, error as Error);
       persistenceDeleteFailed = true;
@@ -678,7 +827,7 @@ export class SessionStore extends DurableObject<Env> {
     // Critical for OIDC RP-Initiated Logout security
     if (persistenceDeleteFailed) {
       try {
-        await this.createTombstone(sessionId);
+        await this.createTombstone(sessionId, route);
       } catch (tombstoneError) {
         log.error(
           'CRITICAL - Failed to create tombstone for session',
@@ -710,15 +859,20 @@ export class SessionStore extends DurableObject<Env> {
     const MAX_BATCH_SIZE = 1000;
     const failed: string[] = [];
     let deleted = 0;
-    const failedPersistenceDeleteIds: string[] = [];
 
     // Process in chunks to prevent timeout on large batches
     for (let i = 0; i < sessionIds.length; i += MAX_BATCH_SIZE) {
       const chunk = sessionIds.slice(i, i + MAX_BATCH_SIZE);
       const storageKeysToDelete: string[] = [];
+      const routes = new Map<string, SessionRouteHint | null>();
 
       // Process each session in chunk - remove from cache and collect storage keys
       for (const sessionId of chunk) {
+        try {
+          routes.set(sessionId, await this.getSessionRoute(sessionId));
+        } catch {
+          routes.set(sessionId, null);
+        }
         // Remove from memory cache
         this.sessionCache.delete(sessionId);
         // Collect storage keys for batch delete
@@ -740,31 +894,26 @@ export class SessionStore extends DurableObject<Env> {
       // Delete from cold persistence in batch - MUST await to prevent race condition
       if (chunk.length > 0) {
         try {
-          await this.batchDeleteFromPersistence(chunk);
+          await this.batchDeleteFromPersistence(chunk, routes);
+          await this.actorCtx.storage.deleteMany(
+            chunk.map((sessionId) => this.buildSessionRouteKey(sessionId))
+          );
         } catch (error) {
           log.error(
             'Failed to batch delete from persistence',
             { count: chunk.length },
             error as Error
           );
-          failedPersistenceDeleteIds.push(...chunk);
+          try {
+            await this.createTombstonesBatch(chunk, routes);
+          } catch (tombstoneError) {
+            log.error(
+              'CRITICAL - Failed to create tombstones',
+              { count: chunk.length },
+              tombstoneError as Error
+            );
+          }
         }
-      }
-    }
-
-    // Create tombstones for sessions where persistence deletion failed
-    // This prevents persistence fallback from returning stale sessions
-    if (failedPersistenceDeleteIds.length > 0) {
-      try {
-        await this.createTombstonesBatch(failedPersistenceDeleteIds);
-      } catch (tombstoneError) {
-        log.error(
-          'CRITICAL - Failed to create tombstones',
-          { count: failedPersistenceDeleteIds.length },
-          tombstoneError as Error
-        );
-        // This is a critical error - sessions may be resurrected via persistence fallback
-        // In production, this should trigger an alert
       }
     }
 
@@ -778,12 +927,31 @@ export class SessionStore extends DurableObject<Env> {
    * Batch delete sessions from cold persistence
    * Uses a single SQL statement with IN clause for efficiency
    */
-  private async batchDeleteFromPersistence(sessionIds: string[]): Promise<void> {
+  private async batchDeleteFromPersistence(
+    sessionIds: string[],
+    routes: ReadonlyMap<string, SessionRouteHint | null>
+  ): Promise<void> {
     if (sessionIds.length === 0) {
       return;
     }
 
-    const persistence = await this.ensureSessionPersistence();
+    const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.sessionColdPersistence === 'disabled') return;
+    if (context.storageProfileId === 'builtin:storage:tenant-d1') {
+      for (const sessionId of sessionIds) {
+        const route = routes.get(sessionId) ?? null;
+        const persistence = await this.persistenceForRoute(route);
+        if (!persistence) continue;
+        await retryD1Operation(
+          () => persistence.deleteSession(sessionId),
+          'SessionStore.deleteAccountSessionFromPersistence',
+          { maxRetries: 3 }
+        );
+      }
+      return;
+    }
+
+    const persistence = await this.persistenceForRoute(null);
     if (!persistence) {
       return;
     }
@@ -814,6 +982,7 @@ export class SessionStore extends DurableObject<Env> {
           id: session.id,
           tenantId: session.tenantId,
           userId: session.userId,
+          accountId: session.accountId,
           expiresAt: session.expiresAt,
           createdAt: session.createdAt,
         });
@@ -821,7 +990,16 @@ export class SessionStore extends DurableObject<Env> {
     }
 
     // 2. Get from cold persistence - optional, for audit/completeness
-    const persistence = await this.ensureSessionPersistence();
+    const tenantId = await this.ensureTenantContext();
+    const persistence = await this.persistenceForRoute(
+      tenantId
+        ? {
+            tenantId,
+            accountId: `account:${userId}`,
+            expiresAt: now + 1,
+          }
+        : null
+    );
     if (persistence) {
       try {
         const result = await persistence.listUserSessions(userId, now);
@@ -832,6 +1010,7 @@ export class SessionStore extends DurableObject<Env> {
               id: row.id,
               tenantId: row.tenantId,
               userId: row.userId,
+              accountId: row.accountId,
               expiresAt: row.expiresAt,
               createdAt: row.createdAt,
             });
@@ -849,24 +1028,24 @@ export class SessionStore extends DurableObject<Env> {
    * Extend session expiration (Active TTL)
    */
   async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    // Extend expiration
-    session.expiresAt += additionalSeconds * 1000;
-
-    // Update in memory cache
+    const session = {
+      ...current,
+      expiresAt: current.expiresAt + additionalSeconds * 1000,
+    };
+    await this.persistSessionAndRoute(session);
     this.sessionCache.set(sessionId, session);
 
-    // Persist to Durable Storage
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
     // Update in cold persistence - async
-    this.saveToPersistence(session).catch((error) => {
-      log.error('Failed to extend session in persistence', { sessionId }, error as Error);
-    });
+    this.waitUntilPersistence(
+      this.saveToPersistence(session),
+      'Failed to extend session in persistence',
+      { sessionId }
+    );
 
     return session;
   }
@@ -879,22 +1058,20 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     dataUpdates: Partial<SessionData>
   ): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    // Merge new data with existing data
-    session.data = {
-      ...session.data,
-      ...dataUpdates,
+    const session = {
+      ...current,
+      data: {
+        ...current.data,
+        ...dataUpdates,
+      },
     };
-
-    // Update in memory cache
-    this.sessionCache.set(sessionId, session);
-
-    // Persist to Durable Storage
     await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
+    this.sessionCache.set(sessionId, session);
 
     return session;
   }
@@ -905,35 +1082,27 @@ export class SessionStore extends DurableObject<Env> {
    * NOTE: D1 does not store full session data, only basic fields
    */
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    const oldUserId = session.userId;
-    session.userId = newUserId;
-
-    // Update in memory cache
+    const oldUserId = current.userId;
+    const session = {
+      ...current,
+      userId: newUserId,
+      accountId: `account:${newUserId}`,
+    };
+    await this.persistSessionAndRoute(session);
     this.sessionCache.set(sessionId, session);
 
-    // Persist to Durable Storage
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
-    // Update in cold persistence - async
-    const persistence = await this.ensureSessionPersistence();
-    if (persistence) {
-      retryD1Operation(
-        () => persistence.updateSessionUserId(sessionId, newUserId),
-        'SessionStore.updateSessionUserId.persistence',
-        { maxRetries: 3 }
-      ).catch((error) => {
-        log.error(
-          'Failed to update user_id in persistence',
-          { sessionId, newUserId },
-          error as Error
-        );
-      });
-    }
+    // Upsert into the new account route. Any old mirror is inert because cold loads verify
+    // the route account and it expires with the original session TTL.
+    this.waitUntilPersistence(
+      this.saveToPersistence(session),
+      'Failed to update user_id in persistence',
+      { sessionId, newUserId }
+    );
 
     log.info('Updated session user', { sessionId, oldUserId, newUserId });
 
@@ -947,7 +1116,9 @@ export class SessionStore extends DurableObject<Env> {
   private sanitizeSession(session: Session): SessionResponse {
     return {
       id: session.id,
+      tenantId: session.tenantId,
       userId: session.userId,
+      accountId: session.accountId,
       expiresAt: session.expiresAt,
       createdAt: session.createdAt,
       data: session.data, // Include data for OIDC conformance (prompt=none authTime consistency)
@@ -971,6 +1142,29 @@ export class SessionStore extends DurableObject<Env> {
     await this.actorCtx.storage.put(AUTH_CORE_PERSISTENCE_CONTEXT_KEY, resolved);
     this.persistenceContext = resolved;
     return resolved;
+  }
+
+  private async persistenceForRoute(
+    route: SessionRouteHint | null
+  ): Promise<SessionPersistenceAdapter | null> {
+    const context = await this.ensurePersistenceContext();
+    if (context.transientAuth?.sessionColdPersistence === 'disabled') return null;
+    if (context.storageProfileId !== 'builtin:storage:tenant-d1') {
+      return this.ensureSessionPersistence();
+    }
+    if (!route) throw new Error('session_account_route_required');
+    const actorTenantId = await this.ensureTenantContext();
+    if (!actorTenantId || actorTenantId !== route.tenantId) {
+      throw new Error('session_route_tenant_mismatch');
+    }
+    const account = await resolveAccountCoreDataContext(this.env, {
+      tenantId: route.tenantId,
+      accountId: route.accountId,
+    });
+    if (account.tenantId !== route.tenantId || account.accountId !== route.accountId) {
+      throw new Error('session_account_route_mismatch');
+    }
+    return createSessionPersistenceAdapter(account.coreDb, 'session-store-account', route.tenantId);
   }
 
   private async initializeSessionPersistence(): Promise<SessionPersistenceAdapter | null> {

@@ -11,6 +11,7 @@ import {
   // Health Check
   createHealthCheckHandlers,
   getLogger,
+  createTenantPlacementWriteFenceResponse,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
@@ -125,6 +126,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
+  const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
+  if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('USERINFO');
   log.error('Unhandled error in UserInfo service', { error: err.message }, err as Error);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
@@ -132,3 +135,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

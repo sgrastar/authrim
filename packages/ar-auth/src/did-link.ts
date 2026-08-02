@@ -25,6 +25,9 @@ import {
   getTenantIdFromContext,
   LinkedIdentityRepository,
   createPIIContextFromHono,
+  createAuthContextFromHono,
+  validateAccountDirectoryPublication,
+  type AccountDirectoryPublication,
   resolveDID,
   type DIDDocument,
   type VerificationMethod,
@@ -42,6 +45,11 @@ import { jwtVerify, importJWK, decodeProtectedHeader } from 'jose';
  * - EdDSA: For Ed25519 keys (did:key)
  */
 const ALLOWED_DID_AUTH_ALGORITHMS = ['ES256', 'ES384', 'ES512', 'EdDSA'];
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * Extract session from request cookie or Authorization header
@@ -446,25 +454,106 @@ export async function didUnlinkHandler(c: Context<{ Bindings: Env }>): Promise<R
     const tenantId = getTenantIdFromContext(c);
     const adapter = createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
     const linkedIdentityRepo = new LinkedIdentityRepository(adapter);
+    const accountId = `account:${userId}`;
+    const [issuerDigest, subjectDigest] = await Promise.all([sha256Hex('did'), sha256Hex(did)]);
+    const operationId = `external-unlink:${(await sha256Hex(`${tenantId}\0${accountId}\0did\0${did}`)).slice(0, 32)}`;
 
     // Find the link
     const link = await linkedIdentityRepo.findByProviderUser(tenantId, 'did', did);
-    if (!link) {
+    const existing = await adapter.queryOne<{
+      tenant_id: string;
+      account_id: string;
+      user_id: string;
+      issuer_sha256: string;
+      subject_sha256: string;
+      state: string;
+    }>(
+      `SELECT tenant_id, account_id, user_id, issuer_sha256, subject_sha256, state
+         FROM external_identifier_unlink_operations WHERE operation_id = ?`,
+      [operationId]
+    );
+    if (!link && !existing) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
     // Verify ownership
-    if (link.user_id !== userId) {
+    if (link && link.user_id !== userId) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
+    if (
+      existing &&
+      (existing.tenant_id !== tenantId ||
+        existing.account_id !== accountId ||
+        existing.user_id !== userId ||
+        existing.issuer_sha256 !== issuerDigest ||
+        existing.subject_sha256 !== subjectDigest)
+    ) {
+      throw new Error('identifier_unlink_operation_conflict');
+    }
+    if (existing?.state === 'blocked') throw new Error('identifier_unlink_operation_blocked');
 
-    // Delete the link
-    const deleted = await linkedIdentityRepo.unlink(tenantId, userId, 'did');
+    if (!existing) {
+      const routeRow = await createAuthContextFromHono(c, tenantId).coreAdapter.queryOne<{
+        payload_json: string;
+      }>(
+        `SELECT outbox.payload_json
+           FROM identity_accounts account
+           JOIN account_routing_outbox outbox
+             ON outbox.tenant_id = account.tenant_id AND outbox.account_id = account.id
+            AND outbox.event_kind = 'account_created'
+            AND outbox.route_generation = account.account_route_generation
+          WHERE account.tenant_id = ? AND account.id = ?
+            AND account.lifecycle_state = 'active'
+            AND account.directory_publication_state = 'active'
+            AND outbox.status = 'succeeded'`,
+        [tenantId, accountId]
+      );
+      if (!routeRow) throw new Error('identifier_directory_route_unavailable');
+      const route = await validateAccountDirectoryPublication(
+        JSON.parse(routeRow.payload_json) as AccountDirectoryPublication
+      );
+      if (route.tenantId !== tenantId || route.accountId !== accountId) {
+        throw new Error('identifier_directory_route_mismatch');
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const results = await adapter.batch([
+        {
+          sql: `INSERT INTO external_identifier_unlink_operations (
+             operation_id, tenant_id, account_id, user_id, issuer_json, subject_json,
+             issuer_sha256, subject_sha256, route_projection_json, state,
+             attempt_count, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+          params: [
+            operationId,
+            tenantId,
+            accountId,
+            userId,
+            JSON.stringify('did'),
+            JSON.stringify(did),
+            issuerDigest,
+            subjectDigest,
+            JSON.stringify(route.routeProjection),
+            now,
+            now,
+          ],
+        },
+        {
+          sql: `DELETE FROM linked_identities
+            WHERE tenant_id = ? AND user_id = ? AND provider_id = 'did' AND provider_user_id = ?`,
+          params: [tenantId, userId, did],
+        },
+      ]);
+      if (results[0]?.rowsAffected !== 1 || results[1]?.rowsAffected !== 1) {
+        throw new Error('identifier_unlink_delete_conflict');
+      }
+    }
 
     return c.json({
-      success: deleted,
+      success: true,
       did,
-      message: deleted ? 'DID unlinked successfully' : 'Failed to unlink DID',
+      cleanup_pending: existing?.state !== 'completed',
+      operation_id: operationId,
+      message: 'DID unlinked successfully',
     });
   } catch (error) {
     log.error('DID unlink error', { action: 'unlink' }, error as Error);

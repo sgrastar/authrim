@@ -58,6 +58,7 @@ import {
   // Logger
   getLogger,
   getTenantSystemSettings,
+  resolveClientTrustPolicy,
 } from '@authrim/ar-lib-core';
 import { redirectWithError } from './authorize';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
@@ -222,7 +223,10 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     // Load client metadata via Repository
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const client = await authCtx.repositories.client.findByClientId(client_id);
+    const [client, trustPolicy] = await Promise.all([
+      authCtx.repositories.client.findByClientId(client_id),
+      resolveClientTrustPolicy(authCtx.coreAdapter, tenantId, 'oidc_client', client_id),
+    ]);
 
     // Map to clientRow format for compatibility
     const clientRow = client
@@ -233,7 +237,12 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
           client_uri: client.client_uri ?? null,
           policy_uri: client.policy_uri ?? null,
           tos_uri: client.tos_uri ?? null,
-          is_trusted: client.is_trusted ? 1 : null,
+          // Legacy oauth_clients trust flags are compatibility data, not consent authority.
+          is_trusted:
+            trustPolicy?.first_party &&
+            (trustPolicy.trusted || trustPolicy.skip_authorization_consent)
+              ? 1
+              : null,
         }
       : null;
 

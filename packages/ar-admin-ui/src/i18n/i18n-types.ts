@@ -900,6 +900,10 @@ type RootTranslation = {
 	 */
 	admin_nav_scale: string
 	/**
+	 * C​o​n​t​r​o​l​ ​P​l​a​n​e
+	 */
+	admin_nav_control_plane: string
+	/**
 	 * S​t​o​r​a​g​e​ ​D​e​s​t​i​n​a​t​i​o​n​s
 	 */
 	admin_nav_storage_destinations: string
@@ -1751,6 +1755,43 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​u​s​e​r
 	 */
 	admin_users_error_create: string
+	/**
+	 * A​c​c​o​u​n​t​ ​p​r​o​v​i​s​i​o​n​i​n​g​ ​i​s​ ​p​e​n​d​i​n​g​.​ ​O​p​e​r​a​t​i​o​n​:​ ​{​o​p​e​r​a​t​i​o​n​I​d​}
+	 * @param {string} operationId
+	 */
+	admin_users_creation_pending: RequiredParams<'operationId'>
+	/**
+	 * E​m​a​i​l​ ​c​h​a​n​g​e​ ​s​t​a​t​u​s
+	 */
+	admin_user_detail_identifier_operations: string
+	/**
+	 * L​o​a​d​i​n​g​ ​e​m​a​i​l​ ​c​h​a​n​g​e​ ​s​t​a​t​u​s​.​.​.
+	 */
+	admin_user_detail_identifier_operations_loading: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​e​m​a​i​l​ ​c​h​a​n​g​e​ ​s​t​a​t​u​s
+	 */
+	admin_user_detail_identifier_operations_error: string
+	/**
+	 * F​o​r​w​a​r​d​ ​r​e​p​a​i​r​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_user_detail_identifier_operation_attention: string
+	/**
+	 * P​r​o​c​e​s​s​i​n​g​ ​a​u​t​o​m​a​t​i​c​a​l​l​y
+	 */
+	admin_user_detail_identifier_operation_processing: string
+	/**
+	 * R​e​s​u​m​e
+	 */
+	admin_user_detail_identifier_operation_resume: string
+	/**
+	 * R​e​s​u​m​i​n​g​.​.​.
+	 */
+	admin_user_detail_identifier_operation_resuming: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​u​m​e​ ​e​m​a​i​l​ ​c​h​a​n​g​e
+	 */
+	admin_user_detail_identifier_operation_resume_error: string
 	/**
 	 * G​i​v​e​n​ ​N​a​m​e
 	 */
@@ -7864,6 +7905,134 @@ type RootTranslation = {
 	 */
 	admin_scale_map_traffic_flow: string
 	/**
+	 * R​e​a​d​ ​R​e​p​l​i​c​a​t​i​o​n
+	 */
+	admin_scale_read_replication: string
+	/**
+	 * O​n
+	 */
+	admin_scale_read_replication_on: string
+	/**
+	 * O​f​f
+	 */
+	admin_scale_read_replication_off: string
+	/**
+	 * U​p​d​a​t​i​n​g
+	 */
+	admin_scale_read_replication_updating: string
+	/**
+	 * A​t​t​e​n​t​i​o​n​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_scale_read_replication_attention: string
+	/**
+	 * T​o​g​g​l​e​ ​r​e​a​d​ ​r​e​p​l​i​c​a​t​i​o​n
+	 */
+	admin_scale_read_replication_toggle: string
+	/**
+	 * R​e​t​r​y​ ​r​e​a​d​ ​r​e​p​l​i​c​a​t​i​o​n​ ​r​o​l​l​o​u​t
+	 */
+	admin_scale_read_replication_retry: string
+	/**
+	 * R​e​a​d​ ​r​e​p​l​i​c​a​t​i​o​n​ ​s​t​a​t​u​s​ ​i​s​ ​u​n​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_scale_read_replication_load_failed: string
+	/**
+	 * R​e​a​d​ ​r​e​p​l​i​c​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​u​p​d​a​t​e​d​.
+	 */
+	admin_scale_read_replication_update_failed: string
+	/**
+	 * T​e​n​a​n​t​ ​D​1​ ​C​a​p​a​c​i​t​y
+	 */
+	admin_scale_d1_capacity: string
+	/**
+	 * P​r​o​v​i​s​i​o​n​i​n​g​ ​s​c​o​p​e​ ​a​n​d​ ​c​u​r​r​e​n​t​ ​c​a​p​a​c​i​t​y​ ​p​l​a​n
+	 */
+	admin_scale_d1_capacity_status: string
+	/**
+	 * S​c​o​p​e
+	 */
+	admin_scale_d1_scope: string
+	/**
+	 * S​h​a​r​e​d​ ​p​o​o​l
+	 */
+	admin_scale_d1_scope_shared: string
+	/**
+	 * D​e​d​i​c​a​t​e​d​ ​t​e​n​a​n​t
+	 */
+	admin_scale_d1_scope_tenant: string
+	/**
+	 * T​e​n​a​n​t
+	 */
+	admin_scale_d1_tenant: string
+	/**
+	 * C​a​p​a​c​i​t​y​ ​p​r​o​f​i​l​e
+	 */
+	admin_scale_d1_profile: string
+	/**
+	 * M​i​n​i​m​u​m
+	 */
+	admin_scale_d1_profile_minimum: string
+	/**
+	 * S​m​a​l​l​e​s​t​ ​v​a​l​i​d​ ​u​n​i​t
+	 */
+	admin_scale_d1_profile_minimum_detail: string
+	/**
+	 * R​e​c​o​m​m​e​n​d​e​d
+	 */
+	admin_scale_d1_profile_recommended: string
+	/**
+	 * P​l​a​n​n​e​r​ ​t​a​r​g​e​t
+	 */
+	admin_scale_d1_profile_recommended_detail: string
+	/**
+	 * E​x​t​r​a​ ​h​e​a​d​r​o​o​m
+	 */
+	admin_scale_d1_profile_extra: string
+	/**
+	 * O​n​e​ ​a​d​d​i​t​i​o​n​a​l​ ​s​p​a​r​e​ ​u​n​i​t
+	 */
+	admin_scale_d1_profile_extra_detail: string
+	/**
+	 * P​r​e​v​i​e​w
+	 */
+	admin_scale_d1_preview: string
+	/**
+	 * A​d​d​ ​c​a​p​a​c​i​t​y
+	 */
+	admin_scale_d1_request: string
+	/**
+	 * C​a​p​a​c​i​t​y​ ​u​n​i​t​s
+	 */
+	admin_scale_d1_units: string
+	/**
+	 * D​1​ ​d​a​t​a​b​a​s​e​s
+	 */
+	admin_scale_d1_databases: string
+	/**
+	 * E​n​v​i​r​o​n​m​e​n​t​ ​t​o​t​a​l
+	 */
+	admin_scale_d1_projected_total: string
+	/**
+	 * T​h​i​s​ ​c​a​p​a​c​i​t​y​ ​p​r​o​f​i​l​e​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_scale_d1_unavailable: string
+	/**
+	 * C​u​r​r​e​n​t​ ​c​a​p​a​c​i​t​y​ ​a​l​r​e​a​d​y​ ​s​a​t​i​s​f​i​e​s​ ​t​h​i​s​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_scale_d1_no_change: string
+	/**
+	 * C​a​p​a​c​i​t​y​ ​o​p​e​r​a​t​i​o​n​s​ ​w​e​r​e​ ​c​r​e​a​t​e​d​.
+	 */
+	admin_scale_d1_capacity_requested: string
+	/**
+	 * C​a​p​a​c​i​t​y​ ​p​r​e​v​i​e​w​ ​i​s​ ​u​n​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_scale_d1_capacity_preview_failed: string
+	/**
+	 * C​a​p​a​c​i​t​y​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​q​u​e​s​t​e​d​.
+	 */
+	admin_scale_d1_capacity_request_failed: string
+	/**
 	 * S​e​s​s​i​o​n​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_sessions_head_title: string
@@ -13626,24 +13795,6 @@ type RootTranslation = {
 	 */
 	admin_tenants_single_mode_setup_hint: string
 	/**
-	 * T​e​n​a​n​t​ ​D​1​ ​s​l​o​t​s
-	 */
-	admin_tenants_d1_slots: string
-	/**
-	 * A​v​a​i​l​a​b​l​e​ ​{​a​v​a​i​l​a​b​l​e​}​ ​/​ ​{​c​a​p​a​c​i​t​y​}
-	 * @param {number} available
-	 * @param {number} capacity
-	 */
-	admin_tenants_d1_slots_available: RequiredParams<'available' | 'capacity'>
-	/**
-	 * N​o​ ​p​r​e​a​l​l​o​c​a​t​e​d​ ​t​e​n​a​n​t​ ​D​1​ ​s​l​o​t​s​ ​a​v​a​i​l​a​b​l​e
-	 */
-	admin_tenants_d1_exhausted_title: string
-	/**
-	 * U​s​e​ ​t​h​e​ ​s​e​t​u​p​ ​t​o​o​l​ ​e​x​i​s​t​i​n​g​ ​e​n​v​i​r​o​n​m​e​n​t​ ​s​e​t​t​i​n​g​s​ ​t​o​ ​a​d​d​ ​t​e​n​a​n​t​ ​D​1​ ​s​l​o​t​s​.
-	 */
-	admin_tenants_d1_exhausted_message: string
-	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​e​n​a​n​t​s
 	 */
 	admin_tenants_load_failed: string
@@ -13679,6 +13830,26 @@ type RootTranslation = {
 	 * D​e​s​c​r​i​p​t​i​o​n
 	 */
 	admin_tenants_description_label: string
+	/**
+	 * D​a​t​a​ ​p​l​a​c​e​m​e​n​t
+	 */
+	admin_tenants_placement_label: string
+	/**
+	 * S​t​a​n​d​a​r​d
+	 */
+	admin_tenants_placement_shared: string
+	/**
+	 * S​h​a​r​e​ ​p​h​y​s​i​c​a​l​ ​d​a​t​a​b​a​s​e​ ​c​a​p​a​c​i​t​y​ ​w​i​t​h​ ​o​t​h​e​r​ ​t​e​n​a​n​t​s​.
+	 */
+	admin_tenants_placement_shared_hint: string
+	/**
+	 * P​h​y​s​i​c​a​l​ ​i​s​o​l​a​t​i​o​n
+	 */
+	admin_tenants_placement_exclusive: string
+	/**
+	 * U​s​e​ ​p​h​y​s​i​c​a​l​ ​d​a​t​a​b​a​s​e​s​ ​r​e​s​e​r​v​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​ ​o​n​l​y​.
+	 */
+	admin_tenants_placement_exclusive_hint: string
 	/**
 	 * S​t​a​t​u​s
 	 */
@@ -13972,17 +14143,229 @@ type RootTranslation = {
 	 */
 	admin_tenants_provisioning_inactive_title: string
 	/**
-	 * T​h​i​s​ ​t​e​n​a​n​t​ ​d​i​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​ ​s​e​t​u​p​.​ ​O​p​e​r​a​t​i​o​n​a​l​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​u​n​a​v​a​i​l​a​b​l​e​ ​u​n​t​i​l​ ​t​h​e​ ​f​a​i​l​e​d​ ​d​r​a​f​t​ ​i​s​ ​c​l​e​a​n​e​d​ ​u​p​ ​a​n​d​ ​t​h​e​ ​s​l​o​t​ ​i​s​ ​r​e​s​e​t​ ​f​r​o​m​ ​t​h​e​ ​s​e​t​u​p​ ​t​o​o​l​.
-	 */
-	admin_tenants_provisioning_failed_description: string
-	/**
 	 * T​h​i​s​ ​t​e​n​a​n​t​ ​i​s​ ​i​n​a​c​t​i​v​e​.​ ​O​p​e​r​a​t​i​o​n​a​l​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​h​i​d​d​e​n​ ​u​n​t​i​l​ ​i​t​ ​i​s​ ​r​e​a​c​t​i​v​a​t​e​d​.
 	 */
 	admin_tenants_provisioning_inactive_description: string
 	/**
-	 * S​l​o​t
+	 * T​e​n​a​n​t​ ​s​e​t​u​p
 	 */
-	admin_tenants_slot: string
+	admin_tenants_provisioning_title: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​e​n​a​n​t​ ​s​e​t​u​p​ ​s​t​a​t​u​s​.
+	 */
+	admin_tenants_provisioning_load_failed: string
+	/**
+	 * S​e​t​u​p​ ​i​s​ ​q​u​e​u​e​d​.
+	 */
+	admin_tenants_provisioning_status_queued: string
+	/**
+	 * S​e​t​u​p​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.
+	 */
+	admin_tenants_provisioning_status_running: string
+	/**
+	 * S​e​t​u​p​ ​i​s​ ​w​a​i​t​i​n​g​ ​t​o​ ​r​e​t​r​y​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
+	 */
+	admin_tenants_provisioning_status_waiting: string
+	/**
+	 * S​e​t​u​p​ ​n​e​e​d​s​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​a​t​t​e​n​t​i​o​n​.
+	 */
+	admin_tenants_provisioning_status_blocked: string
+	/**
+	 * S​e​t​u​p​ ​c​o​m​p​l​e​t​e​d​.
+	 */
+	admin_tenants_provisioning_status_succeeded: string
+	/**
+	 * S​e​t​u​p​ ​w​a​s​ ​c​a​n​c​e​l​e​d​.
+	 */
+	admin_tenants_provisioning_status_canceled: string
+	/**
+	 * R​e​q​u​e​s​t​ ​a​c​c​e​p​t​e​d
+	 */
+	admin_tenants_provisioning_step_request: string
+	/**
+	 * D​a​t​a​b​a​s​e​ ​c​a​p​a​c​i​t​y
+	 */
+	admin_tenants_provisioning_step_capacity: string
+	/**
+	 * D​a​t​a​b​a​s​e​ ​r​o​u​t​e
+	 */
+	admin_tenants_provisioning_step_route: string
+	/**
+	 * T​e​n​a​n​t​ ​d​a​t​a
+	 */
+	admin_tenants_provisioning_step_seed: string
+	/**
+	 * R​u​n​t​i​m​e​ ​r​e​g​i​s​t​r​y
+	 */
+	admin_tenants_provisioning_step_registry: string
+	/**
+	 * R​u​n​t​i​m​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
+	 */
+	admin_tenants_provisioning_step_smoke: string
+	/**
+	 * T​e​n​a​n​t​ ​c​o​n​f​i​g​u​r​a​t​i​o​n
+	 */
+	admin_tenants_provisioning_step_prepare: string
+	/**
+	 * L​o​g​i​n​ ​l​o​o​k​u​p
+	 */
+	admin_tenants_provisioning_step_lookup: string
+	/**
+	 * A​c​t​i​v​a​t​i​o​n
+	 */
+	admin_tenants_provisioning_step_activate: string
+	/**
+	 * T​e​n​a​n​t​ ​s​e​t​t​i​n​g​s​ ​d​a​t​a​b​a​s​e
+	 */
+	admin_tenants_provisioning_role_default: string
+	/**
+	 * A​c​c​o​u​n​t​ ​d​a​t​a​b​a​s​e
+	 */
+	admin_tenants_provisioning_role_users: string
+	/**
+	 * P​e​r​s​o​n​a​l​ ​d​a​t​a​ ​d​a​t​a​b​a​s​e
+	 */
+	admin_tenants_provisioning_role_pii: string
+	/**
+	 * C​r​e​a​t​i​n​g​ ​D​1
+	 */
+	admin_tenants_provisioning_control_create_d1: string
+	/**
+	 * A​p​p​l​y​i​n​g​ ​m​i​g​r​a​t​i​o​n​s
+	 */
+	admin_tenants_provisioning_control_migrations: string
+	/**
+	 * U​p​d​a​t​i​n​g​ ​W​o​r​k​e​r​ ​b​i​n​d​i​n​g​s
+	 */
+	admin_tenants_provisioning_control_bindings: string
+	/**
+	 * V​e​r​i​f​y​i​n​g​ ​W​o​r​k​e​r​ ​b​i​n​d​i​n​g​s
+	 */
+	admin_tenants_provisioning_control_smoke: string
+	/**
+	 * W​a​i​t​i​n​g​ ​f​o​r​ ​b​i​n​d​i​n​g​ ​p​r​o​p​a​g​a​t​i​o​n
+	 */
+	admin_tenants_provisioning_control_stabilize: string
+	/**
+	 * P​h​y​s​i​c​a​l​ ​d​a​t​a​ ​i​s​o​l​a​t​i​o​n
+	 */
+	admin_tenants_placement_migration_title: string
+	/**
+	 * T​h​i​s​ ​t​e​n​a​n​t​ ​c​u​r​r​e​n​t​l​y​ ​s​h​a​r​e​s​ ​p​h​y​s​i​c​a​l​ ​d​a​t​a​b​a​s​e​ ​c​a​p​a​c​i​t​y​.​ ​M​o​v​e​ ​i​t​ ​o​n​l​i​n​e​ ​t​o​ ​d​a​t​a​b​a​s​e​s​ ​r​e​s​e​r​v​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_tenants_placement_migration_shared_description: string
+	/**
+	 * T​h​i​s​ ​t​e​n​a​n​t​ ​u​s​e​s​ ​p​h​y​s​i​c​a​l​ ​d​a​t​a​b​a​s​e​s​ ​r​e​s​e​r​v​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_tenants_placement_migration_exclusive_description: string
+	/**
+	 * M​o​v​e​ ​t​o​ ​i​s​o​l​a​t​e​d​ ​d​a​t​a​b​a​s​e​s
+	 */
+	admin_tenants_placement_migration_start: string
+	/**
+	 * S​t​a​r​t​i​n​g​ ​m​i​g​r​a​t​i​o​n​.​.​.
+	 */
+	admin_tenants_placement_migration_starting: string
+	/**
+	 * C​a​n​c​e​l​ ​m​i​g​r​a​t​i​o​n
+	 */
+	admin_tenants_placement_migration_cancel: string
+	/**
+	 * C​a​n​c​e​l​i​n​g​.​.​.
+	 */
+	admin_tenants_placement_migration_canceling: string
+	/**
+	 * A​p​p​r​o​v​e​ ​s​o​u​r​c​e​ ​p​u​r​g​e
+	 */
+	admin_tenants_placement_migration_purge: string
+	/**
+	 * C​o​n​f​i​r​m​ ​p​u​r​g​e​ ​a​p​p​r​o​v​a​l​.​ ​Q​u​a​r​a​n​t​i​n​e​d​ ​s​o​u​r​c​e​ ​r​o​w​s​ ​b​e​c​o​m​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​p​e​r​m​a​n​e​n​t​ ​d​e​l​e​t​i​o​n​.
+	 */
+	admin_tenants_placement_migration_purge_confirm: string
+	/**
+	 * C​o​n​f​i​r​m​ ​p​u​r​g​e​ ​a​p​p​r​o​v​a​l
+	 */
+	admin_tenants_placement_migration_purge_confirm_action: string
+	/**
+	 * C​o​n​t​r​o​l​ ​s​t​a​t​u​s​ ​i​s​ ​t​e​m​p​o​r​a​r​i​l​y​ ​u​n​a​v​a​i​l​a​b​l​e​.​ ​L​o​c​a​l​ ​p​r​o​g​r​e​s​s​ ​r​e​m​a​i​n​s​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_tenants_placement_migration_control_unavailable: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​p​l​a​c​e​m​e​n​t​ ​m​i​g​r​a​t​i​o​n​ ​s​t​a​t​u​s​.
+	 */
+	admin_tenants_placement_migration_load_failed: string
+	/**
+	 * P​l​a​c​e​m​e​n​t​ ​m​i​g​r​a​t​i​o​n​ ​a​c​t​i​o​n​ ​f​a​i​l​e​d​.
+	 */
+	admin_tenants_placement_migration_action_failed: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​i​s​ ​q​u​e​u​e​d​.
+	 */
+	admin_tenants_placement_migration_status_queued: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.
+	 */
+	admin_tenants_placement_migration_status_running: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​i​s​ ​w​a​i​t​i​n​g​ ​t​o​ ​r​e​t​r​y​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
+	 */
+	admin_tenants_placement_migration_status_waiting: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​n​e​e​d​s​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​a​t​t​e​n​t​i​o​n​.
+	 */
+	admin_tenants_placement_migration_status_blocked: string
+	/**
+	 * C​u​t​o​v​e​r​ ​c​o​m​p​l​e​t​e​d​.
+	 */
+	admin_tenants_placement_migration_status_succeeded: string
+	/**
+	 * M​i​g​r​a​t​i​o​n​ ​w​a​s​ ​c​a​n​c​e​l​e​d​ ​b​e​f​o​r​e​ ​c​u​t​o​v​e​r​.
+	 */
+	admin_tenants_placement_migration_status_canceled: string
+	/**
+	 * P​r​e​p​a​r​e​ ​i​s​o​l​a​t​e​d​ ​d​a​t​a​b​a​s​e​s
+	 */
+	admin_tenants_placement_migration_step_wait_control: string
+	/**
+	 * L​o​c​k​ ​r​o​u​t​e​ ​g​e​n​e​r​a​t​i​o​n
+	 */
+	admin_tenants_placement_migration_step_begin_cutover: string
+	/**
+	 * P​r​e​p​a​r​e​ ​a​c​c​o​u​n​t​ ​r​o​u​t​e​s
+	 */
+	admin_tenants_placement_migration_step_prepare_lookup: string
+	/**
+	 * P​r​e​p​a​r​e​ ​t​e​n​a​n​t​ ​r​o​u​t​e
+	 */
+	admin_tenants_placement_migration_step_prepare_alias: string
+	/**
+	 * C​o​m​m​i​t​ ​p​l​a​c​e​m​e​n​t
+	 */
+	admin_tenants_placement_migration_step_commit_control: string
+	/**
+	 * P​u​b​l​i​s​h​ ​r​u​n​t​i​m​e​ ​r​e​g​i​s​t​r​y
+	 */
+	admin_tenants_placement_migration_step_publish_registry: string
+	/**
+	 * A​c​t​i​v​a​t​e​ ​t​e​n​a​n​t​ ​r​o​u​t​e
+	 */
+	admin_tenants_placement_migration_step_activate_alias: string
+	/**
+	 * A​c​t​i​v​a​t​e​ ​a​c​c​o​u​n​t​ ​r​o​u​t​e​s
+	 */
+	admin_tenants_placement_migration_step_activate_lookup: string
+	/**
+	 * V​e​r​i​f​y​ ​a​c​t​i​v​e​ ​r​o​u​t​e​s
+	 */
+	admin_tenants_placement_migration_step_verify_routes: string
+	/**
+	 * Q​u​a​r​a​n​t​i​n​e​ ​s​h​a​r​e​d​ ​s​o​u​r​c​e​ ​r​o​w​s
+	 */
+	admin_tenants_placement_migration_step_finalize_source: string
+	/**
+	 * C​o​m​p​l​e​t​e
+	 */
+	admin_tenants_placement_migration_step_complete: string
 	/**
 	 * L​a​s​t​ ​E​r​r​o​r
 	 */
@@ -21953,6 +22336,10 @@ type RootTranslation = {
 	 */
 	admin_notifications_category_tenant_database_health: string
 	/**
+	 * C​o​n​t​r​o​l​ ​p​l​a​n​e​ ​d​r​i​f​t
+	 */
+	admin_notifications_category_control_plane_drift: string
+	/**
 	 * L​o​g​g​i​n​g​ ​d​e​s​t​i​n​a​t​i​o​n​ ​h​e​a​l​t​h
 	 */
 	admin_notifications_category_logging_destination_health: string
@@ -22044,6 +22431,15 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​r​u​n​ ​n​o​t​i​f​i​c​a​t​i​o​n​ ​d​e​l​i​v​e​r​y
 	 */
 	admin_notifications_run_delivery_failed: string
+	/**
+	 * C​o​n​t​r​o​l​ ​p​l​a​n​e​ ​d​e​t​e​c​t​e​d​ ​{​c​o​u​n​t​}​ ​u​n​k​n​o​w​n​ ​W​o​r​k​e​r​ ​s​c​r​i​p​t​(​s​)​.
+	 * @param {number} count
+	 */
+	admin_notifications_control_plane_drift_banner: RequiredParams<'count'>
+	/**
+	 * R​e​v​i​e​w​ ​d​r​i​f​t​ ​f​i​n​d​i​n​g​s
+	 */
+	admin_notifications_review_control_plane_drift: string
 	/**
 	 * D​a​t​a​b​a​s​e​ ​C​o​n​n​e​c​t​i​o​n​s​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -24807,6 +25203,10 @@ type RootTranslation = {
 	 */
 	admin_external_token_refresh_scheduled_tenant_batch_size: string
 	/**
+	 * P​I​I​ ​s​h​a​r​d​s​ ​p​e​r​ ​t​e​n​a​n​t​ ​s​t​e​p
+	 */
+	admin_external_token_refresh_pii_shard_page_size: string
+	/**
 	 * S​a​v​i​n​g​.​.​.
 	 */
 	admin_external_token_refresh_saving: string
@@ -25188,6 +25588,90 @@ type RootTranslation = {
 	 */
 	admin_plugins_capabilities: string
 	/**
+	 * A​d​v​a​n​c​e​d​ ​r​e​s​o​u​r​c​e​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_plugins_resource_advanced: string
+	/**
+	 * A​u​t​h​r​i​m​ ​c​r​e​a​t​e​s​ ​a​n​d​ ​m​a​n​a​g​e​s​ ​t​h​e​s​e​ ​r​e​s​o​u​r​c​e​s​ ​b​y​ ​d​e​f​a​u​l​t​.​ ​C​h​a​n​g​e​ ​t​h​i​s​ ​o​n​l​y​ ​w​h​e​n​ ​r​e​u​s​i​n​g​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​.
+	 */
+	admin_plugins_resource_managed_default: string
+	/**
+	 * U​s​e​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e
+	 */
+	admin_plugins_use_existing_resource: string
+	/**
+	 * C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​ ​I​D
+	 */
+	admin_plugins_provider_resource_id: string
+	/**
+	 * C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​ ​n​a​m​e
+	 */
+	admin_plugins_provider_resource_name: string
+	/**
+	 * E​n​t​e​r​ ​b​o​t​h​ ​t​h​e​ ​C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​ ​I​D​ ​a​n​d​ ​n​a​m​e​ ​f​o​r​ ​e​v​e​r​y​ ​s​e​l​e​c​t​e​d​ ​e​x​i​s​t​i​n​g​ ​r​e​s​o​u​r​c​e​.
+	 */
+	admin_plugins_existing_resource_required: string
+	/**
+	 * A​u​t​h​r​i​m​ ​v​e​r​i​f​i​e​s​ ​a​n​d​ ​b​i​n​d​s​ ​t​h​i​s​ ​r​e​s​o​u​r​c​e​,​ ​b​u​t​ ​n​e​v​e​r​ ​d​e​l​e​t​e​s​ ​t​h​e​ ​u​n​d​e​r​l​y​i​n​g​ ​C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​.
+	 */
+	admin_plugins_existing_resource_retained: string
+	/**
+	 * U​n​i​n​s​t​a​l​l​ ​r​e​s​o​u​r​c​e​s
+	 */
+	admin_plugins_uninstall: string
+	/**
+	 * S​t​a​r​t​i​n​g​ ​c​l​e​a​n​u​p​.​.​.
+	 */
+	admin_plugins_uninstalling: string
+	/**
+	 * D​i​s​a​b​l​e​ ​t​h​i​s​ ​p​l​u​g​i​n​ ​a​n​d​ ​d​e​l​e​t​e​ ​i​t​s​ ​A​u​t​h​r​i​m​-​m​a​n​a​g​e​d​ ​C​l​o​u​d​f​l​a​r​e​ ​r​e​s​o​u​r​c​e​s​ ​a​f​t​e​r​ ​a​ ​3​0​-​m​i​n​u​t​e​ ​q​u​a​r​a​n​t​i​n​e​?​ ​E​x​i​s​t​i​n​g​ ​r​e​s​o​u​r​c​e​s​ ​w​i​l​l​ ​b​e​ ​d​e​t​a​c​h​e​d​ ​a​n​d​ ​r​e​t​a​i​n​e​d​.
+	 */
+	admin_plugins_uninstall_confirm: string
+	/**
+	 * R​e​s​o​u​r​c​e​ ​c​l​e​a​n​u​p​ ​r​e​q​u​e​s​t​e​d​.
+	 */
+	admin_plugins_uninstall_requested: string
+	/**
+	 * R​e​s​o​u​r​c​e​ ​c​l​e​a​n​u​p
+	 */
+	admin_plugins_cleanup_title: string
+	/**
+	 * B​i​n​d​i​n​g​s​ ​a​r​e​ ​b​e​i​n​g​ ​r​e​m​o​v​e​d​ ​b​e​f​o​r​e​ ​t​h​e​ ​3​0​-​m​i​n​u​t​e​ ​q​u​a​r​a​n​t​i​n​e​ ​a​n​d​ ​c​l​e​a​n​u​p​.
+	 */
+	admin_plugins_cleanup_pending: string
+	/**
+	 * M​a​n​a​g​e​d​ ​r​e​s​o​u​r​c​e​s​ ​w​e​r​e​ ​d​e​l​e​t​e​d​ ​a​n​d​ ​e​x​i​s​t​i​n​g​ ​r​e​s​o​u​r​c​e​s​ ​w​e​r​e​ ​r​e​t​a​i​n​e​d​.
+	 */
+	admin_plugins_cleanup_complete: string
+	/**
+	 * R​e​s​o​u​r​c​e​ ​c​l​e​a​n​u​p​ ​n​e​e​d​s​ ​o​p​e​r​a​t​o​r​ ​a​t​t​e​n​t​i​o​n​.
+	 */
+	admin_plugins_cleanup_blocked: string
+	/**
+	 * R​e​s​o​u​r​c​e​ ​p​r​o​v​i​s​i​o​n​i​n​g
+	 */
+	admin_plugins_provisioning_title: string
+	/**
+	 * C​r​e​a​t​i​n​g​ ​a​n​d​ ​v​e​r​i​f​y​i​n​g​ ​t​h​e​ ​p​l​u​g​i​n​ ​r​e​s​o​u​r​c​e​s​.
+	 */
+	admin_plugins_provisioning_pending: string
+	/**
+	 * R​e​s​o​u​r​c​e​s​ ​a​r​e​ ​r​e​a​d​y​.​ ​E​n​a​b​l​i​n​g​ ​t​h​e​ ​p​l​u​g​i​n​.
+	 */
+	admin_plugins_provisioning_activation: string
+	/**
+	 * P​r​o​v​i​s​i​o​n​i​n​g​ ​i​s​ ​b​l​o​c​k​e​d​ ​a​n​d​ ​t​h​e​ ​p​l​u​g​i​n​ ​r​e​m​a​i​n​s​ ​d​i​s​a​b​l​e​d​.
+	 */
+	admin_plugins_provisioning_blocked: string
+	/**
+	 * O​p​e​r​a​t​i​o​n
+	 */
+	admin_plugins_provisioning_operation: string
+	/**
+	 * O​p​e​n​ ​o​p​e​r​a​t​i​o​n​ ​d​e​t​a​i​l​s
+	 */
+	admin_plugins_provisioning_open: string
+	/**
 	 * A​u​t​h​o​r
 	 */
 	admin_plugins_author: string
@@ -25289,9 +25773,50 @@ type RootTranslation = {
 	 */
 	admin_plugins_test_email_sent_with_id: RequiredParams<'messageId'>
 	/**
+	 * T​e​s​t​ ​e​m​a​i​l​ ​q​u​e​u​e​d​ ​f​o​r​ ​r​e​t​r​y
+	 */
+	admin_plugins_test_email_pending: string
+	/**
+	 * T​e​s​t​ ​e​m​a​i​l​ ​q​u​e​u​e​d​ ​f​o​r​ ​r​e​t​r​y​ ​(​{​m​e​s​s​a​g​e​I​d​}​)
+	 * @param {string} messageId
+	 */
+	admin_plugins_test_email_pending_with_id: RequiredParams<'messageId'>
+	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​s​e​n​d​ ​t​e​s​t​ ​e​m​a​i​l
 	 */
 	admin_plugins_test_email_failed: string
+	/**
+	 * P​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​s​ ​r​o​l​l​o​u​t
+	 */
+	admin_plugins_provider_projection_title: string
+	/**
+	 * U​p​d​a​t​i​n​g​ ​{​c​o​u​n​t​}​ ​p​r​o​v​i​d​e​r​s​ ​a​c​r​o​s​s​ ​t​e​n​a​n​t​s​ ​(​{​p​r​o​c​e​s​s​e​d​}​/​{​t​o​t​a​l​}​)​.
+	 * @param {number} count
+	 * @param {number} processed
+	 * @param {number} total
+	 */
+	admin_plugins_provider_projection_running: RequiredParams<'count' | 'processed' | 'total'>
+	/**
+	 * {​c​o​u​n​t​}​ ​p​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​ ​r​o​l​l​o​u​t​s​ ​n​e​e​d​ ​a​t​t​e​n​t​i​o​n​.​ ​R​u​n​t​i​m​e​ ​r​e​m​a​i​n​s​ ​f​a​i​l​ ​c​l​o​s​e​d​.
+	 * @param {number} count
+	 */
+	admin_plugins_provider_projection_failed: RequiredParams<'count'>
+	/**
+	 * P​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​s​ ​a​r​e​ ​s​y​n​c​h​r​o​n​i​z​e​d​.
+	 */
+	admin_plugins_provider_projection_complete: string
+	/**
+	 * P​e​n​d​i​n​g
+	 */
+	admin_plugins_provider_projection_pending: string
+	/**
+	 * P​r​o​c​e​s​s​i​n​g
+	 */
+	admin_plugins_provider_projection_processing: string
+	/**
+	 * F​a​i​l​e​d
+	 */
+	admin_plugins_provider_projection_status_failed: string
 	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n
 	 */
@@ -29300,11 +29825,11 @@ type RootTranslation = {
 	 */
 	admin_flows_template_academic_saml_login_recorded_state: string
 	/**
-	 * L​o​g​i​n​ ​(​N​o​ ​c​o​n​s​e​n​t​)
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​-​o​n​l​y​ ​L​o​g​i​n
 	 */
 	admin_flows_template_oidc_login_no_consent_title: string
 	/**
-	 * S​i​g​n​-​i​n​ ​w​i​t​h​o​u​t​ ​c​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n
+	 * S​i​g​n​-​i​n​ ​w​i​t​h​o​u​t​ ​a​n​ ​i​n​t​e​r​a​c​t​i​v​e​ ​c​o​n​s​e​n​t​ ​n​o​d​e
 	 */
 	admin_flows_template_oidc_login_no_consent_subtitle: string
 	/**
@@ -29340,7 +29865,7 @@ type RootTranslation = {
 	 */
 	admin_flows_template_saml_sp_oidc_rp_subtitle: string
 	/**
-	 * U​s​e​ ​t​h​e​ ​s​a​m​e​ ​s​i​g​n​-​i​n​ ​s​t​e​p​s​ ​a​s​ ​L​o​g​i​n​ ​(​N​o​ ​c​o​n​s​e​n​t​)​,​ ​t​h​e​n​ ​r​o​u​t​e​ ​t​o​ ​a​ ​S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​o​r​ ​O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​s​p​o​n​s​e​ ​b​a​s​e​d​ ​o​n​ ​t​h​e​ ​r​e​q​u​e​s​t​ ​p​r​o​t​o​c​o​l​.
+	 * U​s​e​ ​t​h​e​ ​s​a​m​e​ ​s​i​g​n​-​i​n​ ​s​t​e​p​s​ ​a​s​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​-​o​n​l​y​ ​L​o​g​i​n​,​ ​t​h​e​n​ ​r​o​u​t​e​ ​t​o​ ​a​ ​S​A​M​L​ ​R​e​s​p​o​n​s​e​ ​o​r​ ​O​I​D​C​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​s​p​o​n​s​e​ ​b​a​s​e​d​ ​o​n​ ​t​h​e​ ​r​e​q​u​e​s​t​ ​p​r​o​t​o​c​o​l​.
 	 */
 	admin_flows_template_saml_sp_oidc_rp_description: string
 	/**
@@ -29980,11 +30505,11 @@ type RootTranslation = {
 	 */
 	admin_flows_editor_setting_redirect: string
 	/**
-	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y
+	 * C​l​i​e​n​t​ ​T​r​u​s​t​ ​P​o​l​i​c​y
 	 */
 	admin_flows_trust_policy_title: string
 	/**
-	 * C​o​n​f​i​g​u​r​e​ ​t​r​u​s​t​ ​b​e​h​a​v​i​o​r​.​ ​F​l​o​w​ ​a​s​s​i​g​n​m​e​n​t​ ​i​s​ ​m​a​n​a​g​e​d​ ​f​r​o​m​ ​t​h​e​ ​F​l​o​w​ ​s​e​t​t​i​n​g​s​.
+	 * C​o​n​f​i​g​u​r​e​ ​t​h​e​ ​a​u​t​h​o​r​i​t​a​t​i​v​e​ ​t​r​u​s​t​ ​b​e​h​a​v​i​o​r​ ​f​o​r​ ​a​n​ ​O​I​D​C​ ​c​l​i​e​n​t​ ​o​r​ ​S​A​M​L​ ​s​e​r​v​i​c​e​ ​p​r​o​v​i​d​e​r​.
 	 */
 	admin_flows_trust_policy_description: string
 	/**
@@ -30004,9 +30529,13 @@ type RootTranslation = {
 	 */
 	admin_flows_trust_policy_save_failed: string
 	/**
-	 * S​e​l​e​c​t​ ​t​h​e​ ​L​o​g​i​n​ ​o​r​ ​R​e​g​i​s​t​r​a​t​i​o​n​ ​F​l​o​w​ ​f​o​r​ ​t​h​i​s​ ​t​a​r​g​e​t​ ​f​r​o​m​ ​F​l​o​w​ ​s​e​t​t​i​n​g​s​.​ ​C​o​n​s​e​n​t​ ​p​o​l​i​c​i​e​s​ ​a​r​e​ ​a​t​t​a​c​h​e​d​ ​t​o​ ​C​o​n​s​e​n​t​ ​n​o​d​e​s​ ​i​n​s​i​d​e​ ​a​ ​F​l​o​w​.
+	 * T​h​i​s​ ​r​e​a​d​-​o​n​l​y​ ​g​a​t​e​ ​s​h​o​w​s​ ​t​h​e​ ​p​r​o​t​o​c​o​l​ ​a​u​t​h​o​r​i​t​y​.​ ​E​d​i​t​i​n​g​ ​o​r​ ​p​u​b​l​i​s​h​i​n​g​ ​t​h​e​ ​F​l​o​w​ ​d​o​e​s​ ​n​o​t​ ​c​h​a​n​g​e​ ​t​h​e​ ​C​l​i​e​n​t​ ​T​r​u​s​t​ ​P​o​l​i​c​y​.
 	 */
 	admin_flows_trust_policy_flow_hint: string
+	/**
+	 * A​u​t​h​o​r​i​z​a​t​i​o​n​ ​/​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e
+	 */
+	admin_flows_authoritative_consent_gate_output: string
 	/**
 	 * F​i​r​s​t​-​p​a​r​t​y​ ​a​p​p​l​i​c​a​t​i​o​n
 	 */
@@ -30223,6 +30752,482 @@ type RootTranslation = {
 	 * S​c​h​e​m​a​ ​r​e​q​u​i​r​e​d​ ​f​i​e​l​d​s​ ​r​e​m​a​i​n​ ​r​e​q​u​i​r​e​d​.​ ​A​ ​s​c​r​e​e​n​ ​c​a​n​ ​o​n​l​y​ ​a​d​d​ ​r​e​q​u​i​r​e​d​ ​d​i​s​p​l​a​y​ ​r​u​l​e​s​ ​f​o​r​ ​o​p​t​i​o​n​a​l​ ​s​c​h​e​m​a​ ​f​i​e​l​d​s​.
 	 */
 	admin_screens_schema_required_note: string
+	/**
+	 * C​o​n​t​r​o​l​ ​P​l​a​n​e​ ​-​ ​A​u​t​h​r​i​m
+	 */
+	admin_control_plane_page_title: string
+	/**
+	 * C​o​n​t​r​o​l​ ​P​l​a​n​e
+	 */
+	admin_control_plane_title: string
+	/**
+	 * I​n​s​p​e​c​t​ ​p​r​o​v​i​s​i​o​n​i​n​g​ ​p​r​o​g​r​e​s​s​ ​a​n​d​ ​W​o​r​k​e​r​ ​i​n​v​e​n​t​o​r​y​ ​d​r​i​f​t​.
+	 */
+	admin_control_plane_description: string
+	/**
+	 * R​e​f​r​e​s​h
+	 */
+	admin_control_plane_refresh: string
+	/**
+	 * W​o​r​k​e​r​ ​d​r​i​f​t​ ​f​i​n​d​i​n​g​s
+	 */
+	admin_control_plane_findings: string
+	/**
+	 * L​o​a​d​i​n​g​ ​c​o​n​t​r​o​l​-​p​l​a​n​e​ ​s​t​a​t​u​s​.​.​.
+	 */
+	admin_control_plane_loading: string
+	/**
+	 * N​o​ ​a​c​t​i​v​e​ ​W​o​r​k​e​r​ ​i​n​v​e​n​t​o​r​y​ ​d​r​i​f​t​ ​f​i​n​d​i​n​g​s​.
+	 */
+	admin_control_plane_empty: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​c​o​n​t​r​o​l​-​p​l​a​n​e​ ​s​t​a​t​u​s​.
+	 */
+	admin_control_plane_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​c​o​r​d​ ​t​h​e​ ​r​e​v​i​e​w​ ​d​i​s​p​o​s​i​t​i​o​n​.
+	 */
+	admin_control_plane_review_failed: string
+	/**
+	 * P​r​o​v​i​s​i​o​n​i​n​g​ ​a​u​t​h​o​r​i​t​y
+	 */
+	admin_control_plane_authority_title: string
+	/**
+	 * A​u​t​o​m​a​t​i​c​ ​p​r​o​v​i​s​i​o​n​i​n​g
+	 */
+	admin_control_plane_automatic_provisioning: string
+	/**
+	 * O​n
+	 */
+	admin_control_plane_automatic_on: string
+	/**
+	 * O​f​f
+	 */
+	admin_control_plane_automatic_off: string
+	/**
+	 * A​c​t​i​v​e​ ​e​x​e​c​u​t​o​r
+	 */
+	admin_control_plane_active_executor: string
+	/**
+	 * C​o​n​t​r​o​l​ ​W​o​r​k​e​r
+	 */
+	admin_control_plane_executor_control: string
+	/**
+	 * S​e​t​u​p​ ​o​p​e​r​a​t​o​r
+	 */
+	admin_control_plane_executor_setup: string
+	/**
+	 * T​o​k​e​n​ ​o​w​n​e​r​s​h​i​p
+	 */
+	admin_control_plane_token_ownership: string
+	/**
+	 * N​o​ ​C​o​n​t​r​o​l​ ​t​o​k​e​n
+	 */
+	admin_control_plane_token_none: string
+	/**
+	 * U​s​e​r​-​o​w​n​e​d​ ​t​o​k​e​n
+	 */
+	admin_control_plane_token_user: string
+	/**
+	 * A​c​c​o​u​n​t​-​o​w​n​e​d​ ​t​o​k​e​n
+	 */
+	admin_control_plane_token_account: string
+	/**
+	 * C​a​p​a​b​i​l​i​t​y​ ​s​t​a​t​e
+	 */
+	admin_control_plane_capability_state: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_control_plane_capability_disabled: string
+	/**
+	 * P​e​n​d​i​n​g
+	 */
+	admin_control_plane_capability_pending: string
+	/**
+	 * R​e​a​d​y
+	 */
+	admin_control_plane_capability_ready: string
+	/**
+	 * B​l​o​c​k​e​d
+	 */
+	admin_control_plane_capability_blocked: string
+	/**
+	 * A​c​t​i​v​e​ ​t​e​n​a​n​t​ ​d​i​s​a​s​t​e​r​ ​r​e​c​o​v​e​r​y
+	 */
+	admin_control_plane_recovery_title: string
+	/**
+	 * S​t​a​r​t​ ​r​e​c​o​v​e​r​y
+	 */
+	admin_control_plane_recovery_start: string
+	/**
+	 * I​n​s​p​e​c​t​ ​r​e​c​o​v​e​r​y
+	 */
+	admin_control_plane_recovery_inspect: string
+	/**
+	 * T​e​n​a​n​t​ ​I​D
+	 */
+	admin_control_plane_recovery_tenant: string
+	/**
+	 * C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_control_plane_recovery_confirmation: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​i​n​s​p​e​c​t​ ​t​e​n​a​n​t​ ​r​e​c​o​v​e​r​y​.
+	 */
+	admin_control_plane_recovery_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​t​e​n​a​n​t​ ​r​e​c​o​v​e​r​y​.
+	 */
+	admin_control_plane_recovery_action_failed: string
+	/**
+	 * P​i​n​n​e​d​ ​r​o​u​t​e​ ​g​e​n​e​r​a​t​i​o​n
+	 */
+	admin_control_plane_recovery_route_generation: string
+	/**
+	 * D​r​a​i​n​ ​u​n​t​i​l
+	 */
+	admin_control_plane_recovery_drain_until: string
+	/**
+	 * L​o​o​k​u​p​ ​s​t​a​g​e
+	 */
+	admin_control_plane_recovery_lookup_stage: string
+	/**
+	 * P​r​o​j​e​c​t​e​d​ ​/​ ​v​e​r​i​f​i​e​d​ ​r​o​w​s
+	 */
+	admin_control_plane_recovery_lookup_rows: string
+	/**
+	 * L​e​a​s​e​ ​a​c​t​i​v​e
+	 */
+	admin_control_plane_recovery_lease_active: string
+	/**
+	 * D​1​ ​r​e​s​t​o​r​e​ ​r​e​f​e​r​e​n​c​e
+	 */
+	admin_control_plane_recovery_restore_reference: string
+	/**
+	 * R​e​s​t​o​r​e​ ​c​o​m​p​l​e​t​e​d​ ​a​t
+	 */
+	admin_control_plane_recovery_restored_at: string
+	/**
+	 * C​o​n​f​i​r​m​ ​c​o​m​p​l​e​t​e​d​ ​r​e​s​t​o​r​e
+	 */
+	admin_control_plane_recovery_confirm_restore: string
+	/**
+	 * V​e​r​i​f​y​ ​m​i​g​r​a​t​i​o​n​s
+	 */
+	admin_control_plane_recovery_verify_migration: string
+	/**
+	 * R​e​a​c​t​i​v​a​t​e​ ​t​e​n​a​n​t
+	 */
+	admin_control_plane_recovery_reactivate: string
+	/**
+	 * R​e​s​i​d​e​n​c​y
+	 */
+	admin_control_plane_recovery_residency: string
+	/**
+	 * R​e​s​t​o​r​e
+	 */
+	admin_control_plane_recovery_restore: string
+	/**
+	 * M​i​g​r​a​t​i​o​n
+	 */
+	admin_control_plane_recovery_migration: string
+	/**
+	 * L​o​o​k​u​p
+	 */
+	admin_control_plane_recovery_lookup: string
+	/**
+	 * B​i​n​d​i​n​g​ ​s​m​o​k​e
+	 */
+	admin_control_plane_recovery_binding_smoke: string
+	/**
+	 * W​o​r​k​e​r
+	 */
+	admin_control_plane_worker: string
+	/**
+	 * R​e​v​i​e​w​ ​s​t​a​t​u​s
+	 */
+	admin_control_plane_status: string
+	/**
+	 * N​o​t​i​f​i​c​a​t​i​o​n
+	 */
+	admin_control_plane_notification: string
+	/**
+	 * F​i​r​s​t​ ​s​e​e​n
+	 */
+	admin_control_plane_first_seen: string
+	/**
+	 * L​a​s​t​ ​s​e​e​n
+	 */
+	admin_control_plane_last_seen: string
+	/**
+	 * A​c​t​i​o​n​s
+	 */
+	admin_control_plane_actions: string
+	/**
+	 * U​n​r​e​v​i​e​w​e​d
+	 */
+	admin_control_plane_unreviewed: string
+	/**
+	 * R​e​v​i​e​w​e​d
+	 */
+	admin_control_plane_reviewed: string
+	/**
+	 * D​i​s​m​i​s​s​e​d
+	 */
+	admin_control_plane_dismissed: string
+	/**
+	 * O​p​e​r​a​t​i​o​n​ ​i​n​s​p​e​c​t​i​o​n
+	 */
+	admin_control_plane_operation_inspection: string
+	/**
+	 * O​p​e​r​a​t​i​o​n​ ​I​D
+	 */
+	admin_control_plane_operation_id: string
+	/**
+	 * E​n​t​e​r​ ​a​n​ ​o​p​e​r​a​t​i​o​n​ ​I​D
+	 */
+	admin_control_plane_operation_id_placeholder: string
+	/**
+	 * I​n​s​p​e​c​t
+	 */
+	admin_control_plane_inspect: string
+	/**
+	 * O​p​e​r​a​t​i​o​n​ ​k​i​n​d
+	 */
+	admin_control_plane_operation_kind: string
+	/**
+	 * S​t​a​t​u​s
+	 */
+	admin_control_plane_operation_status: string
+	/**
+	 * A​t​t​e​m​p​t​s
+	 */
+	admin_control_plane_attempts: string
+	/**
+	 * U​p​d​a​t​e​d
+	 */
+	admin_control_plane_updated: string
+	/**
+	 * N​e​x​t​ ​r​e​t​r​y
+	 */
+	admin_control_plane_next_retry: string
+	/**
+	 * L​a​s​t​ ​e​r​r​o​r
+	 */
+	admin_control_plane_last_error: string
+	/**
+	 * O​p​e​r​a​t​i​o​n​ ​s​t​e​p​s
+	 */
+	admin_control_plane_steps: string
+	/**
+	 * S​t​e​p
+	 */
+	admin_control_plane_step: string
+	/**
+	 * S​t​a​r​t​e​d
+	 */
+	admin_control_plane_started: string
+	/**
+	 * C​o​m​p​l​e​t​e​d
+	 */
+	admin_control_plane_completed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​i​n​s​p​e​c​t​ ​t​h​e​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	admin_control_plane_operation_load_failed: string
+	/**
+	 * R​e​t​r​y​ ​s​t​e​p
+	 */
+	admin_control_plane_retry_step: string
+	/**
+	 * B​l​o​c​k​e​d​ ​s​t​e​p
+	 */
+	admin_control_plane_blocked_step: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​t​r​y​ ​t​h​e​ ​o​p​e​r​a​t​i​o​n​ ​s​t​e​p​.
+	 */
+	admin_control_plane_retry_failed: string
+	/**
+	 * C​a​n​c​e​l​ ​o​p​e​r​a​t​i​o​n
+	 */
+	admin_control_plane_cancel_operation: string
+	/**
+	 * T​h​i​s​ ​b​l​o​c​k​e​d​ ​o​p​e​r​a​t​i​o​n​ ​c​a​n​ ​b​e​ ​c​a​n​c​e​l​e​d​ ​s​a​f​e​l​y​.
+	 */
+	admin_control_plane_cancel_available: string
+	/**
+	 * K​e​e​p​ ​o​p​e​r​a​t​i​o​n
+	 */
+	admin_control_plane_keep_operation: string
+	/**
+	 * C​o​n​f​i​r​m​ ​c​a​n​c​e​l
+	 */
+	admin_control_plane_confirm_cancel: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​c​a​n​c​e​l​ ​t​h​e​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	admin_control_plane_cancel_failed: string
+	/**
+	 * R​e​s​t​o​r​e​ ​p​r​e​v​i​o​u​s​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_control_plane_restore_previous_settings: string
+	/**
+	 * T​h​e​ ​s​a​v​e​d​ ​W​o​r​k​e​r​ ​s​e​t​t​i​n​g​s​ ​c​a​n​ ​b​e​ ​r​e​s​t​o​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​f​a​i​l​e​d​ ​r​o​l​l​b​a​c​k​.
+	 */
+	admin_control_plane_restore_available: string
+	/**
+	 * K​e​e​p​ ​c​u​r​r​e​n​t​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_control_plane_keep_current_settings: string
+	/**
+	 * C​o​n​f​i​r​m​ ​r​e​s​t​o​r​e
+	 */
+	admin_control_plane_confirm_restore: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​q​u​e​s​t​ ​t​h​e​ ​p​r​e​v​i​o​u​s​ ​W​o​r​k​e​r​ ​s​e​t​t​i​n​g​s​ ​r​e​s​t​o​r​e​.
+	 */
+	admin_control_plane_restore_failed: string
+	/**
+	 * I​n​a​c​t​i​v​e​ ​s​h​a​r​d​ ​c​l​e​a​n​u​p
+	 */
+	admin_control_plane_cleanup_title: string
+	/**
+	 * L​o​a​d​i​n​g​ ​i​n​a​c​t​i​v​e​ ​s​h​a​r​d​ ​s​t​a​t​u​s​.​.​.
+	 */
+	admin_control_plane_cleanup_loading: string
+	/**
+	 * N​o​ ​i​n​a​c​t​i​v​e​ ​s​h​a​r​d​s​ ​r​e​q​u​i​r​e​ ​c​l​e​a​n​u​p​.
+	 */
+	admin_control_plane_cleanup_empty: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​t​h​e​ ​i​n​a​c​t​i​v​e​ ​s​h​a​r​d​ ​o​p​e​r​a​t​i​o​n​.
+	 */
+	admin_control_plane_cleanup_action_failed: string
+	/**
+	 * S​h​a​r​d
+	 */
+	admin_control_plane_cleanup_shard: string
+	/**
+	 * D​a​t​a​ ​r​o​l​e
+	 */
+	admin_control_plane_cleanup_role: string
+	/**
+	 * Q​u​a​r​a​n​t​i​n​e
+	 */
+	admin_control_plane_cleanup_quarantine: string
+	/**
+	 * C​l​e​a​n​u​p
+	 */
+	admin_control_plane_cleanup_state: string
+	/**
+	 * B​i​n​d​i​n​g​s​ ​r​e​m​o​v​e​d
+	 */
+	admin_control_plane_cleanup_bindings: string
+	/**
+	 * D​e​s​t​r​u​c​t​i​v​e​ ​o​p​e​r​a​t​i​o​n​s​ ​d​i​s​a​b​l​e​d
+	 */
+	admin_control_plane_cleanup_gate_disabled: string
+	/**
+	 * Q​u​a​r​a​n​t​i​n​e
+	 */
+	admin_control_plane_cleanup_quarantine_action: string
+	/**
+	 * R​e​t​r​y​ ​q​u​a​r​a​n​t​i​n​e
+	 */
+	admin_control_plane_cleanup_retry_quarantine: string
+	/**
+	 * A​p​p​r​o​v​e​ ​c​l​e​a​n​u​p
+	 */
+	admin_control_plane_cleanup_approve: string
+	/**
+	 * R​e​t​r​y​ ​c​l​e​a​n​u​p
+	 */
+	admin_control_plane_cleanup_retry: string
+	/**
+	 * C​l​e​a​n​u​p​ ​a​p​p​r​o​v​a​l
+	 */
+	admin_control_plane_cleanup_approval_title: string
+	/**
+	 * E​x​p​o​r​t​ ​s​t​a​t​u​s
+	 */
+	admin_control_plane_cleanup_export_mode: string
+	/**
+	 * E​x​p​o​r​t​ ​s​k​i​p​p​e​d
+	 */
+	admin_control_plane_cleanup_export_skipped: string
+	/**
+	 * E​x​p​o​r​t​ ​m​a​n​u​a​l​l​y​ ​v​e​r​i​f​i​e​d
+	 */
+	admin_control_plane_cleanup_export_verified: string
+	/**
+	 * E​x​p​o​r​t​ ​e​v​i​d​e​n​c​e​ ​I​D
+	 */
+	admin_control_plane_cleanup_export_evidence: string
+	/**
+	 * C​o​n​f​i​r​m​a​t​i​o​n
+	 */
+	admin_control_plane_cleanup_confirmation: string
+	/**
+	 * D​e​l​e​t​e​ ​t​h​e​ ​p​h​y​s​i​c​a​l​ ​D​1​ ​d​a​t​a​b​a​s​e
+	 */
+	admin_control_plane_cleanup_delete_database: string
+	/**
+	 * C​a​n​c​e​l
+	 */
+	admin_control_plane_cleanup_cancel: string
+	/**
+	 * A​p​p​r​o​v​e​ ​a​n​d​ ​s​t​a​r​t​ ​c​l​e​a​n​u​p
+	 */
+	admin_control_plane_cleanup_confirm: string
+	/**
+	 * Q​u​e​u​e​d
+	 */
+	admin_control_plane_status_queued: string
+	/**
+	 * R​u​n​n​i​n​g
+	 */
+	admin_control_plane_status_running: string
+	/**
+	 * W​a​i​t​i​n​g​ ​t​o​ ​r​e​t​r​y
+	 */
+	admin_control_plane_status_waiting_retry: string
+	/**
+	 * S​u​c​c​e​e​d​e​d
+	 */
+	admin_control_plane_status_succeeded: string
+	/**
+	 * B​l​o​c​k​e​d
+	 */
+	admin_control_plane_status_blocked: string
+	/**
+	 * C​a​n​c​e​l​e​d
+	 */
+	admin_control_plane_status_canceled: string
+	/**
+	 * S​k​i​p​p​e​d
+	 */
+	admin_control_plane_status_skipped: string
+	/**
+	 * R​o​l​l​e​d​ ​b​a​c​k
+	 */
+	admin_control_plane_status_rolled_back: string
+	/**
+	 * P​e​n​d​i​n​g
+	 */
+	admin_control_plane_pending: string
+	/**
+	 * A​c​k​n​o​w​l​e​d​g​e​d
+	 */
+	admin_control_plane_acknowledged: string
+	/**
+	 * M​a​r​k​ ​r​e​v​i​e​w​e​d
+	 */
+	admin_control_plane_review: string
+	/**
+	 * D​i​s​m​i​s​s
+	 */
+	admin_control_plane_dismiss: string
 	/**
 	 * S​e​t​t​i​n​g​s
 	 */
@@ -34408,6 +35413,10 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_scale: () => LocalizedString
 	/**
+	 * Control Plane
+	 */
+	admin_nav_control_plane: () => LocalizedString
+	/**
 	 * Storage Destinations
 	 */
 	admin_nav_storage_destinations: () => LocalizedString
@@ -35247,6 +36256,42 @@ export type TranslationFunctions = {
 	 * Failed to create user
 	 */
 	admin_users_error_create: () => LocalizedString
+	/**
+	 * Account provisioning is pending. Operation: {operationId}
+	 */
+	admin_users_creation_pending: (arg: { operationId: string }) => LocalizedString
+	/**
+	 * Email change status
+	 */
+	admin_user_detail_identifier_operations: () => LocalizedString
+	/**
+	 * Loading email change status...
+	 */
+	admin_user_detail_identifier_operations_loading: () => LocalizedString
+	/**
+	 * Failed to load email change status
+	 */
+	admin_user_detail_identifier_operations_error: () => LocalizedString
+	/**
+	 * Forward repair is required
+	 */
+	admin_user_detail_identifier_operation_attention: () => LocalizedString
+	/**
+	 * Processing automatically
+	 */
+	admin_user_detail_identifier_operation_processing: () => LocalizedString
+	/**
+	 * Resume
+	 */
+	admin_user_detail_identifier_operation_resume: () => LocalizedString
+	/**
+	 * Resuming...
+	 */
+	admin_user_detail_identifier_operation_resuming: () => LocalizedString
+	/**
+	 * Failed to resume email change
+	 */
+	admin_user_detail_identifier_operation_resume_error: () => LocalizedString
 	/**
 	 * Given Name
 	 */
@@ -41272,6 +42317,134 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_scale_map_traffic_flow: () => LocalizedString
 	/**
+	 * Read Replication
+	 */
+	admin_scale_read_replication: () => LocalizedString
+	/**
+	 * On
+	 */
+	admin_scale_read_replication_on: () => LocalizedString
+	/**
+	 * Off
+	 */
+	admin_scale_read_replication_off: () => LocalizedString
+	/**
+	 * Updating
+	 */
+	admin_scale_read_replication_updating: () => LocalizedString
+	/**
+	 * Attention required
+	 */
+	admin_scale_read_replication_attention: () => LocalizedString
+	/**
+	 * Toggle read replication
+	 */
+	admin_scale_read_replication_toggle: () => LocalizedString
+	/**
+	 * Retry read replication rollout
+	 */
+	admin_scale_read_replication_retry: () => LocalizedString
+	/**
+	 * Read replication status is unavailable.
+	 */
+	admin_scale_read_replication_load_failed: () => LocalizedString
+	/**
+	 * Read replication could not be updated.
+	 */
+	admin_scale_read_replication_update_failed: () => LocalizedString
+	/**
+	 * Tenant D1 Capacity
+	 */
+	admin_scale_d1_capacity: () => LocalizedString
+	/**
+	 * Provisioning scope and current capacity plan
+	 */
+	admin_scale_d1_capacity_status: () => LocalizedString
+	/**
+	 * Scope
+	 */
+	admin_scale_d1_scope: () => LocalizedString
+	/**
+	 * Shared pool
+	 */
+	admin_scale_d1_scope_shared: () => LocalizedString
+	/**
+	 * Dedicated tenant
+	 */
+	admin_scale_d1_scope_tenant: () => LocalizedString
+	/**
+	 * Tenant
+	 */
+	admin_scale_d1_tenant: () => LocalizedString
+	/**
+	 * Capacity profile
+	 */
+	admin_scale_d1_profile: () => LocalizedString
+	/**
+	 * Minimum
+	 */
+	admin_scale_d1_profile_minimum: () => LocalizedString
+	/**
+	 * Smallest valid unit
+	 */
+	admin_scale_d1_profile_minimum_detail: () => LocalizedString
+	/**
+	 * Recommended
+	 */
+	admin_scale_d1_profile_recommended: () => LocalizedString
+	/**
+	 * Planner target
+	 */
+	admin_scale_d1_profile_recommended_detail: () => LocalizedString
+	/**
+	 * Extra headroom
+	 */
+	admin_scale_d1_profile_extra: () => LocalizedString
+	/**
+	 * One additional spare unit
+	 */
+	admin_scale_d1_profile_extra_detail: () => LocalizedString
+	/**
+	 * Preview
+	 */
+	admin_scale_d1_preview: () => LocalizedString
+	/**
+	 * Add capacity
+	 */
+	admin_scale_d1_request: () => LocalizedString
+	/**
+	 * Capacity units
+	 */
+	admin_scale_d1_units: () => LocalizedString
+	/**
+	 * D1 databases
+	 */
+	admin_scale_d1_databases: () => LocalizedString
+	/**
+	 * Environment total
+	 */
+	admin_scale_d1_projected_total: () => LocalizedString
+	/**
+	 * This capacity profile is not available.
+	 */
+	admin_scale_d1_unavailable: () => LocalizedString
+	/**
+	 * Current capacity already satisfies this profile.
+	 */
+	admin_scale_d1_no_change: () => LocalizedString
+	/**
+	 * Capacity operations were created.
+	 */
+	admin_scale_d1_capacity_requested: () => LocalizedString
+	/**
+	 * Capacity preview is unavailable.
+	 */
+	admin_scale_d1_capacity_preview_failed: () => LocalizedString
+	/**
+	 * Capacity could not be requested.
+	 */
+	admin_scale_d1_capacity_request_failed: () => LocalizedString
+	/**
 	 * Sessions - Admin Dashboard - Authrim
 	 */
 	admin_sessions_head_title: () => LocalizedString
@@ -46928,22 +48101,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenants_single_mode_setup_hint: () => LocalizedString
 	/**
-	 * Tenant D1 slots
-	 */
-	admin_tenants_d1_slots: () => LocalizedString
-	/**
-	 * Available {available} / {capacity}
-	 */
-	admin_tenants_d1_slots_available: (arg: { available: number, capacity: number }) => LocalizedString
-	/**
-	 * No preallocated tenant D1 slots available
-	 */
-	admin_tenants_d1_exhausted_title: () => LocalizedString
-	/**
-	 * Use the setup tool existing environment settings to add tenant D1 slots.
-	 */
-	admin_tenants_d1_exhausted_message: () => LocalizedString
-	/**
 	 * Failed to load tenants
 	 */
 	admin_tenants_load_failed: () => LocalizedString
@@ -46979,6 +48136,26 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Description
 	 */
 	admin_tenants_description_label: () => LocalizedString
+	/**
+	 * Data placement
+	 */
+	admin_tenants_placement_label: () => LocalizedString
+	/**
+	 * Standard
+	 */
+	admin_tenants_placement_shared: () => LocalizedString
+	/**
+	 * Share physical database capacity with other tenants.
+	 */
+	admin_tenants_placement_shared_hint: () => LocalizedString
+	/**
+	 * Physical isolation
+	 */
+	admin_tenants_placement_exclusive: () => LocalizedString
+	/**
+	 * Use physical databases reserved for this tenant only.
+	 */
+	admin_tenants_placement_exclusive_hint: () => LocalizedString
 	/**
 	 * Status
 	 */
@@ -47268,17 +48445,229 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenants_provisioning_inactive_title: () => LocalizedString
 	/**
-	 * This tenant did not complete setup. Operational settings are unavailable until the failed draft is cleaned up and the slot is reset from the setup tool.
-	 */
-	admin_tenants_provisioning_failed_description: () => LocalizedString
-	/**
 	 * This tenant is inactive. Operational settings are hidden until it is reactivated.
 	 */
 	admin_tenants_provisioning_inactive_description: () => LocalizedString
 	/**
-	 * Slot
+	 * Tenant setup
 	 */
-	admin_tenants_slot: () => LocalizedString
+	admin_tenants_provisioning_title: () => LocalizedString
+	/**
+	 * Failed to load tenant setup status.
+	 */
+	admin_tenants_provisioning_load_failed: () => LocalizedString
+	/**
+	 * Setup is queued.
+	 */
+	admin_tenants_provisioning_status_queued: () => LocalizedString
+	/**
+	 * Setup is in progress.
+	 */
+	admin_tenants_provisioning_status_running: () => LocalizedString
+	/**
+	 * Setup is waiting to retry automatically.
+	 */
+	admin_tenants_provisioning_status_waiting: () => LocalizedString
+	/**
+	 * Setup needs administrator attention.
+	 */
+	admin_tenants_provisioning_status_blocked: () => LocalizedString
+	/**
+	 * Setup completed.
+	 */
+	admin_tenants_provisioning_status_succeeded: () => LocalizedString
+	/**
+	 * Setup was canceled.
+	 */
+	admin_tenants_provisioning_status_canceled: () => LocalizedString
+	/**
+	 * Request accepted
+	 */
+	admin_tenants_provisioning_step_request: () => LocalizedString
+	/**
+	 * Database capacity
+	 */
+	admin_tenants_provisioning_step_capacity: () => LocalizedString
+	/**
+	 * Database route
+	 */
+	admin_tenants_provisioning_step_route: () => LocalizedString
+	/**
+	 * Tenant data
+	 */
+	admin_tenants_provisioning_step_seed: () => LocalizedString
+	/**
+	 * Runtime registry
+	 */
+	admin_tenants_provisioning_step_registry: () => LocalizedString
+	/**
+	 * Runtime verification
+	 */
+	admin_tenants_provisioning_step_smoke: () => LocalizedString
+	/**
+	 * Tenant configuration
+	 */
+	admin_tenants_provisioning_step_prepare: () => LocalizedString
+	/**
+	 * Login lookup
+	 */
+	admin_tenants_provisioning_step_lookup: () => LocalizedString
+	/**
+	 * Activation
+	 */
+	admin_tenants_provisioning_step_activate: () => LocalizedString
+	/**
+	 * Tenant settings database
+	 */
+	admin_tenants_provisioning_role_default: () => LocalizedString
+	/**
+	 * Account database
+	 */
+	admin_tenants_provisioning_role_users: () => LocalizedString
+	/**
+	 * Personal data database
+	 */
+	admin_tenants_provisioning_role_pii: () => LocalizedString
+	/**
+	 * Creating D1
+	 */
+	admin_tenants_provisioning_control_create_d1: () => LocalizedString
+	/**
+	 * Applying migrations
+	 */
+	admin_tenants_provisioning_control_migrations: () => LocalizedString
+	/**
+	 * Updating Worker bindings
+	 */
+	admin_tenants_provisioning_control_bindings: () => LocalizedString
+	/**
+	 * Verifying Worker bindings
+	 */
+	admin_tenants_provisioning_control_smoke: () => LocalizedString
+	/**
+	 * Waiting for binding propagation
+	 */
+	admin_tenants_provisioning_control_stabilize: () => LocalizedString
+	/**
+	 * Physical data isolation
+	 */
+	admin_tenants_placement_migration_title: () => LocalizedString
+	/**
+	 * This tenant currently shares physical database capacity. Move it online to databases reserved for this tenant.
+	 */
+	admin_tenants_placement_migration_shared_description: () => LocalizedString
+	/**
+	 * This tenant uses physical databases reserved for this tenant.
+	 */
+	admin_tenants_placement_migration_exclusive_description: () => LocalizedString
+	/**
+	 * Move to isolated databases
+	 */
+	admin_tenants_placement_migration_start: () => LocalizedString
+	/**
+	 * Starting migration...
+	 */
+	admin_tenants_placement_migration_starting: () => LocalizedString
+	/**
+	 * Cancel migration
+	 */
+	admin_tenants_placement_migration_cancel: () => LocalizedString
+	/**
+	 * Canceling...
+	 */
+	admin_tenants_placement_migration_canceling: () => LocalizedString
+	/**
+	 * Approve source purge
+	 */
+	admin_tenants_placement_migration_purge: () => LocalizedString
+	/**
+	 * Confirm purge approval. Quarantined source rows become eligible for permanent deletion.
+	 */
+	admin_tenants_placement_migration_purge_confirm: () => LocalizedString
+	/**
+	 * Confirm purge approval
+	 */
+	admin_tenants_placement_migration_purge_confirm_action: () => LocalizedString
+	/**
+	 * Control status is temporarily unavailable. Local progress remains available.
+	 */
+	admin_tenants_placement_migration_control_unavailable: () => LocalizedString
+	/**
+	 * Failed to load placement migration status.
+	 */
+	admin_tenants_placement_migration_load_failed: () => LocalizedString
+	/**
+	 * Placement migration action failed.
+	 */
+	admin_tenants_placement_migration_action_failed: () => LocalizedString
+	/**
+	 * Migration is queued.
+	 */
+	admin_tenants_placement_migration_status_queued: () => LocalizedString
+	/**
+	 * Migration is in progress.
+	 */
+	admin_tenants_placement_migration_status_running: () => LocalizedString
+	/**
+	 * Migration is waiting to retry automatically.
+	 */
+	admin_tenants_placement_migration_status_waiting: () => LocalizedString
+	/**
+	 * Migration needs administrator attention.
+	 */
+	admin_tenants_placement_migration_status_blocked: () => LocalizedString
+	/**
+	 * Cutover completed.
+	 */
+	admin_tenants_placement_migration_status_succeeded: () => LocalizedString
+	/**
+	 * Migration was canceled before cutover.
+	 */
+	admin_tenants_placement_migration_status_canceled: () => LocalizedString
+	/**
+	 * Prepare isolated databases
+	 */
+	admin_tenants_placement_migration_step_wait_control: () => LocalizedString
+	/**
+	 * Lock route generation
+	 */
+	admin_tenants_placement_migration_step_begin_cutover: () => LocalizedString
+	/**
+	 * Prepare account routes
+	 */
+	admin_tenants_placement_migration_step_prepare_lookup: () => LocalizedString
+	/**
+	 * Prepare tenant route
+	 */
+	admin_tenants_placement_migration_step_prepare_alias: () => LocalizedString
+	/**
+	 * Commit placement
+	 */
+	admin_tenants_placement_migration_step_commit_control: () => LocalizedString
+	/**
+	 * Publish runtime registry
+	 */
+	admin_tenants_placement_migration_step_publish_registry: () => LocalizedString
+	/**
+	 * Activate tenant route
+	 */
+	admin_tenants_placement_migration_step_activate_alias: () => LocalizedString
+	/**
+	 * Activate account routes
+	 */
+	admin_tenants_placement_migration_step_activate_lookup: () => LocalizedString
+	/**
+	 * Verify active routes
+	 */
+	admin_tenants_placement_migration_step_verify_routes: () => LocalizedString
+	/**
+	 * Quarantine shared source rows
+	 */
+	admin_tenants_placement_migration_step_finalize_source: () => LocalizedString
+	/**
+	 * Complete
+	 */
+	admin_tenants_placement_migration_step_complete: () => LocalizedString
 	/**
 	 * Last Error
 	 */
@@ -55166,6 +56555,10 @@ Remove this role from {email}?
 	 */
 	admin_notifications_category_tenant_database_health: () => LocalizedString
 	/**
+	 * Control plane drift
+	 */
+	admin_notifications_category_control_plane_drift: () => LocalizedString
+	/**
 	 * Logging destination health
 	 */
 	admin_notifications_category_logging_destination_health: () => LocalizedString
@@ -55257,6 +56650,14 @@ Remove this role from {email}?
 	 * Failed to run notification delivery
 	 */
 	admin_notifications_run_delivery_failed: () => LocalizedString
+	/**
+	 * Control plane detected {count} unknown Worker script(s).
+	 */
+	admin_notifications_control_plane_drift_banner: (arg: { count: number }) => LocalizedString
+	/**
+	 * Review drift findings
+	 */
+	admin_notifications_review_control_plane_drift: () => LocalizedString
 	/**
 	 * Database Connections - Authrim
 	 */
@@ -57970,6 +59371,10 @@ Remove this role from {email}?
 	 */
 	admin_external_token_refresh_scheduled_tenant_batch_size: () => LocalizedString
 	/**
+	 * PII shards per tenant step
+	 */
+	admin_external_token_refresh_pii_shard_page_size: () => LocalizedString
+	/**
 	 * Saving...
 	 */
 	admin_external_token_refresh_saving: () => LocalizedString
@@ -58346,6 +59751,90 @@ Remove this role from {email}?
 	 */
 	admin_plugins_capabilities: () => LocalizedString
 	/**
+	 * Advanced resource settings
+	 */
+	admin_plugins_resource_advanced: () => LocalizedString
+	/**
+	 * Authrim creates and manages these resources by default. Change this only when reusing an existing Cloudflare resource.
+	 */
+	admin_plugins_resource_managed_default: () => LocalizedString
+	/**
+	 * Use an existing Cloudflare resource
+	 */
+	admin_plugins_use_existing_resource: () => LocalizedString
+	/**
+	 * Cloudflare resource ID
+	 */
+	admin_plugins_provider_resource_id: () => LocalizedString
+	/**
+	 * Cloudflare resource name
+	 */
+	admin_plugins_provider_resource_name: () => LocalizedString
+	/**
+	 * Enter both the Cloudflare resource ID and name for every selected existing resource.
+	 */
+	admin_plugins_existing_resource_required: () => LocalizedString
+	/**
+	 * Authrim verifies and binds this resource, but never deletes the underlying Cloudflare resource.
+	 */
+	admin_plugins_existing_resource_retained: () => LocalizedString
+	/**
+	 * Uninstall resources
+	 */
+	admin_plugins_uninstall: () => LocalizedString
+	/**
+	 * Starting cleanup...
+	 */
+	admin_plugins_uninstalling: () => LocalizedString
+	/**
+	 * Disable this plugin and delete its Authrim-managed Cloudflare resources after a 30-minute quarantine? Existing resources will be detached and retained.
+	 */
+	admin_plugins_uninstall_confirm: () => LocalizedString
+	/**
+	 * Resource cleanup requested.
+	 */
+	admin_plugins_uninstall_requested: () => LocalizedString
+	/**
+	 * Resource cleanup
+	 */
+	admin_plugins_cleanup_title: () => LocalizedString
+	/**
+	 * Bindings are being removed before the 30-minute quarantine and cleanup.
+	 */
+	admin_plugins_cleanup_pending: () => LocalizedString
+	/**
+	 * Managed resources were deleted and existing resources were retained.
+	 */
+	admin_plugins_cleanup_complete: () => LocalizedString
+	/**
+	 * Resource cleanup needs operator attention.
+	 */
+	admin_plugins_cleanup_blocked: () => LocalizedString
+	/**
+	 * Resource provisioning
+	 */
+	admin_plugins_provisioning_title: () => LocalizedString
+	/**
+	 * Creating and verifying the plugin resources.
+	 */
+	admin_plugins_provisioning_pending: () => LocalizedString
+	/**
+	 * Resources are ready. Enabling the plugin.
+	 */
+	admin_plugins_provisioning_activation: () => LocalizedString
+	/**
+	 * Provisioning is blocked and the plugin remains disabled.
+	 */
+	admin_plugins_provisioning_blocked: () => LocalizedString
+	/**
+	 * Operation
+	 */
+	admin_plugins_provisioning_operation: () => LocalizedString
+	/**
+	 * Open operation details
+	 */
+	admin_plugins_provisioning_open: () => LocalizedString
+	/**
 	 * Author
 	 */
 	admin_plugins_author: () => LocalizedString
@@ -58446,9 +59935,45 @@ Remove this role from {email}?
 	 */
 	admin_plugins_test_email_sent_with_id: (arg: { messageId: string }) => LocalizedString
 	/**
+	 * Test email queued for retry
+	 */
+	admin_plugins_test_email_pending: () => LocalizedString
+	/**
+	 * Test email queued for retry ({messageId})
+	 */
+	admin_plugins_test_email_pending_with_id: (arg: { messageId: string }) => LocalizedString
+	/**
 	 * Failed to send test email
 	 */
 	admin_plugins_test_email_failed: () => LocalizedString
+	/**
+	 * Provider settings rollout
+	 */
+	admin_plugins_provider_projection_title: () => LocalizedString
+	/**
+	 * Updating {count} providers across tenants ({processed}/{total}).
+	 */
+	admin_plugins_provider_projection_running: (arg: { count: number, processed: number, total: number }) => LocalizedString
+	/**
+	 * {count} provider setting rollouts need attention. Runtime remains fail closed.
+	 */
+	admin_plugins_provider_projection_failed: (arg: { count: number }) => LocalizedString
+	/**
+	 * Provider settings are synchronized.
+	 */
+	admin_plugins_provider_projection_complete: () => LocalizedString
+	/**
+	 * Pending
+	 */
+	admin_plugins_provider_projection_pending: () => LocalizedString
+	/**
+	 * Processing
+	 */
+	admin_plugins_provider_projection_processing: () => LocalizedString
+	/**
+	 * Failed
+	 */
+	admin_plugins_provider_projection_status_failed: () => LocalizedString
 	/**
 	 * Authentication
 	 */
@@ -62394,11 +63919,11 @@ Remove this role from {email}?
 	 */
 	admin_flows_template_academic_saml_login_recorded_state: () => LocalizedString
 	/**
-	 * Login (No consent)
+	 * Authentication-only Login
 	 */
 	admin_flows_template_oidc_login_no_consent_title: () => LocalizedString
 	/**
-	 * Sign-in without consent confirmation
+	 * Sign-in without an interactive consent node
 	 */
 	admin_flows_template_oidc_login_no_consent_subtitle: () => LocalizedString
 	/**
@@ -62434,7 +63959,7 @@ Remove this role from {email}?
 	 */
 	admin_flows_template_saml_sp_oidc_rp_subtitle: () => LocalizedString
 	/**
-	 * Use the same sign-in steps as Login (No consent), then route to a SAML Response or OIDC authorization response based on the request protocol.
+	 * Use the same sign-in steps as Authentication-only Login, then route to a SAML Response or OIDC authorization response based on the request protocol.
 	 */
 	admin_flows_template_saml_sp_oidc_rp_description: () => LocalizedString
 	/**
@@ -63074,11 +64599,11 @@ Remove this role from {email}?
 	 */
 	admin_flows_editor_setting_redirect: () => LocalizedString
 	/**
-	 * Consent policy
+	 * Client Trust Policy
 	 */
 	admin_flows_trust_policy_title: () => LocalizedString
 	/**
-	 * Configure trust behavior. Flow assignment is managed from the Flow settings.
+	 * Configure the authoritative trust behavior for an OIDC client or SAML service provider.
 	 */
 	admin_flows_trust_policy_description: () => LocalizedString
 	/**
@@ -63098,9 +64623,13 @@ Remove this role from {email}?
 	 */
 	admin_flows_trust_policy_save_failed: () => LocalizedString
 	/**
-	 * Select the Login or Registration Flow for this target from Flow settings. Consent policies are attached to Consent nodes inside a Flow.
+	 * This read-only gate shows the protocol authority. Editing or publishing the Flow does not change the Client Trust Policy.
 	 */
 	admin_flows_trust_policy_flow_hint: () => LocalizedString
+	/**
+	 * Authorization / attribute release
+	 */
+	admin_flows_authoritative_consent_gate_output: () => LocalizedString
 	/**
 	 * First-party application
 	 */
@@ -63317,6 +64846,482 @@ Remove this role from {email}?
 	 * Schema required fields remain required. A screen can only add required display rules for optional schema fields.
 	 */
 	admin_screens_schema_required_note: () => LocalizedString
+	/**
+	 * Control Plane - Authrim
+	 */
+	admin_control_plane_page_title: () => LocalizedString
+	/**
+	 * Control Plane
+	 */
+	admin_control_plane_title: () => LocalizedString
+	/**
+	 * Inspect provisioning progress and Worker inventory drift.
+	 */
+	admin_control_plane_description: () => LocalizedString
+	/**
+	 * Refresh
+	 */
+	admin_control_plane_refresh: () => LocalizedString
+	/**
+	 * Worker drift findings
+	 */
+	admin_control_plane_findings: () => LocalizedString
+	/**
+	 * Loading control-plane status...
+	 */
+	admin_control_plane_loading: () => LocalizedString
+	/**
+	 * No active Worker inventory drift findings.
+	 */
+	admin_control_plane_empty: () => LocalizedString
+	/**
+	 * Failed to load control-plane status.
+	 */
+	admin_control_plane_load_failed: () => LocalizedString
+	/**
+	 * Failed to record the review disposition.
+	 */
+	admin_control_plane_review_failed: () => LocalizedString
+	/**
+	 * Provisioning authority
+	 */
+	admin_control_plane_authority_title: () => LocalizedString
+	/**
+	 * Automatic provisioning
+	 */
+	admin_control_plane_automatic_provisioning: () => LocalizedString
+	/**
+	 * On
+	 */
+	admin_control_plane_automatic_on: () => LocalizedString
+	/**
+	 * Off
+	 */
+	admin_control_plane_automatic_off: () => LocalizedString
+	/**
+	 * Active executor
+	 */
+	admin_control_plane_active_executor: () => LocalizedString
+	/**
+	 * Control Worker
+	 */
+	admin_control_plane_executor_control: () => LocalizedString
+	/**
+	 * Setup operator
+	 */
+	admin_control_plane_executor_setup: () => LocalizedString
+	/**
+	 * Token ownership
+	 */
+	admin_control_plane_token_ownership: () => LocalizedString
+	/**
+	 * No Control token
+	 */
+	admin_control_plane_token_none: () => LocalizedString
+	/**
+	 * User-owned token
+	 */
+	admin_control_plane_token_user: () => LocalizedString
+	/**
+	 * Account-owned token
+	 */
+	admin_control_plane_token_account: () => LocalizedString
+	/**
+	 * Capability state
+	 */
+	admin_control_plane_capability_state: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_control_plane_capability_disabled: () => LocalizedString
+	/**
+	 * Pending
+	 */
+	admin_control_plane_capability_pending: () => LocalizedString
+	/**
+	 * Ready
+	 */
+	admin_control_plane_capability_ready: () => LocalizedString
+	/**
+	 * Blocked
+	 */
+	admin_control_plane_capability_blocked: () => LocalizedString
+	/**
+	 * Active tenant disaster recovery
+	 */
+	admin_control_plane_recovery_title: () => LocalizedString
+	/**
+	 * Start recovery
+	 */
+	admin_control_plane_recovery_start: () => LocalizedString
+	/**
+	 * Inspect recovery
+	 */
+	admin_control_plane_recovery_inspect: () => LocalizedString
+	/**
+	 * Tenant ID
+	 */
+	admin_control_plane_recovery_tenant: () => LocalizedString
+	/**
+	 * Confirmation
+	 */
+	admin_control_plane_recovery_confirmation: () => LocalizedString
+	/**
+	 * Failed to inspect tenant recovery.
+	 */
+	admin_control_plane_recovery_load_failed: () => LocalizedString
+	/**
+	 * Failed to update tenant recovery.
+	 */
+	admin_control_plane_recovery_action_failed: () => LocalizedString
+	/**
+	 * Pinned route generation
+	 */
+	admin_control_plane_recovery_route_generation: () => LocalizedString
+	/**
+	 * Drain until
+	 */
+	admin_control_plane_recovery_drain_until: () => LocalizedString
+	/**
+	 * Lookup stage
+	 */
+	admin_control_plane_recovery_lookup_stage: () => LocalizedString
+	/**
+	 * Projected / verified rows
+	 */
+	admin_control_plane_recovery_lookup_rows: () => LocalizedString
+	/**
+	 * Lease active
+	 */
+	admin_control_plane_recovery_lease_active: () => LocalizedString
+	/**
+	 * D1 restore reference
+	 */
+	admin_control_plane_recovery_restore_reference: () => LocalizedString
+	/**
+	 * Restore completed at
+	 */
+	admin_control_plane_recovery_restored_at: () => LocalizedString
+	/**
+	 * Confirm completed restore
+	 */
+	admin_control_plane_recovery_confirm_restore: () => LocalizedString
+	/**
+	 * Verify migrations
+	 */
+	admin_control_plane_recovery_verify_migration: () => LocalizedString
+	/**
+	 * Reactivate tenant
+	 */
+	admin_control_plane_recovery_reactivate: () => LocalizedString
+	/**
+	 * Residency
+	 */
+	admin_control_plane_recovery_residency: () => LocalizedString
+	/**
+	 * Restore
+	 */
+	admin_control_plane_recovery_restore: () => LocalizedString
+	/**
+	 * Migration
+	 */
+	admin_control_plane_recovery_migration: () => LocalizedString
+	/**
+	 * Lookup
+	 */
+	admin_control_plane_recovery_lookup: () => LocalizedString
+	/**
+	 * Binding smoke
+	 */
+	admin_control_plane_recovery_binding_smoke: () => LocalizedString
+	/**
+	 * Worker
+	 */
+	admin_control_plane_worker: () => LocalizedString
+	/**
+	 * Review status
+	 */
+	admin_control_plane_status: () => LocalizedString
+	/**
+	 * Notification
+	 */
+	admin_control_plane_notification: () => LocalizedString
+	/**
+	 * First seen
+	 */
+	admin_control_plane_first_seen: () => LocalizedString
+	/**
+	 * Last seen
+	 */
+	admin_control_plane_last_seen: () => LocalizedString
+	/**
+	 * Actions
+	 */
+	admin_control_plane_actions: () => LocalizedString
+	/**
+	 * Unreviewed
+	 */
+	admin_control_plane_unreviewed: () => LocalizedString
+	/**
+	 * Reviewed
+	 */
+	admin_control_plane_reviewed: () => LocalizedString
+	/**
+	 * Dismissed
+	 */
+	admin_control_plane_dismissed: () => LocalizedString
+	/**
+	 * Operation inspection
+	 */
+	admin_control_plane_operation_inspection: () => LocalizedString
+	/**
+	 * Operation ID
+	 */
+	admin_control_plane_operation_id: () => LocalizedString
+	/**
+	 * Enter an operation ID
+	 */
+	admin_control_plane_operation_id_placeholder: () => LocalizedString
+	/**
+	 * Inspect
+	 */
+	admin_control_plane_inspect: () => LocalizedString
+	/**
+	 * Operation kind
+	 */
+	admin_control_plane_operation_kind: () => LocalizedString
+	/**
+	 * Status
+	 */
+	admin_control_plane_operation_status: () => LocalizedString
+	/**
+	 * Attempts
+	 */
+	admin_control_plane_attempts: () => LocalizedString
+	/**
+	 * Updated
+	 */
+	admin_control_plane_updated: () => LocalizedString
+	/**
+	 * Next retry
+	 */
+	admin_control_plane_next_retry: () => LocalizedString
+	/**
+	 * Last error
+	 */
+	admin_control_plane_last_error: () => LocalizedString
+	/**
+	 * Operation steps
+	 */
+	admin_control_plane_steps: () => LocalizedString
+	/**
+	 * Step
+	 */
+	admin_control_plane_step: () => LocalizedString
+	/**
+	 * Started
+	 */
+	admin_control_plane_started: () => LocalizedString
+	/**
+	 * Completed
+	 */
+	admin_control_plane_completed: () => LocalizedString
+	/**
+	 * Failed to inspect the operation.
+	 */
+	admin_control_plane_operation_load_failed: () => LocalizedString
+	/**
+	 * Retry step
+	 */
+	admin_control_plane_retry_step: () => LocalizedString
+	/**
+	 * Blocked step
+	 */
+	admin_control_plane_blocked_step: () => LocalizedString
+	/**
+	 * Failed to retry the operation step.
+	 */
+	admin_control_plane_retry_failed: () => LocalizedString
+	/**
+	 * Cancel operation
+	 */
+	admin_control_plane_cancel_operation: () => LocalizedString
+	/**
+	 * This blocked operation can be canceled safely.
+	 */
+	admin_control_plane_cancel_available: () => LocalizedString
+	/**
+	 * Keep operation
+	 */
+	admin_control_plane_keep_operation: () => LocalizedString
+	/**
+	 * Confirm cancel
+	 */
+	admin_control_plane_confirm_cancel: () => LocalizedString
+	/**
+	 * Failed to cancel the operation.
+	 */
+	admin_control_plane_cancel_failed: () => LocalizedString
+	/**
+	 * Restore previous settings
+	 */
+	admin_control_plane_restore_previous_settings: () => LocalizedString
+	/**
+	 * The saved Worker settings can be restored for this failed rollback.
+	 */
+	admin_control_plane_restore_available: () => LocalizedString
+	/**
+	 * Keep current settings
+	 */
+	admin_control_plane_keep_current_settings: () => LocalizedString
+	/**
+	 * Confirm restore
+	 */
+	admin_control_plane_confirm_restore: () => LocalizedString
+	/**
+	 * Failed to request the previous Worker settings restore.
+	 */
+	admin_control_plane_restore_failed: () => LocalizedString
+	/**
+	 * Inactive shard cleanup
+	 */
+	admin_control_plane_cleanup_title: () => LocalizedString
+	/**
+	 * Loading inactive shard status...
+	 */
+	admin_control_plane_cleanup_loading: () => LocalizedString
+	/**
+	 * No inactive shards require cleanup.
+	 */
+	admin_control_plane_cleanup_empty: () => LocalizedString
+	/**
+	 * Failed to update the inactive shard operation.
+	 */
+	admin_control_plane_cleanup_action_failed: () => LocalizedString
+	/**
+	 * Shard
+	 */
+	admin_control_plane_cleanup_shard: () => LocalizedString
+	/**
+	 * Data role
+	 */
+	admin_control_plane_cleanup_role: () => LocalizedString
+	/**
+	 * Quarantine
+	 */
+	admin_control_plane_cleanup_quarantine: () => LocalizedString
+	/**
+	 * Cleanup
+	 */
+	admin_control_plane_cleanup_state: () => LocalizedString
+	/**
+	 * Bindings removed
+	 */
+	admin_control_plane_cleanup_bindings: () => LocalizedString
+	/**
+	 * Destructive operations disabled
+	 */
+	admin_control_plane_cleanup_gate_disabled: () => LocalizedString
+	/**
+	 * Quarantine
+	 */
+	admin_control_plane_cleanup_quarantine_action: () => LocalizedString
+	/**
+	 * Retry quarantine
+	 */
+	admin_control_plane_cleanup_retry_quarantine: () => LocalizedString
+	/**
+	 * Approve cleanup
+	 */
+	admin_control_plane_cleanup_approve: () => LocalizedString
+	/**
+	 * Retry cleanup
+	 */
+	admin_control_plane_cleanup_retry: () => LocalizedString
+	/**
+	 * Cleanup approval
+	 */
+	admin_control_plane_cleanup_approval_title: () => LocalizedString
+	/**
+	 * Export status
+	 */
+	admin_control_plane_cleanup_export_mode: () => LocalizedString
+	/**
+	 * Export skipped
+	 */
+	admin_control_plane_cleanup_export_skipped: () => LocalizedString
+	/**
+	 * Export manually verified
+	 */
+	admin_control_plane_cleanup_export_verified: () => LocalizedString
+	/**
+	 * Export evidence ID
+	 */
+	admin_control_plane_cleanup_export_evidence: () => LocalizedString
+	/**
+	 * Confirmation
+	 */
+	admin_control_plane_cleanup_confirmation: () => LocalizedString
+	/**
+	 * Delete the physical D1 database
+	 */
+	admin_control_plane_cleanup_delete_database: () => LocalizedString
+	/**
+	 * Cancel
+	 */
+	admin_control_plane_cleanup_cancel: () => LocalizedString
+	/**
+	 * Approve and start cleanup
+	 */
+	admin_control_plane_cleanup_confirm: () => LocalizedString
+	/**
+	 * Queued
+	 */
+	admin_control_plane_status_queued: () => LocalizedString
+	/**
+	 * Running
+	 */
+	admin_control_plane_status_running: () => LocalizedString
+	/**
+	 * Waiting to retry
+	 */
+	admin_control_plane_status_waiting_retry: () => LocalizedString
+	/**
+	 * Succeeded
+	 */
+	admin_control_plane_status_succeeded: () => LocalizedString
+	/**
+	 * Blocked
+	 */
+	admin_control_plane_status_blocked: () => LocalizedString
+	/**
+	 * Canceled
+	 */
+	admin_control_plane_status_canceled: () => LocalizedString
+	/**
+	 * Skipped
+	 */
+	admin_control_plane_status_skipped: () => LocalizedString
+	/**
+	 * Rolled back
+	 */
+	admin_control_plane_status_rolled_back: () => LocalizedString
+	/**
+	 * Pending
+	 */
+	admin_control_plane_pending: () => LocalizedString
+	/**
+	 * Acknowledged
+	 */
+	admin_control_plane_acknowledged: () => LocalizedString
+	/**
+	 * Mark reviewed
+	 */
+	admin_control_plane_review: () => LocalizedString
+	/**
+	 * Dismiss
+	 */
+	admin_control_plane_dismiss: () => LocalizedString
 	/**
 	 * Settings
 	 */

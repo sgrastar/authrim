@@ -19,6 +19,7 @@ export interface Tenant {
 	tenant_code: string;
 	name: string;
 	description: string | null;
+	isolation_policy: 'shared_pool' | 'tenant_exclusive';
 	lifecycle_state:
 		| 'provisioning'
 		| 'active'
@@ -32,10 +33,6 @@ export interface Tenant {
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
-	provisioning_status?: 'active' | 'inactive' | 'provisioning_failed';
-	provisioning_error?: string | null;
-	provisioning_slot_id?: string | null;
-	provisioning_updated_at?: number | null;
 }
 
 export type TenantLifecycleCommand =
@@ -48,16 +45,6 @@ export type TenantLifecycleCommand =
 export interface TenantListResponse {
 	tenants: Tenant[];
 	total: number;
-	tenant_d1_pool?: {
-		enabled: boolean;
-		capacity?: number;
-		available_slots?: number;
-		reserved_slots?: number;
-		assigned_slots?: number;
-		pending_binding_slots?: number;
-		unavailable_slots?: number;
-		reset_required_slots?: number;
-	};
 	single_tenant_mode?: boolean;
 	single_tenant_reason?: string | null;
 }
@@ -71,16 +58,140 @@ export interface TenantDeleteResponse {
 export interface TenantProvisioningCleanupResponse {
 	status: 'cleaned';
 	tenant_id: string;
-	slot_id: string | null;
+	operation_id?: string;
 }
 
-export interface TenantProvisioningRetryResponse extends Tenant {
-	provisioning?: {
-		mode: string;
-		slot_id: string;
-		smoke_test: 'passed';
-		retry: 'succeeded';
+export type TenantProvisioningOperationStatus =
+	| 'queued'
+	| 'running'
+	| 'waiting_retry'
+	| 'blocked'
+	| 'succeeded'
+	| 'canceled';
+
+export interface TenantProvisioningOperationStep {
+	step_key:
+		| 'request_accepted'
+		| 'capacity_check'
+		| 'reserve_default_route'
+		| 'tenant_seed'
+		| 'registry_publish'
+		| 'tenant_smoke'
+		| 'tenant_prepare'
+		| 'lookup_activate'
+		| 'tenant_active';
+	status: 'queued' | 'running' | 'waiting_retry' | 'blocked' | 'succeeded' | 'skipped';
+	attempt_count: number;
+	next_attempt_at: number | null;
+	last_error_code: string | null;
+	observed_resource_id: string | null;
+	started_at: number | null;
+	completed_at: number | null;
+	updated_at: number;
+}
+
+export interface ControlProvisioningOperationStep {
+	step_key: string;
+	status:
+		| 'queued'
+		| 'running'
+		| 'waiting_retry'
+		| 'succeeded'
+		| 'blocked'
+		| 'canceled'
+		| 'skipped'
+		| 'rolled_back';
+	attempt_count: number;
+	next_attempt_at: number | null;
+	last_error_code: string | null;
+	observed_resource_id: string | null;
+	progress_current: number | null;
+	progress_total: number | null;
+	started_at: number | null;
+	completed_at: number | null;
+	updated_at: number;
+}
+
+export interface ControlProvisioningOperation {
+	data_role: string;
+	operation_id: string;
+	status: TenantProvisioningOperationStatus;
+	attempt_count: number;
+	next_attempt_at: number | null;
+	last_error_code: string | null;
+	updated_at: number;
+	steps: ControlProvisioningOperationStep[];
+}
+
+export interface TenantProvisioningOperation {
+	operation_id: string;
+	tenant_id: string;
+	operation_kind: 'create' | 'clone';
+	source_tenant_id: string | null;
+	isolation_policy: 'shared_pool' | 'tenant_exclusive';
+	status: TenantProvisioningOperationStatus;
+	current_step: TenantProvisioningOperationStep['step_key'];
+	attempt_count: number;
+	next_attempt_at: number | null;
+	last_error_code: string | null;
+	created_at: number;
+	updated_at: number;
+	completed_at: number | null;
+	preparation_result: Record<string, unknown> | null;
+	capacity_operation_ids: Record<string, string>;
+	capacity_operations?: ControlProvisioningOperation[];
+	steps: TenantProvisioningOperationStep[];
+}
+
+export type TenantPlacementMigrationStepKey =
+	| 'wait_control'
+	| 'begin_route_cutover'
+	| 'prepare_lookup'
+	| 'prepare_alias'
+	| 'commit_control'
+	| 'publish_registry'
+	| 'activate_alias'
+	| 'activate_lookup'
+	| 'verify_routes'
+	| 'finalize_source'
+	| 'complete';
+
+export interface TenantPlacementMigrationOperation {
+	operation_id: string;
+	tenant_id: string;
+	target_isolation_policy: 'tenant_exclusive';
+	status: TenantProvisioningOperationStatus;
+	current_step: TenantPlacementMigrationStepKey;
+	attempt_count: number;
+	next_attempt_at: number | null;
+	last_error_code: string | null;
+	lookup_progress: {
+		prepared_rows: number;
+		activated_rows: number;
+		verified_rows: number;
 	};
+	steps: Array<{
+		step: TenantPlacementMigrationStepKey;
+		status: 'pending' | 'running' | 'waiting_retry' | 'blocked' | 'canceled' | 'completed';
+	}>;
+	created_at: number;
+	started_at: number | null;
+	completed_at: number | null;
+	updated_at: number;
+	control_status: 'available' | 'unavailable';
+	control: {
+		state: string;
+		writeFenceState: 'inactive' | 'requested' | 'active' | 'released';
+		routeCutoverStarted: boolean;
+		canCancel: boolean;
+		canApprovePurge: boolean;
+		sourceRetentionExpiresAt: number | null;
+		lastErrorCode: string | null;
+	} | null;
+}
+
+export interface CreateTenantResponse extends Tenant {
+	provisioning?: TenantProvisioningOperation & { mode: 'control-plane' };
 }
 
 export interface CreateTenantRequest {
@@ -88,6 +199,7 @@ export interface CreateTenantRequest {
 	tenant_code?: string;
 	name: string;
 	description?: string;
+	isolation_policy?: 'shared_pool' | 'tenant_exclusive';
 }
 
 export interface TenantCloneOptions {
@@ -105,7 +217,7 @@ export interface CloneTenantRequest extends CreateTenantRequest {
 	copy: TenantCloneOptions;
 }
 
-export interface CloneTenantResponse extends Tenant {
+export interface CloneTenantCompletedResponse extends Tenant {
 	source_tenant_id: string;
 	source_tenant_name: string;
 	copy: TenantCloneOptions;
@@ -134,6 +246,15 @@ export interface CloneTenantResponse extends Tenant {
 	signing_keys: { copied: false; generated: true };
 	warnings: string[];
 }
+
+export interface CloneTenantProvisioningResponse extends Tenant {
+	source_tenant_id: string;
+	source_tenant_name: string;
+	copy: TenantCloneOptions;
+	provisioning: TenantProvisioningOperation & { mode: 'control-plane' };
+}
+
+export type CloneTenantResponse = CloneTenantCompletedResponse | CloneTenantProvisioningResponse;
 
 export interface UpdateTenantRequest {
 	name?: string;
@@ -216,7 +337,7 @@ export const adminTenantsAPI = {
 	/**
 	 * Create a new tenant
 	 */
-	async create(data: CreateTenantRequest): Promise<Tenant> {
+	async create(data: CreateTenantRequest): Promise<CreateTenantResponse> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/tenants`, {
 			method: 'POST',
 			includeJsonContentType: true,
@@ -227,6 +348,98 @@ export const adminTenantsAPI = {
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
 			throw new Error(error.error_description || error.message || 'Failed to create tenant');
+		}
+		return response.json();
+	},
+
+	async provisioning(id: string): Promise<TenantProvisioningOperation> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning`,
+			{ skipTenantHeader: true }
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to load tenant provisioning status'
+			);
+		}
+		return response.json();
+	},
+
+	async latestPlacementMigration(id: string): Promise<TenantPlacementMigrationOperation | null> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/latest`,
+			{ skipTenantHeader: true }
+		);
+		if (response.status === 404) return null;
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to load placement migration status'
+			);
+		}
+		return response.json();
+	},
+
+	async startPlacementMigration(
+		id: string,
+		idempotencyKey = crypto.randomUUID()
+	): Promise<TenantPlacementMigrationOperation> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations`,
+			{
+				method: 'POST',
+				skipTenantHeader: true,
+				headers: { 'Idempotency-Key': idempotencyKey }
+			}
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to start placement migration'
+			);
+		}
+		return response.json();
+	},
+
+	async cancelPlacementMigration(
+		id: string,
+		operationId: string,
+		idempotencyKey = crypto.randomUUID()
+	): Promise<TenantPlacementMigrationOperation> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/${encodeURIComponent(operationId)}/cancel`,
+			{
+				method: 'POST',
+				skipTenantHeader: true,
+				headers: { 'Idempotency-Key': idempotencyKey }
+			}
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to cancel placement migration'
+			);
+		}
+		return response.json();
+	},
+
+	async approvePlacementMigrationPurge(
+		id: string,
+		operationId: string,
+		idempotencyKey = crypto.randomUUID()
+	): Promise<TenantPlacementMigrationOperation> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/${encodeURIComponent(operationId)}/approve-purge`,
+			{
+				method: 'POST',
+				skipTenantHeader: true,
+				headers: { 'Idempotency-Key': idempotencyKey }
+			}
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error.error_description || error.message || 'Failed to approve source purge');
 		}
 		return response.json();
 	},
@@ -373,7 +586,7 @@ export const adminTenantsAPI = {
 	/**
 	 * Retry a failed tenant provisioning draft.
 	 */
-	async retryProvisioning(id: string): Promise<TenantProvisioningRetryResponse> {
+	async retryProvisioning(id: string): Promise<TenantProvisioningOperation> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/provisioning/retry`,
 			{

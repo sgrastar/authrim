@@ -143,6 +143,10 @@ async function generateEd25519Jwks(kid = 'runtime-registry-key-1') {
   const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey;
   privateJwk.kid = kid;
   publicJwk.kid = kid;
+  privateJwk.alg = 'EdDSA';
+  privateJwk.use = 'sig';
+  publicJwk.alg = 'EdDSA';
+  publicJwk.use = 'sig';
   return { privateJwk, publicJwk };
 }
 
@@ -150,11 +154,13 @@ function createRuntimeRegistrySnapshot(
   overrides: Partial<TenantRuntimeRegistrySnapshot> = {}
 ): TenantRuntimeRegistrySnapshot {
   return {
-    version: 1,
+    version: 2,
     tenantId: 'tenant-a',
     snapshotScope: 'tenant',
     deploymentTarget: 'edge-a',
     runtimeGeneration: 8,
+    routeStatus: 'active',
+    quarantineDenyGeneration: 0,
     storageProfileId: 'builtin:storage:tenant-d1',
     publishedAt: '2026-05-16T00:00:00.000Z',
     expiresAt: '2099-05-16T00:30:00.000Z',
@@ -358,6 +364,96 @@ describe('tenant-database-resolver', () => {
     expect(runtimeRegistry.get).toHaveBeenCalledWith(
       'tenant:tenant-a:runtime-registry:snapshot:tenant:edge-a'
     );
+  });
+
+  it('resolves exact default, users, and PII bindings from multi-shard signed routing', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const baseStore = createRuntimeRegistrySnapshot().stores[0];
+    const stores = [
+      { role: 'tenant_core', shardGroup: 'default', shardIndex: 0 },
+      { role: 'tenant_core', shardGroup: 'default', shardIndex: 1 },
+      { role: 'tenant_core', shardGroup: 'users', shardIndex: 0 },
+      { role: 'tenant_core', shardGroup: 'users', shardIndex: 1 },
+      { role: 'tenant_pii', shardGroup: 'default', shardIndex: 0 },
+      { role: 'tenant_pii', shardGroup: 'default', shardIndex: 1 },
+    ].map((identity) => {
+      const suffix = `${identity.role === 'tenant_pii' ? 'PII' : 'CORE'}_${identity.shardGroup.toUpperCase()}_${identity.shardIndex}`;
+      return {
+        ...baseStore,
+        ...identity,
+        shardCount: 2,
+        shardKeyStrategy: 'least_loaded_fixed',
+        bindingRef: `TDB_${suffix}`,
+        databaseId: `database-${suffix.toLowerCase()}`,
+        databaseName: `authrim-test-${suffix.toLowerCase()}`,
+      };
+    });
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot({
+        stores,
+        metadata: {
+          storeCount: stores.length,
+          roles: ['tenant_core', 'tenant_pii'],
+          signature: null,
+          signatureKeyId: null,
+          signatureAlgorithm: null,
+          signedAt: null,
+        },
+      }),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const bindings = Object.fromEntries(
+      stores.map((store) => [store.bindingRef, createD1Binding()])
+    );
+    const runtimeRegistry = {
+      get: vi.fn(async (key: string) =>
+        key.includes(':runtime-registry:generation:')
+          ? JSON.stringify({ runtimeGeneration: 8 })
+          : JSON.stringify(signedSnapshot)
+      ),
+    };
+    const repository = {
+      getActivePointer: vi.fn(async () => {
+        throw new Error('control_db_unavailable');
+      }),
+      getRegistryRow: vi.fn(async () => null),
+    };
+    const env = {
+      ...bindings,
+      TENANT_RUNTIME_REGISTRY: runtimeRegistry,
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+    };
+
+    for (const expected of [
+      { role: 'tenant_core' as const, shardGroup: 'default', shardIndex: 1 },
+      { role: 'tenant_core' as const, shardGroup: 'users', shardIndex: 0 },
+      { role: 'tenant_pii' as const, shardGroup: 'default', shardIndex: 1 },
+    ]) {
+      const resolved = await resolveTenantDatabaseSourceFromRegistry(
+        env,
+        {
+          tenantId: 'tenant-a',
+          role: expected.role,
+          shardGroup: expected.shardGroup,
+          shardIndex: expected.shardIndex,
+          runtimeSnapshotMode: 'required',
+        },
+        repository
+      );
+      expect(resolved).toMatchObject({
+        role: expected.role,
+        shardGroup: expected.shardGroup,
+        shardIndex: expected.shardIndex,
+        shardCount: 2,
+        shardKeyStrategy: 'least_loaded_fixed',
+      });
+      expect(resolved.source).toBe(bindings[resolved.bindingRef]);
+    }
+
+    expect(repository.getActivePointer).not.toHaveBeenCalled();
+    expect(repository.getRegistryRow).not.toHaveBeenCalled();
   });
 
   it('fails closed for runtime registry snapshots when verification keys are not configured', async () => {
@@ -669,6 +765,108 @@ describe('tenant-database-resolver', () => {
         String(key).includes(':runtime-registry:generation:')
       )
     ).toHaveLength(1);
+  });
+
+  it('denies a quarantined generation before request and worker caches or control DB fallback', async () => {
+    const binding = createD1Binding();
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    let routeStatus: 'active' | 'quarantining' = 'active';
+    const runtimeRegistry = {
+      get: vi.fn(async (key: string) =>
+        key.includes(':runtime-registry:generation:')
+          ? JSON.stringify({
+              runtimeGeneration: 8,
+              routeStatus,
+              quarantineDenyGeneration: routeStatus === 'active' ? 0 : 1,
+            })
+          : JSON.stringify(signedSnapshot)
+      ),
+    };
+    const requestCache = new Map();
+    const repo = createRepository({ pointer: createPointer(), row: createRow() });
+
+    await resolveTenantDatabaseSourceFromRegistry(
+      {
+        TDB_TENANT_A_SNAPSHOT_CORE: binding,
+        TENANT_RUNTIME_REGISTRY: runtimeRegistry,
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+        AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+      },
+      {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        requestCache,
+        generationCacheTtlMs: 0,
+      },
+      repo
+    );
+    routeStatus = 'quarantining';
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(
+        {
+          TDB_TENANT_A_SNAPSHOT_CORE: binding,
+          TENANT_RUNTIME_REGISTRY: runtimeRegistry,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        },
+        {
+          tenantId: 'tenant-a',
+          role: 'tenant_core',
+          requestCache,
+          generationCacheTtlMs: 0,
+        },
+        repo
+      ),
+      'quarantined_route'
+    );
+    expect(repo.getActivePointer).not.toHaveBeenCalled();
+  });
+
+  it('denies a signed quarantined snapshot even if lightweight metadata claims active', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot({
+        routeStatus: 'quarantined',
+        quarantineDenyGeneration: 2,
+      }),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const repo = createRepository({ pointer: createPointer(), row: createRow() });
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(
+        {
+          TENANT_RUNTIME_REGISTRY: {
+            get: vi.fn(async (key: string) =>
+              key.includes(':runtime-registry:generation:')
+                ? JSON.stringify({
+                    runtimeGeneration: 8,
+                    routeStatus: 'active',
+                    quarantineDenyGeneration: 0,
+                  })
+                : JSON.stringify(signedSnapshot)
+            ),
+          },
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        },
+        {
+          tenantId: 'tenant-a',
+          role: 'tenant_core',
+          runtimeSnapshotMode: 'required',
+        },
+        repo
+      ),
+      'quarantined_route'
+    );
+    expect(repo.getActivePointer).not.toHaveBeenCalled();
   });
 
   it('can disable worker memory cache for tests and operator-sensitive reads', async () => {

@@ -19,6 +19,10 @@ import { generateWranglerConfig, toToml, type ResourceIds } from './wrangler.js'
 import type { AuthrimConfig } from './config.js';
 import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from './naming.js';
 import { getWorkersSubdomain } from './cloudflare.js';
+import {
+  loadWorkerCapabilityManifests,
+  validateGeneratedWorkerCapabilities,
+} from './worker-capabilities.js';
 
 // =============================================================================
 // Types
@@ -284,6 +288,9 @@ export async function saveMasterWranglerConfigs(
   options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'> & {
     includeDurableObjectMigrations?: boolean;
     components?: WorkerComponent[];
+    validateCapabilities?: boolean;
+    capabilityManifestBaseDir?: string;
+    placementModeByComponent?: Partial<Record<WorkerComponent, 'off' | 'smart'>>;
   }
 ): Promise<{ success: boolean; files: string[]; errors: string[] }> {
   const { baseDir, env, dryRun, onProgress, includeDurableObjectMigrations } = options;
@@ -305,6 +312,24 @@ export async function saveMasterWranglerConfigs(
     ? options.components.filter((component) => configuredComponents.includes(component))
     : configuredComponents;
 
+  const capabilityManifests = new Map();
+  if (options.validateCapabilities !== false) {
+    try {
+      for (const manifest of await loadWorkerCapabilityManifests({
+        baseDir: options.capabilityManifestBaseDir ?? baseDir,
+        components,
+      })) {
+        capabilityManifests.set(manifest.component, manifest);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        files,
+        errors: [error instanceof Error ? error.message : String(error)],
+      };
+    }
+  }
+
   for (const component of components) {
     try {
       const wranglerConfig = generateWranglerConfig(
@@ -312,8 +337,21 @@ export async function saveMasterWranglerConfigs(
         config,
         resourceIds,
         workersSubdomain ?? undefined,
-        { includeDurableObjectMigrations }
+        {
+          includeDurableObjectMigrations,
+          placementMode: options.placementModeByComponent?.[component],
+        }
       );
+      if (options.validateCapabilities !== false) {
+        const capabilityManifest = capabilityManifests.get(component);
+        if (!capabilityManifest) {
+          throw new Error(`worker_capability_manifest_missing:${component}`);
+        }
+        validateGeneratedWorkerCapabilities({
+          compiled: capabilityManifest,
+          config: wranglerConfig,
+        });
+      }
       // Generate TOML with [env.{env}] section format
       const tomlContent = toToml(wranglerConfig, env);
       const masterPath = getMasterWranglerPath(envPaths, component);

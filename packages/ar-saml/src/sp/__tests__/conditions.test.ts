@@ -14,7 +14,29 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-lib-core';
+
+const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
+  residency: {
+    version: 1,
+    residencyPolicyId: 'test-residency',
+    residencyPartition: 'default',
+    policyGeneration: 1,
+    allowedRegions: ['apac'],
+    jurisdiction: null,
+  },
+  totalShards: 1,
+  now: 1,
+  updatedBy: 'test',
+});
+
+function createTestConfigKv(): KVNamespace {
+  return {
+    get: vi.fn(async (key: string) =>
+      key.startsWith('region_shard_config:') ? TEST_REGION_CONFIG : null
+    ),
+  } as unknown as KVNamespace;
+}
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
@@ -223,6 +245,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
+      AUTHRIM_CONFIG: createTestConfigKv(),
       DB: {
         prepare: vi.fn().mockImplementation(function () {
           return {
@@ -232,7 +255,11 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
-        batch: vi.fn().mockResolvedValue([]),
+        batch: vi
+          .fn()
+          .mockImplementation(async (statements: unknown[]) =>
+            statements.map(() => ({ success: true, meta: { changes: 1 } }))
+          ),
       } as unknown as Env['DB'],
       DB_PII: {
         prepare: vi.fn().mockImplementation(function () {
@@ -243,7 +270,11 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
-        batch: vi.fn().mockResolvedValue([]),
+        batch: vi
+          .fn()
+          .mockImplementation(async (statements: unknown[]) =>
+            statements.map(() => ({ success: true, meta: { changes: 1 } }))
+          ),
       } as unknown as Env['DB_PII'],
       SAML_REQUEST_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-store-id'),

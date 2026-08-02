@@ -11,7 +11,30 @@ import { credentialRoute } from '../credential';
 import { deferredCredentialRoute } from '../deferred';
 import { vciNonceRoute } from '../nonce';
 import type { Context } from 'hono';
+import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '../../../types';
+
+const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
+  residency: {
+    version: 1,
+    residencyPolicyId: 'test-residency',
+    residencyPartition: 'default',
+    policyGeneration: 1,
+    allowedRegions: ['apac'],
+    jurisdiction: null,
+  },
+  totalShards: 1,
+  now: 1,
+  updatedBy: 'test',
+});
+
+function createTestConfigKv(): KVNamespace {
+  return {
+    get: vi.fn(async (key: string) =>
+      key.startsWith('region_shard_config:') ? TEST_REGION_CONFIG : null
+    ),
+  } as unknown as KVNamespace;
+}
 
 // Mock jose
 vi.mock('jose', () => ({
@@ -175,7 +198,7 @@ const createMockContext = (
         }),
       }),
     } as unknown as D1Database,
-    AUTHRIM_CONFIG: {} as KVNamespace,
+    AUTHRIM_CONFIG: createTestConfigKv(),
     VP_REQUEST_STORE: {} as DurableObjectNamespace,
     CREDENTIAL_OFFER_STORE: {
       idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
@@ -303,7 +326,7 @@ describe('VCI Nonce Route', () => {
     };
     const c = createMockContext({
       env: {
-        AUTHRIM_CONFIG: { get: vi.fn().mockResolvedValue(null) } as unknown as KVNamespace,
+        AUTHRIM_CONFIG: createTestConfigKv(),
         CREDENTIAL_OFFER_STORE: {
           idFromName: vi.fn().mockReturnValue({ toString: () => 'nonce-do' }),
           get: vi.fn().mockReturnValue(stub),

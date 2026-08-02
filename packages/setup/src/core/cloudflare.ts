@@ -6,12 +6,19 @@
  */
 
 import { execa, type ExecaError } from 'execa';
+import {
+  AUTHRIM_MIGRATIONS_COLUMN_ALTERS,
+  AUTHRIM_MIGRATIONS_TABLE_SQL,
+  AUTHRIM_MIGRATION_HISTORY_SQL,
+  validateAuthrimMigrationHistoryRows,
+  type AuthrimMigrationHistoryRow,
+} from '@authrim/ar-lib-core/control-plane';
 import { createHash } from 'node:crypto';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { basename, join as pathJoin } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { writeFile, unlink } from 'node:fs/promises';
+import { readFile, stat, writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
   getKVNamespaceName,
@@ -170,13 +177,15 @@ export interface MigrationProfileConfig {
 }
 
 export const R2_BUCKETS = [
-  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets' },
-  { binding: 'AVATARS', suffix: 'authrim-avatars' },
-  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
-  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
-  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
-  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
-  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
+  { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
+  { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
+  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets', baseline: false },
+  { binding: 'AVATARS', suffix: 'authrim-avatars', baseline: false },
+  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs', baseline: false },
+  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive', baseline: false },
+  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts', baseline: false },
+  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts', baseline: false },
+  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details', baseline: false },
 ] as const;
 
 export type R2BucketBinding = (typeof R2_BUCKETS)[number]['binding'];
@@ -189,8 +198,12 @@ export function getR2BucketName(env: string, binding: R2BucketBinding): string {
   return `${env}-${bucket.suffix}`;
 }
 
-export function getRequiredR2Buckets(env: string): R2BucketInfo[] {
-  return R2_BUCKETS.map((bucket) => ({
+export function getRequiredR2Buckets(
+  env: string,
+  options: { includeFeatureBuckets?: boolean } = {}
+): R2BucketInfo[] {
+  const includeFeatureBuckets = options.includeFeatureBuckets ?? true;
+  return R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
     binding: bucket.binding,
     name: `${env}-${bucket.suffix}`,
   }));
@@ -1787,18 +1800,25 @@ function describeInventoryError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function resolveCloudflareInventoryCredentials(): Promise<{
+async function resolveCloudflareInventoryCredentials(accountIdHint?: string): Promise<{
   accountId: string;
   token: string;
+  source: CloudflareApiToken['source'];
 } | null> {
+  const hintedAccountId = accountIdHint?.trim();
+  if (hintedAccountId && !/^[a-f0-9]{32}$/u.test(hintedAccountId)) {
+    throw new Error('cloudflare_account_id_invalid');
+  }
   if (
     process.env.NODE_ENV === 'test' &&
-    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+    ((!hintedAccountId && !process.env.CLOUDFLARE_ACCOUNT_ID?.trim()) ||
+      !process.env.CLOUDFLARE_API_TOKEN?.trim())
   ) {
     return null;
   }
 
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  const accountId =
+    hintedAccountId || process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
   const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
   const tokenInfo = envToken
     ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
@@ -1807,7 +1827,38 @@ async function resolveCloudflareInventoryCredentials(): Promise<{
     return null;
   }
 
-  return { accountId, token: tokenInfo.token };
+  return { accountId, token: tokenInfo.token, source: tokenInfo.source };
+}
+
+async function resolveCloudflareD1Credentials(accountIdHint?: string): Promise<{
+  accountId: string;
+  token: string;
+  source: CloudflareApiToken['source'] | 'd1_env';
+} | null> {
+  const d1Token = process.env.CLOUDFLARE_D1_API_TOKEN?.trim();
+  if (
+    process.env.NODE_ENV === 'test' &&
+    ((!accountIdHint?.trim() && !process.env.CLOUDFLARE_ACCOUNT_ID?.trim()) ||
+      (!d1Token && !process.env.CLOUDFLARE_API_TOKEN?.trim()))
+  ) {
+    return null;
+  }
+  const accountId =
+    accountIdHint?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
+  if (d1Token && accountId) return { accountId, token: d1Token, source: 'd1_env' };
+  return resolveCloudflareInventoryCredentials(accountIdHint);
+}
+
+export function shouldRefreshD1OAuthCredential(input: {
+  status: number;
+  source: CloudflareApiToken['source'] | 'd1_env';
+  attempt: number;
+}): boolean {
+  return (
+    input.source === 'oauth' &&
+    input.attempt === 1 &&
+    (input.status === 401 || input.status === 403)
+  );
 }
 
 async function listCloudflarePaginatedResourcesViaApi<T>(input: {
@@ -2042,16 +2093,72 @@ export async function getKVKeyByNamespaceId(namespaceId: string, key: string): P
   return stdout;
 }
 
+interface KVKeyListRow {
+  name: string;
+}
+
+function normalizeKVKeyListRows(rows: unknown): KVKeyListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('KV key list was not an array');
+  }
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`KV key list row ${index} was not an object`);
+    }
+    const name = (row as { name?: unknown }).name;
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new TypeError(`KV key list row ${index} did not contain a name`);
+    }
+    return { name };
+  });
+}
+
+export function parseKVKeyListOutput(stdout: string): KVKeyListRow[] {
+  return parseValidatedJsonOutput(
+    stdout,
+    normalizeKVKeyListRows,
+    'Wrangler output did not contain a valid KV key list'
+  );
+}
+
+export async function getOptionalKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string
+): Promise<string | null> {
+  const { stdout } = await wrangler(
+    ['kv', 'key', 'list', '--namespace-id', namespaceId, '--prefix', key, '--remote'],
+    { timeout: 60000 }
+  );
+  const exactMatches = parseKVKeyListOutput(stdout).filter((row) => row.name === key);
+  if (exactMatches.length === 0) return null;
+  if (exactMatches.length !== 1) {
+    throw new Error('Cloudflare KV returned duplicate exact keys');
+  }
+  return getKVKeyByNamespaceId(namespaceId, key);
+}
+
 /**
  * Delete a D1 database
  */
 export async function deleteD1Database(name: string): Promise<boolean> {
-  try {
-    await wrangler(['d1', 'delete', name, '--skip-confirmation']);
-    return true;
-  } catch {
-    return false;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      await wrangler(['d1', 'delete', name, '--skip-confirmation']);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : '';
+      const retryable =
+        message.includes('429') ||
+        message.includes('code: 971') ||
+        message.includes('code 971') ||
+        message.includes('throttl') ||
+        message.includes('too many requests');
+      if (!retryable || attempt === 6) return false;
+      const delayMs = process.env.NODE_ENV === 'test' ? 0 : Math.min(2 ** attempt * 1_000, 30_000);
+      if (delayMs > 0) await sleep(delayMs);
+    }
   }
+  return false;
 }
 
 /**
@@ -2196,6 +2303,96 @@ export interface D1ExecuteCommandResult {
   stderr: string;
 }
 
+export interface D1BatchStatement {
+  sql: string;
+  params?: readonly unknown[];
+}
+
+export interface D1BatchExecutionResult {
+  success: true;
+  results?: unknown[];
+  meta?: unknown;
+}
+
+export interface D1BatchExecutionOptions {
+  accountId?: string;
+}
+
+export async function executeD1Batch(
+  databaseId: string,
+  batch: readonly D1BatchStatement[],
+  options: D1BatchExecutionOptions = {}
+): Promise<D1BatchExecutionResult[]> {
+  if (!/^[a-fA-F0-9-]{16,64}$/u.test(databaseId)) {
+    throw new Error('invalid_d1_database_id');
+  }
+  if (batch.length === 0 || batch.length > 512) {
+    throw new Error('invalid_d1_batch_size');
+  }
+  const normalized = batch.map((statement) => {
+    if (!statement.sql.trim() || statement.sql.length > 100_000) {
+      throw new Error('invalid_d1_batch_statement');
+    }
+    return {
+      sql: statement.sql,
+      ...(statement.params ? { params: [...statement.params] } : {}),
+    };
+  });
+  const body = JSON.stringify({ batch: normalized });
+  if (Buffer.byteLength(body, 'utf8') > 4 * 1024 * 1024) {
+    throw new Error('d1_batch_payload_too_large');
+  }
+  let credentials = await resolveCloudflareD1Credentials(options.accountId);
+  if (!credentials) throw new Error('cloudflare_api_credentials_required');
+  let response: Response | undefined;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${databaseId}/query`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+      }
+    );
+    if (response.ok) break;
+    if (
+      !shouldRefreshD1OAuthCredential({
+        status: response.status,
+        source: credentials.source,
+        attempt,
+      })
+    ) {
+      throw new Error(`cloudflare_d1_batch_failed:${response.status}`);
+    }
+    await wrangler(['whoami'], { timeout: 30_000 });
+    const refreshed = await resolveCloudflareD1Credentials(options.accountId);
+    if (!refreshed || refreshed.source !== 'oauth') {
+      throw new Error(`cloudflare_d1_batch_failed:${response.status}`);
+    }
+    credentials = refreshed;
+  }
+  if (!response?.ok) throw new Error(`cloudflare_d1_batch_failed:${response?.status ?? 0}`);
+  const payload = (await response.json()) as { success?: unknown; result?: unknown };
+  if (
+    payload.success !== true ||
+    !Array.isArray(payload.result) ||
+    payload.result.length !== normalized.length ||
+    payload.result.some(
+      (result) =>
+        !result ||
+        typeof result !== 'object' ||
+        Array.isArray(result) ||
+        (result as { success?: unknown }).success !== true
+    )
+  ) {
+    throw new Error('cloudflare_d1_batch_unsuccessful');
+  }
+  return payload.result as D1BatchExecutionResult[];
+}
+
 export async function executeD1Command(
   dbName: string,
   sql: string,
@@ -2320,25 +2517,6 @@ async function queryD1RowsViaApi<T extends Record<string, unknown>>(
   return normalizeD1QueryRows<T>(await response.json());
 }
 
-/** SQL to create the migration tracking table (idempotent) */
-const CREATE_MIGRATIONS_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS authrim_migrations (
-  filename TEXT PRIMARY KEY,
-  checksum TEXT NOT NULL,
-  applied_at INTEGER NOT NULL,
-  execution_time_ms INTEGER,
-  setup_version TEXT,
-  tool_version TEXT
-);
-`.trim();
-
-const MIGRATION_TABLE_COLUMN_ALTERS = [
-  'ALTER TABLE authrim_migrations ADD COLUMN checksum TEXT;',
-  'ALTER TABLE authrim_migrations ADD COLUMN execution_time_ms INTEGER;',
-  'ALTER TABLE authrim_migrations ADD COLUMN setup_version TEXT;',
-  'ALTER TABLE authrim_migrations ADD COLUMN tool_version TEXT;',
-];
-
 /**
  * Ensure the authrim_migrations tracking table exists in the target database.
  * Returns true on success, false on failure.
@@ -2355,9 +2533,9 @@ async function ensureMigrationsTable(
       '--remote',
       '--yes',
       '--command',
-      CREATE_MIGRATIONS_TABLE_SQL,
+      AUTHRIM_MIGRATIONS_TABLE_SQL,
     ]);
-    for (const sql of MIGRATION_TABLE_COLUMN_ALTERS) {
+    for (const sql of AUTHRIM_MIGRATIONS_COLUMN_ALTERS) {
       try {
         await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
       } catch {
@@ -2382,26 +2560,10 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.filename));
 }
 
-interface AppliedMigrationRow extends Record<string, unknown> {
-  filename: string;
-  checksum?: string | null;
-  applied_at?: number | null;
-  execution_time_ms?: number | null;
-}
-
-const APPLIED_MIGRATIONS_SQL =
-  'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;';
+type AppliedMigrationRow = AuthrimMigrationHistoryRow;
 
 function validateAppliedMigrationRows(rows: AppliedMigrationRow[]): AppliedMigrationRow[] {
-  return rows.map((row, index) => {
-    if (typeof row.filename !== 'string' || row.filename.trim().length === 0) {
-      throw new TypeError(`Migration history row ${index} did not contain a filename`);
-    }
-    if (row.checksum !== undefined && row.checksum !== null && typeof row.checksum !== 'string') {
-      throw new TypeError(`Migration history row ${index} contained an invalid checksum`);
-    }
-    return { ...row, filename: row.filename.trim() };
-  });
+  return validateAuthrimMigrationHistoryRows(rows);
 }
 
 async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
@@ -2411,7 +2573,10 @@ async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigration
 
   let apiError: unknown;
   try {
-    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(dbName, APPLIED_MIGRATIONS_SQL);
+    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(
+      dbName,
+      AUTHRIM_MIGRATION_HISTORY_SQL
+    );
     if (apiRows) {
       return validateAppliedMigrationRows(apiRows);
     }
@@ -2420,7 +2585,7 @@ async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigration
   }
 
   try {
-    const result = await executeD1Command(dbName, APPLIED_MIGRATIONS_SQL, { json: true });
+    const result = await executeD1Command(dbName, AUTHRIM_MIGRATION_HISTORY_SQL, { json: true });
     return validateAppliedMigrationRows(parseD1RowsFromWranglerResult<AppliedMigrationRow>(result));
   } catch (error) {
     if (apiError) {
@@ -4814,6 +4979,106 @@ export async function deleteQueueConsumersForWorkers(
 // R2 Bucket Operations
 // =============================================================================
 
+const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/u;
+
+function assertSafeR2ObjectKey(key: string): void {
+  const segments = key.split('/');
+  if (
+    key.length === 0 ||
+    key.length > 1024 ||
+    key.startsWith('/') ||
+    key.endsWith('/') ||
+    key.includes('\\') ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..') ||
+    Array.from(key).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new Error('invalid_r2_object_key');
+  }
+}
+
+export async function putR2Object(input: {
+  bucketName: string;
+  objectKey: string;
+  bytes: Uint8Array;
+  contentType: 'application/json' | 'application/sql';
+}): Promise<void> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  assertSafeR2ObjectKey(input.objectKey);
+  if (input.bytes.byteLength === 0 || input.bytes.byteLength > 16 * 1024 * 1024) {
+    throw new Error('invalid_r2_object_size');
+  }
+  const temporaryPath = pathJoin(
+    tmpdir(),
+    `authrim-r2-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`
+  );
+  try {
+    await writeFile(temporaryPath, input.bytes);
+    await wrangler(
+      [
+        'r2',
+        'object',
+        'put',
+        `${input.bucketName}/${input.objectKey}`,
+        '--remote',
+        '--file',
+        temporaryPath,
+        '--content-type',
+        input.contentType,
+      ],
+      { timeout: 180_000 }
+    );
+  } finally {
+    await unlink(temporaryPath).catch(() => {});
+  }
+}
+
+export async function getR2ObjectBytes(input: {
+  bucketName: string;
+  objectKey: string;
+  maxBytes?: number;
+}): Promise<Uint8Array | null> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  assertSafeR2ObjectKey(input.objectKey);
+  const maxBytes = input.maxBytes ?? 16 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
+    throw new Error('invalid_r2_object_size_limit');
+  }
+  const temporaryPath = pathJoin(
+    tmpdir(),
+    `authrim-r2-get-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`
+  );
+  try {
+    try {
+      await wrangler(
+        [
+          'r2',
+          'object',
+          'get',
+          `${input.bucketName}/${input.objectKey}`,
+          '--remote',
+          '--file',
+          temporaryPath,
+        ],
+        { timeout: 180_000 }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/not found|10007|404/iu.test(message)) return null;
+      throw error;
+    }
+    const metadata = await stat(temporaryPath);
+    if (!Number.isSafeInteger(metadata.size) || metadata.size < 0 || metadata.size > maxBytes) {
+      throw new Error('r2_object_size_limit_exceeded');
+    }
+    return new Uint8Array(await readFile(temporaryPath));
+  } finally {
+    await unlink(temporaryPath).catch(() => {});
+  }
+}
+
 /**
  * Create an R2 bucket
  */
@@ -4962,6 +5227,7 @@ export async function provisionR2Buckets(
   env: string,
   options: {
     existing?: Record<string, { name: string }> | null;
+    includeFeatureBuckets?: boolean;
     onProgress?: (message: string) => void;
   } = {}
 ): Promise<R2BucketInfo[]> {
@@ -4970,7 +5236,9 @@ export async function provisionR2Buckets(
   const provisioned: R2BucketInfo[] = [];
   let bucketNames = await listR2BucketNamesStrict();
 
-  for (const bucket of getRequiredR2Buckets(env)) {
+  for (const bucket of getRequiredR2Buckets(env, {
+    includeFeatureBuckets: options.includeFeatureBuckets,
+  })) {
     const bucketName = existing[bucket.binding]?.name ?? bucket.name;
     if (bucketNames.has(bucketName)) {
       provisioned.push({
@@ -5090,10 +5358,7 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
       const dbName = getD1DatabaseName(env, db.dbType);
       onProgress(`  ⏳ Creating: ${dbName}...`);
 
-      // Get location options for this database type
-      // Note: admin-db uses the same region as pii-db (both contain sensitive data)
-      const dbLocationKey = db.dbType === 'core-db' ? 'core' : 'pii';
-      const dbOptions = options.databaseConfig?.[dbLocationKey];
+      const dbOptions = options.databaseConfig?.[db.locationProfile];
 
       try {
         const result = await createD1Database(dbName, dbOptions);
@@ -5172,16 +5437,20 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     onProgress('');
   }
 
-  // Provision R2 buckets (optional)
-  if (options.createR2) {
-    onProgress('📁 R2 Buckets');
-    try {
-      resources.r2.push(...(await provisionR2Buckets(env, { onProgress })));
-    } catch (error) {
-      onProgress(`  ⚠️ R2 provisioning skipped: ${sanitizeError(error)}`);
-    }
-    onProgress('');
+  // The migration release bucket is baseline infrastructure. Product R2 buckets remain optional.
+  onProgress('📁 R2 Buckets');
+  try {
+    resources.r2.push(
+      ...(await provisionR2Buckets(env, {
+        onProgress,
+        includeFeatureBuckets: options.createR2 === true,
+      }))
+    );
+  } catch (error) {
+    onProgress(`  ❌ R2 provisioning failed: ${sanitizeError(error)}`);
+    throw new Error('Failed to provision baseline R2 migration release bucket');
   }
+  onProgress('');
 
   // Summary
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -5241,13 +5510,13 @@ export function toResourceIds(resources: ProvisionedResources): {
  */
 const AUTHRIM_PATTERNS = {
   worker:
-    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
-  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
+    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|control|plugin-runner|management|agent-access|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
+  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin|control|lookup|plugin-runner)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -5299,6 +5568,66 @@ export function filterKnownQueueNamesForEnvironment(env: string, names: string[]
         ].includes(name)
       )
     )
+  );
+}
+
+const CONTROL_SHARD_D1_SUFFIX = /^(?:core-default|core-users|pii)-[a-z0-9-]+-[a-f0-9]{8}$/u;
+const CONTROL_PLUGIN_D1_SUFFIX = /^[a-f0-9]{32}-d1$/u;
+const CONTROL_PLUGIN_KV_SUFFIX = /^[a-f0-9]{32}-kv$/u;
+const CONTROL_PLUGIN_R2_SUFFIX = /^[a-f0-9]{32}-r2$/u;
+
+function controlManagedSuffix(env: string, name: string): string | null {
+  const prefix = `authrim-${env}-`;
+  return name.startsWith(prefix) ? name.slice(prefix.length) : null;
+}
+
+export function filterControlManagedD1ForEnvironment(
+  env: string,
+  databases: Array<{ name: string; uuid: string }>
+): Array<{ name: string; uuid: string }> {
+  validateEnvName(env);
+  return databases.filter((database) => {
+    const suffix = controlManagedSuffix(env, database.name);
+    return (
+      suffix !== null &&
+      (CONTROL_SHARD_D1_SUFFIX.test(suffix) || CONTROL_PLUGIN_D1_SUFFIX.test(suffix))
+    );
+  });
+}
+
+export function filterControlManagedKVForEnvironment(
+  env: string,
+  namespaces: Array<{ title: string; id: string }>
+): Array<{ title: string; id: string }> {
+  validateEnvName(env);
+  return namespaces.filter((namespace) => {
+    const suffix = controlManagedSuffix(env, namespace.title);
+    return suffix !== null && CONTROL_PLUGIN_KV_SUFFIX.test(suffix);
+  });
+}
+
+export function filterControlManagedR2ForEnvironment(
+  env: string,
+  buckets: Array<{ name: string }>
+): Array<{ name: string }> {
+  validateEnvName(env);
+  return buckets.filter((bucket) => {
+    const suffix = controlManagedSuffix(env, bucket.name);
+    return suffix !== null && CONTROL_PLUGIN_R2_SUFFIX.test(suffix);
+  });
+}
+
+export async function hasControlManagedResourcesForEnvironment(env: string): Promise<boolean> {
+  validateEnvName(env);
+  const [databases, namespaces, buckets] = await Promise.all([
+    listD1Databases(),
+    listKVNamespaces(),
+    listR2Buckets({ throwOnError: true }),
+  ]);
+  return (
+    filterControlManagedD1ForEnvironment(env, databases).length > 0 ||
+    filterControlManagedKVForEnvironment(env, namespaces).length > 0 ||
+    filterControlManagedR2ForEnvironment(env, buckets).length > 0
   );
 }
 
@@ -5581,10 +5910,18 @@ export async function detectEnvironments(
       const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
       if (match) {
         const env = match[1].toLowerCase();
-        // Only attach R2 to environments that already have Workers or D1
-        if (environments.has(env)) {
-          environments.get(env)!.r2.push({ name: bucket.name });
+        if (!environments.has(env)) {
+          environments.set(env, {
+            env,
+            workers: [],
+            d1: [],
+            kv: [],
+            queues: [],
+            r2: [],
+            pages: [],
+          });
         }
+        environments.get(env)!.r2.push({ name: bucket.name });
       }
     }
   } catch (error) {
@@ -5610,9 +5947,14 @@ export async function detectEnvironments(
     );
   }
 
-  // Filter out empty placeholders while keeping queue-only environments for cleanup.
+  // Keep independently listed Queues and R2 buckets so interrupted deletion is resumable.
   for (const [env, info] of environments) {
-    if (info.workers.length === 0 && info.d1.length === 0 && info.queues.length === 0) {
+    if (
+      info.workers.length === 0 &&
+      info.d1.length === 0 &&
+      info.queues.length === 0 &&
+      info.r2.length === 0
+    ) {
       environments.delete(env);
     }
   }
@@ -5870,21 +6212,35 @@ async function removeKnownR2Objects(
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
-async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
-  const tokenInfo = await getCloudflareApiToken();
+export async function resolveR2ApiCredentials(input: {
+  configuredAccountId?: string;
+  resolveAccountId: () => Promise<string | null>;
+  readToken: () => Promise<CloudflareApiToken | null>;
+  inferSingleAccountId: (token: string) => Promise<string | null>;
+}): Promise<{ accountId: string; token: string } | null> {
+  // resolveAccountId runs Wrangler authentication first, so an OAuth refresh is persisted before
+  // readToken reads the credential file used by the direct R2 object API.
+  const resolvedAccountId = input.configuredAccountId || (await input.resolveAccountId());
+  const tokenInfo = await input.readToken();
   if (!tokenInfo?.token) {
     return null;
   }
 
-  const accountId =
-    process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ||
-    (await getAccountId()) ||
-    (await getSingleAccountIdViaApi(tokenInfo.token));
+  const accountId = resolvedAccountId || (await input.inferSingleAccountId(tokenInfo.token));
   if (!accountId) {
     return null;
   }
 
   return { accountId, token: tokenInfo.token };
+}
+
+async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
+  return resolveR2ApiCredentials({
+    configuredAccountId: process.env.CLOUDFLARE_ACCOUNT_ID?.trim(),
+    resolveAccountId: getAccountId,
+    readToken: getCloudflareApiToken,
+    inferSingleAccountId: getSingleAccountIdViaApi,
+  });
 }
 
 async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
@@ -5922,22 +6278,15 @@ async function listAllR2ObjectKeysViaApi(
       params.set('cursor', cursor);
     }
 
-    const response = await fetch(
+    const { data } = await requestR2Api<CloudflareR2ObjectListResponse>(
       `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params.toString()}`,
       {
         headers: {
           Authorization: `Bearer ${credentials.token}`,
         },
-      }
+      },
+      'Cloudflare R2 object list'
     );
-
-    const data = (await response.json().catch(() => ({}))) as CloudflareR2ObjectListResponse;
-    if (!response.ok || data.success === false) {
-      const detail = formatCloudflareApiMessages(data);
-      throw new Error(
-        `Cloudflare R2 object list failed (${response.status})${detail ? `: ${detail}` : ''}`
-      );
-    }
 
     for (const object of data.result ?? []) {
       if (typeof object.key === 'string') {
@@ -5951,114 +6300,106 @@ async function listAllR2ObjectKeysViaApi(
   return keys;
 }
 
+async function requestR2Api<
+  T extends {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  },
+>(
+  url: string,
+  init: NonNullable<Parameters<typeof fetch>[1]>,
+  label: string,
+  acceptNotFound = false
+): Promise<{ data: T; notFound: boolean }> {
+  for (let attempt = 1; attempt <= 7; attempt++) {
+    const response = await fetch(url, init);
+    const data = (await response.json().catch(() => ({}))) as T;
+    if (acceptNotFound && response.status === 404) return { data, notFound: true };
+    if (response.ok && data.success !== false) return { data, notFound: false };
+    const rateLimited =
+      response.status === 429 ||
+      (data.errors ?? []).some(
+        (error) => error.code === 971 || /throttl|too many requests/iu.test(error.message ?? '')
+      );
+    const retryable = rateLimited || response.status >= 500;
+    if (retryable && attempt < 7) {
+      const retryAfter = Number(response.headers?.get?.('retry-after') ?? '');
+      const delayMs =
+        process.env.NODE_ENV === 'test'
+          ? 0
+          : Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1_000, 60_000)
+            : Math.min(2 ** attempt * 1_000, 30_000);
+      if (delayMs > 0) await sleep(delayMs);
+      continue;
+    }
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(`${label} failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  throw new Error(`${label} retry loop exited unexpectedly`);
+}
+
 async function deleteR2ObjectViaApi(
   bucketName: string,
   objectKey: string,
   credentials: { accountId: string; token: string }
 ): Promise<void> {
-  const response = await fetch(
+  const result = await requestR2Api(
     `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodeURIComponent(objectKey)}`,
     {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
       },
-    }
+    },
+    'Cloudflare R2 object delete',
+    true
   );
-
-  if (response.status === 404) {
-    return;
-  }
-
-  const data = (await response.json().catch(() => ({}))) as {
-    success?: boolean;
-    errors?: CloudflareApiMessage[];
-    messages?: CloudflareApiMessage[];
-  };
-  if (!response.ok || data.success === false) {
-    const detail = formatCloudflareApiMessages(data);
-    throw new Error(
-      `Cloudflare R2 object delete failed (${response.status})${detail ? `: ${detail}` : ''}`
-    );
-  }
+  if (result.notFound) return;
 }
 
 async function deleteR2BucketViaApi(
   bucketName: string,
   credentials: { accountId: string; token: string }
 ): Promise<void> {
-  const response = await fetch(
+  const result = await requestR2Api(
     `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}`,
     {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
       },
-    }
+    },
+    'Cloudflare R2 bucket delete',
+    true
   );
-
-  if (response.status === 404) {
-    return;
-  }
-
-  const data = (await response.json().catch(() => ({}))) as {
-    success?: boolean;
-    errors?: CloudflareApiMessage[];
-    messages?: CloudflareApiMessage[];
-  };
-  if (!response.ok || data.success === false) {
-    const detail = formatCloudflareApiMessages(data);
-    throw new Error(
-      `Cloudflare R2 bucket delete failed (${response.status})${detail ? `: ${detail}` : ''}`
-    );
-  }
+  if (result.notFound) return;
 }
 
 async function removeAllR2ObjectsViaApi(
   bucketName: string,
+  credentials: { accountId: string; token: string },
   onProgress?: (message: string) => void
 ): Promise<void> {
-  const credentials = await getR2ApiCredentials();
-  if (!credentials) {
-    onProgress?.(
-      `  ⚠️ R2 full object cleanup skipped for ${bucketName}: API token/account unavailable`
-    );
-    return;
-  }
-
   const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
   if (objectKeys.length === 0) {
     return;
   }
 
   onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
-  const concurrency = 5;
   let removed = 0;
-  let completed = 0;
-  let nextIndex = 0;
-
-  const workerCount = Math.min(concurrency, objectKeys.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < objectKeys.length) {
-        const objectKey = objectKeys[nextIndex];
-        nextIndex += 1;
-        try {
-          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
-          removed += 1;
-        } catch (error) {
-          onProgress?.(`  ⚠️ R2 object cleanup failed for ${bucketName}: ${sanitizeError(error)}`);
-        } finally {
-          completed += 1;
-          if (completed % 50 === 0 || completed === objectKeys.length) {
-            onProgress?.(
-              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
-            );
-          }
-        }
-      }
-    })
-  );
+  for (const [index, objectKey] of objectKeys.entries()) {
+    await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+    removed += 1;
+    const completed = index + 1;
+    if (completed % 50 === 0 || completed === objectKeys.length) {
+      onProgress?.(
+        `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+      );
+    }
+    if (process.env.NODE_ENV !== 'test') await sleep(300);
+  }
   onProgress?.(
     `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
   );
@@ -6069,15 +6410,20 @@ async function removeAllR2ObjectsViaApi(
  */
 export async function deleteR2Bucket(
   name: string,
-  options: { objectKeys?: string[]; onProgress?: (message: string) => void } = {}
+  options: {
+    objectKeys?: string[];
+    onProgress?: (message: string) => void;
+    apiCredentials?: { accountId: string; token: string } | null;
+  } = {}
 ): Promise<boolean> {
   try {
-    await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
-    await removeAllR2ObjectsViaApi(name, options.onProgress);
-    const credentials = await getR2ApiCredentials();
+    const credentials =
+      options.apiCredentials === undefined ? await getR2ApiCredentials() : options.apiCredentials;
     if (credentials) {
+      await removeAllR2ObjectsViaApi(name, credentials, options.onProgress);
       await deleteR2BucketViaApi(name, credentials);
     } else {
+      await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
       await wrangler(['r2', 'bucket', 'delete', name]);
     }
     return true;
@@ -6134,8 +6480,30 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   let envInfo = envs.find((e) => e.env === env);
   const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
   const safeKnownQueueNames = filterKnownQueueNamesForEnvironment(env, knownQueueNames);
+  const [managedD1, managedKV, managedR2] = await Promise.all([
+    deleteD1
+      ? listD1Databases().then((databases) => filterControlManagedD1ForEnvironment(env, databases))
+      : [],
+    deleteKV
+      ? listKVNamespaces().then((namespaces) =>
+          filterControlManagedKVForEnvironment(env, namespaces)
+        )
+      : [],
+    deleteR2
+      ? listR2Buckets({ throwOnError: true }).then((buckets) =>
+          filterControlManagedR2ForEnvironment(env, buckets)
+        )
+      : [],
+  ]);
 
-  if (!envInfo && safeKnownD1Names.length === 0 && safeKnownQueueNames.length === 0) {
+  if (
+    !envInfo &&
+    safeKnownD1Names.length === 0 &&
+    safeKnownQueueNames.length === 0 &&
+    managedD1.length === 0 &&
+    managedKV.length === 0 &&
+    managedR2.length === 0
+  ) {
     return {
       success: false,
       deleted,
@@ -6155,10 +6523,30 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   }
 
   const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
+  for (const database of managedD1) {
+    if (!knownD1Set.has(database.name)) {
+      envInfo.d1.push({ name: database.name, id: database.uuid });
+      knownD1Set.add(database.name);
+    }
+  }
   for (const name of safeKnownD1Names) {
     if (!knownD1Set.has(name)) {
       envInfo.d1.push({ name, id: '' });
       knownD1Set.add(name);
+    }
+  }
+  const knownKVSet = new Set(envInfo.kv.map((namespace) => namespace.name));
+  for (const namespace of managedKV) {
+    if (!knownKVSet.has(namespace.title)) {
+      envInfo.kv.push({ name: namespace.title, id: namespace.id });
+      knownKVSet.add(namespace.title);
+    }
+  }
+  const knownR2Set = new Set(envInfo.r2.map((bucket) => bucket.name));
+  for (const bucket of managedR2) {
+    if (!knownR2Set.has(bucket.name)) {
+      envInfo.r2.push({ name: bucket.name });
+      knownR2Set.add(bucket.name);
     }
   }
   const knownQueueSet = new Set(envInfo.queues.map((queue) => queue.name));
@@ -6216,13 +6604,17 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
 
   // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
   if (deleteR2 && envInfo.r2.length > 0) {
-    const knownR2ObjectsByBucket = await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
+    const r2ApiCredentials = await getR2ApiCredentials();
+    const knownR2ObjectsByBucket = r2ApiCredentials
+      ? new Map<string, string[]>()
+      : await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);
       const success = await deleteR2Bucket(bucket.name, {
         objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
         onProgress,
+        apiCredentials: r2ApiCredentials,
       });
       if (success) {
         deleted.r2.push(bucket.name);

@@ -225,6 +225,9 @@ vi.mock('@authrim/ar-lib-core', () => ({
     coreDb: env.DB,
     piiDb: env.DB_PII ?? env.DB ?? null,
   })),
+  getCachedAuthCorePersistenceContextFromEnv: vi.fn().mockResolvedValue({
+    storageProfileId: 'builtin:storage:standard',
+  }),
   DEFAULT_JIT_CONFIG: {
     enabled: true,
     auto_create_org_on_domain_match: false,

@@ -18,6 +18,12 @@ export * from './types/approval';
 export * from './types/screens';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
+export * from './services/notification-intent-routing';
+export * from './services/notification-delivery-producer';
+export * from './services/notification-installation-id';
+export * from './services/plugin-installation-id';
+export * from './services/plugin-host-interface-contract.js';
+export * from './services/human-verification-runner';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -137,6 +143,7 @@ export * from './utils/totp-backup-codes';
 export * from './services/identity-mapping-runtime-resolver';
 export * from './services/server-flow-execution';
 export * from './services/active-access-token-protected-resource';
+export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
@@ -227,10 +234,15 @@ export * from './utils/cookie-config';
 // Settings History (Configuration Rollback)
 export * from './services/settings-history';
 export * from './services/auth-core-persistence-context';
+export * from './services/runtime-data-context';
+export * from './services/account-provisioning';
+export * from './services/device-secret-route';
 export * from './services/consent-store';
 export * from './services/refresh-token-family-index';
 export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
+export * from './services/notification-intent-envelope';
+export * from './services/notification-delivery-intent';
 export * from './services/object-catalog';
 export * from './services/sensitive-detail-chunk-store';
 export * from './services/identity-identifier-bridge';
@@ -320,6 +332,11 @@ export {
   createErrorResponse,
   createRFCErrorResponse,
 } from './errors';
+export {
+  createTenantPlacementWriteFenceResponse,
+  isTenantPlacementWriteFenceError,
+  TENANT_PLACEMENT_WRITE_FENCE_RETRY_AFTER_MS,
+} from './errors';
 
 // Phase 9: VC (Verifiable Credentials)
 export * from './vc/haip-policy';
@@ -364,6 +381,12 @@ export * from './services/tenant-database-stats';
 export * from './services/tenant-runtime-config-snapshot';
 export * from './services/tenant-runtime-registry-security-events';
 export * from './services/tenant-runtime-registry-snapshot';
+export * from './services/control-plane/cloudflare-worker-settings';
+export * from './services/control-plane/cloudflare-control-api-client';
+export * from './services/control-plane/control-plane-contracts';
+export * from './services/control-plane/migration-history-contract';
+export * from './services/control-plane/plugin-hook-outbox-retention';
+export * from './services/control-plane/runtime-smoke-rpc';
 export * from './services/user-store-runtime-sources';
 export * from './services/refresh-token-family-store';
 
@@ -482,6 +505,8 @@ export { CloudflareActorContext } from './actor';
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
+export { DeviceSecretRouteStore } from './durable-objects/DeviceSecretRouteStore';
+export type { DeviceSecretRouteHint } from './durable-objects/DeviceSecretRouteStore';
 export type {
   ChallengeType,
   Challenge,
@@ -597,3 +622,14 @@ export type {
 export { ACCOUNT_PAGE_PRESET_VERSION, DEFAULT_ACCOUNT_PAGE_DEFINITION } from './types/screens';
 
 export { setBoundedMapEntry } from './utils/bounded-cache';
+
+export { RuntimeSmokeEntrypoint } from './entrypoints/RuntimeSmokeEntrypoint';
+export type {
+  RuntimeControlKeyVerificationResult,
+  RuntimeLookupHmacCandidateVerificationResult,
+  RuntimeLookupHmacGenerationObservationResult,
+  RuntimeLookupHmacKeyMetadata,
+  RuntimeSmokeEntrypointEnv,
+  RuntimeSmokeEntrypointProps,
+} from './entrypoints/RuntimeSmokeEntrypoint';
+export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntrypoint';

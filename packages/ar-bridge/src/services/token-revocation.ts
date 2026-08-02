@@ -230,7 +230,9 @@ async function revokeToken(
       return { success: false, error: `HTTP ${response.status}` };
     }
   } catch (error) {
-    log.error('Token revocation request error', {}, error as Error);
+    log.error('Token revocation request error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     return {
       success: false,
       // SECURITY: Do not expose network error details (may contain URLs)

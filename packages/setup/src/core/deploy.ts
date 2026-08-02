@@ -7,7 +7,7 @@
 
 import { execa, type ExecaError } from 'execa';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import {
@@ -29,8 +29,18 @@ import {
 import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
 import { generateUiWorkersWranglerConfig } from './wrangler.js';
 import { getPackageVersion } from './version.js';
-import { getSecretNamesForWorker, getSecretTargetWorkers, SECRET_KEY_FILES } from './secrets.js';
+import {
+  EPHEMERAL_ENV_SECRET_NAMES,
+  getMissingRequiredDeploySecrets,
+  getSecretNamesForWorker,
+  getSecretTargetWorkers,
+  SECRET_KEY_FILES,
+} from './secrets.js';
 import type { AdminUiBffWorkerSecrets } from './admin-machine-access.js';
+import {
+  SetupWorkerDeploymentLeaseCoordinator,
+  type SetupWorkerDeploymentLease,
+} from './worker-deployment-lease.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -90,6 +100,8 @@ export interface DeployOptions {
   existingComponents?: readonly WorkerComponent[];
   /** Secret values keyed by Wrangler secret name. Only each Worker's allow-list is written. */
   secrets?: Readonly<Record<string, string>>;
+  /** Whether ar-control must receive scoped Cloudflare provisioning tokens. */
+  automaticProvisioning?: boolean;
   /** Optional non-secret CLI vars, scoped per Worker. */
   varsByComponent?: Partial<Record<WorkerComponent, Readonly<Record<string, string>>>>;
   onProgress?: (message: string) => void;
@@ -102,6 +114,19 @@ export interface DeployOptions {
   signal?: AbortSignal;
   /** Remove retired static bearer secrets after the replacement Worker code is live. */
   cleanupLegacyStaticSecrets?: boolean;
+  /** Shared Control DB lease for mutations of Workers that already exist. */
+  deploymentLease?: {
+    controlDatabaseId: string;
+    environmentId: string;
+    actorId: string;
+    /** Target account from environment config; avoids repeated Wrangler account discovery. */
+    accountId?: string;
+    required: boolean;
+    /** Test/embedding hook; production setup constructs the Control DB coordinator. */
+    coordinator?: WorkerDeploymentLeaseCoordinator;
+  };
+  /** Internal state shared by one deployment operation and its rollback/cleanup paths. */
+  deploymentLeaseSession?: WorkerDeploymentLeaseSession;
 }
 
 export interface DeployResult {
@@ -168,7 +193,7 @@ function parseWranglerSecretNames(stdout: unknown): Set<string> {
 }
 
 /** Delete retired static bearer bindings only after their replacement Worker deployed successfully. */
-export async function cleanupLegacyStaticSecrets(
+async function cleanupLegacyStaticSecretsWithoutLease(
   options: DeployOptions,
   components: readonly WorkerComponent[]
 ): Promise<LegacyStaticSecretCleanupResult> {
@@ -237,21 +262,37 @@ export async function cleanupLegacyStaticSecrets(
       if (namesToDelete.length === 0) {
         return;
       }
+      const context = await getWorkerDeploymentContext(component, options);
+      if (isDeployResult(context)) {
+        throw new Error(context.error || 'Failed to resolve Worker deployment context');
+      }
 
       await runWithAdaptiveRetry(
         `Deleting retired secrets from ${getWorkerName(options.env, component)}`,
         options,
         throttle,
         () =>
-          execa(
-            'pnpm',
-            ['exec', 'wrangler', 'secret', 'bulk', ...getConfigArgs(options), '--env', options.env],
-            {
-              cwd: packageDir,
-              reject: true,
-              cancelSignal: options.signal,
-              input: JSON.stringify(Object.fromEntries(namesToDelete.map((name) => [name, null]))),
-            }
+          runAuthorizedWorkerMutation(context, options, throttle, () =>
+            execa(
+              'pnpm',
+              [
+                'exec',
+                'wrangler',
+                'secret',
+                'bulk',
+                ...getConfigArgs(options),
+                '--env',
+                options.env,
+              ],
+              {
+                cwd: packageDir,
+                reject: true,
+                cancelSignal: options.signal,
+                input: JSON.stringify(
+                  Object.fromEntries(namesToDelete.map((name) => [name, null]))
+                ),
+              }
+            )
           )
       );
       for (const secretName of namesToDelete) {
@@ -262,10 +303,6 @@ export async function cleanupLegacyStaticSecrets(
 
       // `wrangler secret bulk` creates and immediately deploys a new Worker version.
       // Report that final active version instead of the pre-cleanup code version.
-      const context = await getWorkerDeploymentContext(component, options);
-      if (isDeployResult(context)) {
-        throw new Error(context.error || 'Failed to resolve Worker deployment context');
-      }
       const snapshot = await readWorkerTrafficSnapshot(context, options, throttle);
       if (snapshot.specs.length !== 1 || !snapshot.specs[0].endsWith('@100%')) {
         throw new Error(
@@ -279,6 +316,33 @@ export async function cleanupLegacyStaticSecrets(
   });
 
   return { failures, activeVersionIds };
+}
+
+export async function cleanupLegacyStaticSecrets(
+  options: DeployOptions,
+  components: readonly WorkerComponent[]
+): Promise<LegacyStaticSecretCleanupResult> {
+  if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
+    return cleanupLegacyStaticSecretsWithoutLease(options, components);
+  }
+  const contexts = new Map<WorkerComponent, WorkerDeploymentContext>();
+  for (const component of components) {
+    const context = await getWorkerDeploymentContext(component, options);
+    if (!isDeployResult(context)) contexts.set(component, context);
+  }
+  const throttle = makeThrottle(options);
+  const session = await createWorkerDeploymentLeaseSession(options, components, contexts, throttle);
+  if (!session) return cleanupLegacyStaticSecretsWithoutLease(options, components);
+  options.deploymentLeaseSession = session;
+  let success = false;
+  try {
+    const result = await cleanupLegacyStaticSecretsWithoutLease(options, components);
+    success = result.failures.length === 0;
+    return result;
+  } finally {
+    options.deploymentLeaseSession = undefined;
+    await closeWorkerDeploymentLeaseSession(session, success);
+  }
 }
 
 export interface DeploymentCompletionState {
@@ -457,6 +521,8 @@ type RetryKind = 'rate-limit' | 'transient' | 'fatal';
 
 const DEPLOYMENT_PRIORITY: readonly WorkerComponent[] = [
   'ar-lib-core',
+  'ar-control',
+  'ar-plugin-runner',
   'ar-bridge',
   'ar-auth',
   'ar-management',
@@ -470,6 +536,107 @@ const DEPLOYMENT_PRIORITY: readonly WorkerComponent[] = [
   'ar-vc',
   'ar-router',
 ];
+
+const AUTH_BOOTSTRAP_CONFIG_FILE = 'wrangler.bootstrap.toml';
+const CONTROL_SMOKE_TARGET_COMPONENTS = [
+  'ar-lib-core',
+  'ar-auth',
+  'ar-token',
+  'ar-userinfo',
+  'ar-management',
+  'ar-agent-access',
+  'ar-async',
+  'ar-policy',
+  'ar-saml',
+  'ar-bridge',
+  'ar-vc',
+  'ar-plugin-runner',
+] as const satisfies readonly WorkerComponent[];
+
+function initialControlBootstrapConfig(
+  options: DeployOptions,
+  components: readonly WorkerComponent[],
+  strategy: 'direct' | 'staged'
+): string | undefined {
+  const existing = new Set(options.existingComponents ?? []);
+  if (
+    strategy !== 'direct' ||
+    !components.includes('ar-control') ||
+    CONTROL_SMOKE_TARGET_COMPONENTS.every((component) => existing.has(component))
+  ) {
+    return undefined;
+  }
+  const fullConfigPath = join(options.rootDir, 'packages', 'ar-control', 'wrangler.toml');
+  if (
+    !existsSync(fullConfigPath) ||
+    !readFileSync(fullConfigPath, 'utf-8').includes('binding = "SMOKE_AR_')
+  ) {
+    return undefined;
+  }
+  const path = join(options.rootDir, 'packages', 'ar-control', AUTH_BOOTSTRAP_CONFIG_FILE);
+  if (!options.dryRun && !existsSync(path)) {
+    throw new Error('initial_control_bootstrap_config_missing');
+  }
+  return path;
+}
+
+function initialAuthBootstrapConfig(
+  options: DeployOptions,
+  components: readonly WorkerComponent[],
+  strategy: 'direct' | 'staged'
+): string | undefined {
+  if (
+    strategy !== 'direct' ||
+    !components.includes('ar-auth') ||
+    !components.includes('ar-management') ||
+    options.existingComponents?.includes('ar-management')
+  ) {
+    return undefined;
+  }
+  const fullConfigPath = options.configFile
+    ? options.configFile
+    : join(options.rootDir, 'packages', 'ar-auth', 'wrangler.toml');
+  if (
+    !existsSync(fullConfigPath) ||
+    !readFileSync(fullConfigPath, 'utf-8').includes('binding = "ACCOUNT_PROVISIONER"')
+  ) {
+    return undefined;
+  }
+  const path = join(options.rootDir, 'packages', 'ar-auth', AUTH_BOOTSTRAP_CONFIG_FILE);
+  if (!options.dryRun && !existsSync(path)) {
+    throw new Error('initial_auth_bootstrap_config_missing');
+  }
+  return path;
+}
+
+function initialBridgeBootstrapConfig(
+  options: DeployOptions,
+  components: readonly WorkerComponent[],
+  strategy: 'direct' | 'staged'
+): string | undefined {
+  if (
+    strategy !== 'direct' ||
+    !components.includes('ar-bridge') ||
+    !components.includes('ar-management') ||
+    options.existingComponents?.includes('ar-management')
+  ) {
+    return undefined;
+  }
+  const fullConfigPath = options.configFile
+    ? options.configFile
+    : join(options.rootDir, 'packages', 'ar-bridge', 'wrangler.toml');
+  if (
+    !existsSync(fullConfigPath) ||
+    !readFileSync(fullConfigPath, 'utf-8').includes('binding = "EXTERNAL_IDP_ACCOUNT_PROVISIONER"')
+  ) {
+    return undefined;
+  }
+  const path = join(options.rootDir, 'packages', 'ar-bridge', AUTH_BOOTSTRAP_CONFIG_FILE);
+  if (!options.dryRun && !existsSync(path)) {
+    throw new Error('initial_bridge_bootstrap_config_missing');
+  }
+  return path;
+}
 
 function clampConcurrency(value: number | undefined): number {
   return Math.min(4, Math.max(1, Math.floor(value ?? DEFAULT_DEPLOY_CONCURRENCY)));
@@ -644,7 +811,9 @@ async function runWithAdaptiveRetry<T>(
 }
 
 function getConfigArgs(options: DeployOptions): string[] {
-  return options.configFile ? ['--config', options.configFile] : [];
+  // Wrangler prefers wrangler.jsonc when both formats exist. Setup owns the generated
+  // wrangler.toml projection, so always select it explicitly.
+  return ['--config', options.configFile ?? 'wrangler.toml'];
 }
 
 function getVarArgs(component: WorkerComponent, options: DeployOptions): string[] {
@@ -771,26 +940,45 @@ async function deployWorkerDirect(
   throttle: DeploymentThrottle
 ): Promise<DeployResult> {
   let secretFile: TemporarySecretFile | undefined;
+  let outputDirectory: string | undefined;
   try {
     secretFile = await createTemporarySecretFile(
       getSecretsForWorker(context.component, options.secrets)
     );
-    await runWithAdaptiveRetry(`Deploying ${context.workerName}`, options, throttle, async () => {
-      await execa(
-        'pnpm',
-        [
-          'exec',
-          'wrangler',
-          'deploy',
-          ...getConfigArgs(options),
-          '--env',
-          options.env,
-          ...getVarArgs(context.component, options),
-          ...(secretFile ? ['--secrets-file', secretFile.path] : []),
-        ],
-        { cwd: context.packageDir, reject: true, cancelSignal: options.signal }
-      );
-    });
+    outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-wrangler-output-'));
+    const commandResult = await runWithAdaptiveRetry(
+      `Deploying ${context.workerName}`,
+      options,
+      throttle,
+      async () =>
+        runAuthorizedWorkerMutation(context, options, throttle, () =>
+          execa(
+            'pnpm',
+            [
+              'exec',
+              'wrangler',
+              'deploy',
+              ...getConfigArgs(options),
+              '--env',
+              options.env,
+              ...getVarArgs(context.component, options),
+              ...(secretFile ? ['--secrets-file', secretFile.path] : []),
+            ],
+            {
+              cwd: context.packageDir,
+              reject: true,
+              cancelSignal: options.signal,
+              env: {
+                WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+              },
+            }
+          )
+        )
+    );
+    const versionId = await readVersionIdFromStructuredOutput(
+      outputDirectory,
+      commandResult.stdout
+    );
     options.onProgress?.(`  ✓ ${context.workerName} deployed successfully`);
     return {
       component: context.component,
@@ -798,12 +986,16 @@ async function deployWorkerDirect(
       success: true,
       deployedAt: new Date().toISOString(),
       version: context.packageVersion,
+      cloudflareVersionId: versionId,
       duration: Date.now() - context.startedAt,
     };
   } catch (error) {
     return deploymentFailure(context, error);
   } finally {
-    await secretFile?.cleanup().catch(() => undefined);
+    await Promise.allSettled([
+      secretFile?.cleanup(),
+      outputDirectory ? rm(outputDirectory, { recursive: true, force: true }) : undefined,
+    ]);
   }
 }
 
@@ -829,7 +1021,10 @@ async function readVersionIdFromStructuredOutput(
     for (const line of payload.split(/\r?\n/)) {
       try {
         const event = JSON.parse(line) as { type?: string; version_id?: unknown };
-        if (event.type === 'version-upload' && typeof event.version_id === 'string') {
+        if (
+          (event.type === 'version-upload' || event.type === 'deploy') &&
+          typeof event.version_id === 'string'
+        ) {
           return event.version_id;
         }
       } catch {
@@ -857,27 +1052,29 @@ async function uploadWorkerVersion(
       options,
       throttle,
       () =>
-        execa(
-          'pnpm',
-          [
-            'exec',
-            'wrangler',
-            'versions',
-            'upload',
-            ...getConfigArgs(options),
-            '--env',
-            options.env,
-            ...getVarArgs(context.component, options),
-            ...(secretFile ? ['--secrets-file', secretFile.path] : []),
-          ],
-          {
-            cwd: context.packageDir,
-            reject: true,
-            cancelSignal: options.signal,
-            env: {
-              WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
-            },
-          }
+        runAuthorizedWorkerMutation(context, options, throttle, () =>
+          execa(
+            'pnpm',
+            [
+              'exec',
+              'wrangler',
+              'versions',
+              'upload',
+              ...getConfigArgs(options),
+              '--env',
+              options.env,
+              ...getVarArgs(context.component, options),
+              ...(secretFile ? ['--secrets-file', secretFile.path] : []),
+            ],
+            {
+              cwd: context.packageDir,
+              reject: true,
+              cancelSignal: options.signal,
+              env: {
+                WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+              },
+            }
+          )
         )
     );
     const versionId = await readVersionIdFromStructuredOutput(
@@ -939,17 +1136,14 @@ async function applyWorkerTriggers(
   options: DeployOptions,
   throttle: DeploymentThrottle
 ): Promise<void> {
-  await runWithAdaptiveRetry(
-    `Applying triggers for ${context.workerName}`,
-    options,
-    throttle,
-    async () => {
-      await execa(
+  await runWithAdaptiveRetry(`Applying triggers for ${context.workerName}`, options, throttle, () =>
+    runAuthorizedWorkerMutation(context, options, throttle, () =>
+      execa(
         'pnpm',
         ['exec', 'wrangler', 'triggers', 'deploy', ...getConfigArgs(options), '--env', options.env],
         { cwd: context.packageDir, reject: true, cancelSignal: options.signal }
-      );
-    }
+      )
+    )
   );
 }
 
@@ -961,23 +1155,25 @@ async function deployWorkerTraffic(
   label = `Promoting ${context.workerName} version`
 ): Promise<DeployResult> {
   try {
-    await runWithAdaptiveRetry(label, options, throttle, async () => {
-      await execa(
-        'pnpm',
-        [
-          'exec',
-          'wrangler',
-          'versions',
-          'deploy',
-          ...trafficSpecs,
-          '--yes',
-          ...getConfigArgs(options),
-          '--env',
-          options.env,
-        ],
-        { cwd: context.packageDir, reject: true, cancelSignal: options.signal }
-      );
-    });
+    await runWithAdaptiveRetry(label, options, throttle, () =>
+      runAuthorizedWorkerMutation(context, options, throttle, () =>
+        execa(
+          'pnpm',
+          [
+            'exec',
+            'wrangler',
+            'versions',
+            'deploy',
+            ...trafficSpecs,
+            '--yes',
+            ...getConfigArgs(options),
+            '--env',
+            options.env,
+          ],
+          { cwd: context.packageDir, reject: true, cancelSignal: options.signal }
+        )
+      )
+    );
     options.onProgress?.(`  ✓ ${context.workerName} traffic updated successfully`);
     return {
       component: context.component,
@@ -1246,8 +1442,38 @@ async function runDependencyScheduler(
   return results;
 }
 
+async function runSingleWorkerWithDeploymentLease<T>(
+  component: WorkerComponent,
+  options: DeployOptions,
+  operation: () => Promise<T>,
+  succeeded: (result: T) => boolean
+): Promise<T> {
+  const existingSession = options.deploymentLeaseSession;
+  if (existingSession || options.dryRun || !options.deploymentLease) return operation();
+  const context = await getWorkerDeploymentContext(component, options);
+  if (isDeployResult(context)) return operation();
+  const throttle = makeThrottle({ ...options, concurrency: 1 });
+  const session = await createWorkerDeploymentLeaseSession(
+    options,
+    [component],
+    new Map([[component, context]]),
+    throttle
+  );
+  if (!session) return operation();
+  options.deploymentLeaseSession = session;
+  let success = false;
+  try {
+    const result = await operation();
+    success = succeeded(result);
+    return result;
+  } finally {
+    options.deploymentLeaseSession = undefined;
+    await closeWorkerDeploymentLeaseSession(session, success);
+  }
+}
+
 /** Deploy a single worker with adaptive retry and optional staged promotion. */
-export async function deployWorker(
+async function deployWorkerWithoutLease(
   component: WorkerComponent,
   options: DeployOptions
 ): Promise<DeployResult> {
@@ -1290,6 +1516,18 @@ export async function deployWorker(
   return promoteWorkerVersion(context, prepared.cloudflareVersionId, options, throttle);
 }
 
+export async function deployWorker(
+  component: WorkerComponent,
+  options: DeployOptions
+): Promise<DeployResult> {
+  return runSingleWorkerWithDeploymentLease(
+    component,
+    options,
+    () => deployWorkerWithoutLease(component, options),
+    (result) => result.success
+  );
+}
+
 export interface GradualDeployOptions {
   /** Strictly increasing percentages; the final stage must be 100. */
   stages: readonly number[];
@@ -1307,6 +1545,33 @@ interface WranglerDeploymentListItem {
 interface WorkerTrafficSnapshot {
   deploymentId?: string;
   specs: string[];
+}
+
+interface HeldWorkerDeploymentLease {
+  context: WorkerDeploymentContext;
+  baseline: WorkerTrafficSnapshot;
+  sourceAbsent: boolean;
+  lease: SetupWorkerDeploymentLease;
+}
+
+interface WorkerDeploymentLeaseSession {
+  coordinator: WorkerDeploymentLeaseCoordinator;
+  leases: Map<WorkerComponent, HeldWorkerDeploymentLease>;
+}
+
+export interface WorkerDeploymentLeaseCoordinator {
+  acquire(input: {
+    workerScriptName: string;
+    expectedSourceVersionId: string;
+  }): Promise<SetupWorkerDeploymentLease>;
+  renew(lease: SetupWorkerDeploymentLease): Promise<SetupWorkerDeploymentLease>;
+  assertCurrent(lease: SetupWorkerDeploymentLease): Promise<void>;
+  markMutationStarted(
+    lease: SetupWorkerDeploymentLease,
+    previousDeploymentId?: string
+  ): Promise<SetupWorkerDeploymentLease>;
+  release(lease: SetupWorkerDeploymentLease): Promise<void>;
+  complete(success: boolean, errorCode?: string): Promise<void>;
 }
 
 function normalizeTrafficSpecs(specs: readonly string[]): string[] {
@@ -1412,6 +1677,189 @@ async function readWorkerTrafficSnapshot(
   };
 }
 
+function sourceVersionFromSnapshot(workerName: string, snapshot: WorkerTrafficSnapshot): string {
+  if (snapshot.specs.length !== 1 || !snapshot.specs[0].endsWith('@100%')) {
+    throw new Error(
+      `Deployment lease for ${workerName} requires one active source version at 100%; found ${snapshot.specs.join(', ')}`
+    );
+  }
+  const versionId = snapshot.specs[0].split('@')[0];
+  if (!versionId) throw new Error(`No active source version found for ${workerName}`);
+  return versionId;
+}
+
+async function createWorkerDeploymentLeaseSession(
+  options: DeployOptions,
+  components: readonly WorkerComponent[],
+  contexts: ReadonlyMap<WorkerComponent, WorkerDeploymentContext>,
+  throttle: DeploymentThrottle
+): Promise<WorkerDeploymentLeaseSession | undefined> {
+  if (options.dryRun) return undefined;
+  const config = options.deploymentLease;
+  const existing = new Set(options.existingComponents ?? []);
+  const leasedComponents = components
+    .filter(
+      (component) =>
+        contexts.has(component) && (existing.has(component) || config?.required === true)
+    )
+    .sort((left, right) =>
+      contexts.get(left)!.workerName.localeCompare(contexts.get(right)!.workerName)
+    );
+  if (leasedComponents.length === 0) return undefined;
+  if (!config) {
+    return undefined;
+  }
+
+  const coordinator =
+    config.coordinator ??
+    new SetupWorkerDeploymentLeaseCoordinator({
+      databaseId: config.controlDatabaseId,
+      environmentId: config.environmentId,
+      actorId: config.actorId,
+      accountId: config.accountId,
+      ttlSeconds: 900,
+    });
+  const session: WorkerDeploymentLeaseSession = { coordinator, leases: new Map() };
+  try {
+    for (const component of leasedComponents) {
+      const context = contexts.get(component)!;
+      const sourceAbsent = !existing.has(component);
+      const baseline = sourceAbsent
+        ? { specs: ['__absent__@100%'] }
+        : await readWorkerTrafficSnapshot(context, options, throttle);
+      const lease = await coordinator.acquire({
+        workerScriptName: context.workerName,
+        expectedSourceVersionId: sourceAbsent
+          ? '__absent__'
+          : sourceVersionFromSnapshot(context.workerName, baseline),
+      });
+      session.leases.set(component, { context, baseline, sourceAbsent, lease });
+      options.onProgress?.(`  ✓ Deployment lease acquired for ${context.workerName}`);
+    }
+    return session;
+  } catch (error) {
+    for (const held of [...session.leases.values()].reverse()) {
+      await coordinator.release(held.lease).catch(() => undefined);
+    }
+    await coordinator.complete(false, 'deployment_lease_acquire_failed').catch(() => undefined);
+    throw error;
+  }
+}
+
+async function closeWorkerDeploymentLeaseSession(
+  session: WorkerDeploymentLeaseSession | undefined,
+  success: boolean
+): Promise<void> {
+  if (!session) return;
+  let releaseFailed = false;
+  for (const held of [...session.leases.values()].reverse()) {
+    try {
+      await session.coordinator.release(held.lease);
+    } catch {
+      releaseFailed = true;
+    }
+  }
+  if (releaseFailed) {
+    await session.coordinator
+      .complete(false, 'deployment_lease_release_failed')
+      .catch(() => undefined);
+    throw new Error('worker_deployment_lease_release_failed');
+  }
+  await session.coordinator.complete(success, success ? undefined : 'worker_deployment_failed');
+}
+
+async function authorizeWorkerMutation(
+  context: WorkerDeploymentContext,
+  options: DeployOptions,
+  throttle: DeploymentThrottle
+): Promise<void> {
+  const session = options.deploymentLeaseSession;
+  const held = session?.leases.get(context.component);
+  if (!session || !held) {
+    if (
+      options.deploymentLease?.required &&
+      new Set(options.existingComponents ?? []).has(context.component)
+    ) {
+      throw new Error(`worker_deployment_lease_missing:${context.workerName}`);
+    }
+    return;
+  }
+
+  held.lease = await session.coordinator.renew(held.lease);
+  if (!held.lease.mutationStarted) {
+    if (held.sourceAbsent) {
+      if (
+        await cloudflareWorkerHasActiveDeployment(
+          context.workerName,
+          context.packageDir,
+          options,
+          throttle
+        )
+      ) {
+        throw new Error(`Concurrent deployment created ${context.workerName} before mutation`);
+      }
+    } else {
+      const current = await readWorkerTrafficSnapshot(context, options, throttle);
+      if (
+        current.deploymentId !== held.baseline.deploymentId ||
+        !trafficSpecsEqual(current.specs, held.baseline.specs)
+      ) {
+        throw new Error(`Concurrent deployment detected for ${context.workerName} before mutation`);
+      }
+    }
+    held.lease = await session.coordinator.markMutationStarted(
+      held.lease,
+      held.baseline.deploymentId
+    );
+  } else {
+    await session.coordinator.assertCurrent(held.lease);
+  }
+}
+
+async function runAuthorizedWorkerMutation<T>(
+  context: WorkerDeploymentContext,
+  options: DeployOptions,
+  throttle: DeploymentThrottle,
+  mutation: () => Promise<T>
+): Promise<T> {
+  await authorizeWorkerMutation(context, options, throttle);
+  const session = options.deploymentLeaseSession;
+  const held = session?.leases.get(context.component);
+  const coordinator = held ? session!.coordinator : undefined;
+  let renewal: Promise<void> = Promise.resolve();
+  let renewalError: unknown;
+  const timer = held
+    ? setInterval(() => {
+        renewal = renewal.then(async () => {
+          if (renewalError) return;
+          try {
+            held.lease = await coordinator!.renew(held.lease);
+          } catch (error) {
+            renewalError = error;
+          }
+        });
+      }, 240_000)
+    : undefined;
+  timer?.unref();
+  let result: T | undefined;
+  let mutationError: unknown;
+  try {
+    result = await mutation();
+  } catch (error) {
+    mutationError = error;
+  }
+  if (timer) clearInterval(timer);
+  await renewal;
+  if (renewalError) {
+    throw renewalError instanceof Error ? renewalError : new Error(getErrorText(renewalError));
+  }
+  if (held) await coordinator!.assertCurrent(held.lease);
+  if (mutationError) {
+    throw mutationError instanceof Error ? mutationError : new Error(getErrorText(mutationError));
+  }
+  return result as T;
+}
+
 function validateGradualStages(stages: readonly number[]): void {
   if (
     stages.length === 0 ||
@@ -1435,7 +1883,7 @@ function validateGradualStages(stages: readonly number[]): void {
  * First deployments fall back to a direct deployment because there is no old
  * version with which to split traffic.
  */
-export async function deployWorkerGradually(
+async function deployWorkerGraduallyWithoutLease(
   component: WorkerComponent,
   options: DeployOptions,
   gradual: GradualDeployOptions
@@ -1611,6 +2059,19 @@ export async function deployWorkerGradually(
   };
 }
 
+export async function deployWorkerGradually(
+  component: WorkerComponent,
+  options: DeployOptions,
+  gradual: GradualDeployOptions
+): Promise<DeployResult> {
+  return runSingleWorkerWithDeploymentLease(
+    component,
+    options,
+    () => deployWorkerGraduallyWithoutLease(component, options, gradual),
+    (result) => result.success
+  );
+}
+
 /** Deploy multiple workers through the same dependency-aware bounded scheduler. */
 export async function deployParallel(
   components: WorkerComponent[],
@@ -1627,7 +2088,25 @@ export async function deployAll(
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
   const components = resolvePlannedComponents(enabledComponents, options.existingComponents);
+  const existingComponents = new Set(options.existingComponents ?? []);
+  if (
+    !options.dryRun &&
+    components.includes('ar-control') &&
+    !existingComponents.has('ar-control')
+  ) {
+    const missingControlSecrets = getMissingRequiredDeploySecrets(
+      options.secrets ?? {},
+      ['ar-control'],
+      { automaticProvisioning: options.automaticProvisioning ?? true }
+    );
+    if (missingControlSecrets.length > 0) {
+      throw new Error(`control_plane_baseline_secrets_missing:${missingControlSecrets.join(',')}`);
+    }
+  }
   const strategy = resolveDeploymentStrategy(options, components);
+  const controlBootstrapConfig = initialControlBootstrapConfig(options, components, strategy);
+  const authBootstrapConfig = initialAuthBootstrapConfig(options, components, strategy);
+  const bridgeBootstrapConfig = initialBridgeBootstrapConfig(options, components, strategy);
   const throttle = makeThrottle(options);
 
   options.onProgress?.('Starting Authrim deployment...\n');
@@ -1648,289 +2127,501 @@ export async function deployAll(
     }
   }
 
-  let resultMap: Map<WorkerComponent, DeployResult>;
-  if (options.dryRun) {
-    resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
-      const failure = validationFailures.get(component);
-      if (failure) {
-        return failure;
-      }
-      const context = contexts.get(component)!;
-      const effectiveStrategy = context.requiresDirectDeployment ? 'direct' : strategy;
-      options.onProgress?.(
-        `  [DRY RUN] Would ${effectiveStrategy === 'staged' ? 'upload and promote' : 'deploy'} ${component}`
-      );
-      return {
-        component,
-        workerName: context.workerName,
-        success: true,
-        deployedAt: new Date().toISOString(),
-        version: context.packageVersion,
-        duration: Date.now() - context.startedAt,
-      };
-    });
-  } else if (strategy === 'staged') {
-    const versionedComponents = components.filter(
-      (component) =>
-        !validationFailures.has(component) &&
-        contexts.get(component)?.requiresDirectDeployment === false
-    );
-    const prepared = await runBoundedPool(versionedComponents, throttle, (component) =>
-      uploadWorkerVersion(contexts.get(component)!, options, throttle)
-    );
-    const uploadFailed =
-      validationFailures.size > 0 ||
-      versionedComponents.some((component) => prepared.get(component)?.success !== true);
-    if (uploadFailed) {
-      resultMap = new Map(
-        components.map((component) => {
-          const validationFailure = validationFailures.get(component);
-          if (validationFailure) {
-            options.onError?.(component, new Error(validationFailure.error));
-            return [component, validationFailure];
-          }
-          const result = prepared.get(component);
-          if (!result || result.success) {
-            const aborted = makeSkippedResult(
-              component,
-              options,
-              result
-                ? 'Version was uploaded but not promoted because another upload failed'
-                : 'Direct deployment was not started because another version upload failed',
-              contexts.get(component)
-            );
-            options.onError?.(component, new Error(aborted.error));
-            return [component, aborted];
-          }
-          options.onError?.(component, new Error(result.error));
-          return [component, result];
-        })
-      );
-    } else {
-      // Validate every non-versioned trigger and snapshot exact baseline traffic
-      // before the first remote mutation. This gives the traffic phase a safe
-      // rollback barrier while keeping trigger changes outside that transaction.
-      const commitPreflight = await runBoundedPool(
-        versionedComponents,
-        throttle,
-        async (component) => {
-          const context = contexts.get(component)!;
-          try {
-            await validateWorkerTriggers(context, options, throttle);
-            return {
-              component,
-              snapshot: await readWorkerTrafficSnapshot(context, options, throttle),
-            };
-          } catch (error) {
-            return { component, failure: deploymentFailure(context, error) };
-          }
-        }
-      );
-      const preflightFailed = versionedComponents.some(
-        (component) => commitPreflight.get(component)?.failure !== undefined
-      );
+  const existingLeaseSession = options.deploymentLeaseSession;
+  const leaseSession =
+    existingLeaseSession ??
+    (await createWorkerDeploymentLeaseSession(options, components, contexts, throttle));
+  const ownsLeaseSession = leaseSession !== undefined && existingLeaseSession === undefined;
+  if (leaseSession) options.deploymentLeaseSession = leaseSession;
+  let deploymentSucceeded = false;
 
-      if (preflightFailed) {
+  try {
+    let resultMap: Map<WorkerComponent, DeployResult>;
+    if (options.dryRun) {
+      resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
+        const failure = validationFailures.get(component);
+        if (failure) {
+          return failure;
+        }
+        const context = contexts.get(component)!;
+        const effectiveStrategy = context.requiresDirectDeployment ? 'direct' : strategy;
+        options.onProgress?.(
+          `  [DRY RUN] Would ${effectiveStrategy === 'staged' ? 'upload and promote' : 'deploy'} ${component}`
+        );
+        if (component === 'ar-management' && authBootstrapConfig) {
+          options.onProgress?.(
+            '  [DRY RUN] Would redeploy ar-auth with ACCOUNT_PROVISIONER after ar-management'
+          );
+        }
+        if (component === 'ar-management' && bridgeBootstrapConfig) {
+          options.onProgress?.(
+            '  [DRY RUN] Would redeploy ar-bridge with EXTERNAL_IDP_ACCOUNT_PROVISIONER after ar-management'
+          );
+        }
+        return {
+          component,
+          workerName: context.workerName,
+          success: true,
+          deployedAt: new Date().toISOString(),
+          version: context.packageVersion,
+          duration: Date.now() - context.startedAt,
+        };
+      });
+    } else if (strategy === 'staged') {
+      const versionedComponents = components.filter(
+        (component) =>
+          !validationFailures.has(component) &&
+          contexts.get(component)?.requiresDirectDeployment === false
+      );
+      const prepared = await runBoundedPool(versionedComponents, throttle, (component) =>
+        uploadWorkerVersion(contexts.get(component)!, options, throttle)
+      );
+      const uploadFailed =
+        validationFailures.size > 0 ||
+        versionedComponents.some((component) => prepared.get(component)?.success !== true);
+      if (uploadFailed) {
         resultMap = new Map(
           components.map((component) => {
-            const failure = commitPreflight.get(component)?.failure;
-            if (failure) {
-              options.onError?.(component, new Error(failure.error));
-              return [component, failure];
+            const validationFailure = validationFailures.get(component);
+            if (validationFailure) {
+              options.onError?.(component, new Error(validationFailure.error));
+              return [component, validationFailure];
             }
-            const aborted = makeSkippedResult(
-              component,
-              options,
-              'Deployment was not started because staged trigger validation or baseline capture failed',
-              contexts.get(component)
-            );
-            options.onError?.(component, new Error(aborted.error));
-            return [component, aborted];
+            const result = prepared.get(component);
+            if (!result || result.success) {
+              const aborted = makeSkippedResult(
+                component,
+                options,
+                result
+                  ? 'Version was uploaded but not promoted because another upload failed'
+                  : 'Direct deployment was not started because another version upload failed',
+                contexts.get(component)
+              );
+              options.onError?.(component, new Error(aborted.error));
+              return [component, aborted];
+            }
+            options.onError?.(component, new Error(result.error));
+            return [component, result];
           })
         );
       } else {
-        const attemptedVersionPromotions: WorkerComponent[] = [];
-        resultMap = await runDependencyScheduler(
-          components,
-          options,
+        // Validate every non-versioned trigger and snapshot exact baseline traffic
+        // before the first remote mutation. This gives the traffic phase a safe
+        // rollback barrier while keeping trigger changes outside that transaction.
+        const commitPreflight = await runBoundedPool(
+          versionedComponents,
           throttle,
           async (component) => {
             const context = contexts.get(component)!;
-            if (context.requiresDirectDeployment) {
-              options.onProgress?.(
-                `${context.workerName} contains Durable Object migrations; using direct deploy.`
-              );
-              return deployWorkerDirect(context, options, throttle);
-            }
-            attemptedVersionPromotions.push(component);
             try {
-              await assertWorkerTrafficUnchanged(
+              await validateWorkerTriggers(context, options, throttle);
+              return {
+                component,
+                snapshot: await readWorkerTrafficSnapshot(context, options, throttle),
+              };
+            } catch (error) {
+              return { component, failure: deploymentFailure(context, error) };
+            }
+          }
+        );
+        const preflightFailed = versionedComponents.some(
+          (component) => commitPreflight.get(component)?.failure !== undefined
+        );
+
+        if (preflightFailed) {
+          resultMap = new Map(
+            components.map((component) => {
+              const failure = commitPreflight.get(component)?.failure;
+              if (failure) {
+                options.onError?.(component, new Error(failure.error));
+                return [component, failure];
+              }
+              const aborted = makeSkippedResult(
+                component,
+                options,
+                'Deployment was not started because staged trigger validation or baseline capture failed',
+                contexts.get(component)
+              );
+              options.onError?.(component, new Error(aborted.error));
+              return [component, aborted];
+            })
+          );
+        } else {
+          const attemptedVersionPromotions: WorkerComponent[] = [];
+          resultMap = await runDependencyScheduler(
+            components,
+            options,
+            throttle,
+            async (component) => {
+              const context = contexts.get(component)!;
+              if (context.requiresDirectDeployment) {
+                options.onProgress?.(
+                  `${context.workerName} contains Durable Object migrations; using direct deploy.`
+                );
+                return deployWorkerDirect(context, options, throttle);
+              }
+              attemptedVersionPromotions.push(component);
+              try {
+                await assertWorkerTrafficUnchanged(
+                  context,
+                  commitPreflight.get(component)!.snapshot!,
+                  options,
+                  throttle
+                );
+              } catch (error) {
+                return deploymentFailure(context, error);
+              }
+              return deployWorkerTraffic(
                 context,
-                commitPreflight.get(component)!.snapshot!,
+                [`${prepared.get(component)!.cloudflareVersionId!}@100%`],
                 options,
                 throttle
               );
-            } catch (error) {
-              return deploymentFailure(context, error);
-            }
-            return deployWorkerTraffic(
-              context,
-              [`${prepared.get(component)!.cloudflareVersionId!}@100%`],
-              options,
-              throttle
-            );
-          },
-          { stopOnFailure: true }
-        );
+            },
+            { stopOnFailure: true }
+          );
 
-        const trafficFailure = components.find(
-          (component) => resultMap.get(component)?.success === false
-        );
-        if (trafficFailure) {
-          const recoveryOptions: DeployOptions = { ...options, signal: undefined, concurrency: 1 };
-          const recoveryThrottle = makeThrottle(recoveryOptions);
-          const rollbackFailures = new Map<WorkerComponent, string>();
-          for (const component of [...attemptedVersionPromotions].reverse()) {
-            const snapshot = commitPreflight.get(component)?.snapshot;
-            if (!snapshot) {
-              continue;
-            }
-            const newVersionId = prepared.get(component)!.cloudflareVersionId!;
-            try {
-              await assertWorkerTrafficOwnedForRollback(
+          const trafficFailure = components.find(
+            (component) => resultMap.get(component)?.success === false
+          );
+          if (trafficFailure) {
+            const recoveryOptions: DeployOptions = {
+              ...options,
+              signal: undefined,
+              concurrency: 1,
+            };
+            const recoveryThrottle = makeThrottle(recoveryOptions);
+            const rollbackFailures = new Map<WorkerComponent, string>();
+            for (const component of [...attemptedVersionPromotions].reverse()) {
+              const snapshot = commitPreflight.get(component)?.snapshot;
+              if (!snapshot) {
+                continue;
+              }
+              const newVersionId = prepared.get(component)!.cloudflareVersionId!;
+              try {
+                await assertWorkerTrafficOwnedForRollback(
+                  contexts.get(component)!,
+                  snapshot,
+                  newVersionId,
+                  recoveryOptions,
+                  recoveryThrottle
+                );
+              } catch (error) {
+                rollbackFailures.set(component, getErrorText(error));
+                continue;
+              }
+              const rollback = await deployWorkerTraffic(
                 contexts.get(component)!,
-                snapshot,
-                newVersionId,
+                snapshot.specs,
                 recoveryOptions,
-                recoveryThrottle
+                recoveryThrottle,
+                `Rolling back ${getWorkerName(options.env, component)}`
               );
-            } catch (error) {
-              rollbackFailures.set(component, getErrorText(error));
-              continue;
+              if (!rollback.success) {
+                rollbackFailures.set(component, rollback.error || 'unknown rollback error');
+              }
             }
-            const rollback = await deployWorkerTraffic(
-              contexts.get(component)!,
-              snapshot.specs,
-              recoveryOptions,
-              recoveryThrottle,
-              `Rolling back ${getWorkerName(options.env, component)}`
-            );
-            if (!rollback.success) {
-              rollbackFailures.set(component, rollback.error || 'unknown rollback error');
-            }
-          }
 
-          for (const component of attemptedVersionPromotions) {
-            const previous = resultMap.get(component)!;
-            const rollbackError = rollbackFailures.get(component);
-            resultMap.set(component, {
-              ...previous,
-              success: false,
-              deployedAt: undefined,
-              trafficCommitted: false,
-              error: rollbackError
-                ? `${previous.error || `Staged deployment failed in ${trafficFailure}`}; rollback failed: ${rollbackError}`
-                : `${previous.error ? `${previous.error}; ` : ''}Rolled back because staged deployment failed in ${trafficFailure}`,
-            });
-          }
-        } else {
-          // All version traffic is now committed. Synchronize non-versioned
-          // routes/domains/crons serially so a failure is explicit and resumable.
-          let triggerFailure: WorkerComponent | undefined;
-          for (const component of versionedComponents) {
-            const trafficResult = resultMap.get(component)!;
-            if (triggerFailure) {
+            for (const component of attemptedVersionPromotions) {
+              const previous = resultMap.get(component)!;
+              const rollbackError = rollbackFailures.get(component);
               resultMap.set(component, {
-                ...trafficResult,
+                ...previous,
                 success: false,
-                trafficCommitted: true,
-                error: `Traffic committed, but trigger synchronization was skipped after ${triggerFailure} failed`,
+                deployedAt: undefined,
+                trafficCommitted: false,
+                error: rollbackError
+                  ? `${previous.error || `Staged deployment failed in ${trafficFailure}`}; rollback failed: ${rollbackError}`
+                  : `${previous.error ? `${previous.error}; ` : ''}Rolled back because staged deployment failed in ${trafficFailure}`,
               });
-              continue;
             }
-            try {
-              await applyWorkerTriggers(contexts.get(component)!, options, throttle);
-              options.onProgress?.(
-                `  ✓ ${getWorkerName(options.env, component)} promoted successfully`
-              );
-            } catch (error) {
-              triggerFailure = component;
-              resultMap.set(component, {
-                ...trafficResult,
-                success: false,
-                trafficCommitted: true,
-                error: `Traffic committed, but trigger synchronization failed: ${sanitizeDeploymentErrorMessage(
-                  getErrorText(error)
-                )}`,
-              });
+          } else {
+            // All version traffic is now committed. Synchronize non-versioned
+            // routes/domains/crons serially so a failure is explicit and resumable.
+            let triggerFailure: WorkerComponent | undefined;
+            for (const component of versionedComponents) {
+              const trafficResult = resultMap.get(component)!;
+              if (triggerFailure) {
+                resultMap.set(component, {
+                  ...trafficResult,
+                  success: false,
+                  trafficCommitted: true,
+                  error: `Traffic committed, but trigger synchronization was skipped after ${triggerFailure} failed`,
+                });
+                continue;
+              }
+              try {
+                await applyWorkerTriggers(contexts.get(component)!, options, throttle);
+                options.onProgress?.(
+                  `  ✓ ${getWorkerName(options.env, component)} promoted successfully`
+                );
+              } catch (error) {
+                triggerFailure = component;
+                resultMap.set(component, {
+                  ...trafficResult,
+                  success: false,
+                  trafficCommitted: true,
+                  error: `Traffic committed, but trigger synchronization failed: ${sanitizeDeploymentErrorMessage(
+                    getErrorText(error)
+                  )}`,
+                });
+              }
             }
           }
         }
       }
-    }
-  } else {
-    resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
-      const failure = validationFailures.get(component);
-      if (failure) {
-        return failure;
-      }
-      return deployWorkerDirect(contexts.get(component)!, options, throttle);
-    });
-  }
+    } else {
+      let bootstrapControlResult: DeployResult | undefined;
+      let bootstrapAuthResult: DeployResult | undefined;
+      let fullAuthResult: DeployResult | undefined;
+      let bootstrapBridgeResult: DeployResult | undefined;
+      let fullBridgeResult: DeployResult | undefined;
+      resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {
+        const failure = validationFailures.get(component);
+        if (failure) {
+          return failure;
+        }
+        if (component === 'ar-control' && controlBootstrapConfig) {
+          options.onProgress?.(
+            'Deploying initial ar-control bootstrap without runtime smoke bindings...'
+          );
+          bootstrapControlResult = await deployWorkerDirect(
+            contexts.get(component)!,
+            { ...options, configFile: controlBootstrapConfig },
+            throttle
+          );
+          return bootstrapControlResult;
+        }
+        if (component === 'ar-auth' && authBootstrapConfig) {
+          options.onProgress?.(
+            'Deploying initial ar-auth bootstrap without ACCOUNT_PROVISIONER...'
+          );
+          bootstrapAuthResult = await deployWorkerDirect(
+            contexts.get(component)!,
+            { ...options, configFile: authBootstrapConfig },
+            throttle
+          );
+          return bootstrapAuthResult;
+        }
+        if (component === 'ar-bridge' && bridgeBootstrapConfig) {
+          options.onProgress?.(
+            'Deploying initial ar-bridge bootstrap without EXTERNAL_IDP_ACCOUNT_PROVISIONER...'
+          );
+          bootstrapBridgeResult = await deployWorkerDirect(
+            contexts.get(component)!,
+            { ...options, configFile: bridgeBootstrapConfig },
+            throttle
+          );
+          return bootstrapBridgeResult;
+        }
+        const result = await deployWorkerDirect(contexts.get(component)!, options, throttle);
+        if (
+          component !== 'ar-management' ||
+          (!authBootstrapConfig && !bridgeBootstrapConfig) ||
+          !result.success
+        ) {
+          return result;
+        }
 
-  const allResults = components.map(
-    (component) =>
-      resultMap.get(component) ??
-      makeSkippedResult(
-        component,
-        options,
-        'Deployment did not produce a result',
-        contexts.get(component)
-      )
-  );
-  if (!options.dryRun && options.cleanupLegacyStaticSecrets) {
-    const cleanupResult = await cleanupLegacyStaticSecrets(
-      options,
-      allResults.filter((result) => result.success).map((result) => result.component)
+        if (bridgeBootstrapConfig) {
+          options.onProgress?.(
+            'Redeploying ar-bridge with the authenticated EXTERNAL_IDP_ACCOUNT_PROVISIONER binding...'
+          );
+          const promotedBridge = await deployWorkerDirect(
+            contexts.get('ar-bridge')!,
+            options,
+            throttle
+          );
+          if (promotedBridge.success) {
+            fullBridgeResult = promotedBridge;
+          } else {
+            fullBridgeResult = {
+              ...promotedBridge,
+              success: false,
+              trafficCommitted: true,
+              deployedAt: bootstrapBridgeResult?.deployedAt,
+              error: `Initial Bridge bootstrap is still active; full Bridge redeploy failed: ${promotedBridge.error || 'unknown error'}`,
+            };
+            return {
+              ...result,
+              success: false,
+              trafficCommitted: true,
+              error: `Management deployed, but full Bridge redeploy failed: ${promotedBridge.error || 'unknown error'}`,
+            };
+          }
+        }
+        if (authBootstrapConfig) {
+          options.onProgress?.(
+            'Redeploying ar-auth with the authenticated ACCOUNT_PROVISIONER binding...'
+          );
+          const promoted = await deployWorkerDirect(contexts.get('ar-auth')!, options, throttle);
+          if (promoted.success) {
+            fullAuthResult = promoted;
+          } else {
+            fullAuthResult = {
+              ...promoted,
+              success: false,
+              trafficCommitted: true,
+              deployedAt: bootstrapAuthResult?.deployedAt,
+              error: `Initial Auth bootstrap is still active; full Auth redeploy failed: ${promoted.error || 'unknown error'}`,
+            };
+            return {
+              ...result,
+              success: false,
+              trafficCommitted: true,
+              error: `Management deployed, but full Auth redeploy failed: ${promoted.error || 'unknown error'}`,
+            };
+          }
+        }
+        return result;
+      });
+      if (controlBootstrapConfig) {
+        const existing = new Set(options.existingComponents ?? []);
+        const unavailableTarget = CONTROL_SMOKE_TARGET_COMPONENTS.find((component) =>
+          components.includes(component)
+            ? resultMap.get(component)?.success !== true
+            : !existing.has(component)
+        );
+        if (bootstrapControlResult?.success && !unavailableTarget) {
+          options.onProgress?.(
+            'Redeploying ar-control with authenticated runtime smoke bindings...'
+          );
+          const fullControlResult = await deployWorkerDirect(
+            contexts.get('ar-control')!,
+            options,
+            throttle
+          );
+          resultMap.set(
+            'ar-control',
+            fullControlResult.success
+              ? fullControlResult
+              : {
+                  ...fullControlResult,
+                  success: false,
+                  trafficCommitted: true,
+                  deployedAt: bootstrapControlResult.deployedAt,
+                  error: `Initial Control bootstrap is still active; full Control redeploy failed: ${fullControlResult.error || 'unknown error'}`,
+                }
+          );
+        } else {
+          resultMap.set('ar-control', {
+            ...(bootstrapControlResult ??
+              makeSkippedResult(
+                'ar-control',
+                options,
+                'Initial Control bootstrap did not complete',
+                contexts.get('ar-control')
+              )),
+            success: false,
+            trafficCommitted: bootstrapControlResult?.success === true,
+            error:
+              bootstrapControlResult?.success === true
+                ? `Initial Control bootstrap is active, but smoke target ${unavailableTarget || 'unknown'} is unavailable`
+                : bootstrapControlResult?.error || 'Initial Control bootstrap did not complete',
+          });
+        }
+      }
+      if (authBootstrapConfig) {
+        resultMap.set(
+          'ar-auth',
+          fullAuthResult ?? {
+            ...(bootstrapAuthResult ??
+              makeSkippedResult(
+                'ar-auth',
+                options,
+                'Initial Auth bootstrap did not complete',
+                contexts.get('ar-auth')
+              )),
+            success: false,
+            trafficCommitted: bootstrapAuthResult?.success === true,
+            error:
+              bootstrapAuthResult?.success === true
+                ? 'Initial Auth bootstrap is active, but Management did not complete the full Auth redeploy'
+                : bootstrapAuthResult?.error || 'Initial Auth bootstrap did not complete',
+          }
+        );
+      }
+      if (bridgeBootstrapConfig) {
+        resultMap.set(
+          'ar-bridge',
+          fullBridgeResult ?? {
+            ...(bootstrapBridgeResult ??
+              makeSkippedResult(
+                'ar-bridge',
+                options,
+                'Initial Bridge bootstrap did not complete',
+                contexts.get('ar-bridge')
+              )),
+            success: false,
+            trafficCommitted: bootstrapBridgeResult?.trafficCommitted,
+            error:
+              bootstrapBridgeResult?.error ||
+              'Initial Bridge bootstrap remains active because Management or full Bridge deployment did not complete',
+          }
+        );
+      }
+    }
+
+    const allResults = components.map(
+      (component) =>
+        resultMap.get(component) ??
+        makeSkippedResult(
+          component,
+          options,
+          'Deployment did not produce a result',
+          contexts.get(component)
+        )
     );
-    for (const result of allResults) {
-      const activeVersionId = cleanupResult.activeVersionIds[result.component];
-      if (activeVersionId) {
-        result.cloudflareVersionId = activeVersionId;
-        result.deployedAt = new Date().toISOString();
+    if (!options.dryRun && options.cleanupLegacyStaticSecrets) {
+      const cleanupResult = await cleanupLegacyStaticSecrets(
+        options,
+        allResults.filter((result) => result.success).map((result) => result.component)
+      );
+      for (const result of allResults) {
+        const activeVersionId = cleanupResult.activeVersionIds[result.component];
+        if (activeVersionId) {
+          result.cloudflareVersionId = activeVersionId;
+          result.deployedAt = new Date().toISOString();
+        }
+      }
+      for (const failure of cleanupResult.failures) {
+        const result = allResults.find((candidate) => candidate.component === failure.component);
+        if (result) {
+          result.success = false;
+          result.trafficCommitted = true;
+          result.error = `Worker deployed, but legacy static secret cleanup failed: ${failure.error}`;
+        }
       }
     }
-    for (const failure of cleanupResult.failures) {
-      const result = allResults.find((candidate) => candidate.component === failure.component);
-      if (result) {
-        result.success = false;
-        result.trafficCommitted = true;
-        result.error = `Worker deployed, but legacy static secret cleanup failed: ${failure.error}`;
-      }
-    }
-  }
-  const completedAt = new Date().toISOString();
-  const successCount = allResults.filter((result) => result.success).length;
-  const failedCount = allResults.length - successCount;
-  const summary: DeploymentSummary = {
-    totalComponents: allResults.length,
-    successCount,
-    failedCount,
-    results: allResults,
-    startedAt,
-    completedAt,
-    duration: Date.now() - startTime,
-  };
+    const completedAt = new Date().toISOString();
+    const successCount = allResults.filter((result) => result.success).length;
+    const failedCount = allResults.length - successCount;
+    const summary: DeploymentSummary = {
+      totalComponents: allResults.length,
+      successCount,
+      failedCount,
+      results: allResults,
+      startedAt,
+      completedAt,
+      duration: Date.now() - startTime,
+    };
 
-  options.onProgress?.('\n━━━ Deployment Summary ━━━');
-  options.onProgress?.(`Total: ${summary.totalComponents}`);
-  options.onProgress?.(`Success: ${successCount}`);
-  options.onProgress?.(`Failed: ${failedCount}`);
-  options.onProgress?.(`Duration: ${(summary.duration / 1000).toFixed(1)}s`);
-  for (const result of allResults.filter((candidate) => !candidate.success)) {
-    options.onProgress?.(`  • ${result.component}: ${result.error}`);
+    options.onProgress?.('\n━━━ Deployment Summary ━━━');
+    options.onProgress?.(`Total: ${summary.totalComponents}`);
+    options.onProgress?.(`Success: ${successCount}`);
+    options.onProgress?.(`Failed: ${failedCount}`);
+    options.onProgress?.(`Duration: ${(summary.duration / 1000).toFixed(1)}s`);
+    for (const result of allResults.filter((candidate) => !candidate.success)) {
+      options.onProgress?.(`  • ${result.component}: ${result.error}`);
+    }
+    deploymentSucceeded = failedCount === 0;
+    return summary;
+  } finally {
+    if (ownsLeaseSession) {
+      options.deploymentLeaseSession = undefined;
+      await closeWorkerDeploymentLeaseSession(leaseSession, deploymentSucceeded);
+    }
   }
-  return summary;
 }
 
 // =============================================================================
@@ -1949,6 +2640,7 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
         name: result.workerName,
         deployedAt: result.deployedAt,
         version: result.version,
+        ...(result.cloudflareVersionId ? { cloudflareVersionId: result.cloudflareVersionId } : {}),
       };
     }
   }
@@ -1966,7 +2658,7 @@ export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResu
 
 /** Load only the local secret files needed by the selected Workers. */
 export async function loadDeploySecretsFromKeys(
-  keysDir: string,
+  keysDir: string | undefined,
   workers?: WorkerComponent[]
 ): Promise<Record<string, string>> {
   const targetSet = new Set(workers ?? CORE_WORKER_COMPONENTS);
@@ -1986,12 +2678,19 @@ export async function loadDeploySecretsFromKeys(
   const secrets: Record<string, string> = {};
 
   for (const secretName of secretNames) {
+    if (EPHEMERAL_ENV_SECRET_NAMES.includes(secretName)) {
+      const value = process.env[secretName]?.trim();
+      if (value) {
+        secrets[secretName] = value;
+      }
+      continue;
+    }
     const fileName = SECRET_KEY_FILES[secretName];
     if (!fileName) {
       continue;
     }
-    const filePath = join(keysDir, fileName);
-    if (existsSync(filePath)) {
+    const filePath = keysDir ? join(keysDir, fileName) : undefined;
+    if (filePath && existsSync(filePath)) {
       secrets[secretName] = await readFile(filePath, 'utf-8');
     }
   }
@@ -2003,7 +2702,7 @@ export async function loadDeploySecretsFromKeys(
  *
  * Uses --env flag to target the correct environment section in wrangler.toml
  */
-export async function uploadSecrets(
+async function uploadSecretsWithoutLease(
   secrets: Record<string, string>,
   options: DeployOptions,
   workers?: WorkerComponent[]
@@ -2029,27 +2728,32 @@ export async function uploadSecrets(
 
     let secretFile: TemporarySecretFile | undefined;
     try {
+      const context = await getWorkerDeploymentContext(component, options);
+      if (isDeployResult(context)) {
+        throw new Error(context.error || 'Failed to resolve Worker deployment context');
+      }
       secretFile = await createTemporarySecretFile(workerSecrets);
       await runWithAdaptiveRetry(
         `Uploading ${Object.keys(workerSecrets).length} secret(s) to ${workerName}`,
         options,
         throttle,
-        async () => {
-          await execa(
-            'pnpm',
-            [
-              'exec',
-              'wrangler',
-              'secret',
-              'bulk',
-              secretFile!.path,
-              ...getConfigArgs(options),
-              '--env',
-              env,
-            ],
-            { cwd: packageDir, reject: true, cancelSignal: options.signal }
-          );
-        }
+        () =>
+          runAuthorizedWorkerMutation(context, options, throttle, () =>
+            execa(
+              'pnpm',
+              [
+                'exec',
+                'wrangler',
+                'secret',
+                'bulk',
+                secretFile!.path,
+                ...getConfigArgs(options),
+                '--env',
+                env,
+              ],
+              { cwd: packageDir, reject: true, cancelSignal: options.signal }
+            )
+          )
       );
       onProgress?.(`  ✓ ${workerName} secrets uploaded in one batch`);
     } catch (error) {
@@ -2067,6 +2771,35 @@ export async function uploadSecrets(
     success: errors.length === 0,
     errors,
   };
+}
+
+export async function uploadSecrets(
+  secrets: Record<string, string>,
+  options: DeployOptions,
+  workers?: WorkerComponent[]
+): Promise<{ success: boolean; errors: string[] }> {
+  const components = getSecretTargetWorkers(workers);
+  if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
+    return uploadSecretsWithoutLease(secrets, options, workers);
+  }
+  const contexts = new Map<WorkerComponent, WorkerDeploymentContext>();
+  for (const component of components) {
+    const context = await getWorkerDeploymentContext(component, options);
+    if (!isDeployResult(context)) contexts.set(component, context);
+  }
+  const throttle = makeThrottle(options);
+  const session = await createWorkerDeploymentLeaseSession(options, components, contexts, throttle);
+  if (!session) return uploadSecretsWithoutLease(secrets, options, workers);
+  options.deploymentLeaseSession = session;
+  let success = false;
+  try {
+    const result = await uploadSecretsWithoutLease(secrets, options, workers);
+    success = result.success;
+    return result;
+  } finally {
+    options.deploymentLeaseSession = undefined;
+    await closeWorkerDeploymentLeaseSession(session, success);
+  }
 }
 
 // =============================================================================

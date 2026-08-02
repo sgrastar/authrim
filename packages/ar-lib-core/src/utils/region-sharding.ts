@@ -31,7 +31,18 @@ const log = createLogger().module('REGION_SHARD');
 /**
  * Valid region keys for Cloudflare locationHint.
  */
-export type RegionKey = 'apac' | 'weur' | 'enam' | 'wnam' | 'oc' | 'afr' | 'me';
+export type RegionKey = 'apac' | 'weur' | 'eeur' | 'enam' | 'wnam' | 'oc' | 'afr' | 'me';
+
+export type RegionShardJurisdiction = 'eu' | 'fedramp';
+
+export interface RegionShardResidencyProjection {
+  version: 1;
+  residencyPolicyId: string;
+  residencyPartition: string;
+  policyGeneration: number;
+  allowedRegions: RegionKey[];
+  jurisdiction: RegionShardJurisdiction | null;
+}
 
 /**
  * Resource types supported by region sharding.
@@ -137,6 +148,8 @@ export interface RegionShardConfigV2 extends RegionShardConfig {
   version?: number;
   /** Colocation group configurations */
   groups?: Record<string, ColocationGroup>;
+  /** Control-owned residency boundary used to validate placement and select a DO jurisdiction. */
+  residency?: RegionShardResidencyProjection;
 }
 
 /**
@@ -243,12 +256,44 @@ export const REGION_SHARD_CONFIG_KV_PREFIX = 'region_shard_config';
 export const VALID_REGION_KEYS = Object.freeze([
   'apac',
   'weur',
+  'eeur',
   'enam',
   'wnam',
   'oc',
   'afr',
   'me',
 ] as const);
+
+const REGION_JURISDICTION_MARKER = '_j_';
+
+export function encodeRegionPlacementKey(
+  regionKey: string,
+  jurisdiction: RegionShardJurisdiction | null
+): string {
+  return jurisdiction ? `${regionKey}${REGION_JURISDICTION_MARKER}${jurisdiction}` : regionKey;
+}
+
+export function parseRegionPlacementKey(value: string): {
+  regionKey: string;
+  jurisdiction: RegionShardJurisdiction | null;
+} {
+  const marker = value.lastIndexOf(REGION_JURISDICTION_MARKER);
+  if (marker === -1) {
+    if (!(VALID_REGION_KEYS as readonly string[]).includes(value)) {
+      throw new Error('region_shard_region_invalid');
+    }
+    return { regionKey: value, jurisdiction: null };
+  }
+  const regionKey = value.slice(0, marker);
+  const jurisdiction = value.slice(marker + REGION_JURISDICTION_MARKER.length);
+  if (jurisdiction !== 'eu' && jurisdiction !== 'fedramp') {
+    throw new Error('region_shard_jurisdiction_invalid');
+  }
+  if (!(VALID_REGION_KEYS as readonly string[]).includes(regionKey)) {
+    throw new Error('region_shard_region_invalid');
+  }
+  return { regionKey, jurisdiction };
+}
 
 // =============================================================================
 // In-Memory Caching
@@ -257,7 +302,10 @@ export const VALID_REGION_KEYS = Object.freeze([
 /**
  * Cached region shard config by tenant.
  */
-const regionShardConfigCache = new Map<string, { config: RegionShardConfig; expiresAt: number }>();
+const regionShardConfigCache = new Map<
+  string,
+  { config: RegionShardConfigV2; expiresAt: number }
+>();
 
 /**
  * Clear region shard config cache.
@@ -389,14 +437,17 @@ export function resolveRegionForShard(
  * // => { generation: 1, regionKey: 'apac', shardIndex: 3 }
  */
 export function resolveShardForNewResource(
-  config: RegionShardConfig,
+  config: RegionShardConfig | RegionShardConfigV2,
   shardKey: string
 ): ShardResolution {
   // Calculate shard index using FNV-1a hash
   const shardIndex = fnv1a32(shardKey) % config.currentTotalShards;
 
   // Resolve region from shard index
-  const regionKey = resolveRegionForShard(shardIndex, config.currentRegions);
+  const regionKey = encodeRegionPlacementKey(
+    resolveRegionForShard(shardIndex, config.currentRegions),
+    (config as RegionShardConfigV2).residency?.jurisdiction ?? null
+  );
 
   return {
     generation: config.currentGeneration,
@@ -650,6 +701,117 @@ export function buildRegionShardConfigKvKey(tenantId: string): string {
   return `${REGION_SHARD_CONFIG_KV_PREFIX}:${tenantId}`;
 }
 
+export function buildPolicyConstrainedRegionShardConfig(input: {
+  residency: RegionShardResidencyProjection;
+  totalShards?: number;
+  groups?: Record<string, ColocationGroup>;
+  now?: number;
+  updatedBy?: string;
+}): RegionShardConfigV2 {
+  const allowedRegions = [...new Set(input.residency.allowedRegions)];
+  const preferredInitialRegions = (Object.keys(DEFAULT_REGION_DISTRIBUTION) as RegionKey[]).filter(
+    (region) => allowedRegions.includes(region)
+  );
+  const initialRegions = input.residency.jurisdiction
+    ? allowedRegions
+    : preferredInitialRegions.length > 0
+      ? preferredInitialRegions
+      : allowedRegions;
+  const totalShards = input.totalShards ?? Math.max(DEFAULT_TOTAL_SHARDS, initialRegions.length);
+  if (
+    allowedRegions.length === 0 ||
+    initialRegions.length === 0 ||
+    totalShards < initialRegions.length
+  ) {
+    throw new Error('region_shard_policy_capacity_invalid');
+  }
+  const basePercentage = Math.floor(100 / initialRegions.length);
+  let remainder = 100 - basePercentage * initialRegions.length;
+  const distribution = Object.fromEntries(
+    initialRegions.map((region) => {
+      const percentage = basePercentage + (remainder > 0 ? 1 : 0);
+      remainder = Math.max(0, remainder - 1);
+      return [region, percentage];
+    })
+  );
+  const config: RegionShardConfigV2 = {
+    version: 2,
+    currentGeneration: 1,
+    currentTotalShards: totalShards,
+    currentRegions: calculateRegionRanges(totalShards, distribution),
+    previousGenerations: [],
+    maxPreviousGenerations: REGION_MAX_PREVIOUS_GENERATIONS,
+    groups: input.groups,
+    residency: {
+      ...input.residency,
+      allowedRegions,
+    },
+    updatedAt: input.now ?? Date.now(),
+    updatedBy: input.updatedBy ?? 'control-residency-policy',
+  };
+  validateRegionShardResidencyStrict(config);
+  return config;
+}
+
+function validateResidencyRegionSet(
+  regions: Record<string, RegionRange>,
+  allowedRegions: ReadonlySet<string>
+): boolean {
+  const entries = Object.entries(regions).filter(([, range]) => range.shardCount > 0);
+  return (
+    entries.length > 0 &&
+    Object.keys(regions).every((region) => allowedRegions.has(region)) &&
+    entries.every(([region]) => allowedRegions.has(region))
+  );
+}
+
+export function validateRegionShardResidencyStrict(config: RegionShardConfigV2): void {
+  const residency = config.residency;
+  if (!residency || residency.version !== 1) {
+    throw new Error('region_shard_residency_policy_missing');
+  }
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(residency.residencyPolicyId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(residency.residencyPartition) ||
+    !Number.isInteger(residency.policyGeneration) ||
+    residency.policyGeneration < 1
+  ) {
+    throw new Error('region_shard_residency_policy_invalid');
+  }
+  const allowedRegions = new Set(residency.allowedRegions);
+  if (
+    allowedRegions.size === 0 ||
+    allowedRegions.size !== residency.allowedRegions.length ||
+    residency.allowedRegions.some(
+      (region) => !(VALID_REGION_KEYS as readonly string[]).includes(region)
+    )
+  ) {
+    throw new Error('region_shard_allowed_regions_invalid');
+  }
+  if (residency.jurisdiction === 'eu') {
+    if ([...allowedRegions].some((region) => region !== 'weur' && region !== 'eeur')) {
+      throw new Error('region_shard_jurisdiction_region_mismatch');
+    }
+  } else if (residency.jurisdiction === 'fedramp') {
+    if ([...allowedRegions].some((region) => region !== 'enam' && region !== 'wnam')) {
+      throw new Error('region_shard_jurisdiction_region_mismatch');
+    }
+  } else if (residency.jurisdiction !== null) {
+    throw new Error('region_shard_jurisdiction_invalid');
+  }
+  if (!validateResidencyRegionSet(config.currentRegions, allowedRegions)) {
+    throw new Error('region_shard_current_region_disallowed');
+  }
+  if (
+    config.previousGenerations.some(
+      (generation) => !validateResidencyRegionSet(generation.regions, allowedRegions)
+    )
+  ) {
+    throw new Error('region_shard_previous_region_disallowed');
+  }
+  validateColocationGroupsStrict(config);
+}
+
 /**
  * Get region shard configuration from KV with caching.
  *
@@ -657,7 +819,10 @@ export function buildRegionShardConfigKvKey(tenantId: string): string {
  * @param tenantId - Tenant ID
  * @returns Region shard configuration
  */
-export async function getRegionShardConfig(env: Env, tenantId: string): Promise<RegionShardConfig> {
+export async function getRegionShardConfig(
+  env: Env,
+  tenantId: string
+): Promise<RegionShardConfigV2> {
   const normalizedTenantId = tenantId.trim();
   if (!normalizedTenantId) {
     throw new Error('getRegionShardConfig requires tenantId');
@@ -673,13 +838,13 @@ export async function getRegionShardConfig(env: Env, tenantId: string): Promise<
     return cached.config;
   }
 
-  let config: RegionShardConfig | null = null;
+  let config: RegionShardConfigV2 | null = null;
 
   // Priority 1: Try KV (dynamic configuration)
   const kv = env.AUTHRIM_CONFIG;
   if (kv) {
     const kvKey = buildRegionShardConfigKvKey(tenantId);
-    config = await kv.get<RegionShardConfig>(kvKey, { type: 'json' });
+    config = await kv.get<RegionShardConfigV2>(kvKey, { type: 'json' });
   }
 
   // Priority 2: Try environment variables
@@ -687,18 +852,11 @@ export async function getRegionShardConfig(env: Env, tenantId: string): Promise<
     config = buildConfigFromEnv(env, now);
   }
 
-  // Priority 3: Default configuration (safe defaults)
   if (!config) {
-    const defaultRegions = calculateRegionRanges(DEFAULT_TOTAL_SHARDS, DEFAULT_REGION_DISTRIBUTION);
-    config = {
-      currentGeneration: 1,
-      currentTotalShards: DEFAULT_TOTAL_SHARDS,
-      currentRegions: defaultRegions,
-      previousGenerations: [],
-      maxPreviousGenerations: REGION_MAX_PREVIOUS_GENERATIONS,
-      updatedAt: now,
-    };
+    throw new Error('region_shard_config_missing');
   }
+
+  validateRegionShardResidencyStrict(config);
 
   // Update cache
   regionShardConfigCache.set(cacheKey, {
@@ -809,12 +967,14 @@ function buildConfigFromEnv(env: Env, now: number): RegionShardConfigV2 | null {
 export async function saveRegionShardConfig(
   env: Env,
   tenantId: string,
-  config: RegionShardConfig
+  config: RegionShardConfigV2
 ): Promise<void> {
   const kv = env.AUTHRIM_CONFIG;
   if (!kv) {
     throw new Error('AUTHRIM_CONFIG KV binding not available');
   }
+
+  validateRegionShardResidencyStrict(config);
 
   const kvKey = buildRegionShardConfigKvKey(tenantId);
   await kv.put(kvKey, JSON.stringify(config));
@@ -864,11 +1024,15 @@ export function getRegionAwareDOStub<T extends Rpc.DurableObjectBranded | undefi
   instanceName: string,
   regionKey: string
 ): DurableObjectStub<T> {
-  const id = namespace.idFromName(instanceName);
+  const placement = parseRegionPlacementKey(regionKey);
+  const targetNamespace = placement.jurisdiction
+    ? namespace.jurisdiction(placement.jurisdiction)
+    : namespace;
+  const id = targetNamespace.idFromName(instanceName);
 
   // locationHint is only effective on the first get() call for a given ID
-  return namespace.get(id, {
-    locationHint: regionKey as DurableObjectLocationHint,
+  return targetNamespace.get(id, {
+    locationHint: placement.regionKey as DurableObjectLocationHint,
   });
 }
 
@@ -1240,6 +1404,7 @@ export function resolveShardForNewResourceTyped(
   resourceType: RegionShardResourceType,
   shardKey: string
 ): ShardResolution {
+  const configV2 = config as RegionShardConfigV2;
   // Get type-specific shard count
   const totalShards = getShardCountForType(config, resourceType);
 
@@ -1249,7 +1414,10 @@ export function resolveShardForNewResourceTyped(
   // For region resolution, we still use the global region distribution
   // Shard index is remapped to global range for region lookup
   const globalShardIndex = shardIndex % config.currentTotalShards;
-  const regionKey = resolveRegionForShard(globalShardIndex, config.currentRegions);
+  const regionKey = encodeRegionPlacementKey(
+    resolveRegionForShard(globalShardIndex, config.currentRegions),
+    configV2.residency?.jurisdiction ?? null
+  );
 
   return {
     generation: config.currentGeneration,

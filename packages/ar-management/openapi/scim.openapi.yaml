@@ -113,15 +113,43 @@ paths:
       tags:
         - SCIM Users
       summary: Create a SCIM user.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         $ref: '#/components/requestBodies/ScimUser'
       responses:
         '201':
           $ref: '#/components/responses/ScimJson'
+        '202':
+          $ref: '#/components/responses/ScimAccountCreationOperation'
         '400':
           $ref: '#/components/responses/ScimError'
         '409':
           $ref: '#/components/responses/ScimError'
+        '503':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Creates the account through the tenant directory publication workflow. Idempotency-Key is
+        optional for SCIM client compatibility; when omitted, Authrim derives a stable key from the
+        authenticated provisioning token and canonical request body. Returns 202 with an operation
+        Location when directory publication continues asynchronously.
+      security:
+        - scimBearer: []
+  /scim/v2/Operations/{id}:
+    get:
+      tags:
+        - SCIM Users
+      summary: Get an account creation operation.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/ScimAccountCreationOperation'
+        '404':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Returns only operations owned by the same tenant and SCIM bearer token. Unknown and
+        differently owned operation identifiers return the same 404 response.
       security:
         - scimBearer: []
   /scim/v2/Users/{id}:
@@ -317,6 +345,18 @@ components:
       schema:
         type: string
       description: Optional ETag precondition for replace, patch, or delete operations.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: >-
+        Stable replay-protection key for one user creation request. Omit to use Authrim's
+        deterministic SCIM request key; send a new explicit value to intentionally recreate an
+        otherwise identical resource after deletion.
     Filter:
       name: filter
       in: query
@@ -399,6 +439,17 @@ components:
           schema:
             $ref: '#/components/schemas/ScimBulkRequest'
   responses:
+    ScimAccountCreationOperation:
+      description: Durable account creation operation state.
+      headers:
+        Location:
+          description: Operation status URL when returned by POST /Users.
+          schema:
+            type: string
+      content:
+        application/scim+json:
+          schema:
+            $ref: '#/components/schemas/ScimAccountCreationOperation'
     ScimJson:
       description: Successful SCIM JSON response.
       content:
@@ -415,6 +466,41 @@ components:
           schema:
             $ref: '#/components/schemas/ScimError'
   schemas:
+    ScimAccountCreationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - schemas
+        - id
+        - status
+        - operationId
+        - meta
+      properties:
+        schemas:
+          type: array
+          contains:
+            const: urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - preparing
+            - reserved
+            - writing
+            - directory_pending
+            - succeeded
+            - blocked
+            - canceled
+        operationId:
+          type: string
+        userId:
+          type: string
+        resourceLocation:
+          type: string
+          format: uri
+        meta:
+          $ref: '#/components/schemas/ScimMeta'
     ScimObject:
       type: object
       additionalProperties: true

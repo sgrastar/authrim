@@ -1,0 +1,225 @@
+openapi: 3.2.0
+info:
+  title: Authrim External Identity Bridge API
+  version: 0.4.0
+  description: Browser continuation endpoints owned by the external identity bridge.
+paths:
+  /api/external/links/{id}:
+    delete:
+      operationId: unlinkExternalIdentity
+      summary: Unlink an external identity from the current account
+      description: >-
+        Revokes upstream tokens on a best-effort basis. Tenant-D1 accounts durably schedule removal
+        of the external-subject Lookup route before acknowledging the authority deletion.
+      security:
+        - authrimSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        '200':
+          description: The local identity was unlinked or an exact prior operation was adopted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalIdentityUnlinkResponse'
+        '400':
+          description: Unlinking would remove the account's final authentication method.
+        '401':
+          description: A valid Authrim session is required.
+        '404':
+          description: The linked identity or prior unlink operation does not exist for this account.
+        '500':
+          description: The authority or durable cleanup operation could not be safely updated.
+  /api/external/provisioning/status:
+    post:
+      operationId: getExternalIdpProvisioningStatus
+      summary: Poll a pending external identity account provisioning operation
+      description: >-
+        Requires the browser-bound HttpOnly continuation cookie created by the external identity
+        callback. The provisioning token is removed from the browser URL before this request.
+      security:
+        - externalProvisioningCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProvisioningStatusRequest'
+      responses:
+        '200':
+          description: Provisioning is ready to resume.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningReadyResponse'
+        '202':
+          description: Provisioning remains pending.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningPendingResponse'
+        '400':
+          description: The continuation is malformed, expired, consumed, or not browser-bound.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningErrorResponse'
+        '409':
+          description: The durable account provisioning operation failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProvisioningFailedResponse'
+  /auth/external/provisioning/resume:
+    get:
+      operationId: resumeExternalIdpProvisioning
+      summary: Consume a ready external identity provisioning continuation
+      description: >-
+        Completes the routed JIT projection, consumes the one-time continuation, and resumes the
+        original authorization flow. It never completes while the durable operation is pending.
+      security:
+        - externalProvisioningCookie: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{43}$'
+        - name: tenant
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+      responses:
+        '302':
+          description: Redirects to the original authorization callback or a generic login error.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+                format: uri
+components:
+  securitySchemes:
+    authrimSession:
+      type: apiKey
+      in: cookie
+      name: authrim_session
+    externalProvisioningCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_external_provisioning_<digest-prefix>
+      description: Dynamically named HttpOnly browser-binding cookie.
+  schemas:
+    ExternalIdentityUnlinkResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+        - cleanup_pending
+        - token_revocation
+      properties:
+        success:
+          type: boolean
+          const: true
+        cleanup_pending:
+          type: boolean
+        operation_id:
+          type: string
+        token_revocation:
+          type: object
+          additionalProperties: false
+          required:
+            - attempted
+            - access_token_revoked
+            - refresh_token_revoked
+          properties:
+            attempted:
+              type: boolean
+            access_token_revoked:
+              type: boolean
+            refresh_token_revoked:
+              type: boolean
+            warnings:
+              type: array
+              maxItems: 8
+              items:
+                type: string
+    ProvisioningStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - provisioning_token
+        - tenant_id
+      properties:
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        tenant_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+    ProvisioningReadyResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - resume_url
+      properties:
+        status:
+          type: string
+          const: ready
+        resume_url:
+          type: string
+          pattern: '^/auth/external/provisioning/resume\\?'
+    ProvisioningPendingResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - retry_after_ms
+      properties:
+        status:
+          type: string
+          const: pending
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+    ProvisioningFailedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: failed
+    ProvisioningErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          const: invalid_or_expired_provisioning_continuation

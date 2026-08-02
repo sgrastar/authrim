@@ -197,7 +197,7 @@ rejected until corresponding logical streams exist; `--external-schema-ready` ca
 stream.
 
 All D1 migration entry points discover the local release manifest automatically. This includes deploy,
-Web deployment, tenant database provisioning, pool migration, and slot reset, so consolidated bundles
+Web deployment, initial tenant database bootstrap, and Control-managed shard provisioning, so consolidated bundles
 always retain their `supersedes` behavior regardless of the command used. Status output also
 materializes a fully applied draft set as its consolidated bundle, rather than reporting the bundle as
 pending and every draft file as orphaned. For databases created before checksum recording was added,
