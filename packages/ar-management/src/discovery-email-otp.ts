@@ -96,6 +96,20 @@ function otpSecret(env: Env): string {
   return secret;
 }
 
+function randomOtpCode(): string {
+  const bytes = new Uint8Array(6);
+  const digits: number[] = [];
+  while (digits.length < 6) {
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      if (byte >= 250) continue;
+      digits.push(Math.floor(byte / 25));
+      if (digits.length === 6) break;
+    }
+  }
+  return digits.join('');
+}
+
 async function assignments(env: Env) {
   if (!env.TENANT_RUNTIME_REGISTRY || !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS) {
     throw new Error('discovery_lookup_unavailable');
@@ -208,9 +222,7 @@ export class DiscoveryEmailOtpService {
   ) {
     this.now = dependencies.now ?? (() => Math.floor(Date.now() / 1000));
     this.randomId = dependencies.randomId ?? (() => crypto.randomUUID());
-    this.randomCode =
-      dependencies.randomCode ??
-      (() => String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0'));
+    this.randomCode = dependencies.randomCode ?? randomOtpCode;
     this.timingNow = dependencies.timingNow ?? (() => performance.now());
     this.recordTiming = dependencies.recordTiming;
   }

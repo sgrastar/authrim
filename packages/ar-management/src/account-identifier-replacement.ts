@@ -79,6 +79,20 @@ function otpSecret(env: Env): string {
   return value;
 }
 
+function randomOtpCode(): string {
+  const bytes = new Uint8Array(6);
+  const digits: number[] = [];
+  while (digits.length < 6) {
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      if (byte >= 250) continue;
+      digits.push(Math.floor(byte / 25));
+      if (digits.length === 6) break;
+    }
+  }
+  return digits.join('');
+}
+
 function recentlyAuthenticated(session: AccountSession, now: number): boolean {
   return session.authTime <= now && now < session.authTime + REAUTH_TTL_SECONDS;
 }
@@ -183,7 +197,7 @@ export async function startAccountIdentifierReplacementHandler(
   }
   const secret = otpSecret(c.env);
   const challengeId = `identifier-replacement-${crypto.randomUUID()}`;
-  const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000).padStart(6, '0');
+  const code = randomOtpCode();
   const verifier = await hmac(`${challengeId}\0${code}`, secret);
   const newValueHash = await sha256(newEmail);
   await pii.defaultPiiAdapter.execute(

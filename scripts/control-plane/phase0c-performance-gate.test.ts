@@ -236,6 +236,13 @@ describe('Phase 0c performance gate', () => {
     expect(checklist).toContain('KV route cache');
   });
 
+  it('escapes backslashes before rendering untrusted evidence in Markdown', () => {
+    const input = evidence();
+    input.runId = String.raw`phase0c\\run|20260729`;
+    const checklist = renderPhase0cChecklist(input, evaluatePhase0cEvidence(input));
+    expect(checklist).toContain('- Run: `phase0c\\\\\\\\run\\|20260729`');
+  });
+
   it('blocks a Lookup result above the fixed p99 boundary', () => {
     const input = evidence();
     input.scenarios.identifierDiscovery.measurement.p99Ms = 751;

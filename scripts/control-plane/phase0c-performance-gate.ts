@@ -538,7 +538,10 @@ export function evaluatePhase0cEvidence(
 }
 
 function escapeMarkdown(value: string): string {
-  return value.replace(/\|/gu, '\\|').replace(/[\r\n]+/gu, ' ');
+  return value
+    .replace(/\\/gu, '\\\\')
+    .replace(/\|/gu, '\\|')
+    .replace(/[\r\n]+/gu, ' ');
 }
 
 export function renderPhase0cChecklist(

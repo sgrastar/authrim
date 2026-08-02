@@ -382,11 +382,25 @@ function operationSummary(operation: ControlOperationView): ControlProvisioningO
 }
 
 function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/gu, '-')
-    .replace(/^-+|-+$/gu, '')
-    .slice(0, 24);
+  const lower = value.toLowerCase();
+  let result = '';
+  let needsSeparator = false;
+  for (const character of lower) {
+    const isLetter = character >= 'a' && character <= 'z';
+    const isDigit = character >= '0' && character <= '9';
+    if (isLetter || isDigit) {
+      if (needsSeparator && result.length > 0) result += '-';
+      result += character;
+      needsSeparator = false;
+    } else if (character === '-') {
+      if (result.length > 0) result += '-';
+      needsSeparator = false;
+    } else if (result.length > 0) {
+      needsSeparator = true;
+    }
+    if (result.length >= 24) break;
+  }
+  return result.slice(0, 24);
 }
 
 export async function writeMigrationMetadata(
