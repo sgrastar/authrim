@@ -61,7 +61,6 @@ vi.mock('../core/release-migrations.js', async (importOriginal) => {
 });
 
 import { tenantDatabaseCommand } from '../cli/commands/tenant-db.js';
-import { buildTenantDatabaseProvisioningPlan } from '../core/tenant-database.js';
 
 const originalCwd = process.cwd();
 let tempDir: string | null = null;
@@ -95,23 +94,17 @@ async function writeEnvironment(): Promise<void> {
   );
 }
 
-describe('tenant-db command interruption recovery', () => {
+describe('retired tenant-db command', () => {
   beforeEach(async () => {
     tempDir = await realpath(await mkdtemp(join(tmpdir(), 'authrim-tenant-db-command-')));
     process.chdir(tempDir);
     vi.clearAllMocks();
     mocks.spinner.start.mockReturnValue(mocks.spinner);
-    const plan = buildTenantDatabaseProvisioningPlan({ env: 'prod', tenantId: 'tenant-a' });
     mocks.createD1Database.mockImplementation(async (name: string) => ({
       id: `${name}-id`,
       name,
     }));
-    mocks.listD1Databases.mockResolvedValue(
-      plan.resources.map((resource) => ({
-        uuid: `${resource.databaseName}-id`,
-        name: resource.databaseName,
-      }))
-    );
+    mocks.listD1Databases.mockResolvedValue([]);
     mocks.executeD1Migration.mockResolvedValue({ success: true });
     mocks.deployCommand.mockResolvedValue(undefined);
   });
@@ -122,39 +115,18 @@ describe('tenant-db command interruption recovery', () => {
     tempDir = null;
   });
 
-  it('keeps preparation blocked and reuses its exact databases after a migration failure', async () => {
+  it('fails closed without mutating topology managed by the Control Plane', async () => {
     await writeEnvironment();
-    mocks.runD1Migrations.mockResolvedValueOnce({ success: false, error: 'migration failed' });
+    const lockPath = join(tempDir!, '.authrim/prod/lock.json');
+    const before = await readFile(lockPath, 'utf-8');
 
     await expect(
       tenantDatabaseCommand({ env: 'prod', tenantId: 'tenant-a', yes: true })
-    ).rejects.toThrow('Core tenant D1 migration failed: migration failed');
+    ).rejects.toThrow('process.exit unexpectedly called with "1"');
 
-    const lockPath = join(tempDir!, '.authrim/prod/lock.json');
-    const interruptedLock = JSON.parse(await readFile(lockPath, 'utf-8'));
-    expect(interruptedLock.topologyUpdate).toMatchObject({
-      kind: 'tenant_database',
-      phase: 'preparing',
-      subject: 'tenant-a:1',
-    });
-    expect(
-      Object.keys(interruptedLock.d1).filter((binding) => binding.startsWith('TDB_'))
-    ).toHaveLength(2);
-    expect(mocks.createD1Database).toHaveBeenCalledTimes(2);
+    expect(await readFile(lockPath, 'utf-8')).toBe(before);
+    expect(mocks.createD1Database).not.toHaveBeenCalled();
+    expect(mocks.runD1Migrations).not.toHaveBeenCalled();
     expect(mocks.deployCommand).not.toHaveBeenCalled();
-
-    mocks.runD1Migrations.mockReset();
-    mocks.runD1Migrations.mockResolvedValue({ success: true, appliedCount: 1, applied: [] });
-    await tenantDatabaseCommand({ env: 'prod', tenantId: 'tenant-a', yes: true });
-
-    expect(mocks.createD1Database).toHaveBeenCalledTimes(2);
-    expect(mocks.runD1Migrations).toHaveBeenCalledTimes(2);
-    expect(mocks.deployCommand).toHaveBeenCalledOnce();
-    const readyLock = JSON.parse(await readFile(lockPath, 'utf-8'));
-    expect(readyLock.topologyUpdate).toMatchObject({
-      kind: 'tenant_database',
-      phase: 'pending_deploy',
-      subject: 'tenant-a:1',
-    });
   });
 });

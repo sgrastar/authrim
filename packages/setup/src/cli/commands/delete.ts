@@ -15,6 +15,7 @@ import {
   checkAuth,
   detectEnvironments,
   deleteEnvironment,
+  hasControlManagedResourcesForEnvironment,
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
@@ -68,11 +69,13 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
 
   // Get environment name
   let env = options.env;
+  let detectedEnvironments: Awaited<ReturnType<typeof detectEnvironments>> | undefined;
 
   if (!env) {
     // Detect environments
     const detectSpinner = ora('Detecting environments...').start();
     const environments = await detectEnvironments();
+    detectedEnvironments = environments;
     detectSpinner.stop();
 
     if (environments.length === 0) {
@@ -142,12 +145,26 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     baseDir,
     env,
     operation: 'delete',
-    requireExisting: true,
+    requireExisting: false,
   });
   let result: Awaited<ReturnType<typeof deleteEnvironment>>;
   try {
     const lock = operationLock.lock;
-    const decision = evaluateEnvironmentOperation({ operation: 'delete', lock });
+    if (!lock && !detectedEnvironments) {
+      const detectSpinner = ora('Confirming remote environment resources...').start();
+      detectedEnvironments = await detectEnvironments();
+      detectSpinner.stop();
+    }
+    const environmentObservedByBaseline = detectedEnvironments?.some(
+      (candidate) => candidate.env === env
+    );
+    const environmentObservedRemotely =
+      environmentObservedByBaseline || (await hasControlManagedResourcesForEnvironment(env));
+    const decision = evaluateEnvironmentOperation({
+      operation: 'delete',
+      lock,
+      environmentObservedRemotely,
+    });
     if (!decision.allowed) {
       throw new Error(environmentOperationBlockMessage(decision));
     }

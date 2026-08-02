@@ -11,11 +11,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  requestContextMiddleware,
-  pluginContextMiddleware,
-  diagnosticLoggingMiddleware,
-} from '@authrim/ar-lib-core';
+import { requestContextMiddleware, diagnosticLoggingMiddleware } from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
@@ -48,9 +44,6 @@ app.use(
     excludePatterns: [/^\/api\/health/, /^\/health\//],
   })
 );
-
-// Plugin Context - provides access to notifiers, idp handlers, authenticators
-app.use('/*', pluginContextMiddleware());
 
 /**
  * POST /device_authorization
@@ -157,3 +150,4 @@ app.post('/api/ciba/conformance-action', cibaConformanceActionHandler);
 app.get('/api/ciba/test', cibaTestPageHandler);
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

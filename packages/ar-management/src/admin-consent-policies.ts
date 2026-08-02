@@ -80,6 +80,32 @@ function normalizeTargetId(targetType: string, targetId: unknown): string {
   return readTrimmed(targetId) ?? '';
 }
 
+async function oidcClientExists(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string
+): Promise<boolean> {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const rows = await authCtx.coreAdapter.query(
+    'SELECT client_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    [tenantId, clientId]
+  );
+  return rows.length > 0;
+}
+
+async function hasEnabledAppLogin(env: Env, tenantId: string, clientId: string): Promise<boolean> {
+  if (!env.SETTINGS) return false;
+  const raw = await env.SETTINGS.get(`settings:client:${tenantId}:${clientId}:client`);
+  if (!raw) return false;
+  const parsed = JSON.parse(raw) as unknown;
+  return (
+    parsed !== null &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    (parsed as Record<string, unknown>)['client.app_login_enabled'] === true
+  );
+}
+
 async function rowExists(
   c: Context<{ Bindings: Env }>,
   table: ExistingTable,
@@ -448,6 +474,19 @@ export async function adminClientTrustPolicyUpsertHandler(c: Context<{ Bindings:
     }
     const targetId = normalizeTargetId(targetType, body.target_id);
     if (!targetId) return invalid(c, 'target_id is required');
+    if (targetType === 'oidc_client' && !(await oidcClientExists(c, tenantId, targetId))) {
+      return notFound(c, 'OIDC client was not found');
+    }
+    if (
+      targetType === 'oidc_client' &&
+      (!readBool(body.first_party) || !readBool(body.is_active, true)) &&
+      (await hasEnabledAppLogin(c.env, tenantId, targetId))
+    ) {
+      return invalid(
+        c,
+        'An active first-party Client Trust Policy is required while App Login is enabled'
+      );
+    }
     const name = `${targetType}-${targetId}-trust`;
     const displayName = readTrimmed(body.display_name) ?? name;
     const now = Date.now();

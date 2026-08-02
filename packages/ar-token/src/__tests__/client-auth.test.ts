@@ -155,6 +155,10 @@ const mocks = vi.hoisted(() => {
       },
       allowCrossClientNativeSSO: false,
     }),
+    mockRecordDeviceSecretRouteHint: vi.fn().mockResolvedValue(undefined),
+    mockResolveDeviceSecretRouteHint: vi.fn().mockResolvedValue(null),
+    mockGetTenantMetadataContextFromHono: vi.fn().mockReturnValue(null),
+    mockResolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
 
     // RBAC / Policy
     mockGetIDTokenRBACClaims: vi.fn().mockResolvedValue({}),
@@ -242,6 +246,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     isNativeSSOEnabled: mocks.mockIsNativeSSOEnabled,
     getNativeSSOConfig: mocks.mockGetNativeSSOConfig,
+    recordDeviceSecretRouteHint: mocks.mockRecordDeviceSecretRouteHint,
+    resolveDeviceSecretRouteHint: mocks.mockResolveDeviceSecretRouteHint,
+    getTenantMetadataContextFromHono: mocks.mockGetTenantMetadataContextFromHono,
+    resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
     createOAuthConfigManager: mocks.mockCreateOAuthConfigManager,
     publishEvent: mocks.mockPublishEvent,
     TOKEN_EVENTS: {
@@ -450,6 +458,10 @@ function resetAllMocks() {
     },
     allowCrossClientNativeSSO: false,
   });
+  mocks.mockRecordDeviceSecretRouteHint.mockReset().mockResolvedValue(undefined);
+  mocks.mockResolveDeviceSecretRouteHint.mockReset().mockResolvedValue(null);
+  mocks.mockGetTenantMetadataContextFromHono.mockReset().mockReturnValue(null);
+  mocks.mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsIdLevelPermissionsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockGetCachedUserCore.mockReset().mockResolvedValue(null);
@@ -1806,6 +1818,45 @@ describe('Client Authentication Tests', () => {
       });
     }
 
+    function setupTenantD1NativeSSORoute(accountId = 'account:user-001') {
+      const coreDb = mocks.mockD1Adapter();
+      const tenantMetadataContext = {
+        tenantId: 'default',
+        storageProfileId: 'builtin:storage:tenant-d1',
+        coreDb,
+      };
+      mocks.mockGetTenantMetadataContextFromHono.mockReturnValue(tenantMetadataContext);
+      mocks.mockResolveDeviceSecretRouteHint.mockResolvedValue({
+        tenantId: 'default',
+        accountId,
+        issuedAt: 1_700_000_000_000,
+        expiresAt: 1_702_592_000_000,
+      });
+      mocks.mockResolveAccountDataContextFromHono.mockImplementation(
+        async (c: { set(key: string, value: unknown): void }, requestedAccountId: string) => {
+          const accountDataContext = {
+            tenantId: 'default',
+            accountId: requestedAccountId,
+            legacyUserId: requestedAccountId.slice('account:'.length),
+            storageProfileId: 'builtin:storage:tenant-d1',
+            membership: {},
+            coreDb,
+            piiDb: coreDb,
+            coreBindingRef: 'D1_USERS_001',
+            piiBindingRef: 'D1_PII_001',
+            coreResidencyPartition: 'global',
+            piiResidencyPartition: 'global',
+            accountRouteGeneration: 1,
+            userCacheScope: 'tenant-account',
+            piiCacheMode: 'disabled',
+          };
+          c.set('tenantMetadataContext', tenantMetadataContext);
+          c.set('accountDataContext', accountDataContext);
+          return accountDataContext;
+        }
+      );
+    }
+
     function setupNativeSSOPublicClientTest(payloadOverrides: Record<string, unknown> = {}) {
       const client = createPublicClient({
         client_id: 'native-public-client-001',
@@ -2166,6 +2217,8 @@ describe('Client Authentication Tests', () => {
           id: 'ds-001',
           user_id: authCodeData.userId,
           session_id: authCodeData.sid,
+          created_at: 1_700_000_000_000,
+          expires_at: 1_702_592_000_000,
         },
       });
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
@@ -2191,6 +2244,62 @@ describe('Client Authentication Tests', () => {
       expect(body.refresh_token).toBe('mock-refresh-token');
       expectRefreshTokenExpiryMetadata(body);
       expect(body.device_secret).toBe('raw-device-secret-001');
+      expect(mocks.mockRecordDeviceSecretRouteHint).toHaveBeenCalledWith(mockEnv, {
+        secret: 'raw-device-secret-001',
+        tenantId: 'default',
+        accountId: `account:${authCodeData.userId}`,
+        issuedAt: 1_700_000_000_000,
+        expiresAt: 1_702_592_000_000,
+      });
+    });
+
+    it('revokes and withholds a device_secret when its route hint cannot be persisted', async () => {
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+        application_type: 'native',
+      });
+      const authCodeData = createAuthCodeData();
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockIsNativeSSOEnabled.mockResolvedValue(true);
+      mocks.mockDeviceSecretRepository.findByUserId.mockResolvedValue([]);
+      mocks.mockDeviceSecretRepository.createSecret.mockResolvedValue({
+        secret: 'unroutable-device-secret',
+        entity: {
+          id: 'ds-unroutable',
+          user_id: authCodeData.userId,
+          session_id: authCodeData.sid,
+          created_at: 1_700_000_000_000,
+          expires_at: 1_702_592_000_000,
+        },
+      });
+      mocks.mockRecordDeviceSecretRouteHint.mockRejectedValue(new Error('route store unavailable'));
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<Record<string, unknown>>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.device_secret).toBeUndefined();
+      expect(mocks.mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
+        'ds-unroutable',
+        'route_hint_write_failed',
+        'default'
+      );
     });
 
     it('should not rotate existing device_secret during authorization code exchange when rotation is disabled', async () => {
@@ -2643,6 +2752,77 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(400);
       expect(body.error).toBe('invalid_grant');
       expect(body.error_details?.code).toBe('device_secret_inactive');
+    });
+
+    it('routes tenant-D1 Native SSO through the device-secret hint before validation', async () => {
+      const client = setupNativeSSOValidationTest();
+      setupTenantD1NativeSSORoute();
+
+      const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockResolveDeviceSecretRouteHint).toHaveBeenCalledWith(mockEnv, {
+        secret: 'presented-device-secret',
+        tenantId: 'default',
+      });
+      expect(mocks.mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+        expect.anything(),
+        'account:user-001'
+      );
+      expect(mocks.mockResolveAccountDataContextFromHono.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.mockDeviceSecretRepository.validateAndUse.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('rejects tenant-D1 Native SSO before users D1 access when the route hint is missing', async () => {
+      const client = setupNativeSSOValidationTest();
+      setupTenantD1NativeSSORoute();
+      mocks.mockResolveDeviceSecretRouteHint.mockResolvedValue(null);
+
+      const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+      const body = await parseJsonResponse<{ error: string; error_details?: { code?: string } }>(
+        response
+      );
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+      expect(body.error_details?.code).toBe('device_secret_inactive');
+      expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
+      expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
+    });
+
+    it('rejects a tenant-D1 device secret whose authoritative owner differs from the hint', async () => {
+      const client = setupNativeSSOValidationTest();
+      setupTenantD1NativeSSORoute('account:other-user');
+
+      const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+      const body = await parseJsonResponse<{ error: string; error_details?: { code?: string } }>(
+        response
+      );
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+      expect(body.error_details?.code).toBe('device_secret_binding_failed');
+    });
+
+    it('returns retryable 503 when tenant-D1 account routing is unavailable', async () => {
+      const client = setupNativeSSOValidationTest();
+      setupTenantD1NativeSSORoute();
+      mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
+        new Error('account_data_runtime_registry_unavailable')
+      );
+
+      const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
+      const body = await parseJsonResponse<{
+        error: string;
+        error_details?: { code?: string; retryable?: boolean };
+      }>(response);
+
+      expect(response.status).toBe(503);
+      expect(body.error).toBe('temporarily_unavailable');
+      expect(body.error_details?.code).toBe('native_sso_server_error');
+      expect(body.error_details?.retryable).toBe(true);
+      expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
     });
 
     it('should return device_secret_binding_failed when subject does not own the device_secret', async () => {

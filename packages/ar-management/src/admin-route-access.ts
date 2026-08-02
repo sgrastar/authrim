@@ -1157,6 +1157,51 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'database connections'
   ),
   ...byMethod(
+    '/api/admin/platform/read-replication',
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
+    'platform D1 read replication',
+    PLATFORM_ADMIN_ROLES
+  ),
+  rule({
+    pattern: '/api/admin/platform/control-plane/capacity/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane capacity preview',
+  }),
+  rule({
+    pattern: '/api/admin/platform/control-plane/lookup-hmac/rotations',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC rotation start',
+  }),
+  rule({
+    pattern: '/api/admin/platform/control-plane/lookup-hmac/rotations/:operationId/activate',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC rotation activation',
+  }),
+  rule({
+    pattern:
+      '/api/admin/platform/control-plane/lookup-hmac/rotations/:operationId/observe-generation',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC generation observation',
+  }),
+  ...byMethod(
+    '/api/admin/platform/control-plane/*',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    'platform control plane operations',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/machine-access',
     ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ,
     ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,

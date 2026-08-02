@@ -345,9 +345,6 @@ importers:
       '@authrim/ar-lib-core':
         specifier: workspace:*
         version: link:../ar-lib-core
-      '@authrim/ar-lib-plugin':
-        specifier: workspace:*
-        version: link:../ar-lib-plugin
       hono:
         specifier: 4.12.29
         version: 4.12.29
@@ -733,6 +730,34 @@ importers:
         specifier: 2.8.3
         version: 2.8.3
 
+  packages/ar-plugin-runner:
+    dependencies:
+      '@authrim/ar-lib-core':
+        specifier: workspace:*
+        version: link:../ar-lib-core
+      '@authrim/ar-lib-plugin':
+        specifier: workspace:*
+        version: link:../ar-lib-plugin
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20251121.0
+        version: 4.20260424.1
+      '@types/node':
+        specifier: ^22.19.7
+        version: 22.19.7
+      jose:
+        specifier: ^6.1.2
+        version: 6.1.3
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.8(@types/node@22.19.7)(@vitest/coverage-v8@4.1.8)(@vitest/ui@4.1.8)(jsdom@27.4.0)(vite@7.3.5(@types/node@22.19.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+      wrangler:
+        specifier: ^4.110.0
+        version: 4.110.0(@cloudflare/workers-types@4.20260424.1)
+
   packages/ar-policy:
     dependencies:
       '@authrim/ar-lib-core':
@@ -794,9 +819,6 @@ importers:
       '@authrim/ar-lib-field-mapping':
         specifier: workspace:*
         version: link:../ar-lib-field-mapping
-      '@authrim/ar-lib-plugin':
-        specifier: workspace:*
-        version: link:../ar-lib-plugin
       '@xmldom/xmldom':
         specifier: ^0.8.13
         version: 0.8.13
@@ -942,6 +964,12 @@ importers:
 
   packages/setup:
     dependencies:
+      '@authrim/ar-control':
+        specifier: workspace:*
+        version: link:../ar-control
+      '@authrim/ar-lib-core':
+        specifier: workspace:*
+        version: link:../ar-lib-core
       '@hono/node-server':
         specifier: 2.0.10
         version: 2.0.10(hono@4.12.29)

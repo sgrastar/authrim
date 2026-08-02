@@ -2,7 +2,7 @@
  * Source Context Detection Module
  *
  * Detects whether the setup tool is running from within the Authrim source
- * repository (e.g., via `pnpm setup`) versus being invoked externally
+ * repository (e.g., via `pnpm run setup`) versus being invoked externally
  * (e.g., via `npx @authrim/setup`).
  */
 
@@ -43,8 +43,8 @@ export function isRunningFromSource(dir?: string): boolean {
 /**
  * Get the appropriate command prefix for user-facing messages.
  *
- * Returns `'pnpm setup'` when running from source, `'npx @authrim/setup'` otherwise.
+ * Returns `'pnpm run setup'` when running from source, `'npx @authrim/setup'` otherwise.
  */
 export function getCommandPrefix(): string {
-  return isRunningFromSource() ? 'pnpm setup' : 'npx @authrim/setup';
+  return isRunningFromSource() ? 'pnpm run setup' : 'npx @authrim/setup';
 }

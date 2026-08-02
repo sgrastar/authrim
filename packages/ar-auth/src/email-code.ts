@@ -24,11 +24,12 @@ import {
   buildDOKey,
   generateId,
   generateUserIdFromSettings,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
   // Event System
@@ -45,6 +46,10 @@ import {
   getSessionCookieSameSite,
   getBrowserStateCookieSameSite,
   CanonicalRuntimeUserStore,
+  getAccountDataContextFromHono,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextByIdentifierFromHono,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { getEmailCodeHtml, getEmailCodeText } from './utils/email/templates';
@@ -60,6 +65,8 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
+import { provisionTenantD1EmailAccount } from './account-provisioning';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
 const OTP_SESSION_COOKIE = 'authrim_otp_session';
@@ -83,7 +90,7 @@ function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -174,11 +181,29 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       // Check if user exists, if not create a new canonical runtime user.
       let user: { id: string; email: string; name: string | null } | null = null;
-      const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      const tenantD1 =
+        getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
+      let runtimeUsers: CanonicalRuntimeUserStore | null = null;
       const normalizedEmail = email.toLowerCase();
       let customFieldValues: Record<string, string> = {};
 
-      const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
+      if (tenantD1) {
+        try {
+          await resolveAccountDataContextByIdentifierFromHono(c, {
+            indexKind: 'email_exact',
+            identifier: normalizedEmail,
+          });
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
+            throw error;
+          }
+        }
+      } else {
+        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      }
+
+      const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
       if (existingUser) {
         user = {
           id: existingUser.id,
@@ -223,23 +248,61 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
         const defaultName = name || null;
         const preferredUsername = normalizedEmail.split('@')[0];
+        const runtimeUser = {
+          active: true as const,
+          emailVerified: false,
+          userType: 'end_user',
+          displayName: defaultName,
+          sourceRef: 'auth:email_code',
+          piiFields: {
+            ...canonicalProfileFields.piiFields,
+            email: true,
+            ...(defaultName ? { name: true } : {}),
+          },
+          sensitiveValues: {
+            ...canonicalProfileFields.sensitiveValues,
+            email: normalizedEmail,
+            ...(defaultName ? { name: defaultName } : {}),
+          },
+          customAttributesJson: JSON.stringify({
+            preferred_username: preferredUsername,
+          }),
+        };
 
         try {
-          await runtimeUsers.syncUser({
-            userId,
-            email: normalizedEmail,
-            name: defaultName,
-            active: true,
-            emailVerified: false,
-            userType: 'end_user',
-            sourceRef: 'email_code',
-            piiFields: canonicalProfileFields.piiFields,
-            sensitiveValues: canonicalProfileFields.sensitiveValues,
-            customAttributesJson: JSON.stringify({
-              preferred_username: preferredUsername,
-            }),
-          });
+          if (tenantD1) {
+            const provisioned = await provisionTenantD1EmailAccount(c, {
+              tenantId,
+              candidateUserId: userId,
+              flow: 'email_code',
+              email: normalizedEmail,
+              runtimeUser,
+            });
+            if (provisioned.status === 'pending') return provisioned.response;
+            await resolveAccountDataContextFromHono(c, provisioned.accountId);
+            runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+            user = {
+              id: provisioned.userId,
+              email: normalizedEmail,
+              name: defaultName,
+            };
+          } else {
+            await runtimeUsers!.syncUser({
+              userId,
+              email: normalizedEmail,
+              name: defaultName,
+              active: true,
+              emailVerified: false,
+              userType: 'end_user',
+              sourceRef: 'email_code',
+              piiFields: canonicalProfileFields.piiFields,
+              sensitiveValues: canonicalProfileFields.sensitiveValues,
+              customAttributesJson: runtimeUser.customAttributesJson,
+            });
+          }
         } catch (piiError: unknown) {
+          const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
+          if (writeFenceResponse) return writeFenceResponse;
           // PII Protection: Don't log full error (may contain PII)
           log.error(
             'Failed to create canonical runtime user',
@@ -249,7 +312,11 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
           return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
         }
 
-        user = { id: userId, email: normalizedEmail, name: defaultName || email.split('@')[0] };
+        user ??= {
+          id: userId,
+          email: normalizedEmail,
+          name: defaultName || email.split('@')[0],
+        };
       }
 
       // Generate OTP session ID for session binding
@@ -302,64 +369,64 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         maxAge: EMAIL_CODE_TTL,
       });
 
-      // Send email via Notifier Plugin
-      const pluginCtx = getRequiredPluginContext(c, 'notification');
-      const emailNotifier = pluginCtx.registry.getNotifier('email');
-
-      if (!emailNotifier) {
-        log.warn('No email notifier plugin configured', {
-          action: 'notifier_check',
-        });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
       const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
 
       // Authentication-Info header for OTP AutoFill (Safari/iOS)
       // This enables domain-bound code verification for phishing protection
       const authenticationInfoHeader = `<${getRequestIssuer(c)}>; otpauth=email`;
 
-      const emailResult = await emailNotifier.send({
-        channel: 'email',
-        to: email,
-        from: fromEmail,
-        subject: 'Your Authrim verification code',
-        body: getEmailCodeHtml({
-          name: (user.name as string) || undefined,
-          email,
-          code,
-          expiresInMinutes: EMAIL_CODE_TTL / 60,
-          appName: 'Authrim',
-          logoUrl: undefined,
-        }),
-        metadata: {
-          // Plain text version for email clients that prefer it
-          textBody: getEmailCodeText({
+      const delivery = await produceNotificationDelivery(c.env, {
+        owner: { owner: 'tenant', tenantId: getTenantIdFromContext(c) },
+        intentId: `email-code:${otpSessionId}`,
+        outboxId: `notification:${otpSessionId}`,
+        notificationKind: 'auth.email-code',
+        idempotencyKey: `email-code:${otpSessionId}`,
+        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        payload: {
+          channel: 'email',
+          to: email,
+          from: fromEmail,
+          subject: 'Your Authrim verification code',
+          body: getEmailCodeHtml({
             name: (user.name as string) || undefined,
             email,
             code,
             expiresInMinutes: EMAIL_CODE_TTL / 60,
             appName: 'Authrim',
+            logoUrl: undefined,
           }),
-          // OTP AutoFill header for Safari/iOS
-          headers: {
-            'Authentication-Info': authenticationInfoHeader,
+          metadata: {
+            // Plain text version for email clients that prefer it
+            textBody: getEmailCodeText({
+              name: (user.name as string) || undefined,
+              email,
+              code,
+              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              appName: 'Authrim',
+            }),
+            // OTP AutoFill header for Safari/iOS
+            headers: {
+              'Authentication-Info': authenticationInfoHeader,
+            },
           },
         },
       });
 
-      if (!emailResult.success) {
-        // PII Protection: Don't log full error (may contain email details)
-        log.error('Failed to send email code', { action: 'email_send', error: emailResult.error });
+      if (delivery.delivery === 'permanent_failure') {
+        log.error('Failed to send email code', {
+          action: 'email_send',
+        });
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
       return c.json({
         success: true,
         message: 'Verification code sent to your email',
-        messageId: emailResult.messageId,
+        messageId: delivery.reference.intentId,
       });
     } catch (error) {
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       // PII Protection: Don't log full error (may contain email/user data)
       log.error('Email code send error', { action: 'send' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -404,10 +471,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Get challenge from ChallengeStore (RPC)
       // Use otpSessionId-based sharding - same UUID always routes to same shard
-      const challengeStore = await getChallengeStoreByChallengeId(
-        c.env,
-        otpSessionId,
-        getTenantIdFromContext(c)
+      const challengeStore = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_otp_challenge_route',
+        () => getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c))
       );
 
       let challengeData: {
@@ -426,11 +493,16 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       try {
         // Consume challenge atomically (includes existence, expiry, and consumed checks)
         // This replaces the previous getChallengeRpc + consumeChallengeRpc pattern
-        challengeData = (await challengeStore.consumeChallengeRpc({
-          id: `email_code:${otpSessionId}`,
-          tenantId: getTenantIdFromContext(c),
-          type: 'email_code',
-        })) as typeof challengeData;
+        challengeData = (await timeAuthRequestDiagnosticOperation(
+          c,
+          'auth_otp_challenge_consume',
+          () =>
+            challengeStore.consumeChallengeRpc({
+              id: `email_code:${otpSessionId}`,
+              tenantId: getTenantIdFromContext(c),
+              type: 'email_code',
+            })
+        )) as typeof challengeData;
       } catch (error) {
         // Publish auth.email_code.failed event (non-blocking)
         const tenantIdForEvent = getTenantIdFromContext(c);
@@ -476,19 +548,32 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         });
         return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
       }
+      const sessionTtlPromise = timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_ttl', () =>
+        resolveSessionTtl(c.env, tenantId, 'email_code')
+      );
+      if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
+        await timeAuthRequestDiagnosticOperation(c, 'auth_otp_account_route', () =>
+          resolveAccountDataContextFromHono(c, `account:${challengeData.userId}`)
+        );
+      }
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
 
-      const [isValidCode, runtimeUser] = await Promise.all([
-        verifyEmailCodeHash(
-          code,
-          email.toLowerCase(),
-          otpSessionId,
-          challengeData.metadata?.issued_at || 0,
-          challengeData.challenge,
-          hmacSecret
-        ),
-        runtimeUsers.findById(challengeData.userId, { includeInactive: true }),
-      ]);
+      const [isValidCode, runtimeUser] = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_otp_hash_and_user',
+        () =>
+          Promise.all([
+            verifyEmailCodeHash(
+              code,
+              email.toLowerCase(),
+              otpSessionId,
+              challengeData.metadata?.issued_at || 0,
+              challengeData.challenge,
+              hmacSecret
+            ),
+            runtimeUsers.findById(challengeData.userId, { includeInactive: true }),
+          ])
+      );
 
       if (!isValidCode) {
         // Publish auth.email_code.failed event (non-blocking)
@@ -512,6 +597,12 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!runtimeUser || runtimeUser.active !== 1) {
+        const accountData = getAccountDataContextFromHono(c);
+        log.warn('Canonical runtime user unavailable after account route resolution', {
+          action: 'email_code_verify_user_read',
+          routeLegacyUserMatches: accountData?.legacyUserId === challengeData.userId,
+          runtimeUserState: runtimeUser ? 'inactive' : 'missing',
+        });
         // Publish auth.email_code.failed event (non-blocking)
         publishEvent(c, {
           type: AUTH_EVENTS.EMAIL_CODE_FAILED,
@@ -619,24 +710,28 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Create new session if not an anonymous upgrade
-      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'email_code');
+      const sessionTtl = await sessionTtlPromise;
       if (!isAnonymousUpgrade) {
         try {
           const { stub: sessionStore, sessionId: newSessionId } =
-            await getSessionStoreForNewSession(c.env, getTenantIdFromContext(c));
+            await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_route', () =>
+              getSessionStoreForNewSession(c.env, getTenantIdFromContext(c))
+            );
           sessionId = newSessionId;
 
-          await sessionStore.createSessionRpc(
-            newSessionId,
-            user.id as string,
-            sessionTtl.seconds,
-            {
-              email: user.email,
-              name: user.name,
-              amr: ['otp'],
-              acr: 'urn:mace:incommon:iap:bronze',
-            },
-            tenantId
+          await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_create', () =>
+            sessionStore.createSessionRpc(
+              newSessionId,
+              user.id as string,
+              sessionTtl.seconds,
+              {
+                email: user.email,
+                name: user.name,
+                amr: ['otp'],
+                acr: 'urn:mace:incommon:iap:bronze',
+              },
+              tenantId
+            )
           );
         } catch (error) {
           // PII Protection: Don't log full error
@@ -774,6 +869,8 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         },
       });
     } catch (error) {
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       // PII Protection: Don't log full error (may contain email/code data)
       log.error('Email code verify error', { action: 'verify' }, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

@@ -26,9 +26,15 @@ export interface ReleaseDeploymentGuardResult {
 export function evaluateReleaseDeploymentGuard(
   lock: AuthrimLock,
   targetVersion: string,
-  operation: Exclude<EnvironmentOperationKind, 'provision' | 'delete' | 'release_update'>
+  operation: Exclude<EnvironmentOperationKind, 'provision' | 'delete' | 'release_update'>,
+  options: { releaseManifestChecksum?: string } = {}
 ): ReleaseDeploymentGuardResult {
-  const decision = evaluateEnvironmentOperation({ operation, lock, targetVersion });
+  const decision = evaluateEnvironmentOperation({
+    operation,
+    lock,
+    targetVersion,
+    ...options,
+  });
   if (decision.allowed) return { allowed: true, currentVersion: decision.currentVersion };
   const reason =
     decision.reason === 'release_update_in_progress'

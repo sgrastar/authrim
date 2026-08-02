@@ -19,6 +19,160 @@ import scimApp from '../scim';
 
 const canonicalRuntimeState = vi.hoisted(() => ({
   users: new Map<string, any>(),
+  apply(input: any) {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const existing = this.users.get(input.userId) ?? {};
+    this.users.set(input.userId, {
+      ...existing,
+      id: input.userId,
+      tenant_id: input.tenantId,
+      email: input.sensitiveValues?.email ?? existing.email ?? null,
+      email_verified: input.emailVerified ? 1 : 0,
+      phone_number: input.sensitiveValues?.phone_number ?? existing.phone_number ?? null,
+      phone_number_verified: input.phoneNumberVerified ? 1 : 0,
+      name: input.sensitiveValues?.name ?? existing.name ?? null,
+      given_name: input.sensitiveValues?.given_name ?? existing.given_name ?? null,
+      family_name: input.sensitiveValues?.family_name ?? existing.family_name ?? null,
+      middle_name: input.sensitiveValues?.middle_name ?? existing.middle_name ?? null,
+      nickname: input.sensitiveValues?.nickname ?? existing.nickname ?? null,
+      preferred_username:
+        input.sensitiveValues?.preferred_username ?? existing.preferred_username ?? null,
+      profile: input.sensitiveValues?.profile ?? existing.profile ?? null,
+      picture: input.sensitiveValues?.picture ?? existing.picture ?? null,
+      website: input.sensitiveValues?.website ?? existing.website ?? null,
+      gender: input.sensitiveValues?.gender ?? existing.gender ?? null,
+      birthdate: input.sensitiveValues?.birthdate ?? existing.birthdate ?? null,
+      zoneinfo: input.sensitiveValues?.zoneinfo ?? input.zoneinfo ?? existing.zoneinfo ?? null,
+      locale: input.sensitiveValues?.locale ?? input.locale ?? existing.locale ?? null,
+      address_json: input.addressJson ?? existing.address_json ?? null,
+      custom_attributes_json: input.customAttributesJson ?? existing.custom_attributes_json ?? null,
+      password_hash: input.passwordHash ?? existing.password_hash ?? null,
+      external_id: input.externalId ?? existing.external_id ?? null,
+      active: input.active === false ? 0 : 1,
+      created_at: existing.created_at ?? nowSeconds,
+      updated_at: nowSeconds,
+    });
+  },
+}));
+
+const accountCreationState = vi.hoisted(() => ({
+  deliveryStatus: 201 as 201 | 202,
+  capacityUnavailable: false,
+  calls: [] as Array<Record<string, unknown>>,
+}));
+
+const accountOperationState = vi.hoisted(() => ({
+  operation: null as Record<string, unknown> | null,
+  error: null as Error | null,
+}));
+
+const accountRemovalState = vi.hoisted(() => ({
+  prepare: vi.fn(async (_env, input) => [
+    {
+      operationId: `remove:${input.userId}`,
+      tenantId: input.tenantId,
+      accountId: `account:${input.userId}`,
+    },
+  ]),
+  ready: vi.fn(),
+  attempt: vi.fn(),
+  erase: vi.fn(),
+}));
+
+vi.mock('../account-directory-removal-producer', () => ({
+  prepareAccountDirectoryRemoval: accountRemovalState.prepare,
+  markAccountDirectoryRemovalsReady: accountRemovalState.ready,
+  attemptImmediateAccountDirectoryRemovals: accountRemovalState.attempt,
+  eraseAccountPiiAfterDirectoryRemovalPrepared: accountRemovalState.erase,
+}));
+
+vi.mock('../account-creation-operation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-creation-operation')>();
+  return {
+    ...actual,
+    AccountCreationOperationRepository: class {
+      async findForActor() {
+        if (accountOperationState.error) throw accountOperationState.error;
+        return accountOperationState.operation;
+      }
+    },
+  };
+});
+
+vi.mock('../account-authoritative-write', () => ({
+  writeCanonicalAccountAuthoritative: vi.fn(async ({ publication, runtimeUser }: any) => {
+    const userId = publication.accountId.slice('account:'.length);
+    canonicalRuntimeState.apply({
+      ...runtimeUser,
+      userId,
+      tenantId: publication.tenantId,
+    });
+    return { userId };
+  }),
+}));
+
+vi.mock('../account-directory-producer', () => ({
+  executeDurableInitialAccountDirectoryWrite: vi.fn(
+    async (env: any, input: any, dependencies: any) => {
+      accountCreationState.calls.push(input);
+      if (accountCreationState.capacityUnavailable) {
+        throw new Error('control_account_allocation_capacity_unavailable');
+      }
+      if (
+        input.email &&
+        [...canonicalRuntimeState.users.values()].some(
+          (user) => user.email?.toLowerCase() === input.email.toLowerCase()
+        )
+      ) {
+        throw new Error('directory_identifier_reservation_conflict');
+      }
+      const core = await import('@authrim/ar-lib-core');
+      const publication = {
+        operationId: input.candidateOperationId,
+        tenantId: input.tenantId,
+        accountId: `account:${input.candidateUserId}`,
+        idempotencyKey: `account-create:${'a'.repeat(64)}`,
+        routeProjection: {
+          schemaVersion: 1,
+          accountRouteGeneration: 1,
+          residencyPolicyId: input.residencyPolicyId,
+          targets: [],
+        },
+        indexes: [],
+      };
+      await dependencies.writeAuthoritative({
+        publication,
+        tenantCoreUsers: core.ensureDatabaseAdapter(env.DB),
+        tenantPii: core.ensureDatabaseAdapter(env.DB_PII),
+        residencyPartition: input.residencyPartition,
+      });
+      return {
+        publication,
+        operation: {
+          operationId: publication.operationId,
+          tenantId: input.tenantId,
+          actorId: input.actorId,
+          idempotencyKey: input.idempotencyKey,
+          allocationIdempotencyKey: publication.idempotencyKey,
+          requestHash: input.requestHash,
+          userId: input.candidateUserId,
+          accountId: publication.accountId,
+          status: accountCreationState.deliveryStatus === 201 ? 'succeeded' : 'directory_pending',
+          publication,
+        },
+        delivery: {
+          status: accountCreationState.deliveryStatus,
+          accountId: publication.accountId,
+          operationId: publication.operationId,
+        },
+      };
+    }
+  ),
+  resolveInitialAccountDirectoryWriteTargets: vi.fn(async (env: any) => ({
+    tenantCoreUsers: env.DB,
+    tenantPii: env.DB_PII,
+    residencyPartition: 'default',
+  })),
 }));
 
 // Mock scim-auth middleware at module level (now from @authrim/ar-lib-scim package)
@@ -131,40 +285,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         ? new Date(user.updated_at * 1000).toISOString()
         : user.updated_at,
   });
-  const applyRuntimeUserInput = (input: any) => {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    const existing = canonicalRuntimeState.users.get(input.userId) ?? {};
-    canonicalRuntimeState.users.set(input.userId, {
-      ...existing,
-      id: input.userId,
-      tenant_id: input.tenantId,
-      email: input.sensitiveValues?.email ?? existing.email ?? null,
-      email_verified: input.emailVerified ? 1 : 0,
-      phone_number: input.sensitiveValues?.phone_number ?? existing.phone_number ?? null,
-      phone_number_verified: input.phoneNumberVerified ? 1 : 0,
-      name: input.sensitiveValues?.name ?? existing.name ?? null,
-      given_name: input.sensitiveValues?.given_name ?? existing.given_name ?? null,
-      family_name: input.sensitiveValues?.family_name ?? existing.family_name ?? null,
-      middle_name: input.sensitiveValues?.middle_name ?? existing.middle_name ?? null,
-      nickname: input.sensitiveValues?.nickname ?? existing.nickname ?? null,
-      preferred_username:
-        input.sensitiveValues?.preferred_username ?? existing.preferred_username ?? null,
-      profile: input.sensitiveValues?.profile ?? existing.profile ?? null,
-      picture: input.sensitiveValues?.picture ?? existing.picture ?? null,
-      website: input.sensitiveValues?.website ?? existing.website ?? null,
-      gender: input.sensitiveValues?.gender ?? existing.gender ?? null,
-      birthdate: input.sensitiveValues?.birthdate ?? existing.birthdate ?? null,
-      zoneinfo: input.sensitiveValues?.zoneinfo ?? input.zoneinfo ?? existing.zoneinfo ?? null,
-      locale: input.sensitiveValues?.locale ?? input.locale ?? existing.locale ?? null,
-      address_json: input.addressJson ?? existing.address_json ?? null,
-      custom_attributes_json: input.customAttributesJson ?? existing.custom_attributes_json ?? null,
-      password_hash: input.passwordHash ?? existing.password_hash ?? null,
-      external_id: input.externalId ?? existing.external_id ?? null,
-      active: input.active === false ? 0 : 1,
-      created_at: existing.created_at ?? nowSeconds,
-      updated_at: nowSeconds,
-    });
-  };
+  const applyRuntimeUserInput = (input: any) => canonicalRuntimeState.apply(input);
   return {
     ...actual,
     invalidateUserCache: vi.fn().mockResolvedValue(undefined),
@@ -262,6 +383,11 @@ describe('SCIM 2.0 Endpoints', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    accountCreationState.deliveryStatus = 201;
+    accountCreationState.capacityUnavailable = false;
+    accountCreationState.calls = [];
+    accountOperationState.operation = null;
+    accountOperationState.error = null;
     mockUsers = new Map();
     canonicalRuntimeState.users = mockUsers;
     mockGroups = new Map();
@@ -1000,6 +1126,99 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.id).toBeDefined();
       expect(body.userName).toBe('newuser');
       expect(res.headers.get('Location')).toBeDefined();
+      expect(accountCreationState.calls).toHaveLength(1);
+      expect(accountCreationState.calls[0]).toMatchObject({
+        tenantId: 'default',
+        residencyPolicyId: 'builtin:residency:default',
+        residencyPartition: 'default',
+        email: 'new.user@example.com',
+      });
+      expect(accountCreationState.calls[0]?.actorId).toMatch(/^scim-token:[a-f0-9]{64}$/u);
+      expect(accountCreationState.calls[0]?.actorId).not.toContain('valid-scim-token');
+    });
+
+    it('returns an operation resource when directory publication continues asynchronously', async () => {
+      accountCreationState.deliveryStatus = 202;
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'scim-create-pending-1' },
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'pending-user',
+          emails: [{ value: 'pending.user@example.com', primary: true }],
+          active: true,
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.schemas).toEqual([
+        'urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation',
+      ]);
+      expect(body.status).toBe('directory_pending');
+      expect(body.operationId).toBeDefined();
+      expect(res.headers.get('Location')).toBe(
+        `http://localhost/scim/v2/Operations/${body.operationId}`
+      );
+      expect(accountCreationState.calls[0]?.idempotencyKey).toBe('scim-create-pending-1');
+    });
+
+    it('rejects an unsafe explicit idempotency key before provisioning', async () => {
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'short' },
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'unsafe-key-user',
+          emails: [{ value: 'unsafe.key@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      expect(accountCreationState.calls).toHaveLength(0);
+    });
+
+    it('returns a retryable SCIM error when no account shard has capacity', async () => {
+      accountCreationState.capacityUnavailable = true;
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'capacity-user',
+          emails: [{ value: 'capacity.user@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as any;
+      expect(body.status).toBe('503');
+      expect(body.detail).not.toContain('capacity.user@example.com');
+    });
+
+    it('publishes externalId in the tenant-scoped SCIM subject namespace', async () => {
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          externalId: 'provider-user-42',
+          userName: 'external-user',
+          emails: [{ value: 'external.user@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(201);
+      expect(accountCreationState.calls[0]?.externalSubject).toEqual({
+        issuer: 'urn:authrim:scim:default',
+        subject: 'provider-user-42',
+      });
     });
 
     it('should reject SCIM password provisioning without storing a password hash', async () => {
@@ -1145,6 +1364,53 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.status).toBe(201);
       const body = (await res.json()) as any;
       expect(body.userName).toBe('required-non-pii-user');
+    });
+  });
+
+  describe('GET /scim/v2/Operations/:id - Account Creation Status', () => {
+    it('returns the current state and completed resource location', async () => {
+      accountOperationState.operation = {
+        operationId: 'operation-account-a',
+        tenantId: 'default',
+        actorId: `scim-token:${'a'.repeat(64)}`,
+        userId: 'user-created-a',
+        status: 'succeeded',
+      };
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Operations/operation-account-a'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.status).toBe('succeeded');
+      expect(body.userId).toBe('user-created-a');
+      expect(body.resourceLocation).toBe('http://localhost/scim/v2/Users/user-created-a');
+    });
+
+    it('does not disclose an unavailable operation', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Operations/operation-unknown'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(404);
+      const body = (await res.json()) as any;
+      expect(body.detail).toBe('The requested resource was not found');
+    });
+
+    it('reports backend failures without presenting them as an unknown operation', async () => {
+      accountOperationState.error = new Error('simulated_database_unavailable');
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Operations/operation-account-a'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as any;
+      expect(body.detail).toBe('Internal server error');
     });
   });
 
@@ -1479,6 +1745,69 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.Operations[0].status).toBe('201');
       expect(body.Operations[0].bulkId).toBe('user1');
       expect(body.Operations[0].location).toBeDefined();
+    });
+
+    it('returns a per-operation 202 result for pending bulk account publication', async () => {
+      accountCreationState.deliveryStatus = 202;
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+          Operations: [
+            {
+              method: 'POST',
+              path: '/Users',
+              bulkId: 'pending-user-1',
+              data: {
+                schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+                userName: 'pending-bulk-user',
+                emails: [{ value: 'pending.bulk@example.com', primary: true }],
+              },
+            },
+          ],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0]).toMatchObject({
+        bulkId: 'pending-user-1',
+        status: '202',
+        response: { status: 'directory_pending' },
+      });
+      expect(body.Operations[0].location).toContain('/scim/v2/Operations/');
+    });
+
+    it('rejects a bulk POST without the required bulkId before allocation', async () => {
+      const req = createRequest('/scim/v2/Bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+          Operations: [
+            {
+              method: 'POST',
+              path: '/Users',
+              data: {
+                schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+                userName: 'missing-bulk-id',
+                emails: [{ value: 'missing.bulk.id@example.com', primary: true }],
+              },
+            },
+          ],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations[0]).toMatchObject({
+        status: '400',
+        response: { detail: 'POST operations require a valid bulkId' },
+      });
+      expect(accountCreationState.calls).toHaveLength(0);
     });
 
     it('should reject bulk user POST password provisioning', async () => {

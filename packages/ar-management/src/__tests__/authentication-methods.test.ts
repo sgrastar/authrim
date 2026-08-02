@@ -790,7 +790,7 @@ describe('Authentication Methods API', () => {
         provider: 'recaptcha',
         siteKey: 'recaptcha-site-key',
         loginEnabled: true,
-        failurePolicy: 'fail_open',
+        failurePolicy: 'fail_closed',
         widget: {
           mode: 'score',
         },

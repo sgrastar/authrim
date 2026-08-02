@@ -37,6 +37,8 @@ function lock(input: {
   });
 }
 
+const checksum = 'a'.repeat(64);
+
 describe('release deployment guard', () => {
   it('allows initial deployments only when the caller declares a complete initial deploy', () => {
     expect(evaluateReleaseDeploymentGuard(lock({}), '1.1.0', 'worker_redeploy').allowed).toBe(
@@ -103,5 +105,35 @@ describe('release deployment guard', () => {
         'worker_redeploy'
       ).allowed
     ).toBe(true);
+  });
+
+  it('resumes only an exact initial release and rejects ambiguous Worker evidence', () => {
+    const interrupted = lock({ releaseUpdatePhase: 'schema_applied' });
+    expect(
+      evaluateReleaseDeploymentGuard(interrupted, '1.1.0', 'initial_deploy', {
+        releaseManifestChecksum: checksum,
+      }).allowed
+    ).toBe(true);
+    expect(
+      evaluateReleaseDeploymentGuard(interrupted, '1.1.0', 'initial_deploy', {
+        releaseManifestChecksum: 'b'.repeat(64),
+      }).reason
+    ).toBe('release_update_in_progress');
+    expect(
+      evaluateReleaseDeploymentGuard(
+        lock({ workerVersions: ['1.1.0'], releaseUpdatePhase: 'schema_applied' }),
+        '1.1.0',
+        'initial_deploy',
+        { releaseManifestChecksum: checksum }
+      ).allowed
+    ).toBe(true);
+    expect(
+      evaluateReleaseDeploymentGuard(
+        lock({ workerVersions: [undefined], releaseUpdatePhase: 'schema_applied' }),
+        '1.1.0',
+        'initial_deploy',
+        { releaseManifestChecksum: checksum }
+      ).reason
+    ).toBe('release_update_in_progress');
   });
 });

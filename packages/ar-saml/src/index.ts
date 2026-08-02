@@ -314,3 +314,4 @@ export default {
   },
   scheduled: handleScheduled,
 };
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

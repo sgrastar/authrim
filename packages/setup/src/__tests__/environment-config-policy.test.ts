@@ -10,7 +10,7 @@ describe('environment config policy', () => {
     expect(hasDatabaseTopologyChange(current, next)).toBe(false);
   });
 
-  it('detects storage, reference, database, and tenant pool changes', () => {
+  it('detects storage, reference, and database changes', () => {
     const current = createDefaultConfig('test');
     for (const mutate of [
       (next: typeof current) => {
@@ -25,9 +25,6 @@ describe('environment config policy', () => {
       },
       (next: typeof current) => {
         next.database.core.location = 'weur';
-      },
-      (next: typeof current) => {
-        next.tenantD1 = { preallocatedSlots: 5 };
       },
     ]) {
       const next = structuredClone(current);

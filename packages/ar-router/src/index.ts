@@ -1323,6 +1323,21 @@ app.all('/api/v1/auth/direct/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+app.post('/api/v1/auth/account-provisioning/status', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/api/v1/invitations/validate', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/api/v1/invitations/use', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
 app.all('/api/v1/login/interactions/*', async (c) => {
   return fetchServiceBindingWithDiagnostics(c, 'OP_AUTH', c.env.OP_AUTH);
 });

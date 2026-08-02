@@ -17,10 +17,23 @@
 		type RegionShardConfig,
 		type RefreshTokenShardConfig
 	} from '$lib/api/admin-infrastructure';
+	import {
+		adminControlPlaneAPI,
+		type ControlCapacityProfile,
+		type ControlCapacityProvisioningOperation,
+		type ControlCapacityProvisioningPreview,
+		type ControlCapacityScope
+	} from '$lib/api/admin-control-plane';
+	import {
+		adminReadReplicationAPI,
+		ReadReplicationApiError,
+		type ReadReplicationStatus
+	} from '$lib/api/admin-read-replication';
 	import WorldMap from '$lib/components/WorldMap.svelte';
-	import { Modal } from '$lib/components';
+	import { Modal, ToggleSwitch } from '$lib/components';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 
 	// =========================================================================
@@ -59,11 +72,11 @@
 		{ key: 'apac', label: 'APAC (Asia Pacific)' },
 		{ key: 'enam', label: 'ENAM (Eastern North America)' },
 		{ key: 'weur', label: 'WEUR (Western Europe)' },
+		{ key: 'eeur', label: 'EEUR (Eastern Europe)' },
 		{ key: 'wnam', label: 'WNAM (Western North America)' },
-		{ key: 'oc', label: 'OC (Oceania)' }
-		// AFR and ME are not DO-capable, commented out for future use
-		// { key: 'afr', label: 'AFR (Africa)' },
-		// { key: 'me', label: 'ME (Middle East)' }
+		{ key: 'oc', label: 'OC (Oceania)' },
+		{ key: 'afr', label: 'AFR (Africa)' },
+		{ key: 'me', label: 'ME (Middle East)' }
 	];
 
 	const DEFAULT_REGIONS = ['apac', 'enam', 'weur', 'wnam'];
@@ -87,6 +100,20 @@
 	let successMessage = $state('');
 	let advancedOpen = $state(false);
 	let showDiffDialog = $state(false);
+	let readReplicationStatus = $state<ReadReplicationStatus | null>(null);
+	let readReplicationVisible = $state(false);
+	let readReplicationLoading = $state(false);
+	let readReplicationError = $state('');
+	let readReplicationTimer: ReturnType<typeof setTimeout> | undefined;
+	let capacityProfile = $state<ControlCapacityProfile>('recommended');
+	let capacityScope = $state<ControlCapacityScope>('shared_pool');
+	let capacityTenantId = $state('');
+	let capacityPreview = $state<ControlCapacityProvisioningPreview | null>(null);
+	let capacityOperations = $state<ControlCapacityProvisioningOperation[]>([]);
+	let capacityPreviewing = $state(false);
+	let capacityRequesting = $state(false);
+	let capacityError = $state('');
+	let capacitySuccess = $state('');
 
 	// Current configuration from API
 	let _currentConfig = $state<ShardConfigState>({
@@ -101,6 +128,13 @@
 	// Edit state
 	let selectedRegions = $state<string[]>([...DEFAULT_REGIONS]);
 	let regionDistribution = $state<RegionDistribution>({ apac: 25, enam: 25, weur: 25, wnam: 25 });
+	let initialSelectedRegions = $state<string[]>([...DEFAULT_REGIONS]);
+	let initialRegionDistribution = $state<RegionDistribution>({
+		apac: 25,
+		enam: 25,
+		weur: 25,
+		wnam: 25
+	});
 
 	let scaleState = $state<ScaleState>({
 		unifiedScale: 4,
@@ -166,10 +200,17 @@
 	let calculatedShards = $derived(calculateShardCounts(scaleState));
 
 	// Check if there are changes to save
-	let hasChanges = $derived(
+	let scaleChanged = $derived(
 		scaleState.unifiedScale !== initialScaleState.unifiedScale ||
 			scaleState.clientBasedCoeff !== initialScaleState.clientBasedCoeff
 	);
+	let regionChanged = $derived(
+		JSON.stringify([...selectedRegions].sort()) !==
+			JSON.stringify([...initialSelectedRegions].sort()) ||
+			JSON.stringify(regionDistribution) !== JSON.stringify(initialRegionDistribution)
+	);
+	let hasChanges = $derived(scaleChanged || regionChanged);
+	let allowedRegions = $derived(_currentConfig.regionShards?.residency.allowedRegions ?? []);
 
 	// Build diff items for dialog
 	let diffItems = $derived.by(() => {
@@ -197,9 +238,125 @@
 	// =========================================================================
 	// Load Functions
 	// =========================================================================
-	onMount(async () => {
-		await loadAllConfigs();
+	onMount(() => {
+		void loadAllConfigs();
+		void loadReadReplicationStatus();
+		void loadCapacityTenants();
+		return () => {
+			if (readReplicationTimer) clearTimeout(readReplicationTimer);
+		};
 	});
+
+	async function loadCapacityTenants() {
+		if (!tenantStore.loaded) await tenantStore.load();
+		if (!capacityTenantId) capacityTenantId = tenantStore.defaultTenantId;
+	}
+
+	function resetCapacityPreview() {
+		capacityPreview = null;
+		capacityOperations = [];
+		capacityError = '';
+		capacitySuccess = '';
+	}
+
+	function capacityRequest() {
+		return {
+			profile: capacityProfile,
+			scope: capacityScope,
+			tenantId: capacityScope === 'tenant_exclusive' ? capacityTenantId || null : null
+		};
+	}
+
+	async function previewD1Capacity() {
+		capacityPreviewing = true;
+		capacityError = '';
+		capacitySuccess = '';
+		capacityOperations = [];
+		try {
+			capacityPreview = (await adminControlPlaneAPI.previewCapacity(capacityRequest())).preview;
+		} catch (caught) {
+			capacityPreview = null;
+			capacityError =
+				caught instanceof Error ? caught.message : $LL.admin_scale_d1_capacity_preview_failed();
+		} finally {
+			capacityPreviewing = false;
+		}
+	}
+
+	async function requestD1Capacity() {
+		capacityRequesting = true;
+		capacityError = '';
+		capacitySuccess = '';
+		try {
+			const response = await adminControlPlaneAPI.requestCapacity(capacityRequest());
+			capacityPreview = response.result.preview;
+			capacityOperations = response.result.operations;
+			capacitySuccess = $LL.admin_scale_d1_capacity_requested();
+		} catch (caught) {
+			capacityError =
+				caught instanceof Error ? caught.message : $LL.admin_scale_d1_capacity_request_failed();
+		} finally {
+			capacityRequesting = false;
+		}
+	}
+
+	function scheduleReadReplicationPoll(status: ReadReplicationStatus) {
+		if (readReplicationTimer) clearTimeout(readReplicationTimer);
+		readReplicationTimer = undefined;
+		if (status.aggregateStatus === 'updating') {
+			readReplicationTimer = setTimeout(() => void loadReadReplicationStatus(), 3000);
+		}
+	}
+
+	async function loadReadReplicationStatus() {
+		if (readReplicationTimer) clearTimeout(readReplicationTimer);
+		readReplicationTimer = undefined;
+		try {
+			const status = await adminReadReplicationAPI.get();
+			readReplicationStatus = status;
+			readReplicationVisible = true;
+			readReplicationError = '';
+			scheduleReadReplicationPoll(status);
+		} catch (err) {
+			if (err instanceof ReadReplicationApiError && err.status === 403) {
+				readReplicationVisible = false;
+				readReplicationStatus = null;
+				return;
+			}
+			readReplicationVisible = true;
+			readReplicationError = $LL.admin_scale_read_replication_load_failed();
+		}
+	}
+
+	async function setReadReplication(enabled: boolean) {
+		if (!readReplicationStatus || readReplicationLoading) return;
+		readReplicationLoading = true;
+		readReplicationError = '';
+		try {
+			const status = await adminReadReplicationAPI.setEnabled(enabled);
+			readReplicationStatus = status;
+			scheduleReadReplicationPoll(status);
+		} catch {
+			const updateError = $LL.admin_scale_read_replication_update_failed();
+			await loadReadReplicationStatus();
+			readReplicationError = updateError;
+		} finally {
+			readReplicationLoading = false;
+		}
+	}
+
+	function readReplicationStatusLabel(status: ReadReplicationStatus): string {
+		switch (status.aggregateStatus) {
+			case 'on':
+				return $LL.admin_scale_read_replication_on();
+			case 'off':
+				return $LL.admin_scale_read_replication_off();
+			case 'updating':
+				return $LL.admin_scale_read_replication_updating();
+			case 'attention_required':
+				return $LL.admin_scale_read_replication_attention();
+		}
+	}
 
 	async function loadAllConfigs() {
 		loading = true;
@@ -210,7 +367,7 @@
 				adminInfrastructureAPI.getRevocationShards(),
 				adminInfrastructureAPI.getSessionShards(),
 				adminInfrastructureAPI.getChallengeShards(),
-				adminInfrastructureAPI.getRegionShards().catch(() => null),
+				adminInfrastructureAPI.getRegionShards(),
 				adminInfrastructureAPI.getRefreshTokenSharding().catch(() => null)
 			]);
 
@@ -241,19 +398,28 @@
 
 			// Initialize region distribution from config
 			if (region && region.currentRegions) {
-				const regions = Object.keys(region.currentRegions);
+				const activeRegionEntries = Object.entries(region.currentRegions).filter(
+					([, data]) => data.shardCount > 0
+				);
+				const regions = activeRegionEntries.map(([key]) => key);
 				const total = region.currentTotalShards || 0;
 				if (regions.length > 0 && total > 0) {
 					selectedRegions = regions;
 					const dist: RegionDistribution = {};
-					for (const [key, data] of Object.entries(region.currentRegions)) {
-						dist[key] = Math.round((data.shardCount / total) * 100);
+					let allocated = 0;
+					for (const [index, [key, data]] of activeRegionEntries.entries()) {
+						const percentage =
+							index === activeRegionEntries.length - 1
+								? 100 - allocated
+								: Math.round((data.shardCount / total) * 100);
+						dist[key] = percentage;
+						allocated += percentage;
 					}
 					regionDistribution = dist;
+					initialSelectedRegions = [...regions];
+					initialRegionDistribution = { ...dist };
 				}
-				// If no valid region config from server, keep initial default values
 			}
-			// Else: keep initial default values (selectedRegions = DEFAULT_REGIONS, regionDistribution = 25% each)
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_scale_load_failed();
 		} finally {
@@ -265,6 +431,7 @@
 	// Region Functions
 	// =========================================================================
 	function toggleRegion(regionKey: string) {
+		if (!allowedRegions.includes(regionKey)) return;
 		if (selectedRegions.includes(regionKey)) {
 			if (selectedRegions.length > 1) {
 				selectedRegions = selectedRegions.filter((r) => r !== regionKey);
@@ -337,7 +504,7 @@
 	// Save Functions
 	// =========================================================================
 	function handleSaveClick() {
-		if (advancedOpen && hasChanges) {
+		if (advancedOpen && scaleChanged) {
 			showDiffDialog = true;
 		} else {
 			saveAllChanges();
@@ -371,6 +538,8 @@
 
 			showSuccess($LL.admin_scale_saved());
 			initialScaleState = { ...scaleState };
+			initialSelectedRegions = [...selectedRegions];
+			initialRegionDistribution = { ...regionDistribution };
 			await loadAllConfigs();
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_scale_save_failed();
@@ -438,6 +607,178 @@
 				<span>{$LL.admin_scale_load_configuration()}</span>
 			</div>
 		{:else}
+			<section class="config-section d1-capacity-section">
+				<div class="capacity-heading">
+					<div>
+						<h2 class="section-title">{$LL.admin_scale_d1_capacity()}</h2>
+						<p class="section-description">{$LL.admin_scale_d1_capacity_status()}</p>
+					</div>
+					<i class="i-ph-database capacity-heading-icon"></i>
+				</div>
+
+				<div class="capacity-controls">
+					<fieldset class="capacity-fieldset">
+						<legend>{$LL.admin_scale_d1_scope()}</legend>
+						<div class="segmented-control">
+							<label class:active={capacityScope === 'shared_pool'}>
+								<input
+									type="radio"
+									name="capacity-scope"
+									value="shared_pool"
+									bind:group={capacityScope}
+									onchange={resetCapacityPreview}
+								/>
+								<span>{$LL.admin_scale_d1_scope_shared()}</span>
+							</label>
+							<label class:active={capacityScope === 'tenant_exclusive'}>
+								<input
+									type="radio"
+									name="capacity-scope"
+									value="tenant_exclusive"
+									bind:group={capacityScope}
+									onchange={resetCapacityPreview}
+								/>
+								<span>{$LL.admin_scale_d1_scope_tenant()}</span>
+							</label>
+						</div>
+					</fieldset>
+
+					{#if capacityScope === 'tenant_exclusive'}
+						<label class="capacity-select-field">
+							<span>{$LL.admin_scale_d1_tenant()}</span>
+							<select bind:value={capacityTenantId} onchange={resetCapacityPreview}>
+								{#each tenantStore.activeTenants as tenant (tenant.id)}
+									<option value={tenant.id}>{tenant.name}</option>
+								{/each}
+							</select>
+						</label>
+					{/if}
+
+					<fieldset class="capacity-fieldset capacity-profile-fieldset">
+						<legend>{$LL.admin_scale_d1_profile()}</legend>
+						<div class="capacity-profile-options">
+							<label class:active={capacityProfile === 'minimum'}>
+								<input
+									type="radio"
+									name="capacity-profile"
+									value="minimum"
+									bind:group={capacityProfile}
+									onchange={resetCapacityPreview}
+								/>
+								<strong>{$LL.admin_scale_d1_profile_minimum()}</strong>
+								<span>{$LL.admin_scale_d1_profile_minimum_detail()}</span>
+							</label>
+							<label class:active={capacityProfile === 'recommended'}>
+								<input
+									type="radio"
+									name="capacity-profile"
+									value="recommended"
+									bind:group={capacityProfile}
+									onchange={resetCapacityPreview}
+								/>
+								<strong>{$LL.admin_scale_d1_profile_recommended()}</strong>
+								<span>{$LL.admin_scale_d1_profile_recommended_detail()}</span>
+							</label>
+							<label class:active={capacityProfile === 'extra_headroom'}>
+								<input
+									type="radio"
+									name="capacity-profile"
+									value="extra_headroom"
+									bind:group={capacityProfile}
+									onchange={resetCapacityPreview}
+								/>
+								<strong>{$LL.admin_scale_d1_profile_extra()}</strong>
+								<span>{$LL.admin_scale_d1_profile_extra_detail()}</span>
+							</label>
+						</div>
+					</fieldset>
+				</div>
+
+				<div class="capacity-actions">
+					<button
+						type="button"
+						class="btn btn-secondary"
+						disabled={capacityPreviewing ||
+							capacityRequesting ||
+							(capacityScope === 'tenant_exclusive' && !capacityTenantId)}
+						onclick={previewD1Capacity}
+					>
+						<i class:animate-spin={capacityPreviewing} class="i-ph-magnifying-glass"></i>
+						<span>{$LL.admin_scale_d1_preview()}</span>
+					</button>
+					<button
+						type="button"
+						class="btn btn-primary"
+						disabled={!capacityPreview?.available ||
+							capacityPreview.d1DatabasesAdded === 0 ||
+							capacityPreviewing ||
+							capacityRequesting}
+						onclick={requestD1Capacity}
+					>
+						<i class:animate-spin={capacityRequesting} class="i-ph-plus-circle"></i>
+						<span>{$LL.admin_scale_d1_request()}</span>
+					</button>
+				</div>
+
+				{#if capacityError}
+					<p class="capacity-message capacity-message-error" role="alert">{capacityError}</p>
+				{/if}
+				{#if capacitySuccess}
+					<p class="capacity-message capacity-message-success" role="status">{capacitySuccess}</p>
+				{/if}
+
+				{#if capacityPreview}
+					<div class="capacity-preview" aria-live="polite">
+						<div class="capacity-summary">
+							<div>
+								<span>{$LL.admin_scale_d1_units()}</span>
+								<strong>{capacityPreview.capacityUnitsAdded}</strong>
+							</div>
+							<div>
+								<span>{$LL.admin_scale_d1_databases()}</span>
+								<strong>{capacityPreview.d1DatabasesAdded}</strong>
+							</div>
+							<div>
+								<span>{$LL.admin_scale_d1_projected_total()}</span>
+								<strong>{capacityPreview.projectedEnvironmentD1Count}</strong>
+							</div>
+						</div>
+						{#if !capacityPreview.available}
+							<p class="capacity-message capacity-message-error">
+								{$LL.admin_scale_d1_unavailable()}
+							</p>
+						{:else if capacityPreview.targets.length === 0}
+							<p class="capacity-message">{$LL.admin_scale_d1_no_change()}</p>
+						{:else}
+							<div class="capacity-target-list">
+								{#each capacityPreview.targets as target (target.operationId)}
+									<div class="capacity-target-row">
+										<div>
+											<strong>{target.dataRole}</strong>
+											<span>{target.residencyPartition} · {target.databaseName}</span>
+										</div>
+										<div class="capacity-target-bindings">
+											<code>{target.bindingRef}</code>
+											<span>{target.workerScripts.join(', ')}</span>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if capacityOperations.length > 0}
+							<div class="capacity-operation-list">
+								{#each capacityOperations as operation (operation.operationId)}
+									<div>
+										<span>{operation.operationId}</span>
+										<strong>{operation.lastErrorCode ?? operation.status}</strong>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+			</section>
+
 			<!-- Section 1: Scale Configuration (Compact Control Panel) -->
 			<section class="scale-control-panel">
 				<div class="scale-panel-header">
@@ -524,13 +865,14 @@
 					{#each ALL_REGIONS as region (region.key)}
 						{@const isSelected = selectedRegions.includes(region.key)}
 						{@const isLastSelected = selectedRegions.length === 1 && isSelected}
-						<div class="region-row" class:selected={isSelected}>
-							<label class="toggle-switch" class:disabled={isLastSelected}>
+						{@const isAllowed = allowedRegions.includes(region.key)}
+						<div class="region-row" class:selected={isSelected} class:disabled={!isAllowed}>
+							<label class="toggle-switch" class:disabled={isLastSelected || !isAllowed}>
 								<input
 									type="checkbox"
 									checked={isSelected}
 									onchange={() => toggleRegion(region.key)}
-									disabled={isLastSelected}
+									disabled={isLastSelected || !isAllowed}
 								/>
 								<span class="toggle-slider"></span>
 							</label>
@@ -560,6 +902,59 @@
 					<p class="slider-note">{$LL.admin_scale_slider_note()}</p>
 				{/if}
 			</section>
+
+			{#if readReplicationVisible}
+				<section class="config-section read-replication-section">
+					<div class="read-replication-row">
+						<div class="read-replication-heading">
+							<h2 class="section-title">{$LL.admin_scale_read_replication()}</h2>
+							{#if readReplicationStatus}
+								<div class="read-replication-state">
+									<span
+										class="status-dot"
+										class:status-on={readReplicationStatus.aggregateStatus === 'on'}
+										class:status-updating={readReplicationStatus.aggregateStatus === 'updating'}
+										class:status-attention={readReplicationStatus.aggregateStatus ===
+											'attention_required'}
+									></span>
+									<span>{readReplicationStatusLabel(readReplicationStatus)}</span>
+									{#if readReplicationStatus.targetCount > 0}
+										<span class="read-replication-progress">
+											{readReplicationStatus.convergedTargetCount} / {readReplicationStatus.targetCount}
+										</span>
+									{/if}
+								</div>
+							{/if}
+						</div>
+						<div class="read-replication-actions">
+							{#if readReplicationStatus?.aggregateStatus === 'attention_required'}
+								<button
+									type="button"
+									class="icon-button"
+									title={$LL.admin_scale_read_replication_retry()}
+									aria-label={$LL.admin_scale_read_replication_retry()}
+									disabled={readReplicationLoading}
+									onclick={() =>
+										setReadReplication(readReplicationStatus?.desiredMode === 'enabled')}
+								>
+									<i class:animate-spin={readReplicationLoading} class="i-ph-arrow-clockwise"></i>
+								</button>
+							{/if}
+							<ToggleSwitch
+								checked={readReplicationStatus?.desiredMode === 'enabled'}
+								disabled={!readReplicationStatus ||
+									readReplicationLoading ||
+									readReplicationStatus.aggregateStatus === 'updating'}
+								ariaLabel={$LL.admin_scale_read_replication_toggle()}
+								onchange={setReadReplication}
+							/>
+						</div>
+					</div>
+					{#if readReplicationError}
+						<p class="read-replication-error" role="alert">{readReplicationError}</p>
+					{/if}
+				</section>
+			{/if}
 
 			<!-- Section 4: Advanced Settings -->
 			<section class="config-section advanced-section">
@@ -664,7 +1059,11 @@
 
 			<!-- Save Button -->
 			<div class="actions">
-				<button class="btn btn-primary" onclick={handleSaveClick} disabled={saving || !hasChanges}>
+				<button
+					class="btn btn-primary"
+					onclick={handleSaveClick}
+					disabled={loading || saving || !hasChanges}
+				>
 					{#if saving}
 						<i class="i-ph-circle-notch animate-spin"></i>
 						<span>{$LL.admin_scale_saving()}</span>
@@ -805,6 +1204,371 @@
 		border-radius: var(--radius-lg);
 		padding: 24px;
 		margin-bottom: 24px;
+	}
+
+	.d1-capacity-section {
+		padding: 20px;
+	}
+
+	.capacity-heading {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	.capacity-heading .section-description {
+		margin-bottom: 18px;
+	}
+
+	.capacity-heading-icon {
+		width: 24px;
+		height: 24px;
+		color: var(--color-accent);
+		flex-shrink: 0;
+	}
+
+	.capacity-controls {
+		display: grid;
+		grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr);
+		gap: 16px;
+	}
+
+	.capacity-fieldset {
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	.capacity-fieldset legend,
+	.capacity-select-field > span {
+		display: block;
+		margin-bottom: 7px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--color-text-muted);
+	}
+
+	.segmented-control {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+
+	.segmented-control label {
+		position: relative;
+		padding: 9px 12px;
+		font-size: 0.8125rem;
+		text-align: center;
+		color: var(--color-text-muted);
+		background: var(--color-surface-muted);
+		cursor: pointer;
+	}
+
+	.segmented-control label + label {
+		border-left: 1px solid var(--color-border);
+	}
+
+	.segmented-control label.active {
+		color: var(--color-text);
+		background: var(--color-accent-muted);
+	}
+
+	.segmented-control input,
+	.capacity-profile-options input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.capacity-select-field {
+		grid-column: 1;
+	}
+
+	.capacity-select-field select {
+		width: 100%;
+		min-height: 38px;
+		padding: 8px 10px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-text);
+	}
+
+	.capacity-profile-fieldset {
+		grid-column: 2;
+		grid-row: 1 / span 2;
+	}
+
+	.capacity-profile-options {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 8px;
+	}
+
+	.capacity-profile-options label {
+		position: relative;
+		display: flex;
+		min-width: 0;
+		min-height: 72px;
+		flex-direction: column;
+		gap: 5px;
+		padding: 11px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-muted);
+		cursor: pointer;
+	}
+
+	.capacity-profile-options label.active {
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
+	}
+
+	.capacity-profile-options strong {
+		font-size: 0.8125rem;
+		color: var(--color-text);
+	}
+
+	.capacity-profile-options span {
+		font-size: 0.6875rem;
+		line-height: 1.35;
+		color: var(--color-text-muted);
+	}
+
+	.capacity-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 8px;
+		margin-top: 16px;
+	}
+
+	.capacity-message {
+		margin: 12px 0 0;
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
+	}
+
+	.capacity-message-error {
+		color: var(--color-danger);
+	}
+
+	.capacity-message-success {
+		color: var(--color-success);
+	}
+
+	.capacity-preview {
+		margin-top: 16px;
+		padding-top: 16px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.capacity-summary {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 1px;
+		background: var(--color-border);
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+
+	.capacity-summary > div {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 10px 12px;
+		background: var(--color-surface-muted);
+	}
+
+	.capacity-summary span {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.capacity-summary strong {
+		font-size: 1rem;
+		font-variant-numeric: tabular-nums;
+		color: var(--color-text);
+	}
+
+	.capacity-target-list,
+	.capacity-operation-list {
+		display: flex;
+		flex-direction: column;
+		gap: 1px;
+		margin-top: 12px;
+		background: var(--color-border);
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+
+	.capacity-target-row,
+	.capacity-operation-list > div {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 10px 12px;
+		background: var(--color-surface);
+	}
+
+	.capacity-target-row > div,
+	.capacity-target-bindings {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.capacity-target-row strong,
+	.capacity-operation-list strong {
+		font-size: 0.8125rem;
+		color: var(--color-text);
+	}
+
+	.capacity-target-row span,
+	.capacity-operation-list span {
+		overflow-wrap: anywhere;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
+	.capacity-target-bindings {
+		align-items: flex-end;
+		text-align: right;
+	}
+
+	.capacity-target-bindings code {
+		font-size: 0.6875rem;
+		color: var(--color-accent);
+	}
+
+	@media (max-width: 720px) {
+		.capacity-controls {
+			grid-template-columns: 1fr;
+		}
+
+		.capacity-profile-fieldset,
+		.capacity-select-field {
+			grid-column: 1;
+			grid-row: auto;
+		}
+
+		.capacity-profile-options {
+			grid-template-columns: 1fr;
+		}
+
+		.capacity-profile-options label {
+			min-height: 0;
+		}
+
+		.capacity-target-row {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.capacity-target-bindings {
+			align-items: flex-start;
+			text-align: left;
+		}
+	}
+
+	.read-replication-section {
+		padding-block: 18px;
+	}
+
+	.read-replication-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 20px;
+	}
+
+	.read-replication-heading {
+		min-width: 0;
+	}
+
+	.read-replication-heading .section-title {
+		margin-bottom: 6px;
+	}
+
+	.read-replication-state {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		font-size: 0.8125rem;
+		color: var(--color-text-muted);
+	}
+
+	.status-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--color-text-muted);
+	}
+
+	.status-dot.status-on {
+		background: var(--color-success);
+	}
+
+	.status-dot.status-updating {
+		background: var(--color-warning);
+	}
+
+	.status-dot.status-attention {
+		background: var(--color-error);
+	}
+
+	.read-replication-progress {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.read-replication-actions {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-shrink: 0;
+	}
+
+	.icon-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-text);
+		cursor: pointer;
+	}
+
+	.icon-button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.read-replication-error {
+		margin: 10px 0 0;
+		font-size: 0.8125rem;
+		color: var(--color-error);
+	}
+
+	@media (max-width: 560px) {
+		.read-replication-row {
+			align-items: flex-start;
+		}
+
+		.read-replication-state {
+			flex-wrap: wrap;
+		}
 	}
 
 	/* Scale Control Panel - Cyberpunk Style */

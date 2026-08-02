@@ -22,8 +22,11 @@ const waitForWorkerDeploymentsReadyMock = vi.hoisted(() => vi.fn());
 const waitForWorkerHttpReadyMock = vi.hoisted(() => vi.fn());
 const configureDownstreamIntrospectionDeploymentMock = vi.hoisted(() => vi.fn());
 const ensureInitialTenantD1ResourcesMock = vi.hoisted(() => vi.fn());
+const ensureInitialTenantRegionShardConfigMock = vi.hoisted(() => vi.fn());
 const publishInitialTenantD1RuntimeSnapshotMock = vi.hoisted(() => vi.fn());
+const ensureInitialNotificationProviderConfigurationMock = vi.hoisted(() => vi.fn());
 const runMigrationsForEnvironmentMock = vi.hoisted(() => vi.fn());
+const applyReleaseSchemaUpdatePlanMock = vi.hoisted(() => vi.fn());
 const ensureInitialTenantInD1Mock = vi.hoisted(() => vi.fn());
 const ensureInitialAdminRolesInD1Mock = vi.hoisted(() => vi.fn());
 const ensureSetupMachineAccessInD1Mock = vi.hoisted(() => vi.fn());
@@ -33,6 +36,16 @@ const seedDefaultCanonicalCatalogMock = vi.hoisted(() => vi.fn());
 const seedRuntimeProfilesMock = vi.hoisted(() => vi.fn());
 const ensureWildcardDnsForMultiTenantMock = vi.hoisted(() => vi.fn());
 const prepareAdminUiBffDeploymentMock = vi.hoisted(() => vi.fn());
+const publishAndActivateMigrationReleaseMock = vi.hoisted(() => vi.fn());
+const compileControlWorkerInventoryFromArtifactsMock = vi.hoisted(() => vi.fn());
+const registerControlWorkerInventoryMock = vi.hoisted(() => vi.fn());
+const registerInitialControlTopologyMock = vi.hoisted(() => vi.fn());
+const recordInitialBootstrapWorkerEvidenceMock = vi.hoisted(() => vi.fn());
+const waitForInitialBootstrapHandoffMock = vi.hoisted(() => vi.fn());
+const discoverExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
+const registerExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
+const publishDynamicPluginWorkerBundlesMock = vi.hoisted(() => vi.fn());
+const queryD1RowsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../core/deploy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/deploy.js')>();
@@ -63,6 +76,15 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     seedDefaultCanonicalCatalog: seedDefaultCanonicalCatalogMock,
     seedRuntimeProfiles: seedRuntimeProfilesMock,
     ensureWildcardDnsForMultiTenant: ensureWildcardDnsForMultiTenantMock,
+    queryD1Rows: queryD1RowsMock,
+  };
+});
+
+vi.mock('../core/release-update.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/release-update.js')>();
+  return {
+    ...actual,
+    applyReleaseSchemaUpdatePlan: applyReleaseSchemaUpdatePlanMock,
   };
 });
 
@@ -100,12 +122,42 @@ vi.mock('../core/tenant-d1-bootstrap.js', async (importOriginal) => {
   return {
     ...actual,
     ensureInitialTenantD1Resources: ensureInitialTenantD1ResourcesMock,
+    ensureInitialTenantRegionShardConfig: ensureInitialTenantRegionShardConfigMock,
     publishInitialTenantD1RuntimeSnapshot: publishInitialTenantD1RuntimeSnapshotMock,
   };
 });
 
+vi.mock('../core/notification-provider-bootstrap.js', () => ({
+  ensureInitialNotificationProviderConfiguration:
+    ensureInitialNotificationProviderConfigurationMock,
+}));
+
 vi.mock('../core/admin-ui-bff-deployment.js', () => ({
   prepareAdminUiBffDeployment: prepareAdminUiBffDeploymentMock,
+}));
+
+vi.mock('../core/migration-release-publication.js', () => ({
+  publishAndActivateMigrationRelease: publishAndActivateMigrationReleaseMock,
+}));
+
+vi.mock('../core/control-worker-inventory.js', () => ({
+  compileControlWorkerInventoryFromArtifacts: compileControlWorkerInventoryFromArtifactsMock,
+  registerControlWorkerInventory: registerControlWorkerInventoryMock,
+}));
+
+vi.mock('../core/control-bootstrap-handoff.js', () => ({
+  registerInitialControlTopology: registerInitialControlTopologyMock,
+  recordInitialBootstrapWorkerEvidence: recordInitialBootstrapWorkerEvidenceMock,
+  waitForInitialBootstrapHandoff: waitForInitialBootstrapHandoffMock,
+}));
+
+vi.mock('../core/external-capability-registration.js', () => ({
+  discoverExternalCapabilities: discoverExternalCapabilitiesMock,
+  registerExternalCapabilities: registerExternalCapabilitiesMock,
+}));
+
+vi.mock('../core/dynamic-plugin-publication.js', () => ({
+  publishDynamicPluginWorkerBundles: publishDynamicPluginWorkerBundlesMock,
 }));
 
 import { createApiRoutes, generateSessionToken } from '../web/api.js';
@@ -126,7 +178,9 @@ function deferred<T>() {
 async function writeEnvironment(env: string) {
   const envDir = join(tempDir!, '.authrim', env);
   await mkdir(envDir, { recursive: true });
-  await writeFile(join(envDir, 'config.json'), JSON.stringify(createDefaultConfig(env), null, 2));
+  const config = createDefaultConfig(env);
+  config.profiles.defaults.storage = 'builtin:storage:shared-d1';
+  await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
   await writeFile(
     join(envDir, 'lock.json'),
     `${JSON.stringify(
@@ -169,6 +223,27 @@ async function writeEnvironment(env: string) {
     join(routerPackageDir, 'package.json'),
     `${JSON.stringify({ name: '@authrim/ar-router', version: '0.3.0' }, null, 2)}\n`
   );
+
+  const releasesDir = join(tempDir!, 'migrations', 'releases');
+  await mkdir(releasesDir, { recursive: true });
+  await writeFile(
+    join(releasesDir, '0.2.0.json'),
+    `${JSON.stringify(
+      {
+        formatVersion: 1,
+        productVersion: '0.2.0',
+        streams: [
+          { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+          { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+          { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+          { id: 'd1-control', dialect: 'sqlite', logicalRoles: ['control'], files: [] },
+          { id: 'd1-lookup', dialect: 'sqlite', logicalRoles: ['lookup'], files: [] },
+        ],
+      },
+      null,
+      2
+    )}\n`
+  );
 }
 
 async function addVersionedWorkerPackage(
@@ -199,6 +274,15 @@ async function markEnvironmentProvisioned(env: string): Promise<void> {
   const value = JSON.parse(await readFile(lockPath, 'utf-8'));
   delete value.productVersion;
   value.workers = {};
+  value.d1 = {
+    CONTROL_DB: { id: 'control-id', name: `authrim-${env}-control` },
+    LOOKUP_DB: { id: 'lookup-id', name: `authrim-${env}-lookup` },
+  };
+  value.r2 = {
+    MIGRATION_RELEASES: {
+      name: `authrim-${env}-migration-releases`,
+    },
+  };
   await writeFile(lockPath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
@@ -215,6 +299,8 @@ async function writeDraftManifest(version: string): Promise<void> {
           { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
           { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
           { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+          { id: 'd1-control', dialect: 'sqlite', logicalRoles: ['control'], files: [] },
+          { id: 'd1-lookup', dialect: 'sqlite', logicalRoles: ['lookup'], files: [] },
         ],
       },
       null,
@@ -223,11 +309,10 @@ async function writeDraftManifest(version: string): Promise<void> {
   );
 }
 
-async function enableTenantD1WithoutSlots(env: string): Promise<void> {
+async function enableTenantD1WithoutBootstrapResources(env: string): Promise<void> {
   const configPath = join(tempDir!, '.authrim', env, 'config.json');
   const config = JSON.parse(await readFile(configPath, 'utf-8'));
   config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
-  config.tenantD1 = { preallocatedSlots: 1 };
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
   const releasesDir = join(tempDir!, 'migrations', 'releases');
@@ -271,8 +356,11 @@ describe('setup web worker update API', () => {
     waitForWorkerHttpReadyMock.mockReset();
     configureDownstreamIntrospectionDeploymentMock.mockReset();
     ensureInitialTenantD1ResourcesMock.mockReset();
+    ensureInitialTenantRegionShardConfigMock.mockReset();
     publishInitialTenantD1RuntimeSnapshotMock.mockReset();
+    ensureInitialNotificationProviderConfigurationMock.mockReset();
     runMigrationsForEnvironmentMock.mockReset();
+    applyReleaseSchemaUpdatePlanMock.mockReset();
     ensureInitialTenantInD1Mock.mockReset();
     ensureInitialAdminRolesInD1Mock.mockReset();
     ensureSetupMachineAccessInD1Mock.mockReset();
@@ -282,6 +370,16 @@ describe('setup web worker update API', () => {
     seedRuntimeProfilesMock.mockReset();
     ensureWildcardDnsForMultiTenantMock.mockReset();
     prepareAdminUiBffDeploymentMock.mockReset();
+    publishAndActivateMigrationReleaseMock.mockReset();
+    compileControlWorkerInventoryFromArtifactsMock.mockReset();
+    registerControlWorkerInventoryMock.mockReset();
+    registerInitialControlTopologyMock.mockReset();
+    recordInitialBootstrapWorkerEvidenceMock.mockReset();
+    waitForInitialBootstrapHandoffMock.mockReset();
+    discoverExternalCapabilitiesMock.mockReset();
+    registerExternalCapabilitiesMock.mockReset();
+    publishDynamicPluginWorkerBundlesMock.mockReset();
+    queryD1RowsMock.mockReset();
 
     buildApiPackagesMock.mockResolvedValue({ success: true });
     deployAllUiWorkersMock.mockResolvedValue({
@@ -310,8 +408,14 @@ describe('setup web worker update API', () => {
     loadDeploySecretsFromKeysMock.mockResolvedValue({
       FLOW_RUNTIME_HMAC_SECRET: 'flow-runtime-secret',
       PLUGIN_ENCRYPTION_KEY: 'plugin-encryption-key',
+      RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+      TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-v1',
+      SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+      CLOUDFLARE_D1_API_TOKEN: 'd1-token',
+      CLOUDFLARE_WORKERS_API_TOKEN: 'workers-token',
     });
     getWorkersSubdomainMock.mockResolvedValue('example-subdomain');
+    queryD1RowsMock.mockResolvedValue([]);
     saveMasterWranglerConfigsMock.mockResolvedValue({ success: true, errors: [] });
     syncWranglerConfigsMock.mockResolvedValue({ success: true, errors: [], synced: ['ar-auth'] });
     buildWorkerHttpReadinessTargetsMock.mockReturnValue([]);
@@ -320,12 +424,42 @@ describe('setup web worker update API', () => {
     waitForWorkerHttpReadyMock.mockResolvedValue({ ready: true });
     configureDownstreamIntrospectionDeploymentMock.mockResolvedValue({ success: true });
     ensureInitialTenantD1ResourcesMock.mockResolvedValue({ success: true, skipped: true });
+    ensureInitialTenantRegionShardConfigMock.mockResolvedValue({ created: true, config: {} });
     publishInitialTenantD1RuntimeSnapshotMock.mockResolvedValue({ success: true, skipped: true });
+    ensureInitialNotificationProviderConfigurationMock.mockResolvedValue({
+      providerId: null,
+      namespaces: ['authrim-platform', 'test'],
+    });
+    discoverExternalCapabilitiesMock.mockResolvedValue([]);
+    registerExternalCapabilitiesMock.mockResolvedValue({
+      operationId: 'op-external',
+      aggregateDigest: 'a'.repeat(64),
+      sourceCount: 0,
+      sql: '',
+    });
+    publishDynamicPluginWorkerBundlesMock.mockResolvedValue({ published: [] });
     runMigrationsForEnvironmentMock.mockResolvedValue({
       success: true,
       core: { success: true, appliedCount: 0, skippedCount: 0 },
       pii: { success: true, appliedCount: 0, skippedCount: 0 },
       admin: { success: true, appliedCount: 0, skippedCount: 0 },
+    });
+    applyReleaseSchemaUpdatePlanMock.mockResolvedValue({
+      success: true,
+      results: [
+        {
+          targetId: 'd1:control-id:d1-control',
+          success: true,
+          appliedCount: 0,
+          skippedCount: 0,
+        },
+        {
+          targetId: 'd1:lookup-id:d1-lookup',
+          success: true,
+          appliedCount: 0,
+          skippedCount: 0,
+        },
+      ],
     });
     ensureInitialTenantInD1Mock.mockResolvedValue({ success: true });
     ensureInitialAdminRolesInD1Mock.mockResolvedValue({ success: true });
@@ -339,6 +473,24 @@ describe('setup web worker update API', () => {
       backend: 'D1',
     });
     ensureWildcardDnsForMultiTenantMock.mockResolvedValue(undefined);
+    publishAndActivateMigrationReleaseMock.mockResolvedValue({
+      artifact: { releaseId: '0.2.0', streamIds: ['d1-core', 'd1-pii', 'd1-lookup'] },
+      operationId: 'release-op',
+    });
+    compileControlWorkerInventoryFromArtifactsMock.mockResolvedValue([
+      { workerScriptName: 'test-ar-auth' },
+    ]);
+    registerControlWorkerInventoryMock.mockResolvedValue(undefined);
+    registerInitialControlTopologyMock.mockResolvedValue({
+      ownershipFingerprint: 'a'.repeat(64),
+      manifestDigest: 'b'.repeat(64),
+    });
+    recordInitialBootstrapWorkerEvidenceMock.mockResolvedValue({
+      workerCount: 1,
+      controlDeploymentId: 'deployment-control',
+      controlVersionId: 'version-control',
+    });
+    waitForInitialBootstrapHandoffMock.mockResolvedValue({ state: 'accepted', acceptedAt: 100 });
   });
 
   afterEach(async () => {
@@ -442,7 +594,7 @@ describe('setup web worker update API', () => {
   it('does not create missing tenant databases during a Worker-only redeploy', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    await enableTenantD1WithoutSlots(env);
+    await enableTenantD1WithoutBootstrapResources(env);
 
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -459,28 +611,23 @@ describe('setup web worker update API', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: false,
       topologyIssues: [
-        { binding: 'TDB_SLOT_0001_CORE', reason: 'missing_binding' },
-        { binding: 'TDB_SLOT_0001_PII', reason: 'missing_binding' },
+        { binding: 'TDB_DEFAULT_BOOTSTRAP_CORE', reason: 'missing_binding' },
+        { binding: 'TDB_USERS_BOOTSTRAP_CORE', reason: 'missing_binding' },
+        { binding: 'TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
       ],
     });
     expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
     expect(deployAllMock).not.toHaveBeenCalled();
   });
 
-  it('allows tenant database reconciliation only with a server-issued topology token', async () => {
+  it('does not let a request body spoof a Tenant D1 topology operation', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    await enableTenantD1WithoutSlots(env);
-    deployAllMock.mockResolvedValue({
-      totalComponents: 0,
-      successCount: 0,
-      failedCount: 0,
-      results: [],
-    });
+    await enableTenantD1WithoutBootstrapResources(env);
 
     const token = generateSessionToken();
     const app = createApiRoutes();
-    const spoofed = await app.request('/update/workers', {
+    const response = await app.request('/update/workers', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -488,39 +635,9 @@ describe('setup web worker update API', () => {
       },
       body: JSON.stringify({ env, onlyChanged: false, operationKind: 'topology_change' }),
     });
-    expect(spoofed.status).toBe(409);
+    expect(response.status).toBe(409);
     expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
-
-    const expanded = await app.request(`/tenant-d1/pool/${env}/expand`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-Token': token,
-      },
-      body: JSON.stringify({ addSlots: 1 }),
-    });
-    expect(expanded.status).toBe(200);
-    const { topologyDeploymentToken } = (await expanded.json()) as {
-      topologyDeploymentToken: string;
-    };
-    const restartedSessionToken = generateSessionToken();
-
-    const response = await app.request('/update/workers', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-Token': restartedSessionToken,
-      },
-      body: JSON.stringify({ env, onlyChanged: true, topologyDeploymentToken }),
-    });
-
-    expect(response.status).toBe(200);
-    expect(ensureInitialTenantD1ResourcesMock).toHaveBeenCalledOnce();
-    expect(deployAllMock).toHaveBeenCalledOnce();
-    const completedLock = JSON.parse(
-      await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8')
-    );
-    expect(completedLock.topologyUpdate).toBeUndefined();
+    expect(deployAllMock).not.toHaveBeenCalled();
   });
 
   it('keeps the initial Web deploy route from redeploying an existing environment', async () => {
@@ -590,18 +707,46 @@ describe('setup web worker update API', () => {
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 
     const events: string[] = [];
-    runMigrationsForEnvironmentMock.mockImplementation(async () => {
+    applyReleaseSchemaUpdatePlanMock.mockImplementation(async () => {
       events.push('schema');
       return {
         success: true,
-        core: { success: true, appliedCount: 0, skippedCount: 0 },
-        pii: { success: true, appliedCount: 0, skippedCount: 0 },
-        admin: { success: true, appliedCount: 0, skippedCount: 0 },
+        results: [
+          {
+            targetId: 'd1:control-id:d1-control',
+            success: true,
+            appliedCount: 0,
+            skippedCount: 0,
+          },
+          {
+            targetId: 'd1:lookup-id:d1-lookup',
+            success: true,
+            appliedCount: 0,
+            skippedCount: 0,
+          },
+        ],
       };
     });
     resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({
       loginUi: false,
       adminUi: false,
+    });
+    publishAndActivateMigrationReleaseMock.mockImplementation(async () => {
+      events.push('release');
+      return {
+        artifact: { releaseId: '0.2.0', streamIds: ['d1-core', 'd1-pii', 'd1-lookup'] },
+        operationId: 'release-op',
+      };
+    });
+    registerControlWorkerInventoryMock.mockImplementation(async () => {
+      events.push('inventory');
+    });
+    registerInitialControlTopologyMock.mockImplementation(async () => {
+      events.push('topology');
+      return {
+        ownershipFingerprint: 'a'.repeat(64),
+        manifestDigest: 'b'.repeat(64),
+      };
     });
     deployAllMock.mockImplementation(async (_options, components) => {
       events.push('workers');
@@ -618,6 +763,18 @@ describe('setup web worker update API', () => {
         failedCount: 0,
         results,
       };
+    });
+    recordInitialBootstrapWorkerEvidenceMock.mockImplementation(async () => {
+      events.push('evidence');
+      return {
+        workerCount: 1,
+        controlDeploymentId: 'deployment-control',
+        controlVersionId: 'version-control',
+      };
+    });
+    waitForInitialBootstrapHandoffMock.mockImplementation(async () => {
+      events.push('acceptance');
+      return { state: 'accepted', acceptedAt: 100 };
     });
 
     const token = generateSessionToken();
@@ -639,8 +796,17 @@ describe('setup web worker update API', () => {
     const responseBody = await response.json();
     expect(response.status, JSON.stringify(responseBody)).toBe(200);
     expect(responseBody).toMatchObject({ success: true });
-    expect(events).toEqual(['schema', 'workers']);
-    expect(runMigrationsForEnvironmentMock).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      'schema',
+      'release',
+      'inventory',
+      'topology',
+      'workers',
+      'evidence',
+      'acceptance',
+    ]);
+    expect(applyReleaseSchemaUpdatePlanMock).toHaveBeenCalledOnce();
+    expect(runMigrationsForEnvironmentMock).not.toHaveBeenCalled();
     expect(resolveMissingUiWorkerBindingTargetsMock).toHaveBeenCalledWith(expect.any(Object), {
       loginUi: false,
       adminUi: false,
@@ -649,6 +815,12 @@ describe('setup web worker update API', () => {
     expect(deployAllUiWorkersMock).not.toHaveBeenCalled();
     expect(ensureAdminUiBffMachineAccessInD1Mock).not.toHaveBeenCalled();
     expect(prepareAdminUiBffDeploymentMock).not.toHaveBeenCalled();
+    expect(recordInitialBootstrapWorkerEvidenceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: env,
+        controlDatabaseName: `authrim-${env}-control`,
+      })
+    );
 
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8'));
     expect(lock.productVersion).toBe('0.2.0');
@@ -1030,7 +1202,7 @@ describe('setup web worker update API', () => {
       body: JSON.stringify({ env, onlyChanged: true }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ success: true });
     expect(configureDownstreamIntrospectionDeploymentMock).not.toHaveBeenCalled();
   });

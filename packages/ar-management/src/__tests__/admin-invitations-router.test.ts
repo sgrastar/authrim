@@ -38,6 +38,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getRequiredPluginContext: vi.fn(() => ({
       registry: { getNotifier: () => notifier },
     })),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const result = await notifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
     adminAuthMiddleware:
       () =>
       async (

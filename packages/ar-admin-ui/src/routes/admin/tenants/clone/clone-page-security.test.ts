@@ -8,8 +8,10 @@ describe('tenant clone page retry safety', () => {
 		expect(page).toContain('const fingerprint = JSON.stringify({ sourceTenantId, request })');
 		expect(page).toContain('if (fingerprint !== cloneAttemptFingerprint)');
 		expect(page).toContain('cloneAttemptIdempotencyKey = crypto.randomUUID()');
-		expect(page).toContain(
-			'adminTenantsAPI.clone(sourceTenantId, request, cloneAttemptIdempotencyKey)'
+		expect(page).toMatch(
+			/adminTenantsAPI\.clone\(\s*sourceTenantId,\s*request,\s*cloneAttemptIdempotencyKey\s*\)/
 		);
+		expect(page).toContain("while (['queued', 'running', 'waiting_retry'].includes(");
+		expect(page).toContain('adminTenantsAPI.provisioning(response.id)');
 	});
 });

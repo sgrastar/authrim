@@ -30,7 +30,7 @@ describe('discover resolution', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -86,7 +86,7 @@ describe('discover resolution', () => {
 		expect(cookies.set).toHaveBeenCalled();
 	});
 
-	it('redirects common-entry discovery success to the resolved tenant login URL even when selection_policy is always_select', async () => {
+	it('shows the chooser for a single candidate when selection_policy is always_select', async () => {
 		const fetch = vi
 			.fn()
 			.mockResolvedValueOnce(
@@ -94,7 +94,7 @@ describe('discover resolution', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'always_select',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -118,31 +118,26 @@ describe('discover resolution', () => {
 						source: 'tenant_code'
 					}
 				})
-			)
-			.mockResolvedValueOnce(
-				jsonResponse({
-					grant: 'grant-token',
-					login_url: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
-				})
 			);
 
-		await expect(
-			actions.resolve({
-				cookies: createCookies(),
-				fetch,
-				request: new Request('https://multi-tenant.authrim.com/discover?/resolve', {
-					method: 'POST',
-					body: new URLSearchParams({
-						mode: 'tenant_code',
-						value: 'first'
-					})
-				}),
-				url: new URL('https://multi-tenant.authrim.com/discover?/resolve')
-			} as never)
-		).rejects.toMatchObject({
-			status: 303,
-			location: 'https://first.multi-tenant.authrim.com/login?discovery_grant=grant-token'
+		const result = await actions.resolve({
+			cookies: createCookies(),
+			fetch,
+			request: new Request('https://multi-tenant.authrim.com/discover?/resolve', {
+				method: 'POST',
+				body: new URLSearchParams({
+					mode: 'tenant_code',
+					value: 'first'
+				})
+			}),
+			url: new URL('https://multi-tenant.authrim.com/discover?/resolve')
+		} as never);
+
+		expect(result).toMatchObject({
+			result: 'multiple',
+			candidates: [{ tenant_id: 'first' }]
 		});
+		expect(fetch).toHaveBeenCalledTimes(2);
 	});
 
 	it('redirects common-entry invitation discovery success to the resolved tenant signup URL', async () => {
@@ -153,7 +148,7 @@ describe('discover resolution', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,

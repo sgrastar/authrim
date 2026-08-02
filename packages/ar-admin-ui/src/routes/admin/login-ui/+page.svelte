@@ -3,6 +3,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { getTenantInfo } from '$lib/api/admin-info';
 	import { adminClientsAPI, type Client } from '$lib/api/admin-clients';
+	import { adminConsentPoliciesAPI } from '$lib/api/admin-consent-policies';
 	import {
 		adminSettingsAPI,
 		adminUiConfigAPI,
@@ -352,7 +353,20 @@
 	async function loadAppLoginClientOptions() {
 		appLoginClientOptionsError = '';
 		try {
-			const clientsResult = await adminClientsAPI.list({ limit: 100 });
+			const [clientsResult, trustResult] = await Promise.all([
+				adminClientsAPI.list({ limit: 100 }),
+				adminConsentPoliciesAPI.listClientTrustPolicies()
+			]);
+			const firstPartyClientIds = new Set(
+				trustResult.policies
+					.filter(
+						(policy) =>
+							policy.target_type === 'oidc_client' &&
+							policy.first_party === 1 &&
+							policy.is_active === 1
+					)
+					.map((policy) => policy.target_id)
+			);
 			const candidates = await Promise.all(
 				clientsResult.clients.map(async (client: Client): Promise<AppLoginClientOption | null> => {
 					try {
@@ -361,7 +375,7 @@
 							'client'
 						);
 						if (
-							clientSettings.values['client.first_party'] !== true ||
+							!firstPartyClientIds.has(client.client_id) ||
 							clientSettings.values['client.app_login_enabled'] !== true
 						) {
 							return null;

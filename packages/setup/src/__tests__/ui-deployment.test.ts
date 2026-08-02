@@ -135,6 +135,7 @@ describe('resolveUiDeploymentSettings', () => {
     });
 
     expect(login.apiBaseUrl).toBe('https://test.authrim.com');
+    expect(login.uiEnv.PUBLIC_AUTHRIM_ENVIRONMENT_NAME).toBe('test');
     expect(login.useRelativeApi).toBe(true);
     expect(login.needsProxy).toBe(true);
     expect(login.serviceBindingName).toBe('AR_ROUTER');
@@ -148,6 +149,7 @@ describe('resolveUiDeploymentSettings', () => {
     expect(login.runtimeApiBackendUrl).toBe('https://test.authrim.com');
 
     expect(admin.useRelativeApi).toBe(true);
+    expect(admin.uiEnv.PUBLIC_AUTHRIM_ENVIRONMENT_NAME).toBe('test');
     expect(admin.needsProxy).toBe(true);
     expect(admin.adminUiApiMode).toBe('cross-site-proxy');
     expect(admin.serviceBindingName).toBe('AR_ROUTER');

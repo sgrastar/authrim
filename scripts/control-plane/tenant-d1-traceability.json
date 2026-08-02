@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "backendCommand": "pnpm run test:coverage:api",
+    "uiCommand": "pnpm run test:ui",
+    "controlPlaneCommand": "pnpm run control-plane:test"
+  },
+  "requirements": [
+    {
+      "id": "P0-CLOUDFLARE-CONTRACT",
+      "phase": "0",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": ["scripts/control-plane/phase0-live-spike.test.ts"]
+    },
+    {
+      "id": "P0B-D1-CAPACITY",
+      "phase": "0b",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": ["scripts/control-plane/phase0b-d1-capacity.test.ts"]
+    },
+    {
+      "id": "P0C-PERFORMANCE-GATE",
+      "phase": "0c",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "scripts/control-plane/phase0c-performance-gate.test.ts",
+        "scripts/control-plane/phase0c-identifier-fixture.test.ts",
+        "scripts/control-plane/phase0c-identifier-k6-contract.test.ts",
+        "scripts/control-plane/phase0c-mail-otp-k6-contract.test.ts",
+        "scripts/control-plane/phase0c-totp-load-live.test.ts",
+        "scripts/control-plane/auth-router-route-inventory.test.ts",
+        "packages/ar-lib-core/src/utils/__tests__/id.test.ts",
+        "packages/ar-auth/src/__tests__/account-provisioning.test.ts",
+        "packages/ar-management/src/__tests__/account-creation-operation.integration.test.ts",
+        "packages/ar-management/src/__tests__/directory-routing-outbox.integration.test.ts",
+        "packages/ar-router/src/__tests__/router.test.ts"
+      ]
+    },
+    {
+      "id": "P1-CAPABILITY-INVENTORY",
+      "phase": "1",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/setup/src/__tests__/worker-capabilities.test.ts",
+        "packages/setup/src/__tests__/external-capabilities.test.ts",
+        "packages/setup/src/__tests__/control-worker-inventory.test.ts"
+      ]
+    },
+    {
+      "id": "P2-CONTROL-WORKER-AND-BOOTSTRAP",
+      "phase": "2",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-control/src/__tests__/control-service.test.ts",
+        "packages/ar-control/src/__tests__/bootstrap-handoff-repository.integration.test.ts",
+        "packages/ar-control/src/__tests__/plugin-dynamic-worker-desired-state.integration.test.ts",
+        "packages/setup/src/__tests__/control-bootstrap-handoff.test.ts"
+      ]
+    },
+    {
+      "id": "P2B-PLUGIN-RUNTIME-BOUNDARY",
+      "phase": "2b",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-plugin-runner/src/__tests__/worker-rpc.test.ts",
+        "packages/ar-plugin-runner/src/__tests__/dynamic-worker-backend.test.ts",
+        "packages/ar-plugin-runner/src/__tests__/dynamic-worker-artifacts.integration.test.ts",
+        "packages/ar-plugin-runner/src/__tests__/outbound-gateway.integration.test.ts",
+        "packages/ar-plugin-runner/src/__tests__/sync-hooks.integration.test.ts",
+        "packages/ar-async/src/__tests__/plugin-runner-boundary.test.ts"
+      ]
+    },
+    {
+      "id": "P3-MIGRATION-RELEASE-AND-RESUME",
+      "phase": "3",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-control/src/__tests__/migration-engine.integration.test.ts",
+        "packages/ar-control/src/__tests__/release-artifact.test.ts",
+        "packages/setup/src/__tests__/migration-release-publication.test.ts",
+        "packages/setup/src/__tests__/release-migrations.test.ts"
+      ]
+    },
+    {
+      "id": "P4-WORKER-BINDING-SMOKE-AND-ROLLBACK",
+      "phase": "4",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-lib-core/src/services/control-plane/__tests__/worker-binding-engine.test.ts",
+        "packages/ar-lib-core/src/services/control-plane/__tests__/runtime-smoke-rpc.test.ts",
+        "packages/ar-control/src/__tests__/runtime-smoke-signer.test.ts",
+        "packages/ar-control/src/__tests__/worker-binding-reconciler.test.ts",
+        "packages/setup/src/__tests__/worker-deployment-lease.test.ts"
+      ]
+    },
+    {
+      "id": "P5-LOOKUP-ROUTING-AND-ALLOCATION",
+      "phase": "5",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/routing-characterization.test.ts",
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/resolver.test.ts",
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/d1-session-repository.test.ts",
+        "packages/ar-control/src/__tests__/lookup-bucket-migration.integration.test.ts",
+        "packages/ar-control/src/__tests__/lookup-hmac-rotation.integration.test.ts",
+        "packages/ar-control/src/__tests__/account-allocation.integration.test.ts",
+        "packages/ar-management/src/__tests__/account-directory-coordinator.integration.test.ts",
+        "packages/ar-management/src/__tests__/cross-shard-account-list.integration.test.ts"
+      ]
+    },
+    {
+      "id": "P6-TENANT-LIFECYCLE-AND-ACTIVATION",
+      "phase": "6",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-management/src/__tests__/tenant-provisioning-operation.integration.test.ts",
+        "packages/ar-management/src/__tests__/tenant-provisioning-orchestrator.test.ts",
+        "packages/ar-management/src/__tests__/tenant-deletion-authoritative-purge.test.ts",
+        "packages/ar-management/src/__tests__/admin-tenant-clone.test.ts",
+        "packages/ar-management/src/__tests__/tenant-runtime-registry-route-state.test.ts"
+      ]
+    },
+    {
+      "id": "P7-SETUP-DEPLOYMENT-AND-AUTHORITY",
+      "phase": "7",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/setup/src/__tests__/cli-initial-deploy.test.ts",
+        "packages/setup/src/__tests__/web-worker-update-api.test.ts",
+        "packages/setup/src/__tests__/cloudflare-control-token-bootstrap.test.ts",
+        "packages/setup/src/__tests__/control-provision-command.test.ts",
+        "packages/setup/src/__tests__/control-provisioning-authority.test.ts",
+        "packages/setup/src/__tests__/environment-operation-policy.test.ts",
+        "packages/setup/src/__tests__/deploy-secrets.test.ts"
+      ]
+    },
+    {
+      "id": "P8-OPERATOR-RECOVERY-AND-DRIFT",
+      "phase": "8",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-control/src/__tests__/control-repository.test.ts",
+        "packages/ar-control/src/__tests__/worker-inventory-reconciler.test.ts",
+        "packages/ar-control/src/__tests__/shard-cleanup.integration.test.ts",
+        "packages/ar-control/src/__tests__/tenant-disaster-recovery.integration.test.ts",
+        "packages/ar-management/src/__tests__/control-plane-operations-router.test.ts",
+        "packages/ar-management/src/__tests__/control-plane-drift-notifications.test.ts",
+        "packages/ar-management/src/__tests__/tenant-disaster-recovery-lookup.integration.test.ts",
+        "packages/ar-admin-ui/src/lib/api/admin-control-plane.test.ts",
+        "packages/setup/src/__tests__/control-operator-executor.test.ts",
+        "scripts/control-plane/phase8-dr-rehearsal.test.ts"
+      ]
+    },
+    {
+      "id": "P9-AGGREGATE-RELEASE-BOUNDARIES",
+      "phase": "9",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-lib-core/src/services/__tests__/tenant-database-resolver.test.ts",
+        "packages/ar-lib-core/src/services/__tests__/tenant-runtime-registry-snapshot.test.ts",
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/shard-registry.test.ts",
+        "packages/ar-management/src/__tests__/directory-routing-outbox.integration.test.ts",
+        "packages/ar-management/src/__tests__/discovery-email-otp.integration.test.ts",
+        "packages/ar-plugin-runner/src/__tests__/egress-policy.test.ts",
+        "packages/setup/src/__tests__/worker-deployment-lease.test.ts"
+      ]
+    }
+  ]
+}

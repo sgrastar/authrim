@@ -787,11 +787,7 @@ const id: Translations = {
     'Satu core D1 dan PII D1 untuk seluruh deployment. Biaya setup paling rendah dan jalur default.',
   'web.db.tenantD1Title': 'Tenant D1',
   'web.db.tenantD1Desc':
-    'Satu pasangan core/PII D1 per tenant. Memerlukan provisioning database tenant sebelum aktivasi tenant.',
-  'web.db.preallocatedSlotsTitle': 'Slot tenant pra-alokasi',
-  'web.db.preallocatedSlotsDesc': 'Setiap slot tenant membuat dua database D1: core dan PII.',
-  'web.db.slotsLabel': 'Slot',
-  'web.db.slotsHelp': 'Default 3. Maksimum 500 slot.',
+    'Menginisialisasi Control Plane dan shard awal; kapasitas berikutnya dibuat otomatis saat diperlukan.',
 
   // Web UI Email
   'web.email.title': 'Penyedia Email',

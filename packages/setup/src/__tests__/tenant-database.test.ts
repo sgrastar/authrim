@@ -3,8 +3,6 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  buildTenantDatabaseSlotPlan,
-  buildTenantDatabaseSlotPlans,
   buildTenantDatabaseProvisioningPlan,
   buildTenantDatabaseAdminJobSql,
   buildTenantDatabaseActivationBatchJobConfig,
@@ -17,14 +15,16 @@ import {
   evaluateTenantDatabaseSizeWarning,
   evaluateTenantDatabaseStatsFreshness,
   getTenantDatabaseRoleFromBinding,
+  getControlGeneratedDatabaseDataRoleFromBinding,
   getLatestMigrationVersionFromDirectory,
   isTenantDatabaseBinding,
+  isControlGeneratedDatabaseBinding,
+  isLookupDatabaseBinding,
   listTenantDatabaseMigrationTargets,
   loadTenantDatabaseRegistrySignatureConfigFromEnv,
   reconcileTenantDatabaseDerivedBindings,
   signTenantDatabaseRegistryResource,
   signTenantDatabaseRegistryResources,
-  MAX_TENANT_D1_PREALLOCATED_SLOTS,
   TENANT_DATABASE_PROVISIONING_STATES,
 } from '../core/tenant-database.js';
 
@@ -68,41 +68,14 @@ describe('tenant database setup helpers', () => {
     expect(isTenantDatabaseBinding('TDB_SLOT_0001_CORE')).toBe(true);
     expect(isTenantDatabaseBinding('TDB_SLOT_0001_PII')).toBe(true);
     expect(isTenantDatabaseBinding('DB')).toBe(false);
+    expect(isLookupDatabaseBinding('TDB_LOOKUP_ED83F354_LOOKUP')).toBe(true);
+    expect(isTenantDatabaseBinding('TDB_LOOKUP_ED83F354_LOOKUP')).toBe(false);
+    expect(isControlGeneratedDatabaseBinding('TDB_LOOKUP_ED83F354_LOOKUP')).toBe(true);
+    expect(getControlGeneratedDatabaseDataRoleFromBinding('TDB_LOOKUP_ED83F354_LOOKUP')).toBe(
+      'lookup'
+    );
     expect(getTenantDatabaseRoleFromBinding('TDB_EXAMPLE_ABC123_CORE')).toBe('tenant_core');
     expect(getTenantDatabaseRoleFromBinding('TDB_EXAMPLE_ABC123_PII')).toBe('tenant_pii');
-  });
-
-  it('builds stable preallocated tenant D1 slot names and bindings', () => {
-    expect(buildTenantDatabaseSlotPlan({ env: 'phase9-tenant-d1', slotNumber: 1 })).toEqual({
-      slotNumber: 1,
-      slotId: 'tdb-slot-0001',
-      resources: [
-        {
-          slotNumber: 1,
-          role: 'tenant_core',
-          databaseName: 'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-          binding: 'TDB_SLOT_0001_CORE',
-        },
-        {
-          slotNumber: 1,
-          role: 'tenant_pii',
-          databaseName: 'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-          binding: 'TDB_SLOT_0001_PII',
-        },
-      ],
-    });
-
-    expect(buildTenantDatabaseSlotPlans({ env: 'prod', slots: 2, startSlotNumber: 4 })).toEqual([
-      expect.objectContaining({ slotNumber: 4, slotId: 'tdb-slot-0004' }),
-      expect.objectContaining({ slotNumber: 5, slotId: 'tdb-slot-0005' }),
-    ]);
-    expect(() =>
-      buildTenantDatabaseSlotPlans({
-        env: 'prod',
-        slots: 1,
-        startSlotNumber: MAX_TENANT_D1_PREALLOCATED_SLOTS + 1,
-      })
-    ).toThrow('tenant_database_slot_number_exceeds_maximum');
   });
 
   it('lists tenant D1 migration targets from the lock file', () => {

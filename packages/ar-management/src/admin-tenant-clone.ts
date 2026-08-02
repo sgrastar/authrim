@@ -1,17 +1,19 @@
 import type { Context } from 'hono';
 import { z } from 'zod';
-import type { Env } from '@authrim/ar-lib-core';
+import type { ControlTenantDefaultRouteAllocation, Env } from '@authrim/ar-lib-core';
 import {
   ALL_CATEGORY_META,
   ADMIN_PERMISSIONS,
   CATEGORY_SCOPE_CONFIG,
   AR_ERROR_CODES,
   buildContractKey,
+  createAuditLog,
   createAuditLogFromContext,
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
   requireAdminDatabaseAdapter,
+  resolveAuthCorePersistenceAdapterFromEnv,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { requirePlatformTenantManagementAuthority } from './admin-tenant-access';
@@ -20,12 +22,7 @@ import {
   ensureSupportedTenantId,
   isSingleTenantMode,
 } from './single-tenant-guard';
-import {
-  activateProvisionedTenant,
-  provisionTenant,
-  rollbackProvisionedTenant,
-  rotateProvisionedTenantSigningKey,
-} from './admin-tenants';
+import type { TenantProvisioningOperationView } from './tenant-provisioning-operation';
 
 const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 // Keep synchronous clone work below the lowest Workers/D1 invocation budgets. Larger copies must
@@ -50,12 +47,21 @@ const CloneOptionsSchema = z
   })
   .strict();
 
+const CloneSourceSnapshotSchema = z
+  .object({
+    tenant_updated_at: z.number().int().nonnegative(),
+    database_version: z.string().regex(/^[a-f0-9]{64}$/),
+    kv_version: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
 const TenantCloneRequestSchema = z
   .object({
     id: z.string().min(1).max(63).regex(TENANT_ID_REGEX),
     tenant_code: z.string().min(1).max(63).regex(TENANT_ID_REGEX).optional(),
     name: z.string().min(1).max(200),
     description: z.string().max(500).optional(),
+    isolation_policy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
     copy: CloneOptionsSchema.optional(),
     // Legacy flags remain accepted for existing API callers.
     include_clients: z.boolean().optional(),
@@ -65,6 +71,15 @@ const TenantCloneRequestSchema = z
   .strict();
 
 type CloneOptions = z.infer<typeof CloneOptionsSchema>;
+
+interface TenantCloneInternalExecution {
+  sourceTenantId: string;
+  requestBody: z.infer<typeof TenantCloneRequestSchema>;
+  sourceAdapter: DatabaseAdapter;
+  targetAdapter: DatabaseAdapter;
+  adminAdapter: DatabaseAdapter;
+  actorId: string;
+}
 
 export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'client_id',
@@ -191,6 +206,12 @@ interface KvCloneBudget {
   remaining: number;
 }
 
+interface KvRollbackEntry {
+  kv: KVNamespace;
+  key: string;
+  previousValue: string | null;
+}
+
 interface SettingsCopyContext {
   targetTenantId: string;
   targetTenantName: string;
@@ -200,6 +221,31 @@ interface SettingsCopyContext {
 function consumeKvCloneBudget(budget: KvCloneBudget, count = 1): void {
   budget.remaining -= count;
   if (budget.remaining < 0) throw new Error('tenant_clone_kv_budget_exceeded');
+}
+
+async function putTrackedKv(
+  kv: KVNamespace,
+  key: string,
+  value: string,
+  rollbackEntries: KvRollbackEntry[],
+  options?: KVNamespacePutOptions
+): Promise<void> {
+  const previousValue = await kv.get(key);
+  await kv.put(key, value, options);
+  rollbackEntries.push({ kv, key, previousValue });
+}
+
+async function rollbackKvWrites(entries: KvRollbackEntry[]): Promise<boolean> {
+  let succeeded = true;
+  for (const { kv, key, previousValue } of [...entries].reverse()) {
+    try {
+      if (previousValue === null) await kv.delete(key);
+      else await kv.put(key, previousValue);
+    } catch {
+      succeeded = false;
+    }
+  }
+  return succeeded;
 }
 
 function assertCloneKvValueSize(value: string): string;
@@ -527,7 +573,7 @@ async function copyTenantPluginSettings(
   kv: KVNamespace | undefined,
   includeSecrets: boolean,
   entries: TenantPluginSettingEntry[],
-  writtenKvKeys: Array<{ kv: KVNamespace; key: string }>,
+  writtenKvKeys: KvRollbackEntry[],
   budget: KvCloneBudget
 ): Promise<{ copied: number; skippedSecrets: number; skippedUnclassified: number }> {
   if (!kv) return { copied: 0, skippedSecrets: 0, skippedUnclassified: 0 };
@@ -547,8 +593,7 @@ async function copyTenantPluginSettings(
       skippedUnclassified += 1;
       continue;
     }
-    await kv.put(entry.targetKey, entry.value);
-    writtenKvKeys.push({ kv, key: entry.targetKey });
+    await putTrackedKv(kv, entry.targetKey, entry.value, writtenKvKeys);
     copied += 1;
   }
   return { copied, skippedSecrets: 0, skippedUnclassified };
@@ -613,7 +658,52 @@ async function captureSourceKvVersion(
       budget
     );
   }
-  return JSON.stringify(state);
+  return sha256Hex(JSON.stringify(state));
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  let cursor: string | undefined;
+  const names: string[] = [];
+  do {
+    const page = await kv.list({ prefix, cursor, limit: 1000 });
+    names.push(...page.keys.map(({ name }) => name));
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+  for (let offset = 0; offset < names.length; offset += 25) {
+    await Promise.all(names.slice(offset, offset + 25).map((name) => kv.delete(name)));
+  }
+}
+
+export async function cleanupTenantCloneKvArtifacts(env: Env, tenantId: string): Promise<void> {
+  const registryRaw = assertCloneKvValueSize((await env.SETTINGS?.get('plugins:registry')) ?? null);
+  const registry = registryRaw ? parseSettingsRecord(registryRaw) : {};
+  if (!registry) throw new Error('tenant_provisioning_clone_cleanup_failed');
+  const pluginIds = Object.keys(registry).filter((pluginId) =>
+    /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(pluginId)
+  );
+  if (pluginIds.length > MAX_REGISTERED_PLUGINS_FOR_CLONE) {
+    throw new Error('tenant_provisioning_clone_cleanup_failed');
+  }
+  const results = await Promise.allSettled([
+    deleteKvPrefix(env.SETTINGS, `settings:tenant:${tenantId}:`),
+    deleteKvPrefix(env.SETTINGS, `settings:client:${tenantId}:`),
+    deleteKvPrefix(env.AUTHRIM_CONFIG, `settings:tenant:${tenantId}:`),
+    deleteKvPrefix(env.AUTHRIM_CONFIG, `${env.ENVIRONMENT || 'dev'}:contract:client:${tenantId}:`),
+    env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'tenant', tenantId)),
+    ...pluginIds.flatMap((pluginId) => [
+      env.SETTINGS?.delete(`plugins:config:${pluginId}:tenant:${tenantId}`),
+      env.SETTINGS?.delete(`plugins:enabled:${pluginId}:tenant:${tenantId}`),
+    ]),
+  ]);
+  if (results.some((result) => result.status === 'rejected')) {
+    throw new Error('tenant_provisioning_clone_cleanup_failed');
+  }
 }
 
 async function copyKvPrefix(
@@ -621,7 +711,7 @@ async function copyKvPrefix(
   sourcePrefix: string,
   targetPrefix: string,
   includeSecrets: boolean,
-  writtenKeys: string[],
+  writtenKvKeys: KvRollbackEntry[],
   budget: KvCloneBudget,
   context: SettingsCopyContext,
   excludedCategories: ReadonlySet<string> = new Set()
@@ -657,12 +747,13 @@ async function copyKvPrefix(
             return;
           }
           const targetKey = `${targetPrefix}${key.name.slice(sourcePrefix.length)}`;
-          await kv.put(
+          await putTrackedKv(
+            kv,
             targetKey,
             copiedValue,
+            writtenKvKeys,
             key.metadata ? { metadata: key.metadata } : undefined
           );
-          writtenKeys.push(targetKey);
           copied += 1;
         })
       );
@@ -869,7 +960,7 @@ async function cloneClientKvConfiguration(
   targetTenantName: string,
   clientIds: Set<string>,
   includeCredentials: boolean,
-  writtenKvKeys: Array<{ kv: KVNamespace; key: string }>,
+  writtenKvKeys: KvRollbackEntry[],
   budget: KvCloneBudget
 ): Promise<{
   settings: number;
@@ -883,13 +974,12 @@ async function cloneClientKvConfiguration(
   let unclassifiedSettingsSkipped = 0;
 
   for (const clientId of clientIds) {
-    const settingsKeys: string[] = [];
     const copiedSettings = await copyKvPrefix(
       env.SETTINGS,
       `settings:client:${sourceTenantId}:${clientId}:`,
       `settings:client:${targetTenantId}:${clientId}:`,
       includeCredentials,
-      settingsKeys,
+      writtenKvKeys,
       budget,
       {
         targetTenantId,
@@ -900,11 +990,6 @@ async function cloneClientKvConfiguration(
     settings += copiedSettings.copied;
     secretSettingsSkipped += copiedSettings.skippedSecrets;
     unclassifiedSettingsSkipped += copiedSettings.skippedUnclassified;
-    const settingsKv = env.SETTINGS;
-    if (settingsKv) {
-      writtenKvKeys.push(...settingsKeys.map((key) => ({ kv: settingsKv, key })));
-    }
-
     if (!env.AUTHRIM_CONFIG) continue;
     const sourceKey = buildContractKey(env, 'client', sourceTenantId, clientId);
     const serialized = assertCloneKvValueSize(await env.AUTHRIM_CONFIG.get(sourceKey));
@@ -925,8 +1010,7 @@ async function cloneClientKvConfiguration(
       status: 'active',
     };
     const targetKey = buildContractKey(env, 'client', targetTenantId, clientId);
-    await env.AUTHRIM_CONFIG.put(targetKey, JSON.stringify(contract));
-    writtenKvKeys.push({ kv: env.AUTHRIM_CONFIG, key: targetKey });
+    await putTrackedKv(env.AUTHRIM_CONFIG, targetKey, JSON.stringify(contract), writtenKvKeys);
     contracts += 1;
   }
 
@@ -1231,17 +1315,57 @@ async function cloneWebhooks(
   return { copied, skippedClientWebhooks };
 }
 
-export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
-  const platformError = await requirePlatformTenantManagementAuthority(
-    c,
-    ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD
-  );
-  if (platformError) return platformError;
+async function cleanupInternalCloneDatabaseRows(
+  targetAdapter: DatabaseAdapter,
+  targetTenantId: string
+): Promise<void> {
+  const tables = [
+    'role_assignment_rules',
+    'role_assignments',
+    'user_roles',
+    'roles',
+    'webhook_configs',
+    'client_consent_overrides',
+    'client_trust_policies',
+    'web_origin_registry',
+    'oauth_clients',
+    'custom_claim_schemas',
+  ] as const;
+  for (const table of tables) {
+    await targetAdapter.execute(`DELETE FROM ${table} WHERE tenant_id = ?`, [targetTenantId]);
+  }
+}
 
-  const sourceTenantId = c.req.param('id');
-  const blocked = await ensureSupportedTenantId(c, sourceTenantId);
-  if (blocked) return blocked;
-  if (isSingleTenantMode(c.env)) return createSingleTenantMutationError(c, 'tenant');
+async function executeTenantCloneHandler(
+  c: Context<{ Bindings: Env }>,
+  internal?: TenantCloneInternalExecution
+) {
+  if (!internal) {
+    const platformError = await requirePlatformTenantManagementAuthority(
+      c,
+      ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD
+    );
+    if (platformError) return platformError;
+  }
+
+  // Keep the provisioning saga's static dependency graph one-way: admin-tenants owns the saga and
+  // imports this module's clone preparation callback. The public clone route loads its lifecycle
+  // helpers only after both modules have initialized.
+  const {
+    activateProvisionedTenant,
+    beginTenantProvisioning,
+    formatTenantProvisioningOperation,
+    provisionTenant,
+    rollbackProvisionedTenant,
+    rotateProvisionedTenantSigningKey,
+  } = await import('./admin-tenants');
+
+  const sourceTenantId = internal?.sourceTenantId ?? c.req.param('id');
+  if (!internal) {
+    const blocked = await ensureSupportedTenantId(c, sourceTenantId);
+    if (blocked) return blocked;
+    if (isSingleTenantMode(c.env)) return createSingleTenantMutationError(c, 'tenant');
+  }
   if (!sourceTenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'id' },
@@ -1251,11 +1375,11 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
   let targetTenantId: string | null = null;
   let provisioned = false;
   let adminAccessTouched = false;
-  const writtenKvKeys: Array<{ kv: KVNamespace; key: string }> = [];
+  const writtenKvKeys: KvRollbackEntry[] = [];
   try {
     let requestBody: unknown;
     try {
-      requestBody = await c.req.json<unknown>();
+      requestBody = internal?.requestBody ?? (await c.req.json<unknown>());
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'body', reason: 'Request body must be valid JSON' },
@@ -1281,7 +1405,8 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         variables: { field: 'id', reason: 'Destination tenant must differ from source tenant' },
       });
     }
-    const sourceAdapter = createAuthContextFromHono(c, sourceTenantId).coreAdapter;
+    const sourceAdapter =
+      internal?.sourceAdapter ?? createAuthContextFromHono(c, sourceTenantId).coreAdapter;
     const sourceTenant = await sourceAdapter.queryOne<{
       id: string;
       name: string;
@@ -1303,7 +1428,7 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const adminAdapter = options.admin_access
-      ? requireAdminDatabaseAdapter(c.env, 'tenant-clone-preflight')
+      ? (internal?.adminAdapter ?? requireAdminDatabaseAdapter(c.env, 'tenant-clone-preflight'))
       : null;
     const sourceDatabaseSnapshot = await estimateSelectedDatabaseQueries(
       sourceAdapter,
@@ -1356,17 +1481,58 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       tenantPluginSettings
     );
 
-    const created = await provisionTenant(c, {
-      id: targetTenantId,
-      tenantCode: parsed.data.tenant_code ?? targetTenantId,
-      name: parsed.data.name,
-      description: parsed.data.description ?? null,
-      deferActivation: true,
-    });
-    if (!created.ok) return created.response;
+    if (!internal && c.env.DEFAULT_STORAGE_PROFILE_ID === 'builtin:storage:tenant-d1') {
+      const sourceSnapshot = {
+        tenant_updated_at: sourceTenant.updated_at,
+        database_version: await sha256Hex(sourceDatabaseSnapshot.sourceVersion),
+        kv_version: sourceKvVersion,
+      };
+      const started = await beginTenantProvisioning(c, {
+        id: targetTenantId,
+        tenantCode: parsed.data.tenant_code ?? targetTenantId,
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        isolationPolicy: parsed.data.isolation_policy,
+        operationKind: 'clone',
+        sourceTenantId,
+        preparationPayload: { copy: options, source_snapshot: sourceSnapshot },
+      });
+      if (started instanceof Response) return started;
+      await createAuditLogFromContext(c, 'tenant.clone.requested', 'tenant', targetTenantId, {
+        source_tenant_id: sourceTenantId,
+        operation_id: started.operation.operationId,
+        options,
+      });
+      return c.json(
+        {
+          ...started.tenant,
+          source_tenant_id: sourceTenantId,
+          source_tenant_name: sourceTenant.name,
+          copy: options,
+          provisioning: {
+            mode: 'control-plane',
+            ...formatTenantProvisioningOperation(started.operation),
+          },
+        },
+        202
+      );
+    }
+
+    let created: Awaited<ReturnType<typeof provisionTenant>> | null = null;
+    if (!internal) {
+      created = await provisionTenant(c, {
+        id: targetTenantId,
+        tenantCode: parsed.data.tenant_code ?? targetTenantId,
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        deferActivation: true,
+      });
+      if (!created.ok) return created.response;
+    }
     provisioned = true;
 
-    const targetAdapter = createAuthContextFromHono(c, targetTenantId).coreAdapter;
+    const targetAdapter =
+      internal?.targetAdapter ?? createAuthContextFromHono(c, targetTenantId).coreAdapter;
     const kvBudget: KvCloneBudget = { remaining: MAX_SYNCHRONOUS_CLONE_KV_KEYS };
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
@@ -1395,13 +1561,12 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
     let clonedClientIds = new Set<string>();
 
     if (options.settings) {
-      const settingsKeys: string[] = [];
       const copied = await copyKvPrefix(
         c.env.SETTINGS,
         `settings:tenant:${sourceTenantId}:`,
         `settings:tenant:${targetTenantId}:`,
         options.secret_settings,
-        settingsKeys,
+        writtenKvKeys,
         kvBudget,
         {
           targetTenantId,
@@ -1412,18 +1577,12 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       summary.settings += copied.copied;
       summary.secret_settings_skipped += copied.skippedSecrets;
       summary.unclassified_settings_skipped += copied.skippedUnclassified;
-      const settingsKv = c.env.SETTINGS;
-      if (settingsKv) {
-        writtenKvKeys.push(...settingsKeys.map((key) => ({ kv: settingsKv, key })));
-      }
-
-      const configSettingsKeys: string[] = [];
       const copiedConfigSettings = await copyKvPrefix(
         c.env.AUTHRIM_CONFIG,
         `settings:tenant:${sourceTenantId}:`,
         `settings:tenant:${targetTenantId}:`,
         options.secret_settings,
-        configSettingsKeys,
+        writtenKvKeys,
         kvBudget,
         {
           targetTenantId,
@@ -1435,10 +1594,6 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       summary.settings += copiedConfigSettings.copied;
       summary.secret_settings_skipped += copiedConfigSettings.skippedSecrets;
       summary.unclassified_settings_skipped += copiedConfigSettings.skippedUnclassified;
-      const configKv = c.env.AUTHRIM_CONFIG;
-      if (configKv) {
-        writtenKvKeys.push(...configSettingsKeys.map((key) => ({ kv: configKv, key })));
-      }
 
       const copiedPluginSettings = await copyTenantPluginSettings(
         c.env.SETTINGS,
@@ -1482,8 +1637,12 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         }
         mergedValues['tenant.default_id'] = targetTenantId;
         mergedValues['tenant.name'] = parsed.data.name;
-        await c.env.AUTHRIM_CONFIG.put(targetTenantSettingsKey, JSON.stringify(mergedValues));
-        writtenKvKeys.push({ kv: c.env.AUTHRIM_CONFIG, key: targetTenantSettingsKey });
+        await putTrackedKv(
+          c.env.AUTHRIM_CONFIG,
+          targetTenantSettingsKey,
+          JSON.stringify(mergedValues),
+          writtenKvKeys
+        );
         summary.settings += 1;
       }
 
@@ -1506,8 +1665,12 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
           status: 'active',
         };
         const targetContractKey = buildContractKey(c.env, 'tenant', targetTenantId);
-        await c.env.AUTHRIM_CONFIG.put(targetContractKey, JSON.stringify(contract));
-        writtenKvKeys.push({ kv: c.env.AUTHRIM_CONFIG, key: targetContractKey });
+        await putTrackedKv(
+          c.env.AUTHRIM_CONFIG,
+          targetContractKey,
+          JSON.stringify(contract),
+          writtenKvKeys
+        );
         summary.settings += 1;
       }
     }
@@ -1680,20 +1843,53 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       throw new Error('source_tenant_changed_during_clone');
     }
 
-    await rotateProvisionedTenantSigningKey(c, targetTenantId);
-    await createAuditLogFromContext(c, 'tenant.clone.prepared', 'tenant', targetTenantId, {
-      source_tenant_id: sourceTenantId,
-      options,
-      cloned_items: summary,
-      signing_keys: 'generated',
-    });
-    const activatedTenant = await activateProvisionedTenant(c, targetTenantId);
-    await createAuditLogFromContext(c, 'tenant.cloned', 'tenant', targetTenantId, {
-      source_tenant_id: sourceTenantId,
-      options,
-      cloned_items: summary,
-      signing_keys: 'generated',
-    });
+    let activatedTenant: Record<string, unknown>;
+    if (internal) {
+      const keyManager = c.env.KEY_MANAGER.get(
+        c.env.KEY_MANAGER.idFromName(`${targetTenantId}-v3`)
+      );
+      await keyManager.rotateKeysRpc();
+      await createAuditLog(c.env, {
+        tenantId: targetTenantId,
+        userId: internal.actorId,
+        action: 'tenant.clone.prepared',
+        resource: 'tenant',
+        resourceId: targetTenantId,
+        ipAddress: 'internal',
+        userAgent: 'tenant-provisioning-saga',
+        metadata: JSON.stringify({
+          source_tenant_id: sourceTenantId,
+          options,
+          cloned_items: summary,
+          signing_keys: 'generated',
+          operation: 'control-plane-provisioning',
+        }),
+        severity: 'info',
+      });
+      activatedTenant = {
+        id: targetTenantId,
+        tenant_code: parsed.data.tenant_code ?? targetTenantId,
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        lifecycle_state: 'provisioning',
+        is_default: false,
+      };
+    } else {
+      await rotateProvisionedTenantSigningKey(c, targetTenantId);
+      await createAuditLogFromContext(c, 'tenant.clone.prepared', 'tenant', targetTenantId, {
+        source_tenant_id: sourceTenantId,
+        options,
+        cloned_items: summary,
+        signing_keys: 'generated',
+      });
+      activatedTenant = await activateProvisionedTenant(c, targetTenantId);
+      await createAuditLogFromContext(c, 'tenant.cloned', 'tenant', targetTenantId, {
+        source_tenant_id: sourceTenantId,
+        options,
+        cloned_items: summary,
+        signing_keys: 'generated',
+      });
+    }
 
     return c.json(
       {
@@ -1704,7 +1900,6 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         cloned_items: summary,
         signing_keys: { copied: false, generated: true },
         warnings,
-        ...(created.provisioning ? { provisioning: created.provisioning } : {}),
       },
       201
     );
@@ -1726,14 +1921,31 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
       });
     }
     if (provisioned && targetTenantId) {
-      const cleanupFailures: string[] = [];
-      for (const { kv, key } of [...writtenKvKeys].reverse()) {
+      if (internal) {
+        await rollbackKvWrites(writtenKvKeys);
         try {
-          await kv.delete(key);
+          await cleanupInternalCloneDatabaseRows(internal.targetAdapter, targetTenantId);
         } catch {
-          if (!cleanupFailures.includes('kv')) cleanupFailures.push('kv');
+          // The provisioning operation remains blocked and cleanup can be retried safely.
         }
+        if (adminAccessTouched) {
+          try {
+            await internal.adminAdapter.execute(
+              'DELETE FROM admin_role_assignments WHERE tenant_id = ?',
+              [targetTenantId]
+            );
+            await internal.adminAdapter.execute(
+              'DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0',
+              [targetTenantId]
+            );
+          } catch {
+            // The destination is not active; the next attempt repeats cleanup before copying.
+          }
+        }
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
+      const cleanupFailures: string[] = [];
+      if (!(await rollbackKvWrites(writtenKvKeys))) cleanupFailures.push('kv');
       if (adminAccessTouched) {
         try {
           const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-clone-rollback-admin');
@@ -1762,9 +1974,137 @@ export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
         });
       }
     }
-    getLogger(c)
-      .module('ADMIN-TENANT-CLONE')
-      .error('Failed to clone tenant', { sourceTenantId, targetTenantId }, error as Error);
+    if (!internal) {
+      getLogger(c)
+        .module('ADMIN-TENANT-CLONE')
+        .error('Failed to clone tenant', { sourceTenantId, targetTenantId }, error as Error);
+    }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
+  return executeTenantCloneHandler(c);
+}
+
+export async function prepareTenantCloneForProvisioning(
+  env: Env,
+  operation: TenantProvisioningOperationView,
+  route: ControlTenantDefaultRouteAllocation
+): Promise<Record<string, unknown>> {
+  if (
+    operation.operationKind !== 'clone' ||
+    !operation.sourceTenantId ||
+    operation.sourceTenantId === operation.tenantId ||
+    !operation.preparationPayload ||
+    Object.keys(operation.preparationPayload).length !== 2
+  ) {
+    throw new Error('tenant_provisioning_clone_payload_invalid');
+  }
+  const options = CloneOptionsSchema.safeParse(operation.preparationPayload.copy);
+  const sourceSnapshot = CloneSourceSnapshotSchema.safeParse(
+    operation.preparationPayload.source_snapshot
+  );
+  if (!options.success || !sourceSnapshot.success) {
+    throw new Error('tenant_provisioning_clone_payload_invalid');
+  }
+  const dependencyError = validateOptionDependencies(options.data);
+  if (dependencyError) throw new Error('tenant_provisioning_clone_payload_invalid');
+  const boundTarget = (env as unknown as Record<string, unknown>)[route.target.bindingRef];
+  if (!boundTarget) throw new Error('tenant_provisioning_clone_binding_unavailable');
+
+  const [sourceAdapter, targetAdapter] = await Promise.all([
+    resolveAuthCorePersistenceAdapterFromEnv(env, 'tenant-clone-source', {
+      tenantId: operation.sourceTenantId,
+      runtimeSnapshotMode: 'required',
+    }),
+    resolveAuthCorePersistenceAdapterFromEnv(env, 'tenant-clone-target', {
+      tenantId: operation.tenantId,
+      runtimeSnapshotMode: 'required',
+    }),
+  ]);
+  const adminAdapter = requireAdminDatabaseAdapter(env, 'tenant-clone-provisioning');
+  const [currentSource, currentDatabaseSnapshot, currentKvVersion] = await Promise.all([
+    sourceAdapter.queryOne<{ lifecycle_state: string; updated_at: number }>(
+      'SELECT lifecycle_state, updated_at FROM tenants WHERE id = ?',
+      [operation.sourceTenantId]
+    ),
+    estimateSelectedDatabaseQueries(
+      sourceAdapter,
+      options.data.admin_access ? adminAdapter : null,
+      operation.sourceTenantId,
+      options.data
+    ),
+    captureSourceKvVersion(env, operation.sourceTenantId, options.data),
+  ]);
+  if (
+    currentSource?.lifecycle_state !== 'active' ||
+    currentSource.updated_at !== sourceSnapshot.data.tenant_updated_at ||
+    (await sha256Hex(currentDatabaseSnapshot.sourceVersion)) !==
+      sourceSnapshot.data.database_version ||
+    currentKvVersion !== sourceSnapshot.data.kv_version
+  ) {
+    throw new Error('tenant_provisioning_clone_source_conflict');
+  }
+  await cleanupInternalCloneDatabaseRows(targetAdapter, operation.tenantId);
+  await adminAdapter.execute('DELETE FROM admin_role_assignments WHERE tenant_id = ?', [
+    operation.tenantId,
+  ]);
+  await adminAdapter.execute('DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0', [
+    operation.tenantId,
+  ]);
+
+  const requestBody: z.infer<typeof TenantCloneRequestSchema> = {
+    id: operation.tenantId,
+    tenant_code: operation.tenantCode,
+    name: operation.tenantName,
+    description: operation.tenantDescription ?? undefined,
+    isolation_policy: operation.isolationPolicy,
+    copy: options.data,
+  };
+  const internalContext = {
+    env,
+    req: {
+      param: (name: string) => (name === 'id' ? operation.sourceTenantId! : undefined),
+      json: async () => requestBody,
+      header: (_name: string) => undefined,
+    },
+    get: (name: string) => {
+      if (name === 'adminAuth') return { userId: operation.createdBy };
+      if (name === 'tenantId') return operation.tenantId;
+      return undefined;
+    },
+    json: (body: unknown, status: number = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      }),
+  } as unknown as Context<{ Bindings: Env }>;
+  const response = await executeTenantCloneHandler(internalContext, {
+    sourceTenantId: operation.sourceTenantId,
+    requestBody,
+    sourceAdapter,
+    targetAdapter,
+    adminAdapter,
+    actorId: operation.createdBy,
+  });
+  if (response.status !== 201) {
+    throw new Error('tenant_provisioning_clone_prepare_failed');
+  }
+  const result = (await response.json()) as Record<string, unknown>;
+  if (
+    result.source_tenant_id !== operation.sourceTenantId ||
+    !result.cloned_items ||
+    typeof result.cloned_items !== 'object' ||
+    !Array.isArray(result.warnings)
+  ) {
+    throw new Error('tenant_provisioning_clone_result_invalid');
+  }
+  return {
+    source_tenant_id: operation.sourceTenantId,
+    copy: options.data,
+    cloned_items: result.cloned_items,
+    signing_keys: { copied: false, generated: true },
+    warnings: result.warnings,
+  };
 }

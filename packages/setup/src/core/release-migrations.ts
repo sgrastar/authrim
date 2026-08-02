@@ -106,7 +106,7 @@ export const RELEASE_MIGRATION_STREAM_DEFINITIONS: readonly MigrationStreamDefin
     id: 'd1-admin',
     dialect: 'sqlite',
     directory: 'admin',
-    logicalRoles: ['admin', 'control'],
+    logicalRoles: ['admin'],
   },
   {
     id: 'd1-control',
@@ -588,6 +588,13 @@ export function resolveReleaseMigrationTargets(input: {
     { binding: 'DB', streamId: 'd1-core', logicalRole: 'core' },
     { binding: 'DB_PII', streamId: 'd1-pii', logicalRole: 'pii' },
     { binding: 'DB_ADMIN', streamId: 'd1-admin', logicalRole: 'admin' },
+    { binding: 'CONTROL_DB', streamId: 'd1-control', logicalRole: 'control' },
+    { binding: 'LOOKUP_DB', streamId: 'd1-lookup', logicalRole: 'lookup' },
+    {
+      binding: 'PLUGIN_RUNNER_DB',
+      streamId: 'd1-plugin-runner',
+      logicalRole: 'plugin_runner',
+    },
   ];
 
   for (const definition of sharedBindings) {
@@ -708,7 +715,7 @@ export function resolveRegisteredSchemaReferences(input: {
   const references = new Set<string>();
   for (const target of resolveReleaseMigrationTargets(input)) {
     // Tenant D1 bindings are selected through the signed tenant database runtime registry,
-    // not through admin-created runtime profiles. Emitting every preallocated slot here would
+    // not through admin-created runtime profiles. Emitting every Control-managed shard here would
     // make this Worker text variable grow linearly with the tenant pool and exceed Cloudflare's
     // per-variable size limit. Shared and setup-seeded external profile references remain listed.
     if (target.scope === 'tenant') continue;

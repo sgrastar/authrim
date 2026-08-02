@@ -46,14 +46,14 @@ export interface TransactionContext {
    * @param sql - SQL query string
    * @param params - Query parameters
    */
-  query<T>(sql: string, params?: unknown[]): Promise<T[]>;
+  query<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T[]>;
 
   /**
    * Execute a query and return the first result
    * @param sql - SQL query string
    * @param params - Query parameters
    */
-  queryOne<T>(sql: string, params?: unknown[]): Promise<T | null>;
+  queryOne<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T | null>;
 
   /**
    * Execute a statement (INSERT, UPDATE, DELETE) within the transaction
@@ -85,8 +85,12 @@ export interface HealthStatus {
 export interface QueryOptions {
   /** Query timeout in milliseconds */
   timeoutMs?: number;
-  /** Whether to use read replica (if available) */
+  /** @deprecated Use consistencyClass instead. */
   useReadReplica?: boolean;
+  /** D1 Sessions API consistency class. Defaults to primary_required. */
+  consistencyClass?: 'replica_eligible' | 'primary_required' | 'read_after_write';
+  /** Prior D1 session bookmark. Required for read_after_write. */
+  bookmark?: string | null;
 }
 
 /**
@@ -153,10 +157,12 @@ export interface DatabaseAdapter {
   execute(sql: string, params?: unknown[]): Promise<ExecuteResult>;
 
   /**
-   * Execute multiple statements in a transaction
+   * Execute a callback using backend-specific transaction semantics.
    *
-   * If any statement fails, all changes are rolled back.
-   * Note: D1 uses batch for transactions (all-or-nothing semantics)
+   * PostgreSQL and MySQL provide rollback. D1 executes callback operations
+   * immediately and cannot roll them back because its transactional API
+   * requires the full statement list up front. Use batch() for atomic D1
+   * writes and reserve this callback for read-dependent, retryable workflows.
    *
    * @param fn - Async function receiving transaction context
    * @returns Result of the transaction function

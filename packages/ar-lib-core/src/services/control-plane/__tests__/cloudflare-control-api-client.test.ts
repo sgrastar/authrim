@@ -14,10 +14,11 @@ function success(result: unknown): Response {
 }
 
 describe('CloudflareControlApiClient', () => {
-  it('uses only the D1 token for query, raw, and import endpoints', async () => {
+  it('uses only the D1 token for query, batch, raw, and import endpoints', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(success([{ success: true, results: [{ id: 'account-1' }] }]))
+      .mockResolvedValueOnce(success([{ success: true, results: [] }]))
       .mockResolvedValueOnce(
         success([{ success: true, results: { columns: ['id'], rows: [[1]] } }])
       )
@@ -32,10 +33,15 @@ describe('CloudflareControlApiClient', () => {
     const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
 
     await client.queryD1('db/id', 'SELECT ?', ['account-1']);
+    await client.queryD1Batch('db/id', [
+      { sql: 'CREATE TABLE example (id TEXT)' },
+      { sql: 'INSERT INTO example (id) VALUES (?)', params: ['account-1'] },
+    ]);
     await client.rawD1('db/id', 'SELECT 1');
     await client.importD1('db/id', { action: 'init', etag: 'md5' });
 
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/db%2Fid/query`,
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/db%2Fid/query`,
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/db%2Fid/raw`,
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/db%2Fid/import`,
@@ -48,6 +54,21 @@ describe('CloudflareControlApiClient', () => {
       sql: 'SELECT ?',
       params: ['account-1'],
     });
+    expect(JSON.parse(String(fetcher.mock.calls[1]?.[1].body))).toEqual({
+      batch: [
+        { sql: 'CREATE TABLE example (id TEXT)' },
+        { sql: 'INSERT INTO example (id) VALUES (?)', params: ['account-1'] },
+      ],
+    });
+  });
+
+  it('rejects empty or blank D1 query batches before fetch', () => {
+    const fetcher = vi.fn();
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    expect(() => client.queryD1Batch('db', [])).toThrow('cloudflare_d1_query_batch_empty');
+    expect(() => client.queryD1Batch('db', [{ sql: '   ' }])).toThrow('d1_query_sql_required');
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it('updates D1 read replication with the D1 token', async () => {
@@ -66,7 +87,7 @@ describe('CloudflareControlApiClient', () => {
     expect(url).toBe(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database/db%2Fid`
     );
-    expect(init.method).toBe('PATCH');
+    expect(init.method).toBe('PUT');
     expect(new Headers(init.headers).get('Authorization')).toBe('Bearer d1-token');
     expect(JSON.parse(String(init.body))).toEqual({ read_replication: { mode: 'auto' } });
   });
@@ -75,7 +96,7 @@ describe('CloudflareControlApiClient', () => {
     const fetcher = vi.fn().mockResolvedValue(success({ bindings: [] }));
     const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
     await client.patchWorkerSettings('worker/name', {
-      bindings: [{ name: 'DB', type: 'd1', database_id: 'db-id' }],
+      bindings: [{ name: 'DB', type: 'd1', id: 'db-id' }],
     });
 
     const [url, init] = fetcher.mock.calls[0] ?? [];
@@ -86,8 +107,60 @@ describe('CloudflareControlApiClient', () => {
     expect(new Headers(init.headers).has('Content-Type')).toBe(false);
     expect(init.body).toBeInstanceOf(FormData);
     expect(JSON.parse(String((init.body as FormData).get('settings')))).toEqual({
-      bindings: [{ name: 'DB', type: 'd1', database_id: 'db-id' }],
+      bindings: [{ name: 'DB', type: 'd1', id: 'db-id' }],
     });
+  });
+
+  it('lists Worker scripts with the Workers token and drops malformed rows', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        success([
+          { id: 'test-ar-auth', etag: 'etag-auth' },
+          { id: '' },
+          { modified_on: '2026-07-29T00:00:00Z' },
+        ])
+      );
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    await expect(client.listWorkerScripts()).resolves.toEqual([
+      { id: 'test-ar-auth', etag: 'etag-auth' },
+    ]);
+    const [url, init] = fetcher.mock.calls[0] ?? [];
+    expect(url).toBe(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`);
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer workers-token');
+  });
+
+  it('reads account and script workers.dev subdomain state with the Workers token', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(success({ subdomain: 'example' }))
+      .mockResolvedValueOnce(success({ enabled: true, previews_enabled: false }));
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    await expect(client.getWorkersSubdomain()).resolves.toEqual({ subdomain: 'example' });
+    await expect(client.getWorkerSubdomain('worker/name')).resolves.toEqual({
+      enabled: true,
+      previews_enabled: false,
+    });
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/worker%2Fname/subdomain`,
+    ]);
+    for (const [, init] of fetcher.mock.calls) {
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer workers-token');
+    }
+  });
+
+  it('rejects a malformed Worker list envelope result', async () => {
+    const client = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi.fn().mockResolvedValue(success({ id: 'not-an-array' })),
+    });
+    await expect(client.listWorkerScripts()).rejects.toThrow(
+      'cloudflare_workers_script_list_invalid_result'
+    );
   });
 
   it('uses the modern storage KV path and a separate KV token', async () => {

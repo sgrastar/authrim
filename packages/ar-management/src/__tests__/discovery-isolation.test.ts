@@ -270,7 +270,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
       // Default tenant: all discovery methods enabled
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.override_enabled': true,
-        'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
+        'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug","app_hint"]',
       }),
       // Acme tenant branding (login-ui.brand_name takes precedence over tenant name)
       'settings:tenant:acme:login-ui': JSON.stringify({
@@ -284,7 +284,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
       'settings:tenant:acme:login-entry': JSON.stringify({
         'login-entry.override_enabled': true,
         'login-entry.mode': 'discovery_optional',
-        'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+        'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug"]',
       }),
       // Beta tenant: no branding configured — display_name falls back to tenant.name
     }),
@@ -620,7 +620,7 @@ describe('Discovery API: tenant_slug resolution', () => {
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
           'login-entry.override_enabled': true,
-          'login-entry.discovery_methods': '["email_domain","tenant_code"]',
+          'login-entry.discovery_methods': '["email_exact","tenant_code"]',
         }),
       }),
     });
@@ -666,8 +666,8 @@ describe('Discovery API: data isolation', () => {
     }));
   });
 
-  describe('email domain isolation', () => {
-    it('resolves a unique exact email match even when the domain itself is shared', async () => {
+  describe('email exact isolation', () => {
+    it('requires OTP verification before any exact-email resolution', async () => {
       mocked.discoveryCandidatesMock.mockResolvedValue([
         { tenant_id: 'acme', priority: 20 },
         { tenant_id: 'beta', priority: 10 },
@@ -675,38 +675,34 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@gmail.com' });
-      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string };
 
-      expect(body.result).toBe('resolved');
-      expect(body.candidate.tenant_id).toBe('acme');
+      expect(body.result).toBe('manual_required');
+      expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
     });
 
-    it('returns multiple candidates when the exact email exists in multiple active tenants', async () => {
+    it('does not expose whether exact email exists in multiple tenants', async () => {
       mocked.discoveryCandidatesMock.mockResolvedValue([]);
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'shared@gmail.com' });
-      const body = (await res.json()) as {
-        result: string;
-        candidates: Array<{ tenant_id: string }>;
-      };
+      const body = (await res.json()) as { result: string };
 
-      expect(body.result).toBe('multiple');
-      expect(body.candidates.map((candidate) => candidate.tenant_id)).toEqual(['acme', 'beta']);
+      expect(body.result).toBe('manual_required');
     });
 
-    it('resolves to acme only when the domain maps exclusively to acme', async () => {
+    it('does not use email domains as tenant routing keys', async () => {
       mocked.discoveryCandidatesMock.mockResolvedValue([{ tenant_id: 'acme', priority: 10 }]);
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@acme.com' });
-      const body = (await res.json()) as { result: string; candidate: { tenant_id: string } };
+      const body = (await res.json()) as { result: string };
 
-      expect(body.result).toBe('resolved');
-      expect(body.candidate.tenant_id).toBe('acme');
+      expect(body.result).toBe('manual_required');
+      expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
     });
 
-    it('returns multiple candidates when the domain maps to both acme and beta', async () => {
+    it('does not disclose shared-domain tenant candidates', async () => {
       mocked.discoveryCandidatesMock.mockResolvedValue([
         { tenant_id: 'acme', priority: 20 },
         { tenant_id: 'beta', priority: 10 },
@@ -714,14 +710,10 @@ describe('Discovery API: data isolation', () => {
       const { app, env } = createDiscoveryApp();
 
       const res = await postDiscovery(app, env, { mode: 'email', value: 'user@shared.com' });
-      const body = (await res.json()) as {
-        result: string;
-        candidates: Array<{ tenant_id: string }>;
-      };
+      const body = (await res.json()) as { result: string };
 
-      expect(body.result).toBe('multiple');
-      expect(body.candidates).toHaveLength(2);
-      expect(body.candidates.map((c) => c.tenant_id)).toEqual(['acme', 'beta']);
+      expect(body.result).toBe('manual_required');
+      expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
     });
 
     it('returns manual_required when no tenant maps to the email domain', async () => {
@@ -735,7 +727,7 @@ describe('Discovery API: data isolation', () => {
       expect(body.result).toBe('manual_required');
     });
 
-    it('returns manual_required without querying the DB when email_domain is not in discovery_methods', async () => {
+    it('returns manual_required without querying the DB when email_exact is not in discovery_methods', async () => {
       const { app, env } = createDiscoveryApp({
         SETTINGS: createMockKV({
           'settings:tenant:default:login-entry': JSON.stringify({
@@ -799,7 +791,7 @@ describe('Discovery API: data isolation', () => {
         SETTINGS: createMockKV({
           'settings:tenant:default:login-entry': JSON.stringify({
             'login-entry.override_enabled': true,
-            'login-entry.discovery_methods': '["email_domain","tenant_slug"]',
+            'login-entry.discovery_methods': '["email_exact","tenant_slug"]',
           }),
         }),
       });
@@ -934,24 +926,23 @@ describe('Discovery API: settings-driven behaviour', () => {
     mocked.discoveryCandidatesMock.mockReset();
   });
 
-  it('returns not_found instead of manual_required when allow_manual_tenant_entry is false', async () => {
+  it('keeps the legacy raw-email endpoint membership-blind when manual entry is disabled', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([]);
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
           'login-entry.override_enabled': true,
-          'login-entry.discovery_methods':
-            '["email_domain","tenant_code","tenant_slug","app_hint"]',
+          'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug","app_hint"]',
           'login-entry.allow_manual_tenant_entry': false,
         }),
       }),
     });
 
     const res = await postDiscovery(app, env, { mode: 'email', value: 'user@unknown.com' });
-    const body = (await res.json()) as { result: string; code: string };
+    const body = (await res.json()) as { result: string };
 
-    expect(body.result).toBe('not_found');
-    expect(body.code).toBe('email_domain_not_found');
+    expect(body.result).toBe('manual_required');
+    expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
   });
 });
 

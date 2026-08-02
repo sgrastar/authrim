@@ -49,6 +49,10 @@ const {
 vi.mock('@authrim/ar-lib-core', () => ({
   ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
   resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+  getCachedAuthCorePersistenceContextFromEnv: vi.fn().mockResolvedValue({
+    storageProfileId: 'builtin:storage:standard',
+  }),
+  resolveAccountDataContextByIdentifier: vi.fn(),
   getDefaultTenantId: vi.fn(() => 'default'),
 }));
 
@@ -58,6 +62,7 @@ import {
   findLinkedIdentitiesAcrossTenantsByProviderSub,
   findLinkedIdentitiesByProviderSub,
   getLinkedIdentityForUserAndProvider,
+  updateLinkedIdentity,
 } from '../services/linked-identity-store';
 
 describe('linked-identity-store', () => {
@@ -126,5 +131,14 @@ describe('linked-identity-store', () => {
 
     expect(sqlTracker.calls[0]?.sql).toContain('tenant_id');
     expect(sqlTracker.calls[0]?.params?.[1]).toBe('tenant-a');
+  });
+
+  it('clears access, refresh, and expiry state for backchannel logout', async () => {
+    await updateLinkedIdentity(env, 'tenant-a', 'link-a', { clearTokens: true });
+
+    expect(sqlTracker.calls[0]?.sql).toContain('access_token_encrypted = NULL');
+    expect(sqlTracker.calls[0]?.sql).toContain('refresh_token_encrypted = NULL');
+    expect(sqlTracker.calls[0]?.sql).toContain('token_expires_at = NULL');
+    expect(sqlTracker.calls[0]?.params).toEqual([expect.any(Number), 'tenant-a', 'link-a']);
   });
 });

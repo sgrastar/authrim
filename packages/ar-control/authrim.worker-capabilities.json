@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-control",
+  "worker": "ar-control",
+  "requiredDataRoles": ["control"],
+  "bindings": [
+    {
+      "name": "CONTROL_DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "control",
+      "capability": "control_state"
+    },
+    {
+      "name": "MIGRATION_RELEASES",
+      "kind": "r2_bucket",
+      "required": true,
+      "capability": "migration_release_read"
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "lookup_registry.publish"
+    },
+    {
+      "name": "SMOKE_AR_LIB_CORE",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_DISCOVERY",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_AUTH",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_TOKEN",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_USERINFO",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_MANAGEMENT",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_AGENT_ACCESS",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_ASYNC",
+      "kind": "service",
+      "required": false,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_POLICY",
+      "kind": "service",
+      "required": false,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_SAML",
+      "kind": "service",
+      "required": false,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_BRIDGE",
+      "kind": "service",
+      "required": false,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_VC",
+      "kind": "service",
+      "required": false,
+      "capability": "control_smoke.invoke"
+    },
+    {
+      "name": "SMOKE_AR_PLUGIN_RUNNER",
+      "kind": "service",
+      "required": true,
+      "capability": "control_smoke.invoke"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A",
+      "capability": "lookup_registry.sign",
+      "required": true
+    },
+    {
+      "name": "RUNTIME_REGISTRY_SIGNING_JWK_SLOT_B",
+      "capability": "lookup_registry.sign",
+      "required": false
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID",
+      "capability": "lookup_registry.sign",
+      "required": true
+    },
+    {
+      "name": "SMOKE_RPC_SIGNING_JWK_SLOT_A",
+      "capability": "control_smoke.sign",
+      "required": true
+    },
+    {
+      "name": "SMOKE_RPC_SIGNING_JWK_SLOT_B",
+      "capability": "control_smoke.sign",
+      "required": false
+    },
+    {
+      "name": "CLOUDFLARE_D1_API_TOKEN",
+      "capability": "cloudflare.d1.mutate",
+      "required": true
+    },
+    {
+      "name": "CLOUDFLARE_WORKERS_API_TOKEN",
+      "capability": "cloudflare.workers.mutate",
+      "required": true
+    },
+    {
+      "name": "CLOUDFLARE_KV_API_TOKEN",
+      "capability": "cloudflare.kv.mutate",
+      "required": false
+    },
+    {
+      "name": "CLOUDFLARE_R2_API_TOKEN",
+      "capability": "cloudflare.r2.mutate",
+      "required": false
+    }
+  ]
+}

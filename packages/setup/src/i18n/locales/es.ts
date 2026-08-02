@@ -795,11 +795,7 @@ const es: Translations = {
     'Un D1 core y un D1 PII para todo el despliegue. Menor coste de configuración y ruta predeterminada.',
   'web.db.tenantD1Title': 'D1 por tenant',
   'web.db.tenantD1Desc':
-    'Un par D1 core/PII por tenant. Requiere aprovisionar la base de datos del tenant antes de activarlo.',
-  'web.db.preallocatedSlotsTitle': 'Slots de tenant preasignados',
-  'web.db.preallocatedSlotsDesc': 'Cada slot de tenant crea dos bases de datos D1: core y PII.',
-  'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp': 'El valor predeterminado es 3. El máximo es 500 slots.',
+    'Inicializa el plano de control y los shards iniciales; la capacidad posterior se crea automáticamente.',
 
   // Web UI Email
   'web.email.title': 'Proveedor de Email',

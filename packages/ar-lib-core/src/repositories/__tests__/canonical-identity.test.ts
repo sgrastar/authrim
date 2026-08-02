@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createLookupBlindIndex,
+  type AccountDirectoryPublication,
+} from '../../services/lookup-directory';
 import { CanonicalIdentityRepository } from '../identity';
 import { MockDatabaseAdapter } from './mock-adapter';
 
@@ -63,6 +67,61 @@ describe('CanonicalIdentityRepository', () => {
     expect(adapter.getById('identity_accounts', 'account-1')?.legacy_user_id).toBe('legacy-user-1');
     expect(adapter.getById('subject_account_links', 'link-1')?.source_ref).toBe('source/scim/acme');
     expect(adapter.getById('profiles', 'profile-1')?.locale).toBe('ja-JP');
+  });
+
+  it('creates the initial graph and directory outbox through one atomic batch', async () => {
+    adapter.initTable('account_routing_outbox', 'outbox_id');
+    const publication: AccountDirectoryPublication = {
+      operationId: 'operation-atomic',
+      tenantId: 'tenant-a',
+      accountId: 'account-atomic',
+      idempotencyKey: 'create-account-atomic',
+      routeProjection: {
+        schemaVersion: 1,
+        accountRouteGeneration: 3,
+        residencyPolicyId: 'default-policy',
+        targets: [
+          {
+            dataRole: 'tenant_core/users',
+            residencyPartition: 'default',
+            shardId: 'core-1',
+            bindingRef: 'CORE_1',
+            requiredBindingRouteGeneration: 3,
+          },
+        ],
+      },
+      indexes: [
+        await createLookupBlindIndex('account_id', 'account-atomic', {
+          generation: 1,
+          secret: '0123456789abcdef0123456789abcdef',
+        }),
+      ],
+    };
+    const batch = vi.spyOn(adapter, 'batch');
+
+    await repository.createIdentityGraph(
+      {
+        subject: { id: 'subject-atomic' },
+        account: { id: 'account-atomic' },
+        link: { id: 'link-atomic' },
+      },
+      publication
+    );
+
+    expect(batch).toHaveBeenCalledTimes(1);
+    expect(
+      batch.mock.calls[0][0].some((statement) => statement.sql.includes('account_routing_outbox'))
+    ).toBe(true);
+    expect(adapter.getById('identity_accounts', 'account-atomic')).toMatchObject({
+      account_route_generation: 3,
+      directory_publication_state: 'pending',
+    });
+    expect(
+      adapter.getById('account_routing_outbox', 'account-routing:operation-atomic')
+    ).toMatchObject({
+      status: 'prepared',
+      account_id: 'account-atomic',
+    });
   });
 
   it('guards writes against cross-tenant input', async () => {

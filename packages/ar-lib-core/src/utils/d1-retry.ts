@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from './logger';
+import { isTenantPlacementWriteFenceError } from '../errors/tenant-placement-write-fence';
 
 const log = createLogger().module('D1_RETRY');
 
@@ -73,6 +74,10 @@ export async function retryD1Operation<T>(
       return await operation();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      // This is an intentional application fence. Retrying inside D1 only hides the
+      // typed cause and delays the API contract that lets the UI wait safely.
+      if (isTenantPlacementWriteFenceError(lastError)) throw lastError;
 
       // If this was the last attempt, don't retry
       if (attempt === cfg.maxRetries) {

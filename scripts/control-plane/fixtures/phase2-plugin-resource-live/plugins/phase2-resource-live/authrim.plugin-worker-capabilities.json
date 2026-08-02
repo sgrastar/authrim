@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "phase2-resource-live",
+  "backend": "dynamic_worker",
+  "workerBundle": {
+    "path": "worker-bundle.json"
+  },
+  "resourceScope": "tenant",
+  "visibility": "tenant",
+  "bindings": [],
+  "resources": [
+    {
+      "schemaVersion": 1,
+      "logicalResourceId": "plugin_state",
+      "binding": "PLUGIN_STATE",
+      "kind": "d1",
+      "scope": "tenant",
+      "access": "read_write",
+      "provisioning": {
+        "defaultMode": "managed",
+        "allowExisting": true
+      },
+      "migrationStream": "d1-plugin-runner"
+    },
+    {
+      "schemaVersion": 1,
+      "logicalResourceId": "plugin_cache",
+      "binding": "PLUGIN_CACHE",
+      "kind": "kv_namespace",
+      "scope": "tenant",
+      "access": "read_write",
+      "provisioning": {
+        "defaultMode": "managed",
+        "allowExisting": true
+      },
+      "migrationStream": null
+    },
+    {
+      "schemaVersion": 1,
+      "logicalResourceId": "plugin_objects",
+      "binding": "PLUGIN_OBJECTS",
+      "kind": "r2_bucket",
+      "scope": "tenant",
+      "access": "read_write",
+      "provisioning": {
+        "defaultMode": "managed",
+        "allowExisting": true
+      },
+      "migrationStream": null
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "phase2.resource.smoke",
+      "execution": "sync",
+      "failurePolicy": "fail_closed",
+      "timeoutMs": 2000,
+      "mutationScopes": [],
+      "asyncOutbox": {
+        "enabled": false,
+        "succeededRetentionDays": 7,
+        "deadLetterRetentionDays": 90
+      }
+    }
+  ],
+  "credentials": [],
+  "egressAllowedHosts": []
+}

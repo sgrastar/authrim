@@ -30,6 +30,10 @@ import {
 } from '../services/tenant-vanity-domain-resolver';
 import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
 import {
+  resolveTenantMetadataContext,
+  type TenantMetadataContext,
+} from '../services/runtime-data-context';
+import {
   resolveUserStoreRuntimeSourcesFromEnv,
   type ResolvedUserStoreRuntimeSources,
 } from '../services/user-store-runtime-sources';
@@ -235,7 +239,7 @@ function isPublicAuthenticationMethodsPath(path: string): boolean {
   return path === '/api/auth/authentication-methods';
 }
 
-function shouldResolveRuntimeUserStoreSources(
+function shouldResolveTenantDataContexts(
   requestClass:
     | 'platform_admin'
     | 'tenant_inventory_admin'
@@ -496,9 +500,49 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       !!tenantId &&
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
+    let tenantMetadataContext: TenantMetadataContext | undefined;
+    if (
+      c.env.DEFAULT_STORAGE_PROFILE_ID &&
+      shouldResolveTenantDataContexts(requestClass, c.req.path)
+    ) {
+      try {
+        tenantMetadataContext = await timeDiagnosticSpan(timingSpans, 'rc_tenant_metadata', () =>
+          resolveTenantMetadataContext(c.env, tenantId)
+        );
+      } catch (error) {
+        if (error instanceof TenantDatabaseResolverError) {
+          return c.json(
+            {
+              error: error.code,
+              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+              route: c.req.path,
+              tenant_id: tenantId,
+            },
+            409
+          );
+        }
+        const code = error instanceof Error ? error.message : 'tenant_metadata_source_unavailable';
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant metadata source resolution failed', {
+          error: code,
+          tenantId,
+          path: c.req.path,
+          storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
+        });
+        return c.json(
+          { error: 'temporarily_unavailable', error_description: 'Tenant unavailable' },
+          503
+        );
+      }
+    }
+
     if (shouldValidateTenantExists) {
       const exists = await timeDiagnosticSpan(timingSpans, 'rc_tenant_exists', () =>
-        validateTenantExistsWithIsolateCache(c.env, authCoreSource, tenantId)
+        validateTenantExistsWithIsolateCache(
+          c.env,
+          tenantMetadataContext?.coreDb ?? authCoreSource,
+          tenantId
+        )
       );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -520,7 +564,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ) {
       const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
         getPrimaryTenantVanityDomain(
-          { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
+          {
+            AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG,
+            DB: tenantMetadataContext?.coreDb ?? authCoreSource,
+          },
           tenantId
         )
       );
@@ -577,7 +624,13 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
-    if (shouldResolveRuntimeUserStoreSources(requestClass, c.req.path)) {
+    if (tenantMetadataContext) {
+      ctx.set('tenantMetadataContext', tenantMetadataContext);
+    }
+    if (
+      tenantMetadataContext?.storageProfileId !== 'builtin:storage:tenant-d1' &&
+      shouldResolveTenantDataContexts(requestClass, c.req.path)
+    ) {
       try {
         ctx.set(
           'runtimeUserStoreSources',

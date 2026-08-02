@@ -170,6 +170,34 @@ jobs:
       - name: Run UI tests
         run: pnpm run test:ui
 
+  control-plane-tests:
+    name: Tenant D1 Control Plane Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tenant D1 control-plane tests
+        run: pnpm run control-plane:test
+
+      - name: Run Phase 9 local release gate
+        run: pnpm run control-plane:phase9-local-gate
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -236,6 +264,7 @@ jobs:
       - typecheck
       - api-tests
       - ui-tests
+      - control-plane-tests
       - build
       - format
     if: ${{ always() }}

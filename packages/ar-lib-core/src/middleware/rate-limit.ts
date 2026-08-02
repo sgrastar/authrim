@@ -784,14 +784,29 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
         }
       }
 
-      const { allowed, remaining, resetAt } = await timeDiagnosticSpan(
-        timingSpans,
-        'rl_check',
-        () => checkRateLimit(c.env, clientIP, config, tenantId)
+      let activeConfig = config;
+      let result = await timeDiagnosticSpan(timingSpans, 'rl_check', () =>
+        checkRateLimit(c.env, clientIP, config, tenantId)
       );
 
+      if (!result.allowed) {
+        const relaxedOverride = await timeDiagnosticSpan(
+          timingSpans,
+          'rl_denied_override_refresh',
+          () => refreshRelaxedRateLimitOverrideAfterDenial(c.env, config)
+        );
+        if (relaxedOverride) {
+          activeConfig = { ...config, ...relaxedOverride };
+          result = await timeDiagnosticSpan(timingSpans, 'rl_override_recheck', () =>
+            checkRateLimit(c.env, clientIP, activeConfig, tenantId)
+          );
+        }
+      }
+
+      const { allowed, remaining, resetAt } = result;
+
       // Add rate limit headers to response
-      c.header('X-RateLimit-Limit', config.maxRequests.toString());
+      c.header('X-RateLimit-Limit', activeConfig.maxRequests.toString());
       c.header('X-RateLimit-Remaining', remaining.toString());
       c.header('X-RateLimit-Reset', resetAt.toString());
 
@@ -825,8 +840,8 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
             endpoint: c.req.path,
             clientIpHash: ipHash,
             rateLimit: {
-              maxRequests: config.maxRequests,
-              windowSeconds: config.windowSeconds,
+              maxRequests: activeConfig.maxRequests,
+              windowSeconds: activeConfig.windowSeconds,
               retryAfter,
               endpointClass: config.endpointClass,
             },
@@ -963,6 +978,9 @@ let rateLimitProfileOverrideCache: {
   cachedAt: number;
 } | null = null;
 const rateLimitRefreshPromises = new Map<string, Promise<void>>();
+let deniedOverrideRefreshCache: { config: RateLimitConfig | null; checkedAt: number } | null = null;
+let deniedOverrideRefreshPromise: Promise<RateLimitConfig | null> | null = null;
+const DENIED_OVERRIDE_REFRESH_TTL_MS = 1_000;
 const RATE_LIMIT_PROFILE_KV_NAMES: Record<keyof typeof RateLimitProfiles, string> = {
   strict: 'strict',
   moderate: 'moderate',
@@ -1033,6 +1051,42 @@ async function readRateLimitConfigFromKV(
   }
 
   return { maxRequests, windowSeconds };
+}
+
+async function refreshRelaxedRateLimitOverrideAfterDenial(
+  env: Env,
+  current: RateLimitConfig
+): Promise<RateLimitConfig | null> {
+  if (!env.AUTHRIM_CONFIG) return null;
+  const now = Date.now();
+  if (
+    deniedOverrideRefreshCache &&
+    now - deniedOverrideRefreshCache.checkedAt < DENIED_OVERRIDE_REFRESH_TTL_MS
+  ) {
+    return deniedOverrideRefreshCache.config;
+  }
+  if (deniedOverrideRefreshPromise) return deniedOverrideRefreshPromise;
+
+  deniedOverrideRefreshPromise = (async () => {
+    try {
+      const value = await env.AUTHRIM_CONFIG!.get(PROFILE_OVERRIDE_KV_KEY);
+      if (!value || !(value in RateLimitProfiles)) return null;
+      const profile = value as keyof typeof RateLimitProfiles;
+      const refreshed = await readRateLimitConfigFromKV(env, profile);
+      rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
+      rateLimitConfigCache.set(profile, { config: refreshed, cachedAt: Date.now() });
+      return refreshed.maxRequests > current.maxRequests ? refreshed : null;
+    } catch {
+      return null;
+    }
+  })();
+  try {
+    const config = await deniedOverrideRefreshPromise;
+    deniedOverrideRefreshCache = { config, checkedAt: Date.now() };
+    return config;
+  } finally {
+    deniedOverrideRefreshPromise = null;
+  }
 }
 
 /**
@@ -1197,4 +1251,6 @@ export function clearRateLimitConfigCache(): void {
   rateLimitConfigCache.clear();
   rateLimitProfileOverrideCache = null;
   rateLimitRefreshPromises.clear();
+  deniedOverrideRefreshCache = null;
+  deniedOverrideRefreshPromise = null;
 }

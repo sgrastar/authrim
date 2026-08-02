@@ -396,7 +396,31 @@ describe('UI, OAuth, and rate-limit settings', () => {
       400
     );
     const response = await setProfileOverride(context({ store, body: { profile: 'loadTest' } }));
-    await expect(response.json()).resolves.toMatchObject({ warning: expect.any(String) });
+    await expect(response.json()).resolves.toMatchObject({
+      warning: expect.any(String),
+      expires_in: 900,
+    });
+    expect(store.put).toHaveBeenLastCalledWith('rate_limit_profile_override', 'loadTest', {
+      expirationTtl: 900,
+    });
+    expect(
+      (
+        await setProfileOverride(
+          context({ store, body: { profile: 'loadTest', expires_in: 1200 } })
+        )
+      ).status
+    ).toBe(200);
+    expect(store.put).toHaveBeenLastCalledWith('rate_limit_profile_override', 'loadTest', {
+      expirationTtl: 1200,
+    });
+    expect(
+      (await setProfileOverride(context({ store, body: { profile: 'loadTest', expires_in: 59 } })))
+        .status
+    ).toBe(400);
+    expect(
+      (await setProfileOverride(context({ store, body: { profile: 'strict', expires_in: 120 } })))
+        .status
+    ).toBe(400);
     expect((await clearProfileOverride(context({ store }))).status).toBe(200);
   });
 

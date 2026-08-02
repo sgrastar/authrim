@@ -2311,6 +2311,24 @@ describe('logging control routers', () => {
     );
   });
 
+  it('accepts control-plane drift as a notification center category', async () => {
+    mockAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mockAdapter.queryOne.mockResolvedValueOnce({ total: 0 });
+
+    const response = await createApp([ADMIN_PERMISSIONS.DATABASE_ROUTING_READ]).request(
+      '/api/admin/notifications?category=control_plane_drift&status=unresolved',
+      {},
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockAdapter.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('FROM internal_notification_events'),
+      expect.arrayContaining(['control_plane_drift', 'pending', 'failed', 'dead_letter'])
+    );
+  });
+
   it('resolves notification center events with tenant scoping', async () => {
     mockAdapter.queryOne.mockResolvedValueOnce({
       id: 'notif_1',

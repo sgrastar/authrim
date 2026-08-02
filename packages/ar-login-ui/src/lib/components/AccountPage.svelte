@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 	import { Button, Spinner } from '$lib/components';
 	import {
@@ -11,6 +11,7 @@
 		type AccountPasskey,
 		type AccountProfile,
 		type AccountProfileSession,
+		type IdentifierReplacementOperation,
 		type AccountSession,
 		type AccountPageScreen,
 		type AccountPageScreenField,
@@ -64,6 +65,12 @@
 	let consentError = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
+	let emailChangeStage = $state<'idle' | 'challenge' | 'processing' | 'completed'>('idle');
+	let emailChangeLoading = $state(false);
+	let emailChangeError = $state('');
+	let emailChangeChallengeId = $state('');
+	let emailChangeIdempotencyKey = $state('');
+	let emailChangePollGeneration = 0;
 	let securityError = $state('');
 	let reauthNeeded = $state(false);
 	let securityLoading = $state(false);
@@ -83,6 +90,7 @@
 		| { type: 'add-totp'; label: string }
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
+		| { type: 'change-email'; email: string }
 		| null
 	>(null);
 
@@ -291,6 +299,10 @@
 		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
 	});
 
+	onDestroy(() => {
+		emailChangePollGeneration += 1;
+	});
+
 	async function detectPasskeySupport(): Promise<boolean> {
 		return window.isSecureContext && window.PublicKeyCredential !== undefined;
 	}
@@ -462,6 +474,8 @@
 			await deleteTotpCredential(pending.id, pending.code);
 		} else if (pending?.type === 'regenerate-totp-backup-codes') {
 			await regenerateTotpBackupCodes(pending.code);
+		} else if (pending?.type === 'change-email') {
+			await startEmailChange(pending.email);
 		}
 	}
 
@@ -574,6 +588,106 @@
 		} finally {
 			profileSaving = false;
 		}
+	}
+
+	async function refreshProfileAfterEmailChange() {
+		const result = await accountAPI.getProfile();
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_loadFailed());
+			return;
+		}
+		profile = result.data.profile;
+		syncAuthFromAccountProfile(result.data.profile, result.data.session);
+		await signalCurrentUserDetails(profile);
+	}
+
+	async function finishEmailChangeOperation(operation: IdentifierReplacementOperation) {
+		if (operation.state === 'completed') {
+			await refreshProfileAfterEmailChange();
+			emailChangeStage = 'completed';
+			emailChangeLoading = false;
+			return true;
+		}
+		if (operation.state === 'blocked_forward_repair' || operation.state === 'canceled') {
+			emailChangeError = $LL.account_actionFailed();
+			emailChangeLoading = false;
+			return true;
+		}
+		return false;
+	}
+
+	async function pollEmailChange(operationId: string, generation: number) {
+		for (let attempt = 0; attempt < 120 && generation === emailChangePollGeneration; attempt += 1) {
+			await new Promise((resolve) => window.setTimeout(resolve, 1500));
+			if (generation !== emailChangePollGeneration) return;
+			const result = await accountAPI.getIdentifierReplacement(operationId);
+			if (result.error) {
+				if (attempt === 119) {
+					emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+					emailChangeLoading = false;
+				}
+				continue;
+			}
+			if (result.data && (await finishEmailChangeOperation(result.data.operation))) return;
+		}
+		if (generation === emailChangePollGeneration) {
+			emailChangeError = $LL.account_actionFailed();
+			emailChangeLoading = false;
+		}
+	}
+
+	async function startEmailChange(email: string) {
+		emailChangeError = '';
+		emailChangeLoading = true;
+		const result = await accountAPI.startIdentifierReplacement(email.trim());
+		if (result.error?.error === 'reauthentication_required') {
+			emailChangeLoading = false;
+			requestReauth({ type: 'change-email', email: email.trim() });
+			return;
+		}
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+			emailChangeLoading = false;
+			return;
+		}
+		emailChangeChallengeId = result.data.challenge_id;
+		emailChangeIdempotencyKey = crypto.randomUUID();
+		emailChangeStage = 'challenge';
+		emailChangeLoading = false;
+	}
+
+	async function completeEmailChange(code: string) {
+		if (!emailChangeChallengeId || !emailChangeIdempotencyKey) return;
+		emailChangeError = '';
+		emailChangeLoading = true;
+		const result = await accountAPI.completeIdentifierReplacement(
+			emailChangeChallengeId,
+			code.trim(),
+			emailChangeIdempotencyKey
+		);
+		if (result.error?.error === 'reauthentication_required') {
+			emailChangeLoading = false;
+			requestReauth();
+			return;
+		}
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+			emailChangeLoading = false;
+			return;
+		}
+		if (await finishEmailChangeOperation(result.data.operation)) return;
+		emailChangeStage = 'processing';
+		const generation = ++emailChangePollGeneration;
+		void pollEmailChange(result.data.operation.id, generation);
+	}
+
+	function cancelEmailChange() {
+		emailChangePollGeneration += 1;
+		emailChangeStage = 'idle';
+		emailChangeLoading = false;
+		emailChangeError = '';
+		emailChangeChallengeId = '';
+		emailChangeIdempotencyKey = '';
 	}
 
 	async function revokeSession(id: string) {
@@ -865,7 +979,13 @@
 													saving={profileSaving}
 													error={profileError}
 													saved={profileSaved}
+													{emailChangeStage}
+													{emailChangeLoading}
+													{emailChangeError}
 													onSave={saveProfileName}
+													onStartEmailChange={startEmailChange}
+													onCompleteEmailChange={completeEmailChange}
+													onCancelEmailChange={cancelEmailChange}
 												/>
 											{:else if field.block_type === 'account_consent_widget'}
 												<AccountConsentSection
@@ -1028,7 +1148,13 @@
 						saving={profileSaving}
 						error={profileError}
 						saved={profileSaved}
+						{emailChangeStage}
+						{emailChangeLoading}
+						{emailChangeError}
 						onSave={saveProfileName}
+						onStartEmailChange={startEmailChange}
+						onCompleteEmailChange={completeEmailChange}
+						onCancelEmailChange={cancelEmailChange}
 					/>
 					<AccountSecuritySection
 						{devices}

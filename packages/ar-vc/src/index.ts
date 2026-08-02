@@ -245,3 +245,4 @@ export { KeyManager } from '@authrim/ar-lib-core';
 // =============================================================================
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

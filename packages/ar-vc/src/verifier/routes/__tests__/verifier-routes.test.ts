@@ -12,7 +12,32 @@ import { vpRequestStatusRoute } from '../request-status';
 import { vpRequestObjectRoute } from '../request-object';
 import { initiateAttributeVerification } from '../attribute-verify';
 import type { Context } from 'hono';
+import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env, VPRequestState } from '../../../types';
+
+const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
+  residency: {
+    version: 1,
+    residencyPolicyId: 'test-residency',
+    residencyPartition: 'default',
+    policyGeneration: 1,
+    allowedRegions: ['apac'],
+    jurisdiction: null,
+  },
+  totalShards: 1,
+  now: 1,
+  updatedBy: 'test',
+});
+
+function createTestConfigKv(): KVNamespace {
+  return {
+    get: vi.fn(async (key: string) =>
+      key.startsWith('region_shard_config:') ? TEST_REGION_CONFIG : null
+    ),
+    put: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockResolvedValue(undefined),
+  } as unknown as KVNamespace;
+}
 
 const verifierCoreMocks = vi.hoisted(() => ({
   findClient: vi.fn(),
@@ -95,11 +120,7 @@ const createMockContext = (
       }),
       batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
-    AUTHRIM_CONFIG: {
-      get: vi.fn().mockResolvedValue(null),
-      put: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
-    } as unknown as KVNamespace,
+    AUTHRIM_CONFIG: createTestConfigKv(),
     VP_REQUEST_STORE: {
       idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-do-id' }),
       get: vi.fn().mockReturnValue(mockStub),

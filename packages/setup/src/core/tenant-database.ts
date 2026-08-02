@@ -2,6 +2,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 
 export type TenantDatabaseRole = 'tenant_core' | 'tenant_pii';
+export type TenantDatabaseDataRole = 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
+export type ControlGeneratedDatabaseDataRole = TenantDatabaseDataRole | 'lookup';
 export type TenantDatabaseProvisioningState =
   | 'requested'
   | 'provisioning'
@@ -47,6 +49,10 @@ export interface TenantDatabaseResourcePlan {
 
 export interface TenantDatabaseRegistryResourceInput extends TenantDatabaseResourcePlan {
   databaseId: string;
+  shardGroup?: string;
+  shardIndex?: number;
+  shardCount?: number;
+  shardKeyStrategy?: string;
   schemaVersion?: number;
   status?: TenantDatabaseProvisioningState;
   signature?: string | null;
@@ -58,19 +64,6 @@ export interface TenantDatabaseProvisioningPlan {
   tenantSlug?: string;
   generation: number;
   resources: TenantDatabaseResourcePlan[];
-}
-
-export interface TenantDatabaseSlotResourcePlan {
-  slotNumber: number;
-  role: TenantDatabaseRole;
-  databaseName: string;
-  binding: string;
-}
-
-export interface TenantDatabaseSlotPlan {
-  slotNumber: number;
-  slotId: string;
-  resources: TenantDatabaseSlotResourcePlan[];
 }
 
 export interface TenantDatabaseRegistrySignatureConfig {
@@ -229,9 +222,6 @@ export const DEFAULT_TENANT_ACCOUNT_STRONG_WARNING_THRESHOLD = 800_000;
 export const DEFAULT_TENANT_STORAGE_WARNING_RATIO = 0.7;
 export const DEFAULT_TENANT_STORAGE_STRONG_WARNING_RATIO = 0.8;
 export const DEFAULT_TENANT_STATS_STALE_AFTER_HOURS = 36;
-export const DEFAULT_TENANT_D1_PREALLOCATED_SLOTS = 3;
-export const MAX_TENANT_D1_PREALLOCATED_SLOTS = 500;
-
 const ROLE_SUFFIX: Record<TenantDatabaseRole, string> = {
   tenant_core: 'CORE',
   tenant_pii: 'PII',
@@ -311,81 +301,44 @@ export function buildTenantDatabaseProvisioningPlan(
   };
 }
 
-function normalizeSlotNumber(slotNumber: number): number {
-  if (!Number.isInteger(slotNumber) || slotNumber < 1) {
-    throw new Error('tenant_database_slot_number_must_be_positive_integer');
-  }
-  if (slotNumber > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-    throw new Error('tenant_database_slot_number_exceeds_maximum');
-  }
-  return slotNumber;
-}
-
-export function formatTenantDatabaseSlotNumber(slotNumber: number): string {
-  return normalizeSlotNumber(slotNumber).toString().padStart(4, '0');
-}
-
-export function buildTenantDatabaseSlotResourcePlan(input: {
-  env: string;
-  slotNumber: number;
-  role: TenantDatabaseRole;
-}): TenantDatabaseSlotResourcePlan {
-  const env = normalizeDatabasePart(input.env, 'env');
-  const slot = formatTenantDatabaseSlotNumber(input.slotNumber);
-  const roleSuffix = ROLE_SUFFIX[input.role];
-  const databaseRole = ROLE_DATABASE_SUFFIX[input.role];
-  return {
-    slotNumber: input.slotNumber,
-    role: input.role,
-    databaseName: `authrim-${env}-tdb-slot-${slot}-${databaseRole}`,
-    binding: `TDB_SLOT_${slot}_${roleSuffix}`,
-  };
-}
-
-export function buildTenantDatabaseSlotPlan(input: {
-  env: string;
-  slotNumber: number;
-}): TenantDatabaseSlotPlan {
-  const slot = formatTenantDatabaseSlotNumber(input.slotNumber);
-  return {
-    slotNumber: input.slotNumber,
-    slotId: `tdb-slot-${slot}`,
-    resources: (['tenant_core', 'tenant_pii'] as const).map((role) =>
-      buildTenantDatabaseSlotResourcePlan({
-        env: input.env,
-        slotNumber: input.slotNumber,
-        role,
-      })
-    ),
-  };
-}
-
-export function buildTenantDatabaseSlotPlans(input: {
-  env: string;
-  slots: number;
-  startSlotNumber?: number;
-}): TenantDatabaseSlotPlan[] {
-  const slots = normalizeSlotNumber(input.slots);
-  const startSlotNumber = normalizeSlotNumber(input.startSlotNumber ?? 1);
-  const lastSlotNumber = startSlotNumber + slots - 1;
-  if (lastSlotNumber > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-    throw new Error('tenant_database_slot_plan_exceeds_maximum');
-  }
-  return Array.from({ length: slots }, (_, index) =>
-    buildTenantDatabaseSlotPlan({
-      env: input.env,
-      slotNumber: startSlotNumber + index,
-    })
-  );
-}
-
 export function isTenantDatabaseBinding(binding: string): boolean {
   return /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/.test(binding);
+}
+
+export function isLookupDatabaseBinding(binding: string): boolean {
+  return /^TDB_LOOKUP_[A-Z0-9_]+_LOOKUP$/u.test(binding);
+}
+
+export function isControlGeneratedDatabaseBinding(binding: string): boolean {
+  return isTenantDatabaseBinding(binding) || isLookupDatabaseBinding(binding);
 }
 
 export function getTenantDatabaseRoleFromBinding(binding: string): TenantDatabaseRole | null {
   const match = binding.match(/_(CORE|PII)(?:_S[0-9]+)?$/u);
   return match ? (BINDING_ROLE_SUFFIX[match[1]] ?? null) : null;
+}
+
+export function getTenantDatabaseDataRoleFromBinding(
+  binding: string
+): TenantDatabaseDataRole | null {
+  if (!isTenantDatabaseBinding(binding)) return null;
+  if (/^TDB_DEFAULT_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(binding)) {
+    return 'tenant_core/default';
+  }
+  if (/^TDB_USERS_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(binding)) {
+    return 'tenant_core/users';
+  }
+  if (/^TDB_PII_[A-Z0-9_]*_PII(?:_S[0-9]+)?$/u.test(binding)) {
+    return 'tenant_pii';
+  }
+  return null;
+}
+
+export function getControlGeneratedDatabaseDataRoleFromBinding(
+  binding: string
+): ControlGeneratedDatabaseDataRole | null {
+  if (isLookupDatabaseBinding(binding)) return 'lookup';
+  return getTenantDatabaseDataRoleFromBinding(binding);
 }
 
 export function listTenantDatabaseMigrationTargets(
@@ -617,6 +570,10 @@ function buildTenantDatabaseRegistrySignaturePayload(input: {
   schemaVersion: number;
   status: TenantDatabaseProvisioningState;
 }): string {
+  const shardGroup = input.resource.shardGroup ?? 'default';
+  const shardIndex = input.resource.shardIndex ?? 0;
+  const shardCount = input.resource.shardCount ?? 1;
+  const shardKeyStrategy = input.resource.shardKeyStrategy ?? 'none';
   const values: Record<(typeof _SIGNED_TENANT_DATABASE_REGISTRY_FIELDS)[number], unknown> = {
     tenant_id: input.tenantId,
     role: input.resource.role,
@@ -626,10 +583,10 @@ function buildTenantDatabaseRegistrySignaturePayload(input: {
     schema_version: input.schemaVersion,
     status: input.status,
     generation: input.resource.generation,
-    shard_group: 'default',
-    shard_index: 0,
-    shard_count: 1,
-    shard_key_strategy: 'none',
+    shard_group: shardGroup,
+    shard_index: shardIndex,
+    shard_count: shardCount,
+    shard_key_strategy: shardKeyStrategy,
     worker_shard: 'primary',
     deployment_target: null,
     region_hint: null,
@@ -715,6 +672,25 @@ export function buildTenantDatabaseRegistrySql(options: {
   const statements: string[] = [];
 
   for (const resource of options.resources) {
+    const shardGroup = resource.shardGroup?.trim() || 'default';
+    const shardIndex = resource.shardIndex ?? 0;
+    const shardCount = resource.shardCount ?? 1;
+    const shardKeyStrategy = resource.shardKeyStrategy?.trim() || 'none';
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(shardGroup)) {
+      throw new Error(`tenant_database_shard_group_invalid:${shardGroup}`);
+    }
+    if (!Number.isSafeInteger(shardIndex) || shardIndex < 0) {
+      throw new Error(`tenant_database_shard_index_invalid:${shardIndex}`);
+    }
+    if (!Number.isSafeInteger(shardCount) || shardCount < 1 || shardCount > 32) {
+      throw new Error(`tenant_database_shard_count_invalid:${shardCount}`);
+    }
+    if (shardIndex >= shardCount) {
+      throw new Error(`tenant_database_shard_index_out_of_range:${shardIndex}:${shardCount}`);
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(shardKeyStrategy)) {
+      throw new Error(`tenant_database_shard_key_strategy_invalid:${shardKeyStrategy}`);
+    }
     const schemaVersion = resource.schemaVersion ?? 1;
     const status = resource.status ?? 'ready';
     const signature = resource.signature ? `'${escapeSql(resource.signature)}'` : 'NULL';
@@ -730,9 +706,9 @@ INSERT INTO tenant_database_registry (
   region_hint, jurisdiction, signature, signature_key_id, metadata_json,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
-  '${escapeSql(options.tenantId)}', '${resource.role}', ${resource.generation}, 'default', 0, 'd1',
+  '${escapeSql(options.tenantId)}', '${resource.role}', ${resource.generation}, '${escapeSql(shardGroup)}', ${shardIndex}, 'd1',
   '${escapeSql(resource.databaseId)}', '${escapeSql(resource.databaseName)}', '${escapeSql(resource.binding)}', NULL, ${schemaVersion},
-  '${status}', 1, 'none', 'primary', NULL,
+  '${status}', ${shardCount}, '${escapeSql(shardKeyStrategy)}', 'primary', NULL,
   NULL, NULL, ${signature}, ${signatureKeyId}, '${metadataJson}',
   '${now}', '${now}', '${escapeSql(actor)}', '${escapeSql(actor)}'
 )
@@ -772,7 +748,7 @@ INSERT INTO tenant_database_active_pointers (
   tenant_id, role, shard_group, generation, shard_count, shard_key_strategy,
   runtime_generation, status, updated_at, updated_by, metadata_json
 ) VALUES (
-  '${escapeSql(options.tenantId)}', '${resource.role}', 'default', ${resource.generation}, 1, 'none',
+  '${escapeSql(options.tenantId)}', '${resource.role}', '${escapeSql(shardGroup)}', ${resource.generation}, ${shardCount}, '${escapeSql(shardKeyStrategy)}',
   1, 'active', '${now}', '${escapeSql(actor)}', NULL
 )
 ON CONFLICT(tenant_id, role, shard_group) DO UPDATE SET

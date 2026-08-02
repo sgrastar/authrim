@@ -36,8 +36,6 @@ export function topologyUpdateResumeInstruction(update: TopologyUpdateState, env
   const prefix = 'npx @authrim/setup';
   const quotedEnv = quoteShellArgument(env);
   switch (update.kind) {
-    case 'tenant_d1_pool':
-      return `${prefix} tenant-db-pool-expand --env ${quotedEnv}`;
     case 'tenant_database': {
       const separator = update.subject?.lastIndexOf(':') ?? -1;
       const tenantId = separator > 0 ? update.subject?.slice(0, separator) : undefined;

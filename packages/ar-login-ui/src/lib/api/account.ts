@@ -99,6 +99,24 @@ export type AccountOperation = {
 	metadata?: Record<string, unknown>;
 };
 
+export type IdentifierReplacementOperation = {
+	id: string;
+	state:
+		| 'processing'
+		| 'directory_pending'
+		| 'authoritative_switch_pending'
+		| 'authoritative_switched'
+		| 'revocation_pending'
+		| 'completed'
+		| 'blocked_forward_repair'
+		| 'canceled';
+	status_url?: string;
+	error_code?: string | null;
+	created_at?: number;
+	updated_at?: number;
+	completed_at?: number | null;
+};
+
 export type AccountOAuthClientConsent = {
 	kind: 'oauth_client';
 	id: string;
@@ -366,6 +384,30 @@ export const accountAPI = {
 			method: 'POST',
 			body: JSON.stringify({ code })
 		}),
+
+	startIdentifierReplacement: (email: string) =>
+		accountFetch<{ challenge_id: string; expires_in: number }>(
+			'/api/account/identifier-replacements/start',
+			{
+				method: 'POST',
+				body: JSON.stringify({ email })
+			}
+		),
+
+	completeIdentifierReplacement: (challengeId: string, code: string, idempotencyKey: string) =>
+		accountFetch<{ operation: IdentifierReplacementOperation }>(
+			'/api/account/identifier-replacements/complete',
+			{
+				method: 'POST',
+				headers: { 'Idempotency-Key': idempotencyKey },
+				body: JSON.stringify({ challenge_id: challengeId, code })
+			}
+		),
+
+	getIdentifierReplacement: (operationId: string) =>
+		accountFetch<{ operation: IdentifierReplacementOperation }>(
+			`/api/account/identifier-replacements/${encodeURIComponent(operationId)}`
+		),
 
 	getSessions: () => accountFetch<{ sessions: AccountSession[] }>('/api/account/sessions'),
 

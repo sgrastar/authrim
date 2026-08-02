@@ -35,8 +35,9 @@
 	let adminContextPromise: Promise<void> | null = null;
 	let loggingAlertCount = $state(0);
 	let notificationAlertCount = $state(0);
+	let controlPlaneDriftAlertCount = $state(0);
 	const adminUiVersion = `v${adminUiPackage.version}`;
-	const runtimeEnvironment = import.meta.env.MODE || 'development';
+	const runtimeEnvironment = import.meta.env.PUBLIC_AUTHRIM_ENVIRONMENT_NAME || 'unknown';
 
 	const hiddenDashboardRoutes = $derived([
 		{
@@ -203,6 +204,11 @@
 		],
 		operations: [
 			{ path: '/admin/scale', label: $LL.admin_nav_scale(), icon: 'i-ph-chart-bar' },
+			{
+				path: '/admin/control-plane',
+				label: $LL.admin_nav_control_plane(),
+				icon: 'i-ph-git-diff'
+			},
 			{
 				path: '/admin/storage-destinations',
 				label: $LL.admin_nav_storage_destinations(),
@@ -547,6 +553,16 @@
 		} catch {
 			notificationAlertCount = 0;
 		}
+		try {
+			const response = await adminLoggingControlAPI.listNotificationCenter({
+				category: 'control_plane_drift',
+				status: 'unresolved',
+				limit: 1
+			});
+			controlPlaneDriftAlertCount = response.total;
+		} catch {
+			controlPlaneDriftAlertCount = 0;
+		}
 	}
 </script>
 
@@ -758,6 +774,19 @@
 			/>
 
 			<div class="page-content">
+				{#if controlPlaneDriftAlertCount > 0}
+					<div class="control-drift-warning" role="status">
+						<i class="i-ph-warning-circle" aria-hidden="true"></i>
+						<span>
+							{$LL.admin_notifications_control_plane_drift_banner({
+								count: controlPlaneDriftAlertCount
+							})}
+						</span>
+						<a href="/admin/notifications">
+							{$LL.admin_notifications_review_control_plane_drift()}
+						</a>
+					</div>
+				{/if}
 				{@render children()}
 			</div>
 		</main>
@@ -796,6 +825,36 @@
 		box-sizing: border-box;
 	}
 
+	.control-drift-warning {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-bottom: 18px;
+		padding: 10px 12px;
+		border: 1px solid var(--color-warning-border, #d59b27);
+		border-left-width: 4px;
+		background: var(--color-warning-subtle, #fff8e6);
+		color: var(--color-text, #20242a);
+		font-size: 14px;
+	}
+
+	.control-drift-warning i {
+		flex: 0 0 auto;
+		font-size: 20px;
+		color: var(--color-warning, #9a6400);
+	}
+
+	.control-drift-warning span {
+		min-width: 0;
+		flex: 1;
+	}
+
+	.control-drift-warning a {
+		flex: 0 0 auto;
+		color: var(--color-link, #075ea8);
+		font-weight: 600;
+	}
+
 	/* Loading State */
 	.loading-container {
 		display: flex;
@@ -826,6 +885,16 @@
 
 		.page-content {
 			padding: 20px 16px 48px;
+		}
+
+		.control-drift-warning {
+			align-items: flex-start;
+			flex-wrap: wrap;
+		}
+
+		.control-drift-warning a {
+			width: 100%;
+			padding-left: 30px;
 		}
 	}
 </style>

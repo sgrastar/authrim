@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
 const mocks = vi.hoisted(() => ({
@@ -93,6 +93,8 @@ function app() {
 
 describe('device secret admin security behavior', () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-15T00:00:00.000Z'));
     vi.clearAllMocks();
     mocks.repositoryTenants.length = 0;
     mocks.findByUserId.mockResolvedValue([]);
@@ -102,6 +104,8 @@ describe('device secret admin security behavior', () => {
     mocks.cleanupExpired.mockResolvedValue(0);
     mocks.audit.mockResolvedValue(undefined);
   });
+
+  afterEach(() => vi.useRealTimers());
 
   it('returns metadata only, filters revoked secrets and computes a meaningful summary', async () => {
     const now = Date.now();

@@ -68,6 +68,14 @@ export interface RegionShardConfig {
 			description?: string;
 		}
 	>;
+	residency: {
+		version: 1;
+		residencyPolicyId: string;
+		residencyPartition: string;
+		policyGeneration: number;
+		allowedRegions: string[];
+		jurisdiction: 'eu' | 'fedramp' | null;
+	};
 	validation: {
 		valid: boolean;
 		errors: string[];

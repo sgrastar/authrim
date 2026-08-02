@@ -52,7 +52,7 @@ function defaultTransientAuthStoragePolicy(
 ): TransientAuthStoragePolicy {
   if (deploymentProfile === 'tenant-d1') {
     return {
-      sessionColdPersistence: 'disabled',
+      sessionColdPersistence: 'enabled',
       sessionClientMirror: 'async',
       deviceCibaColdPersistence: 'disabled',
       externalDurableMirror: 'disabled',

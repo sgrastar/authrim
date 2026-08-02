@@ -111,6 +111,15 @@ function buildApp(env: TestEnv, requireTenant = true) {
       ),
     });
   });
+  app.get('/api/admin/tenants/:tenantId/provisioning', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/tenants/:tenantId/provisioning/retry', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/tenants/:tenantId/provisioning/cleanup', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
   app.get('/api/admin/users', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
@@ -720,7 +729,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
     });
 
-    it('returns a PII-free 409 when tenant database runtime source resolution fails', async () => {
+    it('returns a PII-free 409 when the signed tenant runtime snapshot is missing', async () => {
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
@@ -746,7 +755,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'missing_binding',
+        error: 'missing_snapshot',
         storage_profile: 'builtin:storage:tenant-d1',
         route: '/test',
         tenant_id: 'sample',
@@ -809,7 +818,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.email).toBeUndefined();
     });
 
-    it('returns a PII-free 409 for tenant-d1 protocol routes that are not routed yet', async () => {
+    it('returns a PII-free 409 for tenant-d1 protocol routes without a signed snapshot', async () => {
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
@@ -839,7 +848,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'unsupported_storage_profile',
+        error: 'missing_snapshot',
         storage_profile: 'builtin:storage:tenant-d1',
         route: '/device_authorization',
         tenant_id: 'sample',
@@ -847,7 +856,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.email).toBeUndefined();
     });
 
-    it('returns a PII-free 409 for tenant-d1 admin-critical job routes that are not routed yet', async () => {
+    it('returns a PII-free 409 for tenant-d1 admin routes without a signed snapshot', async () => {
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
@@ -879,7 +888,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'unsupported_storage_profile',
+        error: 'missing_snapshot',
         storage_profile: 'builtin:storage:tenant-d1',
         route: '/api/admin/jobs/users/bulk-update',
         tenant_id: 'sample',
@@ -916,6 +925,34 @@ describe('requestContextMiddleware – tenant existence check', () => {
 
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({ tenantId: 'sample' });
+    });
+
+    it.each([
+      ['GET', '/api/admin/tenants/provisioning-tenant/provisioning'],
+      ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/retry'],
+      ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/cleanup'],
+    ])('allows %s %s before the tenant runtime snapshot exists', async (method, path) => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
+      };
+      const app = buildApp(env);
+      const request = makeRequest('admin.pages.dev', path);
+
+      const res = await app.request(
+        new Request(request.url, { method, headers: request.headers }),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'default' });
+      expect(db.prepare).not.toHaveBeenCalled();
     });
 
     it('allows platform admin requests without X-Tenant-Id', async () => {

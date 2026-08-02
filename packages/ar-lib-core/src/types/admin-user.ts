@@ -717,6 +717,12 @@ export const ADMIN_PERMISSIONS = {
   ADMIN_MACHINE_ACCESS_DELETE: 'admin:machine_access:delete',
   ADMIN_MACHINE_ACCESS_ALL: 'admin:machine_access:*',
 
+  // Environment control plane
+  CONTROL_PLANE_READ: 'admin:control_plane:read',
+  CONTROL_PLANE_ROTATE: 'admin:control_plane:rotate',
+  CONTROL_PLANE_PROVISION: 'admin:control_plane:provision',
+  CONTROL_PLANE_ALL: 'admin:control_plane:*',
+
   // Operational logs
   OPERATIONAL_LOGS_READ: 'admin:operational_logs:read',
   OPERATIONAL_LOGS_DETAIL_READ: 'admin:operational_logs:detail:read',

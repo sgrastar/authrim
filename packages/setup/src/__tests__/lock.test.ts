@@ -19,6 +19,13 @@ function createTestLock(): AuthrimLock {
       { binding: 'DB', name: 'test-authrim-core-db', id: 'stale-core-id' },
       { binding: 'DB_PII', name: 'test-authrim-pii-db', id: 'stale-pii-id' },
       { binding: 'DB_ADMIN', name: 'test-authrim-admin-db', id: 'stale-admin-id' },
+      { binding: 'CONTROL_DB', name: 'test-authrim-control-db', id: 'control-id' },
+      { binding: 'LOOKUP_DB', name: 'test-authrim-lookup-db', id: 'lookup-id' },
+      {
+        binding: 'PLUGIN_RUNNER_DB',
+        name: 'test-authrim-plugin-runner-db',
+        id: 'plugin-runner-id',
+      },
     ],
     kv: KV_NAMESPACES.map((binding) => ({
       binding,
@@ -123,6 +130,9 @@ describe('reconcileSharedD1ResourcesInLock', () => {
       { name: 'test-authrim-core-db', uuid: 'live-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'live-pii-id' },
       { name: 'test-authrim-admin-db', uuid: 'live-admin-id' },
+      { name: 'test-authrim-control-db', uuid: 'control-id' },
+      { name: 'test-authrim-lookup-db', uuid: 'lookup-id' },
+      { name: 'test-authrim-plugin-runner-db', uuid: 'plugin-runner-id' },
       { name: 'authrim-test-tdb-slot-0001-core', uuid: 'live-tenant-core-id' },
     ]);
 
@@ -146,6 +156,9 @@ describe('reconcileSharedD1ResourcesInLock', () => {
     const result = reconcileSharedD1ResourcesInLock(lock, 'test', [
       { name: 'test-authrim-core-db', uuid: 'live-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'live-pii-id' },
+      { name: 'test-authrim-control-db', uuid: 'control-id' },
+      { name: 'test-authrim-lookup-db', uuid: 'lookup-id' },
+      { name: 'test-authrim-plugin-runner-db', uuid: 'plugin-runner-id' },
       { name: 'authrim-test-tdb-slot-0001-core', uuid: 'stale-tenant-core-id' },
     ]);
 
@@ -161,6 +174,9 @@ describe('reconcileSharedD1ResourcesInLock', () => {
       { name: 'test-authrim-core-db', uuid: 'stale-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'stale-pii-id' },
       { name: 'test-authrim-admin-db', uuid: 'stale-admin-id' },
+      { name: 'test-authrim-control-db', uuid: 'control-id' },
+      { name: 'test-authrim-lookup-db', uuid: 'lookup-id' },
+      { name: 'test-authrim-plugin-runner-db', uuid: 'plugin-runner-id' },
       { name: 'authrim-test-tdb-slot-0001-core', uuid: 'stale-tenant-core-id' },
     ];
 
@@ -178,6 +194,9 @@ describe('reconcileSharedD1ResourcesInLock', () => {
       { name: 'test-authrim-core-db', uuid: 'stale-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'stale-pii-id' },
       { name: 'test-authrim-admin-db', uuid: 'stale-admin-id' },
+      { name: 'test-authrim-control-db', uuid: 'control-id' },
+      { name: 'test-authrim-lookup-db', uuid: 'lookup-id' },
+      { name: 'test-authrim-plugin-runner-db', uuid: 'plugin-runner-id' },
     ]);
 
     expect(result.missingBindings).toEqual([

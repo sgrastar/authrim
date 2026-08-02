@@ -1,16 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   adminTenantCreateHandler,
   adminTenantDeleteHandler,
   adminTenantGetHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
+  adminTenantProvisioningStatusHandler,
   adminTenantUpdateHandler,
   adminTenantSuspendHandler,
   adminTenantResumeHandler,
   adminTenantLifecycleJobRetryHandler,
   adminTenantsListHandler,
+  activateProvisionedTenantLifecycle,
   activateProvisionedTenant,
   provisionTenant,
   rollbackProvisionedTenant,
@@ -35,23 +37,11 @@ interface TenantRow {
   tenant_code: string;
   name: string;
   description: string | null;
+  isolation_policy: 'shared_pool' | 'tenant_exclusive';
   lifecycle_state: string;
   is_default: number;
   created_at: number;
   updated_at: number;
-}
-
-interface TenantDatabaseSlotRow {
-  slot_id: string;
-  slot_number: number;
-  core_binding_ref: string;
-  pii_binding_ref: string;
-  core_database_name: string;
-  pii_database_name: string;
-  core_database_id: string;
-  pii_database_id: string;
-  state: string;
-  assigned_tenant_id: string | null;
 }
 
 const adapters = vi.hoisted(() => ({
@@ -59,6 +49,8 @@ const adapters = vi.hoisted(() => ({
   tenantAdapters: new Map<string, MockAdapter>(),
   adminAdapter: null as MockAdapter | null,
 }));
+
+const ensureTenantRegionShardConfig = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock('@authrim/ar-lib-core', () => ({
   ADMIN_PERMISSIONS: {
@@ -148,6 +140,10 @@ vi.mock('../single-tenant-guard', () => ({
   isSingleTenantMode: vi.fn(() => false),
 }));
 
+vi.mock('../tenant-region-shard-policy', () => ({
+  ensureTenantRegionShardConfig,
+}));
+
 function createAdapter(
   handler: (
     sql: string,
@@ -214,6 +210,7 @@ function createTenantRow(id: string, overrides: Partial<TenantRow> = {}): Tenant
     tenant_code: id,
     name: id,
     description: null,
+    isolation_policy: 'tenant_exclusive',
     lifecycle_state: 'active',
     is_default: 0,
     created_at: 1,
@@ -227,9 +224,10 @@ function createTenantRowFromInsertParams(params: unknown[]): TenantRow {
     tenant_code: String(params[1]),
     name: String(params[3]),
     description: params[4] as string | null,
-    lifecycle_state: String(params[5]),
-    created_at: Number(params[7]),
-    updated_at: Number(params[8]),
+    isolation_policy: String(params[5]) as TenantRow['isolation_policy'],
+    lifecycle_state: String(params[6]),
+    created_at: Number(params[8]),
+    updated_at: Number(params[9]),
   });
 }
 
@@ -254,11 +252,24 @@ function createContext(
     },
     env: {
       BASE_DOMAIN: 'auth.example.com',
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
       DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       AUTHRIM_CONFIG: createKVNamespace(),
       SETTINGS: createKVNamespace(),
       TENANT_RUNTIME_REGISTRY: createKVNamespace(),
       KEY_MANAGER: createKeyManager(),
+      PLUGIN_RUNNER: {
+        resolveNotificationProviderOrder: vi.fn(async () => {
+          throw new Error('plugin_notification_provider_order_unavailable');
+        }),
+        replaceNotificationProviderOrder: vi.fn(async (input) => ({
+          tenantId: input.tenantId,
+          channel: input.channel,
+          configVersion: 1,
+          state: 'disabled' as const,
+          installationIds: [],
+        })),
+      } as unknown as Env['PLUGIN_RUNNER'],
       ...envOverrides,
     } as Env,
     json: vi.fn((responseBody: unknown, status = 200) => {
@@ -274,23 +285,7 @@ function createContext(
   } as any;
 }
 
-function createSlot(overrides: Partial<TenantDatabaseSlotRow> = {}): TenantDatabaseSlotRow {
-  return {
-    slot_id: 'slot-0001',
-    slot_number: 1,
-    core_binding_ref: 'TDB_SLOT_0001_CORE',
-    pii_binding_ref: 'TDB_SLOT_0001_PII',
-    core_database_name: 'authrim-test-tdb-slot-0001-core',
-    pii_database_name: 'authrim-test-tdb-slot-0001-pii',
-    core_database_id: 'core-db-id',
-    pii_database_id: 'pii-db-id',
-    state: 'available',
-    assigned_tenant_id: null,
-    ...overrides,
-  };
-}
-
-describe('tenant D1 pool tenant management', () => {
+describe('Control-plane tenant D1 management', () => {
   beforeEach(() => {
     adapters.defaultAdapter = null;
     adapters.tenantAdapters.clear();
@@ -298,43 +293,27 @@ describe('tenant D1 pool tenant management', () => {
     vi.clearAllMocks();
   });
 
-  it('returns the tenant D1 pool summary in the tenant list', async () => {
+  it('lists tenants without reading the retired preallocated slot inventory', async () => {
     adapters.defaultAdapter = createAdapter((sql) => {
       if (sql.includes('FROM tenants')) {
         return [createTenantRow('first', { name: 'First' })];
       }
       return null;
     });
-    adapters.adminAdapter = createAdapter((sql) => {
-      if (sql.includes('FROM tenant_database_slots')) {
-        return [
-          { state: 'available', count: 2 },
-          { state: 'assigned', count: 1 },
-          { state: 'reset_required', count: 1 },
-        ];
-      }
-      return null;
+    adapters.adminAdapter = createAdapter(() => {
+      throw new Error('legacy slot inventory must not be queried');
     });
 
     const response = await adminTenantsListHandler(createContext({}));
     const body = (await response.json()) as {
-      tenant_d1_pool: {
-        enabled: boolean;
-        capacity: number;
-        available_slots: number;
-        assigned_slots: number;
-        reset_required_slots: number;
-      };
+      tenants: Array<{ id: string }>;
+      tenant_d1_pool?: unknown;
     };
 
     expect(response.status).toBe(200);
-    expect(body.tenant_d1_pool).toMatchObject({
-      enabled: true,
-      capacity: 4,
-      available_slots: 2,
-      assigned_slots: 1,
-      reset_required_slots: 1,
-    });
+    expect(body.tenants).toEqual([expect.objectContaining({ id: 'first' })]);
+    expect(body).not.toHaveProperty('tenant_d1_pool');
+    expect(adapters.adminAdapter.calls).toEqual([]);
   });
 
   it('limits tenant inventory list to the authenticated tenant scope for non-platform admins', async () => {
@@ -387,714 +366,392 @@ describe('tenant D1 pool tenant management', () => {
     expect(body.error).toBe('admin_insufficient_permissions');
   });
 
-  it('returns 409 when no preallocated tenant D1 slot is available', async () => {
-    adapters.defaultAdapter = createAdapter((sql) => {
-      if (sql === 'SELECT id FROM tenants WHERE id = ?') {
-        return null;
-      }
-      if (sql === 'SELECT id FROM tenants WHERE tenant_code = ?') {
-        return null;
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-    adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes('LIMIT 1')
-      ) {
-        return null;
-      }
-      if (op === 'queryOne' && sql.includes('COUNT(*) AS total')) {
-        return { total: 3 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
-    });
-
-    const response = await adminTenantCreateHandler(
-      createContext({ id: 'second', name: 'Second Tenant' })
-    );
-    const body = (await response.json()) as {
-      error: string;
-      current_capacity: number;
-      required_additional_slots: number;
-    };
-
-    expect(response.status).toBe(409);
-    expect(body).toMatchObject({
-      error: 'tenant_d1_slot_exhausted',
-      current_capacity: 3,
-      required_additional_slots: 1,
-    });
-    expect(
-      adapters.defaultAdapter.calls.some(
-        (call) => call.op === 'execute' && call.sql.includes('INSERT INTO tenants')
-      )
-    ).toBe(false);
-  });
-
-  it('does not create a tenant row when slot reservation loses a conditional update race', async () => {
-    const slot = createSlot();
-
-    adapters.defaultAdapter = createAdapter((sql) => {
-      if (sql === 'SELECT id FROM tenants WHERE id = ?') {
-        return null;
-      }
-      if (sql === 'SELECT id FROM tenants WHERE tenant_code = ?') {
-        return null;
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-    adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('WHERE state =') && sql.includes('LIMIT 1')) {
-        return slot;
-      }
-      if (op === 'execute' && sql.includes("SET state = 'reserved'")) {
-        return { rowsAffected: 0 };
-      }
-      if (op === 'queryOne' && sql.includes('WHERE slot_id = ? AND state = ?')) {
-        return null;
-      }
-      if (op === 'queryOne' && sql.includes('COUNT(*) AS total')) {
-        return { total: 1 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
-    });
-
-    const response = await adminTenantCreateHandler(
-      createContext({ id: 'second', name: 'Second Tenant' })
-    );
-    const body = (await response.json()) as { error: string; current_capacity: number };
-
-    expect(response.status).toBe(409);
-    expect(body).toMatchObject({
-      error: 'tenant_d1_slot_exhausted',
-      current_capacity: 1,
-    });
-    expect(
-      adapters.defaultAdapter.calls.some(
-        (call) => call.op === 'execute' && call.sql.includes('INSERT INTO tenants')
-      )
-    ).toBe(false);
-  });
-
-  it('reserves a slot, seeds the tenant database, and marks the slot assigned', async () => {
-    const slot = createSlot();
-    let slotState = 'available';
-    let assignedTenantId: string | null = null;
-    let controlTenant: TenantRow | null = null;
-    let tenantDbRow: TenantRow | null = null;
-
+  it('accepts Control provisioning without reading a preallocated slot', async () => {
+    let tenant: TenantRow | null = null;
+    let operation: Record<string, unknown> | null = null;
+    const steps: Array<Record<string, unknown>> = [];
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
-        return null;
-      }
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') {
-        return null;
-      }
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') return null;
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') return null;
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRowFromInsertParams(params);
+        tenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'active'")) {
-        if (controlTenant) {
-          controlTenant = {
-            ...controlTenant,
-            lifecycle_state: 'active',
-            updated_at: Number(params[0]),
-          };
-        }
-        return { rowsAffected: 1 };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes(
-          'SELECT id, tenant_code, name, description, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?'
-        )
-      ) {
-        return controlTenant;
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
+      if (op === 'queryOne' && sql.includes('SELECT id, tenant_code, name')) return tenant;
+      throw new Error(`unexpected platform adapter SQL: ${sql}`);
     });
-
-    const tenantAdapter = createAdapter((sql, params, op) => {
-      if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        tenantDbRow = createTenantRowFromInsertParams(params);
-        return { rowsAffected: 1 };
-      }
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
-        return tenantDbRow ? { id: tenantDbRow.id } : null;
-      }
-      throw new Error(`unexpected tenant adapter SQL: ${sql}`);
-    });
-    adapters.tenantAdapters.set('second', tenantAdapter);
-
     adapters.adminAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql.includes('WHERE state =') && sql.includes('LIMIT 1')) {
-        return slotState === 'available'
-          ? { ...slot, state: slotState, assigned_tenant_id: null }
-          : null;
-      }
-      if (op === 'execute' && sql.includes("SET state = 'reserved'")) {
-        slotState = 'reserved';
-        assignedTenantId = String(params[0]);
+      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) return null;
+      if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operations')) {
+        operation = {
+          operation_id: params[0],
+          environment_id: params[1],
+          tenant_id: params[2],
+          tenant_code: params[3],
+          tenant_name: params[4],
+          tenant_description: params[5],
+          operation_kind: params[6],
+          source_tenant_id: params[7],
+          preparation_payload_json: params[8],
+          preparation_result_json: null,
+          residency_policy_id: params[9],
+          residency_partition: params[10],
+          isolation_policy: params[11],
+          request_hash: params[12],
+          idempotency_key: params[13],
+          status: 'queued',
+          current_step: 'request_accepted',
+          capacity_operation_ids_json: '{}',
+          default_route_allocation_json: null,
+          attempt_count: 0,
+          retry_budget_started_at: params[14],
+          next_attempt_at: null,
+          last_error_code: null,
+          lease_owner: null,
+          lease_expires_at: null,
+          fencing_token: 0,
+          created_by: params[15],
+          created_at: params[16],
+          started_at: null,
+          completed_at: null,
+          updated_at: params[17],
+        };
         return { rowsAffected: 1 };
       }
-      if (op === 'queryOne' && sql.includes('WHERE slot_id = ? AND state = ?')) {
-        return slotState === 'reserved'
-          ? { ...slot, state: slotState, assigned_tenant_id: assignedTenantId }
-          : null;
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
+      if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operation_steps')) {
+        steps.push({
+          step_key: params[1],
+          display_order: params[2],
+          status: params[3],
+          attempt_count: 0,
+          retry_budget_started_at: params[10],
+          next_attempt_at: null,
+          last_error_code: null,
+          observed_resource_id: null,
+          started_at: null,
+          completed_at: params[4],
+          updated_at: params[5],
+        });
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes("SET state = 'assigned'")) {
-        slotState = 'assigned';
-        assignedTenantId = String(params[0]);
-        return { rowsAffected: 1 };
-      }
+      if (op === 'queryOne' && sql.includes('WHERE operation_id = ?')) return operation;
+      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return steps;
       throw new Error(`unexpected admin adapter SQL: ${sql}`);
     });
 
     const response = await adminTenantCreateHandler(
-      createContext({ id: 'second', name: 'Second Tenant', description: 'Tenant D1' })
+      createContext({ id: 'second', name: 'Second Tenant' })
     );
     const body = (await response.json()) as {
-      id: string;
       lifecycle_state: string;
-      provisioning: { mode: string; slot_id: string; smoke_test: string };
+      provisioning: {
+        mode: string;
+        status: string;
+        isolation_policy: string;
+        steps: unknown[];
+      };
     };
 
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(202);
     expect(body).toMatchObject({
-      id: 'second',
-      lifecycle_state: 'active',
+      lifecycle_state: 'provisioning',
       provisioning: {
-        mode: 'tenant-d1-preallocated-pool',
-        slot_id: 'slot-0001',
-        smoke_test: 'passed',
+        mode: 'control-plane',
+        status: 'queued',
+        isolation_policy: 'tenant_exclusive',
       },
     });
-    expect(tenantDbRow).toMatchObject({ id: 'second', lifecycle_state: 'active' });
-    expect(slotState).toBe('assigned');
-    expect(assignedTenantId).toBe('second');
+    expect(operation).toMatchObject({ isolation_policy: 'tenant_exclusive' });
+    expect(body.provisioning.steps).toHaveLength(9);
+    expect(
+      adapters.adminAdapter.calls.some((call) => call.sql.includes('tenant_database_slots'))
+    ).toBe(false);
   });
 
-  it('marks the slot reset_required when smoke fails after tenant DB write', async () => {
-    const slot = createSlot();
-    let slotState = 'available';
-    let assignedTenantId: string | null = null;
-    let controlTenant: TenantRow | null = null;
-    let tenantDbRow: TenantRow | null = null;
-
+  it('adopts a concurrent matching operation without deleting its platform draft', async () => {
+    let tenant: TenantRow | null = null;
+    let operation: Record<string, unknown> | null = null;
+    let tenantOperationReads = 0;
     adapters.defaultAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
-        return null;
-      }
-      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') {
-        return null;
-      }
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') return null;
+      if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE tenant_code = ?') return null;
       if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRowFromInsertParams(params);
+        tenant = createTenantRowFromInsertParams(params);
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'suspended'")) {
-        if (controlTenant) {
-          controlTenant = {
-            ...controlTenant,
-            lifecycle_state: 'suspended',
-            updated_at: Number(params[0]),
-          };
-        }
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
-        controlTenant = controlTenant
-          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(params[0]) }
-          : null;
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
+      if (op === 'queryOne' && sql.includes('SELECT id, tenant_code, name')) return tenant;
+      throw new Error(`unexpected platform adapter SQL: ${sql}`);
     });
-
-    adapters.tenantAdapters.set(
-      'second',
-      createAdapter((sql, params, op) => {
-        if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-          tenantDbRow = createTenantRowFromInsertParams(params);
-          return { rowsAffected: 1 };
-        }
-        if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
-          return tenantDbRow ? { id: tenantDbRow.id } : null;
-        }
-        throw new Error(`unexpected tenant adapter SQL: ${sql}`);
-      })
-    );
-
     adapters.adminAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql.includes('WHERE state =') && sql.includes('LIMIT 1')) {
-        return slotState === 'available'
-          ? { ...slot, state: slotState, assigned_tenant_id: null }
-          : null;
+      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) {
+        tenantOperationReads += 1;
+        return tenantOperationReads === 1 ? null : operation;
       }
-      if (op === 'execute' && sql.includes("SET state = 'reserved'")) {
-        slotState = 'reserved';
-        assignedTenantId = String(params[0]);
-        return { rowsAffected: 1 };
+      if (op === 'execute' && sql.includes('INSERT INTO tenant_provisioning_operations')) {
+        operation = {
+          operation_id: params[0],
+          environment_id: params[1],
+          tenant_id: params[2],
+          tenant_code: params[3],
+          tenant_name: params[4],
+          tenant_description: params[5],
+          operation_kind: params[6],
+          source_tenant_id: params[7],
+          preparation_payload_json: params[8],
+          preparation_result_json: null,
+          residency_policy_id: params[9],
+          residency_partition: params[10],
+          isolation_policy: params[11],
+          request_hash: params[12],
+          idempotency_key: params[13],
+          status: 'queued',
+          current_step: 'request_accepted',
+          capacity_operation_ids_json: '{}',
+          default_route_allocation_json: null,
+          attempt_count: 0,
+          next_attempt_at: null,
+          last_error_code: null,
+          lease_owner: null,
+          lease_expires_at: null,
+          fencing_token: 0,
+          retry_budget_started_at: params[14],
+          created_by: params[15],
+          created_at: params[16],
+          started_at: null,
+          completed_at: null,
+          updated_at: params[17],
+        };
+        throw new Error('UNIQUE constraint failed');
       }
-      if (op === 'queryOne' && sql.includes('WHERE slot_id = ? AND state = ?')) {
-        return slotState === 'reserved'
-          ? { ...slot, state: slotState, assigned_tenant_id: assignedTenantId }
-          : null;
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes('SET state = ?')) {
-        slotState = String(params[0]);
-        return { rowsAffected: 1 };
-      }
-      if (
-        op === 'execute' &&
-        (sql.includes('tenant_database_active_pointers') ||
-          sql.includes('tenant_database_registry') ||
-          sql.includes('tenant_runtime_registry_snapshots'))
-      ) {
-        return { rowsAffected: 1 };
-      }
+      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return [];
       throw new Error(`unexpected admin adapter SQL: ${sql}`);
     });
 
-    const failingSettings = {
-      get: vi.fn(async () => {
-        throw new Error('settings read failed');
-      }),
-      put: vi.fn(async () => {}),
-      delete: vi.fn(async () => {}),
-    } as unknown as KVNamespace;
-
-    let fakeNow = 1_000_000;
-    const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
-      fakeNow += 20_000;
-      return fakeNow;
-    });
     const response = await adminTenantCreateHandler(
-      createContext({ id: 'second', name: 'Second Tenant' }, { SETTINGS: failingSettings })
+      createContext({ id: 'concurrent', name: 'Concurrent Tenant' })
     );
-    dateNowSpy.mockRestore();
 
-    expect(response.status).toBe(500);
-    expect(slotState).toBe('reset_required');
-    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'suspended' });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      id: 'concurrent',
+      lifecycle_state: 'provisioning',
+      provisioning: { mode: 'control-plane', status: 'queued' },
+    });
+    expect(
+      adapters.defaultAdapter.calls.some(
+        (call) => call.op === 'execute' && call.sql.includes('DELETE FROM tenants')
+      )
+    ).toBe(false);
   });
 
-  it('cleans up a failed provisioning draft without releasing the reset-required slot', async () => {
-    const slot = createSlot({
-      state: 'reset_required',
-      assigned_tenant_id: 'second',
-    });
-    let controlTenant: TenantRow | null = createTenantRow('second', {
-      lifecycle_state: 'suspended',
-    });
-    let cleanupAuditWritten = false;
-
-    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return controlTenant;
-      }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
-        controlTenant = controlTenant
-          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(_params[0]) }
-          : null;
+  it('activates the runtime destination only after the platform row', async () => {
+    const order: string[] = [];
+    let platformState = 'provisioning';
+    let tenantState = 'provisioning';
+    const platformAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'execute' && sql.includes("lifecycle_state = 'active'")) {
+        order.push('platform');
+        platformState = 'active';
         return { rowsAffected: 1 };
       }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
+      if (op === 'queryOne') return { lifecycle_state: platformState };
+      throw new Error(`unexpected platform activation SQL: ${sql}`);
     });
-
-    adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes("state IN ('reset_required', 'unavailable')")
-      ) {
-        return { slot_id: slot.slot_id, state: slot.state, updated_at: 1_700_000_000 };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result IN ('failed', 'succeeded')")
-      ) {
-        return {
-          slot_id: slot.slot_id,
-          error_code: 'settings read failed',
-          created_at: 1_700_000_001,
-          result: 'failed',
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result = 'failed'")
-      ) {
-        return { error_code: 'settings read failed', created_at: 1_700_000_001 };
-      }
-      if (
-        op === 'execute' &&
-        (sql.includes('tenant_database_active_pointers') ||
-          sql.includes('tenant_database_registry') ||
-          sql.includes('tenant_runtime_registry_snapshots'))
-      ) {
+    const tenantAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'execute' && sql.includes("lifecycle_state = 'active'")) {
+        order.push('tenant');
+        tenantState = 'active';
         return { rowsAffected: 1 };
       }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        cleanupAuditWritten = true;
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
+      if (op === 'queryOne') return { lifecycle_state: tenantState };
+      throw new Error(`unexpected tenant activation SQL: ${sql}`);
     });
 
-    const response = await adminTenantProvisioningCleanupHandler(
-      createContext({}, {}, { id: 'second' })
-    );
-    const body = (await response.json()) as { status: string; slot_id: string };
+    await activateProvisionedTenantLifecycle({
+      platformAdapter: platformAdapter as unknown as DatabaseAdapter,
+      tenantAdapter: tenantAdapter as unknown as DatabaseAdapter,
+      tenantId: 'second',
+      now: 100,
+    });
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({ status: 'cleaned', slot_id: 'slot-0001' });
-    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'deleted' });
-    expect(cleanupAuditWritten).toBe(true);
+    expect(order).toEqual(['platform', 'tenant']);
   });
 
-  it('rejects provisioning retry while the failed slot still requires reset', async () => {
-    const slot = createSlot({
-      state: 'reset_required',
-      assigned_tenant_id: 'second',
+  it('leaves the runtime destination provisioning when platform activation fails', async () => {
+    const platformAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'execute' && sql.includes("lifecycle_state = 'active'")) {
+        throw new Error('platform write failed');
+      }
+      throw new Error(`unexpected platform activation SQL: ${sql}`);
     });
+    const tenantAdapter = createAdapter();
 
-    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return createTenantRow('second', { lifecycle_state: 'suspended' });
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-
-    adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes("state IN ('reset_required', 'unavailable')")
-      ) {
-        return { slot_id: slot.slot_id, state: slot.state, updated_at: 1_700_000_000 };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result IN ('failed', 'succeeded')")
-      ) {
-        return {
-          slot_id: slot.slot_id,
-          error_code: 'settings read failed',
-          created_at: 1_700_000_001,
-          result: 'failed',
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result = 'failed'")
-      ) {
-        return { error_code: 'settings read failed', created_at: 1_700_000_001 };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')
-      ) {
-        return slot;
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
-    });
-
-    const response = await adminTenantProvisioningRetryHandler(
-      createContext({}, {}, { id: 'second' })
-    );
-    const body = (await response.json()) as { error: string; current_state: string };
-
-    expect(response.status).toBe(409);
-    expect(body).toMatchObject({
-      error: 'tenant_d1_slot_reset_required',
-      current_state: 'reset_required',
-    });
-  });
-
-  it('retries provisioning after the failed slot has been reset to available', async () => {
-    const slot = createSlot({ state: 'available', assigned_tenant_id: null });
-    let slotState = 'available';
-    let assignedTenantId: string | null = null;
-    let controlTenant: TenantRow | null = createTenantRow('second', {
-      lifecycle_state: 'suspended',
-    });
-    let tenantDbRow: TenantRow | null = null;
-
-    adapters.defaultAdapter = createAdapter((sql, params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return controlTenant;
-      }
-      if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-        controlTenant = createTenantRowFromInsertParams(params);
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'active'")) {
-        if (controlTenant) {
-          controlTenant = {
-            ...controlTenant,
-            lifecycle_state: 'active',
-            updated_at: Number(params[0]),
-          };
-        }
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-
-    adapters.tenantAdapters.set(
-      'second',
-      createAdapter((sql, params, op) => {
-        if (op === 'execute' && sql.includes('INSERT INTO tenants')) {
-          tenantDbRow = createTenantRowFromInsertParams(params);
-          return { rowsAffected: 1 };
-        }
-        if (op === 'queryOne' && sql === 'SELECT id FROM tenants WHERE id = ?') {
-          return tenantDbRow ? { id: tenantDbRow.id } : null;
-        }
-        throw new Error(`unexpected tenant adapter SQL: ${sql}`);
+    await expect(
+      activateProvisionedTenantLifecycle({
+        platformAdapter: platformAdapter as unknown as DatabaseAdapter,
+        tenantAdapter: tenantAdapter as unknown as DatabaseAdapter,
+        tenantId: 'second',
+        now: 100,
       })
-    );
+    ).rejects.toThrow('platform write failed');
 
-    adapters.adminAdapter = createAdapter((sql, params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes("state IN ('reset_required', 'unavailable')")
-      ) {
-        return null;
+    expect(tenantAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('returns the persisted Control provisioning status without mutating it', async () => {
+    const operation = {
+      operation_id: 'tenant-create-second',
+      environment_id: 'test',
+      tenant_id: 'second',
+      tenant_code: 'second',
+      tenant_name: 'Second Tenant',
+      tenant_description: null,
+      residency_policy_id: 'builtin:residency:default',
+      residency_partition: 'default',
+      request_hash: 'a'.repeat(64),
+      idempotency_key: 'tenant-create-second',
+      status: 'waiting_retry',
+      current_step: 'capacity_check',
+      capacity_operation_ids_json: '{"tenant_core/default":"control-op-default"}',
+      default_route_allocation_json: null,
+      attempt_count: 2,
+      retry_budget_started_at: 100,
+      next_attempt_at: 200,
+      last_error_code: null,
+      lease_owner: null,
+      lease_expires_at: null,
+      fencing_token: 1,
+      created_by: 'platform-admin',
+      created_at: 100,
+      started_at: 101,
+      completed_at: null,
+      updated_at: 102,
+    };
+    adapters.adminAdapter = createAdapter((sql, _params, op) => {
+      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) return operation;
+      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) {
+        return [
+          {
+            step_key: 'request_accepted',
+            display_order: 0,
+            status: 'succeeded',
+            attempt_count: 0,
+            next_attempt_at: null,
+            last_error_code: null,
+            observed_resource_id: null,
+            started_at: 100,
+            completed_at: 100,
+            updated_at: 100,
+          },
+          {
+            step_key: 'capacity_check',
+            display_order: 10,
+            status: 'waiting_retry',
+            attempt_count: 2,
+            next_attempt_at: 200,
+            last_error_code: null,
+            observed_resource_id: null,
+            started_at: 101,
+            completed_at: null,
+            updated_at: 102,
+          },
+        ];
       }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes('slot_id IS NOT NULL')
-      ) {
-        return {
-          slot_id: slot.slot_id,
-          error_code: 'settings read failed',
-          created_at: 1_700_000_001,
-          result: 'failed',
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT slot_id, state, updated_at FROM tenant_database_slots')
-      ) {
-        return { slot_id: slot.slot_id, state: slotState, updated_at: 1_700_000_010 };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')
-      ) {
-        return { ...slot, state: slotState, assigned_tenant_id: assignedTenantId };
-      }
-      if (op === 'execute' && sql.includes("SET state = 'reserved'")) {
-        slotState = 'reserved';
-        assignedTenantId = String(params[0]);
-        return { rowsAffected: 1 };
-      }
-      if (op === 'queryOne' && sql.includes('WHERE slot_id = ? AND state = ?')) {
-        return slotState === 'reserved'
-          ? { ...slot, state: slotState, assigned_tenant_id: assignedTenantId }
-          : null;
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes("SET state = 'assigned'")) {
-        slotState = 'assigned';
-        assignedTenantId = String(params[0]);
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
+      throw new Error(`unexpected status adapter SQL: ${sql}`);
     });
 
-    const response = await adminTenantProvisioningRetryHandler(
+    const response = await adminTenantProvisioningStatusHandler(
       createContext({}, {}, { id: 'second' })
     );
     const body = (await response.json()) as {
-      id: string;
-      lifecycle_state: string;
-      provisioning: { retry: string; slot_id: string };
+      status: string;
+      current_step: string;
+      capacity_operation_ids: Record<string, string>;
     };
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
-      id: 'second',
-      lifecycle_state: 'active',
-      provisioning: { retry: 'succeeded', slot_id: 'slot-0001' },
+      status: 'waiting_retry',
+      current_step: 'capacity_check',
+      capacity_operation_ids: { 'tenant_core/default': 'control-op-default' },
     });
-    expect(slotState).toBe('assigned');
-    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'active' });
-    expect(tenantDbRow).toMatchObject({ id: 'second', lifecycle_state: 'active' });
+    expect(adapters.adminAdapter.execute).not.toHaveBeenCalled();
   });
 
-  it('rejects provisioning retry when the failed slot has already been reused', async () => {
-    const reusedSlot = createSlot({
-      state: 'assigned',
-      assigned_tenant_id: 'third',
-    });
-    let retryAuditWritten = false;
-
-    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return createTenantRow('second', { lifecycle_state: 'suspended' });
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-
+  it('fails closed without querying retired slots when no Control operation exists', async () => {
     adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes("state IN ('reset_required', 'unavailable')")
-      ) {
-        return null;
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result IN ('failed', 'succeeded')")
-      ) {
-        return {
-          slot_id: reusedSlot.slot_id,
-          error_code: 'registry write failed',
-          created_at: 1_700_000_001,
-          result: 'failed',
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT slot_id, state, updated_at FROM tenant_database_slots')
-      ) {
-        return {
-          slot_id: reusedSlot.slot_id,
-          state: reusedSlot.state,
-          updated_at: 1_700_000_010,
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT * FROM tenant_database_slots WHERE slot_id = ?')
-      ) {
-        return reusedSlot;
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        retryAuditWritten = true;
-        return { rowsAffected: 1 };
-      }
+      if (op === 'queryOne' && sql.includes('FROM tenant_provisioning_operations')) return null;
       throw new Error(`unexpected admin adapter SQL: ${sql}`);
     });
 
-    const response = await adminTenantProvisioningRetryHandler(
-      createContext({}, {}, { id: 'second' })
+    const retryResponse = await adminTenantProvisioningRetryHandler(
+      createContext({}, {}, { id: 'missing-tenant' })
     );
-    const body = (await response.json()) as {
-      error: string;
-      current_state: string;
-      slot_id: string;
-    };
+    const cleanupResponse = await adminTenantProvisioningCleanupHandler(
+      createContext({}, {}, { id: 'missing-tenant' })
+    );
 
-    expect(response.status).toBe(409);
-    expect(body).toMatchObject({
-      error: 'tenant_d1_slot_unavailable',
-      current_state: 'assigned',
-      slot_id: 'slot-0001',
-    });
-    expect(retryAuditWritten).toBe(true);
+    expect(retryResponse.status).toBe(404);
+    expect(cleanupResponse.status).toBe(404);
+    expect(
+      adapters.adminAdapter.calls.some((call) => call.sql.includes('tenant_database_slots'))
+    ).toBe(false);
   });
 
-  it('keeps a failed draft cleanable even if its released slot was reused', async () => {
-    const reusedSlot = createSlot({
-      state: 'assigned',
-      assigned_tenant_id: 'third',
-    });
-    let controlTenant: TenantRow | null = createTenantRow('second', {
-      lifecycle_state: 'suspended',
-    });
-
-    adapters.defaultAdapter = createAdapter((sql, _params, op) => {
-      if (op === 'queryOne' && sql.includes('FROM tenants WHERE id = ?')) {
-        return controlTenant;
-      }
-      if (op === 'execute' && sql.includes("UPDATE tenants SET lifecycle_state = 'deleted'")) {
-        controlTenant = controlTenant
-          ? { ...controlTenant, lifecycle_state: 'deleted', updated_at: Number(_params[0]) }
-          : null;
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected default adapter SQL: ${sql}`);
-    });
-
+  it('rejects cleanup after Lookup activation may have started', async () => {
+    const operation = {
+      operation_id: 'tenant-create-second',
+      environment_id: 'test',
+      tenant_id: 'second',
+      tenant_code: 'second',
+      tenant_name: 'Second Tenant',
+      tenant_description: null,
+      residency_policy_id: 'builtin:residency:default',
+      residency_partition: 'default',
+      request_hash: 'a'.repeat(64),
+      idempotency_key: 'tenant-create-second',
+      status: 'waiting_retry',
+      current_step: 'lookup_activate',
+      capacity_operation_ids_json: '{}',
+      default_route_allocation_json: null,
+      attempt_count: 3,
+      retry_budget_started_at: 100,
+      next_attempt_at: 200,
+      last_error_code: 'tenant_alias_activation_failed',
+      lease_owner: null,
+      lease_expires_at: null,
+      fencing_token: 2,
+      created_by: 'platform-admin',
+      created_at: 100,
+      started_at: 101,
+      completed_at: null,
+      updated_at: 102,
+    };
     adapters.adminAdapter = createAdapter((sql, _params, op) => {
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slots') &&
-        sql.includes("state IN ('reset_required', 'unavailable')")
-      ) {
-        return null;
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('FROM tenant_database_slot_audit_events') &&
-        sql.includes("result IN ('failed', 'succeeded')")
-      ) {
-        return {
-          slot_id: reusedSlot.slot_id,
-          error_code: 'registry write failed',
-          created_at: 1_700_000_001,
-          result: 'failed',
-        };
-      }
-      if (
-        op === 'queryOne' &&
-        sql.includes('SELECT slot_id, state, updated_at FROM tenant_database_slots')
-      ) {
-        return {
-          slot_id: reusedSlot.slot_id,
-          state: reusedSlot.state,
-          updated_at: 1_700_000_010,
-        };
-      }
-      if (
-        op === 'execute' &&
-        (sql.includes('tenant_database_active_pointers') ||
-          sql.includes('tenant_database_registry') ||
-          sql.includes('tenant_runtime_registry_snapshots'))
-      ) {
-        return { rowsAffected: 1 };
-      }
-      if (op === 'execute' && sql.includes('tenant_database_slot_audit_events')) {
-        return { rowsAffected: 1 };
-      }
-      throw new Error(`unexpected admin adapter SQL: ${sql}`);
+      if (op === 'queryOne' && sql.includes('WHERE tenant_id = ?')) return operation;
+      if (op === 'query' && sql.includes('tenant_provisioning_operation_steps')) return [];
+      throw new Error(`unexpected cleanup adapter SQL: ${sql}`);
     });
+    const releaseTenantDefaultRoute = vi.fn();
 
     const response = await adminTenantProvisioningCleanupHandler(
-      createContext({}, {}, { id: 'second' })
+      createContext(
+        {},
+        { CONTROL: { releaseTenantDefaultRoute } as unknown as Env['CONTROL'] },
+        { id: 'second' }
+      )
     );
-    const body = (await response.json()) as { status: string; slot_id: string };
 
-    expect(response.status).toBe(200);
-    expect(body).toMatchObject({ status: 'cleaned', slot_id: 'slot-0001' });
-    expect(controlTenant).toMatchObject({ id: 'second', lifecycle_state: 'deleted' });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: 'tenant_provisioning_cleanup_conflict',
+      provisioning: { current_step: 'lookup_activate' },
+    });
+    expect(adapters.adminAdapter.execute).not.toHaveBeenCalled();
+    expect(releaseTenantDefaultRoute).not.toHaveBeenCalled();
   });
+
+  // Preallocated-slot provisioning was retired in favor of Control Worker operations.
 
   it('requires dedicated commands for operator lifecycle updates', async () => {
     let tenantRow = createTenantRow('second', { lifecycle_state: 'active' });

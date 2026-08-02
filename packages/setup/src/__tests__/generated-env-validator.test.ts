@@ -87,16 +87,63 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
       keyId: `${keyId}-tenant-runtime-registry`,
       createdAt: '2026-01-01T00:00:00.000Z',
     },
+    controlSmokeKeyPair: {
+      privateJwk: {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        kid: `${keyId}-control-smoke`,
+        d: 'fixture-private',
+        x: 'fixture-public',
+        use: 'sig',
+        alg: 'EdDSA',
+      },
+      publicJwk: {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        kid: `${keyId}-control-smoke`,
+        x: 'fixture-public',
+        use: 'sig',
+        alg: 'EdDSA',
+      },
+      keyId: `${keyId}-control-smoke`,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
+    notificationPayloadKeyPair: {
+      privateJwk: {
+        kty: 'RSA',
+        kid: `${keyId}-notification-payload`,
+        n: 'fixture-modulus',
+        e: 'AQAB',
+        d: 'fixture-private',
+        use: 'enc',
+        alg: 'RSA-OAEP-256',
+        key_ops: ['decrypt'],
+      },
+      publicJwk: {
+        kty: 'RSA',
+        kid: `${keyId}-notification-payload`,
+        n: 'fixture-modulus',
+        e: 'AQAB',
+        use: 'enc',
+        alg: 'RSA-OAEP-256',
+        key_ops: ['encrypt'],
+      },
+      keyId: `${keyId}-notification-payload`,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    },
     rpTokenEncryptionKey: 'a'.repeat(64),
     piiEncryptionKey: 'd'.repeat(64),
     objectEncryptionRootKey: 'b'.repeat(64),
     otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
     loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
+    lookupHmacKeySlotA: 'fixture_lookup_hmac_key_slot_a_1234567890',
     flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
     vcTransactionCodeHmacSecret: 't'.repeat(43),
     vcEvidenceHmacSecret: 'e'.repeat(43),
     vcProfileContractHmacSecret: 'p'.repeat(43),
     pluginEncryptionKey: 'c'.repeat(64),
+    pluginMutationHmacKey: 'm'.repeat(43),
+    notificationIntentHmacKey: 'n'.repeat(43),
     agentElevationEncryptionKey: 'd'.repeat(64),
     setupToken: 'fixture_setup_token_1234567890',
   };
@@ -107,7 +154,7 @@ async function writeGeneratedEnvironment(
   options?: {
     externalStorageDefault?: boolean;
     tenantD1StorageDefault?: boolean;
-    withTenantD1Slots?: boolean;
+    withTenantD1Bootstrap?: boolean;
     withHyperdriveReferences?: boolean;
     queueEnabled?: boolean;
     withLoggingQueues?: boolean;
@@ -116,6 +163,8 @@ async function writeGeneratedEnvironment(
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
+  config.profiles.defaults.storage = 'builtin:storage:shared-d1';
+  config.cloudflare.accountId = 'account-id';
   config.keys.storageType = options?.externalKeys ? 'external' : 'internal';
   config.keys.secretsPath = './keys/';
   config.features.queue = { enabled: options?.queueEnabled === true };
@@ -153,24 +202,33 @@ async function writeGeneratedEnvironment(
     { binding: 'DB', name: `${env}-authrim-core-db`, id: 'db-core-id' },
     { binding: 'DB_PII', name: `${env}-authrim-pii-db`, id: 'db-pii-id' },
     { binding: 'DB_ADMIN', name: `${env}-authrim-admin-db`, id: 'db-admin-id' },
+    { binding: 'CONTROL_DB', name: `${env}-authrim-control-db`, id: 'db-control-id' },
+    { binding: 'LOOKUP_DB', name: `${env}-authrim-lookup-db`, id: 'db-lookup-id' },
+    {
+      binding: 'PLUGIN_RUNNER_DB',
+      name: `${env}-authrim-plugin-runner-db`,
+      id: 'db-plugin-runner-id',
+    },
   ];
 
-  if (options?.withTenantD1Slots) {
-    for (let slotNumber = 1; slotNumber <= 3; slotNumber += 1) {
-      const slot = String(slotNumber).padStart(4, '0');
-      d1.push(
-        {
-          binding: `TDB_SLOT_${slot}_CORE`,
-          name: `authrim-${env}-tdb-slot-${slot}-core`,
-          id: `slot-${slot}-core-id`,
-        },
-        {
-          binding: `TDB_SLOT_${slot}_PII`,
-          name: `authrim-${env}-tdb-slot-${slot}-pii`,
-          id: `slot-${slot}-pii-id`,
-        }
-      );
-    }
+  if (options?.withTenantD1Bootstrap) {
+    d1.push(
+      {
+        binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+        name: `authrim-${env}-default-bootstrap`,
+        id: 'bootstrap-default-core-id',
+      },
+      {
+        binding: 'TDB_USERS_BOOTSTRAP_CORE',
+        name: `authrim-${env}-users-bootstrap`,
+        id: 'bootstrap-users-core-id',
+      },
+      {
+        binding: 'TDB_PII_BOOTSTRAP_PII',
+        name: `authrim-${env}-pii-bootstrap`,
+        id: 'bootstrap-pii-id',
+      }
+    );
   }
 
   const queues = options?.withLoggingQueues
@@ -217,6 +275,7 @@ async function writeGeneratedEnvironment(
     ],
     queues,
     r2: [
+      { binding: 'MIGRATION_RELEASES', name: `${env}-migration-releases` },
       { binding: 'PUBLIC_ASSETS', name: `${env}-public-assets` },
       { binding: 'AVATARS', name: `${env}-authrim-avatars` },
       { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
@@ -280,9 +339,96 @@ function mockLiveRuntimeSchema(
       ),
     ],
     [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'field_mapping_sets']],
+    [
+      `${env}-authrim-control-db`,
+      [
+        'control_environments',
+        'control_operations',
+        'control_operation_steps',
+        'control_desired_resources',
+        'control_observed_resources',
+        'control_migration_release_catalog',
+        'control_operation_release_pins',
+        'control_tenant_database_migration_state',
+        'control_worker_deployment_leases',
+        'control_worker_binding_reconciliations',
+        'control_bootstrap_handoffs',
+        'control_bootstrap_worker_evidence',
+        'control_directory_rewrite_leases',
+        'control_environment_resource_policies',
+        'control_d1_create_budget_reservations',
+        'control_residency_partitions',
+        'control_tenant_shards',
+        'control_shard_capacity',
+        'control_tenant_shard_allocations',
+        'control_read_replication_policies',
+        'control_read_replication_rollouts',
+        'control_lookup_physical_shards',
+        'control_lookup_bucket_assignments',
+        'control_lookup_registry_publications',
+        'control_lookup_bucket_migrations',
+        'control_hmac_rotation_operations',
+        'control_lookup_hmac_key_states',
+        'control_lookup_hmac_key_state_publications',
+        'control_lookup_hmac_rotation_sources',
+        'control_lookup_hmac_rotation_verification_shards',
+        'control_lookup_hmac_candidate_verifications',
+        'control_route_projection_migrations',
+        'control_signing_key_metadata',
+        'control_signing_key_verifications',
+        'control_runtime_registry_publications',
+        'control_runtime_registry_routes',
+        'control_desired_worker_inventory',
+        'control_worker_inventory_change_events',
+        'control_worker_required_data_roles',
+        'control_worker_desired_bindings',
+        'control_worker_observed_bindings',
+        'control_worker_inventory_drift_findings',
+        'control_external_capability_sources',
+        'control_external_capability_bindings',
+        'control_plugin_desired_resources',
+        'control_plugin_dynamic_worker_bindings',
+        'control_plugin_runner_registry_publications',
+        'control_read_replication_rollout_targets',
+        'control_tenant_default_allocations',
+        'control_audit_events',
+      ],
+    ],
+    [
+      `${env}-authrim-lookup-db`,
+      [
+        'lookup_schema_metadata',
+        'lookup_identifiers',
+        'lookup_tenant_aliases',
+        'lookup_identifier_reservations',
+        'lookup_bucket_counters',
+        'lookup_discovery_otp_challenges',
+        'lookup_identifier_replacements',
+        'lookup_directory_job_cursors',
+        'lookup_migration_state',
+      ],
+    ],
+    [
+      `${env}-authrim-plugin-runner-db`,
+      [
+        'plugin_runner_shard_cursors',
+        'plugin_runner_full_sweep_state',
+        'plugin_runner_hook_policies',
+        'plugin_runner_egress_allowed_hosts',
+        'plugin_runner_circuit_breakers',
+        'plugin_runner_migration_state',
+      ],
+    ],
   ]);
 
   queryD1RowsMock.mockImplementation((dbName: string, sql: string) => {
+    if (sql.includes("name = 'control_plugin_desired_resources'")) {
+      return Promise.resolve(
+        schemaTablesByDatabase.get(dbName)?.includes('control_plugin_desired_resources')
+          ? [{ name: 'control_plugin_desired_resources' }]
+          : []
+      );
+    }
     if (sql.includes("sqlite_master WHERE type = 'table'")) {
       return Promise.resolve((schemaTablesByDatabase.get(dbName) ?? []).map((name) => ({ name })));
     }
@@ -293,8 +439,8 @@ function mockLiveRuntimeSchema(
           : []
       );
     }
-    if (sql.includes('SELECT COUNT(*) AS count FROM tenant_database_slots')) {
-      return Promise.resolve([{ count: 3 }]);
+    if (sql.includes('SELECT state FROM control_bootstrap_handoffs')) {
+      return Promise.resolve([{ state: 'accepted' }]);
     }
     return Promise.resolve([]);
   });
@@ -312,6 +458,7 @@ describe('validateGeneratedEnvironment', () => {
     );
     listR2BucketsMock.mockReset();
     queryD1RowsMock.mockReset();
+    queryD1RowsMock.mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -329,8 +476,10 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+    expect(queryD1RowsMock).not.toHaveBeenCalled();
   });
 
   it('resolves validation targets from an environment or generated config path', async () => {
@@ -388,6 +537,28 @@ describe('validateGeneratedEnvironment', () => {
       status: 'fail',
       details: [expect.stringContaining('keys directory is missing')],
     });
+  });
+
+  it('fails without disclosing values when a generated artifact contains secret material', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const secret = await readFile(
+      join(root, '.authrim', env, 'keys', 'otp_hmac_secret.txt'),
+      'utf8'
+    );
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'));
+    lock.leaked = secret;
+    await writeFile(lockPath, JSON.stringify(lock, null, 2), 'utf8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const check = result.checks.find((entry) => entry.id === 'generated-artifacts-secret-free');
+
+    expect(result.ok).toBe(false);
+    expect(check).toMatchObject({
+      status: 'fail',
+      details: expect.arrayContaining([expect.stringContaining('otp_hmac_secret.txt')]),
+    });
+    expect(JSON.stringify(check)).not.toContain(secret);
   });
 
   it('warns explicitly when R2 and queues are disabled without hiding valid output', async () => {
@@ -685,6 +856,27 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
+  it('fails when the baseline migration release bucket is missing even if product R2 is disabled', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.features.r2 = { enabled: false };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.r2.MIGRATION_RELEASES;
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`, 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const check = result.checks.find(
+      (candidate) => candidate.id === 'migration-release-r2-binding'
+    );
+
+    expect(result.ok).toBe(false);
+    expect(check?.status).toBe('fail');
+    expect(check?.details).toContain('MIGRATION_RELEASES is missing from lock.json');
+  });
+
   it('fails when the active storage default requires unsupported external primary bindings', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
       externalStorageDefault: true,
@@ -719,6 +911,7 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
   });
@@ -730,8 +923,12 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
+      { name: `${env}-authrim-control-db`, uuid: 'db-control-id' },
+      { name: `${env}-authrim-lookup-db`, uuid: 'db-lookup-id' },
+      { name: `${env}-authrim-plugin-runner-db`, uuid: 'db-plugin-runner-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
@@ -743,6 +940,7 @@ describe('validateGeneratedEnvironment', () => {
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
 
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.checks.find((check) => check.id === 'live-cloudflare-d1')?.status).toBe('pass');
     expect(result.checks.find((check) => check.id === 'live-cloudflare-kv')?.status).toBe('pass');
@@ -787,6 +985,7 @@ describe('validateGeneratedEnvironment', () => {
       }))
     );
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
@@ -821,6 +1020,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
@@ -852,6 +1052,7 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
@@ -871,24 +1072,25 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
-  it('checks live tenant D1 slot count against DB_ADMIN for tenant-d1 environments', async () => {
+  it('checks the live initial tenant D1 resources and accepted Control handoff', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
       tenantD1StorageDefault: true,
-      withTenantD1Slots: true,
+      withTenantD1Bootstrap: true,
     });
     mockLiveRuntimeSchema(env);
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
       { name: `${env}-authrim-pii-db`, uuid: 'db-pii-id' },
       { name: `${env}-authrim-admin-db`, uuid: 'db-admin-id' },
-      { name: `authrim-${env}-tdb-slot-0001-core`, uuid: 'slot-0001-core-id' },
-      { name: `authrim-${env}-tdb-slot-0001-pii`, uuid: 'slot-0001-pii-id' },
-      { name: `authrim-${env}-tdb-slot-0002-core`, uuid: 'slot-0002-core-id' },
-      { name: `authrim-${env}-tdb-slot-0002-pii`, uuid: 'slot-0002-pii-id' },
-      { name: `authrim-${env}-tdb-slot-0003-core`, uuid: 'slot-0003-core-id' },
-      { name: `authrim-${env}-tdb-slot-0003-pii`, uuid: 'slot-0003-pii-id' },
+      { name: `${env}-authrim-control-db`, uuid: 'db-control-id' },
+      { name: `${env}-authrim-lookup-db`, uuid: 'db-lookup-id' },
+      { name: `${env}-authrim-plugin-runner-db`, uuid: 'db-plugin-runner-id' },
+      { name: `authrim-${env}-default-bootstrap`, uuid: 'bootstrap-default-core-id' },
+      { name: `authrim-${env}-users-bootstrap`, uuid: 'bootstrap-users-core-id' },
+      { name: `authrim-${env}-pii-bootstrap`, uuid: 'bootstrap-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
+      { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
       { name: `${env}-authrim-avatars` },
       { name: `${env}-diagnostic-logs` },
@@ -899,16 +1101,17 @@ describe('validateGeneratedEnvironment', () => {
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
-    const slotCheck = result.checks.find((check) => check.id === 'live-tenant-d1-slots');
+    const bootstrapCheck = result.checks.find((check) => check.id === 'live-tenant-d1-bootstrap');
 
+    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(result.ok).toBe(true);
-    expect(slotCheck?.status).toBe('pass');
-    expect(slotCheck?.details).toEqual(
-      expect.arrayContaining([expect.stringContaining('tenant_database_slots count: 3/3')])
+    expect(bootstrapCheck?.status).toBe('pass');
+    expect(bootstrapCheck?.details).toEqual(
+      expect.arrayContaining([expect.stringContaining('bootstrap handoff state: accepted')])
     );
     expect(queryD1RowsMock).toHaveBeenLastCalledWith(
-      `${env}-authrim-admin-db`,
-      'SELECT COUNT(*) AS count FROM tenant_database_slots;'
+      `${env}-authrim-control-db`,
+      "SELECT state FROM control_bootstrap_handoffs WHERE environment_id = 'portable';"
     );
   });
 });

@@ -4,13 +4,14 @@
  * Implementation of DatabaseAdapter for Cloudflare D1.
  * Provides:
  * - Type-safe query methods
- * - Transaction support via batch API
+ * - Explicit atomic batches and non-atomic callback compatibility
  * - Retry logic with exponential backoff
  * - Health check functionality
  *
  * D1 Characteristics:
  * - Serverless SQLite database
- * - Batch API provides transaction-like semantics (all-or-nothing)
+ * - Batch API provides all-or-nothing semantics
+ * - Callback transactions execute immediately and cannot roll back
  * - No persistent connections (stateless)
  */
 
@@ -34,6 +35,13 @@ interface D1Database {
   prepare(query: string): D1PreparedStatement;
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
   exec(query: string): Promise<D1ExecResult>;
+  withSession?(constraintOrBookmark?: string): D1DatabaseSession;
+}
+
+interface D1DatabaseSession {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  getBookmark(): string | null;
 }
 
 interface D1PreparedStatement {
@@ -99,11 +107,13 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async query<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T[]> {
     const startTime = Date.now();
+    const sessionConstraint = this.readSessionConstraint(options);
 
     try {
       const result = await retryD1Operation(
         async () => {
-          const stmt = params ? this.db.prepare(sql).bind(...params) : this.db.prepare(sql);
+          const session = this.readSession(sessionConstraint);
+          const stmt = params ? session.prepare(sql).bind(...params) : session.prepare(sql);
           return stmt.all<T>();
         },
         `D1Adapter.query[${this.partition}]`,
@@ -147,26 +157,36 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async queryOne<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T | null> {
     const startTime = Date.now();
+    const sessionConstraint = this.readSessionConstraint(options);
 
     try {
       const result = await retryD1Operation(
         async () => {
-          const stmt = params ? this.db.prepare(sql).bind(...params) : this.db.prepare(sql);
-          return stmt.first<T>();
+          const session = this.readSession(sessionConstraint);
+          const stmt = params ? session.prepare(sql).bind(...params) : session.prepare(sql);
+          return { value: await stmt.first<T>() };
         },
         `D1Adapter.queryOne[${this.partition}]`,
         this.retryConfig
       );
 
+      if (!result) {
+        log.error('D1Adapter.queryOne failed after retries exhausted', {
+          partition: this.partition,
+          sql: this.truncateSql(sql),
+        });
+        throw new Error('D1Adapter.queryOne failed after retries exhausted');
+      }
+
       if (this.debug) {
         log.debug('D1Adapter.queryOne completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
-          found: result !== null,
+          found: result.value !== null,
         });
       }
 
-      return result;
+      return result.value;
     } catch (error) {
       log.error(
         'D1Adapter.queryOne error',
@@ -359,7 +379,7 @@ export class D1Adapter implements DatabaseAdapter {
 
     try {
       // Simple health check query
-      const result = await this.db.prepare('SELECT 1').first();
+      const result = await this.readSession('first-primary').prepare('SELECT 1').first();
       const latencyMs = Date.now() - startTime;
 
       return {
@@ -391,6 +411,31 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async close(): Promise<void> {
     // D1 is stateless, no connection to close
+  }
+
+  private readSessionConstraint(options?: QueryOptions): string {
+    const consistencyClass =
+      options?.consistencyClass ??
+      (options?.useReadReplica === true ? 'replica_eligible' : 'primary_required');
+    const bookmark = options?.bookmark?.trim() || null;
+    if (consistencyClass === 'read_after_write') {
+      if (!bookmark) throw new Error('d1_read_after_write_bookmark_required');
+      if (typeof this.db.withSession !== 'function') throw new Error('d1_sessions_api_required');
+      return bookmark;
+    }
+    if (bookmark) throw new Error(`d1_bookmark_not_allowed_for:${consistencyClass}`);
+    const constraint =
+      consistencyClass === 'replica_eligible' ? 'first-unconstrained' : 'first-primary';
+    if (constraint !== 'first-primary' && typeof this.db.withSession !== 'function') {
+      throw new Error('d1_sessions_api_required');
+    }
+    return constraint;
+  }
+
+  private readSession(constraint: string): D1DatabaseSession {
+    if (typeof this.db.withSession === 'function') return this.db.withSession(constraint);
+    if (constraint !== 'first-primary') throw new Error('d1_sessions_api_required');
+    return this.db as unknown as D1DatabaseSession;
   }
 
   /**

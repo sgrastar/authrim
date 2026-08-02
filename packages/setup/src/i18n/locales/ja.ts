@@ -782,13 +782,7 @@ const ja: Translations = {
     '環境全体で core D1 と PII D1 を1組ずつ共有します。構築コストが最小の標準構成です。',
   'web.db.tenantD1Title': 'テナント別 D1（Tenant D1）',
   'web.db.tenantD1Desc':
-    'テナントごとに core / PII のD1ペアを割り当てます。テナント有効化の前にスロットの事前確保が必要です。',
-  'web.db.preallocatedSlotsTitle': '事前確保するテナントスロット',
-  'web.db.preallocatedSlotsDesc':
-    '各テナントスロットは core と PII の 2 つの D1 データベースを作成します。',
-  'web.db.slotsLabel': 'スロット',
-  'web.db.slotsHelp':
-    'スロット1つにつき core / PII の2つのD1データベースが作成されます。既定値は3、最大500です。あとから環境管理画面で拡張できます。',
+    'Control Planeと初期tenant shardを構築します。以後のtenant容量は必要に応じて自動作成されます。',
 
   // Web UI Email
   'web.email.title': 'メールプロバイダー',

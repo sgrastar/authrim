@@ -1,29 +1,21 @@
 import type { Context } from 'hono';
-import type { ApprovalRequest, ApprovalRequestApproval, Env } from '@authrim/ar-lib-core';
-import { getRequiredPluginContext } from '@authrim/ar-lib-core';
+import type {
+  AdminAuthContext,
+  ApprovalRequest,
+  ApprovalRequestApproval,
+  Env,
+} from '@authrim/ar-lib-core';
+import { produceNotificationDelivery } from '@authrim/ar-lib-core';
 import { getApprovalNotificationCooldownMs } from './approval-policy-presets';
 import {
   ApprovalTransportChannelResolutionError,
   resolveApprovalTransportChannel,
 } from './approval-approver-contact';
 
-type AdminContext = Context<any, any, any>;
-
-type NotificationHandler = {
-  send(notification: {
-    channel: string;
-    to: string;
-    from?: string;
-    subject?: string;
-    body: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{
-    success: boolean;
-    messageId?: string;
-    error?: string;
-    retryable?: boolean;
-  }>;
-};
+type AdminContext = Context<{
+  Bindings: Env;
+  Variables: { adminAuth?: AdminAuthContext };
+}>;
 
 function looksLikeEmail(value: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
@@ -205,15 +197,6 @@ export async function dispatchApprovalCibaUserCode(
   messageId: string | null;
 }> {
   const { channel, target } = await resolveCibaTarget(c, input.request, input.approval);
-  const pluginCtx = getRequiredPluginContext(c, 'notification');
-  const notifier = pluginCtx.registry.getNotifier(channel) as NotificationHandler | undefined;
-  if (!notifier) {
-    throw new ApprovalCibaNotificationError(
-      `No ${channel} notifier is configured for CIBA delivery.`,
-      503
-    );
-  }
-
   const body =
     channel === 'email'
       ? [
@@ -230,34 +213,42 @@ export async function dispatchApprovalCibaUserCode(
           `Device ${buildDevicePath(input.artifactId)}`,
         ].join(' ');
 
-  const result = await notifier.send({
-    channel,
-    to: target,
-    subject:
-      channel === 'email'
-        ? `Approval device confirmation: ${input.request.request_surface}`
-        : undefined,
-    body,
-    metadata: {
-      kind: 'approval_ciba',
-      auth_req_id: input.authReqId,
-      approval_request_id: input.request.public_request_id,
-      approval_step_id: input.approval.id,
-      artifact_id: input.artifactId,
-      investigation_id: input.request.investigation_id,
+  const delivery = await produceNotificationDelivery(c.env, {
+    owner: { owner: 'tenant', tenantId: input.request.tenant_id },
+    intentId: `approval-ciba:${input.artifactId}`,
+    outboxId: `notification:${input.artifactId}`,
+    notificationKind: 'approval.ciba',
+    idempotencyKey: `approval-ciba:${input.artifactId}`,
+    expiresAt: Math.floor(Math.min(input.request.expires_at, input.approval.expires_at) / 1000),
+    payload: {
+      channel,
+      to: target,
+      subject:
+        channel === 'email'
+          ? `Approval device confirmation: ${input.request.request_surface}`
+          : undefined,
+      body,
+      metadata: {
+        kind: 'approval_ciba',
+        auth_req_id: input.authReqId,
+        approval_request_id: input.request.public_request_id,
+        approval_step_id: input.approval.id,
+        artifact_id: input.artifactId,
+        investigation_id: input.request.investigation_id,
+      },
     },
   });
 
-  if (!result.success) {
+  if (delivery.delivery === 'permanent_failure') {
     throw new ApprovalCibaNotificationError(
-      result.error ?? `Failed to deliver CIBA verification code via ${channel}.`,
-      result.retryable ? 503 : 409
+      `Failed to deliver CIBA verification code via ${channel}.`,
+      409
     );
   }
 
   return {
     channel,
     target,
-    messageId: result.messageId ?? null,
+    messageId: delivery.reference.intentId,
   };
 }

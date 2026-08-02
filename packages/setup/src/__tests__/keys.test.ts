@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import {
   generateKeyId,
   generateRsaKeyPair,
+  generateRsaOaepJwkKeyPair,
   generateEs256KeyPair,
   generateHexSecret,
   generateBase64Secret,
@@ -118,6 +119,21 @@ describe('generateAllSecrets', () => {
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.kty).toBe('OKP');
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.crv).toBe('Ed25519');
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.alg).toBe('EdDSA');
+    expect(secrets.notificationPayloadKeyPair.keyId).toBe('test-key-notification-payload');
+    expect(secrets.notificationPayloadKeyPair.publicJwk).toMatchObject({
+      kty: 'RSA',
+      use: 'enc',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['encrypt'],
+    });
+    expect(secrets.notificationPayloadKeyPair.publicJwk).not.toHaveProperty('d');
+    expect(secrets.notificationPayloadKeyPair.privateJwk).toMatchObject({
+      kty: 'RSA',
+      use: 'enc',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['decrypt'],
+    });
+    expect(secrets.notificationPayloadKeyPair.privateJwk.d).toEqual(expect.any(String));
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
@@ -135,6 +151,8 @@ describe('generateAllSecrets', () => {
       ]).size
     ).toBe(3);
     expect(secrets.pluginEncryptionKey).toBeDefined();
+    expect(secrets.pluginMutationHmacKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(secrets.notificationIntentHmacKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(secrets.setupToken).toBeDefined();
   });
 });
@@ -304,7 +322,7 @@ describe('ensureSupplementalKeyFiles', () => {
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(17);
+    expect(result.createdFiles).toHaveLength(24);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
@@ -312,8 +330,20 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(existsSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_mutation_hmac_key.txt'))).toBe(true);
+    expect(
+      existsSync(join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'))
+    ).toBe(true);
+    expect(
+      existsSync(join(keysDir, 'notification_payload_decryption_jwk_slot_b.private.jwk.json'))
+    ).toBe(false);
+    expect(existsSync(join(keysDir, 'notification_payload_encryption_public.jwks.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'notification_intent_hmac_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'agent_elevation_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
@@ -324,6 +354,9 @@ describe('ensureSupplementalKeyFiles', () => {
     );
     expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_b.private.jwk.json'))).toBe(false);
+    expect(existsSync(join(keysDir, 'control_smoke_verify.jwks.json'))).toBe(true);
 
     const setupJwk = JSON.parse(
       readFileSync(join(keysDir, 'setup_machine_public.jwk.json'), 'utf-8')
@@ -334,6 +367,44 @@ describe('ensureSupplementalKeyFiles', () => {
     const tenantRuntimeRegistryJwks = JSON.parse(
       readFileSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'), 'utf-8')
     );
+    const controlSmokePrivateJwk = JSON.parse(
+      readFileSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'), 'utf-8')
+    );
+    const controlSmokePublicJwks = JSON.parse(
+      readFileSync(join(keysDir, 'control_smoke_verify.jwks.json'), 'utf-8')
+    );
+    const notificationPayloadPrivateJwk = JSON.parse(
+      readFileSync(
+        join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'),
+        'utf-8'
+      )
+    );
+    const notificationPayloadPublicJwks = JSON.parse(
+      readFileSync(join(keysDir, 'notification_payload_encryption_public.jwks.json'), 'utf-8')
+    );
+    expect(controlSmokePrivateJwk).toMatchObject({
+      kty: 'OKP',
+      crv: 'Ed25519',
+      kid: 'legacy-key-control-smoke',
+    });
+    expect(controlSmokePrivateJwk.d).toEqual(expect.any(String));
+    expect(controlSmokePublicJwks.keys).toHaveLength(1);
+    expect(controlSmokePublicJwks.keys[0]).not.toHaveProperty('d');
+    expect(notificationPayloadPrivateJwk).toMatchObject({
+      kid: 'legacy-key-notification-payload',
+      kty: 'RSA',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['decrypt'],
+    });
+    expect(notificationPayloadPrivateJwk.d).toEqual(expect.any(String));
+    expect(notificationPayloadPublicJwks.keys).toHaveLength(1);
+    expect(notificationPayloadPublicJwks.keys[0]).toMatchObject({
+      kid: 'legacy-key-notification-payload',
+      kty: 'RSA',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['encrypt'],
+    });
+    expect(notificationPayloadPublicJwks.keys[0]).not.toHaveProperty('d');
     const tenantRuntimeRegistryKeyId = readFileSync(
       join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
       'utf-8'
@@ -356,6 +427,20 @@ describe('ensureSupplementalKeyFiles', () => {
     delete staleMetadata.files.vcEvidenceHmacSecret;
     delete staleMetadata.files.vcProfileContractHmacSecret;
     writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify(staleMetadata));
+    const notificationPayloadSlotB = generateRsaOaepJwkKeyPair(
+      'legacy-key-notification-payload-previous',
+      2048
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_decryption_jwk_slot_b.private.jwk.json'),
+      JSON.stringify(notificationPayloadSlotB.privateJwk)
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_encryption_public.jwks.json'),
+      JSON.stringify({
+        keys: [notificationPayloadPublicJwks.keys[0], notificationPayloadSlotB.publicJwk],
+      })
+    );
 
     const secondResult = await ensureSupplementalKeyFiles(keysDir);
     expect(secondResult.createdFiles).toHaveLength(0);
@@ -402,6 +487,20 @@ describe('ensureSupplementalKeyFiles', () => {
     expect(metadata.files).not.toHaveProperty('versionManagerSecret');
   });
 
+  it('does not create deploy-only setup credentials for a focused Worker deploy', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+
+    const result = await ensureSupplementalKeyFiles(keysDir, {
+      includeSetupMachineKeyPair: false,
+    });
+
+    expect(result.createdFiles).not.toContain(join(keysDir, 'setup_machine_private.pem'));
+    expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(false);
+    expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(false);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
+  });
+
   it('rejects partial supplemental machine key pairs', async () => {
     const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
     mkdirSync(keysDir, { recursive: true });
@@ -419,6 +518,25 @@ describe('ensureSupplementalKeyFiles', () => {
 
     await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
       /Incomplete tenant runtime registry key set/
+    );
+  });
+
+  it('rejects mismatched existing notification payload key material', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const privatePair = generateRsaOaepJwkKeyPair('notification-key-a', 2048);
+    const publicPair = generateRsaOaepJwkKeyPair('notification-key-a', 2048);
+    writeFileSync(
+      join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'),
+      JSON.stringify(privatePair.privateJwk)
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_encryption_public.jwks.json'),
+      JSON.stringify({ keys: [publicPair.publicJwk] })
+    );
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      'Invalid notification payload key set'
     );
   });
 });

@@ -26,17 +26,21 @@ import { deleteCommand } from './cli/commands/delete.js';
 import { infoCommand } from './cli/commands/info.js';
 import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js';
 import { tenantDatabaseCommand } from './cli/commands/tenant-db.js';
-import { tenantDatabasePoolExpandCommand } from './cli/commands/tenant-db-pool-expand.js';
-import { tenantDatabasePoolStatusCommand } from './cli/commands/tenant-db-pool-status.js';
-import { tenantDatabaseSlotResetCommand } from './cli/commands/tenant-db-slot-reset.js';
 import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
 import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
 import { externalDatabaseRegisterCommand } from './cli/commands/external-db-register.js';
+import {
+  rotateRuntimeRegistrySigningKeyCommand,
+  rotateSmokeRpcSigningKeyCommand,
+} from './cli/commands/signing-key-rotate.js';
+import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
+import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import {
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
   resolveLoginUiExecutionOrigin,
 } from './core/url-config.js';
+import { formatFatalError } from './core/fatal-error.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -61,8 +65,8 @@ process.on('uncaughtException', (error) => {
   if (isExitPromptError(error)) {
     process.exit(0);
   }
-  // Default handling for genuine errors
-  console.error(error);
+  // Avoid object inspection here: malformed third-party errors must not hide the original failure.
+  process.stderr.write(`${formatFatalError(error)}\n`);
   process.exit(1);
 });
 
@@ -90,6 +94,11 @@ program
   .option('--config <path>', 'Configuration file path')
   .option('--source <path>', 'Authrim source directory (containing packages/)')
   .option('--component <name>', 'Deploy a single component')
+  .option('--placement <mode>', 'Test-only component placement override (off or smart)')
+  .option(
+    '--test-endpoints <mode>',
+    'Test-only ar-management endpoint override (enabled or disabled)'
+  )
   .option('--dry-run', 'Show what would be deployed without actually deploying')
   .option('--skip-secrets', 'Skip uploading secrets')
   .option('--skip-build', 'Skip building packages')
@@ -119,6 +128,22 @@ program
   .action(updateCommand);
 
 program
+  .command('control-provision')
+  .description('Execute a pending canonical Control provisioning operation with Wrangler OAuth')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--operation-id <id>', 'Specific pending Control operation ID')
+  .option(
+    '--capacity-profile <profile>',
+    'Create capacity operations: minimum, recommended, or extra_headroom'
+  )
+  .option('--scope <scope>', 'Capacity scope: shared_pool or tenant_exclusive', 'shared_pool')
+  .option('--tenant-id <id>', 'Tenant ID for tenant_exclusive capacity')
+  .option('--keys-dir <path>', 'Setup machine key directory')
+  .option('--dry-run', 'Show the server-owned operation without claiming it')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(controlProvisionCommand);
+
+program
   .command('tenant-db')
   .description('Create tenant-d1 core and PII databases for one tenant')
   .requiredOption('--tenant-id <id>', 'Tenant ID')
@@ -145,31 +170,6 @@ program
   .action(tenantDatabaseMigrateAllCommand);
 
 program
-  .command('tenant-db-pool-expand')
-  .description('Add preallocated tenant-d1 slots to an existing environment and redeploy workers')
-  .option('--add-slots <n>', 'Number of tenant slots to add (not needed when resuming)')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option('--dry-run', 'Show what would change without updating config or deploying')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(tenantDatabasePoolExpandCommand);
-
-program
-  .command('tenant-db-pool-status')
-  .description('Show preallocated tenant-d1 slot capacity and availability')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option('--json', 'Print machine-readable JSON')
-  .action(tenantDatabasePoolStatusCommand);
-
-program
-  .command('tenant-db-slot-reset')
-  .description('Reset a failed/unavailable preallocated tenant-d1 slot and mark it available')
-  .requiredOption('--slot <n>', 'Slot number to reset, for example 1 or 0001')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option('--dry-run', 'Show what would be reset without changing D1 or slot state')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(tenantDatabaseSlotResetCommand);
-
-program
   .command('r2-provision')
   .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
   .option('--env <name>', 'Environment name', 'prod')
@@ -189,6 +189,39 @@ program
   .option('--dry-run', 'Validate and show the registration plan without changing files')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(externalDatabaseRegisterCommand);
+
+program
+  .command('rotate-runtime-registry-key')
+  .description('Rotate the Control Worker Runtime Registry signing key')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--source <path>', 'Authrim source directory')
+  .option('--keys-dir <path>', 'Keys directory')
+  .option('--skip-build', 'Skip building packages during Worker redeployments')
+  .option('--dry-run', 'Show the rotation target set without changing key state')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(rotateRuntimeRegistrySigningKeyCommand);
+
+program
+  .command('rotate-smoke-rpc-key')
+  .description('Rotate the Control Worker runtime smoke RPC signing key')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--source <path>', 'Authrim source directory')
+  .option('--keys-dir <path>', 'Keys directory')
+  .option('--skip-build', 'Skip building packages during Worker redeployments')
+  .option('--dry-run', 'Show the rotation target set without changing key state')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(rotateSmokeRpcSigningKeyCommand);
+
+program
+  .command('rotate-lookup-hmac-key')
+  .description('Rotate the Lookup blind-index HMAC key and start resumable reindexing')
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--source <path>', 'Authrim source directory')
+  .option('--keys-dir <path>', 'Keys directory')
+  .option('--skip-build', 'Skip building packages during Worker redeployments')
+  .option('--dry-run', 'Validate the environment without changing key state')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(rotateLookupHmacKeyCommand);
 
 program
   .command('upgrade')
@@ -317,7 +350,8 @@ program
           : (resolved.paths as { config: string }).config;
       if (existsSync(configPath)) {
         const configContent = await readFile(configPath, 'utf-8');
-        cfg = JSON.parse(configContent);
+        const { AuthrimConfigSchema } = await import('./core/config.js');
+        cfg = AuthrimConfigSchema.parse(JSON.parse(configContent));
       }
     } catch {
       // Config is optional for worker deployment
@@ -489,6 +523,27 @@ program
         }
 
         if (result.success) {
+          if (!dryRun) {
+            const controlDatabaseName = upgradeLock.d1.CONTROL_DB?.name;
+            if (!controlDatabaseName) {
+              throw new Error('control_database_required_for_ui_worker_inventory');
+            }
+            const { registerUiWorkerInventoryFromArtifacts } =
+              await import('./core/control-worker-inventory.js');
+            await registerUiWorkerInventoryFromArtifacts({
+              baseDir,
+              environmentId: env,
+              environmentName: env,
+              controlDatabaseName,
+              components: [componentName as 'ar-admin-ui' | 'ar-login-ui'],
+              environmentBootstrap: {
+                defaultResidencyPolicyId: cfg.profiles.defaults.residency,
+                automaticProvisioning: cfg.tenantD1?.automaticProvisioning === true,
+              },
+              registeredBy: 'setup:upgrade-ui',
+              disableMissing: false,
+            });
+          }
           deploySpinner.succeed(`${componentName} deployed successfully`);
           if (!dryRun && upgradeLock && upgradeLockPath && result.deployedAt) {
             const updatedLock = {
@@ -522,6 +577,36 @@ program
       }
     } else {
       // Deploy Worker component
+      if (!dryRun) {
+        if (!cfg) {
+          spinner.fail('A valid environment config is required for Worker deployment');
+          process.exit(1);
+        }
+        const artifactSpinner = ora('Refreshing generated Worker configuration...').start();
+        try {
+          const { refreshWorkerDeploymentArtifacts } =
+            await import('./core/worker-deployment-artifacts.js');
+          const refreshed = await refreshWorkerDeploymentArtifacts({
+            baseDir,
+            env,
+            config: cfg,
+            lock: upgradeLock,
+            lockPath: upgradeLockPath,
+            components: [componentName as (typeof WORKER_COMPONENTS)[number]],
+            registeredBy: 'setup:upgrade',
+            onProgress: (message) => {
+              artifactSpinner.text = message;
+            },
+          });
+          Object.assign(upgradeLock, refreshed.lock);
+          artifactSpinner.succeed(`Refreshed ${componentName} Worker configuration`);
+        } catch (error) {
+          artifactSpinner.fail('Worker configuration refresh failed');
+          console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+          process.exit(1);
+        }
+      }
+
       if (!skipBuild && !dryRun) {
         const buildSpinner = ora('Building packages...').start();
 

@@ -11,7 +11,6 @@
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
-import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
   getSessionStoreBySessionId,
   isShardedSessionId,
@@ -25,6 +24,7 @@ import {
   createAuthContextFromHono,
   getChallengeStoreByChallengeId,
   DIAGNOSTIC_FLOW_ID_HEADER,
+  verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import {
@@ -80,14 +80,18 @@ async function verifyExternalStartHumanVerification(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): Promise<Response | null> {
-  const result = await verifyHumanVerificationToken({
-    env: c.env,
-    tenantId,
-    actions: ['login', 'signup'],
-    response: c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
-    remoteIp: remoteIp(c),
-  });
-  if (result.ok) return null;
+  try {
+    const result = await verifyHumanVerificationWithRunner(c.env, {
+      tenantId,
+      action: 'login',
+      responseToken:
+        c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
+      remoteIp: remoteIp(c),
+    });
+    if (result.verified) return null;
+  } catch {
+    // Provider, configuration, and Runner failures share the same public denial.
+  }
 
   return c.json(
     {

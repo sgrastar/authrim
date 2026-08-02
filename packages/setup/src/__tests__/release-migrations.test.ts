@@ -432,6 +432,9 @@ describe('release migration topology', () => {
         DB: { id: 'db-core', name: 'core' },
         DB_PII: { id: 'db-pii', name: 'pii' },
         DB_ADMIN: { id: 'db-admin', name: 'admin' },
+        CONTROL_DB: { id: 'db-control', name: 'control' },
+        LOOKUP_DB: { id: 'db-lookup', name: 'lookup' },
+        PLUGIN_RUNNER_DB: { id: 'db-plugin-runner', name: 'plugin-runner' },
         TDB_SLOT_0001_CORE: { id: 'tenant-core', name: 'tenant-core' },
         TDB_SLOT_0001_PII: { id: 'tenant-pii', name: 'tenant-pii' },
         TDB_ACME_CORE_S1: { id: 'tenant-core-s1', name: 'tenant-core-s1' },
@@ -441,6 +444,21 @@ describe('release migration topology', () => {
     expect(targets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ binding: 'DB', streamId: 'd1-core', scope: 'deployment' }),
+        expect.objectContaining({
+          binding: 'CONTROL_DB',
+          streamId: 'd1-control',
+          logicalRoles: ['control'],
+        }),
+        expect.objectContaining({
+          binding: 'LOOKUP_DB',
+          streamId: 'd1-lookup',
+          logicalRoles: ['lookup'],
+        }),
+        expect.objectContaining({
+          binding: 'PLUGIN_RUNNER_DB',
+          streamId: 'd1-plugin-runner',
+          logicalRoles: ['plugin_runner'],
+        }),
         expect.objectContaining({
           binding: 'TDB_SLOT_0001_CORE',
           streamId: 'd1-core',

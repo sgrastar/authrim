@@ -9,6 +9,7 @@ import type { Env } from '../../types/env';
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
+  private failPutKey: string | null = null;
   id!: DurableObjectId;
   storage: DurableObjectStorage;
 
@@ -18,6 +19,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve(this._storage.get(key) as T | undefined);
       },
       put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        if (typeof keyOrEntries === 'string' && keyOrEntries === this.failPutKey) {
+          this.failPutKey = null;
+          return Promise.reject(new Error('Durable Storage unavailable'));
+        }
         if (typeof keyOrEntries === 'string') {
           this._storage.set(keyOrEntries, value);
         } else {
@@ -77,6 +82,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
 
   waitUntil(): void {
     // No-op for testing
+  }
+
+  failNextPut(key: string): void {
+    this.failPutKey = key;
   }
 }
 
@@ -156,9 +165,60 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(201);
     });
+
+    it('does not expose a code when its durable write fails', async () => {
+      mockState.failNextPut('code:undurable_code');
+
+      await expect(
+        codeStore.storeCodeRpc({
+          code: 'undurable_code',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_123',
+          scope: 'openid',
+        })
+      ).rejects.toThrow('Durable Storage unavailable');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'undurable_code',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).rejects.toThrow('Authorization code not found');
+    });
   });
 
   describe('Code Consumption (One-Time Use)', () => {
+    it('does not publish a consumed marker before its durable write succeeds', async () => {
+      await codeStore.storeCodeRpc({
+        code: 'consume_write_failure',
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'user_123',
+        scope: 'openid',
+      });
+      mockState.failNextPut('code:consume_write_failure');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'consume_write_failure',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).rejects.toThrow('Durable Storage unavailable');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'consume_write_failure',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).resolves.toMatchObject({ userId: 'user_123', scope: 'openid' });
+    });
+
     it('should consume valid authorization code', async () => {
       // Store code
       const storeRequest = new Request('http://localhost/code', {

@@ -32,6 +32,7 @@ const adminNotifications = {
 	admin_notifications_category_storage_registry_health: 'Storage registry health',
 	admin_notifications_category_tenant_database_stats: 'Tenant database stats',
 	admin_notifications_category_tenant_database_health: 'Tenant database health',
+	admin_notifications_category_control_plane_drift: 'Control plane drift',
 	admin_notifications_category_logging_destination_health: 'Logging destination health',
 	admin_notifications_category_logging_delivery_failure: 'Logging delivery failure',
 	admin_notifications_category_logging_fallback_used: 'Logging fallback used',
@@ -54,7 +55,10 @@ const adminNotifications = {
 	admin_notifications_load_failed: 'Failed to load notification center',
 	admin_notifications_resolve_failed: 'Failed to resolve notification',
 	admin_notifications_deliver_failed: 'Failed to deliver notification',
-	admin_notifications_run_delivery_failed: 'Failed to run notification delivery'
+	admin_notifications_run_delivery_failed: 'Failed to run notification delivery',
+	admin_notifications_control_plane_drift_banner:
+		'Control plane detected {count:number} unknown Worker script(s).',
+	admin_notifications_review_control_plane_drift: 'Review drift findings'
 } as const;
 
 export default adminNotifications;

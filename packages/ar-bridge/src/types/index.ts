@@ -257,7 +257,8 @@ export interface HandleIdentityParams {
   tenantId: string;
 }
 
-export interface HandleIdentityResult {
+export interface HandleIdentityReadyResult {
+  status: 'ready';
   userId: string;
   isNewUser: boolean;
   linkedIdentityId: string;
@@ -276,6 +277,23 @@ export interface HandleIdentityResult {
     value: string;
   }>;
 }
+
+export interface HandleIdentityPendingResult {
+  status: 'pending';
+  userId: string;
+  isNewUser: true;
+  stitchedFromExisting: false;
+  linkedIdentityId?: string;
+  roles_assigned?: HandleIdentityReadyResult['roles_assigned'];
+  orgs_joined?: HandleIdentityReadyResult['orgs_joined'];
+  attributes_set?: HandleIdentityReadyResult['attributes_set'];
+  accountId: string;
+  operationId: string;
+  providerId: string;
+  providerUserId: string;
+}
+
+export type HandleIdentityResult = HandleIdentityReadyResult | HandleIdentityPendingResult;
 
 // =============================================================================
 // API Responses

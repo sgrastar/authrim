@@ -4,6 +4,7 @@ import {
   getWorkspaceVersionMismatches,
   resolveLegacyDeploymentVersion,
   resolveSchemaExecutionState,
+  splitReleaseDeploymentForControlCoordinator,
   getUiComponentsToUpdate,
   isUpdateSourceLockUnchanged,
   withReleaseUpdateState,
@@ -76,6 +77,23 @@ function lock() {
 }
 
 describe('release update orchestration', () => {
+  it('deploys the Control coordinator first when a release updates multiple API Workers', () => {
+    expect(
+      splitReleaseDeploymentForControlCoordinator(['ar-auth', 'ar-control', 'ar-userinfo'])
+    ).toEqual({
+      coordinator: ['ar-control'],
+      remaining: ['ar-auth', 'ar-userinfo'],
+    });
+    expect(splitReleaseDeploymentForControlCoordinator(['ar-control'])).toEqual({
+      coordinator: [],
+      remaining: ['ar-control'],
+    });
+    expect(splitReleaseDeploymentForControlCoordinator(['ar-auth', 'ar-userinfo'])).toEqual({
+      coordinator: [],
+      remaining: ['ar-auth', 'ar-userinfo'],
+    });
+  });
+
   it('includes enabled UI Workers in release completion and skips disabled UI Workers', () => {
     const config = createDefaultConfig('prod');
     const currentLock = AuthrimLockSchema.parse({
@@ -107,6 +125,8 @@ describe('release update orchestration', () => {
         'ar-auth',
         'ar-token',
         'ar-userinfo',
+        'ar-control',
+        'ar-plugin-runner',
         'ar-management',
         'ar-agent-access',
         'ar-async',

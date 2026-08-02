@@ -576,6 +576,7 @@ export interface Passkey {
   tenant_id?: string;
   user_id: string;
   credential_id: string; // WebAuthn credential ID (unique)
+  rp_id?: string; // WebAuthn relying-party ID used to namespace credential routing
   public_key: string; // Public key for verification
   counter: number; // Signature counter for replay attack prevention
   transports?: string[]; // Authenticator transports (usb, nfc, ble, internal)

@@ -76,6 +76,7 @@ const adminShell = {
 	admin_nav_security: 'セキュリティ',
 	admin_nav_compliance: 'コンプライアンス',
 	admin_nav_scale: 'スケール',
+	admin_nav_control_plane: 'コントロールプレーン',
 	admin_nav_storage_destinations: '保存先',
 	admin_nav_logging_policies: 'ログポリシー',
 	admin_nav_notification_center: '通知センター',

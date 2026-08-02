@@ -77,7 +77,14 @@ describe('setup web basic API contracts', () => {
       ['/reset', {}],
       ['/admin/setup', {}],
       ['/cloudflare/check-zone', {}],
-      ['/tenant-d1/pool/prod/expand', {}],
+      ['/cloudflare/control-token-template', {}],
+      ['/control/pending-operations/execute', {}],
+      ['/control/automatic-provisioning/prepare', {}],
+      ['/control/automatic-provisioning/cancel-pending', {}],
+      ['/control/automatic-provisioning/complete', {}],
+      ['/control/automatic-provisioning/cleanup-bootstrap', {}],
+      ['/control/capacity/preview', {}],
+      ['/control/capacity/request', {}],
       ['/r2/prod/provision', {}],
       ['/environments/prod/delete', {}],
       ['/migrations/apply', {}],
@@ -205,6 +212,7 @@ describe('setup web basic API contracts', () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const config = createDefaultConfig('prod');
+    config.profiles.defaults.storage = 'builtin:storage:shared-d1';
     expect(
       (await app.request('/config/validate', post('/config/validate', config, token))).status
     ).toBe(200);
@@ -274,6 +282,7 @@ describe('setup web basic API contracts', () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const config = createDefaultConfig('prod');
+    config.profiles.defaults.storage = 'builtin:storage:shared-d1';
     expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
     await writeDeployedLock('prod');
 
@@ -371,6 +380,113 @@ describe('setup web basic API contracts', () => {
       config: null,
       progress: [],
       error: null,
+    });
+  });
+
+  it('requires same-loopback origin for the Cloudflare token template flow', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const missingOrigin = await app.request(
+      '/cloudflare/control-token-template',
+      post('/cloudflare/control-token-template', { env: 'test' }, token)
+    );
+    expect(missingOrigin.status).toBe(403);
+    const crossOrigin = await app.request('/cloudflare/control-token-template', {
+      ...post('/cloudflare/control-token-template', { env: 'test' }, token),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'https://attacker.example',
+      },
+    });
+    expect(crossOrigin.status).toBe(403);
+  });
+
+  it('requires same-loopback origin and strict input for Automatic provisioning completion', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const path = '/control/automatic-provisioning/complete';
+    const missingOrigin = await app.request(
+      path,
+      post(
+        path,
+        { env: 'test', bootstrapToken: 'bootstrap-token-value-123', ownership: 'user' },
+        token
+      )
+    );
+    expect(missingOrigin.status).toBe(403);
+
+    const malformed = await app.request(path, {
+      ...post(path, { env: 'test', bootstrapToken: 'short', ownership: 'user' }, token),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+    });
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toEqual({
+      success: false,
+      error: 'Invalid bootstrap token input',
+    });
+
+    const cleanupPath = '/control/automatic-provisioning/cleanup-bootstrap';
+    const cleanupMissingOrigin = await app.request(
+      cleanupPath,
+      post(
+        cleanupPath,
+        { env: 'test', bootstrapToken: 'bootstrap-token-value-123', ownership: 'user' },
+        token
+      )
+    );
+    expect(cleanupMissingOrigin.status).toBe(403);
+    const malformedCleanup = await app.request(cleanupPath, {
+      ...post(cleanupPath, { env: 'test', bootstrapToken: 'short', ownership: 'user' }, token),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+    });
+    expect(malformedCleanup.status).toBe(400);
+    await expect(malformedCleanup.json()).resolves.toEqual({
+      success: false,
+      error: 'Invalid bootstrap cleanup input',
+    });
+
+    const cancelPath = '/control/automatic-provisioning/cancel-pending';
+    const cancelMissingOrigin = await app.request(
+      cancelPath,
+      post(cancelPath, { env: 'test' }, token)
+    );
+    expect(cancelMissingOrigin.status).toBe(403);
+    const malformedCancel = await app.request(cancelPath, {
+      ...post(cancelPath, { env: 'test', unexpected: true }, token),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+    });
+    expect(malformedCancel.status).toBe(400);
+    await expect(malformedCancel.json()).resolves.toEqual({
+      success: false,
+      error: 'Invalid Automatic provisioning request',
+    });
+  });
+
+  it('protects pending Control operation discovery with the setup session', async () => {
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    expect((await app.request('/control/pending-operations')).status).toBe(401);
+    const response = await app.request('/control/pending-operations', {
+      headers: { 'X-Session-Token': token },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      operations: [],
+      warnings: [],
     });
   });
 
@@ -559,32 +675,6 @@ describe('setup web basic API contracts', () => {
     });
   });
 
-  it('reports tenant-D1 pool state safely for invalid, missing, and shared-D1 environments', async () => {
-    const token = generateSessionToken();
-    const app = createApiRoutes();
-    expect((await app.request('/tenant-d1/pool/UPPER/status')).status).toBe(400);
-    expect((await app.request('/tenant-d1/pool/prod/status')).status).toBe(404);
-
-    const config = createDefaultConfig('prod');
-    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
-    const status = await app.request('/tenant-d1/pool/prod/status');
-    expect(status.status).toBe(200);
-    await expect(status.json()).resolves.toMatchObject({
-      success: true,
-      storageProfile: 'builtin:storage:shared-d1',
-      tenantD1Pool: { enabled: false, capacity: 0, available: null },
-    });
-
-    for (const [path, body, expected] of [
-      ['/tenant-d1/pool/UPPER/expand', { addSlots: 1 }, 400],
-      ['/tenant-d1/pool/prod/expand', {}, 400],
-      ['/tenant-d1/pool/prod/expand', { addSlots: -1 }, 400],
-      ['/tenant-d1/pool/prod/expand', { addSlots: 1 }, 409],
-    ] as const) {
-      expect((await app.request(path, post(path, body, token))).status).toBe(expected);
-    }
-  });
-
   it('validates R2 and migration status environment names before external calls', async () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -596,64 +686,6 @@ describe('setup web basic API contracts', () => {
       (await app.request('/r2/prod/provision', post('/r2/prod/provision', {}, token))).status
     ).toBe(404);
     expect((await app.request('/migrations/status/UPPER')).status).toBe(400);
-  });
-
-  it('expands an enabled tenant-D1 pool and enforces the hard capacity limit', async () => {
-    const token = generateSessionToken();
-    const app = createApiRoutes();
-    const config = createDefaultConfig('prod');
-    config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
-    config.tenantD1 = { preallocatedSlots: 3 };
-    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
-    await writeDeployedLock('prod');
-
-    const expanded = await app.request(
-      '/tenant-d1/pool/prod/expand',
-      post('/tenant-d1/pool/prod/expand', { addSlots: '2' }, token)
-    );
-    expect(expanded.status).toBe(200);
-    const expandedBody = (await expanded.json()) as { topologyDeploymentToken: string };
-    expect(expandedBody).toMatchObject({
-      success: true,
-      currentSlots: 3,
-      addSlots: 2,
-      nextSlots: 5,
-      deployRequired: true,
-      topologyDeploymentToken: expect.any(String),
-    });
-
-    const blockedConfigMutation = await app.request('/config', post('/config', config, token));
-    expect(blockedConfigMutation.status).toBe(409);
-
-    const resumed = await app.request(
-      '/tenant-d1/pool/prod/expand',
-      post('/tenant-d1/pool/prod/expand', { addSlots: 2 }, token)
-    );
-    expect(resumed.status).toBe(200);
-    const resumedBody = (await resumed.json()) as { topologyDeploymentToken: string };
-    expect(resumedBody).toMatchObject({
-      currentSlots: 5,
-      addSlots: 0,
-      nextSlots: 5,
-      topologyDeploymentToken: expect.any(String),
-    });
-    expect(resumedBody.topologyDeploymentToken).not.toBe(expandedBody.topologyDeploymentToken);
-
-    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
-    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
-    delete lock.topologyUpdate;
-    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-    config.tenantD1.preallocatedSlots = 500;
-    await writeFile(
-      join(root, '.authrim', 'prod', 'config.json'),
-      `${JSON.stringify(config, null, 2)}\n`
-    );
-    const overLimit = await app.request(
-      '/tenant-d1/pool/prod/expand',
-      post('/tenant-d1/pool/prod/expand', { addSlots: 1 }, token)
-    );
-    expect(overLimit.status).toBe(400);
-    await expect(overLimit.json()).resolves.toMatchObject({ currentSlots: 500, maxAddSlots: 0 });
   });
 
   it('updates an existing config file with Cloudflare email settings', async () => {

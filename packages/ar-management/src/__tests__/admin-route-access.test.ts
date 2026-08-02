@@ -90,6 +90,12 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/tenants/tenant-a/directory-auth/maintenance/cleanup', (c) =>
     c.json({ ok: true })
   );
+  app.post('/api/admin/platform/control-plane/capacity/preview', (c) => c.json({ ok: true }));
+  app.post('/api/admin/platform/control-plane/capacity/requests', (c) => c.json({ ok: true }));
+  app.post('/api/admin/platform/control-plane/operations/operation-1/retry-step', (c) =>
+    c.json({ ok: true })
+  );
+  app.post('/api/admin/platform/control-plane/lookup-hmac/rotations', (c) => c.json({ ok: true }));
 
   return app;
 }
@@ -176,6 +182,41 @@ describe('declared admin route access', () => {
     const genericSettingsReader = createHarness([ADMIN_PERMISSIONS.SETTINGS_READ]);
     expect((await agentSettingsReader.request('/api/admin/settings/agent')).status).toBe(200);
     expect((await genericSettingsReader.request('/api/admin/settings/agent')).status).toBe(403);
+  });
+
+  it('uses dedicated control-plane permissions for setup machine operations', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.CONTROL_PLANE_READ]);
+    const provisioner = createHarness([ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION]);
+    const rotator = createHarness([ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE]);
+    const legacyDatabaseWriter = createHarness([ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE]);
+
+    expect(
+      findAdminRouteAccessRule(
+        'POST',
+        '/api/admin/platform/control-plane/operations/operation-1/retry-step'
+      )?.permissions
+    ).toEqual([ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION]);
+    await expect(
+      reader.request('/api/admin/platform/control-plane/capacity/preview', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      provisioner.request('/api/admin/platform/control-plane/capacity/requests', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      provisioner.request('/api/admin/platform/control-plane/operations/operation-1/retry-step', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      rotator.request('/api/admin/platform/control-plane/lookup-hmac/rotations', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      legacyDatabaseWriter.request('/api/admin/platform/control-plane/capacity/requests', {
+        method: 'POST',
+      })
+    ).resolves.toMatchObject({ status: 403 });
   });
 
   it('requires grant write permission for the grant eligibility helper', async () => {

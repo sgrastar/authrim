@@ -14,6 +14,8 @@ const {
   mockDiagnosticAuthDecision,
   mockDiagnosticCleanup,
   mockCreateDiagnosticLogger,
+  mockPersistenceContext,
+  mockResolveAccountContext,
   MockD1Adapter,
   sqlTracker,
 } = vi.hoisted(() => {
@@ -47,6 +49,10 @@ const {
     logAuthDecision: diagnosticAuthDecision,
     cleanup: diagnosticCleanup,
   });
+  const persistenceContext = vi.fn().mockResolvedValue({
+    storageProfileId: 'builtin:storage:standard',
+  });
+  const resolveAccountContext = vi.fn();
 
   class D1AdapterClass {
     constructor(_options: { db: unknown }) {}
@@ -76,6 +82,8 @@ const {
     mockDiagnosticAuthDecision: diagnosticAuthDecision,
     mockDiagnosticCleanup: diagnosticCleanup,
     mockCreateDiagnosticLogger: createDiagnosticLogger,
+    mockPersistenceContext: persistenceContext,
+    mockResolveAccountContext: resolveAccountContext,
     MockD1Adapter: D1AdapterClass,
     sqlTracker: tracker,
   };
@@ -114,6 +122,8 @@ vi.mock('@authrim/ar-lib-core', () => ({
   createDiagnosticLoggerFromContext: mockCreateDiagnosticLogger,
   getDiagnosticSessionId: vi.fn().mockReturnValue(undefined),
   DIAGNOSTIC_FLOW_ID_HEADER: 'X-Authrim-Diagnostic-Flow-Id',
+  getCachedAuthCorePersistenceContextFromEnv: mockPersistenceContext,
+  resolveAccountDataContextByIdentifier: mockResolveAccountContext,
 }));
 
 vi.mock('../services/provider-store', () => ({
@@ -177,6 +187,10 @@ describe('backchannel logout', () => {
       logAuthDecision: mockDiagnosticAuthDecision,
       cleanup: mockDiagnosticCleanup,
     });
+    mockPersistenceContext.mockReset().mockResolvedValue({
+      storageProfileId: 'builtin:storage:standard',
+    });
+    mockResolveAccountContext.mockReset();
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), {
         status: 200,
@@ -245,6 +259,63 @@ describe('backchannel logout', () => {
       'signed.logout.token',
       expect.anything(),
       expect.objectContaining({ algorithms: ['RS256'] })
+    );
+  });
+
+  it('uses the external-subject routed PII shard for tenant-D1 logout', async () => {
+    mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
+    const accountContext = {
+      accountId: 'account:user-a',
+      legacyUserId: 'user-a',
+      piiDb: { binding: 'pii-a' },
+    };
+    mockResolveAccountContext.mockResolvedValue(accountContext);
+    const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
+    const env = {
+      DB: {},
+      SETTINGS: {
+        get: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+    const c = {
+      req: {
+        param: vi.fn(() => 'google'),
+        query: vi.fn(() => undefined),
+        header: vi.fn((name: string) =>
+          name === 'Content-Type' ? 'application/x-www-form-urlencoded' : undefined
+        ),
+        parseBody: vi.fn().mockResolvedValue({ logout_token: 'signed.logout.token' }),
+      },
+      env,
+      get: vi.fn((key: string) => contextStore.get(key)),
+      header: vi.fn(),
+    };
+
+    const response = await handleBackchannelLogout(c as never);
+
+    expect(response.status).toBe(200);
+    expect(mockResolveAccountContext).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        indexKind: 'external_subject',
+        identifier: { issuer: 'provider-google', subject: 'provider-sub-123' },
+      })
+    );
+    expect(mockFindByProviderSub).toHaveBeenCalledWith(
+      env,
+      'tenant-a',
+      'provider-google',
+      'provider-sub-123',
+      accountContext.piiDb
+    );
+    expect(mockUpdateLinkedIdentity).toHaveBeenCalledWith(
+      env,
+      'tenant-a',
+      'link-1',
+      expect.anything(),
+      accountContext.piiDb
     );
   });
 

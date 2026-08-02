@@ -794,11 +794,7 @@ const de: Translations = {
     'Eine bereitstellungsweite Core-D1- und PII-D1-Datenbank. Geringster Einrichtungsaufwand und Standardpfad.',
   'web.db.tenantD1Title': 'Tenant D1',
   'web.db.tenantD1Desc':
-    'Ein Core/PII-D1-Paar pro Tenant. Erfordert Tenant-Datenbank-Provisionierung vor der Aktivierung.',
-  'web.db.preallocatedSlotsTitle': 'Vorab zugewiesene Tenant-Slots',
-  'web.db.preallocatedSlotsDesc': 'Jeder Tenant-Slot erstellt zwei D1-Datenbanken: Core und PII.',
-  'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp': 'Standard ist 3. Maximum sind 500 Slots.',
+    'Initialisiert die Control Plane und erste Tenant-Shards; weitere Kapazität wird automatisch erstellt.',
 
   // Web UI Email
   'web.email.title': 'E-Mail-Anbieter',

@@ -115,3 +115,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

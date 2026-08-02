@@ -618,4 +618,77 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain("a.download = 'authrim-' + env + '-config.json';");
   });
+
+  it('keeps Automatic provisioning optional and handles bootstrap input as a password', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('name="automatic-provisioning" value="on" checked');
+    expect(html).toContain('name="automatic-provisioning" value="off"');
+    expect(html).toContain('id="btn-create-control-bootstrap-token"');
+    expect(html).toMatch(/type="password"\s+id="control-bootstrap-token"\s+autocomplete="off"/u);
+    expect(html).toContain("api('/cloudflare/control-token-template'");
+    expect(html).toContain("bootstrapTokenInput.value = '';");
+    expect(html).toContain('id="env-control-automatic-provisioning"');
+    expect(html).toMatch(
+      /type="password"\s+id="env-control-bootstrap-token"\s+autocomplete="off"/u
+    );
+    expect(html).toContain("api('/control/automatic-provisioning/prepare'");
+    expect(html).toContain("api('/deploy/component/ar-control'");
+    expect(html).toContain("api('/control/automatic-provisioning/complete'");
+    expect(html).toContain("api('/control/automatic-provisioning/cleanup-bootstrap'");
+    expect(html).toContain("api('/control/automatic-provisioning/cancel-pending'");
+    expect(html).toContain('error.cleanupRequired === false');
+    expect(html).toContain('Automatic provisioning returned to Off.');
+    expect(html).toContain("api('/control/automatic-provisioning/status?env='");
+    expect(html).toContain('if (!bootstrapToken) {');
+    expect(html).not.toContain('if (!bootstrapToken || !envControlBootstrapOwnership)');
+    expect(html.indexOf("api('/deploy/component/ar-control'")).toBeLessThan(
+      html.indexOf("api('/control/automatic-provisioning/complete'")
+    );
+    expect(html).not.toContain('body: { env: envName, dryRun: false, bootstrapToken');
+    expect(html).not.toContain('CLOUDFLARE_D1_API_TOKEN: bootstrapToken');
+    expect(html).toContain("bootstrapToken = '';");
+  });
+
+  it('prioritizes canonical pending Control operations without tenant reselection', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('id="pending-control-operations"');
+    expect(html).toContain("api('/control/pending-operations')");
+    expect(html).toContain('pendingControlOperations[0]');
+    expect(html).toContain('operation.tenantId');
+    expect(html).toContain("api('/control/pending-operations/execute'");
+    expect(html).toContain('Run pending operation');
+    expect(html).not.toContain('pending.tenantId =');
+  });
+
+  it('offers the same server-owned capacity profiles without raw D1 inputs', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('id="control-capacity-profile"');
+    expect(html).toContain('value="minimum"');
+    expect(html).toContain('value="recommended" selected');
+    expect(html).toContain('value="extra_headroom"');
+    expect(html).toContain('id="control-capacity-scope"');
+    expect(html).toContain("api('/control/capacity/' + action");
+    expect(html).toContain("'/control/capacity/tenants?environmentId='");
+    expect(html).not.toContain('id="control-capacity-database-name"');
+    expect(html).not.toContain('id="control-capacity-binding-ref"');
+    expect(html).not.toContain('id="control-capacity-d1-count"');
+  });
 });

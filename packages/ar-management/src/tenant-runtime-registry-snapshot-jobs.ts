@@ -5,6 +5,7 @@ import {
   type Env,
   type TenantDatabaseRegistryRow,
 } from '@authrim/ar-lib-core';
+import { createControlRuntimeRegistrySigner } from './control-runtime-registry-signer';
 
 interface TenantRuntimeRegistrySnapshotJobLogger {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -27,7 +28,12 @@ export interface TenantRuntimeRegistrySnapshotRefreshOptions {
 
 const DEFAULT_TENANT_RUNTIME_REGISTRY_SNAPSHOT_LIMIT = 25;
 const DEFAULT_TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
-const DEFAULT_SNAPSHOT_REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SNAPSHOT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
+export const TENANT_RUNTIME_REGISTRY_REFRESH_CRON = '*/2 * * * *';
+
+export function isTenantRuntimeRegistryRefreshCron(cron: string): boolean {
+  return cron === TENANT_RUNTIME_REGISTRY_REFRESH_CRON;
+}
 
 function getDeploymentTarget(env: Env): string | null {
   return (env as Env & { AUTHRIM_DEPLOYMENT_TARGET?: string }).AUTHRIM_DEPLOYMENT_TARGET ?? null;
@@ -149,12 +155,7 @@ export async function refreshTenantRuntimeRegistrySnapshots(
         deploymentTarget,
         now,
         actorId: options.actorId ?? 'tenant-runtime-registry-snapshot',
-        signingKey: env.TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK
-          ? {
-              privateJwk: env.TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK,
-              keyId: env.TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID,
-            }
-          : null,
+        externalSigner: await createControlRuntimeRegistrySigner(env),
       });
       summary.published += 1;
     } catch (error) {

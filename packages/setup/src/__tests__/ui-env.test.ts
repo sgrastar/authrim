@@ -143,6 +143,7 @@ describe('ui-env module', () => {
       };
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
+        PUBLIC_AUTHRIM_ENVIRONMENT_NAME: 'test',
         PUBLIC_API_BASE_URL: 'https://api.example.com',
         PUBLIC_AUTHRIM_ISSUER: 'https://api.example.com',
         PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',
@@ -158,6 +159,7 @@ describe('ui-env module', () => {
       };
 
       expect(buildInitialUiEnvConfig(config)).toEqual({
+        PUBLIC_AUTHRIM_ENVIRONMENT_NAME: 'test',
         PUBLIC_API_BASE_URL: 'https://test.authrim.com',
         PUBLIC_AUTHRIM_ISSUER: 'https://test.authrim.com',
         PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',

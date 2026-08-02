@@ -88,6 +88,12 @@ export {
 } from './details';
 
 export {
+  createTenantPlacementWriteFenceResponse,
+  isTenantPlacementWriteFenceError,
+  TENANT_PLACEMENT_WRITE_FENCE_RETRY_AFTER_MS,
+} from './tenant-placement-write-fence';
+
+export {
   createStepUpErrorBody,
   createStepUpErrorResponse,
   type CreateStepUpErrorBodyInput,

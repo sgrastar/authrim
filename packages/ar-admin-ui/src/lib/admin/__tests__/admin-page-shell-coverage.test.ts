@@ -105,4 +105,31 @@ describe('Admin UI route structure', () => {
 			expect(layout).toContain(`'${route}'`);
 		}
 	});
+
+	it('surfaces guarded control-plane actions without provider cleanup or registration', () => {
+		const layout = readFileSync(`${srcDir}/routes/admin/+layout.svelte`, 'utf8');
+		const notifications = readFileSync(`${srcDir}/routes/admin/notifications/+page.svelte`, 'utf8');
+		const controlPlane = readFileSync(`${srcDir}/routes/admin/control-plane/+page.svelte`, 'utf8');
+
+		expect(layout).toContain("category: 'control_plane_drift'");
+		expect(layout).toContain('admin_notifications_control_plane_drift_banner');
+		expect(layout).toContain('href="/admin/notifications"');
+		expect(notifications).toContain("value: 'control_plane_drift'");
+		expect(layout).toContain("path: '/admin/control-plane'");
+		expect(controlPlane).toContain("setDisposition(finding, 'reviewed')");
+		expect(controlPlane).toContain("setDisposition(finding, 'dismissed')");
+		expect(controlPlane).toContain('getProvisioningOperation(id)');
+		expect(controlPlane).toContain('admin_control_plane_operation_inspection');
+		expect(controlPlane).toContain('retryProvisioningOperationStep');
+		expect(controlPlane).toContain("step.stepKey === 'create_d1'");
+		expect(controlPlane).toContain("step.stepKey === 'apply_migrations'");
+		expect(controlPlane).toContain("availableActions.includes('cancel')");
+		expect(controlPlane).toContain('cancelProvisioningOperation');
+		expect(controlPlane).toContain("availableActions.includes('restore_previous_settings')");
+		expect(controlPlane).toContain('restoreProvisioningOperationPreviousSettings');
+		expect(controlPlane).not.toContain('cleanupProvisioningOperation');
+		expect(controlPlane).not.toContain('deleteWorker');
+		expect(controlPlane).not.toContain('registerUnknownWorker');
+		expect(layout).not.toContain('registerUnknownWorker');
+	});
 });

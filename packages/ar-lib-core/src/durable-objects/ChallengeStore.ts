@@ -62,6 +62,8 @@ export type ChallengeType =
   | 'direct_passkey_register' // Direct Auth passkey register (authenticated user)
   | 'direct_passkey_register_map' // Challenge ID to userId mapping for register
   | 'direct_email_code' // Direct Auth email code challenge
+  | 'account_provisioning_resume' // Opaque handle for asynchronous account creation
+  | 'external_idp_provisioning_resume' // Browser-bound external IdP JIT continuation
   | 'email_verification_protocol' // Browser/provider email ownership verification nonce
   | 'passkey_reauth' // Account Page passkey re-authentication challenge
   | 'account_email_reauth'; // Account Page email code re-authentication challenge

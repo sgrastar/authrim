@@ -20,6 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_plugin_runner_shards_due
 CREATE TABLE IF NOT EXISTS plugin_runner_full_sweep_state (
   sweep_id TEXT PRIMARY KEY,
   state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'completed', 'failed')),
+  active_sweep_key TEXT NOT NULL,
   started_at INTEGER,
   target_completed_at INTEGER,
   completed_at INTEGER,
@@ -27,12 +28,13 @@ CREATE TABLE IF NOT EXISTS plugin_runner_full_sweep_state (
   scanned_shard_count INTEGER NOT NULL DEFAULT 0 CHECK (scanned_shard_count >= 0),
   error_code TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  CHECK ((state IN ('pending', 'running') AND active_sweep_key = 'active') OR
+         (state IN ('completed', 'failed') AND active_sweep_key = 'sweep:' || sweep_id))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_runner_one_active_sweep
-  ON plugin_runner_full_sweep_state(state)
-  WHERE state IN ('pending', 'running');
+  ON plugin_runner_full_sweep_state(active_sweep_key);
 
 CREATE TABLE IF NOT EXISTS plugin_runner_hook_policies (
   plugin_id TEXT NOT NULL,
@@ -40,6 +42,8 @@ CREATE TABLE IF NOT EXISTS plugin_runner_hook_policies (
   timeout_ms INTEGER NOT NULL CHECK (timeout_ms BETWEEN 1 AND 30000),
   failure_policy TEXT NOT NULL CHECK (failure_policy IN ('fail_open', 'fail_closed', 'retry_async')),
   max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 1 AND 100),
+  async_retry_budget_seconds INTEGER NOT NULL DEFAULT 86400
+    CHECK (async_retry_budget_seconds BETWEEN 60 AND 604800),
   circuit_breaker_threshold INTEGER NOT NULL CHECK (circuit_breaker_threshold BETWEEN 1 AND 1000),
   circuit_breaker_cooldown_seconds INTEGER NOT NULL
     CHECK (circuit_breaker_cooldown_seconds BETWEEN 1 AND 86400),

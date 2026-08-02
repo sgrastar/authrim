@@ -6,6 +6,7 @@ export interface SessionPersistenceRecord {
   id: string;
   tenantId?: string;
   userId: string;
+  accountId: string;
   expiresAt: number;
   createdAt: number;
 }
@@ -91,6 +92,7 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
       id: row.id,
       tenantId: row.tenant_id,
       userId: row.user_id,
+      accountId: `account:${row.user_id}`,
       expiresAt: row.expires_at * 1000,
       createdAt: row.created_at * 1000,
     };
@@ -156,6 +158,7 @@ class DatabaseSessionPersistenceAdapter implements SessionPersistenceAdapter {
       id: row.id,
       tenantId: row.tenant_id,
       userId: row.user_id,
+      accountId: `account:${row.user_id}`,
       expiresAt: row.expires_at * 1000,
       createdAt: row.created_at * 1000,
     }));

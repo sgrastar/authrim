@@ -1,11 +1,7 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { LoginEntrySettings } from '../../types/settings/login-entry';
 
-export type TenantDiscoveryIndexKind =
-  | 'email_domain'
-  | 'email_exact'
-  | 'external_subject'
-  | 'global_subject';
+export type TenantDiscoveryIndexKind = 'email_exact' | 'external_subject' | 'global_subject';
 
 export type TenantDiscoveryIndexStatus = 'active' | 'stale' | 'rotating' | 'disabled' | 'deleted';
 

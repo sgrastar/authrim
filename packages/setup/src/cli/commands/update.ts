@@ -29,6 +29,7 @@ import {
   loadDeploySecretsFromKeys,
   type DeployOptions,
   type DeployResult,
+  type DeploymentSummary,
   type UiWorkerComponent,
 } from '../../core/deploy.js';
 import {
@@ -36,6 +37,7 @@ import {
   checkAuth,
   getWorkersSubdomain,
   findMigrationsRoot,
+  ensureInitialTenantInD1,
   ensureSetupMachineAccessInD1,
   cleanupSetupMachineAccessInD1,
 } from '../../core/cloudflare.js';
@@ -55,7 +57,19 @@ import {
   resolvePaths,
 } from '../../core/paths.js';
 import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../../core/wrangler-sync.js';
-import { buildResourceIdsFromLock } from '../../core/wrangler.js';
+import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
+import {
+  compileControlWorkerInventoryFromArtifacts,
+  registerControlWorkerInventory,
+  registerUiWorkerInventoryFromArtifacts,
+} from '../../core/control-worker-inventory.js';
+import { refreshLockFromControlGeneratedState } from '../../core/control-generated-state.js';
+import {
+  discoverExternalCapabilities,
+  registerExternalCapabilities,
+} from '../../core/external-capability-registration.js';
+import { publishDynamicPluginWorkerBundles } from '../../core/dynamic-plugin-publication.js';
+import { publishAndActivateMigrationRelease } from '../../core/migration-release-publication.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
 import {
@@ -71,6 +85,7 @@ import {
   loadTargetReleaseMigrationManifest,
   readReleaseMigrationManifest,
   resolveReleaseMigrationTargets,
+  type ReleaseMigrationManifest,
 } from '../../core/release-migrations.js';
 import {
   applyReleaseSchemaUpdatePlan,
@@ -92,6 +107,7 @@ import {
   environmentOperationBlockMessage,
   evaluateEnvironmentOperation,
 } from '../../core/environment-operation-policy.js';
+import { publishInitialTenantD1RuntimeSnapshot } from '../../core/tenant-d1-bootstrap.js';
 
 export { withReleaseUpdateState, withSchemaTargetStates } from '../../core/release-state.js';
 
@@ -109,9 +125,48 @@ export interface UpdateCommandOptions {
   yes?: boolean;
 }
 
+const CONTROL_COORDINATOR_SETTLE_MS = 65_000;
+
 // =============================================================================
 // Helpers
 // =============================================================================
+
+export function splitReleaseDeploymentForControlCoordinator(
+  components: readonly WorkerComponent[]
+): { coordinator: WorkerComponent[]; remaining: WorkerComponent[] } {
+  if (components.length <= 1 || !components.includes('ar-control')) {
+    return { coordinator: [], remaining: [...components] };
+  }
+  return {
+    coordinator: ['ar-control'],
+    remaining: components.filter((component) => component !== 'ar-control'),
+  };
+}
+
+function mergeDeploymentSummaries(
+  first: DeploymentSummary,
+  second: DeploymentSummary
+): DeploymentSummary {
+  return {
+    totalComponents: first.totalComponents + second.totalComponents,
+    successCount: first.successCount + second.successCount,
+    failedCount: first.failedCount + second.failedCount,
+    results: [...first.results, ...second.results],
+    startedAt: first.startedAt,
+    completedAt: second.completedAt,
+    duration: first.duration + second.duration,
+  };
+}
+
+function isWorkerDeploymentLeaseBusy(error: unknown): boolean {
+  return error instanceof Error && error.message === 'worker_deployment_lease_busy';
+}
+
+async function waitForControlCoordinatorSettlement(): Promise<void> {
+  await new Promise<void>((resolvePromise) => {
+    setTimeout(resolvePromise, CONTROL_COORDINATOR_SETTLE_MS);
+  });
+}
 
 /**
  * Display version comparison table
@@ -325,6 +380,7 @@ async function deployReleaseUiWorkers(input: {
   lockPath: string;
   components: UiWorkerComponent[];
   productVersion: string;
+  release: ReleaseMigrationManifest;
   skipBuild: boolean;
 }): Promise<AuthrimLock> {
   if (input.components.length === 0) return input.lock;
@@ -343,6 +399,24 @@ async function deployReleaseUiWorkers(input: {
     throw new Error(
       `API router is not ready for UI deployment: ${readiness.error ?? readiness.checkedUrl}`
     );
+  }
+
+  const initialTenant = await ensureInitialTenantInD1(input.env, input.config);
+  if (!initialTenant.success) {
+    throw new Error(
+      `Initial tenant prerequisite failed: ${initialTenant.error ?? 'unknown error'}`
+    );
+  }
+  const snapshot = await publishInitialTenantD1RuntimeSnapshot({
+    env: input.env,
+    config: input.config,
+    lock: input.lock,
+    rootDir: input.baseDir,
+    keysDir: keysDirectory.path,
+    release: input.release,
+  });
+  if (!snapshot.success) {
+    throw new Error(`Initial tenant runtime snapshot failed: ${snapshot.error ?? 'unknown error'}`);
   }
 
   let workingLock = input.lock;
@@ -460,6 +534,23 @@ async function deployReleaseUiWorkers(input: {
     };
     await saveLockFile(workingLock, input.lockPath);
   }
+  const controlDatabaseName = workingLock.d1.CONTROL_DB?.name;
+  if (!controlDatabaseName) {
+    throw new Error('control_database_required_for_ui_worker_inventory');
+  }
+  await registerUiWorkerInventoryFromArtifacts({
+    baseDir: input.baseDir,
+    environmentId: input.env,
+    environmentName: input.env,
+    controlDatabaseName,
+    components: input.components,
+    environmentBootstrap: {
+      defaultResidencyPolicyId: input.config.profiles.defaults.residency,
+      automaticProvisioning: input.config.tenantD1?.automaticProvisioning === true,
+    },
+    registeredBy: 'setup:update-ui',
+    disableMissing: false,
+  });
   return workingLock;
 }
 
@@ -896,6 +987,33 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     await saveLockFile(workingLock, lockPath);
 
+    const controlDatabase = workingLock.d1.CONTROL_DB;
+    const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
+    if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
+    if (!migrationReleaseBucket) {
+      throw new Error('migration_release_bucket_required_for_release_publication');
+    }
+    const releasePublicationSpinner = ora('Publishing migration release artifact...').start();
+    try {
+      const publication = await publishAndActivateMigrationRelease({
+        migrationsRoot,
+        manifestPath: targetManifestResult.path,
+        bucketName: migrationReleaseBucket.name,
+        controlDatabaseId: controlDatabase.id,
+        environmentId: env,
+        actorId: 'setup:update',
+        onProgress: (message) => {
+          releasePublicationSpinner.text = message;
+        },
+      });
+      releasePublicationSpinner.succeed(
+        `Migration release ${publication.artifact.releaseId} published (${publication.artifact.streamIds.length} D1 streams)`
+      );
+    } catch (error) {
+      releasePublicationSpinner.fail('Migration release publication failed');
+      throw error;
+    }
+
     if (componentsToUpdate.length === 0) {
       const lockedWorkers = Object.values(workingLock.workers ?? {}).filter(
         (worker) => worker.version === productVersion
@@ -939,6 +1057,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           lockPath,
           components: uiComponentsToUpdate,
           productVersion,
+          release: targetManifestResult.manifest,
           skipBuild: options.skipBuild === true,
         });
       } catch (error) {
@@ -960,20 +1079,84 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
 
     // Regenerate from the schema-applied lock before copying to deploy locations.
     const wranglerSpinner = ora('Refreshing wrangler configs...').start();
-    const masterResult = await saveMasterWranglerConfigs(
+    try {
+      const projected = await refreshLockFromControlGeneratedState({
+        lock: workingLock,
+        environmentId: env,
+      });
+      workingLock = projected.lock;
+      await saveLockFile(workingLock, lockPath);
+      wranglerSpinner.text = `Loaded Control DB bindings (+${projected.added.length} ~${projected.changed.length} -${projected.removed.length})`;
+    } catch (error) {
+      wranglerSpinner.fail('Control DB generated-state projection failed');
+      console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
+      process.exit(1);
+    }
+    const deploymentResourceIds = await buildWorkerDeploymentResourceIds({
+      lock: workingLock,
       config,
-      buildResourceIdsFromLock(workingLock, config),
-      {
-        baseDir,
-        env,
-        onProgress: (msg) => {
-          wranglerSpinner.text = msg;
-        },
-      }
-    );
+      environmentId: env,
+      onProgress: (message) => {
+        wranglerSpinner.text = message;
+      },
+    });
+    const masterResult = await saveMasterWranglerConfigs(config, deploymentResourceIds, {
+      baseDir,
+      env,
+      onProgress: (msg) => {
+        wranglerSpinner.text = msg;
+      },
+    });
     if (!masterResult.success) {
       wranglerSpinner.fail('Wrangler config generation failed');
       console.error(chalk.red(`\nErrors: ${masterResult.errors.join(', ')}`));
+      process.exit(1);
+    }
+    const controlDatabaseName = workingLock.d1?.CONTROL_DB?.name;
+    if (!controlDatabaseName) {
+      wranglerSpinner.fail('CONTROL_DB is required for desired Worker inventory');
+      process.exit(1);
+    }
+    try {
+      const inventory = await compileControlWorkerInventoryFromArtifacts({
+        baseDir,
+        environmentId: env,
+        environmentName: env,
+        components: CORE_WORKER_COMPONENTS,
+        artifactPaths: masterResult.files,
+      });
+      await registerControlWorkerInventory({
+        controlDatabaseName,
+        records: inventory,
+        environmentBootstrap: {
+          defaultResidencyPolicyId: config.profiles.defaults.residency,
+          automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+        },
+        registeredBy: 'setup:update',
+        onProgress: (message) => {
+          wranglerSpinner.text = message;
+        },
+      });
+      const externalSources = await discoverExternalCapabilities({ baseDir });
+      await publishDynamicPluginWorkerBundles({
+        baseDir,
+        enabled: config.features.pluginDynamicWorkers.enabled,
+        sources: externalSources,
+        bucketName: workingLock.r2?.PLUGIN_BUNDLES?.name,
+        pluginRunnerDatabaseName: workingLock.d1?.PLUGIN_RUNNER_DB?.name,
+        onProgress: (message) => {
+          wranglerSpinner.text = message;
+        },
+      });
+      await registerExternalCapabilities({
+        controlDatabaseName,
+        environmentId: env,
+        sources: externalSources,
+        registeredBy: 'setup:update',
+      });
+    } catch (error) {
+      wranglerSpinner.fail('Desired Worker inventory registration failed');
+      console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
       process.exit(1);
     }
     const syncResult = await syncWranglerConfigs({
@@ -1024,9 +1207,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     if (keysDirectory) {
       await ensureSupplementalKeyFiles(keysDirectory.path);
     }
-    const deploymentSecrets = keysDirectory
-      ? await loadDeploySecretsFromKeys(keysDirectory.path, componentsToUpdate)
-      : {};
+    const deploymentSecrets = await loadDeploySecretsFromKeys(
+      keysDirectory?.path,
+      componentsToUpdate
+    );
+    const deploymentControlDatabase = workingLock.d1.CONTROL_DB;
+    if (!deploymentControlDatabase) {
+      throw new Error('control_database_required_for_worker_deployment_lease');
+    }
 
     const deployOptions: DeployOptions = {
       env,
@@ -1039,6 +1227,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         (component) => workingLock.workers?.[component] !== undefined
       ),
       secrets: deploymentSecrets,
+      deploymentLease: {
+        controlDatabaseId: deploymentControlDatabase.id,
+        environmentId: env,
+        actorId: 'setup:update',
+        accountId: config.cloudflare?.accountId,
+        required: true,
+      },
       cleanupLegacyStaticSecrets: true,
       onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
       onError: (component, error) => {
@@ -1075,7 +1270,40 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       }
     }
 
-    const summary = await deployAll(deployOptions, componentsToUpdate);
+    const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
+    let summary: DeploymentSummary;
+    if (!options.dryRun && deploymentGroups.coordinator.length > 0) {
+      console.log(
+        chalk.gray('  Deploying ar-control first so in-flight provisioning can safely converge...')
+      );
+      const coordinatorSummary = await deployAll(deployOptions, deploymentGroups.coordinator);
+      if (coordinatorSummary.failedCount > 0) {
+        summary = coordinatorSummary;
+      } else {
+        workingLock = updateLockWithDeploymentsAndVersions(
+          workingLock,
+          coordinatorSummary.results,
+          localVersions
+        );
+        await saveLockFile(workingLock, lockPath);
+        let remainingSummary: DeploymentSummary;
+        try {
+          remainingSummary = await deployAll(deployOptions, deploymentGroups.remaining);
+        } catch (error) {
+          if (!isWorkerDeploymentLeaseBusy(error)) throw error;
+          console.log(
+            chalk.gray(
+              '  Waiting for the updated Control coordinator to release superseded provisioning leases...'
+            )
+          );
+          await waitForControlCoordinatorSettlement();
+          remainingSummary = await deployAll(deployOptions, deploymentGroups.remaining);
+        }
+        summary = mergeDeploymentSummaries(coordinatorSummary, remainingSummary);
+      }
+    } else {
+      summary = await deployAll(deployOptions, componentsToUpdate);
+    }
 
     // Update lock file with new versions
     if (summary.results.some((result) => result.success || result.trafficCommitted)) {
@@ -1154,6 +1382,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           lockPath,
           components: uiComponentsToUpdate,
           productVersion,
+          release: targetManifestResult.manifest,
           skipBuild: options.skipBuild === true,
         });
       } catch (error) {

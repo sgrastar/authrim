@@ -89,7 +89,8 @@ export interface UserMissingRequiredField {
 /**
  * Pagination info
  */
-export interface Pagination {
+export interface OffsetPagination {
+	mode?: 'offset';
 	page: number;
 	limit: number;
 	total: number;
@@ -97,6 +98,16 @@ export interface Pagination {
 	hasNext: boolean;
 	hasPrev: boolean;
 }
+
+export interface CursorPagination {
+	mode: 'cursor' | 'exact';
+	limit: number;
+	nextCursor: string | null;
+	hasNext: boolean;
+	cursorReset?: boolean;
+}
+
+export type Pagination = OffsetPagination | CursorPagination;
 
 /**
  * User list response
@@ -115,6 +126,7 @@ export interface UserListParams {
 	search?: string;
 	verified?: boolean;
 	status?: 'active' | 'suspended' | 'locked';
+	cursor?: string;
 }
 
 /**
@@ -127,6 +139,60 @@ export interface CreateUserInput {
 	family_name?: string;
 	email_verified?: boolean;
 }
+
+export type AccountCreationOperationState =
+	| 'preparing'
+	| 'reserved'
+	| 'writing'
+	| 'directory_pending'
+	| 'succeeded'
+	| 'blocked'
+	| 'canceled';
+
+export interface AccountCreationOperation {
+	operation_id: string;
+	state: AccountCreationOperationState;
+	user_id?: string;
+}
+
+export type IdentifierReplacementOperationState =
+	| 'directory_pending'
+	| 'authoritative_switch_pending'
+	| 'authoritative_switched'
+	| 'revocation_pending'
+	| 'completed'
+	| 'blocked_forward_repair'
+	| 'canceled';
+
+const IDENTIFIER_REPLACEMENT_STATES: readonly IdentifierReplacementOperationState[] = [
+	'directory_pending',
+	'authoritative_switch_pending',
+	'authoritative_switched',
+	'revocation_pending',
+	'completed',
+	'blocked_forward_repair',
+	'canceled'
+];
+
+export interface IdentifierReplacementOperation {
+	operation_id: string;
+	authority: 'self_service' | 'admin' | 'scim' | 'external_idp';
+	state: IdentifierReplacementOperationState;
+	attention_required: boolean;
+	error_code: string | null;
+	created_at: number;
+	updated_at: number;
+	completed_at: number | null;
+}
+
+export type CreateUserResult =
+	| { status: 'created'; user: User }
+	| {
+			status: 'pending';
+			operation_id: string;
+			state: AccountCreationOperationState;
+			status_url: string;
+	  };
 
 /**
  * Update user input
@@ -160,17 +226,37 @@ export const adminUsersAPI = {
 		if (params?.search) searchParams.set('search', params.search);
 		if (params?.verified !== undefined) searchParams.set('verified', String(params.verified));
 		if (params?.status) searchParams.set('status', params.status);
+		if (params?.cursor) searchParams.set('cursor', params.cursor);
 
 		const queryString = searchParams.toString();
 		const url = `${API_BASE_URL}/api/admin/users${queryString ? `?${queryString}` : ''}`;
 
-		const response = await adminFetch(url);
+		let response = await adminFetch(url);
+		let cursorReset = false;
+		if (response.status === 409 && params?.cursor) {
+			const error = (await response
+				.clone()
+				.json()
+				.catch(() => null)) as { error?: string } | null;
+			if (error?.error === 'cursor_stale') {
+				searchParams.delete('cursor');
+				const retryQuery = searchParams.toString();
+				response = await adminFetch(
+					`${API_BASE_URL}/api/admin/users${retryQuery ? `?${retryQuery}` : ''}`
+				);
+				cursorReset = true;
+			}
+		}
 
 		if (!response.ok) {
 			throw new Error('Failed to fetch users');
 		}
 
-		return response.json();
+		const result = (await response.json()) as UserListResponse;
+		if (cursorReset && result.pagination.mode === 'cursor') {
+			result.pagination.cursorReset = true;
+		}
+		return result;
 	},
 
 	/**
@@ -221,10 +307,14 @@ export const adminUsersAPI = {
 	 * Create a new user
 	 * POST /api/admin/users
 	 */
-	async create(data: CreateUserInput): Promise<User> {
+	async create(
+		data: CreateUserInput,
+		options?: { idempotencyKey?: string }
+	): Promise<CreateUserResult> {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/users`, {
 			method: 'POST',
 			includeJsonContentType: true,
+			headers: options?.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : undefined,
 			body: JSON.stringify(data)
 		});
 
@@ -234,7 +324,108 @@ export const adminUsersAPI = {
 		}
 
 		const result = await response.json();
-		return result.user;
+		if (response.status === 202) {
+			if (
+				result.status !== 'pending' ||
+				typeof result.operation_id !== 'string' ||
+				typeof result.state !== 'string' ||
+				typeof result.status_url !== 'string'
+			) {
+				throw new Error('Invalid pending account creation response');
+			}
+			return {
+				status: 'pending',
+				operation_id: result.operation_id,
+				state: result.state,
+				status_url: result.status_url
+			};
+		}
+		return { status: 'created', user: result.user };
+	},
+
+	async getCreationOperation(operationId: string): Promise<AccountCreationOperation> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/users/operations/${encodeURIComponent(operationId)}`
+		);
+		if (!response.ok) {
+			throw new Error('Failed to fetch account creation status');
+		}
+		const result = (await response.json()) as AccountCreationOperation;
+		if (
+			result.operation_id !== operationId ||
+			typeof result.state !== 'string' ||
+			(result.state === 'succeeded' && typeof result.user_id !== 'string')
+		) {
+			throw new Error('Invalid account creation status response');
+		}
+		return result;
+	},
+
+	async listIdentifierReplacements(id: string): Promise<IdentifierReplacementOperation[]> {
+		const response = await adminFetch(`${adminUserPath(id)}/identifier-replacements`);
+		if (!response.ok) throw new Error('Failed to fetch identifier operations');
+		const result = (await response.json()) as { operations?: unknown };
+		if (
+			!Array.isArray(result.operations) ||
+			result.operations.length > 20 ||
+			result.operations.some((entry) => {
+				if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return true;
+				const operation = entry as Record<string, unknown>;
+				return (
+					typeof operation.operation_id !== 'string' ||
+					!['self_service', 'admin', 'scim', 'external_idp'].includes(
+						String(operation.authority)
+					) ||
+					typeof operation.state !== 'string' ||
+					!IDENTIFIER_REPLACEMENT_STATES.includes(
+						operation.state as IdentifierReplacementOperationState
+					) ||
+					typeof operation.attention_required !== 'boolean' ||
+					!(operation.error_code === null || typeof operation.error_code === 'string') ||
+					typeof operation.created_at !== 'number' ||
+					typeof operation.updated_at !== 'number' ||
+					!(operation.completed_at === null || typeof operation.completed_at === 'number')
+				);
+			})
+		) {
+			throw new Error('Invalid identifier operations response');
+		}
+		return result.operations as IdentifierReplacementOperation[];
+	},
+
+	async resumeIdentifierReplacement(
+		id: string,
+		operationId: string
+	): Promise<{
+		operation_id: string;
+		state: IdentifierReplacementOperationState;
+		attention_required: boolean;
+	}> {
+		const response = await adminFetch(
+			`${adminUserPath(id)}/identifier-replacements/${encodeURIComponent(operationId)}/resume`,
+			{ method: 'POST', includeJsonContentType: true, body: JSON.stringify({}) }
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to resume operation');
+		}
+		const result = (await response.json()) as Record<string, unknown>;
+		if (
+			result.operation_id !== operationId ||
+			typeof result.state !== 'string' ||
+			!IDENTIFIER_REPLACEMENT_STATES.includes(
+				result.state as IdentifierReplacementOperationState
+			) ||
+			typeof result.attention_required !== 'boolean' ||
+			result.attention_required !== (result.state === 'blocked_forward_repair')
+		) {
+			throw new Error('Invalid identifier operation response');
+		}
+		return result as {
+			operation_id: string;
+			state: IdentifierReplacementOperationState;
+			attention_required: boolean;
+		};
 	},
 
 	/**

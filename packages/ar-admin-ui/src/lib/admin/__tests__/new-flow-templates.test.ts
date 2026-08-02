@@ -190,7 +190,7 @@ describe('new flow templates', () => {
 			preview: {
 				flow: {
 					id: 'default-login-no-consent',
-					title: 'Login (No consent)'
+					title: 'Authentication-only Login'
 				}
 			}
 		});

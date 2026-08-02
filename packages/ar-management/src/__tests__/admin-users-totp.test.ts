@@ -64,12 +64,13 @@ function createMockContext(userId = 'user_123') {
     header: (name: string, value: string) => {
       headers.append(name, value);
     },
-    json: (body: unknown, status = 200) =>
+    json: (body: unknown, status = 200, responseHeaders: Record<string, string> = {}) =>
       new Response(JSON.stringify(body), {
         status,
         headers: {
           'Content-Type': 'application/json',
           ...Object.fromEntries(headers.entries()),
+          ...responseHeaders,
         },
       }),
   } as any;
@@ -121,6 +122,29 @@ describe('admin user TOTP reset handler', () => {
     expect(response.status).toBe(404);
     expect(body.error).toBe('not_found');
     expect(mockTotpRepository.deleteByUserId).not.toHaveBeenCalled();
+    expect(mockCreateAuditLogFromContext).not.toHaveBeenCalled();
+  });
+
+  it('returns a redacted retryable response when the tenant placement write fence is active', async () => {
+    mockProjectionRepository.findByLegacyUserId.mockResolvedValue({ user_id: 'user_123' });
+    mockTotpRepository.deleteByUserId.mockRejectedValue(
+      new Error('D1_ERROR: tenant_placement_migration_write_fenced private-row')
+    );
+
+    const response = await adminUserTotpResetHandler(createMockContext());
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(body).toMatchObject({
+      error: 'temporarily_unavailable',
+      extensions: {
+        reason: 'tenant_placement_write_fence',
+        retryable: true,
+        retry_after_ms: 500,
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('private-row');
     expect(mockCreateAuditLogFromContext).not.toHaveBeenCalled();
   });
 });

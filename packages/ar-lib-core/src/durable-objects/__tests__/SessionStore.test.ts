@@ -11,6 +11,18 @@ import {
 } from '../../types/runtime-profile';
 import { AUTH_CORE_PERSISTENCE_CONTEXT_KEY } from '../../services/auth-core-persistence-context';
 
+const runtimeDataContextMocks = vi.hoisted(() => ({
+  resolveAccountCoreDataContext: vi.fn(),
+  resolveSessionAccountCoreDataContext: vi.fn(),
+}));
+
+vi.mock('../../services/runtime-data-context', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveAccountCoreDataContext: runtimeDataContextMocks.resolveAccountCoreDataContext,
+  resolveSessionAccountCoreDataContext:
+    runtimeDataContextMocks.resolveSessionAccountCoreDataContext,
+}));
+
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
@@ -111,6 +123,8 @@ describe('SessionStore', () => {
   let mockEnv: Env;
 
   beforeEach(() => {
+    runtimeDataContextMocks.resolveAccountCoreDataContext.mockReset();
+    runtimeDataContextMocks.resolveSessionAccountCoreDataContext.mockReset();
     mockState = new MockDurableObjectState();
     mockEnv = createMockEnv();
     sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
@@ -137,6 +151,7 @@ describe('SessionStore', () => {
       const body = (await response.json()) as any;
       expect(body).toHaveProperty('id', sessionId);
       expect(body).toHaveProperty('userId', 'user_123');
+      expect(body).toHaveProperty('accountId', 'account:user_123');
       expect(body).toHaveProperty('expiresAt');
       expect(body).toHaveProperty('createdAt');
     });
@@ -195,6 +210,27 @@ describe('SessionStore', () => {
           'tenant-b'
         )
       ).rejects.toThrow('SessionStore tenant context mismatch');
+    });
+
+    it('updates the trusted account route when an anonymous session subject changes', async () => {
+      const created = await sessionStore.createSessionRpc(
+        '0_session_upgrade',
+        'anonymous-user',
+        3600,
+        { is_anonymous: true },
+        'tenant-a'
+      );
+      expect(created.accountId).toBe('account:anonymous-user');
+
+      const updated = await sessionStore.updateSessionUserIdRpc(
+        '0_session_upgrade',
+        'registered-user'
+      );
+
+      expect(updated).toMatchObject({
+        userId: 'registered-user',
+        accountId: 'account:registered-user',
+      });
     });
 
     it('should use provided sessionId (sharding support)', async () => {
@@ -301,17 +337,23 @@ describe('SessionStore', () => {
       await firstLoad;
     });
 
-    it('disables cold session persistence when the storage profile detaches transient mirrors', async () => {
-      const d1 = createMockD1();
+    it('writes the tenant-D1 cold session mirror only to the resolved users shard', async () => {
+      const metadataD1 = createMockD1();
+      const usersD1 = createMockD1();
+      runtimeDataContextMocks.resolveAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+      });
       mockEnv = {
         ...createMockEnv(),
-        DB: d1,
+        DB: metadataD1,
         DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
       } as Env;
       sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
 
       await sessionStore.createSessionRpc(
-        '0_session_tenant_d1_no_cold_persistence',
+        '0_session_tenant_d1_cold_persistence',
         'user_123',
         3600,
         undefined,
@@ -330,16 +372,193 @@ describe('SessionStore', () => {
       expect(context).toMatchObject({
         storageProfileId: TENANT_D1_STORAGE_PROFILE_ID,
         transientAuth: {
-          sessionColdPersistence: 'disabled',
+          sessionColdPersistence: 'enabled',
           sessionClientMirror: 'async',
           deviceCibaColdPersistence: 'disabled',
         },
       });
-      expect(d1.prepare).not.toHaveBeenCalled();
+      for (let i = 0; i < 5 && !vi.mocked(usersD1.prepare).mock.calls.length; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(runtimeDataContextMocks.resolveAccountCoreDataContext).toHaveBeenCalledWith(mockEnv, {
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+      });
+      expect(usersD1.prepare).toHaveBeenCalled();
+      expect(metadataD1.prepare).not.toHaveBeenCalled();
     });
   });
 
   describe('Session Retrieval', () => {
+    it('fails closed when a tenant-D1 session account route cannot be resolved', async () => {
+      const usersD1 = createMockD1();
+      runtimeDataContextMocks.resolveAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        {
+          ...createMockEnv(),
+          DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        } as Env
+      );
+      await sessionStore.createSessionRpc(
+        '0_session_route_failure',
+        'user_123',
+        3600,
+        undefined,
+        'tenant-a'
+      );
+      runtimeDataContextMocks.resolveSessionAccountCoreDataContext.mockRejectedValue(
+        new Error('account_data_runtime_registry_unavailable')
+      );
+
+      await expect(sessionStore.getSessionRpc('0_session_route_failure')).rejects.toThrow(
+        'account_data_runtime_registry_unavailable'
+      );
+    });
+
+    it('rejects a tenant-D1 session at the user-wide revocation epoch from the routed Core batch', async () => {
+      const usersD1 = createMockD1();
+      runtimeDataContextMocks.resolveAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+      });
+      runtimeDataContextMocks.resolveSessionAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+        revokedAfterMs: Date.now() + 10_000,
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        {
+          ...createMockEnv(),
+          DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        } as Env
+      );
+      await sessionStore.createSessionRpc(
+        '0_session_revoked_at_epoch',
+        'user_123',
+        3600,
+        undefined,
+        'tenant-a'
+      );
+
+      await expect(sessionStore.getSessionRpc('0_session_revoked_at_epoch')).resolves.toBeNull();
+      expect(runtimeDataContextMocks.resolveSessionAccountCoreDataContext).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          tenantId: 'tenant-a',
+          accountId: 'account:user_123',
+          userId: 'user_123',
+          nowMs: expect.any(Number),
+        }
+      );
+    });
+
+    it('fails closed when the session Core resolver crosses its durable tenant route', async () => {
+      const usersD1 = createMockD1();
+      runtimeDataContextMocks.resolveAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+      });
+      runtimeDataContextMocks.resolveSessionAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-b',
+        accountId: 'account:user_123',
+        coreDb: usersD1,
+        revokedAfterMs: null,
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        {
+          ...createMockEnv(),
+          DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        } as Env
+      );
+      await sessionStore.createSessionRpc(
+        '0_session_cross_tenant_core',
+        'user_123',
+        3600,
+        undefined,
+        'tenant-a'
+      );
+
+      await expect(sessionStore.getSessionRpc('0_session_cross_tenant_core')).rejects.toThrow(
+        'session_account_route_mismatch'
+      );
+    });
+
+    it('fails closed when the user-wide revocation epoch cannot be read', async () => {
+      const d1 = createMockD1({
+        prepare: vi.fn().mockReturnValue({
+          bind: vi.fn().mockReturnThis(),
+          first: vi.fn().mockRejectedValue(new Error('D1 unavailable')),
+          all: vi.fn().mockResolvedValue({ results: [] }),
+          run: vi.fn().mockResolvedValue({ success: true }),
+        }),
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        { ...createMockEnv(), DB: d1 } as Env
+      );
+      await sessionStore.createSessionRpc(
+        '0_session_revocation_epoch_failure',
+        'user_123',
+        3600,
+        undefined,
+        'tenant-a'
+      );
+
+      await expect(
+        sessionStore.getSessionRpc('0_session_revocation_epoch_failure')
+      ).rejects.toThrow('session_revocation_epoch_unavailable');
+    });
+
+    it('rejects a cold session whose account does not match the durable route hint', async () => {
+      const sessionId = '0_session_tampered_account_route';
+      const expiresAt = Date.now() + 60_000;
+      const statement = {
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue({
+          id: sessionId,
+          tenant_id: 'tenant-a',
+          user_id: 'different-user',
+          expires_at: Math.floor(expiresAt / 1000),
+          created_at: Math.floor(Date.now() / 1000),
+        }),
+        all: vi.fn().mockResolvedValue({ results: [] }),
+        run: vi.fn().mockResolvedValue({}),
+      };
+      const usersD1 = createMockD1({
+        prepare: vi.fn().mockReturnValue(statement),
+      });
+      runtimeDataContextMocks.resolveAccountCoreDataContext.mockResolvedValue({
+        tenantId: 'tenant-a',
+        accountId: 'account:expected-user',
+        coreDb: usersD1,
+      });
+      await mockState.storage.put('session-store:tenant-context', 'tenant-a');
+      await mockState.storage.put(`session-route:${sessionId}`, {
+        tenantId: 'tenant-a',
+        accountId: 'account:expected-user',
+        expiresAt,
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        {
+          ...createMockEnv(),
+          DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        } as Env
+      );
+
+      await expect(sessionStore.getSessionRpc(sessionId)).resolves.toBeNull();
+    });
+
     it('should retrieve an existing session', async () => {
       // Create session
       const sessionId = '0_session_retrieval_test';
@@ -424,6 +643,33 @@ describe('SessionStore', () => {
       });
       const getResponse = await sessionStore.fetch(getRequest);
       expect(getResponse.status).toBe(404);
+    });
+
+    it('keeps a deletion tombstone until the original long-lived session expires', async () => {
+      const sessionId = '0_session_long_lived_tombstone';
+      const sessionExpiresAt = Date.now() + 3 * 24 * 60 * 60 * 1000;
+      await mockState.storage.put('session-store:tenant-context', 'tenant-a');
+      await mockState.storage.put(`session-route:${sessionId}`, {
+        tenantId: 'tenant-b',
+        accountId: 'account:user-123',
+        expiresAt: sessionExpiresAt,
+      });
+      sessionStore = new SessionStore(
+        mockState as unknown as DurableObjectState,
+        {
+          ...createMockEnv(),
+          DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+        } as Env
+      );
+
+      await sessionStore.invalidateSessionRpc(sessionId);
+
+      const tombstone = await mockState.storage.get<{ expiresAt: number }>(
+        `tombstone:${sessionId}`
+      );
+      expect(tombstone?.expiresAt).toBe(sessionExpiresAt);
+      expect(runtimeDataContextMocks.resolveAccountCoreDataContext).not.toHaveBeenCalled();
+      expect(runtimeDataContextMocks.resolveSessionAccountCoreDataContext).not.toHaveBeenCalled();
     });
 
     it('should handle invalidation of non-existent session', async () => {

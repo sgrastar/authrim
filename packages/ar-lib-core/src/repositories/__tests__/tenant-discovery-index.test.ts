@@ -30,7 +30,7 @@ function createRow(overrides: Partial<TenantDiscoveryIndexRow> = {}): TenantDisc
   return {
     tenant_id: 'tenant-a',
     subject_id: 'user-a',
-    index_kind: 'email_domain',
+    index_kind: 'email_exact',
     index_value: 'hash-domain',
     index_version: 1,
     key_version: 2,
@@ -102,7 +102,7 @@ describe('TenantDiscoveryIndexRepository', () => {
     const repository = new TenantDiscoveryIndexRepository(adapter);
 
     const result = await repository.resolveCandidateSet({
-      indexKind: 'email_domain',
+      indexKind: 'email_exact',
       indexValues: ['hash-domain'],
       keyVersions: [2, 1],
       selectionPolicy: 'select_if_multiple',
@@ -116,7 +116,7 @@ describe('TenantDiscoveryIndexRepository', () => {
     expect(result.primary).toBeNull();
     expect(adapter.query).toHaveBeenCalledWith(
       expect.stringContaining('FROM tenant_discovery_indexes'),
-      ['email_domain', 'hash-domain', 1, 2, 1, 'active', 'rotating', 25]
+      ['email_exact', 'hash-domain', 1, 2, 1, 'active', 'rotating', 25]
     );
   });
 
@@ -139,7 +139,7 @@ describe('TenantDiscoveryIndexRepository', () => {
     const repository = new TenantDiscoveryIndexRepository(adapter);
 
     const deleted = await repository.deletePreviousKeyVersionRows({
-      indexKind: 'email_domain',
+      indexKind: 'email_exact',
       previousKeyVersion: 1,
       currentKeyVersion: 2,
     });
@@ -147,7 +147,7 @@ describe('TenantDiscoveryIndexRepository', () => {
     expect(deleted).toBe(1);
     expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('DELETE FROM tenant_discovery_indexes'),
-      ['email_domain', 1, 1, 2]
+      ['email_exact', 1, 1, 2]
     );
   });
 

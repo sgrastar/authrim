@@ -7,13 +7,13 @@ import {
 
 describe('tenant discovery settings helpers', () => {
 	it('treats email resolution as disabled when email discovery is not enabled', () => {
-		expect(
-			resolveEmailResolutionPolicy('["tenant_code","tenant_slug"]', 'exact_email_then_domain')
-		).toBe('disabled');
+		expect(resolveEmailResolutionPolicy('["tenant_code","tenant_slug"]', 'exact_email_only')).toBe(
+			'disabled'
+		);
 	});
 
 	it('keeps stored email policy when email discovery is enabled', () => {
-		expect(resolveEmailResolutionPolicy('["email_domain","tenant_code"]', 'exact_email_only')).toBe(
+		expect(resolveEmailResolutionPolicy('["email_exact","tenant_code"]', 'exact_email_only')).toBe(
 			'exact_email_only'
 		);
 	});
@@ -22,12 +22,12 @@ describe('tenant discovery settings helpers', () => {
 		expect(
 			buildDiscoveryMethodsValue({
 				emailEnabled: true,
-				emailResolutionPolicy: 'exact_email_then_domain',
+				emailResolutionPolicy: 'exact_email_only',
 				tenantCodeEnabled: true,
 				tenantSlugEnabled: true,
 				wayfEnabled: true
 			})
-		).toBe('["email_domain","tenant_code","tenant_slug","wayf"]');
+		).toBe('["email_exact","tenant_code","tenant_slug","wayf"]');
 	});
 
 	it('omits email discovery when policy is disabled', () => {
@@ -55,7 +55,7 @@ describe('tenant discovery settings helpers', () => {
 	});
 
 	it('reads tenant code, slug, and WAYF toggles from stored methods', () => {
-		expect(getMethodToggles('["email_domain","tenant_slug","wayf"]')).toEqual({
+		expect(getMethodToggles('["email_exact","tenant_slug","wayf"]')).toEqual({
 			emailEnabled: true,
 			tenantCodeEnabled: false,
 			tenantSlugEnabled: true,

@@ -97,6 +97,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
+    getTenantMetadataContextFromHono: vi.fn(() => undefined),
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuditLog: vi.fn().mockResolvedValue(undefined),
     createPIIContextFromHono: mockCreatePIIContextFromHono,
@@ -123,6 +124,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       registry: {
         getNotifier: vi.fn((channel: string) => (channel === 'email' ? mockEmailNotifier : null)),
       },
+    }),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const result = await mockEmailNotifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
     }),
     getLogger: () => ({
       module: () => ({
@@ -273,7 +282,7 @@ describe('Account Page passkey management API', () => {
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
-    mockEmailNotifier.send.mockResolvedValue({ messageId: 'email-001' });
+    mockEmailNotifier.send.mockResolvedValue({ success: true, messageId: 'email-001' });
     mockRuntimeUserStore.findById.mockResolvedValue(null);
     mockGenerateAuthenticationOptions.mockResolvedValue({
       challenge: 'reauth-challenge-value',
@@ -591,6 +600,35 @@ describe('Account Page passkey management API', () => {
         subject: 'Your re-authentication code',
       })
     );
+  });
+
+  it('returns a redacted server error when email-code re-authentication delivery is rejected', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'User@Example.com',
+      email_verified: 1,
+      name: 'User One',
+    });
+    mockEmailNotifier.send.mockResolvedValueOnce({
+      success: false,
+      error: 'provider secret detail',
+    });
+
+    const response = await sendAccountEmailCodeReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('provider secret detail');
   });
 
   it('completes email-code re-authentication and refreshes session authTime', async () => {

@@ -128,7 +128,47 @@
         },
         {
           "path": "032_tenant_directory_and_plugin_outboxes.sql",
-          "checksum": "c353069bff61b9e0cf9f107017f301ced547569c22287f899a8050208251b674"
+          "checksum": "684915b2bc5ac4d7acfc592fe6b71a11aaccd7ec844efc1dff69a039b25007de"
+        },
+        {
+          "path": "033_control_plane_shard_metadata.sql",
+          "checksum": "07ff763a1535b291be91e912a571777409cf3ed175fb670ab351e41fa698cbb1"
+        },
+        {
+          "path": "034_plugin_account_metadata.sql",
+          "checksum": "a599f74419e617a49e28100de33bdc64c6ad8f6521590a823d960206198020bd"
+        },
+        {
+          "path": "035_notification_delivery_intents.sql",
+          "checksum": "cda85131368cd904823e62af8a20463201993b6d75cb30744d6077b6ac1de5a2"
+        },
+        {
+          "path": "036_account_lifecycle_event_outbox.sql",
+          "checksum": "f635fad100beb6314901f6ab4b07b6102ff1c6f28025e3fa65d342708464b456"
+        },
+        {
+          "path": "037_passkey_routing_authority.sql",
+          "checksum": "a01d2f9b5d653457b842a7c3749bd6f6e44942e651382025edc4220d5d1521f5"
+        },
+        {
+          "path": "038_anonymous_device_routing_authority.sql",
+          "checksum": "6b4242d8a6ce980cfb9a9b88055af5859d21218e6340e24e4400df4291a1d226"
+        },
+        {
+          "path": "039_tenant_placement_policy.sql",
+          "checksum": "7494a2b630926cfca309a3c683ebbfbc7a88b0fba447e2bc74d89d52410809a0"
+        },
+        {
+          "path": "040_tenant_placement_migration_outbox.sql",
+          "checksum": "e1fd4b2327810b498520b9411c0e597078f4487ba912cb5257b16169338e0477"
+        },
+        {
+          "path": "041_account_lifecycle_outbox_split_shard.sql",
+          "checksum": "cb8aa2c20849ca8270b4ca94338f65ee7f25c1b2ed9f2b7a42b98423742fd81b"
+        },
+        {
+          "path": "042_rename_authentication_only_login.sql",
+          "checksum": "f1a540ccb022c6a8c0d8c98abccd4a7043e29f4b436edaa843d5409cacbcd9f4"
         }
       ]
     },
@@ -147,6 +187,22 @@
         {
           "path": "002_linked_identity_oidc_fields.sql",
           "checksum": "b30572bb2f9284124622312fafcd8b95dc36bcf0871f60d5cf934c92cb5feca5"
+        },
+        {
+          "path": "003_control_plane_shard_metadata.sql",
+          "checksum": "774cc84663de9482aedd330ea7a04af9a73a3b176b09f983964755bec4760c3b"
+        },
+        {
+          "path": "004_identifier_replacement_authority.sql",
+          "checksum": "8bfa167f60874372b7cbdfb0032016d28330d75e0b9b32e608b6cc0bacbfaec5"
+        },
+        {
+          "path": "007_external_idp_jit_provisioning_state.sql",
+          "checksum": "021fb08662247f61121ccd0f883689ec77c3f98499caf8f71abaee6bc431dbc5"
+        },
+        {
+          "path": "008_tenant_placement_migration_outbox.sql",
+          "checksum": "30bedfd2714654eea121f22712a8ab4de64b51ee15778cab9dac31d1e944a44a"
         }
       ]
     },
@@ -154,8 +210,7 @@
       "id": "d1-admin",
       "dialect": "sqlite",
       "logicalRoles": [
-        "admin",
-        "control"
+        "admin"
       ],
       "files": [
         {
@@ -273,6 +328,30 @@
         {
           "path": "029_stale_self_service_agent_snapshots.sql",
           "checksum": "12d5dc4341c317deed31799fad9d68835bfa3e6971d88afbd978fa967dd0367e"
+        },
+        {
+          "path": "030_control_plane_drift_notifications.sql",
+          "checksum": "9201197a3d19eadc1de6646800579c9ac54a93573c29c6ad626639770feee608"
+        },
+        {
+          "path": "031_provider_reprojection_jobs.sql",
+          "checksum": "309c3c74e74a251d310cde7994456539f6794f17a61f9933be2e3387dc2d0556"
+        },
+        {
+          "path": "032_identifier_replacement_scheduler.sql",
+          "checksum": "df5007f0f185cd2b703f24fca4713751d5b0c5cbd40e821e1e238325542bfb7d"
+        },
+        {
+          "path": "033_tenant_provisioning_operations.sql",
+          "checksum": "160afb0d7e14f179d1084911de30d045a2e5e98c3ecea99e6e037d2f68dfa031"
+        },
+        {
+          "path": "034_tenant_placement_policy.sql",
+          "checksum": "42c87ca5a81df3d8d37083f249b716ff6713a657b1cc96bdc59939f52c9f1326"
+        },
+        {
+          "path": "035_tenant_placement_migration_jobs.sql",
+          "checksum": "657431cce8dd69ece62af6f9499c2af21441709d05b667343c4611d50c3e067a"
         }
       ]
     },
@@ -285,7 +364,91 @@
       "files": [
         {
           "path": "001_control_plane.sql",
-          "checksum": "e9d79783b8f32750dab544a7723017eea078e2328027cbd1e79630629936c5c1"
+          "checksum": "db536e7cea93bf7670a6cbf26cb274c286d2470e67b174b80a786df086d33980"
+        },
+        {
+          "path": "002_plugin_runner_registry.sql",
+          "checksum": "fd1777f1499cc2cab804731fabe32f7f052845b9b9e3d8929fce80d0b9b0618c"
+        },
+        {
+          "path": "003_lookup_bucket_migrations.sql",
+          "checksum": "1bf5aa42442cd5da0033ef42cb21d527031c18b9bd73a112371fe959cf6b556a"
+        },
+        {
+          "path": "004_lookup_hmac_key_state.sql",
+          "checksum": "eb57f3b58ac030c3bad82b093aa4073b318b5ffd60e0434dd23699d5c324d60e"
+        },
+        {
+          "path": "005_read_replication_rollout_targets.sql",
+          "checksum": "21af8046514c8a81e4391972f73a9ca681335d70d1dcf94267c1bd5382c54afc"
+        },
+        {
+          "path": "006_tenant_default_allocations.sql",
+          "checksum": "796a3c1277a349c0c3b8ae8ce5c059a42a12cc9b0690db56a28700ca8fcd0181"
+        },
+        {
+          "path": "007_control_operation_manual_retry.sql",
+          "checksum": "f8c7a0cfe7e6cf46dfe87d1eed3f5600cdabd9da0e8768ff517641cf34be4182"
+        },
+        {
+          "path": "008_signing_key_verifications.sql",
+          "checksum": "a5490f06f07ee329188f95709b515319507deabc2d732888dfb5d5065850d725"
+        },
+        {
+          "path": "009_lookup_hmac_candidate_verifications.sql",
+          "checksum": "5a7c273d719f50fa190183a38d2b23c782888ed1086500dbd9181099c4b80f80"
+        },
+        {
+          "path": "010_bootstrap_handoff_worker_evidence.sql",
+          "checksum": "c4a54df5356accea38c9da235113f6766b5b5c7d92ca80dee7f6b393f66e7857"
+        },
+        {
+          "path": "011_tenant_physical_isolation.sql",
+          "checksum": "34158696516ebe8e836e5c914ac069a0a7f6e560f4b8cffaab02c410075d2bca"
+        },
+        {
+          "path": "012_tenant_placement_migrations.sql",
+          "checksum": "9e9c90742933e8493a95d5fa1b7d4ec60bdf1ca52bdf0ce18d235232e74aac79"
+        },
+        {
+          "path": "013_shard_quarantine_cleanup.sql",
+          "checksum": "b29d547d473de9afe4e34724e00ff1dad6655ef21b17a71c037ce2e7243c9122"
+        },
+        {
+          "path": "014_automatic_provisioning_authority.sql",
+          "checksum": "85d240ebdc9d9eb2c3326f901ed1c7be6b7662c5a1be237da532a37bc1eea1b2"
+        },
+        {
+          "path": "015_bootstrap_worker_evidence_refresh.sql",
+          "checksum": "be8ef18c21e779344c910daa99e7b3c419c95b6c012928103d177233b9b2786e"
+        },
+        {
+          "path": "016_worker_loader_binding_kind.sql",
+          "checksum": "f08fd51f9d657b1267dde7f251f980fa80585c4ad8a5538e4feaeb71c1d68c12"
+        },
+        {
+          "path": "017_failed_shard_cleanup.sql",
+          "checksum": "72383f341104960d560930c5e3d5a784e75191266686dde428d25ac4b692164a"
+        },
+        {
+          "path": "018_plugin_resource_cleanup.sql",
+          "checksum": "51379005b1d030b1ef1f1856486de3aa06e38d47e3aced7bac0e9c9ddfbb39e6"
+        },
+        {
+          "path": "019_tenant_disaster_recovery.sql",
+          "checksum": "78629e500076498eeaab1869cc3e37ff0da7b4c241c5e7218c7042a949d1a814"
+        },
+        {
+          "path": "020_lookup_worker_binding_reconciliations.sql",
+          "checksum": "0a9cf067d4e9503a9ecaffcc707cc876cb04ddd91129e7b1e5b227f685d54a65"
+        },
+        {
+          "path": "021_tenant_disaster_recovery_command_idempotency.sql",
+          "checksum": "b5803cc189272f58b2a1201c4b42d681ad49726430528eb7989402475d89bc65"
+        },
+        {
+          "path": "022_lookup_generated_worker_bindings.sql",
+          "checksum": "f6b61bd4abae8decf072b667fc80712f9e4f787bb5ff69d5b373fc2a7feb8888"
         }
       ]
     },
@@ -298,7 +461,11 @@
       "files": [
         {
           "path": "001_lookup_directory.sql",
-          "checksum": "e6cca076e57c965341c1b37e7d4d75bc8433daf5ceb4e0016bc0cb53028d770c"
+          "checksum": "57d8e296614dc8c90c157e267a88fe19309aec4fc7acf717275f517c63369a60"
+        },
+        {
+          "path": "002_identifier_replacement_verification_gate.sql",
+          "checksum": "3fdb62956052905118aa82cd4b9d066d338f0b9e684d71a9d4ce1b62856fb353"
         }
       ]
     },
@@ -311,7 +478,43 @@
       "files": [
         {
           "path": "001_plugin_runner.sql",
-          "checksum": "84750dc7173e286bbedd3d31095c1926b11585049f10407aeb08b8ffd67f4c9e"
+          "checksum": "b611e8495b83044faae331e34d69c0cc2445b9b99dda9de99ad13e5fa8de8e5b"
+        },
+        {
+          "path": "002_registry_installations_and_config.sql",
+          "checksum": "4c983c5a5e1a8b70dcfcc7b4d0dfbde34500e7085e20ff0fdee9919e9633ab9b"
+        },
+        {
+          "path": "003_sync_circuit_breaker_probe.sql",
+          "checksum": "14a1175ca49c80437861257f91eed5aa02059cc578e70ceb1b527afc86bf4452"
+        },
+        {
+          "path": "004_notification_provider_order.sql",
+          "checksum": "52fa17a25fd0658d6089a9add15b2d9f92658c0891f0051887f301786224b161"
+        },
+        {
+          "path": "005_human_verification_runtime.sql",
+          "checksum": "231c009f32eb1d0e2806d0ed9da54efadbbc81f59bb244a5d2fac84c611f4c40"
+        },
+        {
+          "path": "006_dynamic_worker_loader_artifacts.sql",
+          "checksum": "e17da3873995f44872271c61cacbf80e8a7a0fe9093ba4a784d7fb7754f30634"
+        },
+        {
+          "path": "007_replace_dynamic_rollout_partial_index.sql",
+          "checksum": "f71f0cdd7d49b68f2ccb88d449ae79451274fea4ce2d0c441085788c8efbc7e1"
+        },
+        {
+          "path": "008_dynamic_worker_resource_bindings.sql",
+          "checksum": "58b99635206e3bacf59ff5e47fd4dc86a200e711cc349d3d3918c4e5d1c8ea96"
+        },
+        {
+          "path": "009_dynamic_plugin_activation_fence.sql",
+          "checksum": "734d91bde8b65b4122e99af2ea3733f1a92b693342c130eccc39234e661681fa"
+        },
+        {
+          "path": "010_dynamic_resource_reprovision_fence.sql",
+          "checksum": "083cee97ed632eaaee2d80ac8b3a226cdb8122d331df77826a760f252f30c33c"
         }
       ]
     },
@@ -367,6 +570,22 @@
         {
           "path": "016_external_normalize_screen_locale_tags.sql",
           "checksum": "cb451e424e4a1dea817a8acf0e8d2df3a23c2412e8d94aab898ab8788965a55a"
+        },
+        {
+          "path": "017_external_passkey_routing_authority.sql",
+          "checksum": "a9f88d5a3a4555b598a6a673109737a51f8194fbb9f1e87c10e1df671687d81c"
+        },
+        {
+          "path": "018_external_anonymous_device_routing_authority.sql",
+          "checksum": "ba903be2cbaa071bffe7def9fa023627a970c66f932476af1fee94f974e5db22"
+        },
+        {
+          "path": "019_external_idp_jit_provisioning_state.sql",
+          "checksum": "7da7f246630e4655098301968d1daff9031f7f427213dc4d5a586b46d925e675"
+        },
+        {
+          "path": "020_external_rename_authentication_only_login.sql",
+          "checksum": "71ade831c86d7ed2877d57ae8d93e7082f96723d83faba8a85b97afc53c69925"
         }
       ]
     },

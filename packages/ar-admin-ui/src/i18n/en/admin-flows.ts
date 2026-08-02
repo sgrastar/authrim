@@ -264,8 +264,9 @@ const adminFlows = {
 		'Sign in with an existing account, review the attributes released to the SP, and allow the release',
 	admin_flows_template_academic_saml_login_recorded_state:
 		'tenant + user + SAML SP + statement/version + User Decision',
-	admin_flows_template_oidc_login_no_consent_title: 'Login (No consent)',
-	admin_flows_template_oidc_login_no_consent_subtitle: 'Sign-in without consent confirmation',
+	admin_flows_template_oidc_login_no_consent_title: 'Authentication-only Login',
+	admin_flows_template_oidc_login_no_consent_subtitle:
+		'Sign-in without an interactive consent node',
 	admin_flows_template_oidc_login_no_consent_description:
 		'Review the path from login request, session check, authentication method selection, sign-in, and application continuation.',
 	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
@@ -278,7 +279,7 @@ const adminFlows = {
 	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
 	admin_flows_template_saml_sp_oidc_rp_subtitle: 'Sign-in for SAML SPs and OIDC RPs',
 	admin_flows_template_saml_sp_oidc_rp_description:
-		'Use the same sign-in steps as Login (No consent), then route to a SAML Response or OIDC authorization response based on the request protocol.',
+		'Use the same sign-in steps as Authentication-only Login, then route to a SAML Response or OIDC authorization response based on the request protocol.',
 	admin_flows_template_saml_sp_oidc_rp_primary_entry:
 		'SAML AuthnRequest / OIDC Authorization Request',
 	admin_flows_template_saml_sp_oidc_rp_primary_output:
@@ -478,15 +479,16 @@ const adminFlows = {
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',
 	admin_flows_editor_setting_redirect: 'redirect',
-	admin_flows_trust_policy_title: 'Consent policy',
+	admin_flows_trust_policy_title: 'Client Trust Policy',
 	admin_flows_trust_policy_description:
-		'Configure trust behavior. Flow assignment is managed from the Flow settings.',
+		'Configure the authoritative trust behavior for an OIDC client or SAML service provider.',
 	admin_flows_trust_policy_loading: 'Loading consent policy settings...',
 	admin_flows_trust_policy_load_failed: 'Failed to load consent policy settings',
 	admin_flows_trust_policy_saved: 'Trust policy settings saved.',
 	admin_flows_trust_policy_save_failed: 'Failed to save consent policy settings',
 	admin_flows_trust_policy_flow_hint:
-		'Select the Login or Registration Flow for this target from Flow settings. Consent policies are attached to Consent nodes inside a Flow.',
+		'This read-only gate shows the protocol authority. Editing or publishing the Flow does not change the Client Trust Policy.',
+	admin_flows_authoritative_consent_gate_output: 'Authorization / attribute release',
 	admin_flows_trust_policy_first_party_label: 'First-party application',
 	admin_flows_trust_policy_first_party_description:
 		'Marks the application as operated by the same service owner.',

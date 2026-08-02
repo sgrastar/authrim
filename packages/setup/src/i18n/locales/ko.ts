@@ -780,12 +780,7 @@ const ko: Translations = {
     '배포 전체에서 하나의 core D1과 PII D1을 사용합니다. 설정 비용이 가장 낮은 기본 경로입니다.',
   'web.db.tenantD1Title': '테넌트 D1',
   'web.db.tenantD1Desc':
-    '테넌트마다 core/PII D1 쌍을 하나씩 사용합니다. 테넌트 활성화 전에 테넌트 데이터베이스 프로비저닝이 필요합니다.',
-  'web.db.preallocatedSlotsTitle': '사전 할당된 테넌트 슬롯',
-  'web.db.preallocatedSlotsDesc':
-    '각 테넌트 슬롯은 core와 PII 두 개의 D1 데이터베이스를 생성합니다.',
-  'web.db.slotsLabel': '슬롯',
-  'web.db.slotsHelp': '기본값은 3입니다. 최대 500 슬롯입니다.',
+    'Control Plane과 초기 tenant shard를 구성하며 이후 용량은 필요할 때 자동으로 생성됩니다.',
 
   // Web UI Email
   'web.email.title': '이메일 제공자',

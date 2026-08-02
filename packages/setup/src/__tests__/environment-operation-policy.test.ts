@@ -40,6 +40,16 @@ const updatingRelease: AuthrimLock['releaseUpdate'] = {
 };
 
 describe('environment operation policy', () => {
+  it('allows deletion recovery when remote resources remain after local cleanup', () => {
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'delete',
+        lock: null,
+        environmentObservedRemotely: true,
+      })
+    ).toMatchObject({ allowed: true, lifecycle: 'absent' });
+  });
+
   it('classifies every persisted lifecycle shape centrally', () => {
     expect(classifyEnvironmentLifecycle()).toBe('absent');
     expect(classifyEnvironmentLifecycle(lock())).toBe('provisioned');
@@ -151,6 +161,31 @@ describe('environment operation policy', () => {
         operation: 'release_update',
         lock: value,
         targetVersion: '1.2.0',
+      }).reason
+    ).toBe('release_update_in_progress');
+  });
+
+  it('allows an exact initial deployment to resume without weakening release updates', () => {
+    const value = lock({
+      release: {
+        ...updatingRelease,
+        previousProductVersion: undefined,
+      },
+    });
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: value,
+        targetVersion: '1.1.0',
+        releaseManifestChecksum: checksum,
+      }).allowed
+    ).toBe(true);
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: value,
+        targetVersion: '1.1.0',
+        releaseManifestChecksum: 'b'.repeat(64),
       }).reason
     ).toBe('release_update_in_progress');
   });

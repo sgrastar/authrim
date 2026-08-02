@@ -39,6 +39,16 @@ function percentile(values: number[], percentileRank: number): number {
   return sorted[index] ?? 0;
 }
 
+function activateDirectoryPublication(adapter: MockDatabaseAdapter, accountId: string): void {
+  adapter.seed('identity_accounts', [
+    {
+      ...adapter.getById('identity_accounts', accountId),
+      id: accountId,
+      directory_publication_state: 'active',
+    },
+  ]);
+}
+
 describe('canonical runtime cutover hardening', () => {
   it('keeps SCIM/Admin writes and SAML/OIDC-style reads on the same canonical graph', async () => {
     const adapter = createCanonicalAdapter();
@@ -70,6 +80,7 @@ describe('canonical runtime cutover hardening', () => {
         preferred_username: 'person',
       },
     });
+    activateDirectoryPublication(adapter, 'account:user-1');
 
     const valueResolver: CanonicalRuntimeValueResolver = {
       async resolveValue(valueStorageRef) {
@@ -174,6 +185,7 @@ describe('canonical runtime cutover hardening', () => {
         'field.canonical.preferred_username': 'person',
       },
     });
+    activateDirectoryPublication(adapter, 'account:user-1');
     const projectionRepository = new CanonicalRuntimeUserProjectionRepository(adapter, 'tenant-a', {
       async resolveValue() {
         return null;

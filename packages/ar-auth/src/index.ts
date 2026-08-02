@@ -1,7 +1,6 @@
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
-import { logger } from 'hono/logger';
 import { bodyLimit } from 'hono/body-limit';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -12,6 +11,7 @@ import {
   requestContextMiddleware,
   diagnosticLoggingMiddleware,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   // UI Configuration
   getUIConfig,
@@ -19,8 +19,6 @@ import {
   shouldUseBuiltinForms,
   createConfigurationError,
   // Plugin Context (Phase 9 - Plugin Architecture)
-  pluginContextMiddleware,
-  createPluginLoader,
   // CSRF Protection
   csrfProtectionMiddleware,
   // Logger
@@ -30,8 +28,6 @@ import {
   getTenantSettings,
   adminAuthMiddleware,
 } from '@authrim/ar-lib-core';
-import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
-import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { getRequestIssuer } from './issuer';
 
 // Import handlers
@@ -49,6 +45,7 @@ import {
   passkeyLoginVerifyHandler,
 } from './passkey';
 import { emailCodeSendHandler, emailCodeVerifyHandler } from './email-code';
+import { accountProvisioningStatusHandler } from './account-provisioning';
 import {
   totpLoginStartHandler,
   totpLoginVerifyHandler,
@@ -108,6 +105,7 @@ import {
   loginRuntimeInteractionStartHandler,
   loginRuntimeInteractionSubmitHandler,
 } from './login-runtime-flow';
+import { AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
 
 function escapeHtml(value: string): string {
   return value
@@ -146,7 +144,14 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
 
 const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
 const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
-const LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY = 'authrimLoginInteractionStartDiagnostics';
+const PHASE0C_DIAGNOSTIC_SESSION = /^phase0c-(?:mail|totp)-[0-9]{14}-[a-f0-9]{6}$/u;
+const AUTH_REQUEST_DIAGNOSTIC_PATHS = [
+  '/authorize',
+  '/api/auth/email-codes/verify',
+  '/api/auth/totp/login/start',
+  '/api/auth/totp/login/verify',
+  '/api/v1/login/interactions/start',
+] as const;
 
 interface MiddlewareDiagnosticSpan {
   name: string;
@@ -166,9 +171,17 @@ function sanitizeDiagnosticSessionId(value: string | null | undefined): string |
   return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
-function isDiagnosticTimingEnabled(env: Env): boolean {
+function diagnosticFlagEnabled(env: Env): boolean {
   const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
+}
+
+export function isAuthRequestDiagnosticTimingEnabled(env: Env, sessionId: string | null): boolean {
+  if (!sessionId) return false;
+  return (
+    diagnosticFlagEnabled(env) ||
+    (env.AUTHRIM_ENVIRONMENT_NAME === 'test' && PHASE0C_DIAGNOSTIC_SESSION.test(sessionId))
+  );
 }
 
 function roundDiagnosticDurationMs(durationMs: number): number {
@@ -179,9 +192,9 @@ function getMiddlewareDiagnosticState(
   c: Context<{ Bindings: Env }>
 ): MiddlewareDiagnosticState | null {
   return (
-    ((c as unknown as { get(key: string): unknown }).get(
-      LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY
-    ) as MiddlewareDiagnosticState | undefined) ?? null
+    ((c as unknown as { get(key: string): unknown }).get(AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY) as
+      | MiddlewareDiagnosticState
+      | undefined) ?? null
   );
 }
 
@@ -190,7 +203,7 @@ function setMiddlewareDiagnosticState(
   state: MiddlewareDiagnosticState
 ): void {
   (c as unknown as { set(key: string, value: unknown): void }).set(
-    LOGIN_INTERACTION_START_DIAGNOSTIC_CONTEXT_KEY,
+    AUTH_REQUEST_DIAGNOSTIC_CONTEXT_KEY,
     state
   );
 }
@@ -238,10 +251,10 @@ async function timeMiddlewareDiagnosticOperation<T>(
   }
 }
 
-function loginInteractionStartDiagnosticStartMiddleware() {
+function authRequestDiagnosticStartMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
-    if (!sessionId || !isDiagnosticTimingEnabled(c.env)) {
+    if (!sessionId || !isAuthRequestDiagnosticTimingEnabled(c.env, sessionId)) {
       return next();
     }
 
@@ -266,8 +279,8 @@ function loginInteractionStartDiagnosticStartMiddleware() {
       appendMiddlewareDiagnosticServerTiming(c, state.spans);
       c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
       getLogger(c)
-        .module('LOGIN-RUNTIME-FLOW-TIMING')
-        .info('LoginUI runtime Flow middleware diagnostics', {
+        .module('AUTH-REQUEST-TIMING')
+        .info('Auth request middleware diagnostics', {
           diagnosticSessionId: state.sessionId,
           method: c.req.method,
           path: c.req.path,
@@ -278,7 +291,7 @@ function loginInteractionStartDiagnosticStartMiddleware() {
   };
 }
 
-function loginInteractionStartDiagnosticCheckpoint(name: string) {
+function authRequestDiagnosticCheckpoint(name: string) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     recordMiddlewareDiagnosticSpan(c, name);
     await next();
@@ -288,22 +301,17 @@ function loginInteractionStartDiagnosticCheckpoint(name: string) {
 const AUTH_REQUEST_BODY_MAX_BYTES = 100 * 1024;
 
 // Middleware
-app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticStartMiddleware());
-app.use('*', logger());
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_logger')
-);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticStartMiddleware());
+}
 app.use('*', redirectExternalHttpToHttps);
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_redirect_https')
-);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_redirect_https'));
+}
 app.use('*', requestContextMiddleware());
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_request_context')
-);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_request_context'));
+}
 app.use('*', (c, next) =>
   bodyLimit({
     maxSize: AUTH_REQUEST_BODY_MAX_BYTES,
@@ -317,49 +325,18 @@ app.use('*', (c, next) =>
       ),
   })(c, next)
 );
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_body_limit')
-);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_body_limit'));
+}
 app.use(
   '*',
   diagnosticLoggingMiddleware({
     excludePatterns: [/^\/api\/health/, /^\/health\//, /^\/admin-init-setup/],
   })
 );
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_diagnostic_logging')
-);
-
-// Notification plugin context.
-// Bootstrap config comes from Worker env, but tenant/global KV overrides remain authoritative.
-const loadNotificationPlugins = createPluginLoader([
-  {
-    plugin: cloudflareEmailPlugin,
-    skipIfConfigEmpty: true,
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
-  },
-  {
-    plugin: resendEmailPlugin,
-    skipIfConfigEmpty: true,
-    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
-  },
-]);
-
-const notificationPluginContextMiddleware = pluginContextMiddleware({
-  scope: 'notification',
-  failurePolicy: 'fail_open',
-  loadPlugins: loadNotificationPlugins,
-});
-
-app.use('/api/auth/email-codes/send', notificationPluginContextMiddleware);
-app.use(
-  '/api/auth/directory-password/migration/email-code/send',
-  notificationPluginContextMiddleware
-);
-app.use('/api/v1/auth/direct/email-code/send', notificationPluginContextMiddleware);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_diagnostic_logging'));
+}
 
 // Enhanced security headers
 // Skip for /session/check endpoint (OIDC Session Management iframe needs custom headers)
@@ -401,10 +378,9 @@ app.use('*', async (c, next) => {
     },
   })(c, next);
 });
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_secure_headers')
-);
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_secure_headers'));
+}
 
 // CORS configuration with origin validation
 // Priority: env (ALLOWED_ORIGINS) > KV (tenant.allowed_origins) > ISSUER_URL
@@ -450,18 +426,23 @@ app.use('*', async (c, next) => {
 
   return corsMiddleware(c, next);
 });
-app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticCheckpoint('auth_cors'));
+for (const path of AUTH_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, authRequestDiagnosticCheckpoint('auth_cors'));
+}
 
 // Rate limiting for sensitive endpoints
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
 // or RATE_LIMIT_PROFILE env var for profile selection
 app.use('/authorize', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  const profile = await timeMiddlewareDiagnosticOperation(c, 'auth_rate_limit_profile', () =>
+    getRateLimitProfileAsync(c.env, 'moderate')
+  );
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/authorize'],
   })(c, next);
 });
+app.use('/authorize', authRequestDiagnosticCheckpoint('auth_rate_limit'));
 
 app.use('/par', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
@@ -591,10 +572,11 @@ app.use(
     excludePaths: ['/api/auth/directory-connectors/heartbeat'],
   })
 );
+app.use('/api/auth/email-codes/verify', authRequestDiagnosticCheckpoint('auth_csrf'));
 app.use('/api/sessions/*', csrfProtectionMiddleware());
 app.use('/api/v1/auth/direct/*', csrfProtectionMiddleware());
 app.use('/api/v1/login/interactions/*', csrfProtectionMiddleware());
-app.use('/api/v1/login/interactions/start', loginInteractionStartDiagnosticCheckpoint('auth_csrf'));
+app.use('/api/v1/login/interactions/start', authRequestDiagnosticCheckpoint('auth_csrf'));
 app.use('/auth/consent', csrfProtectionMiddleware());
 app.use('/api/flow/*', csrfProtectionMiddleware());
 
@@ -852,10 +834,7 @@ app.use('/api/v1/login/interactions/*', async (c, next) => {
     endpointClass: 'loginInteraction',
   })(c, next);
 });
-app.use(
-  '/api/v1/login/interactions/start',
-  loginInteractionStartDiagnosticCheckpoint('auth_rate_limit')
-);
+app.use('/api/v1/login/interactions/start', authRequestDiagnosticCheckpoint('auth_rate_limit'));
 
 app.post('/api/v1/login/interactions/start', loginRuntimeInteractionStartHandler);
 app.post(
@@ -879,6 +858,7 @@ app.post('/api/v1/auth/direct/passkey/register/finish', directPasskeyRegisterFin
 // Email Code endpoints
 app.post('/api/v1/auth/direct/email-code/send', directEmailCodeSendHandler);
 app.post('/api/v1/auth/direct/email-code/verify', directEmailCodeVerifyHandler);
+app.post('/api/v1/auth/account-provisioning/status', accountProvisioningStatusHandler);
 
 // Token Exchange endpoint
 app.post('/api/v1/auth/direct/token', directTokenHandler);
@@ -1044,6 +1024,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
+  const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
+  if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('AR-AUTH');
   log.error('Unhandled error', { action: 'error_handler' }, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1052,3 +1034,4 @@ app.onError((err, c) => {
 // Export for Cloudflare Workers
 export default app;
 export { DirectoryConnectorRelay } from './directory-connector-relay';
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

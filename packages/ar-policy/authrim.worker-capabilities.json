@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-policy",
+  "worker": "ar-policy",
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
+  "bindings": [
+    {
+      "name": "DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "tenant_core/default",
+      "capability": "policy_data.read"
+    },
+    {
+      "name": "REBAC_CACHE",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "policy_cache.read_write"
+    },
+    {
+      "name": "AUTHRIM_CONFIG",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "policy_config.read"
+    },
+    {
+      "name": "PERMISSION_CHANGE_HUB",
+      "kind": "durable_object_namespace",
+      "required": true,
+      "capability": "permission_changes.publish"
+    },
+    {
+      "name": "PLUGIN_RUNNER",
+      "kind": "service",
+      "required": true,
+      "capability": "plugin_hooks.invoke"
+    },
+    {
+      "name": "TENANT_DATABASE_HYPERDRIVE",
+      "kind": "hyperdrive",
+      "required": false,
+      "capability": "tenant_database_profiles"
+    },
+    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+  ],
+  "secrets": [
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

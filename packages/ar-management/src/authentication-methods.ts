@@ -88,7 +88,7 @@ interface DirectoryPasswordMethod {
 }
 
 type HumanVerificationProvider = string;
-type HumanVerificationFailurePolicy = 'fail_closed' | 'fail_open';
+type HumanVerificationFailurePolicy = 'fail_closed';
 type HumanVerificationWidgetMode = 'managed' | 'checkbox' | 'invisible' | 'score';
 
 interface HumanVerificationMethod {
@@ -2102,7 +2102,7 @@ async function resolveHumanVerificationMethod(
   const provider = providerFromHumanVerificationPluginId(resolved.providerPluginId);
   const siteKey = typeof pluginConfig.siteKey === 'string' ? pluginConfig.siteKey : '';
   const configured = Boolean(siteKey && typeof pluginConfig.secretKey === 'string');
-  const failurePolicy = pluginConfig.failurePolicy === 'fail_open' ? 'fail_open' : 'fail_closed';
+  const failurePolicy = 'fail_closed' as const;
   const hasEnabledUsage = resolved.loginEnabled || resolved.signupEnabled || resolved.reauthEnabled;
 
   return {

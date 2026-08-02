@@ -173,6 +173,9 @@
 	const pageEyebrow = $derived(
 		savedFlow ? getAdminFlowKindLabel(savedFlow.kind) : (flow?.protocol ?? '')
 	);
+	const showAuthoritativeConsentGate = $derived(
+		(savedFlow?.kind ?? flow?.flowKind ?? '') === 'login'
+	);
 	const authProfileOptions = $derived(
 		loadedAuthProfileOptions.length > 0 ? loadedAuthProfileOptions : fallbackAuthProfileOptions
 	);
@@ -3033,6 +3036,18 @@
 					{/if}
 				</div>
 			{/if}
+			{#if showAuthoritativeConsentGate}
+				<div class="trust-policy-gate" role="note">
+					<div class="trust-policy-gate__path">
+						<span>{$LL.admin_flows_palette_authentication_label()}</span>
+						<i class="trust-policy-gate__connector" aria-hidden="true"></i>
+						<a href="/admin/consent-policies">{$LL.admin_flows_trust_policy_title()}</a>
+						<i class="trust-policy-gate__connector" aria-hidden="true"></i>
+						<span>{$LL.admin_flows_authoritative_consent_gate_output()}</span>
+					</div>
+					<p>{$LL.admin_flows_trust_policy_flow_hint()}</p>
+				</div>
+			{/if}
 			<div class="editor-layout">
 				<aside class="node-palette" aria-label={$LL.admin_flows_node_palette_aria()}>
 					<div class="palette-heading">
@@ -3432,6 +3447,55 @@
 		align-items: stretch;
 	}
 
+	.trust-policy-gate {
+		display: grid;
+		gap: 7px;
+		margin-bottom: 14px;
+		padding: 11px 0;
+		border-block: 1px solid var(--color-border);
+	}
+
+	.trust-policy-gate__path {
+		display: grid;
+		grid-template-columns: max-content minmax(34px, 1fr) max-content minmax(34px, 1fr) max-content;
+		gap: 10px;
+		align-items: center;
+		color: var(--color-text);
+		font-size: 0.8rem;
+		font-weight: 800;
+	}
+
+	.trust-policy-gate__path a {
+		color: var(--color-accent);
+		text-underline-offset: 3px;
+	}
+
+	.trust-policy-gate__connector {
+		position: relative;
+		display: block;
+		height: 1px;
+		background: var(--color-border-strong, var(--color-border));
+	}
+
+	.trust-policy-gate__connector::after {
+		position: absolute;
+		top: -3px;
+		right: 0;
+		width: 6px;
+		height: 6px;
+		border-top: 1px solid var(--color-border-strong, var(--color-border));
+		border-right: 1px solid var(--color-border-strong, var(--color-border));
+		content: '';
+		transform: rotate(45deg);
+	}
+
+	.trust-policy-gate p {
+		margin: 0;
+		color: var(--color-text-muted);
+		font-size: 0.76rem;
+		line-height: 1.45;
+	}
+
 	.settings-warning {
 		margin-bottom: 12px;
 		padding: 10px 12px;
@@ -3797,6 +3861,24 @@
 		.node-palette,
 		.flow-canvas {
 			min-height: 520px;
+		}
+
+		.trust-policy-gate__path {
+			grid-template-columns: 1fr;
+			gap: 7px;
+		}
+
+		.trust-policy-gate__connector {
+			width: 1px;
+			height: 14px;
+			margin-left: 10px;
+		}
+
+		.trust-policy-gate__connector::after {
+			top: auto;
+			right: -3px;
+			bottom: 0;
+			transform: rotate(135deg);
 		}
 	}
 </style>

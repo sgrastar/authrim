@@ -2155,6 +2155,30 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.start': 'Start',
           'web.env.rescan': 'Rescan',
           'web.envDetail.overview': 'Overview',
+          'web.envDetail.capacityTab': 'D1 Capacity',
+          'web.envDetail.capacityTitle': 'Tenant D1 Capacity',
+          'web.envDetail.capacityHint': 'Server-owned placement plan',
+          'web.envDetail.capacityScope': 'Scope',
+          'web.envDetail.capacityShared': 'Shared pool',
+          'web.envDetail.capacityDedicated': 'Dedicated tenant',
+          'web.envDetail.capacityTenant': 'Tenant',
+          'web.envDetail.capacityProfile': 'Capacity profile',
+          'web.envDetail.capacityMinimum': 'Minimum',
+          'web.envDetail.capacityRecommended': 'Recommended',
+          'web.envDetail.capacityExtra': 'Extra headroom',
+          'web.envDetail.capacityPreview': 'Preview',
+          'web.envDetail.capacityAdd': 'Add capacity',
+          'web.envDetail.capacityPlan': 'Capacity plan',
+          'web.envDetail.capacitySelectEnvironment': 'Select an environment first.',
+          'web.envDetail.capacityNoTenant': 'No active dedicated tenant is available.',
+          'web.envDetail.capacitySummary': '{{units}} unit(s) / {{d1}} D1 / {{total}} total',
+          'web.envDetail.capacityPreviewState': 'preview',
+          'web.envDetail.capacityLoading': 'Loading capacity plan...',
+          'web.envDetail.capacityCreating': 'Creating capacity operations...',
+          'web.envDetail.capacityRequestFailed': 'Capacity request failed.',
+          'web.envDetail.capacityCreated': 'Canonical Control operations created. Pending setup actions are now available.',
+          'web.envDetail.capacitySatisfied': 'Current capacity already satisfies this profile.',
+          'web.envDetail.capacityReady': 'Capacity preview is ready.',
           'web.envDetail.workersUpdates': 'Workers / Updates',
           'web.envDetail.storage': 'Storage',
           'web.envDetail.migrations': 'Migrations',
@@ -2188,15 +2212,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Version comparison',
           'web.envDetail.uiUpdates': 'UI Updates',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Tenant D1 Pool',
-          'web.envDetail.loadingTenantStorage': 'Loading tenant storage status...',
-          'web.envDetail.capacity': 'Capacity',
-          'web.envDetail.available': 'Available',
-          'web.envDetail.assigned': 'Assigned',
-          'web.envDetail.needsReset': 'Needs Reset',
-          'web.envDetail.addTenantD1Slots': 'Add Tenant D1 Slots',
-          'web.envDetail.expandPoolDeploy': 'Expand Pool and Deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Tenant D1 Pool Progress',
           'web.envDetail.dedicatedR2Buckets': 'Dedicated R2 Buckets',
           'web.envDetail.loadingR2Status': 'Loading R2 bucket status...',
           'web.envDetail.r2ProvisionDesc': 'Create Authrim R2 buckets, record lock bindings, enable the R2 feature flag, and redeploy workers.',
@@ -2253,6 +2268,30 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.start': '開始画面へ',
           'web.env.rescan': '再スキャン',
           'web.envDetail.overview': '概要',
+          'web.envDetail.capacityTab': 'D1キャパシティ',
+          'web.envDetail.capacityTitle': 'テナントD1キャパシティ',
+          'web.envDetail.capacityHint': 'サーバー管理の配置プラン',
+          'web.envDetail.capacityScope': '対象',
+          'web.envDetail.capacityShared': '共有プール',
+          'web.envDetail.capacityDedicated': '専用テナント',
+          'web.envDetail.capacityTenant': 'テナント',
+          'web.envDetail.capacityProfile': 'キャパシティプロファイル',
+          'web.envDetail.capacityMinimum': '最小',
+          'web.envDetail.capacityRecommended': '推奨',
+          'web.envDetail.capacityExtra': '追加余力',
+          'web.envDetail.capacityPreview': 'プレビュー',
+          'web.envDetail.capacityAdd': 'キャパシティを追加',
+          'web.envDetail.capacityPlan': 'キャパシティプラン',
+          'web.envDetail.capacitySelectEnvironment': '先に環境を選択してください。',
+          'web.envDetail.capacityNoTenant': '利用可能な有効な専用テナントがありません。',
+          'web.envDetail.capacitySummary': '{{units}} unit / {{d1}} D1 / 合計 {{total}}',
+          'web.envDetail.capacityPreviewState': 'プレビュー',
+          'web.envDetail.capacityLoading': 'キャパシティプランを読み込み中...',
+          'web.envDetail.capacityCreating': 'キャパシティoperationを作成中...',
+          'web.envDetail.capacityRequestFailed': 'キャパシティ要求に失敗しました。',
+          'web.envDetail.capacityCreated': '正規のControl operationを作成しました。setupで保留中の操作を実行できます。',
+          'web.envDetail.capacitySatisfied': '現在のキャパシティはこのプロファイルを満たしています。',
+          'web.envDetail.capacityReady': 'キャパシティプレビューを作成しました。',
           'web.envDetail.workersUpdates': 'Workers・更新',
           'web.envDetail.storage': 'ストレージ運用',
           'web.envDetail.migrations': 'マイグレーション',
@@ -2286,15 +2325,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'バージョン比較',
           'web.envDetail.uiUpdates': 'UIの個別更新',
           'web.envDetail.origin': '配信元',
-          'web.envDetail.tenantD1Pool': 'Tenant D1 プール',
-          'web.envDetail.loadingTenantStorage': 'テナントストレージの状態を読み込み中...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '空き',
-          'web.envDetail.assigned': '割り当て済み',
-          'web.envDetail.needsReset': 'リセット要否',
-          'web.envDetail.addTenantD1Slots': 'Tenant D1 スロットを追加',
-          'web.envDetail.expandPoolDeploy': 'プールを拡張してデプロイ',
-          'web.envDetail.tenantD1PoolProgress': 'Tenant D1 プールの進行状況',
           'web.envDetail.dedicatedR2Buckets': '専用R2バケット',
           'web.envDetail.loadingR2Status': 'R2バケットの状態を読み込み中...',
           'web.envDetail.r2ProvisionDesc': 'AuthrimのR2バケットを作成し、ロック用バインディングを記録、R2機能フラグを有効化してWorkerを再デプロイします。',
@@ -2362,15 +2392,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': '版本比较',
           'web.envDetail.uiUpdates': 'UI 更新',
           'web.envDetail.origin': '来源',
-          'web.envDetail.tenantD1Pool': '租户 D1 池',
-          'web.envDetail.loadingTenantStorage': '正在加载租户存储状态...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '可用',
-          'web.envDetail.assigned': '已分配',
-          'web.envDetail.needsReset': '需要重置',
-          'web.envDetail.addTenantD1Slots': '添加租户 D1 槽位',
-          'web.envDetail.expandPoolDeploy': '扩展池并部署',
-          'web.envDetail.tenantD1PoolProgress': '租户 D1 池进度',
           'web.envDetail.dedicatedR2Buckets': '专用 R2 存储桶',
           'web.envDetail.loadingR2Status': '正在加载 R2 存储桶状态...',
           'web.envDetail.r2ProvisionDesc': '创建 Authrim R2 存储桶，记录锁定绑定，启用 R2 功能标志，并重新部署 Workers。',
@@ -2411,15 +2432,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': '版本比較',
           'web.envDetail.uiUpdates': 'UI 更新',
           'web.envDetail.origin': '來源',
-          'web.envDetail.tenantD1Pool': '租戶 D1 池',
-          'web.envDetail.loadingTenantStorage': '正在載入租戶儲存狀態...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '可用',
-          'web.envDetail.assigned': '已分配',
-          'web.envDetail.needsReset': '需要重設',
-          'web.envDetail.addTenantD1Slots': '新增租戶 D1 槽位',
-          'web.envDetail.expandPoolDeploy': '擴充池並部署',
-          'web.envDetail.tenantD1PoolProgress': '租戶 D1 池進度',
           'web.envDetail.dedicatedR2Buckets': '專用 R2 儲存桶',
           'web.envDetail.loadingR2Status': '正在載入 R2 儲存桶狀態...',
           'web.envDetail.r2ProvisionDesc': '建立 Authrim R2 儲存桶，記錄鎖定綁定，啟用 R2 功能旗標，並重新部署 Workers。',
@@ -2460,15 +2472,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Comparación de versiones',
           'web.envDetail.uiUpdates': 'Updates de UI',
           'web.envDetail.origin': 'Origen',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Cargando estado de almacenamiento de tenants...',
-          'web.envDetail.capacity': 'Capacidad',
-          'web.envDetail.available': 'Disponible',
-          'web.envDetail.assigned': 'Asignado',
-          'web.envDetail.needsReset': 'Requiere reset',
-          'web.envDetail.addTenantD1Slots': 'Agregar slots D1 de tenant',
-          'web.envDetail.expandPoolDeploy': 'Expandir pool y desplegar',
-          'web.envDetail.tenantD1PoolProgress': 'Progreso del pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dedicados',
           'web.envDetail.loadingR2Status': 'Cargando estado de buckets R2...',
           'web.envDetail.r2ProvisionDesc': 'Crea buckets R2 de Authrim, registra bindings de lock, activa la feature R2 y redespliega workers.',
@@ -2509,15 +2512,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Comparação de versões',
           'web.envDetail.uiUpdates': 'Updates da UI',
           'web.envDetail.origin': 'Origem',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Carregando status de storage dos tenants...',
-          'web.envDetail.capacity': 'Capacidade',
-          'web.envDetail.available': 'Disponível',
-          'web.envDetail.assigned': 'Atribuído',
-          'web.envDetail.needsReset': 'Precisa reset',
-          'web.envDetail.addTenantD1Slots': 'Adicionar slots D1 de tenant',
-          'web.envDetail.expandPoolDeploy': 'Expandir pool e fazer deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Progresso do pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dedicados',
           'web.envDetail.loadingR2Status': 'Carregando status dos buckets R2...',
           'web.envDetail.r2ProvisionDesc': 'Cria buckets R2 do Authrim, registra bindings de lock, ativa a flag R2 e faz redeploy dos workers.',
@@ -2558,15 +2552,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Comparaison des versions',
           'web.envDetail.uiUpdates': 'Mises à jour UI',
           'web.envDetail.origin': 'Origine',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Chargement du stockage des tenants...',
-          'web.envDetail.capacity': 'Capacité',
-          'web.envDetail.available': 'Disponible',
-          'web.envDetail.assigned': 'Assigné',
-          'web.envDetail.needsReset': 'Réinitialisation',
-          'web.envDetail.addTenantD1Slots': 'Ajouter des slots D1',
-          'web.envDetail.expandPoolDeploy': 'Étendre le pool et déployer',
-          'web.envDetail.tenantD1PoolProgress': 'Progression du pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dédiés',
           'web.envDetail.loadingR2Status': 'Chargement du statut R2...',
           'web.envDetail.r2ProvisionDesc': 'Crée les buckets R2 Authrim, enregistre les bindings de verrou, active le flag R2 et redéploie les workers.',
@@ -2607,15 +2592,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Versionsvergleich',
           'web.envDetail.uiUpdates': 'UI-Updates',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Tenant-D1-Pool',
-          'web.envDetail.loadingTenantStorage': 'Tenant-Speicherstatus wird geladen...',
-          'web.envDetail.capacity': 'Kapazität',
-          'web.envDetail.available': 'Verfügbar',
-          'web.envDetail.assigned': 'Zugewiesen',
-          'web.envDetail.needsReset': 'Reset nötig',
-          'web.envDetail.addTenantD1Slots': 'Tenant-D1-Slots hinzufügen',
-          'web.envDetail.expandPoolDeploy': 'Pool erweitern und deployen',
-          'web.envDetail.tenantD1PoolProgress': 'Fortschritt Tenant-D1-Pool',
           'web.envDetail.dedicatedR2Buckets': 'Dedizierte R2-Buckets',
           'web.envDetail.loadingR2Status': 'R2-Bucket-Status wird geladen...',
           'web.envDetail.r2ProvisionDesc': 'Erstellt Authrim-R2-Buckets, schreibt Lock-Bindings, aktiviert das R2-Feature-Flag und deployt Workers erneut.',
@@ -2656,15 +2632,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': '버전 비교',
           'web.envDetail.uiUpdates': 'UI 업데이트',
           'web.envDetail.origin': '출처',
-          'web.envDetail.tenantD1Pool': '테넌트 D1 풀',
-          'web.envDetail.loadingTenantStorage': '테넌트 스토리지 상태 로딩 중...',
-          'web.envDetail.capacity': '용량',
-          'web.envDetail.available': '사용 가능',
-          'web.envDetail.assigned': '할당됨',
-          'web.envDetail.needsReset': '초기화 필요',
-          'web.envDetail.addTenantD1Slots': '테넌트 D1 슬롯 추가',
-          'web.envDetail.expandPoolDeploy': '풀 확장 후 배포',
-          'web.envDetail.tenantD1PoolProgress': '테넌트 D1 풀 진행 상황',
           'web.envDetail.dedicatedR2Buckets': '전용 R2 버킷',
           'web.envDetail.loadingR2Status': 'R2 버킷 상태 로딩 중...',
           'web.envDetail.r2ProvisionDesc': 'Authrim R2 버킷을 만들고 lock binding을 기록하며 R2 기능 플래그를 켠 뒤 Workers를 다시 배포합니다.',
@@ -2705,15 +2672,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Сравнение версий',
           'web.envDetail.uiUpdates': 'Обновления UI',
           'web.envDetail.origin': 'Источник',
-          'web.envDetail.tenantD1Pool': 'Пул tenant D1',
-          'web.envDetail.loadingTenantStorage': 'Загрузка статуса tenant storage...',
-          'web.envDetail.capacity': 'Емкость',
-          'web.envDetail.available': 'Доступно',
-          'web.envDetail.assigned': 'Назначено',
-          'web.envDetail.needsReset': 'Нужен сброс',
-          'web.envDetail.addTenantD1Slots': 'Добавить слоты tenant D1',
-          'web.envDetail.expandPoolDeploy': 'Расширить пул и деплоить',
-          'web.envDetail.tenantD1PoolProgress': 'Прогресс пула tenant D1',
           'web.envDetail.dedicatedR2Buckets': 'Выделенные R2 buckets',
           'web.envDetail.loadingR2Status': 'Загрузка статуса R2 bucket...',
           'web.envDetail.r2ProvisionDesc': 'Создает R2 buckets Authrim, записывает lock bindings, включает флаг R2 и повторно деплоит Workers.',
@@ -2754,15 +2712,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Perbandingan versi',
           'web.envDetail.uiUpdates': 'Update UI',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Pool D1 tenant',
-          'web.envDetail.loadingTenantStorage': 'Memuat status storage tenant...',
-          'web.envDetail.capacity': 'Kapasitas',
-          'web.envDetail.available': 'Tersedia',
-          'web.envDetail.assigned': 'Ditugaskan',
-          'web.envDetail.needsReset': 'Perlu reset',
-          'web.envDetail.addTenantD1Slots': 'Tambah slot D1 tenant',
-          'web.envDetail.expandPoolDeploy': 'Perluas pool dan deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Progres pool D1 tenant',
           'web.envDetail.dedicatedR2Buckets': 'Bucket R2 khusus',
           'web.envDetail.loadingR2Status': 'Memuat status bucket R2...',
           'web.envDetail.r2ProvisionDesc': 'Membuat bucket R2 Authrim, mencatat lock binding, mengaktifkan flag R2, dan redeploy Workers.',
@@ -2817,13 +2766,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'No environment selected.',
           'web.envDetail.positiveSlotCountRequired': 'Enter a positive slot count.',
           'web.envDetail.tenantStorageLoadFailed': 'Failed to load tenant storage status.',
-          'web.envDetail.sharedD1ModeSummary': 'Shared D1 mode: tenant additions use the existing deployment-wide core/PII D1 databases. No pool expansion is required.',
-          'web.envDetail.tenantD1InventoryMissing': 'Tenant D1 pool is configured, but slot inventory is not available yet. Run deployment to create slots and publish inventory.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant D1 pool mode: Admin UI can add tenants while available slots remain. Expand only when capacity is low or exhausted.',
-          'web.envDetail.expandTenantD1Confirm': 'This will update the environment config, create additional Tenant D1 databases, refresh Worker bindings, and redeploy workers. Continue?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Updating Tenant D1 pool config...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Configured slots: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant D1 pool expansion completed.',
           'web.envDetail.r2StatusLoadFailed': 'Failed to load R2 bucket status.',
           'web.envDetail.r2ConfiguredSummary': 'R2 buckets are configured: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2 buckets need provisioning: {{configured}} / {{required}} configured.',
@@ -2893,13 +2835,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '環境が選択されていません。',
           'web.envDetail.positiveSlotCountRequired': '追加するスロット数には1以上の数値を入力してください。',
           'web.envDetail.tenantStorageLoadFailed': 'テナントストレージの状態を読み込めませんでした。',
-          'web.envDetail.sharedD1ModeSummary': '共有D1モードです。テナント追加時はデプロイ全体で共有する core / PII D1 データベースを使用するため、プール拡張は不要です。',
-          'web.envDetail.tenantD1InventoryMissing': 'Tenant D1 プールは設定されていますが、スロット一覧はまだ利用できません。デプロイを実行してスロットを作成し、一覧を公開してください。',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant D1 プールモードです。空きスロットがある間はAdmin UIからテナントを追加できます。容量が少ない、または枯渇した場合のみ拡張してください。',
-          'web.envDetail.expandTenantD1Confirm': '環境設定を更新し、Tenant D1データベースを追加作成し、Workerバインディングを更新して再デプロイします。続行しますか？',
-          'web.envDetail.tenantD1UpdatingConfig': 'Tenant D1 プール設定を更新中...',
-          'web.envDetail.tenantD1ConfiguredSlots': '設定済みスロット: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant D1 プールの拡張が完了しました。',
           'web.envDetail.r2StatusLoadFailed': 'R2バケットの状態を読み込めませんでした。',
           'web.envDetail.r2ConfiguredSummary': 'R2バケットは設定済みです: {{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2バケットの作成が必要です: {{configured}} / {{required}} 設定済み。',
@@ -2969,13 +2904,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '未选择环境。',
           'web.envDetail.positiveSlotCountRequired': '请输入大于 0 的槽位数量。',
           'web.envDetail.tenantStorageLoadFailed': '无法加载租户存储状态。',
-          'web.envDetail.sharedD1ModeSummary': '共享 D1 模式：新增租户会使用本部署共用的 core / PII D1 数据库，不需要扩展池。',
-          'web.envDetail.tenantD1InventoryMissing': '租户 D1 池已配置，但槽位清单尚不可用。请运行部署以创建槽位并发布清单。',
-          'web.envDetail.tenantD1PoolModeSummary': '租户 D1 池模式：只要还有可用槽位，Admin UI 就可以添加租户。仅在容量不足或耗尽时扩展。',
-          'web.envDetail.expandTenantD1Confirm': '这将更新环境配置，创建额外的租户 D1 数据库，刷新 Worker 绑定并重新部署 Workers。要继续吗？',
-          'web.envDetail.tenantD1UpdatingConfig': '正在更新租户 D1 池配置...',
-          'web.envDetail.tenantD1ConfiguredSlots': '已配置槽位：{{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '租户 D1 池扩展已完成。',
           'web.envDetail.r2StatusLoadFailed': '无法加载 R2 存储桶状态。',
           'web.envDetail.r2ConfiguredSummary': 'R2 存储桶已配置：{{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': '需要创建 R2 存储桶：{{configured}} / {{required}} 已配置。',
@@ -3045,13 +2973,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '未選擇環境。',
           'web.envDetail.positiveSlotCountRequired': '請輸入大於 0 的槽位數量。',
           'web.envDetail.tenantStorageLoadFailed': '無法載入租戶儲存狀態。',
-          'web.envDetail.sharedD1ModeSummary': '共享 D1 模式：新增租戶會使用本部署共用的 core / PII D1 資料庫，不需要擴充池。',
-          'web.envDetail.tenantD1InventoryMissing': '租戶 D1 池已設定，但槽位清單尚不可用。請執行部署以建立槽位並發布清單。',
-          'web.envDetail.tenantD1PoolModeSummary': '租戶 D1 池模式：只要仍有可用槽位，Admin UI 就能新增租戶。僅在容量不足或耗盡時擴充。',
-          'web.envDetail.expandTenantD1Confirm': '這將更新環境設定、建立額外租戶 D1 資料庫、刷新 Worker 綁定並重新部署 Workers。要繼續嗎？',
-          'web.envDetail.tenantD1UpdatingConfig': '正在更新租戶 D1 池設定...',
-          'web.envDetail.tenantD1ConfiguredSlots': '已設定槽位：{{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '租戶 D1 池擴充已完成。',
           'web.envDetail.r2StatusLoadFailed': '無法載入 R2 儲存桶狀態。',
           'web.envDetail.r2ConfiguredSummary': 'R2 儲存桶已設定：{{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': '需要建立 R2 儲存桶：{{configured}} / {{required}} 已設定。',
@@ -3120,11 +3041,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'No se seleccionó ningún entorno.',
           'web.envDetail.positiveSlotCountRequired': 'Introduce un número positivo de slots.',
           'web.envDetail.tenantStorageLoadFailed': 'No se pudo cargar el estado del almacenamiento de tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Modo pool D1 de tenants: Admin UI puede añadir tenants mientras queden slots disponibles. Amplía solo cuando la capacidad sea baja o se agote.',
-          'web.envDetail.expandTenantD1Confirm': 'Esto actualizará la configuración, creará bases D1 de tenant adicionales, refrescará los bindings de Workers y redesplegará workers. ¿Continuar?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Actualizando configuración del pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurados: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Expansión del pool D1 completada.',
           'web.envDetail.r2StatusLoadFailed': 'No se pudo cargar el estado de buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurados: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Se deben provisionar buckets R2: {{configured}} / {{required}} configurados.',
@@ -3193,11 +3109,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Nenhum ambiente selecionado.',
           'web.envDetail.positiveSlotCountRequired': 'Informe um número positivo de slots.',
           'web.envDetail.tenantStorageLoadFailed': 'Falha ao carregar o status do storage dos tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Modo pool D1 de tenants: o Admin UI pode adicionar tenants enquanto houver slots disponíveis. Expanda apenas quando a capacidade estiver baixa ou esgotada.',
-          'web.envDetail.expandTenantD1Confirm': 'Isso atualizará a configuração, criará bancos D1 de tenant adicionais, atualizará bindings de Workers e fará redeploy. Continuar?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Atualizando configuração do pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurados: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Expansão do pool D1 concluída.',
           'web.envDetail.r2StatusLoadFailed': 'Falha ao carregar status dos buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurados: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Buckets R2 precisam ser provisionados: {{configured}} / {{required}} configurados.',
@@ -3266,11 +3177,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Aucun environnement sélectionné.',
           'web.envDetail.positiveSlotCountRequired': 'Saisissez un nombre de slots positif.',
           'web.envDetail.tenantStorageLoadFailed': 'Échec du chargement de l’état du stockage des tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Mode pool D1 de tenants : l’Admin UI peut ajouter des tenants tant que des slots restent disponibles. Étendez uniquement quand la capacité est faible ou épuisée.',
-          'web.envDetail.expandTenantD1Confirm': 'Cela mettra à jour la configuration, créera des bases D1 de tenant supplémentaires, rafraîchira les bindings Workers et redéploiera les workers. Continuer ?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Mise à jour de la configuration du pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurés : {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Extension du pool D1 terminée.',
           'web.envDetail.r2StatusLoadFailed': 'Impossible de charger le statut des buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurés : {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Buckets R2 à provisionner : {{configured}} / {{required}} configurés.',
@@ -3339,11 +3245,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Keine Umgebung ausgewählt.',
           'web.envDetail.positiveSlotCountRequired': 'Geben Sie eine positive Slot-Anzahl ein.',
           'web.envDetail.tenantStorageLoadFailed': 'Tenant-Speicherstatus konnte nicht geladen werden.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant-D1-Pool-Modus: Admin UI kann Tenants hinzufügen, solange Slots verfügbar sind. Erweitern Sie nur bei geringer oder erschöpfter Kapazität.',
-          'web.envDetail.expandTenantD1Confirm': 'Dies aktualisiert die Umgebungskonfiguration, erstellt zusätzliche Tenant-D1-Datenbanken, aktualisiert Worker-Bindings und deployt Workers erneut. Fortfahren?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Tenant-D1-Pool-Konfiguration wird aktualisiert...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Konfigurierte Slots: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant-D1-Pool-Erweiterung abgeschlossen.',
           'web.envDetail.r2StatusLoadFailed': 'R2-Bucket-Status konnte nicht geladen werden.',
           'web.envDetail.r2ConfiguredSummary': 'R2-Buckets konfiguriert: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2-Buckets müssen bereitgestellt werden: {{configured}} / {{required}} konfiguriert.',
@@ -3412,11 +3313,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '선택된 환경이 없습니다.',
           'web.envDetail.positiveSlotCountRequired': '1 이상의 슬롯 수를 입력하세요.',
           'web.envDetail.tenantStorageLoadFailed': '테넌트 스토리지 상태를 불러오지 못했습니다.',
-          'web.envDetail.tenantD1PoolModeSummary': '테넌트 D1 풀 모드입니다. 사용 가능한 슬롯이 남아 있으면 Admin UI에서 테넌트를 추가할 수 있습니다. 용량이 부족하거나 소진된 경우에만 확장하세요.',
-          'web.envDetail.expandTenantD1Confirm': '환경 설정을 업데이트하고 추가 테넌트 D1 데이터베이스를 만들며 Worker 바인딩을 새로고침한 뒤 Workers를 다시 배포합니다. 계속할까요?',
-          'web.envDetail.tenantD1UpdatingConfig': '테넌트 D1 풀 설정 업데이트 중...',
-          'web.envDetail.tenantD1ConfiguredSlots': '설정된 슬롯: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '테넌트 D1 풀 확장이 완료되었습니다.',
           'web.envDetail.r2StatusLoadFailed': 'R2 버킷 상태를 불러오지 못했습니다.',
           'web.envDetail.r2ConfiguredSummary': 'R2 버킷 설정됨: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2 버킷 생성 필요: {{configured}} / {{required}} 설정됨.',
@@ -3485,11 +3381,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Среда не выбрана.',
           'web.envDetail.positiveSlotCountRequired': 'Введите положительное число слотов.',
           'web.envDetail.tenantStorageLoadFailed': 'Не удалось загрузить состояние хранилища tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Режим пула tenant D1: Admin UI может добавлять tenants, пока есть свободные слоты. Расширяйте только при нехватке или исчерпании емкости.',
-          'web.envDetail.expandTenantD1Confirm': 'Будет обновлена конфигурация среды, созданы дополнительные tenant D1 databases, обновлены Worker bindings и повторно развернуты Workers. Продолжить?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Обновление конфигурации пула tenant D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Настроенные слоты: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Расширение пула tenant D1 завершено.',
           'web.envDetail.r2StatusLoadFailed': 'Не удалось загрузить статус R2 buckets.',
           'web.envDetail.r2ConfiguredSummary': 'R2 buckets настроены: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Требуется создать R2 buckets: {{configured}} / {{required}} настроено.',
@@ -3558,11 +3449,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Belum ada environment yang dipilih.',
           'web.envDetail.positiveSlotCountRequired': 'Masukkan jumlah slot positif.',
           'web.envDetail.tenantStorageLoadFailed': 'Gagal memuat status storage tenant.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Mode pool D1 tenant: Admin UI dapat menambah tenant selama slot masih tersedia. Perluas hanya saat kapasitas rendah atau habis.',
-          'web.envDetail.expandTenantD1Confirm': 'Ini akan memperbarui konfigurasi environment, membuat database D1 tenant tambahan, memperbarui binding Worker, dan redeploy Workers. Lanjutkan?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Memperbarui konfigurasi pool D1 tenant...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slot terkonfigurasi: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Perluasan pool D1 tenant selesai.',
           'web.envDetail.r2StatusLoadFailed': 'Gagal memuat status bucket R2.',
           'web.envDetail.r2ConfiguredSummary': 'Bucket R2 terkonfigurasi: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Bucket R2 perlu dibuat: {{configured}} / {{required}} terkonfigurasi.',
@@ -4477,6 +4363,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <span><span data-setup-copy="startSubdomain">${startCopy.subdomain}</span> <b id="setup-recap-subdomain">${startCopy.unknown}</b> <span class="ok">✓</span></span>
       </div>
 
+      <section id="pending-control-operations" class="alert warn hidden" aria-live="polite">
+        <div class="a-head">Pending provisioning operations</div>
+        <p>Admin requests are ready for setup operator execution. Their tenant and placement plan are already fixed.</p>
+        <div id="pending-control-operation-items"></div>
+        <p id="pending-control-operation-result" aria-live="polite"></p>
+        <button type="button" class="btn btn-next" id="btn-open-pending-operation">Run pending operation</button>
+      </section>
+
       <div class="modegrid setup-modegrid">
         <div class="modepanel primary" id="menu-new-setup" role="button" tabindex="0">
           <span class="mp-num">${startCopy.newNum}</span>
@@ -4833,7 +4727,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="rowbody">
           <div class="radiocards db-profile-cards">
             <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:shared-d1" checked>
+              <input type="radio" name="storage-profile" value="builtin:storage:shared-d1">
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
                 <span data-i18n="web.db.sharedD1Title">Shared D1</span>
@@ -4842,28 +4736,49 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               <span class="st"></span>
             </label>
             <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1">
+              <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1" checked>
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
                 <span data-i18n="web.db.tenantD1Title">Tenant D1</span>
-                <small data-i18n="web.db.tenantD1Desc">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
+                <small data-i18n="web.db.tenantD1Desc">Bootstrap the Control Plane and initial tenant shards. Later capacity is provisioned automatically.</small>
               </span>
               <span class="st"></span>
             </label>
           </div>
 
-          <div id="tenant-d1-slot-config" class="tenant-d1-slot-config" style="display: none;">
-            <label class="f-label" for="tenant-d1-preallocated-slots" data-i18n="web.db.preallocatedSlotsTitle">Preallocated tenant slots</label>
-            <div class="sliderline">
-              <input id="tenant-d1-preallocated-slots" type="range" min="1" max="500" step="1" value="3">
-              <span class="val"><span id="tenant-d1-preallocated-slots-value">3</span> <small>/ 500</small></span>
-            </div>
-            <div class="f-help" data-i18n="web.db.slotsHelp">One slot creates two D1 databases: core and PII. Default is 3, maximum is 500. You can expand this later from environment management.</div>
-          </div>
         </div>
         <div class="rownote" data-i18n="web.db.storageProfileDesc">
           Select how user core/PII data is placed for this deployment.
         </div>
+      </section>
+
+      <section class="row" id="automatic-provisioning-row">
+        <div class="rowlabel">
+          <h2>Automatic provisioning</h2>
+        </div>
+        <div class="rowbody">
+          <div class="radiocards db-profile-cards">
+            <label class="radiocard db-profile-card">
+              <input type="radio" name="automatic-provisioning" value="on" checked>
+              <span class="dot" aria-hidden="true"></span>
+              <span class="nm">
+                <span>On</span>
+                <small>Control creates capacity automatically with separate scoped Cloudflare tokens.</small>
+              </span>
+              <span class="st"></span>
+            </label>
+            <label class="radiocard db-profile-card">
+              <input type="radio" name="automatic-provisioning" value="off">
+              <span class="dot" aria-hidden="true"></span>
+              <span class="nm">
+                <span>Off</span>
+                <small>No Cloudflare API token is stored on Control. Setup executes pending operations.</small>
+              </span>
+              <span class="st"></span>
+            </label>
+          </div>
+        </div>
+        <div class="rownote">This can be skipped without changing tenant physical isolation.</div>
       </section>
 
       <section class="row">
@@ -5196,6 +5111,30 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         Ready to deploy Authrim workers to Cloudflare.
       </p>
 
+      <section class="row wide hidden" id="control-token-bootstrap-row">
+        <div class="rowlabel">
+          <h2>Control credentials</h2>
+        </div>
+        <div class="rowbody">
+          <div class="cred">
+            <div class="c-head">One-time Cloudflare bootstrap token</div>
+            <div class="c-note">Cloudflare Dashboard login is separate from Wrangler OAuth and may ask you to sign in again.</div>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-control-bootstrap-token">Create one-time Cloudflare token</button>
+            <label class="f-label" for="control-bootstrap-token">Bootstrap token</label>
+            <input
+              class="f-input sm"
+              type="password"
+              id="control-bootstrap-token"
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-describedby="control-bootstrap-token-status"
+            >
+            <div class="f-help" id="control-bootstrap-token-status" aria-live="polite">The token is used once and revoked after split tokens are registered.</div>
+          </div>
+        </div>
+      </section>
+
       <div id="deploy-manual-wildcard-warning" class="alert manual-wildcard-warning hidden">
         <div class="a-head" id="deploy-manual-wildcard-title"></div>
         <p id="deploy-manual-wildcard-summary"></p>
@@ -5326,6 +5265,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <button type="button" class="tab on" data-env-tab="overview" data-i18n="web.envDetail.overview">Overview</button>
         <button type="button" class="tab" data-env-tab="email" data-i18n="web.envDetail.email">Email</button>
         <button type="button" class="tab" data-env-tab="storage" data-i18n="web.envDetail.storage">Storage</button>
+        <button type="button" class="tab" data-env-tab="capacity" data-i18n="web.envDetail.capacityTab">D1 Capacity</button>
         <button type="button" class="tab" data-env-tab="workers"><span data-i18n="web.envDetail.workersUpdates">Workers / Updates</span> <span class="cnt" id="detail-workers-tab-count">0</span></button>
         <button type="button" class="tab" data-env-tab="migrations"><span data-i18n="web.envDetail.migrations">Migrations</span> <span class="cnt" id="detail-migrations-tab-count">0</span></button>
         <button type="button" class="tab" data-env-tab="resources"><span data-i18n="web.envDetail.resources">Resources</span> <span class="cnt" id="detail-resource-tab-count">0</span></button>
@@ -5343,6 +5283,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="bigtable">
           <div class="cap"><span>URLs</span><em data-i18n="web.envDetail.verified">verified ✓</em></div>
           <table><tbody id="detail-url-list"></tbody></table>
+        </div>
+
+        <div id="env-control-automatic-provisioning" class="hidden">
+          <div class="sechead"><span class="idx">D1</span><h3>Automatic provisioning</h3><span class="hint" id="env-control-automatic-status">Checking...</span></div>
+          <div id="env-control-automatic-inputs" class="inline-form">
+            <button type="button" class="btn btn-ghost sm" id="btn-env-create-control-bootstrap-token">Create one-time Cloudflare token</button>
+            <input
+              class="f-input sm"
+              type="password"
+              id="env-control-bootstrap-token"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="One-time Cloudflare bootstrap token"
+              placeholder="One-time bootstrap token"
+            >
+            <button type="button" class="btn btn-next sm" id="btn-env-enable-control-automatic">Enable</button>
+          </div>
+          <div class="f-help" id="env-control-automatic-message" aria-live="polite"></div>
         </div>
 
         <div class="sechead"><span class="idx">ADMIN</span><h3 data-i18n="web.envDetail.adminAccount">Admin Account</h3></div>
@@ -5476,22 +5434,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div id="pane-storage" class="tabpane" data-env-pane="storage">
-        <div id="env-tenant-d1-section">
-          <div class="sechead"><span class="idx">D1 POOL</span><h3 data-i18n="web.envDetail.tenantD1Pool">Tenant D1 Pool</h3><span class="hint" id="env-tenant-d1-summary" data-i18n="web.envDetail.loadingTenantStorage">Loading tenant storage status...</span></div>
-          <div id="env-tenant-d1-stats" class="stats hidden">
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.capacity">Capacity</div><div class="s-v" id="env-tenant-d1-capacity">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.available">Available</div><div class="s-v" id="env-tenant-d1-available">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.assigned">Assigned</div><div class="s-v" id="env-tenant-d1-assigned">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.needsReset">Needs Reset</div><div class="s-v hot" id="env-tenant-d1-reset-required">-</div></div>
-          </div>
-          <div id="env-tenant-d1-expand" class="hidden inline-form">
-            <div class="fi"><label class="f-label" for="env-tenant-d1-add-slots" data-i18n="web.envDetail.addTenantD1Slots">Add Tenant D1 Slots</label><input class="f-input sm" id="env-tenant-d1-add-slots" type="number" min="1" max="500" value="1"></div>
-            <button class="btn btn-next" id="btn-expand-tenant-d1-pool"><span data-i18n="web.envDetail.expandPoolDeploy">Expand Pool and Deploy</span> <span class="arr">→</span></button>
-            <button class="btn btn-ghost" id="btn-refresh-tenant-d1-pool" data-i18n="web.envDetail.refreshVersions">Refresh</button>
-          </div>
-          <div id="env-tenant-d1-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.tenantD1PoolProgress">Tenant D1 Pool Progress</span></div><pre id="env-tenant-d1-log"></pre></div>
-        </div>
-
         <div id="env-r2-provision-section">
           <div class="sechead"><span class="idx">R2</span><h3 data-i18n="web.envDetail.dedicatedR2Buckets">Dedicated R2 Buckets</h3><span class="hint" id="env-r2-provision-summary" data-i18n="web.envDetail.loadingR2Status">Loading R2 bucket status...</span></div>
           <div class="secdesc" data-i18n="web.envDetail.r2ProvisionDesc">Create Authrim R2 buckets, record lock bindings, enable the R2 feature flag, and redeploy workers.</div>
@@ -5501,6 +5443,43 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </div>
           <div id="env-r2-provision-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.r2ProvisioningProgress">R2 Provisioning Progress</span></div><pre id="env-r2-provision-log"></pre></div>
         </div>
+      </div>
+
+      <div id="pane-capacity" class="tabpane" data-env-pane="capacity">
+        <div class="sechead">
+          <span class="idx">D1</span><h3 data-i18n="web.envDetail.capacityTitle">Tenant D1 Capacity</h3>
+          <span class="hint" data-i18n="web.envDetail.capacityHint">Server-owned placement plan</span>
+        </div>
+        <div class="twocol">
+          <div>
+            <label class="f-label" for="control-capacity-scope" data-i18n="web.envDetail.capacityScope">Scope</label>
+            <select class="f-input sm" id="control-capacity-scope">
+              <option value="shared_pool" data-i18n="web.envDetail.capacityShared">Shared pool</option>
+              <option value="tenant_exclusive" data-i18n="web.envDetail.capacityDedicated">Dedicated tenant</option>
+            </select>
+          </div>
+          <div id="control-capacity-tenant-field" class="hidden">
+            <label class="f-label" for="control-capacity-tenant" data-i18n="web.envDetail.capacityTenant">Tenant</label>
+            <select class="f-input sm" id="control-capacity-tenant"></select>
+          </div>
+          <div>
+            <label class="f-label" for="control-capacity-profile" data-i18n="web.envDetail.capacityProfile">Capacity profile</label>
+            <select class="f-input sm" id="control-capacity-profile">
+              <option value="minimum" data-i18n="web.envDetail.capacityMinimum">Minimum</option>
+              <option value="recommended" selected data-i18n="web.envDetail.capacityRecommended">Recommended</option>
+              <option value="extra_headroom" data-i18n="web.envDetail.capacityExtra">Extra headroom</option>
+            </select>
+          </div>
+        </div>
+        <div class="inline-form">
+          <button type="button" class="btn btn-ghost" id="btn-control-capacity-preview" data-i18n="web.envDetail.capacityPreview">Preview</button>
+          <button type="button" class="btn btn-next" id="btn-control-capacity-request" disabled><span data-i18n="web.envDetail.capacityAdd">Add capacity</span> <span class="arr">→</span></button>
+        </div>
+        <div id="control-capacity-result" class="bigtable hidden" aria-live="polite">
+          <div class="cap"><span data-i18n="web.envDetail.capacityPlan">Capacity plan</span><em id="control-capacity-summary"></em></div>
+          <table><tbody id="control-capacity-targets"></tbody></table>
+        </div>
+        <p id="control-capacity-status" aria-live="polite"></p>
       </div>
 
       <div id="pane-migrations" class="tabpane" data-env-pane="migrations">
@@ -5822,9 +5801,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let lastPrerequisitesResult = null;
 
     function normalizeStorageProfileId(value) {
-      return value === 'builtin:storage:tenant-d1'
-        ? 'builtin:storage:tenant-d1'
-        : 'builtin:storage:shared-d1';
+      return value === 'builtin:storage:shared-d1'
+        ? 'builtin:storage:shared-d1'
+        : 'builtin:storage:tenant-d1';
     }
 
     function buildProfilesConfig(storageProfileId) {
@@ -5854,42 +5833,43 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       );
     }
 
-    function getTenantD1PreallocatedSlots() {
-      const value = Number.parseInt(
-        document.getElementById('tenant-d1-preallocated-slots')?.value || '3',
-        10
-      );
-      return Number.isInteger(value) ? Math.min(500, Math.max(1, value)) : 3;
-    }
-
-    function setTenantD1PreallocatedSlots(value) {
-      const normalized = Math.min(500, Math.max(1, Number.parseInt(value || '3', 10) || 3));
-      const input = document.getElementById('tenant-d1-preallocated-slots');
-      const label = document.getElementById('tenant-d1-preallocated-slots-value');
-      if (input) input.value = String(normalized);
-      if (label) label.textContent = String(normalized);
-    }
-
-    function updateTenantD1SlotConfigVisibility() {
-      const visible = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
-      const panel = document.getElementById('tenant-d1-slot-config');
-      if (panel) panel.style.display = visible ? 'block' : 'none';
-    }
-
     function setSelectedStorageProfileId(profileId) {
       const normalized = normalizeStorageProfileId(profileId);
       document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
         input.checked = input.value === normalized;
       });
-      updateTenantD1SlotConfigVisibility();
+      syncAutomaticProvisioningUi();
+    }
+
+    function automaticProvisioningEnabled() {
+      return (
+        getSelectedStorageProfileId() === 'builtin:storage:tenant-d1' &&
+        document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off'
+      );
+    }
+
+    function setAutomaticProvisioningEnabled(enabled) {
+      document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
+        input.checked = input.value === (enabled ? 'on' : 'off');
+      });
+      syncAutomaticProvisioningUi();
+    }
+
+    function syncAutomaticProvisioningUi() {
+      const tenantD1 = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
+      document.getElementById('automatic-provisioning-row')?.classList.toggle('hidden', !tenantD1);
+      document
+        .getElementById('control-token-bootstrap-row')
+        ?.classList.toggle('hidden', !tenantD1 || !automaticProvisioningEnabled());
     }
 
     document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
-      input.addEventListener('change', updateTenantD1SlotConfigVisibility);
+      input.addEventListener('change', syncAutomaticProvisioningUi);
     });
-    document.getElementById('tenant-d1-preallocated-slots')?.addEventListener('input', (event) => {
-      setTenantD1PreallocatedSlots(event.currentTarget.value);
+    document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
+      input.addEventListener('change', syncAutomaticProvisioningUi);
     });
+    syncAutomaticProvisioningUi();
 
     function getConfiguredWorkerCount() {
       const apiWorkers = 12;
@@ -5923,8 +5903,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (config?.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
         return baseCount;
       }
-      const slots = Number(config?.tenantD1?.preallocatedSlots || 3);
-      return baseCount + Math.max(0, slots) * 2;
+      return baseCount + 3;
     }
 
     function getCompleteKvCount() {
@@ -6048,8 +6027,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // Environment management state
     let detectedEnvironments = [];
+    let pendingControlOperations = [];
     let selectedEnvForDetail = null;
     let selectedEnvDetailConfig = null;
+    let envControlBootstrapOwnership = null;
+    let controlCapacityPreview = null;
     let selectedEnvForDelete = null;
     let envCardRenderGeneration = 0;
     let migrationStatusLoadGeneration = 0;
@@ -7802,10 +7784,42 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Show top menu
-    function showTopMenu() {
+    async function loadPendingControlOperations() {
+      const panel = document.getElementById('pending-control-operations');
+      const items = document.getElementById('pending-control-operation-items');
+      if (!panel || !items) return [];
+      panel.classList.add('hidden');
+      items.replaceChildren();
+      try {
+        const result = await api('/control/pending-operations');
+        const operations = result.success && Array.isArray(result.operations) ? result.operations : [];
+        if (operations.length === 0) return [];
+        for (const operation of operations.slice(0, 5)) {
+          const row = document.createElement('p');
+          if (operation.operationKind === 'tenant_disaster_recovery') {
+            row.textContent = operation.environmentId + ' / Tenant ' + operation.tenantId +
+              ' / Disaster recovery / ' + (operation.currentStep || 'verify_runtime_bindings');
+          } else {
+            const owner = operation.scope === 'tenant_exclusive'
+              ? 'Tenant ' + operation.tenantId
+              : 'Shared pool';
+            row.textContent = operation.environmentId + ' / ' + owner + ' / ' +
+              operation.dataRole + ' / ' + (operation.currentStep || 'provisioning');
+          }
+          items.appendChild(row);
+        }
+        panel.classList.remove('hidden');
+        return operations;
+      } catch {
+        return [];
+      }
+    }
+
+    async function showTopMenu() {
       setStep(2);
       updateStartRecap();
       showSection('topMenu');
+      pendingControlOperations = await loadPendingControlOperations();
     }
 
     function updateStartRecap() {
@@ -7833,6 +7847,51 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     const menuNewSetup = document.getElementById('menu-new-setup');
     const menuLoadConfig = document.getElementById('menu-load-config');
     const menuManageEnv = document.getElementById('menu-manage-env');
+
+    document.getElementById('btn-open-pending-operation')?.addEventListener('click', async () => {
+      const pending = pendingControlOperations[0];
+      if (!pending) return;
+      const button = document.getElementById('btn-open-pending-operation');
+      const status = document.getElementById('pending-control-operation-result');
+      if (button) button.disabled = true;
+      if (status) status.textContent = 'Running provisioning operation...';
+      try {
+        const result = await api('/control/pending-operations/execute', {
+          method: 'POST',
+          body: {
+            environmentId: pending.environmentId,
+            operationId: pending.operationId,
+          },
+        });
+        if (!result.success) throw new Error(result.error || 'Control operation failed');
+        pendingControlOperations = await loadPendingControlOperations();
+        if (result.result?.state === 'awaiting_migration') {
+          if (status) status.textContent = 'D1 created. Migration is ready for the next operator step.';
+        } else if (result.result?.state === 'awaiting_worker_bindings') {
+          if (status) {
+            status.textContent =
+              'Migration completed. Worker binding reconciliation is ready for the next operator step.';
+          }
+        } else if (result.result?.state === 'awaiting_smoke') {
+          if (status) {
+            status.textContent =
+              'Worker bindings patched. Private smoke and stabilization are running.';
+          }
+        } else if (result.result?.state === 'retry_required') {
+          if (status) status.textContent = 'Provisioning requires a retry.';
+        } else if (result.result?.state === 'lease_unavailable') {
+          if (status) status.textContent = 'Another executor currently owns this operation.';
+        } else {
+          if (status) status.textContent = 'Provisioning is blocked. Review the operation status.';
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error instanceof Error ? error.message : 'Control operation failed';
+        }
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
 
     function activatePanelWithKeyboard(element) {
       element.addEventListener('keydown', (event) => {
@@ -8061,7 +8120,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
       updateBaseDomainUI();
       setSelectedStorageProfileId(config.profiles?.defaults?.storage);
-      setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
+      setAutomaticProvisioningEnabled(config.tenantD1?.automaticProvisioning === true);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
       document.getElementById('feature-queue-enabled').checked =
@@ -9130,7 +9189,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           r2: { enabled: true },
           email: { provider: 'none' },
         },
-        profiles: buildProfilesConfig('builtin:storage:shared-d1'),
+        profiles: buildProfilesConfig('builtin:storage:tenant-d1'),
+        tenantD1: { automaticProvisioning: true },
         zoneId: domainZoneId || null,
         customDomainBinding: baseDomain
           ? (document.getElementById('custom-domain-binding')?.checked ?? false)
@@ -9195,10 +9255,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         core: parseDbLocation(coreLocation),
         pii: parseDbLocation(piiLocation),
       };
-      config.tenantD1 = {
-        ...(config.tenantD1 || {}),
-        preallocatedSlots: getTenantD1PreallocatedSlots(),
-      };
       config.profiles = {
         ...(config.profiles || buildProfilesConfig(storageProfileId)),
         defaults: {
@@ -9211,6 +9267,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         references: config.profiles?.references || { hyperdrive: {} },
         seed: config.profiles?.seed || { storage: [], audit: [], residency: [] },
       };
+      config.tenantD1 = { automaticProvisioning: automaticProvisioningEnabled() };
 
       // Proceed to email configuration
       setStep(6);
@@ -9504,7 +9561,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             databaseConfig: config.database,
             createQueues: config.features?.queue?.enabled === true,
             createR2: true,
-            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:shared-d1',
+            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:tenant-d1',
+            automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
           },
         });
 
@@ -9584,6 +9642,150 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       await copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath);
     });
 
+    let controlBootstrapOwnership = null;
+    document
+      .getElementById('btn-create-control-bootstrap-token')
+      .addEventListener('click', async () => {
+        const status = document.getElementById('control-bootstrap-token-status');
+        const dashboardWindow = window.open('about:blank', '_blank');
+        if (dashboardWindow) dashboardWindow.opener = null;
+        const result = await api('/cloudflare/control-token-template', {
+          method: 'POST',
+          body: { env: config.env },
+        });
+        if (!result.success || !result.url) {
+          dashboardWindow?.close();
+          status.textContent = result.error || 'Could not create the Cloudflare token link.';
+          return;
+        }
+        controlBootstrapOwnership = result.ownership;
+        if (dashboardWindow) dashboardWindow.location.replace(result.url);
+        status.textContent = dashboardWindow
+          ? 'Create the token in Cloudflare Dashboard, then enter it below.'
+          : 'The browser blocked the new tab. Allow popups and select this button again.';
+      });
+
+    document
+      .getElementById('btn-env-create-control-bootstrap-token')
+      .addEventListener('click', async () => {
+        if (!selectedEnvForDetail) return;
+        const status = document.getElementById('env-control-automatic-message');
+        const dashboardWindow = window.open('about:blank', '_blank');
+        if (dashboardWindow) dashboardWindow.opener = null;
+        const result = await api('/cloudflare/control-token-template', {
+          method: 'POST',
+          body: { env: selectedEnvForDetail.env },
+        });
+        if (!result.success || !result.url) {
+          dashboardWindow?.close();
+          status.textContent = result.error || 'Could not create the Cloudflare token link.';
+          return;
+        }
+        envControlBootstrapOwnership = result.ownership;
+        if (dashboardWindow) dashboardWindow.location.replace(result.url);
+        status.textContent = dashboardWindow
+          ? 'Enter the one-time token, then select Enable.'
+          : 'The browser blocked the Cloudflare Dashboard tab.';
+      });
+
+    document
+      .getElementById('btn-env-enable-control-automatic')
+      .addEventListener('click', async () => {
+        if (!selectedEnvForDetail) return;
+        const envName = selectedEnvForDetail.env;
+        const input = document.getElementById('env-control-bootstrap-token');
+        const button = document.getElementById('btn-env-enable-control-automatic');
+        const status = document.getElementById('env-control-automatic-message');
+        let bootstrapToken = input.value.trim();
+        if (!bootstrapToken) {
+          status.textContent = 'Enter the one-time Cloudflare token first.';
+          input.focus();
+          return;
+        }
+        input.value = '';
+        button.disabled = true;
+        status.textContent = 'Preparing Control provisioning authority...';
+        try {
+          const prepared = await api('/control/automatic-provisioning/prepare', {
+            method: 'POST',
+            body: {
+              env: envName,
+              ...(envControlBootstrapOwnership
+                ? { ownership: envControlBootstrapOwnership }
+                : {}),
+            },
+          });
+          if (!prepared.success) throw new Error(prepared.error || 'Preparation failed');
+          status.textContent = 'Deploying the Control Worker configuration...';
+          const deployed = await api('/deploy/component/ar-control', {
+            method: 'POST',
+            body: { env: envName, dryRun: false, skipBuild: false },
+          });
+          if (!deployed.success) throw new Error(deployed.error || 'Control deployment failed');
+          status.textContent = 'Registering scoped credentials...';
+          const completed = await api('/control/automatic-provisioning/complete', {
+            method: 'POST',
+            body: {
+              env: envName,
+              bootstrapToken,
+              ...(envControlBootstrapOwnership
+                ? { ownership: envControlBootstrapOwnership }
+                : {}),
+            },
+          });
+          if (!completed.success) {
+            const completionError = new Error(completed.error || 'Credential bootstrap failed');
+            completionError.cleanupRequired = completed.cleanupRequired === true;
+            throw completionError;
+          }
+          envControlBootstrapOwnership = null;
+          await loadEnvControlAutomaticProvisioning(envName);
+        } catch (error) {
+          let cleanupConfirmed = error.cleanupRequired === false;
+          if (!cleanupConfirmed) {
+            try {
+              const cleanup = await api('/control/automatic-provisioning/cleanup-bootstrap', {
+                method: 'POST',
+                body: {
+                  env: envName,
+                  bootstrapToken,
+                  ...(envControlBootstrapOwnership
+                    ? { ownership: envControlBootstrapOwnership }
+                    : {}),
+                },
+              });
+              cleanupConfirmed = cleanup.success === true && cleanup.revoked === true;
+            } catch {
+              cleanupConfirmed = false;
+            }
+          }
+          const manualCleanup = error.cleanupRequired === true || !cleanupConfirmed;
+          let pendingCanceled = false;
+          if (!manualCleanup) {
+            try {
+              const canceled = await api('/control/automatic-provisioning/cancel-pending', {
+                method: 'POST',
+                body: { env: envName },
+              });
+              pendingCanceled = canceled.success === true && canceled.enabled === false;
+            } catch {
+              pendingCanceled = false;
+            }
+          }
+          status.textContent = manualCleanup
+            ? (error.message || 'Automatic provisioning setup failed.') +
+              ' Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.'
+            : !pendingCanceled
+              ? (error.message || 'Automatic provisioning setup failed.') +
+                ' The bootstrap token was revoked, but the pending state could not be reset. Retry or repair the pending operation.'
+            : (error.message || 'Automatic provisioning setup failed.') +
+              ' The bootstrap token was revoked and Automatic provisioning returned to Off.';
+        } finally {
+          bootstrapToken = '';
+          button.disabled = false;
+        }
+      });
+
     // Deploy
     document.getElementById('btn-deploy').addEventListener('click', async () => {
       const btn = document.getElementById('btn-deploy');
@@ -9595,6 +9797,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const output = document.getElementById('deploy-output');
       const progressUI = document.getElementById('deploy-progress-ui');
       const readyText = document.getElementById('deploy-ready-text');
+      const bootstrapTokenInput = document.getElementById('control-bootstrap-token');
+      const bootstrapToken = bootstrapTokenInput.value.trim();
+
+      if (automaticProvisioningEnabled() && (!bootstrapToken || !controlBootstrapOwnership)) {
+        document.getElementById('control-bootstrap-token-status').textContent =
+          'Create and enter the one-time Cloudflare bootstrap token before deployment.';
+        bootstrapTokenInput.focus();
+        return;
+      }
 
       btn.disabled = true;
       btn.classList.add('hidden');
@@ -9656,8 +9867,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             dryRun: false,
+            ...(automaticProvisioningEnabled()
+              ? {
+                  bootstrapToken,
+                  tokenOwnership: controlBootstrapOwnership,
+                }
+              : {}),
           },
         });
+        bootstrapTokenInput.value = '';
 
         if (pollInterval) {
           clearInterval(pollInterval);
@@ -9769,6 +9987,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           throw new Error(result.error || t('web.status.error'));
         }
       } catch (error) {
+        bootstrapTokenInput.value = '';
         if (pollInterval) {
           clearInterval(pollInterval);
           pollInterval = null;
@@ -10030,8 +10249,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
       if (d1Count) d1Count.textContent = '3';
       if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
-        const slots = config.tenantD1?.preallocatedSlots || 3;
-        appendPreviewRow(d1List, 'Preallocated tenant D1 slots: ' + slots, (slots * 2) + ' D1');
+        appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
       }
 
       for (let i = 0; i < resources.kv.length; i += 2) {
@@ -10527,6 +10745,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
       }
       renderEnvDetailUrls(env);
+      loadEnvControlAutomaticProvisioning(env.env);
       loadEnvEmailStatus(env.env);
       loadServiceSiteStatus(env.env);
       document.getElementById('env-email-progress').classList.add('hidden');
@@ -10587,9 +10806,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         checkAndShowAdminSetup(configKv.id);
       }
 
-      document.getElementById('env-tenant-d1-progress').classList.add('hidden');
-      document.getElementById('env-tenant-d1-log').textContent = '';
-      loadTenantD1PoolStatus(env.env);
       document.getElementById('env-r2-provision-progress').classList.add('hidden');
       document.getElementById('env-r2-provision-log').textContent = '';
       document.getElementById('btn-provision-r2-buckets').disabled = false;
@@ -10605,6 +10821,46 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       // Load details asynchronously
       loadResourceDetails(env);
+    }
+
+    function renderEnvControlAutomaticProvisioning(result) {
+      const section = document.getElementById('env-control-automatic-provisioning');
+      const status = document.getElementById('env-control-automatic-status');
+      const inputs = document.getElementById('env-control-automatic-inputs');
+      const message = document.getElementById('env-control-automatic-message');
+      const tenantD1 = result?.success && result.tenantD1 === true;
+      section.classList.toggle('hidden', !tenantD1);
+      if (!tenantD1) return;
+      const capabilityState = result.authority?.capabilityState ||
+        (result.enabled ? 'pending' : 'disabled');
+      status.textContent = capabilityState === 'ready'
+        ? 'On'
+        : capabilityState === 'disabled'
+          ? 'Off'
+          : capabilityState;
+      inputs.classList.toggle('hidden', capabilityState === 'ready');
+      const missingResourceClasses = Array.isArray(result.missingResourceClasses)
+        ? result.missingResourceClasses.join(', ')
+        : '';
+      message.textContent = capabilityState === 'ready'
+        ? 'Scoped Control Worker credentials are registered.'
+        : capabilityState === 'blocked'
+          ? 'Automatic provisioning is blocked' +
+            (missingResourceClasses ? ' (missing: ' + missingResourceClasses + ')' : '') +
+            '. Enter a new one-time token to repair it.'
+          : '';
+    }
+
+    async function loadEnvControlAutomaticProvisioning(envName) {
+      const status = document.getElementById('env-control-automatic-status');
+      status.textContent = 'Checking...';
+      try {
+        renderEnvControlAutomaticProvisioning(
+          await api('/control/automatic-provisioning/status?env=' + encodeURIComponent(envName))
+        );
+      } catch (error) {
+        status.textContent = 'Unavailable';
+      }
     }
 
     function stripTrailingSlash(url) {
@@ -11039,156 +11295,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
         btn.disabled = false;
         if (btnLabel) btnLabel.textContent = originalLabel || t('web.envDetail.serviceSiteSaveDeploy');
-      }
-    }
-
-    function renderTenantD1PoolStatus(response) {
-      const summaryEl = document.getElementById('env-tenant-d1-summary');
-      const statsEl = document.getElementById('env-tenant-d1-stats');
-      const expandEl = document.getElementById('env-tenant-d1-expand');
-      const addInput = document.getElementById('env-tenant-d1-add-slots');
-
-      if (!response || !response.success) {
-        summaryEl.textContent = response?.error || t('web.envDetail.tenantStorageLoadFailed');
-        statsEl.classList.add('hidden');
-        expandEl.classList.add('hidden');
-        return;
-      }
-
-      const pool = response.tenantD1Pool || {};
-      if (!pool.enabled) {
-        summaryEl.textContent = t('web.envDetail.sharedD1ModeSummary');
-        statsEl.classList.add('hidden');
-        expandEl.classList.add('hidden');
-        return;
-      }
-
-      expandEl.classList.remove('hidden');
-      const configuredSlots = Number(pool.configuredSlots || pool.capacity || 0);
-      const maxAdd = Math.max(0, 500 - configuredSlots);
-      addInput.max = String(maxAdd || 1);
-      if (Number(addInput.value || '1') > maxAdd && maxAdd > 0) {
-        addInput.value = String(maxAdd);
-      }
-
-      if (!pool.tableReady) {
-        summaryEl.textContent = t('web.envDetail.tenantD1InventoryMissing');
-        statsEl.classList.add('hidden');
-        document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
-        return;
-      }
-
-      const counts = pool.counts || {};
-      document.getElementById('env-tenant-d1-capacity').textContent = String(pool.capacity ?? 0);
-      document.getElementById('env-tenant-d1-available').textContent = String(pool.available ?? 0);
-      document.getElementById('env-tenant-d1-assigned').textContent = String(counts.assigned || 0);
-      document.getElementById('env-tenant-d1-reset-required').textContent = String(
-        counts.reset_required || 0
-      );
-      summaryEl.textContent = t('web.envDetail.tenantD1PoolModeSummary');
-      statsEl.classList.remove('hidden');
-      document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
-    }
-
-    async function loadTenantD1PoolStatus(envName) {
-      const summaryEl = document.getElementById('env-tenant-d1-summary');
-      summaryEl.textContent = t('web.envDetail.loadingTenantStorage');
-      try {
-        const response = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/status');
-        renderTenantD1PoolStatus(response);
-      } catch (error) {
-        renderTenantD1PoolStatus({ success: false, error: error.message });
-      }
-    }
-
-    async function expandTenantD1PoolForEnv() {
-      if (!selectedEnvForDetail) {
-        alert(t('web.envDetail.noEnvironmentSelected'));
-        return;
-      }
-
-      const envName = selectedEnvForDetail.env;
-      const addSlots = Number.parseInt(
-        document.getElementById('env-tenant-d1-add-slots').value || '0',
-        10
-      );
-      if (!Number.isInteger(addSlots) || addSlots < 1) {
-        alert(t('web.envDetail.positiveSlotCountRequired'));
-        return;
-      }
-
-      const confirmed = confirm(
-        t('web.envDetail.expandTenantD1Confirm')
-      );
-      if (!confirmed) return;
-
-      const btn = document.getElementById('btn-expand-tenant-d1-pool');
-      const progressDiv = document.getElementById('env-tenant-d1-progress');
-      const logDiv = document.getElementById('env-tenant-d1-log');
-      btn.disabled = true;
-      progressDiv.classList.remove('hidden');
-      logDiv.textContent = '';
-
-      const addLog = (message) => {
-        const line = document.createElement('div');
-        line.textContent = message;
-        logDiv.appendChild(line);
-        logDiv.scrollTop = logDiv.scrollHeight;
-      };
-
-      let pollInterval = null;
-      try {
-        addLog(t('web.envDetail.tenantD1UpdatingConfig'));
-        const expansion = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/expand', {
-          method: 'POST',
-          body: { addSlots },
-        });
-        if (!expansion.success) {
-          throw new Error(expansion.error || t('web.status.error'));
-        }
-        addLog(t('web.envDetail.tenantD1ConfiguredSlots', {
-          current: expansion.currentSlots,
-          next: expansion.nextSlots,
-        }));
-        addLog(t('web.status.startingDeploy'));
-
-        let lastProgressLength = 0;
-        pollInterval = setInterval(async () => {
-          try {
-            const statusResult = await api('/deploy/status');
-            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-              const newMessages = statusResult.progress.slice(lastProgressLength);
-              newMessages.forEach(msg => addLog(formatProgressMessageForDisplay(msg)));
-              lastProgressLength = statusResult.progress.length;
-            }
-          } catch (error) {
-            // Ignore transient polling errors while deploy is running.
-          }
-        }, 1000);
-
-        const deployResult = await api('/update/workers', {
-          method: 'POST',
-          body: {
-            env: envName,
-            onlyChanged: false,
-            topologyDeploymentToken: expansion.topologyDeploymentToken,
-          },
-        });
-
-        if (!deployResult.success) {
-          throw new Error(deployResult.error || t('web.status.error'));
-        }
-
-        addLog(t('web.envDetail.tenantD1ExpansionComplete'));
-        await loadTenantD1PoolStatus(envName);
-        await loadWorkerVersionComparison(envName);
-      } catch (error) {
-        addLog(t('web.status.errorWithMessage', { error: error.message }));
-      } finally {
-        if (pollInterval !== null) {
-          clearInterval(pollInterval);
-        }
-        btn.disabled = false;
       }
     }
 
@@ -12215,12 +12321,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     document.getElementById('btn-save-service-site')?.addEventListener('click', configureServiceSiteForEnv);
     document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
     document.getElementById('btn-enable-resend-email')?.addEventListener('click', enableResendEmailForEnv);
-    document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {
-      if (selectedEnvForDetail) {
-        loadTenantD1PoolStatus(selectedEnvForDetail.env);
-      }
-    });
-    document.getElementById('btn-expand-tenant-d1-pool')?.addEventListener('click', expandTenantD1PoolForEnv);
     document.getElementById('btn-refresh-r2-buckets')?.addEventListener('click', () => {
       if (selectedEnvForDetail) {
         loadR2ProvisionStatus(selectedEnvForDetail.env);
@@ -12500,6 +12600,169 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       loadEnvironments();
     });
 
+    function resetControlCapacityPreview() {
+      controlCapacityPreview = null;
+      document.getElementById('control-capacity-result')?.classList.add('hidden');
+      const targets = document.getElementById('control-capacity-targets');
+      if (targets) targets.replaceChildren();
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (requestButton) requestButton.disabled = true;
+      const status = document.getElementById('control-capacity-status');
+      if (status) status.textContent = '';
+    }
+
+    function getControlCapacityRequest() {
+      if (!selectedEnvForDetail) throw new Error(t('web.envDetail.capacitySelectEnvironment'));
+      const scope = document.getElementById('control-capacity-scope')?.value;
+      const profile = document.getElementById('control-capacity-profile')?.value;
+      const tenantId =
+        scope === 'tenant_exclusive'
+          ? document.getElementById('control-capacity-tenant')?.value || null
+          : null;
+      if (scope === 'tenant_exclusive' && !tenantId) {
+        throw new Error(t('web.envDetail.capacityNoTenant'));
+      }
+      return { environmentId: selectedEnvForDetail.env, profile, scope, tenantId };
+    }
+
+    async function loadControlCapacityTenants() {
+      if (!selectedEnvForDetail) return;
+      const select = document.getElementById('control-capacity-tenant');
+      if (!select) return;
+      select.replaceChildren();
+      try {
+        const result = await api(
+          '/control/capacity/tenants?environmentId=' +
+            encodeURIComponent(selectedEnvForDetail.env)
+        );
+        for (const tenantId of Array.isArray(result.tenants) ? result.tenants : []) {
+          const option = document.createElement('option');
+          option.value = tenantId;
+          option.textContent = tenantId;
+          select.appendChild(option);
+        }
+      } catch (error) {
+        const status = document.getElementById('control-capacity-status');
+        if (status) status.textContent = error.message || 'Tenant capacity targets are unavailable.';
+      }
+    }
+
+    function appendControlCapacityCell(row, primary, secondary) {
+      const cell = document.createElement('td');
+      const title = document.createElement('strong');
+      title.textContent = primary;
+      cell.appendChild(title);
+      if (secondary) {
+        const detail = document.createElement('small');
+        detail.textContent = secondary;
+        cell.appendChild(document.createElement('br'));
+        cell.appendChild(detail);
+      }
+      row.appendChild(cell);
+    }
+
+    function renderControlCapacityPlan(preview, operations = []) {
+      controlCapacityPreview = preview;
+      const result = document.getElementById('control-capacity-result');
+      const summary = document.getElementById('control-capacity-summary');
+      const targets = document.getElementById('control-capacity-targets');
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (!result || !summary || !targets || !requestButton) return;
+      result.classList.remove('hidden');
+      summary.textContent = t('web.envDetail.capacitySummary', {
+        units: preview.capacityUnitsAdded,
+        d1: preview.d1DatabasesAdded,
+        total: preview.projectedEnvironmentD1Count,
+      });
+      targets.replaceChildren();
+      for (const target of preview.targets || []) {
+        const row = document.createElement('tr');
+        appendControlCapacityCell(
+          row,
+          target.dataRole + ' / ' + target.residencyPartition,
+          target.databaseName
+        );
+        appendControlCapacityCell(row, target.bindingRef, (target.workerScripts || []).join(', '));
+        const operation = operations.find((item) => item.operationId === target.operationId);
+        appendControlCapacityCell(
+          row,
+          operation?.lastErrorCode || operation?.status || t('web.envDetail.capacityPreviewState'),
+          target.operationId
+        );
+        targets.appendChild(row);
+      }
+      requestButton.disabled =
+        !preview.available || !Array.isArray(preview.targets) || preview.targets.length === 0;
+    }
+
+    async function runControlCapacityAction(action) {
+      const status = document.getElementById('control-capacity-status');
+      const previewButton = document.getElementById('btn-control-capacity-preview');
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (previewButton) previewButton.disabled = true;
+      if (requestButton) requestButton.disabled = true;
+      if (status) {
+        status.textContent =
+          action === 'preview'
+            ? t('web.envDetail.capacityLoading')
+            : t('web.envDetail.capacityCreating');
+      }
+      try {
+        const response = await api('/control/capacity/' + action, {
+          method: 'POST',
+          body: getControlCapacityRequest(),
+        });
+        if (!response.success) {
+          throw new Error(response.error || t('web.envDetail.capacityRequestFailed'));
+        }
+        const preview = action === 'preview' ? response.preview : response.result?.preview;
+        const operations = action === 'request' ? response.result?.operations || [] : [];
+        renderControlCapacityPlan(preview, operations);
+        if (status) {
+          status.textContent =
+            action === 'request'
+              ? t('web.envDetail.capacityCreated')
+              : preview.targets.length === 0
+                ? t('web.envDetail.capacitySatisfied')
+                : t('web.envDetail.capacityReady');
+        }
+        if (action === 'request') {
+          pendingControlOperations = await loadPendingControlOperations();
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error.message || t('web.envDetail.capacityRequestFailed');
+        }
+      } finally {
+        if (previewButton) previewButton.disabled = false;
+        if (requestButton) {
+          requestButton.disabled =
+            !controlCapacityPreview?.available || controlCapacityPreview.targets.length === 0;
+        }
+      }
+    }
+
+    document.getElementById('control-capacity-scope')?.addEventListener('change', (event) => {
+      const exclusive = event.target.value === 'tenant_exclusive';
+      document
+        .getElementById('control-capacity-tenant-field')
+        ?.classList.toggle('hidden', !exclusive);
+      resetControlCapacityPreview();
+      if (exclusive) loadControlCapacityTenants();
+    });
+    document
+      .getElementById('control-capacity-profile')
+      ?.addEventListener('change', resetControlCapacityPreview);
+    document
+      .getElementById('control-capacity-tenant')
+      ?.addEventListener('change', resetControlCapacityPreview);
+    document
+      .getElementById('btn-control-capacity-preview')
+      ?.addEventListener('click', () => runControlCapacityAction('preview'));
+    document
+      .getElementById('btn-control-capacity-request')
+      ?.addEventListener('click', () => runControlCapacityAction('request'));
+
     document.getElementById('btn-back-env-detail').addEventListener('click', () => {
       showSection('envList');
     });
@@ -12518,6 +12781,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         if (name === 'migrations' && selectedEnvForDetail) {
           loadMigrationStatus(selectedEnvForDetail.env);
+        }
+        if (name === 'capacity' && selectedEnvForDetail) {
+          resetControlCapacityPreview();
+          if (document.getElementById('control-capacity-scope')?.value === 'tenant_exclusive') {
+            loadControlCapacityTenants();
+          }
         }
       });
     });

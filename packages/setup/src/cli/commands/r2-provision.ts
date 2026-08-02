@@ -11,7 +11,7 @@ import {
 } from '../../core/lock.js';
 import { findAuthrimBaseDir, getEnvironmentPaths } from '../../core/paths.js';
 import { getRequiredR2Buckets, provisionR2Buckets } from '../../core/cloudflare.js';
-import { buildResourceIdsFromLock } from '../../core/wrangler.js';
+import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
 import { saveMasterWranglerConfigs } from '../../core/wrangler-sync.js';
 import { getRootProductVersion } from '../../core/version.js';
 import {
@@ -172,15 +172,17 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
     console.log(chalk.green('✓ R2 buckets are recorded in the environment lock file.'));
     console.log(chalk.green('✓ R2 feature flag is enabled in config.'));
 
-    const wranglerResult = await saveMasterWranglerConfigs(
-      updatedConfig,
-      buildResourceIdsFromLock(topologyLock, updatedConfig),
-      {
-        baseDir,
-        env,
-        onProgress: (message) => console.log(chalk.gray(message)),
-      }
-    );
+    const deploymentResourceIds = await buildWorkerDeploymentResourceIds({
+      lock: topologyLock,
+      config: updatedConfig,
+      environmentId: env,
+      onProgress: (message) => console.log(chalk.gray(message)),
+    });
+    const wranglerResult = await saveMasterWranglerConfigs(updatedConfig, deploymentResourceIds, {
+      baseDir,
+      env,
+      onProgress: (message) => console.log(chalk.gray(message)),
+    });
     if (!wranglerResult.success) {
       console.error(chalk.red('Failed to refresh generated wrangler configs:'));
       for (const error of wranglerResult.errors) {

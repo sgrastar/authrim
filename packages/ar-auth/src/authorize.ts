@@ -23,11 +23,12 @@ import {
   parseShardedSessionId,
   getCachedUser,
   getCachedConsent,
-  invalidateConsentCache,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextFromHono,
   getRuntimeUserStoreSourcesFromHonoContext,
   registerSessionClientInStore,
   getTenantIdFromContext,
@@ -118,6 +119,7 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -1894,7 +1896,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const validClientId: string = client_id as string;
 
   // Fetch client metadata to validate redirect_uri (request-level cached)
-  const clientMetadata = await getClientCached(c, c.env, validClientId);
+  const clientMetadata = await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_client', () =>
+    getClientCached(c, c.env, validClientId)
+  );
   if (!clientMetadata) {
     if (await shouldUseBuiltinForms(c.env)) {
       return c.json(
@@ -1941,7 +1945,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const tenantId = clientTenantId || requestTenantId;
-  const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+  const tenantProfilePromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_tenant_profile',
+    () => loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId)
+  );
+  const securitySettingsPromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_security_settings',
+    () =>
+      getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+        failOnError: true,
+      })
+  ).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
+  const tenantProfile = await tenantProfilePromise;
   const profileAllowedResponseTypes = filterResponseTypesByProfile(
     ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
     tenantProfile
@@ -1968,19 +1988,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
   let fapiConfig: FAPIConfig = {};
   let oidcConfig: OIDCConfig = {};
-  try {
-    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
-      failOnError: true,
-    });
-    if (settings) {
-      fapiConfig = settings.fapi || {};
-      oidcConfig = settings.oidc || {};
-    }
-  } catch (error) {
+  const securitySettings = await securitySettingsPromise;
+  if (!securitySettings.ok) {
     log.error(
       'Failed to load FAPI settings from KV',
       { action: 'fapi_settings_load' },
-      error as Error
+      securitySettings.error as Error
     );
     return c.json(
       {
@@ -1989,6 +2002,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       },
       503
     );
+  }
+  if (securitySettings.value) {
+    fapiConfig = securitySettings.value.fapi || {};
+    oidcConfig = securitySettings.value.oidc || {};
   }
 
   // OAuth 2.0 Section 3.1.2.3: Handle redirect_uri based on registration
@@ -2576,6 +2593,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_request', 'PKCE with S256 is required for this client');
   }
 
+  // Start optional SSO settings only after request validation, while still overlapping session I/O.
+  // Invalid authorization requests must not amplify Settings KV reads.
+  const settingsManager = getSettingsManager(c.env);
+  const ssoSettingsPromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_sso_settings',
+    () =>
+      Promise.all([
+        settingsManager
+          .getAll('client', {
+            type: 'client',
+            id: validClientId,
+            tenantId,
+          })
+          .catch(() => null),
+        settingsManager
+          .getAll('oauth', {
+            type: 'tenant',
+            id: tenantId,
+          })
+          .catch(() => null),
+      ])
+  );
+
   // Process authentication-related parameters (OIDC Core 3.1.2.1)
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
@@ -2595,7 +2636,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     action: 'session_detect',
     hasCookieHeader: !!cookieHeader,
     hasSessionId: !!sessionId,
-    sessionIdPrefix: sessionId ? sessionId.substring(0, 30) : null, // First 30 chars for debugging
     isShardedFormat: sessionId ? isShardedSessionId(sessionId) : false,
     clientId: validClientId,
   });
@@ -2606,14 +2646,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     try {
       const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
 
-      const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+      const session = (await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_session_read',
+        () => sessionStore.getSessionRpc(sessionId)
+      )) as Session | null;
 
       // Debug: Log session retrieval result
       log.info('Session retrieved', {
         action: 'session_retrieved',
         hasSession: !!session,
         sessionExpired: session ? session.expiresAt <= Date.now() : null,
-        sessionUserId: session?.userId,
+        hasSessionUserId: typeof session?.userId === 'string' && session.userId.length > 0,
         clientId: validClientId,
       });
 
@@ -2699,30 +2743,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let ssoEnabled = false; // Default: disabled for security
 
   try {
-    // Use cached SettingsManager for better performance
-    const settingsManager = getSettingsManager(c.env);
-
     let clientSsoSetting: boolean | null = null;
     let tenantSsoSetting: boolean | null = null;
 
     // Fetch client and tenant settings in parallel for better performance
     // Priority: Client setting > Tenant setting > Default (false)
     try {
-      const [clientSettings, tenantSettings] = await Promise.all([
-        settingsManager
-          .getAll('client', {
-            type: 'client',
-            id: validClientId,
-            tenantId,
-          })
-          .catch(() => null),
-        settingsManager
-          .getAll('oauth', {
-            type: 'tenant',
-            id: tenantId,
-          })
-          .catch(() => null),
-      ]);
+      const [clientSettings, tenantSettings] = await ssoSettingsPromise;
 
       // A category default is not an explicit client override. Treating the client default as
       // configured here prevents the tenant setting from ever being inherited by newly registered
@@ -3216,6 +3243,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const sub = sessionUserId;
+  if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
+    try {
+      await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_account_route', () =>
+        resolveAccountDataContextFromHono(c, sub)
+      );
+    } catch (error) {
+      log.error(
+        'Unable to resolve account data for authorization',
+        { action: 'account_route_resolve' },
+        error as Error
+      );
+      return sendError('temporarily_unavailable', 'Account data is temporarily unavailable');
+    }
+  }
   if (_consent_confirmed === 'true' && confirmedConsentUserId && confirmedConsentUserId !== sub) {
     return sendError('invalid_request', 'Consent confirmation does not match the active session');
   }
@@ -3248,7 +3289,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const clientMetadata = await getClientCached(c, c.env, validClientId);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Get client settings from KV (replaces legacy D1 is_trusted/skip_consent fields)
+    // Client Trust Policy is the sole authority for first-party and consent bypass decisions.
     let consentRequired = true; // Default: require consent (security-first)
     let firstParty = false;
     let clientTrustPolicySource: string | null = null;
@@ -3257,40 +3298,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     let requiresFirstTimeSignInConfirmation = false;
 
     try {
-      // Use cached SettingsManager for better performance
-      const settingsManager = getSettingsManager(c.env);
-
-      // Get consent_required setting (KV > env > default)
-      const consentRequiredSetting = await settingsManager.get('client.consent_required', {
-        type: 'client',
-        id: validClientId,
-        tenantId,
-      });
-      consentRequired = (consentRequiredSetting as boolean | undefined) ?? true;
-
-      // Get first_party setting (informational)
-      const firstPartySetting = await settingsManager.get('client.first_party', {
-        type: 'client',
-        id: validClientId,
-        tenantId,
-      });
-      firstParty = (firstPartySetting as boolean | undefined) ?? false;
-    } catch (error) {
-      log.error('Failed to get client settings, defaulting to consent required', {
-        action: 'consent_settings_error',
-        clientId: validClientId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      consentRequired = true; // fail-safe: require consent
-    }
-
-    try {
-      const clientTrustPolicy = await resolveClientTrustPolicy(
-        authCtx.coreAdapter,
-        tenantId,
-        'oidc_client',
-        validClientId
-      );
+      const [clientTrustPolicy, signInConfirmationPolicy] =
+        await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_trust_policy', () =>
+          Promise.all([
+            resolveClientTrustPolicy(authCtx.coreAdapter, tenantId, 'oidc_client', validClientId),
+            resolveSignInConfirmationPolicy(authCtx.coreAdapter, tenantId),
+          ])
+        );
       if (clientTrustPolicy) {
         firstParty = clientTrustPolicy.first_party;
         consentRequired = !(
@@ -3298,11 +3312,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
         clientTrustPolicySource = 'client';
       }
-
-      const signInConfirmationPolicy = await resolveSignInConfirmationPolicy(
-        authCtx.coreAdapter,
-        tenantId
-      );
       signInConfirmationMode = signInConfirmationPolicy?.mode ?? null;
       signInConfirmationRememberDurationDays =
         signInConfirmationPolicy?.remember_duration_days ?? null;
@@ -3312,7 +3321,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         requiresFirstTimeSignInConfirmation = true;
       }
     } catch (error) {
-      log.warn('Failed to apply consent policy settings', {
+      log.warn('Failed to apply authoritative consent policies', {
         action: 'consent_policy_settings',
         clientId: validClientId,
         error: error instanceof Error ? error.message : String(error),
@@ -3342,7 +3351,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       legacy_skip_consent: clientMetadata?.skip_consent,
     });
 
-    // Trusted client: consent_required=false allows skipping consent
+    // An active authoritative trust policy allows skipping consent.
     // (unless prompt=consent is explicitly specified)
     const isTrustedClient = !consentRequired;
 
@@ -3368,12 +3377,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       !requiresEveryTimeSignInConfirmation
     ) {
       // Check if consent already exists (using cache)
-      const existingConsent = await getCachedConsent(
-        c.env,
-        sub,
-        validClientId,
-        tenantId,
-        authCtx.coreAdapter
+      const existingConsent = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_lookup',
+        () => getCachedConsent(c.env, sub, validClientId, tenantId, authCtx.coreAdapter)
       );
 
       if (!existingConsent) {
@@ -3382,15 +3389,16 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         const now = Date.now();
 
         // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
-        await authCtx.coreAdapter.execute(
-          `INSERT INTO oauth_client_consents
-           (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
+        await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
+          authCtx.coreAdapter.execute(
+            `INSERT INTO oauth_client_consents
+             (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
+          )
         );
 
-        // Invalidate consent cache after insert so next read picks up new consent
-        await invalidateConsentCache(c.env, sub, tenantId, validClientId);
+        // getCachedConsent does not negative-cache misses, so there is no stale entry to delete.
 
         log.info('Auto-granted consent for trusted client', {
           action: 'consent_auto_grant',
@@ -3596,7 +3604,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       let consentMgmtEnabled = false;
       if (c.env.KV) {
         try {
-          const kvVal = await c.env.KV.get('consent:consent_management_enabled');
+          const settingsKv = c.env.KV;
+          const kvVal = await timeAuthRequestDiagnosticOperation(
+            c,
+            'auth_authorize_consent_management_config',
+            () => settingsKv.get('consent:consent_management_enabled')
+          );
           if (kvVal !== null) {
             consentMgmtEnabled = kvVal === 'true' || kvVal === '1';
           } else {
@@ -3614,32 +3627,29 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
       const authCtx = createAuthContextFromHono(c, tenantId);
       const piiCtx = createPIIContextFromHono(c, tenantId);
-      const userClaims = await getUserClaimsForRules(
-        authCtx.coreAdapter,
-        tenantId,
-        sub,
-        piiCtx.defaultPiiAdapter
+      const userClaims = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_user_claims',
+        () => getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub, piiCtx.defaultPiiAdapter)
       );
-      const requirements = await resolveConsentRequirements(
-        authCtx.coreAdapter,
-        tenantId,
-        validClientId,
-        userClaims,
-        {
-          target_type: 'oidc_client',
-          target_id: validClientId,
-          requested_scopes: splitScopes(scope),
-          requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
-        }
+      const requirements = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_requirements',
+        () =>
+          resolveConsentRequirements(authCtx.coreAdapter, tenantId, validClientId, userClaims, {
+            target_type: 'oidc_client',
+            target_id: validClientId,
+            requested_scopes: splitScopes(scope),
+            requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
+          })
       );
 
       if (consentMgmtEnabled || requirements.length > 0) {
         if (requirements.length > 0) {
-          const { satisfied, unsatisfied } = await checkUserConsentSatisfaction(
-            authCtx.coreAdapter,
-            tenantId,
-            sub,
-            requirements
+          const { satisfied, unsatisfied } = await timeAuthRequestDiagnosticOperation(
+            c,
+            'auth_authorize_consent_satisfaction',
+            () => checkUserConsentSatisfaction(authCtx.coreAdapter, tenantId, sub, requirements)
           );
 
           if (!satisfied) {
@@ -3738,7 +3748,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         { action: 'consent_mgmt_check' },
         error as Error
       );
-      // Non-blocking: continue if consent management check fails
+      return sendError('temporarily_unavailable', 'Unable to evaluate consent requirements');
     }
   }
 
@@ -3747,8 +3757,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (prompt?.split(' ').includes('none') && handoff === 'true') {
     log.info('Handoff SSO: Issuing handoff token', {
       action: 'handoff_sso',
-      sessionId,
-      userId: sessionUserId,
+      hasSession: !!sessionId,
+      hasUser: !!sessionUserId,
     });
 
     const handoffToken = crypto.randomUUID();
@@ -3925,7 +3935,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Determine shard count from KV (dynamic) > environment > default
     // This ensures both op-auth and op-token use the same shard count
-    const shardCount = await getShardCount(c.env);
+    const shardCount = await timeAuthRequestDiagnosticOperation(
+      c,
+      'auth_authorize_code_shard_config',
+      () => getShardCount(c.env)
+    );
 
     // Session→AuthCode Sticky Routing: Use session's shard index for AuthCode
     // This collocates Session and AuthCode on the same DO shard for locality,
@@ -3957,34 +3971,34 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     try {
       const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
 
-      await authCodeStore.storeCodeRpc({
-        code,
-        tenantId: getTenantIdFromContext(c),
-        clientId: validClientId,
-        redirectUri: validRedirectUri,
-        userId: sub,
-        scope: validScope,
-        codeChallenge: code_challenge,
-        codeChallengeMethod: code_challenge_method as 'S256' | 'plain' | undefined,
-        nonce,
-        state,
-        claims,
-        claimsRequestProtected: claimsRequestIntegrityProtected,
-        authTime: currentAuthTime,
-        acr: selectedAcr,
-        amr: sessionAmr,
-        dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
-        sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
-        authorizationDetails: authorization_details, // RFC 9396 RAR
-      });
+      await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_code_store', () =>
+        authCodeStore.storeCodeRpc({
+          code: code as string,
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+          redirectUri: validRedirectUri,
+          userId: sub,
+          scope: validScope,
+          codeChallenge: code_challenge,
+          codeChallengeMethod: code_challenge_method as 'S256' | 'plain' | undefined,
+          nonce,
+          state,
+          claims,
+          claimsRequestProtected: claimsRequestIntegrityProtected,
+          authTime: currentAuthTime,
+          acr: selectedAcr,
+          amr: sessionAmr,
+          dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
+          sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
+          authorizationDetails: authorization_details, // RFC 9396 RAR
+        })
+      );
       log.info('Stored authorization code', {
         action: 'auth_code_store',
         tenantId: getTenantIdFromContext(c),
         clientId: validClientId,
         shardCount,
         shardIndex: authCodeShardIndex,
-        instanceName: authCodeStoreInstanceName,
-        codePrefix: code.includes('_') ? code.split('_', 1)[0] : 'legacy',
       });
     } catch (error) {
       log.error('AuthCodeStore DO error', { action: 'auth_code_store' }, error as Error);
@@ -4160,8 +4174,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       log.debug('Registering session-client for implicit/hybrid logout', {
         action: 'session_client_register',
-        sidPrefix: sessionId.substring(0, 25),
-        clientIdPrefix: validClientId.substring(0, 25),
+        clientId: validClientId,
       });
       const mirrorMode =
         getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth

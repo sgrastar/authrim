@@ -1287,3 +1287,4 @@ app.onError((err, c) => {
 });
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

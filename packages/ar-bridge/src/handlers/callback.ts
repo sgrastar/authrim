@@ -24,6 +24,8 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
+  getCachedAuthCorePersistenceContextFromEnv,
+  resolveAccountDataContextByIdentifier,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
   // Event System
@@ -47,11 +49,14 @@ import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { Fapi2Client } from '../clients/fapi2-client';
-import { handleIdentity } from '../services/identity-stitching';
+import { completeTenantD1ExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
 import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
+  type ExternalIdpAuthState,
+  type HandleIdentityPendingResult,
+  type HandleIdentityReadyResult,
   type TokenResponse,
   type UserInfo,
   type UpstreamProvider,
@@ -191,6 +196,471 @@ async function generateAuthCode(
   });
 
   return authCode;
+}
+
+async function completeExternalAuthentication(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    authState: ExternalIdpAuthState;
+    provider: UpstreamProvider;
+    userInfo: UserInfo;
+    upstreamIdToken?: string;
+    result: HandleIdentityReadyResult;
+  }
+): Promise<Response> {
+  const { authState, provider, userInfo, result } = input;
+  const persistence = await getCachedAuthCorePersistenceContextFromEnv(c.env);
+  if (persistence.storageProfileId === 'builtin:storage:tenant-d1') {
+    const account = await resolveAccountDataContextByIdentifier(c.env, {
+      tenantId: authState.tenantId,
+      indexKind: 'external_subject',
+      identifier: { issuer: provider.id, subject: userInfo.sub },
+      expectedAccountId: `account:${result.userId}`,
+    });
+    (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
+  }
+  publishEvent(c, {
+    type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
+    tenantId: authState.tenantId,
+    data: {
+      userId: result.userId,
+      method: 'external_idp',
+      clientId: provider.id,
+    } satisfies Omit<AuthEventData, 'sessionId'>,
+  }).catch((eventError: unknown) => {
+    getLogger(c)
+      .module('CALLBACK')
+      .error('Failed to publish auth.external_idp.succeeded', {}, eventError as Error);
+  });
+
+  const codeChallenge = authState.codeChallenge;
+  if (!codeChallenge) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Missing code_challenge in auth state'
+    );
+  }
+  const clientId = authState.clientId;
+  if (!clientId) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Missing client_id in auth state'
+    );
+  }
+
+  const tenantId = authState.tenantId;
+  if (authState.enableSso !== false) {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    });
+    const runtimeUser = await runtimeUsers.findById(result.userId);
+    if (!runtimeUser) return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
+    const sessionTTL = 24 * 60 * 60;
+    const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+    const upstreamIdTokenEncrypted =
+      input.upstreamIdToken && encryptionKey
+        ? await encrypt(input.upstreamIdToken, encryptionKey)
+        : undefined;
+    await sessionStore.createSessionRpc(
+      sessionId,
+      result.userId,
+      sessionTTL,
+      {
+        email: userInfo.email || null,
+        name: userInfo.name || null,
+        amr: ['external_idp'],
+        acr: 'urn:mace:incommon:iap:bronze',
+        client_id: clientId,
+        external_idp: provider.id,
+        external_provider_id: provider.id,
+        external_provider_sub: userInfo.sub,
+        external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+        upstream_id_token_encrypted: upstreamIdTokenEncrypted,
+      },
+      tenantId
+    );
+    await recordExternalProviderSession(c.env, {
+      tenantId,
+      sessionId,
+      userId: result.userId,
+      providerId: provider.id,
+      providerSub: userInfo.sub,
+      providerSid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+      expiresAt: Date.now() + sessionTTL * 1000,
+    });
+
+    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+    setCookie(c, 'authrim_session', sessionId, {
+      path: '/',
+      httpOnly: true,
+      secure: issuerUrl.startsWith('https://'),
+      sameSite: 'Lax',
+      maxAge: sessionTTL,
+    });
+
+    const handoffToken = crypto.randomUUID();
+    const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
+    await handoffStore.storeChallengeRpc({
+      id: `handoff:${handoffToken}`,
+      tenantId,
+      type: 'handoff',
+      userId: result.userId,
+      challenge: sessionId,
+      ttl: 30,
+      metadata: {
+        client_id: clientId,
+        state: authState.state,
+        aud: 'handoff',
+        created_at: Date.now(),
+      },
+    });
+    const redirectUrl = new URL(authState.redirectUri);
+    redirectUrl.searchParams.set('handoff_token', handoffToken);
+    redirectUrl.searchParams.set('state', authState.state);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: redirectUrl.toString(),
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
+  const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
+    method: 'external_idp',
+    provider: provider.id,
+    provider_id: provider.id,
+    provider_slug: provider.slug ?? provider.id,
+    client_id: clientId,
+    is_new_user: result.isNewUser,
+    stitched_from_existing: result.stitchedFromExisting,
+  });
+  const redirectUrl = new URL(authState.redirectUri);
+  redirectUrl.searchParams.set('code', authCode);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+const EXTERNAL_PROVISIONING_TTL_SECONDS = 5 * 60;
+const EXTERNAL_PROVISIONING_TOKEN = /^[A-Za-z0-9_-]{43}$/u;
+const SAFE_CONTINUATION_TENANT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+
+interface ExternalIdpProvisioningContinuation {
+  schemaVersion: 1;
+  authState: ExternalIdpAuthState;
+  providerId: string;
+  userInfo: UserInfo;
+  upstreamIdToken?: string;
+  result: HandleIdentityPendingResult;
+}
+
+function randomContinuationToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '');
+}
+
+async function continuationDigest(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function continuationCookieName(digest: string): string {
+  return `authrim_external_provisioning_${digest.slice(0, 24)}`;
+}
+
+async function beginExternalIdpProvisioningContinuation(
+  c: Context<{ Bindings: Env }>,
+  continuation: Omit<ExternalIdpProvisioningContinuation, 'schemaVersion'>
+): Promise<Response> {
+  const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+  if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
+  const token = randomContinuationToken();
+  const digest = await continuationDigest(token);
+  const id = `external_idp_provisioning:${digest}`;
+  const payload = JSON.stringify({ schemaVersion: 1, ...continuation });
+  if (new TextEncoder().encode(payload).byteLength > 48 * 1024) {
+    throw new Error('external_idp_provisioning_continuation_too_large');
+  }
+  const store = await getChallengeStoreByChallengeId(c.env, id, continuation.authState.tenantId);
+  await store.storeChallengeRpc({
+    id,
+    tenantId: continuation.authState.tenantId,
+    type: 'external_idp_provisioning_resume',
+    userId: continuation.result.userId,
+    challenge: digest,
+    ttl: EXTERNAL_PROVISIONING_TTL_SECONDS,
+    metadata: { schema_version: 1, encrypted_payload: await encrypt(payload, encryptionKey) },
+  });
+  const issuerUrl = buildIssuerUrl(c.env, continuation.authState.tenantId);
+  setCookie(c, continuationCookieName(digest), digest, {
+    path: '/',
+    httpOnly: true,
+    secure: issuerUrl.startsWith('https://'),
+    sameSite: 'Lax',
+    maxAge: EXTERNAL_PROVISIONING_TTL_SECONDS,
+  });
+  const redirect = new URL(continuation.authState.redirectUri);
+  redirect.searchParams.set('provisioning_token', token);
+  redirect.searchParams.set('provisioning_tenant', continuation.authState.tenantId);
+  redirect.searchParams.set('state', continuation.authState.state);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirect.toString(),
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
+}
+
+function parseContinuation(value: string): ExternalIdpProvisioningContinuation {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  const continuation = parsed as Partial<ExternalIdpProvisioningContinuation>;
+  const authState = continuation.authState as Partial<ExternalIdpAuthState> | undefined;
+  const result = continuation.result as Partial<HandleIdentityPendingResult> | undefined;
+  const userInfo = continuation.userInfo as Partial<UserInfo> | undefined;
+  const boundedString = (candidate: unknown, maximumLength = 2048): candidate is string =>
+    typeof candidate === 'string' && candidate.length > 0 && candidate.length <= maximumLength;
+  if (
+    continuation.schemaVersion !== 1 ||
+    !authState ||
+    !result ||
+    !userInfo ||
+    result.status !== 'pending' ||
+    result.isNewUser !== true ||
+    result.stitchedFromExisting !== false ||
+    !boundedString(authState.id, 256) ||
+    !boundedString(authState.tenantId, 256) ||
+    !SAFE_CONTINUATION_TENANT.test(authState.tenantId) ||
+    !boundedString(authState.providerId, 256) ||
+    !boundedString(authState.state, 2048) ||
+    !boundedString(authState.redirectUri, 4096) ||
+    !boundedString(authState.clientId, 256) ||
+    !boundedString(authState.codeChallenge, 2048) ||
+    !Number.isSafeInteger(authState.expiresAt) ||
+    !Number.isSafeInteger(authState.createdAt) ||
+    !boundedString(continuation.providerId, 256) ||
+    continuation.providerId !== authState.providerId ||
+    !boundedString(userInfo.sub) ||
+    !boundedString(result.userId, 256) ||
+    !boundedString(result.accountId, 256) ||
+    !boundedString(result.operationId, 256) ||
+    !boundedString(result.providerId, 256) ||
+    !boundedString(result.providerUserId) ||
+    result.accountId !== `account:${result.userId}` ||
+    continuation.providerId !== result.providerId ||
+    userInfo.sub !== result.providerUserId
+  ) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  return continuation as ExternalIdpProvisioningContinuation;
+}
+
+async function loadExternalIdpContinuation(
+  c: Context<{ Bindings: Env }>,
+  token: string,
+  tenantId: string
+): Promise<{
+  digest: string;
+  id: string;
+  store: Awaited<ReturnType<typeof getChallengeStoreByChallengeId>>;
+  continuation: ExternalIdpProvisioningContinuation;
+}> {
+  if (!EXTERNAL_PROVISIONING_TOKEN.test(token) || !SAFE_CONTINUATION_TENANT.test(tenantId)) {
+    throw new Error('external_idp_provisioning_token_invalid');
+  }
+  const digest = await continuationDigest(token);
+  if (!matchesAuthStateCookie(digest, getCookie(c, continuationCookieName(digest)))) {
+    throw new Error('external_idp_provisioning_browser_binding_failed');
+  }
+  const id = `external_idp_provisioning:${digest}`;
+  const store = await getChallengeStoreByChallengeId(c.env, id, tenantId);
+  const challenge = await store.getChallengeRpc(id);
+  const encryptedPayload = challenge?.metadata?.encrypted_payload;
+  if (
+    !challenge ||
+    challenge.type !== 'external_idp_provisioning_resume' ||
+    challenge.tenantId !== tenantId ||
+    challenge.challenge !== digest ||
+    challenge.consumed ||
+    challenge.expiresAt <= Date.now() ||
+    typeof encryptedPayload !== 'string'
+  ) {
+    throw new Error('external_idp_provisioning_token_invalid');
+  }
+  const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+  if (!encryptionKey) throw new Error('external_idp_provisioning_key_unavailable');
+  const continuation = parseContinuation(await decrypt(encryptedPayload, encryptionKey));
+  if (
+    continuation.authState.tenantId !== tenantId ||
+    continuation.result.userId !== challenge.userId
+  ) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  return { digest, id, store, continuation };
+}
+
+export async function handleExternalProvisioningStatus(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  try {
+    const encodedBody = await c.req.text();
+    if (new TextEncoder().encode(encodedBody).byteLength > 4096) {
+      throw new Error('external_idp_provisioning_request_too_large');
+    }
+    const body = JSON.parse(encodedBody) as unknown;
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      Object.keys(body).length !== 2 ||
+      !Object.hasOwn(body, 'provisioning_token') ||
+      !Object.hasOwn(body, 'tenant_id') ||
+      typeof (body as Record<string, unknown>).provisioning_token !== 'string' ||
+      typeof (body as Record<string, unknown>).tenant_id !== 'string'
+    ) {
+      throw new Error('external_idp_provisioning_token_invalid');
+    }
+    const request = body as { provisioning_token: string; tenant_id: string };
+    const loaded = await loadExternalIdpContinuation(
+      c,
+      request.provisioning_token,
+      request.tenant_id
+    );
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    const expected = loaded.continuation.result;
+    const status = await provisioner.getExternalIdpAccountProvisioningStatus({
+      schemaVersion: 1,
+      tenantId: loaded.continuation.authState.tenantId,
+      operationId: expected.operationId,
+      flow: 'external_idp',
+    });
+    if (
+      status.operationId !== expected.operationId ||
+      status.accountId !== expected.accountId ||
+      status.userId !== expected.userId
+    ) {
+      throw new Error('external_idp_provisioning_status_mismatch');
+    }
+    if (status.status === 'failed') {
+      await loaded.store.consumeChallengeRpc({
+        id: loaded.id,
+        tenantId: loaded.continuation.authState.tenantId,
+        type: 'external_idp_provisioning_resume',
+        challenge: loaded.digest,
+      });
+      deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
+    }
+    return c.json(
+      status.status === 'ready'
+        ? {
+            status: 'ready',
+            resume_url: `/auth/external/provisioning/resume?token=${encodeURIComponent(request.provisioning_token)}&tenant=${encodeURIComponent(request.tenant_id)}`,
+          }
+        : status.status === 'failed'
+          ? { status: 'failed' }
+          : { status: 'pending', retry_after_ms: 500 },
+      status.status === 'ready' ? 200 : status.status === 'failed' ? 409 : 202,
+      { 'Cache-Control': 'no-store' }
+    );
+  } catch {
+    return c.json({ error: 'invalid_or_expired_provisioning_continuation' }, 400, {
+      'Cache-Control': 'no-store',
+    });
+  }
+}
+
+export async function handleExternalProvisioningResume(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  try {
+    const token = c.req.query('token');
+    const tenantId = c.req.query('tenant');
+    if (!token || !tenantId) throw new Error('external_idp_provisioning_token_invalid');
+    const loaded = await loadExternalIdpContinuation(c, token, tenantId);
+    const expected = loaded.continuation.result;
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    const status = await provisioner.getExternalIdpAccountProvisioningStatus({
+      schemaVersion: 1,
+      tenantId,
+      operationId: expected.operationId,
+      flow: 'external_idp',
+    });
+    if (
+      status.status !== 'ready' ||
+      status.operationId !== expected.operationId ||
+      status.accountId !== expected.accountId ||
+      status.userId !== expected.userId
+    ) {
+      throw new Error('external_idp_provisioning_not_ready');
+    }
+    const completed = await completeTenantD1ExternalIdpJIT(c.env, {
+      tenantId,
+      userId: expected.userId,
+      providerId: expected.providerId,
+      providerUserId: expected.providerUserId,
+    });
+    const consumed = await loaded.store.consumeChallengeRpc({
+      id: loaded.id,
+      tenantId,
+      type: 'external_idp_provisioning_resume',
+      challenge: loaded.digest,
+    });
+    if (consumed.userId !== expected.userId) {
+      throw new Error('external_idp_provisioning_consume_mismatch');
+    }
+    deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
+    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
+    if (!provider || provider.id !== expected.providerId || !completed.linkedIdentityId) {
+      throw new Error('external_idp_provisioning_provider_mismatch');
+    }
+    return await completeExternalAuthentication(c, {
+      authState: loaded.continuation.authState,
+      provider,
+      userInfo: loaded.continuation.userInfo,
+      upstreamIdToken: loaded.continuation.upstreamIdToken,
+      result: {
+        status: 'ready',
+        userId: expected.userId,
+        isNewUser: true,
+        linkedIdentityId: completed.linkedIdentityId,
+        stitchedFromExisting: false,
+        roles_assigned: completed.roles_assigned,
+        orgs_joined: completed.orgs_joined,
+      },
+    });
+  } catch {
+    return redirectWithError(
+      c,
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Authentication could not be resumed. Please try again.'
+    );
+  }
 }
 
 /**
@@ -810,165 +1280,30 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       tenantId: authState.tenantId,
     });
 
-    // 8. Publish authentication success event (non-blocking)
-    // Note: Session will be created during token exchange, not here
-    publishEvent(c, {
-      type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
-      tenantId: authState.tenantId,
-      data: {
-        userId: result.userId,
-        method: 'external_idp',
-        clientId: provider.id,
-      } satisfies Omit<AuthEventData, 'sessionId'>,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish auth.external_idp.succeeded', {}, err as Error);
-    });
-
-    // 9. Generate authorization code for Direct Auth token exchange
-    // Use code_challenge from authState (client-side PKCE)
-    const codeChallenge = authState.codeChallenge;
-    if (!codeChallenge) {
-      throw new ExternalIdPError(
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Missing code_challenge in auth state'
-      );
-    }
-
-    const clientId = authState.clientId;
-    if (!clientId) {
-      throw new ExternalIdPError(
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Missing client_id in auth state'
-      );
-    }
-
-    // 11. SSO decision: SSO is enabled by default (handoff flow)
-    const enableSso = authState.enableSso !== false; // Default: true
-
-    if (enableSso) {
-      // SSO enabled: handoff flow
-
-      // 11a. User verification (performed before session creation)
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const runtimeUsers = new CanonicalRuntimeUserStore({
-        coreAdapter: authCtx.coreAdapter,
-        piiAdapter: piiCtx.defaultPiiAdapter,
-        tenantId,
-      });
-      const runtimeUser = await runtimeUsers.findById(result.userId);
-
-      if (!runtimeUser) {
-        return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
-      }
-
-      // 11b. Create session (SSO session)
-      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-      const sessionTTL = 24 * 60 * 60; // 24 hours
-      const encryptionKey = getEncryptionKeyOrUndefined(c.env);
-      const upstreamIdTokenEncrypted =
-        tokens.id_token && encryptionKey
-          ? await encrypt(tokens.id_token, encryptionKey)
-          : undefined;
-
-      await sessionStore.createSessionRpc(
-        sessionId,
-        result.userId,
-        sessionTTL,
-        {
-          email: userInfo.email || null,
-          name: userInfo.name || null,
-          amr: ['external_idp'],
-          acr: 'urn:mace:incommon:iap:bronze',
-          client_id: clientId,
-          external_idp: provider.id,
-          external_provider_id: provider.id,
-          external_provider_sub: userInfo.sub,
-          external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
-          upstream_id_token_encrypted: upstreamIdTokenEncrypted,
-        },
-        tenantId
-      );
-
-      await recordExternalProviderSession(c.env, {
-        tenantId,
-        sessionId,
-        userId: result.userId,
+    if (result.status === 'pending') {
+      return await beginExternalIdpProvisioningContinuation(c, {
+        authState,
         providerId: provider.id,
-        providerSub: userInfo.sub,
-        providerSid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
-        expiresAt: Date.now() + sessionTTL * 1000,
-      });
-
-      // Set session cookie
-      const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
-      const isSecure = issuerUrl.startsWith('https://');
-
-      setCookie(c, 'authrim_session', sessionId, {
-        path: '/',
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'Lax',
-        maxAge: sessionTTL,
-      });
-
-      // 11c. handoff tokengenerate
-      const handoffToken = crypto.randomUUID();
-      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
-
-      await handoffStore.storeChallengeRpc({
-        id: `handoff:${handoffToken}`,
-        tenantId,
-        type: 'handoff',
-        userId: result.userId,
-        challenge: sessionId, // Store sessionId
-        ttl: 30, // 30 seconds (enough for redirect + JS execution)
-        metadata: {
-          client_id: clientId,
-          state: authState.state,
-          aud: 'handoff', // prevent accidental token reuse
-          created_at: Date.now(),
-        },
-      });
-
-      // 11d. Redirect to the RP (with handoff token + Referrer mitigation)
-      const redirectUrl = new URL(authState.redirectUri);
-      redirectUrl.searchParams.set('handoff_token', handoffToken);
-      redirectUrl.searchParams.set('state', authState.state);
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: redirectUrl.toString(),
-          'Referrer-Policy': 'no-referrer', // Mitigate browser-history and referrer leakage
-          'Cache-Control': 'no-store', // Prevent caching
-        },
-      });
-    } else {
-      // SSO disabled: legacy Direct Auth flow (returns authCode)
-      const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
-        method: 'external_idp',
-        provider: provider.id,
-        provider_id: provider.id,
-        provider_slug: provider.slug ?? provider.id,
-        client_id: clientId,
-        is_new_user: result.isNewUser,
-        stitched_from_existing: result.stitchedFromExisting,
-      });
-
-      const redirectUrl = new URL(authState.redirectUri);
-      redirectUrl.searchParams.set('code', authCode);
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: redirectUrl.toString(),
-        },
+        userInfo,
+        upstreamIdToken: tokens.id_token,
+        result,
       });
     }
+    return await completeExternalAuthentication(c, {
+      authState,
+      provider,
+      userInfo,
+      upstreamIdToken: tokens.id_token,
+      result,
+    });
   } catch (error) {
-    log.error('Callback error', {}, error as Error);
+    log.error('Callback error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      errorCode:
+        error instanceof ExternalIdPError
+          ? error.code
+          : classifyFapi2CallbackError(error) || ExternalIdPErrorCode.CALLBACK_FAILED,
+    });
 
     if (diagnosticLogger && fapi2Flow) {
       const validationError = classifyFapi2CallbackError(error);
@@ -1205,7 +1540,14 @@ async function redirectWithError(
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 
-  return c.redirect(redirectUrl.toString());
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
 interface ExternalProviderSessionRecord {

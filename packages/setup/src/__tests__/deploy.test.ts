@@ -23,8 +23,10 @@ import {
   hasBlockingDeploymentFailures,
   loadDeploySecretsFromKeys,
   resolveExistingWorkerComponents,
+  type WorkerDeploymentLeaseCoordinator,
 } from '../core/deploy.js';
 import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
+import type { SetupWorkerDeploymentLease } from '../core/worker-deployment-lease.js';
 
 vi.mock('execa', () => ({
   execa: vi.fn(),
@@ -87,6 +89,44 @@ function commandError(message: string): Error & { stderr: string; exitCode: numb
     stderr: message,
     exitCode: 1,
   });
+}
+
+function fakeDeploymentLeaseCoordinator(calls: string[]): WorkerDeploymentLeaseCoordinator {
+  const nextLease = (
+    lease: SetupWorkerDeploymentLease,
+    changes: Partial<SetupWorkerDeploymentLease> = {}
+  ): SetupWorkerDeploymentLease => ({ ...lease, ...changes });
+  return {
+    acquire: async ({ workerScriptName, expectedSourceVersionId }) => {
+      calls.push(`acquire:${workerScriptName}:${expectedSourceVersionId}`);
+      return {
+        environmentId: 'test',
+        workerScriptName,
+        operationId: 'op-test-deploy',
+        fencingToken: 1,
+        leaseExpiresAt: 1_000,
+        expectedSourceVersionId,
+        mutationStarted: false,
+      };
+    },
+    renew: async (lease) => {
+      calls.push(`renew:${lease.workerScriptName}:${lease.fencingToken}`);
+      return nextLease(lease, { fencingToken: lease.fencingToken + 1 });
+    },
+    assertCurrent: async (lease) => {
+      calls.push(`assert:${lease.workerScriptName}:${lease.fencingToken}`);
+    },
+    markMutationStarted: async (lease, deploymentId) => {
+      calls.push(`start:${lease.workerScriptName}:${deploymentId}`);
+      return nextLease(lease, { mutationStarted: true });
+    },
+    release: async (lease) => {
+      calls.push(`release:${lease.workerScriptName}:${lease.fencingToken}`);
+    },
+    complete: async (success, errorCode) => {
+      calls.push(`complete:${success}:${errorCode ?? ''}`);
+    },
+  };
 }
 
 beforeEach(() => {
@@ -278,15 +318,51 @@ describe('deployWorker', () => {
     expect(result.success).toBe(true);
     expect(uploadedSecrets).toEqual({
       FLOW_RUNTIME_HMAC_SECRET: 'flow-secret',
-      PLUGIN_ENCRYPTION_KEY: 'plugin-secret',
     });
     expect(secretFileMode).toBe(0o600);
     expect(secretFilePath).toBeDefined();
     expect(existsSync(secretFilePath!)).toBe(false);
     expect(vi.mocked(execa)).toHaveBeenCalledWith(
       'pnpm',
-      expect.arrayContaining(['exec', 'wrangler', 'deploy', '--env', 'test', '--secrets-file']),
+      expect.arrayContaining([
+        'exec',
+        'wrangler',
+        'deploy',
+        '--config',
+        'wrangler.toml',
+        '--env',
+        'test',
+        '--secrets-file',
+      ]),
       expect.objectContaining({ cwd: join(rootDir, 'packages', 'ar-auth') })
+    );
+  });
+
+  it('records the exact Cloudflare version ID reported by a direct deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const versionId = 'direct-version-1';
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      if ((args ?? []).includes('deploy')) {
+        const outputDirectory = options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY;
+        expect(typeof outputDirectory).toBe('string');
+        writeFileSync(
+          join(String(outputDirectory), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'deploy', version_id: versionId })}\n`
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
     );
   });
 
@@ -988,6 +1064,100 @@ describe('deployUiWorkerBindingTargets', () => {
 });
 
 describe('deployAll', () => {
+  it('holds the shared Control DB lease around every existing Worker mutation', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    const leaseCalls: string[] = [];
+    const commandCalls: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      commandCalls.push(args.join(' '));
+      if (args.includes('deployments') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'deployment-source',
+              versions: [{ version_id: 'version-source', percentage: 100 }],
+            },
+          ]),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: ['ar-lib-core'],
+        deploymentLease: {
+          controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+          environmentId: 'test',
+          actorId: 'setup:test',
+          required: true,
+          coordinator: fakeDeploymentLeaseCoordinator(leaseCalls),
+        },
+      },
+      ['ar-lib-core']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(commandCalls.filter((command) => command.includes('deployments list'))).toHaveLength(2);
+    expect(commandCalls.some((command) => command.includes('wrangler deploy'))).toBe(true);
+    expect(leaseCalls).toEqual([
+      'acquire:test-ar-lib-core:version-source',
+      'renew:test-ar-lib-core:1',
+      'start:test-ar-lib-core:deployment-source',
+      'assert:test-ar-lib-core:2',
+      'release:test-ar-lib-core:2',
+      'complete:true:',
+    ]);
+  });
+
+  it('leases an absent Worker during a non-bootstrap deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    const leaseCalls: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('deployments') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          exitCode: 1,
+          stderr: 'Worker not found',
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: [],
+        deploymentLease: {
+          controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+          environmentId: 'test',
+          actorId: 'setup:test',
+          required: true,
+          coordinator: fakeDeploymentLeaseCoordinator(leaseCalls),
+        },
+      },
+      ['ar-lib-core']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(leaseCalls).toEqual([
+      'acquire:test-ar-lib-core:__absent__',
+      'renew:test-ar-lib-core:1',
+      'start:test-ar-lib-core:undefined',
+      'assert:test-ar-lib-core:2',
+      'release:test-ar-lib-core:2',
+      'complete:true:',
+    ]);
+  });
+
   it('keeps every core Worker in the deployment plan', async () => {
     const rootDir = createTempRoot();
     for (const component of CORE_WORKER_COMPONENTS) {
@@ -1003,8 +1173,66 @@ describe('deployAll', () => {
     expect(summary.results.map((result) => result.component)).toContain('ar-agent-access');
   });
 
+  it('fails before mutation when a fresh Control Worker lacks baseline split tokens', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+
+    await expect(deployAll({ env: 'test', rootDir }, ['ar-control'])).rejects.toThrow(
+      'control_plane_baseline_secrets_missing:RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A,TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID,SMOKE_RPC_SIGNING_JWK_SLOT_A,CLOUDFLARE_D1_API_TOKEN,CLOUDFLARE_WORKERS_API_TOKEN'
+    );
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('allows a fresh Control Worker with baseline split tokens and no optional plugin tokens', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    vi.mocked(execa).mockResolvedValue(successfulCommandResult());
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          CLOUDFLARE_D1_API_TOKEN: 'd1-token',
+          CLOUDFLARE_WORKERS_API_TOKEN: 'workers-token',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.successCount).toBe(1);
+    expect(summary.failedCount).toBe(0);
+  });
+
+  it('allows a fresh Control Worker without Cloudflare tokens when Automatic provisioning is off', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    vi.mocked(execa).mockResolvedValue(successfulCommandResult());
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.successCount).toBe(1);
+    expect(summary.failedCount).toBe(0);
+  });
+
   it('repairs a missing transitive dependency even when the requested Worker already exists', async () => {
     const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-plugin-runner', '1.0.0');
     createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
     const started: string[] = [];
@@ -1023,9 +1251,13 @@ describe('deployAll', () => {
       ['ar-auth']
     );
 
-    expect(summary.successCount).toBe(2);
-    expect(summary.results.map((result) => result.component)).toEqual(['ar-bridge', 'ar-auth']);
-    expect(started).toEqual(['ar-bridge', 'ar-auth']);
+    expect(summary.successCount).toBe(3);
+    expect(summary.results.map((result) => result.component)).toEqual([
+      'ar-plugin-runner',
+      'ar-bridge',
+      'ar-auth',
+    ]);
+    expect(started).toEqual(['ar-plugin-runner', 'ar-bridge', 'ar-auth']);
   });
 
   it('runs the first-deploy dependency DAG with a maximum concurrency of two', async () => {
@@ -1076,19 +1308,19 @@ describe('deployAll', () => {
     await vi.waitFor(() => expect(started).toEqual(['ar-lib-core']));
     releases.get('ar-lib-core')!.resolve(successfulCommandResult());
 
-    await vi.waitFor(() => expect(started).toEqual(['ar-lib-core', 'ar-bridge', 'ar-token']));
+    await vi.waitFor(() => {
+      expect(started[0]).toBe('ar-lib-core');
+      expect(new Set(started.slice(1))).toEqual(new Set(['ar-bridge', 'ar-token']));
+    });
     expect(maxActive).toBe(2);
 
     // ar-auth is unlocked as soon as ar-bridge completes, even while ar-token is still running.
     releases.get('ar-bridge')!.resolve(successfulCommandResult());
-    await vi.waitFor(() =>
-      expect(started).toEqual(['ar-lib-core', 'ar-bridge', 'ar-token', 'ar-auth'])
-    );
+    await vi.waitFor(() => expect(started).toContain('ar-auth'));
+    expect(started).not.toContain('ar-management');
 
     releases.get('ar-auth')!.resolve(successfulCommandResult());
-    await vi.waitFor(() =>
-      expect(started).toEqual(['ar-lib-core', 'ar-bridge', 'ar-token', 'ar-auth', 'ar-management'])
-    );
+    await vi.waitFor(() => expect(started).toContain('ar-management'));
 
     releases.get('ar-management')!.resolve(successfulCommandResult());
     expect(started).not.toContain('ar-router');
@@ -1101,6 +1333,145 @@ describe('deployAll', () => {
     expect(summary.failedCount).toBe(0);
     expect(maxActive).toBeLessThanOrEqual(2);
     expect(started.at(-1)).toBe('ar-router');
+  });
+
+  it('bootstraps Auth and Bridge, deploys Management, then restores full bindings', async () => {
+    const rootDir = createTempRoot();
+    const selected = [
+      'ar-lib-core',
+      'ar-control',
+      'ar-plugin-runner',
+      'ar-bridge',
+      'ar-auth',
+      'ar-management',
+      'ar-vc',
+    ] as const;
+    for (const component of selected) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const authDirectory = join(rootDir, 'packages', 'ar-auth');
+    const bootstrapPath = join(authDirectory, 'wrangler.bootstrap.toml');
+    const bridgeDirectory = join(rootDir, 'packages', 'ar-bridge');
+    const bridgeBootstrapPath = join(bridgeDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(authDirectory, 'wrangler.toml'),
+      'name = "test-ar-auth"\n\n[[services]]\nbinding = "ACCOUNT_PROVISIONER"\nservice = "test-ar-management"\n'
+    );
+    writeFileSync(bootstrapPath, 'name = "test-ar-auth"\n');
+    writeFileSync(
+      join(bridgeDirectory, 'wrangler.toml'),
+      'name = "test-ar-bridge"\n\n[[services]]\nbinding = "EXTERNAL_IDP_ACCOUNT_PROVISIONER"\nservice = "test-ar-management"\n'
+    );
+    writeFileSync(bridgeBootstrapPath, 'name = "test-ar-bridge"\n');
+
+    const mutations: Array<{ component: string; bootstrap: 'auth' | 'bridge' | false }> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      mutations.push({
+        component: basename(String(options?.cwd)),
+        bootstrap: (args ?? []).includes(bootstrapPath)
+          ? 'auth'
+          : (args ?? []).includes(bridgeBootstrapPath)
+            ? 'bridge'
+            : false,
+      });
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 2,
+        existingComponents: ['ar-auth', 'ar-bridge'],
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          CLOUDFLARE_D1_API_TOKEN: 'd1-token',
+          CLOUDFLARE_WORKERS_API_TOKEN: 'workers-token',
+        },
+      },
+      [...selected]
+    );
+
+    expect(summary.failedCount).toBe(0);
+    const authMutations = mutations.filter(({ component }) => component === 'ar-auth');
+    expect(authMutations).toEqual([
+      { component: 'ar-auth', bootstrap: 'auth' },
+      { component: 'ar-auth', bootstrap: false },
+    ]);
+    const bridgeMutations = mutations.filter(({ component }) => component === 'ar-bridge');
+    expect(bridgeMutations).toEqual([
+      { component: 'ar-bridge', bootstrap: 'bridge' },
+      { component: 'ar-bridge', bootstrap: false },
+    ]);
+    const managementIndex = mutations.findIndex(({ component }) => component === 'ar-management');
+    expect(managementIndex).toBeGreaterThan(
+      mutations.findIndex(
+        ({ component, bootstrap }) => component === 'ar-auth' && bootstrap === 'auth'
+      )
+    );
+    expect(managementIndex).toBeLessThan(
+      mutations.findIndex(({ component, bootstrap }) => component === 'ar-auth' && !bootstrap)
+    );
+    expect(managementIndex).toBeGreaterThan(
+      mutations.findIndex(
+        ({ component, bootstrap }) => component === 'ar-bridge' && bootstrap === 'bridge'
+      )
+    );
+    expect(managementIndex).toBeLessThan(
+      mutations.findIndex(({ component, bootstrap }) => component === 'ar-bridge' && !bootstrap)
+    );
+  });
+
+  it('bootstraps Control until every runtime smoke target exists, then restores bindings', async () => {
+    const rootDir = createTempRoot();
+    const selected = [...CORE_WORKER_COMPONENTS];
+    for (const component of selected) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const mutations: Array<{ component: string; config: string | undefined }> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      mutations.push({
+        component: basename(String(options?.cwd)),
+        config: configIndex >= 0 ? args?.[configIndex + 1] : undefined,
+      });
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 2,
+        existingComponents: ['ar-control'],
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      selected
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(mutations.filter(({ component }) => component === 'ar-control')).toEqual([
+      { component: 'ar-control', config: controlBootstrapPath },
+      { component: 'ar-control', config: 'wrangler.toml' },
+    ]);
+    expect(mutations.every(({ config }) => config !== undefined)).toBe(true);
   });
 
   it('waits for the VC service-binding target before deploying management', async () => {
@@ -1132,7 +1503,11 @@ describe('deployAll', () => {
 
     await vi.waitFor(() => expect(started).toEqual(['ar-lib-core']));
     releases.get('ar-lib-core')!.resolve(successfulCommandResult());
-    await vi.waitFor(() => expect(started).toEqual(['ar-lib-core', 'ar-bridge', 'ar-vc']));
+    await vi.waitFor(() => {
+      expect(started[0]).toBe('ar-lib-core');
+      expect(started.slice(1)).toHaveLength(2);
+      expect(new Set(started.slice(1))).toEqual(new Set(['ar-bridge', 'ar-vc']));
+    });
 
     releases.get('ar-bridge')!.resolve(successfulCommandResult());
     await vi.waitFor(() => expect(started).toContain('ar-auth'));
@@ -1283,7 +1658,7 @@ describe('deployAll', () => {
         env: 'test',
         rootDir,
         deploymentStrategy: 'staged',
-        existingComponents: ['ar-lib-core', 'ar-bridge', ...selected],
+        existingComponents: ['ar-lib-core', 'ar-plugin-runner', 'ar-bridge', ...selected],
         concurrency: 2,
       },
       [...selected]

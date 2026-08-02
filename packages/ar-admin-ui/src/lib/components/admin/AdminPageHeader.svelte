@@ -87,12 +87,18 @@
 		align-items: center;
 		gap: 10px;
 		flex-wrap: wrap;
+		min-width: 0;
+		max-width: 100%;
 	}
 
 	@media (max-width: 720px) {
 		.admin-page__header {
 			align-items: flex-start;
 			flex-direction: column;
+		}
+
+		.admin-page__actions {
+			width: 100%;
 		}
 	}
 </style>

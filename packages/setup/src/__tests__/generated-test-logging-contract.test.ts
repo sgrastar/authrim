@@ -10,6 +10,7 @@ const generatedEnvAvailable =
   existsSync(resolve(generatedEnvDir, 'config.json')) &&
   existsSync(resolve(generatedEnvDir, 'lock.json')) &&
   existsSync(resolve(generatedEnvDir, 'wrangler/ar-management.toml')) &&
+  existsSync(resolve(generatedEnvDir, 'wrangler/ar-plugin-runner.toml')) &&
   existsSync(generatedKeysDir);
 
 interface GeneratedConfig {
@@ -77,7 +78,7 @@ describeGenerated('generated test environment logging/storage contract', () => {
     const lock = readJson<GeneratedLock>(resolve(generatedEnvDir, 'lock.json'));
 
     expect(config.profiles?.defaults).toMatchObject({
-      storage: 'builtin:storage:shared-d1',
+      storage: 'builtin:storage:tenant-d1',
       audit: 'builtin:audit:standard',
       residency: 'builtin:residency:default',
     });
@@ -103,7 +104,6 @@ describeGenerated('generated test environment logging/storage contract', () => {
   });
 
   it('maps each generated worker to the bindings needed by its log write paths', () => {
-    const config = readJson<GeneratedConfig>(resolve(generatedEnvDir, 'config.json'));
     const management = readWrangler('ar-management');
     expect(bindingNames(management, '[[env.test.d1_databases]]')).toEqual(
       expect.arrayContaining(['DB', 'DB_ADMIN', 'DB_PII'])
@@ -118,14 +118,10 @@ describeGenerated('generated test environment logging/storage contract', () => {
         'SENSITIVE_DETAILS',
       ])
     );
-    if (config.features?.email?.provider === 'cloudflare') {
-      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toContain('EMAIL');
-    } else {
-      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
-    }
+    expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
     expect(vars(management)).toMatchObject({
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
+      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       PROFILE_REGISTRY_BACKEND: 'kv',
     });
 
@@ -146,7 +142,7 @@ describeGenerated('generated test environment logging/storage contract', () => {
     ]) {
       expect(vars(readWrangler(component))).toMatchObject({
         DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
+        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       });
     }
   });

@@ -8,8 +8,8 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "extensionId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
-    "owner": { "type": "string", "minLength": 1 },
-    "source": { "type": "string", "minLength": 1 },
+    "owner": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "source": { "type": "string", "minLength": 1, "maxLength": 1000 },
     "scope": { "enum": ["platform", "tenant"] },
     "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
     "workers": {
@@ -20,7 +20,13 @@
         "additionalProperties": false,
         "required": ["scriptName", "bindings", "secrets", "services"],
         "properties": {
-          "scriptName": { "type": "string", "minLength": 1 },
+          "scriptName": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$",
+            "not": {
+              "pattern": "(?:^|-)(?:ar-lib-core|ar-discovery|ar-auth|ar-token|ar-userinfo|ar-control|ar-management|ar-agent-access|ar-router|ar-async|ar-policy|ar-saml|ar-bridge|ar-vc)$"
+            }
+          },
           "bindings": { "type": "array", "items": { "$ref": "#/$defs/request" } },
           "services": { "type": "array", "items": { "$ref": "#/$defs/request" } },
           "secrets": { "type": "array", "items": { "$ref": "#/$defs/secretRequest" } }
@@ -34,8 +40,8 @@
       "additionalProperties": false,
       "required": ["name", "capability", "scope", "reason"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "capability": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "capability": { "type": "string", "minLength": 1, "maxLength": 200 },
         "scope": { "enum": ["platform", "tenant"] },
         "reason": { "type": "string", "minLength": 1, "maxLength": 1000 }
       }

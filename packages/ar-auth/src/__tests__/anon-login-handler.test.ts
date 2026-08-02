@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   publishEvent: vi.fn(),
   createAuditLog: vi.fn(),
   error: vi.fn(),
+  usesTenantD1AccountStorage: vi.fn(),
+  resolveAnonymousRoute: vi.fn(),
+  provisionAnonymous: vi.fn(),
+  removeAnonymousRoute: vi.fn(),
+  resolveAccountDataContextFromHono: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -29,6 +34,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     isAnonymousAuthEnabled: mocks.isAnonymousAuthEnabled,
     validateDeviceId: mocks.validateDeviceId,
     validateDeviceStability: mocks.validateDeviceStability,
@@ -66,6 +72,13 @@ vi.mock('@authrim/ar-lib-core', async () => {
     })),
   };
 });
+
+vi.mock('../account-provisioning', () => ({
+  usesTenantD1AccountStorage: mocks.usesTenantD1AccountStorage,
+  resolveTenantD1AnonymousAccountRoute: mocks.resolveAnonymousRoute,
+  provisionTenantD1AnonymousAccount: mocks.provisionAnonymous,
+  removeTenantD1AnonymousDeviceRoute: mocks.removeAnonymousRoute,
+}));
 
 import { anonLoginChallengeHandler, anonLoginVerifyHandler } from '../anon-login';
 
@@ -182,6 +195,17 @@ describe('anonymous login challenge handler', () => {
     mocks.createSessionRpc.mockResolvedValue(undefined);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.usesTenantD1AccountStorage.mockReturnValue(false);
+    mocks.resolveAccountDataContextFromHono.mockResolvedValue({
+      accountId: 'account:new-user-1',
+      legacyUserId: 'new-user-1',
+    });
+    mocks.provisionAnonymous.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:new-user-1',
+      userId: 'new-user-1',
+    });
+    mocks.removeAnonymousRoute.mockResolvedValue(201);
   });
 
   afterEach(() => {
@@ -354,6 +378,17 @@ describe('anonymous login verify handler', () => {
     mocks.loadClientContractCached.mockResolvedValue({
       anonymousAuth: { enabled: true, deviceStability: 'installation', expiresInDays: 30 },
     });
+    mocks.usesTenantD1AccountStorage.mockReturnValue(false);
+    mocks.resolveAccountDataContextFromHono.mockResolvedValue({
+      accountId: 'account:new-user-1',
+      legacyUserId: 'new-user-1',
+    });
+    mocks.provisionAnonymous.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:new-user-1',
+      userId: 'new-user-1',
+    });
+    mocks.removeAnonymousRoute.mockResolvedValue(201);
   });
 
   afterEach(() => {
@@ -482,6 +517,117 @@ describe('anonymous login verify handler', () => {
         userId: 'existing-user-1',
         ipAddress: '192.0.2.10',
       })
+    );
+  });
+
+  it('resolves an existing tenant-D1 anonymous device before primary authority access', async () => {
+    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+    mocks.resolveAnonymousRoute.mockResolvedValue({
+      accountId: 'account:existing-user-1',
+      legacyUserId: 'existing-user-1',
+    });
+
+    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveAnonymousRoute).toHaveBeenCalledWith(expect.anything(), 'device-hash');
+    expect(mocks.queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('FROM anonymous_devices'),
+      ['tenant-1', 'device-hash'],
+      { consistencyClass: 'primary_required' }
+    );
+    expect(mocks.provisionAnonymous).not.toHaveBeenCalled();
+    expect(mocks.syncUser).not.toHaveBeenCalled();
+  });
+
+  it('durably releases an expired tenant-D1 device route before requiring a restart', async () => {
+    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+    mocks.resolveAnonymousRoute.mockResolvedValue({
+      accountId: 'account:existing-user-1',
+      legacyUserId: 'existing-user-1',
+    });
+    mocks.queryOne.mockResolvedValueOnce({
+      id: 'anonymous-device-existing',
+      user_id: 'existing-user-1',
+      expires_at: 1,
+    });
+
+    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      status: 'anonymous_credential_recycling',
+      restart_required: true,
+      retry_after_ms: 500,
+    });
+    expect(mocks.execute).toHaveBeenCalledWith(expect.stringContaining('SET is_active = FALSE'), [
+      'anonymous-device-existing',
+      'tenant-1',
+      'existing-user-1',
+    ]);
+    expect(mocks.removeAnonymousRoute).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-1',
+      userId: 'existing-user-1',
+      deviceId: 'anonymous-device-existing',
+      deviceIdHash: 'device-hash',
+    });
+    expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('uses durable normal-pool provisioning for a new tenant-D1 anonymous device', async () => {
+    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+    mocks.resolveAnonymousRoute.mockRejectedValue(new Error('account_data_route_not_found'));
+    mocks.queryOne.mockResolvedValueOnce({ user_id: 'new-user-1' });
+
+    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ user_id: 'new-user-1', is_new_user: true });
+    expect(mocks.provisionAnonymous).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant-1',
+        candidateUserId: 'new-user-1',
+        device: expect.objectContaining({
+          deviceIdHash: 'device-hash',
+          stability: 'installation',
+        }),
+      })
+    );
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'new-user-1'
+    );
+    expect(mocks.syncUser).not.toHaveBeenCalled();
+  });
+
+  it('returns the provisioning continuation before creating a session when routing is pending', async () => {
+    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+    mocks.resolveAnonymousRoute.mockRejectedValue(new Error('account_data_route_not_found'));
+    mocks.provisionAnonymous.mockResolvedValueOnce({
+      status: 'pending',
+      response: Response.json(
+        {
+          status: 'provisioning',
+          provisioning_token: 'opaque-token',
+          status_endpoint: '/api/v1/auth/account-provisioning/status',
+          retry_after_ms: 500,
+        },
+        { status: 202 }
+      ),
+    });
+
+    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: 'provisioning',
+      retry_after_ms: 500,
+    });
+    expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+    expect(mocks.publishEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: 'auth.login.succeeded' })
     );
   });
 

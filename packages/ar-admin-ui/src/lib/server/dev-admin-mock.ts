@@ -920,6 +920,7 @@ interface DevTenant {
 	tenant_code: string;
 	name: string;
 	description: string | null;
+	isolation_policy: 'shared_pool' | 'tenant_exclusive';
 	lifecycle_state:
 		| 'provisioning'
 		| 'active'
@@ -933,6 +934,24 @@ interface DevTenant {
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
+}
+
+const DEV_TENANT_PROVISIONING_STEPS = [
+	'request_accepted',
+	'capacity_check',
+	'reserve_default_route',
+	'tenant_seed',
+	'registry_publish',
+	'tenant_smoke',
+	'lookup_activate',
+	'tenant_active'
+] as const;
+
+interface DevTenantProvisioning {
+	operationId: string;
+	tenantId: string;
+	createdAt: number;
+	pollCount: number;
 }
 
 interface DevTenantInvitation {
@@ -1883,6 +1902,10 @@ const endUsers = new Map<string, DevEndUser>([
 	]
 ]);
 
+const devIdentifierReplacementStates = new Map<string, string>([
+	['dev-user-alice', 'blocked_forward_repair']
+]);
+
 const userSessions = new Map<string, DevSession>([
 	[
 		'sess-alice-mac',
@@ -2448,13 +2471,98 @@ const tenants = new Map<string, DevTenant>([
 			tenant_code: 'dev',
 			name: 'Dev Tenant',
 			description: 'Local Admin UI mock tenant',
+			isolation_policy: 'tenant_exclusive',
 			lifecycle_state: 'active',
 			is_default: true,
 			created_at: NOW,
 			updated_at: NOW
 		}
+	],
+	[
+		'dev-shared',
+		{
+			id: 'dev-shared',
+			tenant_code: 'dev-shared',
+			name: 'Shared Dev Tenant',
+			description: 'Local tenant used to preview online physical isolation migration',
+			isolation_policy: 'shared_pool',
+			lifecycle_state: 'active',
+			is_default: false,
+			created_at: NOW,
+			updated_at: NOW
+		}
 	]
 ]);
+
+const tenantProvisioning = new Map<string, DevTenantProvisioning>();
+
+function devTenantProvisioningStatus(operation: DevTenantProvisioning) {
+	const currentIndex = Math.min(operation.pollCount, DEV_TENANT_PROVISIONING_STEPS.length);
+	const completed = currentIndex >= DEV_TENANT_PROVISIONING_STEPS.length;
+	const currentStep =
+		DEV_TENANT_PROVISIONING_STEPS[Math.min(currentIndex, DEV_TENANT_PROVISIONING_STEPS.length - 1)];
+	const updatedAt = operation.createdAt + currentIndex * 2;
+	return {
+		operation_id: operation.operationId,
+		tenant_id: operation.tenantId,
+		status: completed ? 'succeeded' : 'running',
+		current_step: currentStep,
+		attempt_count: 1,
+		next_attempt_at: null,
+		last_error_code: null,
+		created_at: operation.createdAt,
+		updated_at: updatedAt,
+		completed_at: completed ? updatedAt : null,
+		capacity_operation_ids: {
+			'tenant_core/default': `${operation.operationId}:default`,
+			'tenant_core/users': `${operation.operationId}:users`,
+			tenant_pii: `${operation.operationId}:pii`
+		},
+		capacity_operations:
+			currentIndex === 1
+				? ['tenant_core/default', 'tenant_core/users', 'tenant_pii'].map((dataRole) => ({
+						data_role: dataRole,
+						operation_id: `${operation.operationId}:${dataRole}`,
+						status: 'running',
+						attempt_count: 1,
+						next_attempt_at: null,
+						last_error_code: null,
+						updated_at: updatedAt,
+						steps: [
+							{
+								step_key: 'create_d1',
+								status: 'running',
+								attempt_count: 1,
+								next_attempt_at: null,
+								last_error_code: null,
+								observed_resource_id: null,
+								progress_current: null,
+								progress_total: null,
+								started_at: updatedAt,
+								completed_at: null,
+								updated_at: updatedAt
+							}
+						]
+					}))
+				: [],
+		steps: DEV_TENANT_PROVISIONING_STEPS.map((step, index) => ({
+			step_key: step,
+			status:
+				completed || index < currentIndex
+					? 'succeeded'
+					: index === currentIndex
+						? 'running'
+						: 'queued',
+			attempt_count: index <= currentIndex ? 1 : 0,
+			next_attempt_at: null,
+			last_error_code: null,
+			observed_resource_id: null,
+			started_at: index <= currentIndex ? operation.createdAt + index * 2 : null,
+			completed_at: completed || index < currentIndex ? operation.createdAt + index * 2 + 1 : null,
+			updated_at: updatedAt
+		}))
+	};
+}
 
 const tenantInvitations = new Map<string, DevTenantInvitation>([
 	[
@@ -2531,6 +2639,13 @@ const devShardSettings: Record<string, number> = {
 	'challenge-shards': 16,
 	'refresh-token-sharding': 16
 };
+let devReadReplicationEnabled = false;
+let devControlPlaneDriftReviewState: 'unreviewed' | 'reviewed' | 'dismissed' = 'unreviewed';
+let devControlPlaneOperationRetried = false;
+let devControlPlaneOperationCanceled = false;
+let devControlPlaneSettingsRestoreRequested = false;
+let devControlPlaneCleanupApproved = false;
+let devControlPlaneQuarantineStarted = false;
 
 const tenantVanityDomains = new Map<string, DevTenantVanityDomain>([
 	[
@@ -3215,7 +3330,7 @@ installDevFlow('flow-default-login', 'login', 'Default Login Flow', {
 installDevFlow('flow-default-registration', 'registration', 'Default Registration Flow', {
 	templateId: 'default-registration'
 });
-installDevFlow('flow-default-login-no-consent', 'login', 'Login (No consent)', {
+installDevFlow('flow-default-login-no-consent', 'login', 'Authentication-only Login', {
 	noConsent: true,
 	templateId: 'default-login-no-consent'
 });
@@ -3549,8 +3664,6 @@ const settings = new Map<string, DevSettings>([
 				'client.par_required': false,
 				'client.dpop_required': false,
 				'client.login_ui_url': '',
-				'client.consent_required': true,
-				'client.first_party': false,
 				'client.app_login_enabled': false
 			},
 			sources: {
@@ -3558,8 +3671,6 @@ const settings = new Map<string, DevSettings>([
 				'client.par_required': 'default',
 				'client.dpop_required': 'default',
 				'client.login_ui_url': 'default',
-				'client.consent_required': 'kv',
-				'client.first_party': 'default',
 				'client.app_login_enabled': 'default'
 			}
 		}
@@ -4541,20 +4652,6 @@ function settingsMetaResponse(category: string) {
 			description: 'Client settings',
 			writable: true,
 			settings: {
-				'client.consent_required': settingMeta(
-					'client.consent_required',
-					'boolean',
-					true,
-					'Require consent',
-					'Require consent for this client.'
-				),
-				'client.first_party': settingMeta(
-					'client.first_party',
-					'boolean',
-					false,
-					'First-party client',
-					'Treat this client as a first-party application.'
-				),
 				'client.app_login_enabled': settingMeta(
 					'client.app_login_enabled',
 					'boolean',
@@ -5551,6 +5648,41 @@ async function handleEndUsers(event: RequestEvent, segments: string[]): Promise<
 	const userId = segments[1];
 	const user = endUsers.get(userId);
 	if (!user) return json({ error_description: 'User not found' }, 404);
+
+	if (segments[2] === 'identifier-replacements') {
+		const operationId = 'identifier-replacement:00000000-0000-4000-8000-000000000001';
+		if (segments.length === 3 && method === 'GET') {
+			const state = devIdentifierReplacementStates.get(userId);
+			return json({
+				operations: state
+					? [
+							{
+								operation_id: operationId,
+								authority: 'self_service',
+								state,
+								attention_required: state === 'blocked_forward_repair',
+								error_code:
+									state === 'blocked_forward_repair'
+										? 'identifier_replacement_forward_repair'
+										: null,
+								created_at: Math.floor((NOW - 3600 * 1000) / 1000),
+								updated_at: Math.floor(NOW / 1000),
+								completed_at: state === 'completed' ? Math.floor(NOW / 1000) : null
+							}
+						]
+					: []
+			});
+		}
+		if (
+			segments.length === 5 &&
+			segments[3] === operationId &&
+			segments[4] === 'resume' &&
+			method === 'POST'
+		) {
+			devIdentifierReplacementStates.set(userId, 'completed');
+			return json({ operation_id: operationId, state: 'completed', attention_required: false });
+		}
+	}
 
 	if (segments.length === 2 && method === 'GET') {
 		return json({
@@ -10437,13 +10569,21 @@ function devRegionShardConfig(
 		maxPreviousGenerations: 2,
 		updatedAt,
 		updatedBy: 'dev-admin',
-		version: 1,
+		version: 2,
 		groups: {
 			default: {
 				totalShards,
 				members: Object.keys(currentRegions),
 				description: 'Dev mock global region shard group'
 			}
+		},
+		residency: {
+			version: 1,
+			residencyPolicyId: 'builtin:residency:default',
+			residencyPartition: 'default',
+			policyGeneration: 1,
+			allowedRegions: ['apac', 'weur', 'eeur', 'enam', 'wnam', 'oc', 'afr', 'me'],
+			jurisdiction: null
 		},
 		validation: {
 			valid: true,
@@ -10455,6 +10595,402 @@ function devRegionShardConfig(
 
 async function handleSettings(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
+	if (
+		method === 'POST' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'capacity' &&
+		(segments[3] === 'preview' || segments[3] === 'requests') &&
+		segments.length === 4
+	) {
+		const input = await readJson(event.request);
+		const keys = Object.keys(input);
+		const profile = input.profile;
+		const scope = input.scope;
+		const tenantId = input.tenantId;
+		if (
+			keys.length !== 3 ||
+			!keys.every((key) => ['profile', 'scope', 'tenantId'].includes(key)) ||
+			!['minimum', 'recommended', 'extra_headroom'].includes(String(profile)) ||
+			!['shared_pool', 'tenant_exclusive'].includes(String(scope)) ||
+			(scope === 'shared_pool' && tenantId !== null) ||
+			(scope === 'tenant_exclusive' &&
+				(typeof tenantId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(tenantId)))
+		) {
+			return json({ error: 'CONTROL_PLANE_CAPACITY_INVALID_REQUEST' }, 400);
+		}
+		const unitCount = profile === 'extra_headroom' ? 2 : 1;
+		const dataRole = scope === 'tenant_exclusive' ? 'tenant_core/default' : 'tenant_core/users';
+		const roleName = dataRole === 'tenant_core/default' ? 'default' : 'users';
+		const workerScript = dataRole === 'tenant_core/default' ? 'dev-ar-management' : 'dev-ar-auth';
+		const targets = Array.from({ length: unitCount }, (_, index) => ({
+			unitKey: `default:jp:${dataRole}`,
+			unitIndex: index + 1,
+			workerScripts: [workerScript],
+			operationId: `dev-capacity-${scope}-${roleName}-${index + 1}`,
+			environmentId: 'development',
+			dataRole,
+			residencyPolicyId: 'default',
+			residencyPartition: 'jp',
+			logicalShardId: `${roleName}:jp:dev-${index + 1}`,
+			databaseName: `authrim-development-${roleName}-jp-dev-${index + 1}`,
+			bindingRef: `TDB_${roleName.toUpperCase()}_DEV_${index + 1}_CORE`,
+			readReplicationMode: 'disabled',
+			migrationStreamId: 'd1-core'
+		}));
+		const preview = {
+			dryRun: true,
+			profile,
+			scope,
+			tenantId,
+			available: true,
+			reasonCode: null,
+			capacityUnitsAdded: unitCount,
+			d1DatabasesAdded: unitCount,
+			projectedEnvironmentD1Count: 6 + unitCount,
+			targets
+		};
+		if (segments[3] === 'preview') return json({ preview });
+		if (!event.request.headers.get('idempotency-key')) {
+			return json({ error: 'CONTROL_PLANE_CAPACITY_INVALID_REQUEST' }, 400);
+		}
+		return json(
+			{
+				result: {
+					preview,
+					operations: targets.map((target) => ({
+						operationId: target.operationId,
+						status: 'queued',
+						attemptCount: 0,
+						nextAttemptAt: null,
+						lastErrorCode: null,
+						createdAt: 1_800_000_000,
+						updatedAt: 1_800_000_000
+					}))
+				},
+				auditId: 'dev-capacity-request-audit'
+			},
+			202
+		);
+	}
+	if (
+		method === 'GET' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'provisioning-authority' &&
+		segments.length === 3
+	) {
+		return json({
+			authority: {
+				automaticProvisioningEnabled: true,
+				tokenOwnership: 'account',
+				capabilityState: 'ready',
+				automaticExecutionAvailable: true,
+				activeExecutor: 'control'
+			}
+		});
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'operations'
+	) {
+		const operationId = segments[3];
+		if (operationId !== 'dev-operation-1' && operationId !== 'dev-operation-restore') {
+			return json({ error: 'CONTROL_PLANE_OPERATION_NOT_FOUND' }, 404);
+		}
+		const restoreMode = operationId === 'dev-operation-restore';
+		const operation = () => ({
+			operationId,
+			operationKind: 'provision_shard',
+			status: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? 'running'
+					: 'blocked'
+				: devControlPlaneOperationCanceled
+					? 'canceled'
+					: devControlPlaneOperationRetried
+						? 'running'
+						: 'blocked',
+			attemptCount: 3,
+			nextAttemptAt: null,
+			lastErrorCode: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? null
+					: 'control_worker_rollback_failed'
+				: devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? null
+					: 'cloudflare_d1_request_rejected',
+			createdAt: NOW_SECONDS - 3600,
+			updatedAt:
+				devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? NOW_SECONDS
+					: NOW_SECONDS - 300,
+			availableActions: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? []
+					: ['restore_previous_settings']
+				: devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? []
+					: ['retry_create_d1', 'cancel'],
+			steps: restoreMode
+				? [
+						{
+							stepKey: 'reconcile_worker_bindings',
+							displayOrder: 30,
+							status: devControlPlaneSettingsRestoreRequested ? 'running' : 'blocked',
+							attemptCount: 2,
+							nextAttemptAt: null,
+							lastErrorCode: devControlPlaneSettingsRestoreRequested
+								? null
+								: 'control_worker_rollback_failed',
+							observedResourceId: null,
+							progressCurrent: 0,
+							progressTotal: 1,
+							startedAt: NOW_SECONDS - 900,
+							completedAt: null,
+							updatedAt: devControlPlaneSettingsRestoreRequested ? NOW_SECONDS : NOW_SECONDS - 300
+						}
+					]
+				: [
+						{
+							stepKey: 'create_d1',
+							displayOrder: 10,
+							status: devControlPlaneOperationCanceled
+								? 'canceled'
+								: devControlPlaneOperationRetried
+									? 'running'
+									: 'blocked',
+							attemptCount: 3,
+							nextAttemptAt: null,
+							lastErrorCode: devControlPlaneOperationRetried
+								? null
+								: 'cloudflare_d1_request_rejected',
+							observedResourceId: null,
+							progressCurrent: null,
+							progressTotal: null,
+							startedAt: NOW_SECONDS - 3500,
+							completedAt: null,
+							updatedAt: devControlPlaneOperationRetried ? NOW_SECONDS : NOW_SECONDS - 300
+						},
+						{
+							stepKey: 'apply_migrations',
+							displayOrder: 20,
+							status: devControlPlaneOperationCanceled ? 'canceled' : 'queued',
+							attemptCount: 0,
+							nextAttemptAt: null,
+							lastErrorCode: null,
+							observedResourceId: null,
+							progressCurrent: null,
+							progressTotal: null,
+							startedAt: null,
+							completedAt: null,
+							updatedAt: NOW_SECONDS - 300
+						}
+					]
+		});
+		if (segments.length === 4 && method === 'GET') {
+			return json({ operation: operation() });
+		}
+		if (segments.length === 5 && segments[4] === 'retry-step' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (input.stepKey !== 'create_d1') {
+				return json({ error: 'CONTROL_PLANE_OPERATION_RETRY_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneOperationRetried = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-retry-audit' });
+		}
+		if (segments.length === 5 && segments[4] === 'cancel' && method === 'POST') {
+			if (devControlPlaneOperationRetried || devControlPlaneOperationCanceled) {
+				return json({ error: 'CONTROL_PLANE_OPERATION_CANCEL_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneOperationCanceled = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-cancel-audit' });
+		}
+		if (segments.length === 5 && segments[4] === 'restore-previous-settings' && method === 'POST') {
+			if (!restoreMode || devControlPlaneSettingsRestoreRequested) {
+				return json({ error: 'CONTROL_PLANE_OPERATION_RESTORE_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneSettingsRestoreRequested = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-restore-audit' });
+		}
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'shard-cleanup'
+	) {
+		const cleanupCandidate = () => ({
+			environmentId: 'dev',
+			shardId: 'dev-retired-shard-ready',
+			dataRole: 'tenant_core/default',
+			residencyPartition: 'global',
+			bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+			databaseId: 'dev-database-retired-ready',
+			databaseName: 'dev-tenant-core-retired-ready',
+			shardStatus: devControlPlaneCleanupApproved ? 'deleting' : 'retired',
+			quarantineOperationId: 'dev-quarantine-operation-ready',
+			quarantineState: 'quarantined',
+			quarantineOperationState: 'ready_for_cleanup',
+			denyRegistryGeneration: 12,
+			drainNotBefore: NOW_SECONDS - 600,
+			registryVerifiedAt: NOW_SECONDS - 300,
+			referencesVerifiedAt: NOW_SECONDS - 300,
+			cleanupOperationId: devControlPlaneCleanupApproved ? 'dev-cleanup-operation-ready' : null,
+			cleanupState: devControlPlaneCleanupApproved ? 'removing_bindings' : null,
+			exportMode: devControlPlaneCleanupApproved ? 'skipped' : null,
+			deleteDatabase: devControlPlaneCleanupApproved ? true : null,
+			destructiveOperationsEnabled: true,
+			availableActions: devControlPlaneCleanupApproved ? [] : ['approve_cleanup'],
+			bindings: devControlPlaneCleanupApproved
+				? [
+						{
+							workerScriptName: 'dev-ar-auth',
+							bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+							state: 'removed',
+							lastErrorCode: null,
+							updatedAt: NOW_SECONDS
+						},
+						{
+							workerScriptName: 'dev-ar-token',
+							bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+							state: 'removing',
+							lastErrorCode: null,
+							updatedAt: NOW_SECONDS
+						}
+					]
+				: [],
+			lastErrorCode: null,
+			createdAt: NOW_SECONDS - 7200,
+			updatedAt: devControlPlaneCleanupApproved ? NOW_SECONDS : NOW_SECONDS - 300
+		});
+		const gatedCandidate = () => ({
+			environmentId: 'dev',
+			shardId: 'dev-retired-shard-gated',
+			dataRole: 'tenant_pii',
+			residencyPartition: 'eu',
+			bindingRef: 'TDB_PII_DEV_RETIRED',
+			databaseId: 'dev-database-retired-gated',
+			databaseName: 'dev-tenant-pii-retired-gated',
+			shardStatus: 'retired',
+			quarantineOperationId: devControlPlaneQuarantineStarted
+				? 'dev-quarantine-operation-gated'
+				: null,
+			quarantineState: devControlPlaneQuarantineStarted ? 'quarantining' : 'none',
+			quarantineOperationState: devControlPlaneQuarantineStarted ? 'draining' : null,
+			denyRegistryGeneration: devControlPlaneQuarantineStarted ? 13 : null,
+			drainNotBefore: devControlPlaneQuarantineStarted ? NOW_SECONDS + 1800 : null,
+			registryVerifiedAt: null,
+			referencesVerifiedAt: null,
+			cleanupOperationId: null,
+			cleanupState: null,
+			exportMode: null,
+			deleteDatabase: null,
+			destructiveOperationsEnabled: false,
+			availableActions: devControlPlaneQuarantineStarted ? [] : ['quarantine'],
+			bindings: [],
+			lastErrorCode: null,
+			createdAt: NOW_SECONDS - 3600,
+			updatedAt: devControlPlaneQuarantineStarted ? NOW_SECONDS : NOW_SECONDS - 600
+		});
+		const candidateFor = (shardId: string | undefined) =>
+			shardId === 'dev-retired-shard-ready'
+				? cleanupCandidate()
+				: shardId === 'dev-retired-shard-gated'
+					? gatedCandidate()
+					: null;
+		if (segments.length === 3 && method === 'GET') {
+			const items = [cleanupCandidate(), gatedCandidate()];
+			return json({ items, count: items.length });
+		}
+		const shardId = segments[3];
+		if (segments.length === 4 && method === 'GET') {
+			const candidate = candidateFor(shardId);
+			return candidate
+				? json({ candidate })
+				: json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_NOT_FOUND' }, 404);
+		}
+		if (segments.length === 5 && segments[4] === 'quarantine' && method === 'POST') {
+			if (shardId !== 'dev-retired-shard-gated' || devControlPlaneQuarantineStarted) {
+				return json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_CONFLICT' }, 409);
+			}
+			devControlPlaneQuarantineStarted = true;
+			return json({ candidate: gatedCandidate(), auditId: 'dev-shard-quarantine-audit' }, 202);
+		}
+		if (segments.length === 5 && segments[4] === 'approve' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (
+				shardId !== 'dev-retired-shard-ready' ||
+				devControlPlaneCleanupApproved ||
+				input.confirmation !== 'DELETE_RETIRED_TENANT_SHARD'
+			) {
+				return json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_CONFLICT' }, 409);
+			}
+			devControlPlaneCleanupApproved = true;
+			return json({ candidate: cleanupCandidate(), auditId: 'dev-shard-cleanup-audit' }, 202);
+		}
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'drift-findings'
+	) {
+		const findingId = 'drift:dev:actual_only:dev-unmanaged-worker';
+		const finding = () => ({
+			findingId,
+			environmentId: 'dev',
+			workerScriptName: 'dev-unmanaged-worker',
+			findingKind: 'actual_only',
+			severity: 'warning',
+			reviewState: devControlPlaneDriftReviewState,
+			notificationState: 'acknowledged',
+			firstObservedAt: NOW_SECONDS - 7200,
+			lastObservedAt: NOW_SECONDS - 300,
+			resolvedAt: null,
+			notifiedAt: NOW_SECONDS - 6900
+		});
+		if (segments.length === 3 && method === 'GET') {
+			return json({ items: [finding()], count: 1 });
+		}
+		if (segments[3] === findingId && segments[4] === 'review' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (input.disposition !== 'reviewed' && input.disposition !== 'dismissed') {
+				return json({ error: 'CONTROL_PLANE_DRIFT_REVIEW_INVALID_REQUEST' }, 400);
+			}
+			devControlPlaneDriftReviewState = input.disposition;
+			return json({ finding: finding(), auditId: 'dev-control-plane-review-audit' });
+		}
+	}
+	if (segments[0] === 'platform' && segments[1] === 'read-replication') {
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			if (typeof input.enabled !== 'boolean') {
+				return json({ error: 'READ_REPLICATION_INVALID_REQUEST' }, 400);
+			}
+			devReadReplicationEnabled = input.enabled;
+		}
+		const readReplication = {
+			environmentId: 'dev',
+			desiredMode: devReadReplicationEnabled ? 'enabled' : 'disabled',
+			aggregateStatus: devReadReplicationEnabled ? 'on' : 'off',
+			operationId: method === 'PUT' ? 'dev-read-replication-operation' : null,
+			operationStatus: method === 'PUT' ? 'succeeded' : null,
+			eligiblePolicyCount: 4,
+			convergedPolicyCount: 4,
+			failedPolicyCount: 0,
+			targetCount: 8,
+			convergedTargetCount: 8,
+			pendingTargetCount: 0,
+			failedTargetCount: 0,
+			updatedAt: Math.floor(Date.now() / 1000)
+		};
+		return json(
+			method === 'PUT'
+				? { readReplication, auditId: 'dev-read-replication-audit' }
+				: { readReplication },
+			method === 'PUT' ? 202 : 200
+		);
+	}
 	if (segments[0] === 'settings') {
 		if (
 			segments[1] === 'code-shards' ||
@@ -10615,7 +11151,6 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		return json({
 			tenants: items,
 			total: items.length,
-			tenant_d1_pool: { enabled: false },
 			single_tenant_mode: false,
 			single_tenant_reason: null
 		});
@@ -10635,7 +11170,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		if (tenants.has(id)) {
 			return json({ error_description: 'Tenant already exists' }, 409);
 		}
-		const now = Date.now();
+		const now = Math.floor(Date.now() / 1000);
 		const tenant: DevTenant = {
 			id,
 			tenant_code: tenantCode,
@@ -10644,13 +11179,52 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				typeof input.description === 'string' && input.description.trim()
 					? input.description.trim()
 					: null,
-			lifecycle_state: 'active',
+			isolation_policy:
+				input.isolation_policy === 'shared_pool' ? 'shared_pool' : 'tenant_exclusive',
+			lifecycle_state: 'provisioning',
 			is_default: tenants.size === 0,
 			created_at: now,
 			updated_at: now
 		};
 		tenants.set(id, tenant);
-		return json(tenant, 201);
+		const operation: DevTenantProvisioning = {
+			operationId: `tenant-create-dev-${id}`,
+			tenantId: id,
+			createdAt: now,
+			pollCount: 0
+		};
+		tenantProvisioning.set(id, operation);
+		return json(
+			{
+				...tenant,
+				provisioning: { mode: 'control-plane', ...devTenantProvisioningStatus(operation) }
+			},
+			202
+		);
+	}
+
+	if (segments.length === 3 && segments[2] === 'provisioning' && method === 'GET') {
+		const operation = tenantProvisioning.get(segments[1]);
+		if (!operation) return json({ error_description: 'Tenant provisioning not found' }, 404);
+		operation.pollCount += 1;
+		const status = devTenantProvisioningStatus(operation);
+		if (status.status === 'succeeded') {
+			const tenant = tenants.get(operation.tenantId);
+			if (tenant) {
+				tenant.lifecycle_state = 'active';
+				tenant.updated_at = status.updated_at;
+			}
+		}
+		return json(status);
+	}
+
+	if (
+		segments.length === 4 &&
+		segments[2] === 'lifecycle' &&
+		segments[3] === 'jobs' &&
+		method === 'GET'
+	) {
+		return json({ jobs: [] });
 	}
 
 	if (segments.length === 3 && segments[2] === 'clone' && method === 'POST') {
@@ -10689,6 +11263,8 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				typeof input.description === 'string' && input.description.trim()
 					? input.description.trim()
 					: null,
+			isolation_policy:
+				input.isolation_policy === 'shared_pool' ? 'shared_pool' : 'tenant_exclusive',
 			lifecycle_state: 'active',
 			is_default: false,
 			created_at: now,
@@ -10793,6 +11369,15 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		}
 		tenantInvitations.delete(segments[3]);
 		return json({ success: true });
+	}
+
+	if (
+		segments.length === 4 &&
+		segments[2] === 'placement-migrations' &&
+		segments[3] === 'latest' &&
+		method === 'GET'
+	) {
+		return json({ error_description: 'Tenant placement migration not found' }, 404);
 	}
 
 	if (segments.length === 2 && method === 'GET') {

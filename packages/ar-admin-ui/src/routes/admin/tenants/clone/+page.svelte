@@ -3,8 +3,10 @@
 	import { page } from '$app/stores';
 	import {
 		adminTenantsAPI,
+		type CloneTenantCompletedResponse,
 		type CloneTenantResponse,
-		type TenantCloneOptions
+		type TenantCloneOptions,
+		type TenantProvisioningOperation
 	} from '$lib/api/admin-tenants';
 	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
@@ -22,7 +24,8 @@
 	let error = $state('');
 	let idError = $state('');
 	let codeError = $state('');
-	let result = $state<CloneTenantResponse | null>(null);
+	let result = $state<CloneTenantCompletedResponse | null>(null);
+	let provisioningOperation = $state<TenantProvisioningOperation | null>(null);
 	let cloneAttemptFingerprint = '';
 	let cloneAttemptIdempotencyKey = '';
 	let options = $state<TenantCloneOptions>({
@@ -82,6 +85,56 @@
 		if (!value && option === 'webhooks') options.webhook_secrets = false;
 	}
 
+	function sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	function provisioningStepLabel(step: TenantProvisioningOperation['current_step']): string {
+		switch (step) {
+			case 'request_accepted':
+				return $LL.admin_tenants_provisioning_step_request();
+			case 'capacity_check':
+				return $LL.admin_tenants_provisioning_step_capacity();
+			case 'reserve_default_route':
+				return $LL.admin_tenants_provisioning_step_route();
+			case 'tenant_seed':
+				return $LL.admin_tenants_provisioning_step_seed();
+			case 'registry_publish':
+				return $LL.admin_tenants_provisioning_step_registry();
+			case 'tenant_smoke':
+				return $LL.admin_tenants_provisioning_step_smoke();
+			case 'tenant_prepare':
+				return $LL.admin_tenants_provisioning_step_prepare();
+			case 'lookup_activate':
+				return $LL.admin_tenants_provisioning_step_lookup();
+			case 'tenant_active':
+				return $LL.admin_tenants_provisioning_step_activate();
+		}
+	}
+
+	function completedClone(
+		initial: Extract<CloneTenantResponse, { provisioning: TenantProvisioningOperation }>,
+		operation: TenantProvisioningOperation
+	): CloneTenantCompletedResponse {
+		const preparation = operation.preparation_result;
+		if (
+			!preparation ||
+			typeof preparation.cloned_items !== 'object' ||
+			!preparation.cloned_items ||
+			!Array.isArray(preparation.warnings)
+		) {
+			throw new Error($LL.admin_tenants_clone_failed());
+		}
+		return {
+			...initial,
+			lifecycle_state: 'active',
+			copy: initial.copy,
+			cloned_items: preparation.cloned_items as CloneTenantCompletedResponse['cloned_items'],
+			signing_keys: { copied: false, generated: true },
+			warnings: preparation.warnings as string[]
+		};
+	}
+
 	async function handleClone() {
 		idError = validateId(newId);
 		codeError = validateCode(newTenantCode);
@@ -110,7 +163,26 @@
 				cloneAttemptFingerprint = fingerprint;
 				cloneAttemptIdempotencyKey = crypto.randomUUID();
 			}
-			result = await adminTenantsAPI.clone(sourceTenantId, request, cloneAttemptIdempotencyKey);
+			const response = await adminTenantsAPI.clone(
+				sourceTenantId,
+				request,
+				cloneAttemptIdempotencyKey
+			);
+			if ('provisioning' in response) {
+				provisioningOperation = response.provisioning;
+				while (['queued', 'running', 'waiting_retry'].includes(provisioningOperation.status)) {
+					await sleep(1500);
+					provisioningOperation = await adminTenantsAPI.provisioning(response.id);
+				}
+				if (provisioningOperation.status !== 'succeeded') {
+					throw new Error(
+						provisioningOperation.last_error_code || $LL.admin_tenants_clone_failed()
+					);
+				}
+				result = completedClone(response, provisioningOperation);
+			} else {
+				result = response;
+			}
 			tenantStore.add(result);
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_tenants_clone_failed();
@@ -129,6 +201,7 @@
 		codeError = '';
 		cloneAttemptFingerprint = '';
 		cloneAttemptIdempotencyKey = '';
+		provisioningOperation = null;
 	}
 </script>
 
@@ -151,6 +224,12 @@
 		<div class="alert alert-error" role="alert">
 			<i class="i-ph-warning-circle"></i>
 			{error}
+		</div>
+	{/if}
+	{#if cloning && provisioningOperation}
+		<div class="loading-state" role="status" aria-live="polite">
+			<i class="i-ph-circle-notch animate-spin" aria-hidden="true"></i>
+			{provisioningStepLabel(provisioningOperation.current_step)}
 		</div>
 	{/if}
 

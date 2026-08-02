@@ -61,11 +61,11 @@ Every mutating entry point must declare exactly one operation kind and use the s
 | `structure_migration` | Existing state with no incomplete release/topology operation | None                                          | Move legacy local environment files to the current layout without changing their semantic contents.                                                     |
 | `delete`              | Any existing state                                           | None                                          | Exclusively delete the environment. This is also allowed for recovery from an incomplete update.                                                        |
 
-Direct API/UI Worker scripts are `worker_redeploy` operations. Tenant D1 provisioning, pool expansion,
-external database registration, and R2 binding changes are `topology_change` operations. A tenant D1
-slot reset is a `manual_migration` recovery operation because it reapplies the installed release to
-existing bindings and does not change Worker topology. A route name or UI workflow does not change
-these rules.
+Direct API/UI Worker scripts are `worker_redeploy` operations. Initial tenant D1 bootstrap, Control
+Worker shard provisioning, external database registration, and R2 binding changes are
+`topology_change` operations. Reapplying a pinned release to an existing target is a
+`manual_migration` recovery operation and does not change Worker topology. A route name or UI
+workflow does not change these rules.
 
 Before its first externally visible mutation can affect a later deployment, a topology command must
 persist a `preparing` journal. A topology change that replaces `config.json` must first durably write a
@@ -76,7 +76,7 @@ Before releasing the exclusive preparation lock, the command must therefore pers
 schema/resource evidence, and `topologyUpdate` journal atomically from the perspective of subsequent
 commands with phase `pending_deploy`. The delegated deployment must require that phase and verify its
 product version and config checksum. Rerunning the same dedicated command resumes the journal without
-allocating another slot or database generation. An unrelated topology command, generic deploy, config
+allocating another physical resource or database generation. An unrelated topology command, generic deploy, config
 mutation, or release update must fail closed until the journal is completed or the environment is
 deleted.
 
@@ -104,7 +104,7 @@ The target inventory includes:
 
 - shared core, PII, and Admin D1 databases;
 - the PII stream in the shared database for single-DB deployments;
-- every setup-managed tenant D1 binding in the lock, including `_S<n>` shards;
+- every setup-bootstrap or Control-managed tenant D1 binding projected into the lock;
 - every external database referenced by any deployable seeded storage or audit profile, not only the
   environment default profile;
 - explicit future targets added to the setup-managed inventory.
@@ -128,8 +128,8 @@ After a complete stream is applied or explicitly acknowledged, `schemaTargets[ta
 - whether setup or an operator applied it;
 - update timestamp.
 
-The record must be written for databases created between product releases, including tenant database
-provisioning, pool expansion, slot reset, and reconciliation. A future update uses the per-target record
+The record must be written for databases created between product releases, including initial tenant
+bootstrap, Control shard provisioning, migration recovery, and reconciliation. A future update uses the per-target record
 to choose a delta. A target without a trustworthy record receives the cumulative target stream.
 
 No operation may mark a target current merely because a migration command returned successfully for a
@@ -155,7 +155,7 @@ and it only creates resources and initial metadata. It must not apply any databa
 schema application belongs exclusively to the complete `initial_deploy` operation.
 
 For a deployed environment, generic configuration saving must reject changes to schema topology fields,
-including storage/audit profiles, Hyperdrive references, D1 layout, and tenant D1 capacity. Dedicated
+including storage/audit profiles, Hyperdrive references, and D1 layout. Dedicated setup or Control
 topology operations perform those changes under the installed release manifest. Non-topology settings
 may be saved under the environment lock when no release update is in progress.
 
@@ -163,9 +163,9 @@ may be saved under the environment lock when no release update is in progress.
 
 The policy and exclusive lock apply to:
 
-- setup CLI deploy, update, delete, tenant DB, pool, slot reset, R2, and migration commands;
+- setup CLI deploy, update, delete, tenant DB bootstrap, R2, and migration commands;
 - setup Web provision, deploy, Worker update, individual component, Service Site, email deployment,
-  configuration, tenant pool, R2, migration, and environment deletion routes;
+  configuration, R2, migration, and environment deletion routes;
 - repository API/UI deployment and migration scripts;
 - future automation that writes environment config, lock state, Cloudflare resources, schemas, or
   Workers.

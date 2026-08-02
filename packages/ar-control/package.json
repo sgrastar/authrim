@@ -3,6 +3,12 @@
   "version": "0.4.0",
   "type": "module",
   "private": true,
+  "exports": {
+    "./bootstrap-handoff": {
+      "types": "./src/bootstrap-handoff.ts",
+      "default": "./src/bootstrap-handoff.ts"
+    }
+  },
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-control --mode=auto --concurrency=1",

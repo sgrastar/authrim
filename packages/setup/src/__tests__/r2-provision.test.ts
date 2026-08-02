@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const deployCommandMock = vi.hoisted(() => vi.fn());
 const provisionR2BucketsMock = vi.hoisted(() => vi.fn());
+const queryD1RowsMock = vi.hoisted(() => vi.fn());
 const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../cli/commands/deploy.js', () => ({
@@ -16,6 +17,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   return {
     ...actual,
     provisionR2Buckets: provisionR2BucketsMock,
+    queryD1Rows: queryD1RowsMock,
   };
 });
 
@@ -57,7 +59,9 @@ async function writeEnvironment(env: string) {
         env,
         createdAt: '2026-05-18T00:00:00.000Z',
         updatedAt: '2026-05-18T00:00:00.000Z',
-        d1: {},
+        d1: {
+          CONTROL_DB: { id: 'control-id', name: `${env}-authrim-control-db` },
+        },
         kv: {},
       },
       null,
@@ -75,6 +79,7 @@ describe('r2-provision command', () => {
     deployCommandMock.mockResolvedValue(undefined);
     provisionR2BucketsMock.mockReset();
     provisionR2BucketsMock.mockResolvedValue([
+      { binding: 'MIGRATION_RELEASES', name: 'prod-migration-releases' },
       { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
       { binding: 'AVATARS', name: 'prod-authrim-avatars' },
       { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
@@ -83,6 +88,13 @@ describe('r2-provision command', () => {
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
     ]);
+    queryD1RowsMock
+      .mockReset()
+      .mockImplementation(async (_databaseName, sql: string) =>
+        sql.includes("name = 'control_plugin_desired_resources'")
+          ? [{ name: 'control_plugin_desired_resources' }]
+          : []
+      );
     saveMasterWranglerConfigsMock.mockReset();
     saveMasterWranglerConfigsMock.mockResolvedValue({
       success: true,
@@ -109,6 +121,7 @@ describe('r2-provision command', () => {
 
     expect(config.features.r2.enabled).toBe(true);
     expect(lock.r2).toEqual({
+      MIGRATION_RELEASES: { name: 'prod-migration-releases' },
       PUBLIC_ASSETS: { name: 'prod-public-assets' },
       AVATARS: { name: 'prod-authrim-avatars' },
       DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
@@ -125,6 +138,7 @@ describe('r2-provision command', () => {
       expect.objectContaining({ features: expect.objectContaining({ r2: { enabled: true } }) }),
       expect.objectContaining({
         r2: expect.objectContaining({
+          MIGRATION_RELEASES: { name: 'prod-migration-releases' },
           PUBLIC_ASSETS: { name: 'prod-public-assets' },
           DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
           SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
@@ -149,7 +163,7 @@ describe('r2-provision command', () => {
     expect(deployCommandMock).toHaveBeenCalledOnce();
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
-    expect(Object.keys(lock.r2)).toHaveLength(7);
+    expect(Object.keys(lock.r2)).toHaveLength(8);
   });
 
   it('does not update local state or deploy when bucket provisioning fails', async () => {

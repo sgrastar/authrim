@@ -223,6 +223,55 @@ export const API_BASE_URL = resolveApiBaseUrl();
 
 const DEFAULT_API_TIMEOUT = 30000; // 30 seconds
 
+function isTenantPlacementWriteFenceResponse(value: unknown): value is APIError {
+	if (!value || typeof value !== 'object') return false;
+	const error = value as APIError;
+	return (
+		error.error === 'temporarily_unavailable' &&
+		error.extensions?.reason === 'tenant_placement_write_fence' &&
+		error.extensions?.retryable === true
+	);
+}
+
+async function readApiPayload(response: Response): Promise<unknown> {
+	const contentType = response.headers.get('content-type');
+	if (contentType?.includes('application/json')) return response.json();
+	const body = await response.text();
+	if (!body) return {};
+	try {
+		return JSON.parse(body);
+	} catch {
+		return {};
+	}
+}
+
+async function fetchWithTenantPlacementWriteFenceRetry(
+	endpoint: string,
+	options: ApiFetchOptions,
+	deadline: number
+): Promise<{ response: Response; payload: unknown }> {
+	const signal = options.signal;
+	const replayable =
+		typeof ReadableStream === 'undefined' || !(options.body instanceof ReadableStream);
+	while (true) {
+		const response = await authrimFetch(endpoint, options);
+		const payload = await readApiPayload(response);
+		if (
+			response.status !== 503 ||
+			!isTenantPlacementWriteFenceResponse(payload) ||
+			!signal ||
+			!replayable
+		) {
+			return { response, payload };
+		}
+		const configuredDelay = Number(payload.extensions?.retry_after_ms);
+		const retryAfter = Number.isFinite(configuredDelay) ? configuredDelay : 500;
+		const delay = Math.min(2000, Math.max(250, retryAfter));
+		if (Date.now() + delay >= deadline) return { response, payload };
+		await provisioningDelay(delay, signal);
+	}
+}
+
 /**
  * Get the current diagnostic session ID.
  * Uses DiagnosticLogger if enabled, otherwise falls back to sessionStorage.
@@ -285,30 +334,16 @@ async function apiFetch<T>(
 		if (!headers.has('Content-Type')) {
 			headers.set('Content-Type', 'application/json');
 		}
-		const response = await authrimFetch(endpoint, {
-			...requestOptions,
-			baseUrl,
-			signal: controller.signal,
-			headers
-		});
-
-		// Handle empty response body (e.g., 204 No Content)
-		let data: unknown;
-		const contentType = response.headers.get('content-type');
-		if (contentType?.includes('application/json')) {
-			data = await response.json();
-		} else {
-			const text = await response.text();
-			if (text) {
-				try {
-					data = JSON.parse(text);
-				} catch {
-					data = {};
-				}
-			} else {
-				data = {};
-			}
-		}
+		const { response, payload: data } = await fetchWithTenantPlacementWriteFenceRetry(
+			endpoint,
+			{
+				...requestOptions,
+				baseUrl,
+				signal: controller.signal,
+				headers
+			},
+			Date.now() + DEFAULT_API_TIMEOUT
+		);
 
 		if (!response.ok) {
 			return { error: data as APIError };
@@ -383,10 +418,49 @@ const loginUiDirectAuthStorage: AuthrimStorage = {
 	}
 };
 
+interface AccountProvisioningAccepted {
+	status: 'provisioning';
+	provisioning_token: string;
+	status_endpoint: '/api/v1/auth/account-provisioning/status';
+	retry_after_ms: number;
+}
+
+function isAccountProvisioningAccepted(value: unknown): value is AccountProvisioningAccepted {
+	if (!value || typeof value !== 'object') return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		candidate.status === 'provisioning' &&
+		typeof candidate.provisioning_token === 'string' &&
+		/^[A-Za-z0-9_-]{43}$/.test(candidate.provisioning_token) &&
+		candidate.status_endpoint === '/api/v1/auth/account-provisioning/status' &&
+		typeof candidate.retry_after_ms === 'number'
+	);
+}
+
+async function provisioningDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const cleanup = () => signal.removeEventListener('abort', abort);
+		const timeout = globalThis.setTimeout(
+			() => {
+				cleanup();
+				resolve();
+			},
+			Math.min(2000, Math.max(250, milliseconds))
+		);
+		const abort = () => {
+			globalThis.clearTimeout(timeout);
+			cleanup();
+			reject(new DOMException('Account provisioning was cancelled', 'AbortError'));
+		};
+		if (signal.aborted) return abort();
+		signal.addEventListener('abort', abort, { once: true });
+	});
+}
+
 const loginUiDirectAuthHttp: HttpClient = {
 	async fetch<T = unknown>(url: string, options: HttpOptions = {}): Promise<HttpResponse<T>> {
 		const controller = new AbortController();
-		const timeoutId =
+		let timeoutId =
 			options.timeout && options.timeout > 0
 				? globalThis.setTimeout(() => controller.abort(), options.timeout)
 				: null;
@@ -394,13 +468,69 @@ const loginUiDirectAuthHttp: HttpClient = {
 		options.signal?.addEventListener('abort', abortFromCaller, { once: true });
 
 		try {
-			const response = await authrimFetch(url, {
-				method: options.method,
-				headers: options.headers,
-				body: options.body,
-				signal: controller.signal
-			});
-			const payload = (await response.json().catch(() => ({}))) as T;
+			let initial = await fetchWithTenantPlacementWriteFenceRetry(
+				url,
+				{
+					method: options.method,
+					headers: options.headers,
+					body: options.body,
+					signal: controller.signal
+				},
+				Date.now() + (options.timeout ?? DEFAULT_API_TIMEOUT)
+			);
+			let response = initial.response;
+			let payload = initial.payload as T;
+			if (response.status === 202) {
+				if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
+				timeoutId = globalThis.setTimeout(() => controller.abort(), 120_000);
+				while (response.status === 202) {
+					if (!isAccountProvisioningAccepted(payload)) {
+						throw new Error('Invalid account provisioning response');
+					}
+					const accepted = payload;
+					let retryAfter = accepted.retry_after_ms;
+					while (true) {
+						await provisioningDelay(retryAfter, controller.signal);
+						const statusResponse = await authrimFetch(accepted.status_endpoint, {
+							method: 'POST',
+							headers: options.headers,
+							body: JSON.stringify({ provisioning_token: accepted.provisioning_token }),
+							signal: controller.signal
+						});
+						const statusPayload = (await statusResponse.json().catch(() => ({}))) as Record<
+							string,
+							unknown
+						>;
+						if (!statusResponse.ok) {
+							response = statusResponse;
+							payload = statusPayload as T;
+							break;
+						}
+						if (statusPayload.status === 'ready') {
+							initial = await fetchWithTenantPlacementWriteFenceRetry(
+								url,
+								{
+									method: options.method,
+									headers: options.headers,
+									body: options.body,
+									signal: controller.signal
+								},
+								Date.now() + 120_000
+							);
+							response = initial.response;
+							payload = initial.payload as T;
+							break;
+						}
+						if (statusPayload.status !== 'pending') {
+							throw new Error('Invalid account provisioning status response');
+						}
+						retryAfter =
+							typeof statusPayload.retry_after_ms === 'number'
+								? statusPayload.retry_after_ms
+								: retryAfter;
+					}
+				}
+			}
 			return {
 				status: response.status,
 				statusText: response.statusText,

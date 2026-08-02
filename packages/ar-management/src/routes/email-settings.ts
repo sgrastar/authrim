@@ -10,6 +10,7 @@ import {
 import { needsBuiltinRegistration, registerBuiltinPlugins } from '@authrim/ar-lib-plugin';
 import { getResolvedPluginConfigState } from './settings/plugins';
 import { requireTenantResourceAccess } from '../admin-tenant-access';
+import { projectTenantNotificationProviderOrder } from '../notification-provider-projection';
 
 interface PluginRegistryEntry {
   id: string;
@@ -192,38 +193,42 @@ export async function updateTenantEmailSettingsHandler(c: Context<{ Bindings: En
   }
 
   await ensureBuiltinPluginsRegistered(kv);
-  const registry = await getPluginRegistry(kv);
-  const knownProviderIds = Object.values(registry)
-    .filter((entry) => entry.capabilities.includes('notifier.email'))
-    .map((entry) => entry.id)
-    .filter((providerId) => !EXCLUDED_EMAIL_PROVIDER_IDS.has(providerId));
+  const availableProviders = await listEmailProviders(c.env, tenantId);
+  const availableProviderIds = new Set(availableProviders.map((provider) => provider.id));
 
   const invalidProviderId = parsed.data.providerOrder.find(
-    (providerId) => !knownProviderIds.includes(providerId)
+    (providerId) => !availableProviderIds.has(providerId)
   );
   if (invalidProviderId) {
     return c.json(
       {
         error: 'invalid_provider',
-        error_description: `Unknown email provider: ${invalidProviderId}`,
+        error_description: `Unavailable email provider: ${invalidProviderId}`,
       },
       400
     );
   }
 
-  const existing = await getTenantEmailSettings(c.env, tenantId);
-  const preservedDisabledProviders = existing.providerOrder.filter(
-    (providerId) => !parsed.data.providerOrder.includes(providerId)
-  );
-
   const nextSettings = {
     strategy: 'priority_failover' as const,
-    providerOrder: [...parsed.data.providerOrder, ...preservedDisabledProviders],
+    providerOrder: parsed.data.providerOrder,
   };
 
   // TODO: Support round-robin and send-count based routing once the runtime
   // registry exposes strategy-aware distribution policies.
   await putTenantEmailSettings(c.env, tenantId, nextSettings);
+  const providerConfigEntries = await Promise.all(
+    nextSettings.providerOrder.map(async (providerId) => [
+      providerId,
+      (await getResolvedPluginConfigState(kv, c.env, providerId, tenantId)).config,
+    ])
+  );
+  await projectTenantNotificationProviderOrder(c.env, {
+    tenantId,
+    channel: 'email',
+    providerIds: nextSettings.providerOrder,
+    providerConfigs: Object.fromEntries(providerConfigEntries),
+  });
 
   const providers = await listEmailProviders(c.env, tenantId);
   const settings = await getTenantEmailSettings(

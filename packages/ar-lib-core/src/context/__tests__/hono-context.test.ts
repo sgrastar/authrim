@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
 import type { DatabaseAdapter } from '../../db';
 import {
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
   hasPIIDatabase,
@@ -201,5 +202,136 @@ describe('hono-context runtime user store sources', () => {
     } as unknown as Parameters<typeof createPIIContextFromHono>[0];
 
     expect(() => createPIIContextFromHono(c)).toThrow('requires tenant context');
+  });
+
+  it('uses the explicit tenant metadata context instead of a legacy runtime source', () => {
+    const metadataAdapter = createMockAdapter('tenant-metadata');
+    const legacyAdapter = createMockAdapter('legacy-runtime');
+    const c = {
+      env: { DB: createMockD1() },
+      get(key: string) {
+        if (key === 'tenantId') return 'tenant-a';
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            coreDb: metadataAdapter,
+          };
+        }
+        if (key === 'runtimeUserStoreSources') return { coreDb: legacyAdapter };
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createAuthContextFromHono>[0];
+
+    expect(createAuthContextFromHono(c).coreAdapter).toBe(metadataAdapter);
+  });
+
+  it('fails closed instead of using a fallback PII binding without an account context', () => {
+    const c = {
+      env: { DB: createMockD1(), DB_PII: createMockD1() },
+      get(key: string) {
+        if (key === 'tenantId') return 'tenant-a';
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            coreDb: createMockAdapter('tenant-metadata'),
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createPIIContextFromHono>[0];
+
+    expect(() => createPIIContextFromHono(c)).toThrow('account_data_context_required');
+    expect(hasPIIDatabase(c)).toBe(false);
+  });
+
+  it('uses one explicit account route for tenant-D1 core and PII access', () => {
+    const accountCore = createMockAdapter('account-core');
+    const accountPii = createMockAdapter('account-pii');
+    const c = {
+      env: { DB: createMockD1(), DB_PII: createMockD1() },
+      get(key: string) {
+        if (key === 'tenantId') return 'tenant-a';
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            coreDb: createMockAdapter('tenant-metadata'),
+          };
+        }
+        if (key === 'accountDataContext') {
+          return {
+            tenantId: 'tenant-a',
+            accountId: 'account:user-a',
+            coreDb: accountCore,
+            piiDb: accountPii,
+            userCacheScope: {
+              storageProfileId: 'builtin:storage:tenant-d1',
+              sourceGeneration: 'account:3:core:8:pii:9',
+              schemaVersion: 'route:1',
+            },
+            piiCacheMode: 'no_cross_request_pii',
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createPIIContextFromHono>[0];
+
+    const context = createPIIContextFromHono(c);
+    expect(context.coreAdapter).toBe(accountCore);
+    expect(context.defaultPiiAdapter).toBe(accountPii);
+    expect(context.userCacheScope?.sourceGeneration).toBe('account:3:core:8:pii:9');
+    expect(context.piiCacheMode).toBe('no_cross_request_pii');
+    expect(hasPIIDatabase(c)).toBe(true);
+  });
+
+  it('uses the explicit tenant-D1 account core source for account auth context', () => {
+    const metadataCore = createMockAdapter('tenant-metadata');
+    const accountCore = createMockAdapter('account-core');
+    const c = {
+      env: { DB: createMockD1() },
+      get(key: string) {
+        if (key === 'tenantId') return 'tenant-a';
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            coreDb: metadataCore,
+          };
+        }
+        if (key === 'accountDataContext') {
+          return {
+            tenantId: 'tenant-a',
+            coreDb: accountCore,
+            userCacheScope: { storageProfileId: 'builtin:storage:tenant-d1' },
+            piiCacheMode: 'no_cross_request_pii',
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createAccountAuthContextFromHono>[0];
+
+    expect(createAuthContextFromHono(c).coreAdapter).toBe(metadataCore);
+    expect(createAccountAuthContextFromHono(c).coreAdapter).toBe(accountCore);
+  });
+
+  it('requires an account route for tenant-D1 account auth context', () => {
+    const c = {
+      env: { DB: createMockD1() },
+      get(key: string) {
+        if (key === 'tenantId') return 'tenant-a';
+        if (key === 'tenantMetadataContext') {
+          return {
+            tenantId: 'tenant-a',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            coreDb: createMockAdapter('tenant-metadata'),
+          };
+        }
+        return undefined;
+      },
+    } as unknown as Parameters<typeof createAccountAuthContextFromHono>[0];
+
+    expect(() => createAccountAuthContextFromHono(c)).toThrow('account_data_context_required');
   });
 });

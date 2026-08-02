@@ -75,10 +75,6 @@ import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
 import { buildUrlsConfig, getUiWorkersDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
 import { uiCustomDomainRequiresOwnRoute } from '../../core/ui-deployment.js';
 import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
-import {
-  DEFAULT_TENANT_D1_PREALLOCATED_SLOTS,
-  MAX_TENANT_D1_PREALLOCATED_SLOTS,
-} from '../../core/tenant-database.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 import { isValidCustomDomain, validateSetupDomainInputs } from '../../web/domain-form-state.js';
 
@@ -1362,14 +1358,14 @@ async function runLoadConfig(): Promise<boolean> {
 
 const SETUP_STORAGE_PROFILE_CHOICES = [
   {
-    value: 'builtin:storage:shared-d1',
-    name: 'Shared D1 - small/default deployment',
-    description: 'One deployment-wide core D1 and PII D1. Lowest setup cost.',
+    value: 'builtin:storage:tenant-d1',
+    name: 'Tenant-isolated D1 - dedicated default/users/PII shards',
+    description: 'Default. The Control Plane provisions physical tenant isolation automatically.',
   },
   {
-    value: 'builtin:storage:tenant-d1',
-    name: 'Tenant D1 - one core/PII D1 pair per tenant',
-    description: 'Requires tenant-db provisioning before tenant activation.',
+    value: 'builtin:storage:shared-d1',
+    name: 'Shared D1 - explicitly shared deployment',
+    description: 'Multiple tenants may share physical D1 shards. Lowest resource count.',
   },
 ] as const;
 
@@ -1378,7 +1374,9 @@ type SetupStorageProfileId = (typeof SETUP_STORAGE_PROFILE_CHOICES)[number]['val
 function normalizeSetupStorageProfileId(value: string | undefined): SetupStorageProfileId {
   return value === 'builtin:storage:tenant-d1'
     ? 'builtin:storage:tenant-d1'
-    : 'builtin:storage:shared-d1';
+    : value === 'builtin:storage:shared-d1'
+      ? 'builtin:storage:shared-d1'
+      : 'builtin:storage:tenant-d1';
 }
 
 async function promptStorageDeploymentProfile(
@@ -1405,7 +1403,7 @@ async function promptStorageDeploymentProfile(
   if (selected === '__custom__') {
     return input({
       message: 'Default storage profile ID',
-      default: current || 'builtin:storage:shared-d1',
+      default: current || 'builtin:storage:tenant-d1',
       validate: (value) => {
         if (!value.trim()) return 'Profile ID is required';
         return true;
@@ -1416,7 +1414,7 @@ async function promptStorageDeploymentProfile(
   if (selected === 'builtin:storage:tenant-d1') {
     console.log(
       chalk.yellow(
-        '  tenant-d1 pre-creates tenant D1 slots during setup. Increase capacity later with tenant-db-pool-expand.'
+        '  tenant-d1 bootstraps the Control Plane; tenant shards are provisioned automatically when needed.'
       )
     );
   }
@@ -1424,19 +1422,20 @@ async function promptStorageDeploymentProfile(
   return selected;
 }
 
-async function promptTenantD1PreallocatedSlots(current?: number): Promise<number> {
-  const value = await input({
-    message: 'Preallocated tenant D1 slots',
-    default: String(current ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS),
-    validate: (inputValue) => {
-      const parsed = Number.parseInt(inputValue, 10);
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-        return `Enter a number from 1 to ${MAX_TENANT_D1_PREALLOCATED_SLOTS}`;
-      }
-      return true;
-    },
+async function promptAutomaticProvisioning(storageProfileId: string): Promise<boolean> {
+  if (storageProfileId !== 'builtin:storage:tenant-d1') return false;
+  const enabled = await confirm({
+    message: 'Enable Automatic provisioning from the Control Worker?',
+    default: true,
   });
-  return Number.parseInt(value, 10);
+  console.log(
+    chalk.gray(
+      enabled
+        ? '  Setup will request one temporary bootstrap token during deploy and issue separate scoped D1 and Workers tokens.'
+        : '  No Cloudflare API token will be stored on Control. Use setup to run pending provisioning operations.'
+    )
+  );
+  return enabled;
 }
 
 async function runQuickSetup(options: InitOptions): Promise<void> {
@@ -1479,19 +1478,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     checkSpinner.warn(t('env.checkFailed'));
   }
 
-  // Step 2: Cloudflare API Token
-  const cfApiToken = await password({
-    message: t('cf.apiTokenPrompt'),
-    mask: '*',
-    validate: (value) => {
-      if (!value || value.length < 10) {
-        return t('cf.apiTokenValidation');
-      }
-      return true;
-    },
-  });
-
-  // Step 3: Show infrastructure info
+  // Step 2: Show infrastructure info
   console.log('');
   console.log(
     chalk.gray(
@@ -1582,11 +1569,8 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   // Storage deployment profile
   console.log('');
   console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
-  const tenantD1PreallocatedSlots =
-    storageProfileId === 'builtin:storage:tenant-d1'
-      ? await promptTenantD1PreallocatedSlots()
-      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:tenant-d1');
+  const automaticProvisioning = await promptAutomaticProvisioning(storageProfileId);
 
   // Database Configuration
   console.log('');
@@ -1726,9 +1710,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   // Create configuration
   const config = createDefaultConfig(envPrefix);
   config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = {
-    preallocatedSlots: tenantD1PreallocatedSlots,
-  };
+  config.tenantD1 = { automaticProvisioning };
   config.database = {
     core: parseDbLocation(coreDbLocation),
     pii: parseDbLocation(piiDbLocation),
@@ -1763,7 +1745,10 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   console.log(`  Worker Prefix: ${chalk.cyan(envPrefix + '-ar-*')}`);
   console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
   if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
+    console.log(`  Tenant D1:     ${chalk.cyan('Control Plane managed')}`);
+    console.log(
+      `  Provisioning:   ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
+    );
   }
   console.log('');
   console.log(chalk.bold('URLs (Single-tenant):'));
@@ -1829,7 +1814,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
 
   // Run setup
-  await executeSetup(config, cfApiToken, options.keep);
+  await executeSetup(config, options.keep);
 }
 
 // =============================================================================
@@ -1876,19 +1861,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     checkSpinner.warn(t('env.checkFailed'));
   }
 
-  // Step 2: Cloudflare API Token
-  const cfApiToken = await password({
-    message: t('cf.apiTokenPrompt'),
-    mask: '*',
-    validate: (value) => {
-      if (!value || value.length < 10) {
-        return t('cf.apiTokenValidation');
-      }
-      return true;
-    },
-  });
-
-  // Step 3: Profile selection
+  // Step 2: Profile selection
   const profile = await select({
     message: t('profile.prompt'),
     choices: [
@@ -2345,11 +2318,8 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
   console.log('');
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
-  const tenantD1PreallocatedSlots =
-    storageProfileId === 'builtin:storage:tenant-d1'
-      ? await promptTenantD1PreallocatedSlots()
-      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:tenant-d1');
+  const automaticProvisioning = await promptAutomaticProvisioning(storageProfileId);
 
   // Step 10: Database Configuration
   console.log('');
@@ -2446,9 +2416,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   const config = createDefaultConfig(envPrefix);
   config.profile = profile as 'basic-op' | 'fapi-rw' | 'fapi2-security';
   config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = {
-    preallocatedSlots: tenantD1PreallocatedSlots,
-  };
+  config.tenantD1 = { automaticProvisioning };
   config.database = {
     core: parseDbLocationNormal(coreDbLocation),
     pii: parseDbLocationNormal(piiDbLocation),
@@ -2495,6 +2463,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   config.features = {
     queue: { enabled: enableQueue },
     r2: { enabled: enableR2 },
+    pluginDynamicWorkers: config.features.pluginDynamicWorkers,
     email: {
       provider: emailConfigNormal.provider,
       fromAddress: emailConfigNormal.fromAddress,
@@ -2606,7 +2575,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(chalk.bold('Database:'));
   console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
   if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
+    console.log(`  Tenant D1:     ${chalk.cyan('Control Plane managed')}`);
+    console.log(
+      `  Provisioning:   ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
+    );
   }
   const coreDbDisplay =
     coreDbLocation === 'eu'
@@ -2658,18 +2630,14 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   }
   await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
 
-  await executeSetup(config, cfApiToken, options.keep);
+  await executeSetup(config, options.keep);
 }
 
 // =============================================================================
 // Execute Setup
 // =============================================================================
 
-async function executeSetup(
-  config: AuthrimConfig,
-  cfApiToken: string,
-  keepPath?: string
-): Promise<void> {
+async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<void> {
   const outputDir = resolve(keepPath || '.');
   const env = config.environment.prefix;
   let secrets: ReturnType<typeof generateAllSecrets> | null = null;
@@ -2960,15 +2928,41 @@ async function executeSetup(
     // Next steps
     console.log(chalk.bold('📋 Next Steps:'));
     console.log('');
-    console.log('  1. Upload secrets to Cloudflare:');
-    console.log(chalk.cyan(`     ${getCommandPrefix()} secrets --env=${env}`));
-    console.log('');
-    console.log('  2. Deploy Workers:');
-    console.log(chalk.cyan(`     pnpm deploy --env=${env}`));
+    for (const line of buildSetupCompletionNextSteps({
+      env,
+      automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+      commandPrefix: getCommandPrefix(),
+    })) {
+      console.log(line);
+    }
     console.log('');
   } finally {
     await environmentOperation.release();
   }
+}
+
+export function buildSetupCompletionNextSteps(input: {
+  env: string;
+  automaticProvisioning: boolean;
+  commandPrefix: string;
+}): string[] {
+  const deployCommand = `${input.commandPrefix} deploy --env ${input.env}`;
+  if (input.automaticProvisioning) {
+    return [
+      '  1. Apply schemas and deploy the complete release:',
+      `     ${deployCommand}`,
+      '',
+      '  2. When prompted, create and enter one one-time Cloudflare bootstrap token.',
+      '     Setup registers split child tokens directly on Control and revokes the bootstrap token.',
+    ];
+  }
+  return [
+    '  1. Apply schemas and deploy with the current Wrangler OAuth login:',
+    `     ${deployCommand}`,
+    '',
+    '  2. Use setup to execute pending provisioning operations requested from Admin.',
+    '     Automatic provisioning is OFF; no Cloudflare API token is stored on Control.',
+  ];
 }
 
 // =============================================================================
@@ -3672,7 +3666,7 @@ async function configureRequiredHyperdriveReferences(
 async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
   console.log(
-    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:shared-d1')}`
+    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:tenant-d1')}`
   );
   console.log(
     `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
@@ -3688,7 +3682,7 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log('');
 
   const defaultStorageProfileId = await promptStorageDeploymentProfile(
-    config.profiles.defaults.storage || 'builtin:storage:shared-d1',
+    config.profiles.defaults.storage || 'builtin:storage:tenant-d1',
     {
       allowCustom: true,
     }
@@ -3697,12 +3691,9 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   if (defaultStorageProfileId === 'builtin:storage:tenant-d1') {
     console.log(
       chalk.yellow(
-        '  Existing tenants need tenant-db registry rows and runtime D1 bindings before this profile is usable.'
+        '  Tenant shards are provisioned automatically by the Control Plane after bootstrap.'
       )
     );
-    config.tenantD1 = {
-      preallocatedSlots: await promptTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots),
-    };
   }
 
   const defaultAuditProfileId = await input({

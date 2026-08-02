@@ -785,12 +785,7 @@ const en: Translations = {
     'Share one core D1 and one PII D1 across the whole environment. This is the standard configuration with the lowest setup cost.',
   'web.db.tenantD1Title': 'Tenant D1',
   'web.db.tenantD1Desc':
-    'Assign a core / PII D1 pair to each tenant. Slots must be preallocated before tenant activation.',
-  'web.db.preallocatedSlotsTitle': 'Preallocated tenant slots',
-  'web.db.preallocatedSlotsDesc': 'Each tenant slot creates two D1 databases: core and PII.',
-  'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp':
-    'One slot creates two D1 databases: core and PII. Default is 3, maximum is 500. You can expand this later from environment management.',
+    'Bootstrap the Control Plane and initial tenant shards. Later tenant capacity is provisioned automatically.',
 
   // Web UI Email
   'web.email.title': 'Email Provider',

@@ -22,6 +22,8 @@ import { ensureHttps } from './url-config.js';
 // =============================================================================
 
 export interface UiEnvConfig {
+  /** Deployment environment shown in the UI runtime context (for example, test or production). */
+  PUBLIC_AUTHRIM_ENVIRONMENT_NAME?: string;
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
   /**
@@ -178,6 +180,7 @@ export function buildInitialUiEnvConfig(config: AuthrimConfig): UiEnvConfig | nu
   }
 
   return {
+    PUBLIC_AUTHRIM_ENVIRONMENT_NAME: config.environment.prefix,
     PUBLIC_API_BASE_URL: apiUrl,
     PUBLIC_AUTHRIM_ISSUER: apiUrl,
     PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',

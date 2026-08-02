@@ -4,6 +4,8 @@ import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
 	issueDiscoveryGrant,
+	startDiscoveryEmailVerification,
+	verifyDiscoveryEmail,
 	type DiscoveryCandidate,
 	type DiscoveryConfigResponse
 } from '../../lib/discovery-entry';
@@ -22,7 +24,6 @@ type DiscoveryResponse =
 
 type DiscoveryErrorCode =
 	| 'email_not_found'
-	| 'email_domain_not_found'
 	| 'tenant_code_not_found'
 	| 'tenant_slug_not_found'
 	| 'invitation_not_found'
@@ -31,7 +32,11 @@ type DiscoveryErrorCode =
 	| 'value_required'
 	| 'manual_required'
 	| 'invitation_unresolved'
-	| 'resolve_failed';
+	| 'resolve_failed'
+	| 'invalid_or_expired_code'
+	| 'rate_limited'
+	| 'discovery_disabled'
+	| 'discovery_unavailable';
 
 function readDiscoveryGrantContext(formData: FormData | URLSearchParams) {
 	const expectedTenantId = String(formData.get('expected_tenant_id') || '').trim();
@@ -360,6 +365,8 @@ export const actions: Actions = {
 		const mode = String(formData.get('mode') || '') as DiscoveryMode;
 		const value = String(formData.get('value') || '').trim();
 		const inviteToken = String(formData.get('invite_token') || '').trim();
+		const emailChallengeId = String(formData.get('email_challenge_id') || '').trim();
+		const emailCode = String(formData.get('email_code') || '').trim();
 		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
 		const currentIsCommonDiscover = config.common_discover_url
 			? isSamePublicUrl(
@@ -387,9 +394,51 @@ export const actions: Actions = {
 				value
 			});
 		}
+		if (
+			mode === 'email' &&
+			(!effectiveConfig.config.discovery_methods.includes('email_exact') ||
+				effectiveConfig.config.email_resolution_policy === 'disabled' ||
+				effectiveConfig.config.selection_policy === 'manual_only')
+		) {
+			return fail(403, {
+				mode: defaultManualMode(effectiveConfig.config),
+				value,
+				errorCode: 'manual_required' as const,
+				result: 'manual_required' as const
+			});
+		}
 
 		try {
-			const result = await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
+			if (mode === 'email' && !emailChallengeId) {
+				const started = await startDiscoveryEmailVerification(event.fetch, value, discoveryHeaders);
+				return {
+					mode,
+					value,
+					loginHint: value,
+					emailChallengeId: started.challenge_id,
+					emailExpiresIn: started.expires_in,
+					result: 'email_code_sent' as const
+				};
+			}
+
+			if (mode === 'email' && !/^\d{6}$/u.test(emailCode)) {
+				return fail(400, {
+					mode,
+					value,
+					loginHint: value,
+					emailChallengeId,
+					errorCode: 'invalid_or_expired_code' as const
+				});
+			}
+
+			const result: DiscoveryResponse =
+				mode === 'email'
+					? await verifyDiscoveryEmail(
+							event.fetch,
+							{ challenge_id: emailChallengeId, code: emailCode },
+							discoveryHeaders
+						)
+					: await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
 
 			if (result.result === 'resolved') {
 				if (effectiveConfig.config.remember_last_tenant) {
@@ -410,12 +459,6 @@ export const actions: Actions = {
 					);
 				}
 
-				await redirectResolvedCandidate(event, effectiveConfig, result.candidate, {
-					expectedTenantId,
-					returnTo,
-					loginHint: loginHint || (mode === 'email' && value ? value : null)
-				});
-
 				if (effectiveConfig.config.selection_policy === 'always_select') {
 					return {
 						mode,
@@ -426,6 +469,12 @@ export const actions: Actions = {
 						result: 'multiple' as const
 					};
 				}
+
+				await redirectResolvedCandidate(event, effectiveConfig, result.candidate, {
+					expectedTenantId,
+					returnTo,
+					loginHint: loginHint || (mode === 'email' && value ? value : null)
+				});
 
 				throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 			}
@@ -463,10 +512,32 @@ export const actions: Actions = {
 				throw error;
 			}
 
-			return fail(500, {
+			const errorCode =
+				error instanceof Error &&
+				[
+					'invalid_or_expired_code',
+					'rate_limited',
+					'discovery_disabled',
+					'discovery_unavailable'
+				].includes(error.message)
+					? (error.message as DiscoveryErrorCode)
+					: ('resolve_failed' as const);
+			const status =
+				errorCode === 'invalid_or_expired_code'
+					? 400
+					: errorCode === 'rate_limited'
+						? 429
+						: errorCode === 'discovery_disabled'
+							? 403
+							: errorCode === 'discovery_unavailable'
+								? 503
+								: 500;
+			return fail(status, {
 				mode,
 				value,
-				errorCode: 'resolve_failed' as const,
+				loginHint: mode === 'email' ? value : loginHint || '',
+				emailChallengeId: mode === 'email' ? emailChallengeId : undefined,
+				errorCode,
 				candidates: [],
 				result: 'not_found' as const
 			});

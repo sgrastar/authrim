@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-vc",
+  "worker": "ar-vc",
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
+  "bindings": [
+    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
+    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
+    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
+    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
+    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
+    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
+    { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "CREDENTIAL_OFFER_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "VP_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
+    { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
+    { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
+    { "name": "TENANT_DATABASE_HYPERDRIVE", "kind": "hyperdrive", "required": false },
+    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+  ],
+  "secrets": [
+    { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
+    {
+      "name": "VC_TRANSACTION_CODE_HMAC_SECRET",
+      "capability": "vc_transaction_code.verify",
+      "required": true
+    },
+    { "name": "VC_EVIDENCE_HMAC_SECRET", "capability": "vc_evidence.verify", "required": true },
+    {
+      "name": "VC_PROFILE_CONTRACT_HMAC_SECRET",
+      "capability": "vc_profile_contract.verify",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

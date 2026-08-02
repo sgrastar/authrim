@@ -71,6 +71,9 @@ const mocks = vi.hoisted(() => {
     persistRegistrationFieldValuesFromEnv: vi.fn(),
     verifyHumanVerificationForAction: vi.fn(),
     verifyEmailVerificationProtocol: vi.fn(),
+    resolveAccountDataContextByIdentifierFromHono: vi.fn(),
+    resolveAccountDataContextFromHono: vi.fn(),
+    provisionTenantD1EmailAccount: vi.fn(),
     findActiveInvitationByToken: vi.fn(),
     getCookie: vi.fn(),
     warn: vi.fn(),
@@ -111,6 +114,14 @@ vi.mock('../human-verification', () => ({
 vi.mock('../email-verification-protocol', () => ({
   verifyEmailVerificationProtocol: mocks.verifyEmailVerificationProtocol,
 }));
+
+vi.mock('../account-provisioning', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-provisioning')>();
+  return {
+    ...actual,
+    provisionTenantD1EmailAccount: mocks.provisionTenantD1EmailAccount,
+  };
+});
 
 vi.mock('@authrim/ar-lib-core/services/invitation-auth-core', async (importOriginal) => {
   const actual =
@@ -193,6 +204,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getClient: mocks.getClient,
     getWebOriginRegistry: mocks.getWebOriginRegistry,
     resolveTenantFromEmailDomain: mocks.resolveTenantFromEmailDomain,
+    resolveAccountDataContextByIdentifierFromHono:
+      mocks.resolveAccountDataContextByIdentifierFromHono,
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
       repositories: {
@@ -216,6 +230,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         getNotifier: mocks.getNotifier,
       },
     })),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const notifier = mocks.getNotifier('email');
+      if (!notifier) throw new Error('notification_delivery_provider_order_unavailable');
+      const result = await notifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
     publishEvent: mocks.publishEvent,
     getLogger: vi.fn(() => ({
       module: () => ({
@@ -281,10 +305,10 @@ function createContext(
     },
     env: createEnv(),
     get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant_test' : undefined)),
-    json: (payload: unknown, status = 200) =>
+    json: (payload: unknown, status = 200, responseHeaders: Record<string, string> = {}) =>
       new Response(JSON.stringify(payload), {
         status,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...responseHeaders },
       }),
   };
 }
@@ -445,6 +469,13 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     mocks.verifyEmailVerificationProtocol.mockResolvedValue({
       verified: false,
       reason: 'verification_failed',
+    });
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({});
+    mocks.resolveAccountDataContextFromHono.mockResolvedValue({});
+    mocks.provisionTenantD1EmailAccount.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:user_new',
+      userId: 'user_new',
     });
     mocks.findActiveInvitationByToken.mockReset();
     mocks.findActiveInvitationByToken.mockResolvedValue(null);
@@ -722,6 +753,55 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         }),
       })
     );
+  });
+
+  it('returns a retryable 503 when passkey login reaches the placement write fence', async () => {
+    const codeVerifier = 'passkey-login-code-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'passkey-login-challenge',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid profile',
+        transaction_id: 'transaction_1',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    mocks.passkey.updateCounterAfterAuth.mockRejectedValue(
+      new Error('D1_ERROR: tenant_placement_migration_write_fenced private-row')
+    );
+    const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
+
+    const response = await directPasskeyLoginFinishHandler(
+      createContext({
+        challenge_id: 'challenge_1',
+        credential: {
+          id: 'credential-id',
+          rawId: 'credential-id',
+          response: {},
+          type: 'public-key',
+        },
+        code_verifier: codeVerifier,
+        channel: 'browser',
+      }) as never
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(body).toMatchObject({
+      error: 'temporarily_unavailable',
+      extensions: {
+        reason: 'tenant_placement_write_fence',
+        retryable: true,
+        retry_after_ms: 500,
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('private-row');
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
   });
 
   it('marks passkey login credential misses as safe for signalUnknownCredential', async () => {
@@ -1249,6 +1329,63 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('returns 202 without sending an OTP while a tenant-D1 account route is pending', async () => {
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockRejectedValueOnce(
+      new Error('account_data_route_not_found')
+    );
+    mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
+      status: 'pending',
+      response: Response.json(
+        {
+          status: 'provisioning',
+          provisioning_token: 'A'.repeat(43),
+          status_endpoint: '/api/v1/auth/account-provisioning/status',
+          retry_after_ms: 500,
+        },
+        { status: 202 }
+      ),
+    });
+    const context = enableEmailOtp(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'new@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      )
+    );
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(context as never);
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ status: 'provisioning' });
+    expect(mocks.provisionTenantD1EmailAccount).toHaveBeenCalledWith(
+      context,
+      expect.objectContaining({
+        tenantId: 'tenant_test',
+        candidateUserId: 'user_new',
+        flow: 'email_code',
+        email: 'new@example.com',
+        runtimeUser: expect.objectContaining({
+          sourceRef: 'auth:email_code',
+          sensitiveValues: expect.objectContaining({ email: 'new@example.com' }),
+        }),
+      })
+    );
+    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
   it('accepts a valid email verification presentation without sending an OTP', async () => {
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
@@ -1689,6 +1826,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it('does not validate signup registration fields for existing email-code users', async () => {
+    mocks.resolveTenantFromEmailDomain.mockResolvedValue('tenant_other');
     mocks.userPII.findByTenantAndEmail.mockResolvedValue({
       id: 'user_existing',
       email: 'existing@example.com',
@@ -1712,6 +1850,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.resolveTenantFromEmailDomain).not.toHaveBeenCalled();
     expect(mocks.validateRegistrationFieldSubmissionFromEnv).not.toHaveBeenCalled();
   });
 
@@ -1903,6 +2042,33 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(response.status).toBe(500);
     expect(body).not.toHaveProperty('_dev_code');
     expect(body).not.toHaveProperty('code');
+  });
+
+  it('does not return an accepted response when the email provider rejects delivery', async () => {
+    mocks.emailNotifier.send.mockResolvedValueOnce({
+      success: false,
+      error: 'provider secret detail',
+    });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('provider secret detail');
   });
 
   it('rejects email-code send when OTP_HMAC_SECRET is missing', async () => {

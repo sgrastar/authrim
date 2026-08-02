@@ -15,6 +15,8 @@ import {
   buildIssuerUrl,
   getTenantIdFromContext,
   getLogger,
+  getCachedAuthCorePersistenceContextFromEnv,
+  resolveAccountDataContext,
 } from '@authrim/ar-lib-core';
 import {
   getLinkedIdentityById,
@@ -27,6 +29,22 @@ import { getProvider } from '../services/provider-store';
 import { hasPasskeyCredential } from '../services/identity-stitching';
 import { revokeLinkedIdentityTokens } from '../services/token-revocation';
 import type { LinkedIdentityListResponse } from '../types';
+
+async function resolveLinkedIdentityAccountContext(env: Env, tenantId: string, userId: string) {
+  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
+  if (persistence.storageProfileId !== 'builtin:storage:tenant-d1') return undefined;
+  const account = await resolveAccountDataContext(env, {
+    tenantId,
+    accountId: `account:${userId}`,
+  });
+  if (account.legacyUserId !== userId) throw new Error('external_idp_link_account_mismatch');
+  return account;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
 
 /**
  * List linked identities for current user
@@ -41,7 +59,8 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
 
   try {
     const tenantId = getTenantIdFromContext(c);
-    const identities = await listLinkedIdentities(c.env, tenantId, session.userId);
+    const account = await resolveLinkedIdentityAccountContext(c.env, tenantId, session.userId);
+    const identities = await listLinkedIdentities(c.env, tenantId, session.userId, account?.piiDb);
 
     // Enrich with provider names
     const enrichedIdentities = await Promise.all(
@@ -97,6 +116,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
     }
 
     const tenantId = getTenantIdFromContext(c);
+    const account = await resolveLinkedIdentityAccountContext(c.env, tenantId, session.userId);
 
     // Check if provider exists
     const provider = await getProvider(c.env, tenantId, body.provider_id);
@@ -109,7 +129,8 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
       c.env,
       tenantId,
       session.userId,
-      body.provider_id
+      body.provider_id,
+      account?.piiDb
     );
     if (existing) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -147,15 +168,65 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
 
   try {
     const tenantId = getTenantIdFromContext(c);
+    const account = await resolveLinkedIdentityAccountContext(c.env, tenantId, session.userId);
+    const removalDigest = account
+      ? await sha256Hex(`${tenantId}\u0000${account.accountId}\u0000${linkedIdentityId}`)
+      : undefined;
+    const removalOperationId = removalDigest
+      ? `external-idp-route-remove-${removalDigest.slice(0, 32)}`
+      : undefined;
     // Verify ownership
-    const identity = await getLinkedIdentityById(c.env, tenantId, linkedIdentityId);
+    const identity = await getLinkedIdentityById(c.env, tenantId, linkedIdentityId, account?.piiDb);
+    if (!identity && account && removalOperationId) {
+      const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+      if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+      try {
+        const removal = await provisioner.getExternalIdpRouteRemovalStatus({
+          schemaVersion: 1,
+          tenantId,
+          accountId: account.accountId,
+          userId: session.userId,
+          operationId: removalOperationId,
+        });
+        if (
+          removal.operationId !== removalOperationId ||
+          removal.accountId !== account.accountId ||
+          (removal.status !== 201 && removal.status !== 202)
+        ) {
+          throw new Error('external_idp_route_removal_response_invalid');
+        }
+        return c.json({
+          success: true,
+          cleanup_pending: removal.status === 202,
+          operation_id: removalOperationId,
+          token_revocation: {
+            attempted: false,
+            access_token_revoked: false,
+            refresh_token_revoked: false,
+          },
+        });
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'external_idp_route_removal_status_not_found'
+        ) {
+          return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+        }
+        throw error;
+      }
+    }
     if (!identity || identity.userId !== session.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Check if this is the only authentication method
-    const linkedCount = await countLinkedIdentities(c.env, tenantId, session.userId);
-    const hasPasskey = await hasPasskeyCredential(c.env, tenantId, session.userId);
+    const linkedCount = await countLinkedIdentities(
+      c.env,
+      tenantId,
+      session.userId,
+      account?.piiDb
+    );
+    const hasPasskey = await hasPasskeyCredential(c.env, tenantId, session.userId, account);
 
     if (linkedCount === 1 && !hasPasskey) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
@@ -166,17 +237,47 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
     const revocationResult = await revokeLinkedIdentityTokens(c.env, identity);
     if (!revocationResult.success && revocationResult.errors.length > 0) {
       log.warn('Token revocation failed for identity', {
-        linkedIdentityId,
-        errors: revocationResult.errors,
+        errorCount: revocationResult.errors.length,
       });
     }
 
-    // Delete linked identity (always proceed even if revocation failed)
-    await deleteLinkedIdentity(c.env, tenantId, linkedIdentityId);
+    let cleanupPending = false;
+    let cleanupOperationId: string | undefined;
+    if (account) {
+      const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+      if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+      if (!removalDigest || !removalOperationId) {
+        throw new Error('external_idp_route_removal_operation_invalid');
+      }
+      cleanupOperationId = removalOperationId;
+      const removal = await provisioner.removeExternalIdpRoute({
+        schemaVersion: 1,
+        operationId: cleanupOperationId,
+        idempotencyKey: `auth-external-idp-route-remove:${removalDigest}`,
+        tenantId,
+        accountId: account.accountId,
+        userId: session.userId,
+        linkedIdentityId,
+        providerId: identity.providerId,
+        providerUserId: identity.providerUserId,
+      });
+      if (
+        removal.operationId !== cleanupOperationId ||
+        removal.accountId !== account.accountId ||
+        (removal.status !== 201 && removal.status !== 202)
+      ) {
+        throw new Error('external_idp_route_removal_response_invalid');
+      }
+      cleanupPending = removal.status === 202;
+    } else {
+      await deleteLinkedIdentity(c.env, tenantId, linkedIdentityId);
+    }
 
     // Include revocation status in response for transparency
     return c.json({
       success: true,
+      cleanup_pending: cleanupPending,
+      operation_id: cleanupOperationId,
       token_revocation: {
         attempted: true,
         access_token_revoked: revocationResult.accessTokenRevoked,

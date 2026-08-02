@@ -10,6 +10,7 @@ import {
   signTenantRuntimeRegistrySnapshot,
   verifyTenantRuntimeRegistrySnapshotSignature,
   type Env,
+  type AccountDataContext,
   type TenantRuntimeRegistrySnapshot,
 } from '@authrim/ar-lib-core';
 
@@ -47,17 +48,23 @@ async function generateEd25519Jwks(kid = 'runtime-registry-key-1') {
   const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey;
   privateJwk.kid = kid;
   publicJwk.kid = kid;
+  privateJwk.alg = 'EdDSA';
+  privateJwk.use = 'sig';
+  publicJwk.alg = 'EdDSA';
+  publicJwk.use = 'sig';
   return { privateJwk, publicJwk };
 }
 
 async function createSnapshot(privateJwk: JsonWebKey): Promise<TenantRuntimeRegistrySnapshot> {
   const now = new Date('2026-05-16T00:00:00.000Z');
   const snapshot: TenantRuntimeRegistrySnapshot = {
-    version: 1,
+    version: 2,
     tenantId: 'acme',
     snapshotScope: 'tenant',
     deploymentTarget: 'primary',
     runtimeGeneration: 7,
+    routeStatus: 'active',
+    quarantineDenyGeneration: 0,
     storageProfileId: 'builtin:storage:tenant-d1',
     publishedAt: now.toISOString(),
     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
@@ -141,7 +148,7 @@ describe('tenant-d1 runtime smoke', () => {
         if (key === generationKey) {
           return JSON.stringify({ runtimeGeneration: snapshot.runtimeGeneration });
         }
-        if (key === 'v1:tenant-exists:acme') return null;
+        if (key === 'v1:tenant-exists:acme') return 'true';
         return null;
       }),
       put: vi.fn(),
@@ -165,6 +172,38 @@ describe('tenant-d1 runtime smoke', () => {
     app.use('*', requestContextMiddleware());
     app.get('/userinfo', async (c) => {
       const authCtx = createAuthContextFromHono(c);
+      c.set('accountDataContext', {
+        tenantId: 'acme',
+        accountId: 'account:account-a',
+        legacyUserId: 'account-a',
+        storageProfileId: 'builtin:storage:tenant-d1',
+        membership: {
+          tenantId: 'acme',
+          accountId: 'account:account-a',
+          routeProjection: {
+            schemaVersion: 1,
+            accountRouteGeneration: 7,
+            residencyPolicyId: 'default',
+            targets: [],
+          },
+          accountRouteGeneration: 7,
+          hmacKeyGeneration: 1,
+          normalizationVersion: 1,
+        },
+        coreDb: coreBinding,
+        piiDb: piiBinding,
+        coreBindingRef: 'TDB_ACME_CORE',
+        piiBindingRef: 'TDB_ACME_PII',
+        coreResidencyPartition: 'default',
+        piiResidencyPartition: 'default',
+        accountRouteGeneration: 7,
+        userCacheScope: {
+          storageProfileId: 'builtin:storage:tenant-d1',
+          sourceGeneration: 'core:7:pii:7',
+          schemaVersion: 'core:87:pii:87',
+        },
+        piiCacheMode: 'no_cross_request_pii',
+      } satisfies AccountDataContext);
       const piiCtx = createPIIContextFromHono(c);
       await authCtx.coreAdapter.query('SELECT 1 AS core_binding');
       await piiCtx.defaultPiiAdapter.query('SELECT 1 AS pii_binding');

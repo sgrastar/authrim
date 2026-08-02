@@ -12,6 +12,9 @@ export type CloudflareControlOperation =
   | 'workers.deployment.create'
   | 'workers.deployment.list'
   | 'workers.script.delete'
+  | 'workers.script.list'
+  | 'workers.subdomain.get'
+  | 'workers.script.subdomain.get'
   | 'workers.settings.get'
   | 'workers.settings.patch'
   | 'workers.version.list'
@@ -62,6 +65,9 @@ const TOKEN_KIND_BY_OPERATION: Readonly<
   'workers.deployment.create': 'workers',
   'workers.deployment.list': 'workers',
   'workers.script.delete': 'workers',
+  'workers.script.list': 'workers',
+  'workers.subdomain.get': 'workers',
+  'workers.script.subdomain.get': 'workers',
   'workers.settings.get': 'workers',
   'workers.settings.patch': 'workers',
   'workers.version.list': 'workers',
@@ -121,6 +127,35 @@ function comparableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function canonicalWorkerSettingsValue(value: unknown, parentKey?: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalWorkerSettingsValue(entry));
+  }
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.keys(record)
+      .filter((key) => !(parentKey === 'annotations' && key === 'workers/triggered_by'))
+      .sort()
+      .map((key) => [key, canonicalWorkerSettingsValue(record[key], key)])
+  );
+}
+
+/**
+ * Produces a secret-free, stable fingerprint of the complete settings response used by the
+ * bootstrap handoff. Only the digest is persisted; settings and secret binding bodies are not.
+ */
+export async function digestCloudflareWorkerSettings(
+  settings: CloudflareWorkerSettings
+): Promise<string> {
+  const canonical = JSON.stringify(canonicalWorkerSettingsValue(settings));
+  if (new TextEncoder().encode(canonical).byteLength > MAX_WORKER_SETTINGS_BYTES) {
+    throw new Error('worker_settings_payload_too_large');
+  }
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 function isSensitiveEvidenceKey(key: string): boolean {
   const normalized = key
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
@@ -148,6 +183,19 @@ function sanitizeAnnotations(value: unknown): unknown {
   return annotations;
 }
 
+function writablePreservedSetting(field: string, value: unknown): unknown {
+  const sanitized = field === 'annotations' ? sanitizeAnnotations(value) : value;
+  if (
+    sanitized &&
+    typeof sanitized === 'object' &&
+    !Array.isArray(sanitized) &&
+    Object.keys(sanitized as Record<string, unknown>).length === 0
+  ) {
+    return undefined;
+  }
+  return sanitized;
+}
+
 function assertBindings(value: unknown): CloudflareWorkerBinding[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -170,7 +218,23 @@ function assertBindings(value: unknown): CloudflareWorkerBinding[] {
       throw new Error(`worker_settings_binding_duplicate:${name}`);
     }
     seen.add(name);
-    return { ...record, name, type: record.type.trim() } as CloudflareWorkerBinding;
+    const type = record.type.trim();
+    if (
+      type === 'd1' &&
+      !(
+        (typeof record.database_id === 'string' && record.database_id.trim()) ||
+        (typeof record.id === 'string' && record.id.trim())
+      )
+    ) {
+      throw new Error(`worker_settings_binding_${index}_d1_database_id_required`);
+    }
+    if (
+      type === 'inherit' &&
+      (typeof record.version_id !== 'string' || !record.version_id.trim())
+    ) {
+      throw new Error(`worker_settings_binding_${index}_inherit_version_id_required`);
+    }
+    return { ...record, name, type } as CloudflareWorkerBinding;
   });
 }
 
@@ -211,6 +275,31 @@ export function buildVersionPinnedInheritBindings(input: {
     }));
 }
 
+export function buildLatestWorkerSettingsInheritBindings(input: {
+  currentBindings: unknown;
+  expectedSourceVersionId: string;
+  replaceNames?: Iterable<string>;
+}): CloudflareWorkerInheritBinding[] {
+  const expectedSourceVersionId = assertNonEmpty(
+    input.expectedSourceVersionId,
+    'expected_source_version_id'
+  );
+  if (expectedSourceVersionId === 'latest') {
+    throw new Error('expected_source_version_id_must_be_immutable');
+  }
+  const replaced = new Set(input.replaceNames ?? []);
+  return assertBindings(input.currentBindings)
+    .filter((binding) => !replaced.has(binding.name))
+    .map((binding) => ({
+      name: binding.name,
+      type: 'inherit',
+      // Cloudflare rejected immutable version IDs for settings inheritance in the live provider
+      // matrix. The caller fences the immutable expected source before this PATCH and verifies the
+      // resulting deployment and reflected settings afterward.
+      version_id: 'latest',
+    }));
+}
+
 export function buildPreservingWorkerSettingsPatch(input: {
   currentSettings: CloudflareWorkerSettings;
   sourceVersionId: string;
@@ -218,9 +307,9 @@ export function buildPreservingWorkerSettingsPatch(input: {
 }): CloudflareWorkerSettings {
   const desiredBindings = assertBindings(input.desiredBindings);
   const desiredNames = new Set(desiredBindings.map((binding) => binding.name));
-  const inheritedBindings = buildVersionPinnedInheritBindings({
+  const inheritedBindings = buildLatestWorkerSettingsInheritBindings({
     currentBindings: input.currentSettings.bindings,
-    sourceVersionId: input.sourceVersionId,
+    expectedSourceVersionId: input.sourceVersionId,
     replaceNames: desiredNames,
   });
   const settings: CloudflareWorkerSettings = {
@@ -230,9 +319,107 @@ export function buildPreservingWorkerSettingsPatch(input: {
   for (const field of WORKER_SETTINGS_PRESERVED_FIELDS) {
     const value = input.currentSettings[field];
     if (value === undefined) continue;
-    settings[field] = cloneJsonValue(field === 'annotations' ? sanitizeAnnotations(value) : value);
+    const writable = writablePreservedSetting(field, value);
+    if (writable !== undefined) settings[field] = cloneJsonValue(writable);
   }
   return settings;
+}
+
+export function buildRemovingWorkerBindingSettingsPatch(input: {
+  currentSettings: CloudflareWorkerSettings;
+  sourceVersionId: string;
+  bindingName: string;
+}): CloudflareWorkerSettings {
+  return buildRemovingWorkerBindingsSettingsPatch({
+    currentSettings: input.currentSettings,
+    sourceVersionId: input.sourceVersionId,
+    bindingNames: [input.bindingName],
+  });
+}
+
+export function buildRemovingWorkerBindingsSettingsPatch(input: {
+  currentSettings: CloudflareWorkerSettings;
+  sourceVersionId: string;
+  bindingNames: readonly string[];
+}): CloudflareWorkerSettings {
+  const currentBindings = assertBindings(input.currentSettings.bindings);
+  const names = new Set(input.bindingNames);
+  if (names.size === 0 || names.size !== input.bindingNames.length) {
+    throw new Error('worker_settings_bindings_to_remove_invalid');
+  }
+  for (const name of names) {
+    const matching = currentBindings.filter((binding) => binding.name === name);
+    if (matching.length !== 1) {
+      throw new Error(
+        matching.length === 0
+          ? 'worker_settings_binding_to_remove_missing'
+          : 'worker_settings_binding_to_remove_ambiguous'
+      );
+    }
+  }
+  const inheritedBindings = buildLatestWorkerSettingsInheritBindings({
+    currentBindings,
+    expectedSourceVersionId: input.sourceVersionId,
+    replaceNames: names,
+  });
+  const settings: CloudflareWorkerSettings = { bindings: inheritedBindings };
+  for (const field of WORKER_SETTINGS_PRESERVED_FIELDS) {
+    const value = input.currentSettings[field];
+    if (value === undefined) continue;
+    const writable = writablePreservedSetting(field, value);
+    if (writable !== undefined) settings[field] = cloneJsonValue(writable);
+  }
+  return settings;
+}
+
+export function verifyWorkerSettingsBindingRemoved(input: {
+  before: CloudflareWorkerSettings;
+  after: CloudflareWorkerSettings;
+  bindingName: string;
+}): WorkerSettingsPreservationIssue[] {
+  return verifyWorkerSettingsBindingsRemoved({
+    before: input.before,
+    after: input.after,
+    bindingNames: [input.bindingName],
+  });
+}
+
+export function verifyWorkerSettingsBindingsRemoved(input: {
+  before: CloudflareWorkerSettings;
+  after: CloudflareWorkerSettings;
+  bindingNames: readonly string[];
+}): WorkerSettingsPreservationIssue[] {
+  const beforeBindings = assertBindings(input.before.bindings);
+  const names = new Set(input.bindingNames);
+  if (names.size === 0 || names.size !== input.bindingNames.length) {
+    throw new Error('worker_settings_bindings_to_remove_invalid');
+  }
+  for (const name of names) {
+    const matching = beforeBindings.filter((binding) => binding.name === name);
+    if (matching.length !== 1) {
+      throw new Error(
+        matching.length === 0
+          ? 'worker_settings_binding_to_remove_missing'
+          : 'worker_settings_binding_to_remove_ambiguous'
+      );
+    }
+  }
+  const afterBindings = assertBindings(input.after.bindings);
+  const withoutRemoved: CloudflareWorkerSettings = {
+    ...input.before,
+    bindings: beforeBindings.filter((binding) => !names.has(binding.name)),
+  };
+  const issues = verifyWorkerSettingsPreserved({
+    before: withoutRemoved,
+    after: input.after,
+    desiredBindings: [],
+  });
+  for (const name of names) {
+    if (afterBindings.some((binding) => binding.name === name)) {
+      issues.push({ field: `bindings.${name}`, reason: 'unexpected' });
+    }
+  }
+  return issues;
 }
 
 export function createWorkerSettingsFormData(settings: CloudflareWorkerSettings): FormData {
@@ -288,6 +475,63 @@ export function verifyWorkerSettingsPreserved(input: {
     }
     const actual =
       field === 'annotations' ? sanitizeAnnotations(input.after[field]) : input.after[field];
+    if (comparableJson(expected) !== comparableJson(actual)) {
+      issues.push({ field, reason: 'changed' });
+    }
+  }
+  return issues;
+}
+
+export function verifyWorkerSettingsRestoreIntent(input: {
+  restoreSettings: CloudflareWorkerSettings;
+  after: CloudflareWorkerSettings;
+  desiredBindings: CloudflareWorkerBinding[];
+}): WorkerSettingsPreservationIssue[] {
+  const issues: WorkerSettingsPreservationIssue[] = [];
+  const restoreBindings = assertBindings(input.restoreSettings.bindings);
+  const desiredBindings = assertBindings(input.desiredBindings);
+  const afterBindings = assertBindings(input.after.bindings);
+  const expectedNames = new Set<string>();
+  for (const binding of restoreBindings) {
+    if (binding.type !== 'inherit') {
+      throw new Error(`worker_settings_restore_binding_must_inherit:${binding.name}`);
+    }
+    expectedNames.add(binding.name);
+  }
+  const desiredByName = new Map(desiredBindings.map((binding) => [binding.name, binding]));
+  for (const name of desiredByName.keys()) expectedNames.add(name);
+  const afterByName = new Map(afterBindings.map((binding) => [binding.name, binding]));
+  for (const name of expectedNames) {
+    const actual = afterByName.get(name);
+    if (!actual) {
+      issues.push({ field: `bindings.${name}`, reason: 'missing' });
+      continue;
+    }
+    const desired = desiredByName.get(name);
+    if (desired) {
+      const changedField = findChangedBindingField(desired, actual);
+      if (changedField) {
+        issues.push({ field: `bindings.${name}.${changedField}`, reason: 'changed' });
+      }
+    }
+  }
+  for (const actual of afterBindings) {
+    if (!expectedNames.has(actual.name)) {
+      issues.push({ field: `bindings.${actual.name}`, reason: 'unexpected' });
+    }
+  }
+  for (const field of WORKER_SETTINGS_PRESERVED_FIELDS) {
+    const expected =
+      field === 'annotations'
+        ? sanitizeAnnotations(input.restoreSettings[field])
+        : input.restoreSettings[field];
+    if (expected === undefined) continue;
+    const actual =
+      field === 'annotations' ? sanitizeAnnotations(input.after[field]) : input.after[field];
+    if (actual === undefined) {
+      issues.push({ field, reason: 'missing' });
+      continue;
+    }
     if (comparableJson(expected) !== comparableJson(actual)) {
       issues.push({ field, reason: 'changed' });
     }

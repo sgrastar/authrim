@@ -70,8 +70,8 @@ pnpm exec tsx test/environment-validation/validate-generated-env.ts --env single
 
 Add `--live-cloudflare` when you want read-only checks against the currently authenticated
 Cloudflare account. It verifies that D1 databases and R2 buckets recorded in `lock.json` still
-exist, and for `builtin:storage:tenant-d1` environments it also checks `DB_ADMIN`
-`tenant_database_slots` count against `tenantD1.preallocatedSlots`.
+exist. For `builtin:storage:tenant-d1` environments, generated lock validation also requires the
+initial Lookup/default/users/PII bindings and an accepted Control bootstrap handoff.
 
 ## Public API smoke
 

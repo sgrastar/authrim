@@ -24,14 +24,14 @@ describe('topology update journal', () => {
   it('authorizes only the prepared kind, product, config, and token', () => {
     const config = createDefaultConfig('prod');
     const prepared = prepareTopologyUpdate(deployedLock(), {
-      kind: 'tenant_d1_pool',
+      kind: 'r2',
       targetProductVersion: '0.4.0',
       config,
     });
 
     expect(() =>
       assertPendingTopologyUpdate(prepared.lock, {
-        kind: 'tenant_d1_pool',
+        kind: 'r2',
         targetProductVersion: '0.4.0',
         config,
         authorizationToken: prepared.authorizationToken,
@@ -39,7 +39,7 @@ describe('topology update journal', () => {
     ).not.toThrow();
     expect(() =>
       assertPendingTopologyUpdate(prepared.lock, {
-        kind: 'r2',
+        kind: 'external_database',
         targetProductVersion: '0.4.0',
         config,
       })
@@ -137,11 +137,6 @@ describe('topology update journal', () => {
 
   it('provides argument-free retry instructions where the journal already has the target', () => {
     const config = createDefaultConfig('prod');
-    const pool = prepareTopologyUpdate(deployedLock(), {
-      kind: 'tenant_d1_pool',
-      targetProductVersion: '0.4.0',
-      config,
-    });
     const external = prepareTopologyUpdate(deployedLock(), {
       kind: 'external_database',
       targetProductVersion: '0.4.0',
@@ -155,9 +150,6 @@ describe('topology update journal', () => {
       config,
     });
 
-    expect(topologyUpdateResumeInstruction(pool.lock.topologyUpdate!, 'prod')).toBe(
-      "npx @authrim/setup tenant-db-pool-expand --env 'prod'"
-    );
     expect(topologyUpdateResumeInstruction(external.lock.topologyUpdate!, 'prod')).toBe(
       "npx @authrim/setup external-db-register --env 'prod'"
     );

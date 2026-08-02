@@ -6,6 +6,18 @@ import { describe, it, expect } from 'vitest';
 import { AuthrimConfigSchema, createDefaultConfig, parseConfig } from '../core/config.js';
 
 describe('AuthrimConfigSchema', () => {
+  it('keeps paid Dynamic Worker plugin execution disabled by default', () => {
+    expect(createDefaultConfig('test').features.pluginDynamicWorkers).toEqual({ enabled: false });
+  });
+
+  it('rejects Dynamic Worker plugins when R2 bundle storage is disabled', () => {
+    const config = createDefaultConfig('test');
+    config.features.r2.enabled = false;
+    config.features.pluginDynamicWorkers.enabled = true;
+
+    expect(() => parseConfig(config)).toThrow('Dynamic Worker plugins require R2 bundle storage');
+  });
+
   it('should validate a minimal config', () => {
     const config = {
       version: '1.0.0',
@@ -187,7 +199,7 @@ describe('createDefaultConfig', () => {
     expect(config.components.saml).toBe(true);
     expect(config.components.async).toBe(true);
     expect(config.components.vc).toBe(true);
-    expect(config.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
+    expect(config.profiles.defaults.storage).toBe('builtin:storage:tenant-d1');
     expect(config.profiles.registry.backend).toBe('kv');
   });
 
@@ -301,7 +313,7 @@ describe('parseConfig', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should default tenant D1 preallocated slots to 3', () => {
+  it('should default Automatic provisioning to off', () => {
     const config = parseConfig({
       version: '1.0.0',
       createdAt: new Date().toISOString(),
@@ -315,10 +327,10 @@ describe('parseConfig', () => {
       keys: {},
     });
 
-    expect(config.tenantD1.preallocatedSlots).toBe(3);
+    expect(config.tenantD1).toEqual({ automaticProvisioning: false });
   });
 
-  it('should constrain tenant D1 preallocated slots to 1 through 500', () => {
+  it('should reject removed preallocated-slot configuration', () => {
     const baseConfig = {
       version: '1.0.0',
       createdAt: new Date().toISOString(),
@@ -335,25 +347,7 @@ describe('parseConfig', () => {
     expect(
       AuthrimConfigSchema.safeParse({
         ...baseConfig,
-        tenantD1: { preallocatedSlots: 1 },
-      }).success
-    ).toBe(true);
-    expect(
-      AuthrimConfigSchema.safeParse({
-        ...baseConfig,
-        tenantD1: { preallocatedSlots: 500 },
-      }).success
-    ).toBe(true);
-    expect(
-      AuthrimConfigSchema.safeParse({
-        ...baseConfig,
-        tenantD1: { preallocatedSlots: 0 },
-      }).success
-    ).toBe(false);
-    expect(
-      AuthrimConfigSchema.safeParse({
-        ...baseConfig,
-        tenantD1: { preallocatedSlots: 501 },
+        tenantD1: { preallocatedSlots: 3 },
       }).success
     ).toBe(false);
   });

@@ -90,4 +90,44 @@ describe('buildAdminHeaders', () => {
 		expect(headers).toBeInstanceOf(Headers);
 		expect((headers as Headers).get('Idempotency-Key')).toEqual(expect.any(String));
 	});
+
+	it('replays a write-fenced mutation with the same idempotency key', async () => {
+		vi.useFakeTimers();
+		try {
+			const fetchMock = vi
+				.fn()
+				.mockResolvedValueOnce(
+					new Response(
+						JSON.stringify({
+							error: 'temporarily_unavailable',
+							extensions: {
+								reason: 'tenant_placement_write_fence',
+								retryable: true,
+								retry_after_ms: 250
+							}
+						}),
+						{ status: 503, headers: { 'Content-Type': 'application/json' } }
+					)
+				)
+				.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+			vi.stubGlobal('fetch', fetchMock);
+
+			const pending = adminFetch('/api/admin/example', {
+				method: 'POST',
+				body: JSON.stringify({ mutation: true })
+			});
+			await vi.advanceTimersByTimeAsync(250);
+			await expect(pending).resolves.toMatchObject({ status: 200 });
+
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			const first = fetchMock.mock.calls[0]?.[1] as RequestInit;
+			const second = fetchMock.mock.calls[1]?.[1] as RequestInit;
+			expect(second.body).toBe(first.body);
+			expect((second.headers as Headers).get('Idempotency-Key')).toBe(
+				(first.headers as Headers).get('Idempotency-Key')
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

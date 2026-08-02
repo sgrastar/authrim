@@ -190,7 +190,29 @@ describe('DPoP Utilities', () => {
       const env = {
         DPOP_JTI_STORE: store,
         AUTHRIM_CONFIG: {
-          get: vi.fn(async () => null),
+          get: vi.fn(async (key: string) =>
+            key === 'region_shard_config:tenant-userinfo-no-settings'
+              ? {
+                  version: 2,
+                  currentGeneration: 1,
+                  currentTotalShards: 4,
+                  currentRegions: {
+                    apac: { startShard: 0, endShard: 3, shardCount: 4 },
+                  },
+                  previousGenerations: [],
+                  maxPreviousGenerations: 5,
+                  updatedAt: Date.now(),
+                  residency: {
+                    version: 1,
+                    residencyPolicyId: 'residency-apac',
+                    residencyPartition: 'default',
+                    policyGeneration: 1,
+                    allowedRegions: ['apac'],
+                    jurisdiction: null,
+                  },
+                }
+              : null
+          ),
         },
       };
 

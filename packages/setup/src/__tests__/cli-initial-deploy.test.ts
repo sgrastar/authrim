@@ -7,6 +7,7 @@ import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
 
 const mocks = vi.hoisted(() => ({
   buildApiPackages: vi.fn(),
+  loadDeploySecretsFromKeys: vi.fn(),
   deployAll: vi.fn(),
   deployAllUiWorkers: vi.fn(),
   deployUiWorkerBindingTargets: vi.fn(),
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   checkAuth: vi.fn(),
   getWorkersSubdomain: vi.fn(),
   runMigrationsForEnvironment: vi.fn(),
+  applyReleaseSchemaUpdatePlan: vi.fn(),
   ensureInitialTenantInD1: vi.fn(),
   ensureInitialAdminRolesInD1: vi.fn(),
   ensureSetupMachineAccessInD1: vi.fn(),
@@ -26,7 +28,22 @@ const mocks = vi.hoisted(() => ({
   ensureWildcardDnsForMultiTenant: vi.fn(),
   listD1Databases: vi.fn(),
   listKVNamespaces: vi.fn(),
+  queryD1Rows: vi.fn(),
   saveMasterWranglerConfigs: vi.fn(),
+  compileControlWorkerInventoryFromArtifacts: vi.fn(),
+  registerControlWorkerInventory: vi.fn(),
+  registerInitialControlTopology: vi.fn(),
+  isInitialBootstrapHandoffAccepted: vi.fn(),
+  recordInitialBootstrapWorkerEvidence: vi.fn(),
+  waitForInitialBootstrapHandoff: vi.fn(),
+  initializeControlKeyState: vi.fn(),
+  reconcileLocalControlKeyFiles: vi.fn(),
+  loadControlGeneratedKeyState: vi.fn(),
+  loadControlStagedSigningKeys: vi.fn(),
+  projectControlGeneratedKeyState: vi.fn(),
+  discoverExternalCapabilities: vi.fn(),
+  registerExternalCapabilities: vi.fn(),
+  publishAndActivateMigrationRelease: vi.fn(),
   checkWranglerStatus: vi.fn(),
   syncWranglerConfigs: vi.fn(),
   waitForRouterWorkerReady: vi.fn(),
@@ -34,7 +51,9 @@ const mocks = vi.hoisted(() => ({
   waitForWorkerHttpReady: vi.fn(),
   buildWorkerHttpReadinessTargets: vi.fn(),
   ensureInitialTenantD1Resources: vi.fn(),
+  ensureInitialTenantRegionShardConfig: vi.fn(),
   publishInitialTenantD1RuntimeSnapshot: vi.fn(),
+  ensureInitialNotificationProviderConfiguration: vi.fn(),
   completeInitialSetup: vi.fn(),
   prepareAdminUiBffDeployment: vi.fn(),
   printCliCapabilitySummary: vi.fn(),
@@ -67,6 +86,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     deployAll: mocks.deployAll,
     deployAllUiWorkers: mocks.deployAllUiWorkers,
     deployUiWorkerBindingTargets: mocks.deployUiWorkerBindingTargets,
+    loadDeploySecretsFromKeys: mocks.loadDeploySecretsFromKeys,
     resolveExistingWorkerComponents: mocks.resolveExistingWorkerComponents,
     resolveMissingUiWorkerBindingTargets: mocks.resolveMissingUiWorkerBindingTargets,
   };
@@ -90,6 +110,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     ensureWildcardDnsForMultiTenant: mocks.ensureWildcardDnsForMultiTenant,
     listD1Databases: mocks.listD1Databases,
     listKVNamespaces: mocks.listKVNamespaces,
+    queryD1Rows: mocks.queryD1Rows,
   };
 });
 
@@ -100,6 +121,50 @@ vi.mock('../core/wrangler-sync.js', async (importOriginal) => {
     saveMasterWranglerConfigs: mocks.saveMasterWranglerConfigs,
     checkWranglerStatus: mocks.checkWranglerStatus,
     syncWranglerConfigs: mocks.syncWranglerConfigs,
+  };
+});
+
+vi.mock('../core/control-worker-inventory.js', () => ({
+  compileControlWorkerInventoryFromArtifacts: mocks.compileControlWorkerInventoryFromArtifacts,
+  registerControlWorkerInventory: mocks.registerControlWorkerInventory,
+}));
+
+vi.mock('../core/control-bootstrap-handoff.js', () => ({
+  registerInitialControlTopology: mocks.registerInitialControlTopology,
+  isInitialBootstrapHandoffAccepted: mocks.isInitialBootstrapHandoffAccepted,
+  recordInitialBootstrapWorkerEvidence: mocks.recordInitialBootstrapWorkerEvidence,
+  waitForInitialBootstrapHandoff: mocks.waitForInitialBootstrapHandoff,
+}));
+
+vi.mock('../core/control-key-state.js', () => ({
+  initializeControlKeyState: mocks.initializeControlKeyState,
+  reconcileLocalControlKeyFiles: mocks.reconcileLocalControlKeyFiles,
+}));
+
+vi.mock('../core/control-generated-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/control-generated-state.js')>();
+  return {
+    ...actual,
+    loadControlGeneratedKeyState: mocks.loadControlGeneratedKeyState,
+    loadControlStagedSigningKeys: mocks.loadControlStagedSigningKeys,
+    projectControlGeneratedKeyState: mocks.projectControlGeneratedKeyState,
+  };
+});
+
+vi.mock('../core/external-capability-registration.js', () => ({
+  discoverExternalCapabilities: mocks.discoverExternalCapabilities,
+  registerExternalCapabilities: mocks.registerExternalCapabilities,
+}));
+
+vi.mock('../core/migration-release-publication.js', () => ({
+  publishAndActivateMigrationRelease: mocks.publishAndActivateMigrationRelease,
+}));
+
+vi.mock('../core/release-update.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/release-update.js')>();
+  return {
+    ...actual,
+    applyReleaseSchemaUpdatePlan: mocks.applyReleaseSchemaUpdatePlan,
   };
 });
 
@@ -119,9 +184,15 @@ vi.mock('../core/tenant-d1-bootstrap.js', async (importOriginal) => {
   return {
     ...actual,
     ensureInitialTenantD1Resources: mocks.ensureInitialTenantD1Resources,
+    ensureInitialTenantRegionShardConfig: mocks.ensureInitialTenantRegionShardConfig,
     publishInitialTenantD1RuntimeSnapshot: mocks.publishInitialTenantD1RuntimeSnapshot,
   };
 });
+
+vi.mock('../core/notification-provider-bootstrap.js', () => ({
+  ensureInitialNotificationProviderConfiguration:
+    mocks.ensureInitialNotificationProviderConfiguration,
+}));
 
 vi.mock('../core/admin.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/admin.js')>();
@@ -136,15 +207,16 @@ vi.mock('../cli/capability-summary.js', () => ({
   printCliCapabilitySummary: mocks.printCliCapabilitySummary,
 }));
 
-import { deployCommand } from '../cli/commands/deploy.js';
+import { buildInitialHandoffResumeSummary, deployCommand } from '../cli/commands/deploy.js';
 
 const originalCwd = process.cwd();
 let root: string;
 
-async function writeHeadlessEnvironment(env: string): Promise<void> {
+async function writeHeadlessEnvironment(env: string, automaticProvisioning = false): Promise<void> {
   const config = createDefaultConfig(env);
   config.components.loginUi = false;
   config.components.adminUi = false;
+  config.tenantD1 = { automaticProvisioning };
 
   await mkdir(join(root, '.authrim', env), { recursive: true });
   await mkdir(join(root, 'packages', 'ar-auth'), { recursive: true });
@@ -168,6 +240,12 @@ async function writeHeadlessEnvironment(env: string): Promise<void> {
           DB: { id: 'core-id', name: `${env}-authrim-core-db` },
           DB_PII: { id: 'pii-id', name: `${env}-authrim-pii-db` },
           DB_ADMIN: { id: 'admin-id', name: `${env}-authrim-admin-db` },
+          CONTROL_DB: { id: 'control-id', name: `${env}-authrim-control-db` },
+          LOOKUP_DB: { id: 'lookup-id', name: `${env}-authrim-lookup-db` },
+          PLUGIN_RUNNER_DB: {
+            id: 'plugin-runner-id',
+            name: `${env}-authrim-plugin-runner-db`,
+          },
         },
         kv: Object.fromEntries(
           [
@@ -186,7 +264,9 @@ async function writeHeadlessEnvironment(env: string): Promise<void> {
           ])
         ),
         queues: {},
-        r2: {},
+        r2: {
+          MIGRATION_RELEASES: { name: `${env}-migration-releases` },
+        },
         workers: {},
       },
       null,
@@ -203,12 +283,43 @@ async function writeHeadlessEnvironment(env: string): Promise<void> {
           { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
           { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
           { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+          { id: 'd1-control', dialect: 'sqlite', logicalRoles: ['control'], files: [] },
+          { id: 'd1-lookup', dialect: 'sqlite', logicalRoles: ['lookup'], files: [] },
+          {
+            id: 'd1-plugin-runner',
+            dialect: 'sqlite',
+            logicalRoles: ['plugin_runner'],
+            files: [],
+          },
         ],
       },
       null,
       2
     )}\n`
   );
+}
+
+function successfulDeploymentSummary(
+  env: string,
+  components: readonly (typeof CORE_WORKER_COMPONENTS)[number][] = CORE_WORKER_COMPONENTS
+) {
+  const results = components.map((component, index) => ({
+    component,
+    workerName: `${env}-${component}`,
+    version: '0.2.0',
+    cloudflareVersionId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    deployedAt: '2026-07-22T01:00:00.000Z',
+    success: true,
+  }));
+  return {
+    totalComponents: results.length,
+    successCount: results.length,
+    failedCount: 0,
+    results,
+    startedAt: '2026-07-22T01:00:00.000Z',
+    completedAt: '2026-07-22T01:00:00.000Z',
+    duration: 0,
+  };
 }
 
 describe('CLI initial deployment', () => {
@@ -218,12 +329,45 @@ describe('CLI initial deployment', () => {
     vi.clearAllMocks();
 
     mocks.isWranglerInstalled.mockResolvedValue(true);
-    mocks.checkAuth.mockResolvedValue({ isLoggedIn: true, email: 'test@example.com' });
+    mocks.checkAuth.mockResolvedValue({
+      isLoggedIn: true,
+      email: 'test@example.com',
+      accountId: '0123456789abcdef0123456789abcdef',
+    });
     mocks.getWorkersSubdomain.mockResolvedValue('example-subdomain');
+    mocks.loadDeploySecretsFromKeys.mockResolvedValue({
+      RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+      TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-v1',
+      SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+      CLOUDFLARE_D1_API_TOKEN: 'd1-token',
+      CLOUDFLARE_WORKERS_API_TOKEN: 'workers-token',
+    });
+    mocks.deployAll.mockImplementation(async (_options, components) =>
+      successfulDeploymentSummary('headless', components ?? CORE_WORKER_COMPONENTS)
+    );
+    mocks.applyReleaseSchemaUpdatePlan.mockResolvedValue({
+      success: true,
+      results: [
+        'd1:admin-id:d1-admin',
+        'd1:control-id:d1-control',
+        'd1:core-id:d1-core',
+        'd1:lookup-id:d1-lookup',
+        'd1:pii-id:d1-pii',
+        'd1:plugin-runner-id:d1-plugin-runner',
+      ].map((targetId) => ({
+        targetId,
+        success: true,
+        appliedCount: 1,
+        skippedCount: 0,
+      })),
+    });
     mocks.listD1Databases.mockResolvedValue([
       { uuid: 'core-id', name: 'headless-authrim-core-db' },
       { uuid: 'pii-id', name: 'headless-authrim-pii-db' },
       { uuid: 'admin-id', name: 'headless-authrim-admin-db' },
+      { uuid: 'control-id', name: 'headless-authrim-control-db' },
+      { uuid: 'lookup-id', name: 'headless-authrim-lookup-db' },
+      { uuid: 'plugin-runner-id', name: 'headless-authrim-plugin-runner-db' },
     ]);
     mocks.listKVNamespaces.mockResolvedValue(
       [
@@ -241,7 +385,86 @@ describe('CLI initial deployment', () => {
         title: `HEADLESS-${binding}`,
       }))
     );
+    mocks.queryD1Rows.mockResolvedValue([]);
     mocks.saveMasterWranglerConfigs.mockResolvedValue({ success: true, errors: [], files: [] });
+    mocks.compileControlWorkerInventoryFromArtifacts.mockResolvedValue([]);
+    mocks.registerControlWorkerInventory.mockResolvedValue({
+      aggregateDigest: 'a'.repeat(64),
+      operationId: `op_inventory_${'a'.repeat(32)}`,
+      bootstrapSql: '',
+      workerSql: [],
+    });
+    mocks.registerInitialControlTopology.mockResolvedValue({
+      ownershipFingerprint: 'e'.repeat(64),
+      manifestDigest: 'f'.repeat(64),
+    });
+    mocks.ensureInitialTenantRegionShardConfig.mockResolvedValue({
+      created: true,
+      config: {},
+    });
+    mocks.recordInitialBootstrapWorkerEvidence.mockResolvedValue({
+      workerCount: CORE_WORKER_COMPONENTS.length,
+      sourceVersions: CORE_WORKER_COMPONENTS.map((component) => `${component}:0.2.0`),
+    });
+    mocks.isInitialBootstrapHandoffAccepted.mockResolvedValue(false);
+    mocks.waitForInitialBootstrapHandoff.mockResolvedValue({
+      state: 'accepted',
+      acceptedAt: 1,
+    });
+    mocks.initializeControlKeyState.mockResolvedValue({
+      initialized: true,
+      operationId: `op_key_init_${'d'.repeat(32)}`,
+      fingerprints: {
+        runtimeRegistry: 'a'.repeat(64),
+        smokeRpc: 'b'.repeat(64),
+        lookupHmac: 'c'.repeat(64),
+      },
+    });
+    mocks.reconcileLocalControlKeyFiles.mockResolvedValue(undefined);
+    mocks.loadControlGeneratedKeyState.mockResolvedValue({
+      runtimeRegistry: {
+        activeSlot: 'A',
+        activeKeyId: 'registry-v1',
+        activeFingerprint: 'a'.repeat(64),
+        updatedAt: 1,
+      },
+      smokeRpc: {
+        activeSlot: 'A',
+        activeKeyId: 'smoke-v1',
+        activeFingerprint: 'b'.repeat(64),
+        updatedAt: 1,
+      },
+      lookupHmac: {
+        stateRevision: 1,
+        activeGeneration: 1,
+        activeSlot: 'A',
+        activeKeyId: 'lookup-v1',
+        activeFingerprint: 'c'.repeat(64),
+        updatedAt: 1,
+      },
+    });
+    mocks.loadControlStagedSigningKeys.mockResolvedValue([]);
+    mocks.projectControlGeneratedKeyState.mockImplementation((lock, state) => ({
+      lock: { ...lock, controlKeyState: state },
+      changed: true,
+    }));
+    mocks.discoverExternalCapabilities.mockResolvedValue([]);
+    mocks.registerExternalCapabilities.mockResolvedValue({
+      aggregateDigest: 'b'.repeat(64),
+      operationId: `op_external_${'b'.repeat(32)}`,
+      sourceCount: 0,
+      sql: '',
+    });
+    mocks.publishAndActivateMigrationRelease.mockImplementation(async () => ({
+      artifact: {
+        releaseId: '0.2.0',
+        manifestDigest: 'c'.repeat(64),
+        manifestObjectKey: `releases/0.2.0/${'c'.repeat(64)}/manifest.json`,
+        streamIds: ['d1-core', 'd1-pii'],
+        objects: [],
+      },
+      operationId: `op_release_${'c'.repeat(32)}`,
+    }));
     mocks.checkWranglerStatus.mockResolvedValue([]);
     mocks.syncWranglerConfigs.mockResolvedValue({ success: true, errors: [], synced: [] });
     mocks.resolveExistingWorkerComponents.mockResolvedValue([]);
@@ -271,6 +494,10 @@ describe('CLI initial deployment', () => {
       success: true,
       skipped: true,
     });
+    mocks.ensureInitialNotificationProviderConfiguration.mockResolvedValue({
+      providerId: null,
+      namespaces: ['authrim-platform', 'headless'],
+    });
     mocks.completeInitialSetup.mockResolvedValue({ success: true, alreadyCompleted: true });
   });
 
@@ -283,42 +510,80 @@ describe('CLI initial deployment', () => {
     const env = 'headless';
     await writeHeadlessEnvironment(env);
     const events: string[] = [];
-    mocks.runMigrationsForEnvironment.mockImplementation(async () => {
+    mocks.applyReleaseSchemaUpdatePlan.mockImplementation(async () => {
       events.push('schema');
       return {
         success: true,
-        core: { success: true, appliedCount: 0, skippedCount: 0 },
-        pii: { success: true, appliedCount: 0, skippedCount: 0 },
-        admin: { success: true, appliedCount: 0, skippedCount: 0 },
+        results: [
+          'd1:admin-id:d1-admin',
+          'd1:control-id:d1-control',
+          'd1:core-id:d1-core',
+          'd1:lookup-id:d1-lookup',
+          'd1:pii-id:d1-pii',
+          'd1:plugin-runner-id:d1-plugin-runner',
+        ].map((targetId) => ({
+          targetId,
+          success: true,
+          appliedCount: 1,
+          skippedCount: 0,
+        })),
+      };
+    });
+    mocks.registerControlWorkerInventory.mockImplementation(async () => {
+      events.push('inventory');
+      return {
+        aggregateDigest: 'a'.repeat(64),
+        operationId: `op_inventory_${'a'.repeat(32)}`,
+        bootstrapSql: '',
+        workerSql: [],
+      };
+    });
+    mocks.publishAndActivateMigrationRelease.mockImplementation(async () => {
+      events.push('release');
+      return {
+        artifact: {
+          releaseId: '0.2.0',
+          manifestDigest: 'c'.repeat(64),
+          manifestObjectKey: `releases/0.2.0/${'c'.repeat(64)}/manifest.json`,
+          streamIds: ['d1-core', 'd1-pii'],
+          objects: [],
+        },
+        operationId: `op_release_${'c'.repeat(32)}`,
       };
     });
     mocks.deployAll.mockImplementation(async (_options, components) => {
       events.push('workers');
-      const results = (components ?? CORE_WORKER_COMPONENTS).map((component) => ({
-        component,
-        workerName: `${env}-${component}`,
-        version: '0.2.0',
-        deployedAt: '2026-07-22T01:00:00.000Z',
-        success: true,
-      }));
-      return {
-        totalComponents: results.length,
-        successCount: results.length,
-        failedCount: 0,
-        results,
-      };
+      return successfulDeploymentSummary(env, components ?? CORE_WORKER_COMPONENTS);
     });
 
     await deployCommand({
       env,
       source: root,
       skipBuild: true,
-      skipSecrets: true,
       yes: true,
     });
 
-    expect(events).toEqual(['schema', 'workers']);
-    expect(mocks.runMigrationsForEnvironment).toHaveBeenCalledOnce();
+    expect(events).toEqual(['schema', 'release', 'inventory', 'workers']);
+    expect(mocks.applyReleaseSchemaUpdatePlan).toHaveBeenCalledOnce();
+    expect(mocks.applyReleaseSchemaUpdatePlan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plan: expect.objectContaining({
+          automaticTargets: expect.arrayContaining([
+            expect.objectContaining({ target: expect.objectContaining({ binding: 'DB' }) }),
+            expect.objectContaining({ target: expect.objectContaining({ binding: 'DB_PII' }) }),
+            expect.objectContaining({ target: expect.objectContaining({ binding: 'DB_ADMIN' }) }),
+            expect.objectContaining({ target: expect.objectContaining({ binding: 'CONTROL_DB' }) }),
+            expect.objectContaining({ target: expect.objectContaining({ binding: 'LOOKUP_DB' }) }),
+            expect.objectContaining({
+              target: expect.objectContaining({ binding: 'PLUGIN_RUNNER_DB' }),
+            }),
+          ]),
+        }),
+      })
+    );
+    expect(mocks.registerInitialControlTopology).toHaveBeenCalledOnce();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
+    expect(mocks.waitForInitialBootstrapHandoff).toHaveBeenCalledOnce();
     expect(mocks.deployAll).toHaveBeenCalledWith(expect.any(Object), CORE_WORKER_COMPONENTS);
     expect(mocks.resolveMissingUiWorkerBindingTargets).toHaveBeenCalledWith(expect.any(Object), {
       loginUi: false,
@@ -334,5 +599,91 @@ describe('CLI initial deployment', () => {
     expect(lock.releaseUpdate?.phase).toBe('verified');
     expect(lock.workers['ar-login-ui']).toBeUndefined();
     expect(lock.workers['ar-admin-ui']).toBeUndefined();
+  });
+
+  it('deploys without persistent Control tokens when Automatic provisioning is off', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.loadDeploySecretsFromKeys.mockResolvedValue({});
+
+    await deployCommand({
+      env,
+      source: root,
+      skipBuild: true,
+      yes: true,
+    });
+
+    expect(mocks.applyReleaseSchemaUpdatePlan).toHaveBeenCalledOnce();
+    expect(mocks.publishAndActivateMigrationRelease).toHaveBeenCalledOnce();
+    expect(mocks.deployUiWorkerBindingTargets).not.toHaveBeenCalled();
+    expect(mocks.deployAll).toHaveBeenCalledOnce();
+  });
+
+  it('resumes a failed initial handoff without uploading or promoting Worker code again', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
+      new Error('control_bootstrap_handoff_transient')
+    );
+
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'control_bootstrap_handoff_transient'
+    );
+
+    const checkpoint = JSON.parse(
+      await readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')
+    );
+    expect(checkpoint.releaseUpdate.phase).toBe('workers_deployed');
+    expect(checkpoint.workers['ar-control'].cloudflareVersionId).toMatch(/^[a-f0-9-]{36}$/u);
+
+    mocks.deployAll.mockClear();
+    mocks.applyReleaseSchemaUpdatePlan.mockClear();
+    mocks.isInitialBootstrapHandoffAccepted.mockResolvedValue(true);
+    mocks.waitForInitialBootstrapHandoff.mockResolvedValue({ state: 'accepted', acceptedAt: 2 });
+
+    await deployCommand({ env, source: root, skipBuild: true, yes: true });
+
+    expect(mocks.deployAll).not.toHaveBeenCalled();
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.isInitialBootstrapHandoffAccepted).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: env })
+    );
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an incomplete or cross-environment handoff checkpoint', () => {
+    expect(() =>
+      buildInitialHandoffResumeSummary({
+        lock: {
+          version: '1.0.0',
+          env: 'test',
+          createdAt: '2026-07-22T00:00:00.000Z',
+          d1: {},
+          kv: {},
+          workers: {
+            'ar-control': {
+              name: 'other-ar-control',
+              deployedAt: '2026-07-22T01:00:00.000Z',
+              cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+            },
+          },
+        },
+        components: ['ar-control'],
+      })
+    ).toThrow('initial_handoff_resume_worker_evidence_missing:ar-control');
+  });
+
+  it('fails before schema mutation when Automatic provisioning lacks split tokens noninteractively', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env, true);
+    mocks.loadDeploySecretsFromKeys.mockResolvedValue({});
+
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'process.exit unexpectedly called with "1"'
+    );
+
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
+    expect(mocks.deployAll).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,803 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
+import {
+  executeSetupControlOperatorCreate,
+  executeSetupControlOperatorMigration,
+  executeSetupControlOperatorWorkerBindings,
+  setupOperatorControlTokens,
+  type SetupOperatorControlClient,
+  type SetupOperatorD1Client,
+} from '../core/control-operator-executor.js';
+import type {
+  PendingControlOperatorOperation,
+  PendingTenantDisasterRecoveryOperatorOperation,
+} from '../core/control-operator-operations.js';
+import type { ReleaseArtifactStore } from '@authrim/ar-lib-core/control-plane';
+
+describe('setup operator credential scope', () => {
+  it('uses the in-memory Wrangler OAuth credential for every supported resource class', () => {
+    expect(setupOperatorControlTokens(' operator-oauth ')).toEqual({
+      d1: 'operator-oauth',
+      workers: 'operator-oauth',
+      kv: 'operator-oauth',
+      r2: 'operator-oauth',
+    });
+    expect(() => setupOperatorControlTokens('  ')).toThrow('wrangler_oauth_credentials_required');
+  });
+});
+
+function operation(): PendingControlOperatorOperation {
+  return {
+    operationId: 'op_test_1',
+    environmentId: 'test',
+    operationKind: 'provision_shard',
+    status: 'blocked',
+    requestedByType: 'admin',
+    attemptCount: 0,
+    retryBudgetStartedAt: 100,
+    createdAt: 100,
+    updatedAt: 100,
+    currentStep: 'create_d1',
+    scope: 'tenant_exclusive',
+    tenantId: 'tenant-1',
+    dataRole: 'tenant_core/default',
+    residencyPolicyId: 'builtin:residency:default',
+    residencyPartition: 'default',
+    databaseName: 'authrim-test-default-1234',
+    desiredResourceId: 'desired-1',
+    ownershipFingerprint: 'a'.repeat(64),
+    shardId: 'shard-1',
+    bindingRef: 'TDB_DEFAULT_1234_CORE',
+    jurisdiction: null,
+    locationHint: 'apac',
+    readReplicationMode: 'disabled',
+    migration: null,
+  };
+}
+
+function successfulBatch(length: number) {
+  return Array.from({ length }, () => ({ success: true, results: [] }));
+}
+
+function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
+  let batchCall = 0;
+  const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly unknown[]) => {
+    batchCall += 1;
+    if (batchCall === 1) {
+      const results = successfulBatch(batch.length);
+      results[0] = {
+        success: true,
+        results: [
+          {
+            operation_id: 'op_test_1',
+            environment_id: 'test',
+            operation_kind: 'provision_shard',
+            status: 'running',
+            attempt_count: 1,
+            next_attempt_at: null,
+            last_error_code: null,
+            retry_budget_started_at: 100,
+            created_at: 100,
+            updated_at: 200,
+            fencing_token: 1,
+          },
+        ],
+      };
+      results[results.length - 1] = {
+        success: true,
+        results: [
+          {
+            operation_status: 'running',
+            lock_owner: options.staleClaim ? 'setup:stale-owner' : 'setup:execution-1',
+            fencing_token: 1,
+            step_status: 'running',
+            provisioning_state: 'creating',
+            shard_status: 'provisioning',
+          },
+        ],
+      };
+      return results;
+    }
+    if (batchCall === 2) {
+      return [
+        { success: true, results: [] },
+        { success: true, results: [{ operation_id: 'op_test_1' }] },
+      ];
+    }
+    const results = successfulBatch(batch.length);
+    results[results.length - 1] = options.createError
+      ? {
+          success: true,
+          results: [
+            {
+              operation_status: 'blocked',
+              operation_error_code:
+                typeof options.createError === 'object' &&
+                options.createError !== null &&
+                'status' in options.createError &&
+                options.createError.status === 403
+                  ? 'cloudflare_d1_capability_rejected'
+                  : 'operator_action_required',
+              next_attempt_at:
+                typeof options.createError === 'object' &&
+                options.createError !== null &&
+                'status' in options.createError &&
+                options.createError.status === 403
+                  ? null
+                  : (batch[0] as { params?: unknown[] }).params?.[0],
+              lock_owner: null,
+              fencing_token: 1,
+              step_status: 'blocked',
+              step_error_code:
+                typeof options.createError === 'object' &&
+                options.createError !== null &&
+                'status' in options.createError &&
+                options.createError.status === 403
+                  ? 'cloudflare_d1_capability_rejected'
+                  : 'cloudflare_d1_request_failed',
+            },
+          ],
+        }
+      : {
+          success: true,
+          results: [
+            {
+              operation_status: 'blocked',
+              operation_error_code: 'operator_action_required',
+              lock_owner: null,
+              fencing_token: 1,
+              create_status: 'succeeded',
+              migration_status: 'blocked',
+              observed_resource_id: 'observed:desired-1',
+              provider_database_id: 'database-id',
+            },
+          ],
+        };
+    return results;
+  });
+  const api: SetupOperatorD1Client = {
+    queryD1Batch,
+    queryD1: vi.fn(async () => [{ success: true, results: [] }]),
+    listD1Databases: vi.fn(async () => []),
+    createD1Database: vi.fn(async ({ name }) => {
+      if (options.createError) throw options.createError;
+      return { uuid: 'database-id', name, read_replication: { mode: 'disabled' } };
+    }),
+    updateD1Database: vi.fn(async () => {
+      throw new Error('unexpected_update');
+    }),
+    getD1Database: vi.fn(async () => ({
+      uuid: 'database-id',
+      name: 'authrim-test-default-1234',
+      read_replication: { mode: 'disabled' },
+    })),
+  };
+  return { api, queryD1Batch };
+}
+
+describe('setup canonical Control operator executor', () => {
+  it('claims with fencing, reserves capacity, creates D1, and hands the same operation to migration', async () => {
+    const mocked = client();
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: operation(),
+        client: mocked.api,
+        executionId: 'execution-1',
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: 'op_test_1',
+      state: 'awaiting_migration',
+      errorCode: null,
+      nextAttemptAt: null,
+    });
+
+    expect(mocked.queryD1Batch).toHaveBeenCalledTimes(3);
+    const claimBatch = mocked.queryD1Batch.mock.calls[0]?.[1] as Array<{ sql: string }>;
+    expect(claimBatch[0]?.sql).toContain("status = 'blocked'");
+    expect(claimBatch[0]?.sql).toContain('fencing_token = fencing_token + 1');
+    const commitBatch = mocked.queryD1Batch.mock.calls[2]?.[1] as Array<{ sql: string }>;
+    expect(commitBatch.some((statement) => statement.sql.includes('actor_type'))).toBe(true);
+    expect(JSON.stringify(mocked.queryD1Batch.mock.calls)).not.toMatch(/api[_-]?token|secret/iu);
+  });
+
+  it('keeps a transient failure operator-actionable without exposing the provider body', async () => {
+    const providerError = Object.assign(new Error('sensitive provider body'), { status: 429 });
+    const mocked = client({ createError: providerError });
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: operation(),
+        client: mocked.api,
+        executionId: 'execution-1',
+        now: () => 200,
+      })
+    ).resolves.toMatchObject({
+      state: 'retry_required',
+      errorCode: 'cloudflare_d1_request_failed',
+    });
+    const failureBatch = mocked.queryD1Batch.mock.calls[2]?.[1] as Array<{
+      sql: string;
+      params?: unknown[];
+    }>;
+    expect(failureBatch[0]?.params).toContain('operator_action_required');
+    expect(JSON.stringify(failureBatch)).not.toContain('sensitive provider body');
+  });
+
+  it('blocks a permanent credential failure and does not silently use another credential', async () => {
+    const mocked = client({ createError: { status: 403 } });
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: operation(),
+        client: mocked.api,
+        executionId: 'execution-1',
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: 'op_test_1',
+      state: 'blocked',
+      errorCode: 'cloudflare_d1_capability_rejected',
+      nextAttemptAt: null,
+    });
+  });
+
+  it('rejects an operation whose server-owned step is not D1 creation', async () => {
+    const mocked = client();
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: { ...operation(), currentStep: 'apply_migrations' },
+        client: mocked.api,
+      })
+    ).rejects.toThrow('control_operator_create_step_not_pending');
+    expect(mocked.queryD1Batch).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale lease reflection before making a provider mutation', async () => {
+    const mocked = client({ staleClaim: true });
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: operation(),
+        client: mocked.api,
+        executionId: 'execution-1',
+        now: () => 200,
+      })
+    ).rejects.toThrow('control_operator_lease_reflection_mismatch');
+    expect(mocked.api.createD1Database).not.toHaveBeenCalled();
+  });
+
+  it('applies the pinned release and hands the same operation to Worker binding reconciliation', async () => {
+    const sql = 'CREATE TABLE example (id TEXT PRIMARY KEY);';
+    const checksum = createHash('sha256').update(sql).digest('hex');
+    const manifest = `${JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          files: [{ path: '001_example.sql', checksum }],
+        },
+      ],
+    })}\n`;
+    const manifestDigest = createHash('sha256').update(manifest).digest('hex');
+    const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
+    const objects = new Map([
+      [manifestObjectKey, manifest],
+      [`releases/0.4.0/${manifestDigest}/streams/d1-core/001_example.sql`, sql],
+    ]);
+    const artifactStore: ReleaseArtifactStore = {
+      get: async (key) => {
+        const value = objects.get(key);
+        if (value === undefined) return null;
+        const bytes = new TextEncoder().encode(value);
+        return { size: bytes.byteLength, arrayBuffer: async () => bytes.slice().buffer };
+      },
+    };
+    const migratingOperation: PendingControlOperatorOperation = {
+      ...operation(),
+      currentStep: 'apply_migrations',
+      migration: {
+        databaseId: 'database-id',
+        streamId: 'd1-core',
+        releaseId: '0.4.0',
+        manifestDigest,
+        manifestObjectKey,
+        generation: 1,
+      },
+    };
+    let controlBatchCount = 0;
+    const queryD1Batch = vi.fn(async (databaseId: string, batch: readonly { sql: string }[]) => {
+      if (databaseId === 'control-id') {
+        controlBatchCount += 1;
+        if (controlBatchCount === 1) {
+          const results = successfulBatch(batch.length);
+          results[0] = {
+            success: true,
+            results: [
+              {
+                operation_id: 'op_test_1',
+                environment_id: 'test',
+                operation_kind: 'provision_shard',
+                status: 'running',
+                attempt_count: 2,
+                next_attempt_at: null,
+                last_error_code: null,
+                retry_budget_started_at: 100,
+                created_at: 100,
+                updated_at: 200,
+                fencing_token: 2,
+              },
+            ],
+          };
+          results[results.length - 1] = {
+            success: true,
+            results: [
+              {
+                operation_status: 'running',
+                lock_owner: 'setup:execution-2',
+                fencing_token: 2,
+                step_status: 'running',
+                migration_state: 'applying',
+              },
+            ],
+          };
+          return results;
+        }
+        const results = successfulBatch(batch.length);
+        results[results.length - 1] = {
+          success: true,
+          results: [
+            {
+              operation_status: 'blocked',
+              operation_error_code: 'operator_action_required',
+              lock_owner: null,
+              fencing_token: 2,
+              migration_state: 'ready',
+              expected_file_count: 1,
+              applied_file_count: 1,
+              last_filename: '001_example.sql',
+              migration_step_status: 'succeeded',
+              binding_step_status: 'blocked',
+              provisioning_state: 'ready',
+              shard_status: 'ready',
+            },
+          ],
+        };
+        return results;
+      }
+      if (
+        batch.some((statement) => statement.sql.includes('authrim_control_plane_shard_metadata'))
+      ) {
+        return [
+          { success: true, results: [] },
+          {
+            success: true,
+            results: [
+              {
+                binding_ref: migratingOperation.bindingRef,
+                data_role: migratingOperation.dataRole,
+                residency_partition: migratingOperation.residencyPartition,
+                migration_generation: 1,
+                release_id: '0.4.0',
+                manifest_digest: manifestDigest,
+                expected_file_count: 1,
+                last_filename: '001_example.sql',
+              },
+            ],
+          },
+        ];
+      }
+      return successfulBatch(batch.length);
+    });
+    const api: SetupOperatorD1Client = {
+      queryD1Batch,
+      queryD1: vi.fn(async (_databaseId, query) => {
+        if (query.startsWith('SELECT filename')) return [{ success: true, results: [] }];
+        return [
+          {
+            success: true,
+            results: [
+              {
+                stream_id: 'd1-core',
+                release_id: '0.4.0',
+                manifest_digest: manifestDigest,
+                applied_file_count: 1,
+                state: 'ready',
+                last_filename: '001_example.sql',
+              },
+            ],
+          },
+        ];
+      }),
+      listD1Databases: vi.fn(),
+      createD1Database: vi.fn(),
+      updateD1Database: vi.fn(),
+      getD1Database: vi.fn(),
+    };
+
+    await expect(
+      executeSetupControlOperatorMigration({
+        controlDatabaseId: 'control-id',
+        migrationReleaseBucketName: 'test-migration-releases',
+        operation: migratingOperation,
+        client: api,
+        artifactStore,
+        executionId: 'execution-2',
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: 'op_test_1',
+      state: 'awaiting_worker_bindings',
+      errorCode: null,
+      nextAttemptAt: null,
+    });
+    expect(controlBatchCount).toBe(2);
+    const claimBatch = queryD1Batch.mock.calls.find((call) => call[0] === 'control-id')?.[1] as
+      | Array<{ sql: string }>
+      | undefined;
+    expect(claimBatch?.[0]?.sql).toContain(
+      "migration.state IN ('requested', 'applying', 'waiting_retry', 'ready')"
+    );
+    expect(claimBatch?.[0]?.sql).toContain('lock_expires_at <= ?');
+    expect(queryD1Batch.mock.calls.some((call) => call[0] === 'database-id')).toBe(true);
+  });
+
+  it('reconciles a post-commit response loss and hands smoke back to Control', async () => {
+    const digest = 'b'.repeat(64);
+    const bindingOperation: PendingControlOperatorOperation = {
+      ...operation(),
+      currentStep: 'reconcile_worker_bindings',
+      migration: {
+        databaseId: 'database-id',
+        streamId: 'd1-core',
+        releaseId: '0.4.0',
+        manifestDigest: digest,
+        manifestObjectKey: `releases/0.4.0/${digest}/manifest.json`,
+        generation: 1,
+      },
+    };
+    const oldDeployment = {
+      id: 'deployment-old',
+      created_on: '2026-07-30T00:00:00.000Z',
+      source: 'api',
+      strategy: 'percentage' as const,
+      versions: [{ percentage: 100, version_id: 'version-old' }],
+    };
+    const newDeployment = {
+      ...oldDeployment,
+      id: 'deployment-new',
+      created_on: '2026-07-30T00:00:01.000Z',
+      versions: [{ percentage: 100, version_id: 'version-new' }],
+    };
+    const beforeSettings = {
+      bindings: [{ name: 'DB', type: 'd1', database_id: 'shared-db' }],
+      compatibility_date: '2026-07-01',
+    };
+    const afterSettings = {
+      ...beforeSettings,
+      bindings: [
+        ...beforeSettings.bindings,
+        { name: bindingOperation.bindingRef, type: 'd1', database_id: 'database-id' },
+      ],
+    };
+    let patchRecorded = false;
+    const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly { sql: string }[]) => {
+      const firstSql = batch[0]?.sql ?? '';
+      const results = successfulBatch(batch.length);
+      if (firstSql.includes('INSERT OR IGNORE INTO control_worker_binding_reconciliations')) {
+        results[2] = {
+          success: true,
+          results: [
+            {
+              operation_id: bindingOperation.operationId,
+              environment_id: bindingOperation.environmentId,
+              environment_name: 'test',
+              worker_script_name: 'test-ar-auth',
+              shard_id: bindingOperation.shardId,
+              binding_ref: bindingOperation.bindingRef,
+              data_role: bindingOperation.dataRole,
+              residency_partition: bindingOperation.residencyPartition,
+              migration_generation: 1,
+              provider_database_id: 'database-id',
+              state: 'pending',
+              expected_source_version_id: null,
+              previous_deployment_id: null,
+              patch_result_version_id: null,
+              patch_result_deployment_id: null,
+              previous_restore_settings_json: null,
+            },
+          ],
+        };
+        results[3] = {
+          success: true,
+          results: [{ total_count: 1, patched_count: 0 }],
+        };
+      } else if (firstSql.includes('INSERT INTO control_worker_deployment_leases')) {
+        results[1] = {
+          success: true,
+          results: [
+            {
+              environment_id: 'test',
+              worker_script_name: 'test-ar-auth',
+              owner_operation_id: bindingOperation.operationId,
+              fencing_token: 1,
+              expected_source_version_id: 'version-old',
+              mutation_started: 0,
+              previous_deployment_id: null,
+              patch_result_version_id: null,
+              patch_result_deployment_id: null,
+              lease_expires_at: 1100,
+            },
+          ],
+        };
+      } else if (firstSql.includes('SELECT 1 AS valid')) {
+        results[0] = { success: true, results: [{ valid: 1 }] };
+      } else if (
+        firstSql.includes('UPDATE control_operations') &&
+        !batch.some((statement) => statement.sql.includes('patch_result_version_id = ?'))
+      ) {
+        results[4] = {
+          success: true,
+          results: [
+            {
+              operation_status: 'running',
+              step_status: 'running',
+              mutation_started: 1,
+              fencing_token: 1,
+              expected_source_version_id: 'version-old',
+              previous_deployment_id: 'deployment-old',
+            },
+          ],
+        };
+      } else if (
+        firstSql.includes('UPDATE control_operations') &&
+        batch.some((statement) => statement.sql.includes('patch_result_version_id = ?'))
+      ) {
+        patchRecorded = true;
+        throw new Error('control_db_response_lost_after_commit');
+      } else if (firstSql.includes('SELECT state, patch_result_version_id')) {
+        results[0] = {
+          success: true,
+          results: [
+            {
+              state: 'settings_patched',
+              patch_result_version_id: 'version-new',
+              patch_result_deployment_id: 'deployment-new',
+            },
+          ],
+        };
+      }
+      return results;
+    });
+    const api: SetupOperatorControlClient = {
+      queryD1Batch,
+      queryD1: vi.fn(),
+      listD1Databases: vi.fn(),
+      createD1Database: vi.fn(),
+      updateD1Database: vi.fn(),
+      getD1Database: vi.fn(),
+      listWorkerDeployments: vi
+        .fn()
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValueOnce([newDeployment, oldDeployment]),
+      getWorkerSettings: vi
+        .fn()
+        .mockResolvedValueOnce(beforeSettings)
+        .mockResolvedValueOnce(afterSettings),
+      patchWorkerSettings: vi.fn().mockResolvedValue(afterSettings),
+    };
+
+    await expect(
+      executeSetupControlOperatorWorkerBindings({
+        controlDatabaseId: 'control-id',
+        operation: bindingOperation,
+        client: api,
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: bindingOperation.operationId,
+      state: 'awaiting_smoke',
+      errorCode: null,
+      nextAttemptAt: null,
+    });
+    expect(api.patchWorkerSettings).toHaveBeenCalledWith(
+      'test-ar-auth',
+      expect.objectContaining({
+        bindings: [
+          { name: 'DB', type: 'inherit', version_id: 'latest' },
+          { name: bindingOperation.bindingRef, type: 'd1', database_id: 'database-id' },
+        ],
+      })
+    );
+    expect(patchRecorded).toBe(true);
+    expect(JSON.stringify(queryD1Batch.mock.calls)).not.toMatch(/api[_-]?token|secret/iu);
+  });
+
+  it('resumes as awaiting smoke when every Worker target is already patched', async () => {
+    const bindingOperation: PendingControlOperatorOperation = {
+      ...operation(),
+      currentStep: 'reconcile_worker_bindings',
+      migration: {
+        databaseId: 'database-id',
+        streamId: 'd1-core',
+        releaseId: '0.4.0',
+        manifestDigest: 'c'.repeat(64),
+        manifestObjectKey: `releases/0.4.0/${'c'.repeat(64)}/manifest.json`,
+        generation: 1,
+      },
+    };
+    const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly { sql: string }[]) => {
+      const results = successfulBatch(batch.length);
+      results[2] = { success: true, results: [] };
+      results[3] = {
+        success: true,
+        results: [{ total_count: 12, patched_count: 12 }],
+      };
+      return results;
+    });
+    const api: SetupOperatorControlClient = {
+      queryD1Batch,
+      queryD1: vi.fn(),
+      listD1Databases: vi.fn(),
+      createD1Database: vi.fn(),
+      updateD1Database: vi.fn(),
+      getD1Database: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+    };
+
+    await expect(
+      executeSetupControlOperatorWorkerBindings({
+        controlDatabaseId: 'control-id',
+        operation: bindingOperation,
+        client: api,
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: bindingOperation.operationId,
+      state: 'awaiting_smoke',
+      errorCode: null,
+      nextAttemptAt: null,
+    });
+    expect(api.listWorkerDeployments).not.toHaveBeenCalled();
+  });
+
+  it('requires the complete disaster recovery binding target set before awaiting smoke', async () => {
+    const bindingOperation: PendingTenantDisasterRecoveryOperatorOperation = {
+      operationId: 'tenant-dr-1',
+      environmentId: 'test',
+      operationKind: 'tenant_disaster_recovery',
+      status: 'blocked',
+      lastErrorCode: 'operator_action_required',
+      requestedByType: 'admin',
+      attemptCount: 1,
+      retryBudgetStartedAt: 100,
+      createdAt: 100,
+      updatedAt: 200,
+      currentStep: 'reconcile_worker_bindings',
+      tenantId: 'tenant-1',
+      bindingTargets: [
+        {
+          workerScriptName: 'test-ar-auth',
+          shardId: 'core-1',
+          bindingRef: 'TDB_DEFAULT_CORE_1',
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'default',
+          databaseId: 'database-core-1',
+          migrationGeneration: 1,
+        },
+        {
+          workerScriptName: 'test-ar-auth',
+          shardId: 'users-1',
+          bindingRef: 'TDB_USERS_1',
+          dataRole: 'tenant_core/users',
+          residencyPartition: 'default',
+          databaseId: 'database-users-1',
+          migrationGeneration: 1,
+        },
+      ],
+    };
+    const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly { sql: string }[]) => {
+      const results = successfulBatch(batch.length);
+      results[2] = { success: true, results: [] };
+      results[3] = { success: true, results: [{ total_count: 1, patched_count: 1 }] };
+      return results;
+    });
+    const api: SetupOperatorControlClient = {
+      queryD1Batch,
+      queryD1: vi.fn(),
+      listD1Databases: vi.fn(),
+      createD1Database: vi.fn(),
+      updateD1Database: vi.fn(),
+      getD1Database: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+    };
+
+    await expect(
+      executeSetupControlOperatorWorkerBindings({
+        controlDatabaseId: 'control-id',
+        operation: bindingOperation,
+        client: api,
+        now: () => 200,
+      })
+    ).rejects.toThrow('control_operator_worker_binding_target_invalid');
+    expect(api.listWorkerDeployments).not.toHaveBeenCalled();
+  });
+
+  it('hands a completely patched multi-target disaster recovery operation to smoke', async () => {
+    const bindingOperation: PendingTenantDisasterRecoveryOperatorOperation = {
+      operationId: 'tenant-dr-2',
+      environmentId: 'test',
+      operationKind: 'tenant_disaster_recovery',
+      status: 'blocked',
+      lastErrorCode: 'operator_action_required',
+      requestedByType: 'admin',
+      attemptCount: 1,
+      retryBudgetStartedAt: 100,
+      createdAt: 100,
+      updatedAt: 200,
+      currentStep: 'reconcile_worker_bindings',
+      tenantId: 'tenant-1',
+      bindingTargets: [
+        {
+          workerScriptName: 'test-ar-auth',
+          shardId: 'core-1',
+          bindingRef: 'TDB_DEFAULT_CORE_1',
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'default',
+          databaseId: 'database-core-1',
+          migrationGeneration: 1,
+        },
+        {
+          workerScriptName: 'test-ar-auth',
+          shardId: 'users-1',
+          bindingRef: 'TDB_USERS_1',
+          dataRole: 'tenant_core/users',
+          residencyPartition: 'default',
+          databaseId: 'database-users-1',
+          migrationGeneration: 1,
+        },
+      ],
+    };
+    const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly { sql: string }[]) => {
+      const results = successfulBatch(batch.length);
+      results[2] = { success: true, results: [] };
+      results[3] = { success: true, results: [{ total_count: 2, patched_count: 2 }] };
+      return results;
+    });
+    const api: SetupOperatorControlClient = {
+      queryD1Batch,
+      queryD1: vi.fn(),
+      listD1Databases: vi.fn(),
+      createD1Database: vi.fn(),
+      updateD1Database: vi.fn(),
+      getD1Database: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+    };
+
+    await expect(
+      executeSetupControlOperatorWorkerBindings({
+        controlDatabaseId: 'control-id',
+        operation: bindingOperation,
+        client: api,
+        now: () => 200,
+      })
+    ).resolves.toEqual({
+      operationId: 'tenant-dr-2',
+      state: 'awaiting_smoke',
+      errorCode: null,
+      nextAttemptAt: null,
+    });
+    expect(api.listWorkerDeployments).not.toHaveBeenCalled();
+  });
+});

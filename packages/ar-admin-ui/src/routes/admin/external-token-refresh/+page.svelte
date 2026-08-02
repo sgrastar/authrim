@@ -12,10 +12,11 @@
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 
 	let config: ExternalTokenRefreshConfig = $state({
-		enabled: true,
+		enabled: false,
 		refreshThresholdSeconds: 3600,
 		batchSize: 100,
-		scheduledTenantBatchSize: 100
+		scheduledTenantBatchSize: 100,
+		piiShardPageSize: 4
 	});
 	let runs: ExternalTokenRefreshRunSummary[] = $state([]);
 	let loading = $state(true);
@@ -195,6 +196,17 @@
 						min="1"
 						max="100"
 						bind:value={config.scheduledTenantBatchSize}
+						class="admin-input"
+					/>
+				</label>
+
+				<label class="form-field">
+					<span>{$LL.admin_external_token_refresh_pii_shard_page_size()}</span>
+					<input
+						type="number"
+						min="1"
+						max="32"
+						bind:value={config.piiShardPageSize}
 						class="admin-input"
 					/>
 				</label>

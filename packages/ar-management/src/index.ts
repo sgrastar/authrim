@@ -19,6 +19,7 @@ import {
   ensureDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   requireSystemAdmin,
   requireAnyRole,
@@ -46,11 +47,17 @@ import {
   type AdminAuthContext,
   getDefaultTenantId,
 } from '@authrim/ar-lib-core';
-import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
-import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
-import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
+import {
+  isInteractiveAdminJobCron,
+  processInteractiveAdminJobQueues,
+  processScheduledAdminJobQueues,
+} from './scheduled-admin-jobs';
+import {
+  isTenantRuntimeRegistryRefreshCron,
+  refreshTenantRuntimeRegistrySnapshots,
+} from './tenant-runtime-registry-snapshot-jobs';
 import { isTenantScopedAdminPath } from './admin-tenant-access';
 import { authenticateAgentDownscopeBearer } from './agent-downscope-auth';
 import {
@@ -59,6 +66,13 @@ import {
 } from './agent-elevation-recovery';
 import { processScheduledAgentTokenRevocations } from './agent-token-revocation';
 import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
+import { processControlPlaneDriftNotifications } from './control-plane-drift-notifications';
+import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
+import { processNextLookupBucketMigration } from './lookup-bucket-migration-scheduled';
+import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
+import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
+import type { ExecutionContext } from '@cloudflare/workers-types';
+import { MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -85,7 +99,11 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
 
 const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
 const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
-const AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY = 'authrimAuthenticationMethodsDiagnostics';
+const PHASE0C_MAIL_DIAGNOSTIC_SESSION = /^phase0c-mail-[0-9]{14}-[a-f0-9]{6}$/u;
+const MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS = [
+  '/api/auth/authentication-methods',
+  '/api/admin/test/email-codes',
+] as const;
 
 interface MiddlewareDiagnosticSpan {
   name: string;
@@ -105,9 +123,20 @@ function sanitizeDiagnosticSessionId(value: string | null | undefined): string |
   return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
 }
 
-function isDiagnosticTimingEnabled(env: Env): boolean {
+function diagnosticFlagEnabled(env: Env): boolean {
   const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
+}
+
+export function isManagementRequestDiagnosticTimingEnabled(
+  env: Env,
+  sessionId: string | null
+): boolean {
+  if (!sessionId) return false;
+  return (
+    diagnosticFlagEnabled(env) ||
+    (env.AUTHRIM_ENVIRONMENT_NAME === 'test' && PHASE0C_MAIL_DIAGNOSTIC_SESSION.test(sessionId))
+  );
 }
 
 function roundDiagnosticDurationMs(durationMs: number): number {
@@ -119,7 +148,7 @@ function getMiddlewareDiagnosticState(
 ): MiddlewareDiagnosticState | null {
   return (
     ((c as unknown as { get(key: string): unknown }).get(
-      AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY
+      MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY
     ) as MiddlewareDiagnosticState | undefined) ?? null
   );
 }
@@ -129,7 +158,7 @@ function setMiddlewareDiagnosticState(
   state: MiddlewareDiagnosticState
 ): void {
   (c as unknown as { set(key: string, value: unknown): void }).set(
-    AUTHENTICATION_METHODS_DIAGNOSTIC_CONTEXT_KEY,
+    MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY,
     state
   );
 }
@@ -177,10 +206,10 @@ async function timeMiddlewareDiagnosticOperation<T>(
   }
 }
 
-function authenticationMethodsDiagnosticStartMiddleware() {
+function managementRequestDiagnosticStartMiddleware() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
-    if (!sessionId || !isDiagnosticTimingEnabled(c.env)) {
+    if (!sessionId || !isManagementRequestDiagnosticTimingEnabled(c.env, sessionId)) {
       return next();
     }
 
@@ -205,8 +234,8 @@ function authenticationMethodsDiagnosticStartMiddleware() {
       appendMiddlewareDiagnosticServerTiming(c, state.spans);
       c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
       getLogger(c)
-        .module('LOGIN-METHODS')
-        .info('Authentication methods middleware diagnostics', {
+        .module('MANAGEMENT-REQUEST-TIMING')
+        .info('Management request middleware diagnostics', {
           diagnosticSessionId: state.sessionId,
           method: c.req.method,
           path: c.req.path,
@@ -217,7 +246,7 @@ function authenticationMethodsDiagnosticStartMiddleware() {
   };
 }
 
-function authenticationMethodsDiagnosticCheckpoint(name: string) {
+function managementRequestDiagnosticCheckpoint(name: string) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     recordMiddlewareDiagnosticSpan(c, name);
     await next();
@@ -282,11 +311,14 @@ import {
   adminUsersListHandler,
   adminUserGetHandler,
   adminUserCreateHandler,
+  adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
+  adminUserIdentifierReplacementsHandler,
+  adminUserIdentifierReplacementResumeHandler,
   adminClientsListHandler,
   adminClientCreateHandler,
   adminClientGetHandler,
@@ -526,6 +558,7 @@ import {
 import {
   adminTenantsListHandler,
   adminTenantCreateHandler,
+  adminTenantProvisioningStatusHandler,
   adminTenantGetHandler,
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
@@ -539,7 +572,18 @@ import {
   adminTenantRestoreValidateHandler,
   adminTenantLifecycleJobsHandler,
   adminTenantLifecycleJobRetryHandler,
+  processNextTenantProvisioning,
+  TENANT_D1_STORAGE_PROFILE_ID,
 } from './admin-tenants';
+import { processNextTenantPlacementMigration } from './tenant-placement-migration-scheduled';
+import { processDynamicPluginResourceFinalizations } from './plugin-resource-finalization';
+import {
+  adminTenantPlacementMigrationApprovePurgeHandler,
+  adminTenantPlacementMigrationCancelHandler,
+  adminTenantPlacementMigrationGetHandler,
+  adminTenantPlacementMigrationLatestHandler,
+  adminTenantPlacementMigrationStartHandler,
+} from './admin-tenant-placement-migrations';
 import {
   listTenantDomainMappingsHandler,
   createTenantDomainMappingHandler,
@@ -580,6 +624,8 @@ import {
   postDiscoveryGrantHandler,
   postDiscoveryGrantVerifyHandler,
   postDiscoveryHandler,
+  postDiscoveryEmailStartHandler,
+  postDiscoveryEmailVerifyHandler,
 } from './discovery';
 import {
   dataExportArtifactChunkHandler,
@@ -820,14 +866,20 @@ import {
   getPluginHandler,
   getPluginConfigHandler,
   updatePluginConfigHandler,
+  resetPluginConfigHandler,
   enablePluginHandler,
   disablePluginHandler,
+  uninstallPluginHandler,
   sendPluginTestEmailHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
   ensureBuiltinPluginsRegistered,
   platformPluginScopeMiddleware,
+  getProviderReprojectionStatusHandler,
+  rolloutDynamicPluginBatchHandler,
 } from './routes/settings/plugins';
+import { processProviderReprojectionJobs } from './provider-reprojection-jobs';
+import { processTenantDisasterRecoveryLookupReprojection } from './tenant-disaster-recovery-lookup';
 import {
   getNativeSSOSettingsConfig,
   updateNativeSSOConfig,
@@ -875,6 +927,11 @@ import {
   updateAccountTotpCredentialHandler,
 } from './account-totp';
 import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
+import {
+  completeAccountIdentifierReplacementHandler,
+  getAccountIdentifierReplacementHandler,
+  startAccountIdentifierReplacementHandler,
+} from './account-identifier-replacement';
 import {
   createWebhook,
   listWebhooks,
@@ -1056,61 +1113,35 @@ export const app = new Hono<{ Bindings: Env }>();
 
 const loadAuthBootstrapPlugins = createPluginLoader([]);
 
-const loadNotificationPlugins = createPluginLoader([
-  {
-    plugin: cloudflareEmailPlugin,
-    skipIfConfigEmpty: true,
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
-  },
-  {
-    plugin: resendEmailPlugin,
-    skipIfConfigEmpty: true,
-    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
-  },
-]);
-
 const authBootstrapPluginContextMiddleware = pluginContextMiddleware({
   scope: 'auth-bootstrap',
   failurePolicy: 'fail_open',
   loadPlugins: loadAuthBootstrapPlugins,
 });
 
-const notificationPluginContextMiddleware = pluginContextMiddleware({
-  scope: 'notification',
-  failurePolicy: 'fail_open',
-  loadPlugins: loadNotificationPlugins,
-});
-
 // Middleware
-app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticStartMiddleware());
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticStartMiddleware());
+}
 app.use('*', redirectExternalHttpToHttps);
-app.use(
-  '/api/auth/authentication-methods',
-  authenticationMethodsDiagnosticCheckpoint('mg_redirect_https')
-);
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_redirect_https'));
+}
 app.use('*', logger());
-app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticCheckpoint('mg_logger'));
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_logger'));
+}
 app.use('*', requestContextMiddleware());
-app.use(
-  '/api/auth/authentication-methods',
-  authenticationMethodsDiagnosticCheckpoint('mg_request_context')
-);
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_request_context'));
+}
 app.use('/api/auth/authentication-methods', authBootstrapPluginContextMiddleware);
 app.use(
   '/api/auth/authentication-methods',
-  authenticationMethodsDiagnosticCheckpoint('mg_auth_bootstrap_plugin')
+  managementRequestDiagnosticCheckpoint('mg_auth_bootstrap_plugin')
 );
 app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
 app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
-app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
-app.use('/api/admin/tenants/:id/invitations', notificationPluginContextMiddleware);
-app.use('/api/admin/tenants/:id/invitations/*', notificationPluginContextMiddleware);
-app.use('/api/admin/admin-invitations', notificationPluginContextMiddleware);
-app.use('/api/admin/admin-invitations/*', notificationPluginContextMiddleware);
-app.use('/api/admin/approvals', notificationPluginContextMiddleware);
-app.use('/api/admin/approvals/*', notificationPluginContextMiddleware);
-app.use('/api/approval-artifacts/*', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 app.use(
@@ -1133,10 +1164,9 @@ app.use(
     referrerPolicy: 'strict-origin-when-cross-origin',
   })
 );
-app.use(
-  '/api/auth/authentication-methods',
-  authenticationMethodsDiagnosticCheckpoint('mg_secure_headers')
-);
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_secure_headers'));
+}
 
 /**
  * CORS configuration with dynamic origin validation
@@ -1213,7 +1243,9 @@ app.use('*', async (c, next) => {
     credentials: allowCredentials,
   })(c, next);
 });
-app.use('/api/auth/authentication-methods', authenticationMethodsDiagnosticCheckpoint('mg_cors'));
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_cors'));
+}
 
 // Rate limiting for registration endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
@@ -1293,6 +1325,10 @@ app.use('/revoke/batch', async (c, next) => {
 // Health check endpoints - rate limited with lenient profile
 // These are public endpoints that should be protected from abuse
 app.use('/api/admin/*', adminTenantPolicyMiddleware);
+app.use(
+  '/api/admin/test/email-codes',
+  managementRequestDiagnosticCheckpoint('mg_admin_tenant_policy')
+);
 
 app.use('/api/health', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
@@ -1341,10 +1377,7 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
     nonBlockingRead: true,
   })(c, next);
 });
-app.use(
-  '/api/auth/authentication-methods',
-  authenticationMethodsDiagnosticCheckpoint('mg_rate_limit')
-);
+app.use('/api/auth/authentication-methods', managementRequestDiagnosticCheckpoint('mg_rate_limit'));
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
 app.use('/api/auth/discovery', async (c, next) => {
@@ -1372,6 +1405,8 @@ app.use('/api/auth/discovery/grant/verify', async (c, next) => {
 });
 app.get('/api/auth/discovery', getDiscoveryConfigHandler);
 app.post('/api/auth/discovery', postDiscoveryHandler);
+app.post('/api/auth/discovery/email/start', postDiscoveryEmailStartHandler);
+app.post('/api/auth/discovery/email/verify', postDiscoveryEmailVerifyHandler);
 app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
 app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
@@ -1438,6 +1473,12 @@ app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHan
 app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
+app.post('/api/account/identifier-replacements/start', startAccountIdentifierReplacementHandler);
+app.post(
+  '/api/account/identifier-replacements/complete',
+  completeAccountIdentifierReplacementHandler
+);
+app.get('/api/account/identifier-replacements/:id', getAccountIdentifierReplacementHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
@@ -1466,6 +1507,7 @@ app.get('/api/admin/sessions/me', () =>
 // Applied before auth to reject CSRF attempts early (defense-in-depth with SameSite cookies + CORS)
 // Skips Bearer token requests (server-to-server API calls are not vulnerable to CSRF)
 app.use('/api/admin/*', csrfProtectionMiddleware());
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_admin_csrf'));
 
 // Admin authentication middleware - applies to ALL /api/admin/* routes
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
@@ -1474,6 +1516,7 @@ app.use(
   '/api/admin/*',
   adminAuthMiddleware({ plane: 'tenant', authenticateBearer: authenticateAgentDownscopeBearer })
 );
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_admin_auth'));
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
@@ -1500,6 +1543,10 @@ app.use('/api/admin/*', async (c, next) => {
     },
   })(c, next);
 });
+app.use(
+  '/api/admin/test/email-codes',
+  managementRequestDiagnosticCheckpoint('mg_admin_body_limit')
+);
 
 // Admin API endpoints
 registerDeclaredAdminRouteAccessMiddleware(app);
@@ -1508,7 +1555,13 @@ registerAdminResourcePermissionMiddleware(app);
 app.get('/api/admin/stats', adminStatsHandler);
 app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
+app.get('/api/admin/users/operations/:operationId', adminUserCreationOperationHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
+app.get('/api/admin/users/:id/identifier-replacements', adminUserIdentifierReplacementsHandler);
+app.post(
+  '/api/admin/users/:id/identifier-replacements/:operationId/resume',
+  adminUserIdentifierReplacementResumeHandler
+);
 app.post('/api/admin/users', adminUserCreateHandler);
 app.put('/api/admin/users/:id', adminUserUpdateHandler);
 app.delete('/api/admin/users/:id', adminUserDeleteHandler);
@@ -1680,6 +1733,49 @@ app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'))
 app.use('/api/admin/tenants/:tenantId/*', requireSupportedTenantParam('tenantId'));
 app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
+app.get('/api/admin/tenants/:id/provisioning', adminTenantProvisioningStatusHandler);
+app.get(
+  '/api/admin/tenants/:id/placement-migrations/latest',
+  adminTenantPlacementMigrationLatestHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware(profile)(c, next);
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationStartHandler
+);
+app.get(
+  '/api/admin/tenants/:id/placement-migrations/:operationId',
+  adminTenantPlacementMigrationGetHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations/:operationId/cancel',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationCancelHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations/:operationId/approve-purge',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationApprovePurgeHandler
+);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
 app.post(
   '/api/admin/tenants/:id/clone',
@@ -2671,10 +2767,15 @@ app.get('/api/admin/vc/status-lists/:id', getStatusListHandler);
 app.use('/api/admin/platform/plugins/*', requireSystemAdmin(), platformPluginScopeMiddleware);
 app.use('/api/admin/platform/plugins', requireSystemAdmin(), platformPluginScopeMiddleware);
 app.get('/api/admin/platform/plugins', listPluginsHandler);
+app.get(
+  '/api/admin/platform/plugins/provider-projection/status',
+  getProviderReprojectionStatusHandler
+);
 app.get('/api/admin/platform/plugins/:id', getPluginHandler);
 app.get('/api/admin/platform/plugins/:id/config', getPluginConfigHandler);
 app.put('/api/admin/platform/plugins/:id/config', updatePluginConfigHandler);
 app.post('/api/admin/platform/plugins/:id/test-email', sendPluginTestEmailHandler);
+app.post('/api/admin/platform/plugins/:id/rollout', rolloutDynamicPluginBatchHandler);
 app.put('/api/admin/platform/plugins/:id/enable', enablePluginHandler);
 app.put('/api/admin/platform/plugins/:id/disable', disablePluginHandler);
 app.get('/api/admin/platform/plugins/:id/health', getPluginHealthHandler);
@@ -2687,11 +2788,13 @@ app.get('/api/admin/plugins/:id', getPluginHandler);
 // Plugin configuration
 app.get('/api/admin/plugins/:id/config', getPluginConfigHandler);
 app.put('/api/admin/plugins/:id/config', updatePluginConfigHandler);
+app.delete('/api/admin/plugins/:id/config', resetPluginConfigHandler);
 app.post('/api/admin/plugins/:id/test-email', sendPluginTestEmailHandler);
 
 // Plugin enable/disable
 app.put('/api/admin/plugins/:id/enable', enablePluginHandler);
 app.put('/api/admin/plugins/:id/disable', disablePluginHandler);
+app.post('/api/admin/plugins/:id/uninstall', uninstallPluginHandler);
 
 // Plugin health and schema
 app.get('/api/admin/plugins/:id/health', getPluginHealthHandler);
@@ -3676,6 +3779,7 @@ app.use('/api/admin/test/*', async (c, next) => {
   }
   return next();
 });
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_test_guard'));
 
 // Test endpoints (all protected by adminAuthMiddleware from /api/admin/* and test guard above)
 app.post('/api/admin/test/sessions', adminTestSessionCreateHandler); // Create session without login
@@ -3792,6 +3896,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
+  const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
+  if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('MANAGEMENT');
   log.error('Unhandled error', {}, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -3835,7 +3941,8 @@ async function deleteExpiredTenantRows(
 
 /**
  * Scheduled handler for D1 database cleanup and async job processing.
- * Runs hourly to clean up expired data and process pending jobs.
+ * Provider reprojection runs on every configured schedule; each job is bounded and lease-fenced.
+ * The remaining maintenance work runs on the schedule selected below.
  *
  * Cron configuration in wrangler.toml:
  * [triggers]
@@ -3843,10 +3950,102 @@ async function deleteExpiredTenantRows(
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const log = createLogger().module('SCHEDULED');
+  try {
+    const finalized = await processDynamicPluginResourceFinalizations(env);
+    if (finalized.inspected > 0) {
+      log.info('Dynamic plugin resource finalization scheduler completed', finalized);
+    }
+  } catch (error) {
+    log.warn('Dynamic plugin resource finalization scheduler failed', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  if (env.DEFAULT_STORAGE_PROFILE_ID === TENANT_D1_STORAGE_PROFILE_ID) {
+    try {
+      const recovery = await processTenantDisasterRecoveryLookupReprojection(env);
+      if (recovery.processed) {
+        log.info('Tenant disaster recovery Lookup reprojection advanced', {
+          operationId: recovery.operationId,
+          stage: recovery.stage,
+        });
+      }
+    } catch (error) {
+      log.warn('Tenant disaster recovery Lookup reprojection failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      let processed = 0;
+      while (processed < 5 && (await processNextTenantProvisioning(env))) {
+        processed += 1;
+      }
+      if (processed > 0) {
+        log.info('Tenant provisioning scheduler completed', { processed });
+      }
+    } catch (error) {
+      log.warn('Tenant provisioning scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      let processed = 0;
+      while (processed < 5 && (await processNextTenantPlacementMigration(env))) {
+        processed += 1;
+      }
+      if (processed > 0) {
+        log.info('Tenant placement migration scheduler completed', { processed });
+      }
+    } catch (error) {
+      log.warn('Tenant placement migration scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+  }
+  try {
+    await processProviderReprojectionJobs(env, log.module('PROVIDER-REPROJECTION'));
+  } catch (error) {
+    log.warn('Provider reprojection scheduler failed', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  if (isTenantRuntimeRegistryRefreshCron(event.cron)) {
+    try {
+      await refreshTenantRuntimeRegistrySnapshots(env, log);
+    } catch (error) {
+      log.error('Tenant runtime registry snapshot refresh failed', {}, error as Error);
+    }
+  }
+  if (isDirectoryScheduledCron(event.cron)) {
+    try {
+      const migration = await processNextLookupBucketMigration(env);
+      log.info('Lookup bucket migration scheduler completed', {
+        status: migration.status,
+        state: migration.state,
+        processedRows: migration.processedRows,
+      });
+    } catch (error) {
+      log.warn('Lookup bucket migration scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      await processScheduledIdentifierReplacements(env, log.module('IDENTIFIER-REPLACEMENT'));
+    } catch (error) {
+      log.warn('Identifier replacement scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    await processScheduledDirectoryJobs(env, log.module('DIRECTORY'));
+    return;
+  }
   if (isAgentElevationRecoveryCron(event.cron)) {
     await processScheduledAgentElevationRecovery(env, log);
     await processScheduledAgentTokenRevocations(env, log);
     await processScheduledAgentPayloadRetention(env, log);
+    return;
+  }
+  if (isInteractiveAdminJobCron(event.cron)) {
+    await processInteractiveAdminJobQueues(env, log);
     return;
   }
 
@@ -4044,6 +4243,12 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   await processScheduledAdminJobQueues(env, log);
 
   try {
+    await processControlPlaneDriftNotifications(env, log.module('CONTROL-DRIFT-NOTIFICATIONS'));
+  } catch (notificationError) {
+    log.error('Control drift notification sync failed', {}, notificationError as Error);
+  }
+
+  try {
     await runObjectArtifactCleanup(env, log);
   } catch (cleanupError) {
     log.error('Object artifact cleanup failed', {}, cleanupError as Error);
@@ -4096,8 +4301,58 @@ async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void
 }
 
 // Export for Cloudflare Workers with scheduled + queue handlers
+interface ManagementInternalExports {
+  AccountDirectoryEntrypoint(options: {
+    props: AccountDirectoryRpcProps;
+  }): NonNullable<Env['ACCOUNT_DIRECTORY']>;
+}
+
+export function attachInternalAccountDirectoryBinding(
+  env: Env,
+  executionContext: ExecutionContext
+): Env {
+  if (env.ACCOUNT_DIRECTORY) return env;
+  const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
+  const exports = (executionContext as unknown as { exports?: Partial<ManagementInternalExports> })
+    .exports;
+  if (
+    typeof environmentId !== 'string' ||
+    !environmentId ||
+    typeof exports?.AccountDirectoryEntrypoint !== 'function'
+  ) {
+    return env;
+  }
+  return {
+    ...env,
+    ACCOUNT_DIRECTORY: exports.AccountDirectoryEntrypoint({
+      props: {
+        caller: 'ar-management',
+        environmentId,
+        audience: 'authrim-account-directory-v1',
+      },
+    }),
+  };
+}
+
 export default {
-  fetch: app.fetch,
+  fetch(request: Request, env: Env, executionContext?: ExecutionContext) {
+    return app.fetch(
+      request,
+      executionContext ? attachInternalAccountDirectoryBinding(env, executionContext) : env,
+      executionContext
+    );
+  },
   scheduled: handleScheduled,
   queue: handleQueue,
 };
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
+export { AccountDirectoryEntrypoint } from './account-directory-entrypoint';
+export { AuthAccountProvisioningEntrypoint } from './auth-account-provisioning-entrypoint';
+export {
+  attemptImmediateAccountDirectoryPublication,
+  buildInitialAccountDirectoryPublication,
+  executeDurableInitialAccountDirectoryWrite,
+  executeInitialAccountDirectoryWrite,
+  resolveInitialAccountDirectoryWriteTargets,
+} from './account-directory-producer';
+export { CrossShardAccountListService } from './cross-shard-account-list';

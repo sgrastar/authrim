@@ -766,11 +766,7 @@ const zhTW: Translations = {
   'web.db.sharedD1Title': '共用 D1',
   'web.db.sharedD1Desc': '整個部署共用一個 core D1 與一個 PII D1。設定成本最低，也是預設路徑。',
   'web.db.tenantD1Title': '租戶 D1',
-  'web.db.tenantD1Desc': '每個租戶使用一組 core/PII D1。租戶啟用前需要先完成租戶資料庫佈建。',
-  'web.db.preallocatedSlotsTitle': '預先配置的租戶槽位',
-  'web.db.preallocatedSlotsDesc': '每個租戶槽位會建立兩個 D1 資料庫：core 和 PII。',
-  'web.db.slotsLabel': '槽位',
-  'web.db.slotsHelp': '預設值為 3。最多 500 個槽位。',
+  'web.db.tenantD1Desc': '初始化控制平面和首批租戶分片，後續容量會按需自動建立。',
 
   // Web UI Email
   'web.email.title': '電子郵件提供者',

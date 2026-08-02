@@ -31,6 +31,8 @@ export interface CloudflareD1Database {
   uuid: string;
   name: string;
   created_at?: string;
+  file_size?: number;
+  num_tables?: number;
   jurisdiction?: string;
   version?: string;
   read_replication?: { mode: 'auto' | 'disabled' };
@@ -40,6 +42,11 @@ export interface CloudflareD1QueryResult {
   success?: boolean;
   results?: unknown[];
   meta?: Record<string, unknown>;
+}
+
+export interface CloudflareD1Query {
+  sql: string;
+  params?: unknown[];
 }
 
 export interface CloudflareD1RawResult {
@@ -71,6 +78,14 @@ export interface CloudflareWorkerVersion {
   metadata?: Record<string, unknown>;
 }
 
+export interface CloudflareWorkerScript {
+  id: string;
+  created_on?: string;
+  etag?: string;
+  modified_on?: string;
+  tags?: string[];
+}
+
 export interface CloudflareWorkerDeployment {
   id: string;
   created_on: string;
@@ -90,6 +105,15 @@ export interface CloudflareR2Bucket {
   creation_date?: string;
   location?: string;
   jurisdiction?: string;
+}
+
+export interface CloudflareWorkersSubdomain {
+  subdomain: string;
+}
+
+export interface CloudflareWorkerSubdomainState {
+  enabled: boolean;
+  previews_enabled: boolean;
 }
 
 type ControlRequestInit = NonNullable<Parameters<typeof fetch>[1]>;
@@ -247,7 +271,7 @@ export class CloudflareControlApiClient {
     return this.requestJson(
       'd1.update',
       `/d1/database/${encodePathComponent(databaseId, 'database_id')}`,
-      'PATCH',
+      'PUT',
       input
     );
   }
@@ -270,6 +294,24 @@ export class CloudflareControlApiClient {
       `/d1/database/${encodePathComponent(databaseId, 'database_id')}/query`,
       'POST',
       { sql, params }
+    );
+  }
+
+  queryD1Batch(
+    databaseId: string,
+    batch: readonly CloudflareD1Query[]
+  ): Promise<CloudflareD1QueryResult[]> {
+    if (batch.length === 0) throw new Error('cloudflare_d1_query_batch_empty');
+    return this.requestJson(
+      'd1.query',
+      `/d1/database/${encodePathComponent(databaseId, 'database_id')}/query`,
+      'POST',
+      {
+        batch: batch.map((query) => ({
+          sql: normalizeRequired(query.sql, 'd1_query_sql'),
+          ...(query.params === undefined ? {} : { params: [...query.params] }),
+        })),
+      }
     );
   }
 
@@ -298,6 +340,31 @@ export class CloudflareControlApiClient {
     return this.request(
       'workers.settings.get',
       `/workers/scripts/${encodePathComponent(scriptName, 'script_name')}/settings`
+    );
+  }
+
+  async listWorkerScripts(): Promise<CloudflareWorkerScript[]> {
+    const result = await this.request<CloudflareWorkerScript[]>(
+      'workers.script.list',
+      '/workers/scripts'
+    );
+    if (!Array.isArray(result)) {
+      throw new Error('cloudflare_workers_script_list_invalid_result');
+    }
+    return result.filter(
+      (script): script is CloudflareWorkerScript =>
+        !!script && typeof script.id === 'string' && script.id.trim().length > 0
+    );
+  }
+
+  getWorkersSubdomain(): Promise<CloudflareWorkersSubdomain> {
+    return this.request('workers.subdomain.get', '/workers/subdomain');
+  }
+
+  getWorkerSubdomain(scriptName: string): Promise<CloudflareWorkerSubdomainState> {
+    return this.request(
+      'workers.script.subdomain.get',
+      `/workers/scripts/${encodePathComponent(scriptName, 'script_name')}/subdomain`
     );
   }
 

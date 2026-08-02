@@ -11,30 +11,107 @@
     "resourceScope",
     "visibility",
     "bindings",
+    "resources",
     "capabilities",
+    "credentials",
     "egressAllowedHosts"
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
     "pluginId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
     "backend": { "enum": ["in_process", "dynamic_worker"] },
+    "workerBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^\\u0000-\\u001f\\u007f]+$"
+        }
+      }
+    },
     "resourceScope": { "const": "tenant" },
     "visibility": { "enum": ["tenant", "platform"] },
     "bindings": {
       "type": "array",
+      "minItems": 0,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "interface", "scope"],
         "properties": {
-          "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
-          "interface": { "type": "string", "minLength": 1 },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "allOf": [
+              {
+                "not": {
+                  "pattern": "^(?:DB(?:_PII|_ADMIN)?|CONTROL_DB|LOOKUP_DB|PLUGIN_RUNNER_DB|TDB_.+)$"
+                }
+              },
+              { "not": { "pattern": "^(?:CLOUDFLARE|CF)_.+_(?:API_)?TOKEN$" } }
+            ]
+          },
+          "interface": { "enum": ["authrim.account_metadata.v1"] },
           "scope": { "const": "tenant" }
         }
       }
     },
+    "resources": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "logicalResourceId",
+          "binding",
+          "kind",
+          "scope",
+          "access",
+          "provisioning",
+          "migrationStream"
+        ],
+        "properties": {
+          "schemaVersion": { "const": 1 },
+          "logicalResourceId": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "binding": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+          "kind": { "enum": ["d1", "kv_namespace", "r2_bucket"] },
+          "scope": { "const": "tenant" },
+          "access": { "enum": ["read_only", "read_write"] },
+          "provisioning": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["defaultMode", "allowExisting"],
+            "properties": {
+              "defaultMode": { "const": "managed" },
+              "allowExisting": { "type": "boolean" }
+            }
+          },
+          "migrationStream": {
+            "type": ["string", "null"],
+            "pattern": "^[a-z0-9][a-z0-9._/-]{0,199}$"
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "d1" } } },
+            "then": { "properties": { "migrationStream": { "type": "string" } } },
+            "else": { "properties": { "migrationStream": { "type": "null" } } }
+          }
+        ]
+      }
+    },
     "capabilities": {
       "type": "array",
+      "minItems": 0,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -74,6 +151,52 @@
               "deadLetterRetentionDays": { "const": 90 }
             }
           }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "execution": { "const": "async" } } },
+            "then": {
+              "properties": {
+                "failurePolicy": { "const": "retry_async" },
+                "asyncOutbox": { "properties": { "enabled": { "const": true } } }
+              }
+            }
+          },
+          {
+            "if": { "properties": { "execution": { "const": "sync" } } },
+            "then": {
+              "properties": {
+                "failurePolicy": { "enum": ["fail_open", "fail_closed"] },
+                "asyncOutbox": { "properties": { "enabled": { "const": false } } }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["configKey", "required", "destinationHost", "injectionKind", "injectionName"],
+        "properties": {
+          "configKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$"
+          },
+          "required": { "type": "boolean" },
+          "destinationHost": {
+            "type": "string",
+            "format": "hostname",
+            "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+          },
+          "injectionKind": { "enum": ["header", "bearer"] },
+          "injectionName": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{1,64}$"
+          }
         }
       }
     },
@@ -90,7 +213,15 @@
               "host": {
                 "type": "string",
                 "format": "hostname",
-                "not": { "enum": ["localhost"] }
+                "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+                "allOf": [
+                  {
+                    "not": {
+                      "pattern": "(?:^|\\.)(?:internal|localhost|local|localdomain|home|lan)$"
+                    }
+                  },
+                  { "not": { "pattern": "(?:^|\\.)xn--" } }
+                ]
               }
             }
           },
@@ -109,5 +240,15 @@
         ]
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["backend"],
+        "properties": { "backend": { "const": "dynamic_worker" } }
+      },
+      "then": { "required": ["workerBundle"] },
+      "else": { "not": { "required": ["workerBundle"] } }
+    }
+  ]
 }

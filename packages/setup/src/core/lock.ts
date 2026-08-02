@@ -40,6 +40,7 @@ const WorkerEntrySchema = z.object({
   name: z.string(),
   deployedAt: z.string().datetime().optional(),
   version: z.string().optional(),
+  cloudflareVersionId: z.string().uuid().optional(),
 });
 
 const ReleaseUpdateStateSchema = z.object({
@@ -69,12 +70,78 @@ const SchemaTargetStateSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const TopologyUpdateKindSchema = z.enum([
-  'tenant_d1_pool',
-  'tenant_database',
-  'r2',
-  'external_database',
-]);
+const ControlSigningKeyFields = {
+  activeSlot: z.enum(['A', 'B']),
+  activeKeyId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u),
+  activeFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  previousSlot: z.enum(['A', 'B']).optional(),
+  previousKeyId: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u)
+    .optional(),
+  previousFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+  updatedAt: z.number().int().positive(),
+};
+
+function validateControlKeyPrevious(
+  value: {
+    activeSlot: 'A' | 'B';
+    activeKeyId: string;
+    activeFingerprint: string;
+    previousSlot?: 'A' | 'B';
+    previousKeyId?: string;
+    previousFingerprint?: string;
+  },
+  context: z.RefinementCtx
+): void {
+  const previous = [value.previousSlot, value.previousKeyId, value.previousFingerprint];
+  if (previous.some((item) => item !== undefined) && previous.some((item) => item === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_key_metadata_incomplete' });
+    return;
+  }
+  if (
+    value.previousSlot === value.activeSlot ||
+    value.previousKeyId === value.activeKeyId ||
+    value.previousFingerprint === value.activeFingerprint
+  ) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_key_metadata_conflict' });
+  }
+}
+
+const ControlSigningKeyStateSchema = z
+  .object(ControlSigningKeyFields)
+  .superRefine(validateControlKeyPrevious);
+
+const ControlLookupHmacKeyStateSchema = z
+  .object({
+    ...ControlSigningKeyFields,
+    stateRevision: z.number().int().positive(),
+    activeGeneration: z.number().int().positive(),
+    previousGeneration: z.number().int().positive().optional(),
+  })
+  .superRefine((value, context) => {
+    validateControlKeyPrevious(value, context);
+    const previousMetadataPresent = value.previousSlot !== undefined;
+    if (previousMetadataPresent !== (value.previousGeneration !== undefined)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_generation_incomplete' });
+    } else if (
+      value.previousGeneration !== undefined &&
+      value.previousGeneration >= value.activeGeneration
+    ) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'previous_generation_conflict' });
+    }
+  });
+
+const ControlKeyStateSchema = z.object({
+  runtimeRegistry: ControlSigningKeyStateSchema,
+  smokeRpc: ControlSigningKeyStateSchema,
+  lookupHmac: ControlLookupHmacKeyStateSchema,
+});
+
+export const TopologyUpdateKindSchema = z.enum(['tenant_database', 'r2', 'external_database']);
 
 const TopologyUpdateStateSchema = z.object({
   kind: TopologyUpdateKindSchema,
@@ -92,6 +159,7 @@ export const AuthrimLockSchema = z.object({
   productVersion: z.string().optional(),
   releaseUpdate: ReleaseUpdateStateSchema.optional(),
   schemaTargets: z.record(z.string(), SchemaTargetStateSchema).optional(),
+  controlKeyState: ControlKeyStateSchema.optional(),
   topologyUpdate: TopologyUpdateStateSchema.optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime().optional(),
@@ -108,6 +176,7 @@ export type AuthrimLock = z.infer<typeof AuthrimLockSchema>;
 export type ResourceEntry = z.infer<typeof ResourceEntrySchema>;
 export type KVResourceEntry = z.infer<typeof KVResourceEntrySchema>;
 export type WorkerEntry = z.infer<typeof WorkerEntrySchema>;
+export type ControlKeyState = z.infer<typeof ControlKeyStateSchema>;
 export type TopologyUpdateKind = z.infer<typeof TopologyUpdateKindSchema>;
 export type TopologyUpdateState = z.infer<typeof TopologyUpdateStateSchema>;
 

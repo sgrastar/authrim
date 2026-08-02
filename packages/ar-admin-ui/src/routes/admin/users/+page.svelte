@@ -6,6 +6,8 @@
 	import {
 		adminUsersAPI,
 		type User,
+		type CursorPagination,
+		type OffsetPagination,
 		type Pagination,
 		type UserListParams
 	} from '$lib/api/admin-users';
@@ -30,7 +32,9 @@
 	let statusFilter = $state<'active' | 'suspended' | 'locked' | ''>('');
 	let verifiedFilter = $state<boolean | null>(null);
 	let currentPage = $state(1);
+	let cursorStack: Array<string | null> = $state([null]);
 	const limit = 20;
+	let shardedMode = $derived(isShardedPagination(pagination));
 
 	// Selection state for bulk delete
 	let selectedIds = new SvelteSet<string>();
@@ -68,8 +72,14 @@
 			if (verifiedFilter !== null) {
 				params.verified = verifiedFilter;
 			}
+			const cursor = cursorStack[currentPage - 1];
+			if (cursor) params.cursor = cursor;
 
 			const response = await adminUsersAPI.list(params);
+			if (response.pagination.mode === 'cursor' && response.pagination.cursorReset) {
+				currentPage = 1;
+				cursorStack = [null];
+			}
 			users = response.users;
 			pagination = response.pagination;
 			// Clear selection when page changes
@@ -91,19 +101,25 @@
 		if (!tenantId || tenantId === loadedTenantId) return;
 		loadedTenantId = tenantId;
 		currentPage = 1;
+		cursorStack = [null];
 		loadUsers();
 	});
+
+	function resetPagination() {
+		currentPage = 1;
+		cursorStack = [null];
+	}
 
 	function handleSearch() {
 		clearTimeout(searchTimeout);
 		searchTimeout = setTimeout(() => {
-			currentPage = 1;
+			resetPagination();
 			loadUsers();
 		}, 300);
 	}
 
 	function handleStatusChange() {
-		currentPage = 1;
+		resetPagination();
 		loadUsers();
 	}
 
@@ -114,12 +130,48 @@
 		} else {
 			verifiedFilter = target.value === 'true';
 		}
-		currentPage = 1;
+		resetPagination();
 		loadUsers();
 	}
 
 	function goToPage(page: number) {
 		currentPage = page;
+		loadUsers();
+	}
+
+	function isCursorPagination(
+		value: Pagination | null
+	): value is CursorPagination & { mode: 'cursor' } {
+		return value?.mode === 'cursor';
+	}
+
+	function isShardedPagination(value: Pagination | null): value is CursorPagination {
+		return value?.mode === 'cursor' || value?.mode === 'exact';
+	}
+
+	function isOffsetPagination(value: Pagination | null): value is OffsetPagination {
+		return Boolean(value && !isShardedPagination(value));
+	}
+
+	function goToPreviousPage() {
+		if (!isCursorPagination(pagination)) {
+			goToPage(currentPage - 1);
+			return;
+		}
+		if (currentPage <= 1) return;
+		cursorStack = cursorStack.slice(0, currentPage - 1);
+		currentPage -= 1;
+		loadUsers();
+	}
+
+	function goToNextPage() {
+		if (!isCursorPagination(pagination)) {
+			goToPage(currentPage + 1);
+			return;
+		}
+		if (!pagination.nextCursor) return;
+		cursorStack = [...cursorStack.slice(0, currentPage), pagination.nextCursor];
+		currentPage += 1;
 		loadUsers();
 	}
 
@@ -270,29 +322,33 @@
 			/>
 		</div>
 
-		<div class="admin-field admin-field--compact">
-			<label for="status" class="admin-field__label">{$LL.admin_users_status_label()}</label>
-			<select
-				id="status"
-				class="admin-select"
-				bind:value={statusFilter}
-				onchange={handleStatusChange}
-			>
-				<option value="">{$LL.admin_users_all()}</option>
-				<option value="active">{$LL.admin_users_status_active()}</option>
-				<option value="suspended">{$LL.admin_users_status_suspended()}</option>
-				<option value="locked">{$LL.admin_users_status_locked()}</option>
-			</select>
-		</div>
+		{#if !shardedMode}
+			<div class="admin-field admin-field--compact">
+				<label for="status" class="admin-field__label">{$LL.admin_users_status_label()}</label>
+				<select
+					id="status"
+					class="admin-select"
+					bind:value={statusFilter}
+					onchange={handleStatusChange}
+				>
+					<option value="">{$LL.admin_users_all()}</option>
+					<option value="active">{$LL.admin_users_status_active()}</option>
+					<option value="suspended">{$LL.admin_users_status_suspended()}</option>
+					<option value="locked">{$LL.admin_users_status_locked()}</option>
+				</select>
+			</div>
+		{/if}
 
-		<div class="admin-field admin-field--compact">
-			<label for="verified" class="admin-field__label">{$LL.admin_users_verified_label()}</label>
-			<select id="verified" class="admin-select" onchange={handleVerifiedChange}>
-				<option value="">{$LL.admin_users_all()}</option>
-				<option value="true">{$LL.admin_users_verified()}</option>
-				<option value="false">{$LL.admin_users_unverified()}</option>
-			</select>
-		</div>
+		{#if !shardedMode}
+			<div class="admin-field admin-field--compact">
+				<label for="verified" class="admin-field__label">{$LL.admin_users_verified_label()}</label>
+				<select id="verified" class="admin-select" onchange={handleVerifiedChange}>
+					<option value="">{$LL.admin_users_all()}</option>
+					<option value="true">{$LL.admin_users_verified()}</option>
+					<option value="false">{$LL.admin_users_unverified()}</option>
+				</select>
+			</div>
+		{/if}
 	</AdminToolbar>
 
 	{#if loading}
@@ -370,7 +426,18 @@
 			</AdminDataTable>
 		</AdminSection>
 
-		{#if pagination && pagination.totalPages > 1}
+		{#if isCursorPagination(pagination) && (pagination.hasNext || currentPage > 1)}
+			<AdminPagination
+				label={$LL.admin_users_heading()}
+				info={`#${currentPage}`}
+				previousLabel={$LL.common_previous()}
+				nextLabel={$LL.common_next()}
+				hasPrevious={currentPage > 1}
+				hasNext={pagination.hasNext}
+				onPrevious={goToPreviousPage}
+				onNext={goToNextPage}
+			/>
+		{:else if isOffsetPagination(pagination) && pagination.totalPages > 1}
 			<AdminPagination
 				label={$LL.admin_users_heading()}
 				info={$LL.admin_users_pagination({
@@ -382,8 +449,8 @@
 				nextLabel={$LL.common_next()}
 				hasPrevious={pagination.hasPrev}
 				hasNext={pagination.hasNext}
-				onPrevious={() => goToPage(currentPage - 1)}
-				onNext={() => goToPage(currentPage + 1)}
+				onPrevious={goToPreviousPage}
+				onNext={goToNextPage}
 			/>
 		{/if}
 	{/if}

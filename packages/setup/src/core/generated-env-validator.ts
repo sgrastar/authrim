@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   AUTHRIM_DIR,
   findAuthrimBaseDir,
@@ -16,9 +16,17 @@ import {
   parseWranglerToml,
   validateWranglerConfigs,
 } from './wrangler.js';
+import { buildWorkerDeploymentResourceIds } from './deployment-resource-ids.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
-import { D1_DATABASES, getEnabledComponents, type WorkerComponent } from './naming.js';
+import {
+  D1_DATABASES,
+  getBuiltinD1BindingsForComponent,
+  getEnabledComponents,
+  getRequiredDataRolesForComponent,
+  type WorkerComponent,
+} from './naming.js';
 import { listD1Databases, listKVNamespaces, listR2Buckets, queryD1Rows } from './cloudflare.js';
+import { SECRET_KEY_FILES } from './secrets.js';
 
 type ValidationStatus = 'pass' | 'warn' | 'fail';
 
@@ -76,10 +84,12 @@ const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
   'ar-vc',
 ];
 
-const BUILTIN_D1_BINDINGS: Set<string> = new Set(D1_DATABASES.map((db) => db.binding));
+const BUILTIN_D1_BINDINGS: ReadonlySet<string> = new Set(
+  D1_DATABASES.map((database) => database.binding)
+);
 
 function requiredBuiltinD1Bindings(component: WorkerComponent): ReadonlySet<string> {
-  return component === 'ar-agent-access' ? new Set(['DB', 'DB_ADMIN']) : BUILTIN_D1_BINDINGS;
+  return new Set(getBuiltinD1BindingsForComponent(component));
 }
 
 const LOGGING_R2_BINDINGS = [
@@ -116,7 +126,7 @@ const LOGGING_DELIVERY_PRODUCER_COMPONENTS: WorkerComponent[] = [
 ];
 
 const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
-  binding: 'DB' | 'DB_PII' | 'DB_ADMIN';
+  binding: 'DB' | 'DB_PII' | 'DB_ADMIN' | 'CONTROL_DB' | 'LOOKUP_DB' | 'PLUGIN_RUNNER_DB';
   label: string;
   tables: string[];
 }> = [
@@ -143,6 +153,89 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
     binding: 'DB_ADMIN',
     label: 'admin runtime schema',
     tables: ['admin_users', 'admin_machine_principals', 'field_mapping_sets'],
+  },
+  {
+    binding: 'CONTROL_DB',
+    label: 'control-plane schema',
+    tables: [
+      'control_environments',
+      'control_operations',
+      'control_operation_steps',
+      'control_desired_resources',
+      'control_observed_resources',
+      'control_migration_release_catalog',
+      'control_operation_release_pins',
+      'control_tenant_database_migration_state',
+      'control_worker_deployment_leases',
+      'control_worker_binding_reconciliations',
+      'control_bootstrap_handoffs',
+      'control_bootstrap_worker_evidence',
+      'control_directory_rewrite_leases',
+      'control_environment_resource_policies',
+      'control_d1_create_budget_reservations',
+      'control_residency_partitions',
+      'control_tenant_shards',
+      'control_shard_capacity',
+      'control_tenant_shard_allocations',
+      'control_read_replication_policies',
+      'control_read_replication_rollouts',
+      'control_lookup_physical_shards',
+      'control_lookup_bucket_assignments',
+      'control_lookup_registry_publications',
+      'control_lookup_bucket_migrations',
+      'control_hmac_rotation_operations',
+      'control_lookup_hmac_key_states',
+      'control_lookup_hmac_key_state_publications',
+      'control_lookup_hmac_rotation_sources',
+      'control_lookup_hmac_rotation_verification_shards',
+      'control_lookup_hmac_candidate_verifications',
+      'control_route_projection_migrations',
+      'control_signing_key_metadata',
+      'control_signing_key_verifications',
+      'control_runtime_registry_publications',
+      'control_runtime_registry_routes',
+      'control_desired_worker_inventory',
+      'control_worker_inventory_change_events',
+      'control_worker_required_data_roles',
+      'control_worker_desired_bindings',
+      'control_worker_observed_bindings',
+      'control_worker_inventory_drift_findings',
+      'control_external_capability_sources',
+      'control_external_capability_bindings',
+      'control_plugin_desired_resources',
+      'control_plugin_dynamic_worker_bindings',
+      'control_plugin_runner_registry_publications',
+      'control_read_replication_rollout_targets',
+      'control_tenant_default_allocations',
+      'control_audit_events',
+    ],
+  },
+  {
+    binding: 'LOOKUP_DB',
+    label: 'lookup-directory schema',
+    tables: [
+      'lookup_schema_metadata',
+      'lookup_identifiers',
+      'lookup_tenant_aliases',
+      'lookup_identifier_reservations',
+      'lookup_bucket_counters',
+      'lookup_discovery_otp_challenges',
+      'lookup_identifier_replacements',
+      'lookup_directory_job_cursors',
+      'lookup_migration_state',
+    ],
+  },
+  {
+    binding: 'PLUGIN_RUNNER_DB',
+    label: 'plugin-runner schema',
+    tables: [
+      'plugin_runner_shard_cursors',
+      'plugin_runner_full_sweep_state',
+      'plugin_runner_hook_policies',
+      'plugin_runner_egress_allowed_hosts',
+      'plugin_runner_circuit_breakers',
+      'plugin_runner_migration_state',
+    ],
   },
 ];
 
@@ -256,15 +349,11 @@ function finishCheck(check: ValidationCheck, fallbackDetail: string): Validation
   return check;
 }
 
-function isTenantD1SlotBinding(binding: string): boolean {
-  return /^TDB_SLOT_[0-9]{4}_(CORE|PII)$/.test(binding);
-}
-
-function countValue(value: unknown): number {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
-  return 0;
-}
+const INITIAL_TENANT_D1_BINDINGS = [
+  'TDB_DEFAULT_BOOTSTRAP_CORE',
+  'TDB_USERS_BOOTSTRAP_CORE',
+  'TDB_PII_BOOTSTRAP_PII',
+] as const;
 
 function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -707,6 +796,20 @@ function validateLoggingR2Bindings(config: AuthrimConfig, lock: AuthrimLock): Va
   return finishCheck(check, 'All logging R2 buckets are present in lock.json');
 }
 
+function validateMigrationReleaseR2Binding(lock: AuthrimLock): ValidationCheck {
+  const check = makeCheck(
+    'migration-release-r2-binding',
+    'lock.json has the baseline migration release R2 bucket'
+  );
+  const bucket = lock.r2?.MIGRATION_RELEASES;
+  if (bucket?.name) {
+    pushDetail(check, 'pass', `MIGRATION_RELEASES: ${bucket.name}`);
+  } else {
+    pushDetail(check, 'fail', 'MIGRATION_RELEASES is missing from lock.json');
+  }
+  return finishCheck(check, 'The migration release R2 bucket is present in lock.json');
+}
+
 function validateLoggingQueueBindings(config: AuthrimConfig, lock: AuthrimLock): ValidationCheck {
   const check = makeCheck(
     'logging-queue-bindings',
@@ -804,12 +907,122 @@ async function validateLoggingSecretMaterial(
   return finishCheck(check, 'generated keys include logging, OTP, VC, and encryption secrets');
 }
 
+const NON_SECRET_KEY_FILES = new Set([
+  'public.jwk.json',
+  'tenant_runtime_registry_signing_key_id.txt',
+  'tenant_runtime_registry_verify.jwks.json',
+  'downstream_grant_introspection_client_id.txt',
+]);
+
+const ADDITIONAL_PRIVATE_KEY_FILES = [
+  'setup_token.txt',
+  'setup_machine_private.pem',
+  'admin_ui_bff_private.pem',
+] as const;
+
+const PLAINTEXT_SECRET_ASSIGNMENT =
+  /(?:CLOUDFLARE(?:_[A-Z0-9]+)*_(?:API_)?TOKEN|RESEND_API_KEY|DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET)\s*[=:]\s*["']?[^\s"']{16,}/u;
+
+async function loadSecretLeakCandidates(
+  keysDir: string
+): Promise<Array<{ label: string; value: string }>> {
+  const fileNames = [
+    ...new Set([
+      ...Object.values(SECRET_KEY_FILES).filter(
+        (fileName): fileName is string => !!fileName && !NON_SECRET_KEY_FILES.has(fileName)
+      ),
+      ...ADDITIONAL_PRIVATE_KEY_FILES,
+    ]),
+  ];
+  const candidates: Array<{ label: string; value: string }> = [];
+  for (const fileName of fileNames) {
+    const path = join(keysDir, fileName);
+    if (!existsSync(path)) continue;
+    const value = (await readFile(path, 'utf8')).trim();
+    if (value.length >= 16) candidates.push({ label: fileName, value });
+    if (fileName.endsWith('private.jwk.json')) {
+      try {
+        const jwk = JSON.parse(value) as { d?: unknown };
+        if (typeof jwk.d === 'string' && jwk.d.length >= 16) {
+          candidates.push({ label: `${fileName}:private_parameter`, value: jwk.d });
+        }
+      } catch {
+        // Secret format validation reports malformed key files separately.
+      }
+    }
+  }
+  return candidates;
+}
+
+async function validateGeneratedArtifactsAreSecretFree(input: {
+  baseDir: string;
+  env: string;
+  envPaths: EnvironmentPaths;
+  config: AuthrimConfig;
+  configPath: string;
+  lockPath: string;
+  packagesDir: string;
+  enabledComponents: readonly WorkerComponent[];
+  keysBaseDir?: string;
+}): Promise<ValidationCheck> {
+  const check = makeCheck(
+    'generated-artifacts-secret-free',
+    'generated config, lock, and Wrangler artifacts contain no plaintext secrets'
+  );
+  if (input.config.keys.includeSecrets) {
+    pushDetail(check, 'fail', 'config.keys.includeSecrets must remain false');
+  }
+  const keysDir = resolveKeysDirectory(
+    input.baseDir,
+    input.env,
+    input.envPaths,
+    input.config,
+    input.keysBaseDir
+  );
+  const candidates = existsSync(keysDir) ? await loadSecretLeakCandidates(keysDir) : [];
+  const artifactPaths = [
+    input.configPath,
+    input.lockPath,
+    ...input.enabledComponents.flatMap((component) => [
+      join(input.envPaths.wrangler, `${component}.toml`),
+      join(input.packagesDir, component, 'wrangler.toml'),
+    ]),
+  ];
+
+  for (const artifactPath of [...new Set(artifactPaths)]) {
+    if (!existsSync(artifactPath)) continue;
+    const content = await readFile(artifactPath, 'utf8');
+    const artifactLabel = relative(input.baseDir, artifactPath) || artifactPath;
+    for (const candidate of candidates) {
+      if (content.includes(candidate.value)) {
+        pushDetail(
+          check,
+          'fail',
+          `${artifactLabel}: contains plaintext secret material from ${candidate.label}`
+        );
+      }
+    }
+    if (content.includes('-----BEGIN PRIVATE KEY-----')) {
+      pushDetail(check, 'fail', `${artifactLabel}: contains a private PEM key`);
+    }
+    if (/"d"\s*:\s*"[A-Za-z0-9_-]{16,}"/u.test(content)) {
+      pushDetail(check, 'fail', `${artifactLabel}: contains a private JWK parameter`);
+    }
+    if (PLAINTEXT_SECRET_ASSIGNMENT.test(content)) {
+      pushDetail(check, 'fail', `${artifactLabel}: contains a plaintext provider credential`);
+    }
+  }
+
+  return finishCheck(check, 'No plaintext secret material found in generated artifacts');
+}
+
 async function validateDeployWranglers(
   baseDir: string,
   env: string,
   config: AuthrimConfig,
   lock: AuthrimLock,
-  packagesDir: string
+  packagesDir: string,
+  liveCloudflare: boolean
 ): Promise<ValidationCheck> {
   const check = makeCheck(
     'deploy-wranglers',
@@ -832,12 +1045,15 @@ async function validateDeployWranglers(
     }
   }
 
-  const validation = await validateWranglerConfigs(
-    baseDir,
-    env,
-    buildResourceIdsFromLock(lock, config),
-    enabledComponents
-  );
+  const resourceIds = liveCloudflare
+    ? await buildWorkerDeploymentResourceIds({
+        lock,
+        config,
+        environmentId: env,
+        components: enabledComponents,
+      })
+    : buildResourceIdsFromLock(lock, config);
+  const validation = await validateWranglerConfigs(baseDir, env, resourceIds, enabledComponents);
 
   for (const mismatch of validation.mismatches) {
     pushDetail(
@@ -899,6 +1115,17 @@ async function validateDeployWranglers(
             `${component}: ${binding} expected=${expectedBucket} actual=${parsed.r2[binding] ?? '(missing)'}`
           );
         }
+      }
+    }
+
+    if (component === 'ar-control') {
+      const expectedBucket = lock.r2?.MIGRATION_RELEASES?.name;
+      if (!expectedBucket || parsed.r2.MIGRATION_RELEASES !== expectedBucket) {
+        pushDetail(
+          check,
+          'fail',
+          `${component}: MIGRATION_RELEASES expected=${expectedBucket ?? '(missing from lock)'} actual=${parsed.r2.MIGRATION_RELEASES ?? '(missing)'}`
+        );
       }
     }
 
@@ -987,8 +1214,7 @@ async function validateDeployWranglers(
 
     const expectedHyperdrive = Object.values(config.profiles.references?.hyperdrive ?? {});
     if (
-      component !== 'ar-router' &&
-      component !== 'ar-agent-access' &&
+      getRequiredDataRolesForComponent(component).some((role) => role.startsWith('tenant_')) &&
       expectedHyperdrive.length > 0
     ) {
       for (const binding of expectedHyperdrive) {
@@ -1150,13 +1376,13 @@ async function validateLiveCloudflareR2(lock: AuthrimLock): Promise<ValidationCh
   return finishCheck(check, 'All lock.json R2 buckets exist in Cloudflare');
 }
 
-async function validateLiveTenantD1Slots(
+async function validateLiveTenantD1Bootstrap(
   config: AuthrimConfig,
   lock: AuthrimLock
 ): Promise<ValidationCheck> {
   const check = makeCheck(
-    'live-tenant-d1-slots',
-    'Tenant D1 preallocated slots are present in generated resources and DB_ADMIN'
+    'live-tenant-d1-bootstrap',
+    'Initial Tenant D1 resources are accepted by the Control Plane'
   );
 
   if (config.profiles.defaults.storage !== 'builtin:storage:tenant-d1') {
@@ -1164,49 +1390,40 @@ async function validateLiveTenantD1Slots(
     return finishCheck(check, 'Tenant D1 storage profile is not active');
   }
 
-  const expectedSlots = config.tenantD1?.preallocatedSlots ?? 3;
-  const tenantD1Bindings = Object.keys(lock.d1).filter(isTenantD1SlotBinding);
-  const expectedBindings = expectedSlots * 2;
-  if (tenantD1Bindings.length !== expectedBindings) {
-    pushDetail(
-      check,
-      'fail',
-      `tenant D1 binding count expected=${expectedBindings} actual=${tenantD1Bindings.length}`
-    );
-  } else {
-    pushDetail(check, 'pass', `tenant D1 bindings: ${tenantD1Bindings.length}/${expectedBindings}`);
+  for (const binding of INITIAL_TENANT_D1_BINDINGS) {
+    const database = lock.d1[binding];
+    if (!database?.id || !database.name) {
+      pushDetail(check, 'fail', `${binding}: missing from lock.json`);
+      continue;
+    }
+    pushDetail(check, 'pass', `${binding}: ${database.name}`);
   }
 
-  const adminDb = lock.d1.DB_ADMIN;
-  if (!adminDb?.name) {
-    pushDetail(check, 'fail', 'DB_ADMIN is missing from lock.json');
-    return finishCheck(check, 'DB_ADMIN is required for tenant D1 slot validation');
+  const controlDb = lock.d1.CONTROL_DB;
+  if (!controlDb?.name) {
+    pushDetail(check, 'fail', 'CONTROL_DB is missing from lock.json');
+    return finishCheck(check, 'CONTROL_DB is required for bootstrap handoff validation');
   }
 
   try {
-    const rows = await queryD1Rows<{ count: number | string }>(
-      adminDb.name,
-      'SELECT COUNT(*) AS count FROM tenant_database_slots;'
+    const rows = await queryD1Rows<{ state: string }>(
+      controlDb.name,
+      `SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ${sqlString(config.environment.prefix)};`
     );
-    const actualSlots = countValue(rows[0]?.count);
-    if (actualSlots !== expectedSlots) {
-      pushDetail(
-        check,
-        'fail',
-        `tenant_database_slots count expected=${expectedSlots} actual=${actualSlots}`
-      );
+    if (rows[0]?.state !== 'accepted') {
+      pushDetail(check, 'fail', `bootstrap handoff state: ${rows[0]?.state ?? 'missing'}`);
     } else {
-      pushDetail(check, 'pass', `tenant_database_slots count: ${actualSlots}/${expectedSlots}`);
+      pushDetail(check, 'pass', 'bootstrap handoff state: accepted');
     }
   } catch (error) {
     pushDetail(
       check,
       'fail',
-      `tenant_database_slots query failed: ${error instanceof Error ? error.message : String(error)}`
+      `bootstrap handoff query failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 
-  return finishCheck(check, 'Tenant D1 slot resources and DB_ADMIN metadata are consistent');
+  return finishCheck(check, 'Initial Tenant D1 resources and Control Plane handoff are consistent');
 }
 
 async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<ValidationCheck> {
@@ -1358,6 +1575,7 @@ export async function validateGeneratedEnvironment(
     finishCheck(configCheck, 'config.json is readable'),
     finishCheck(lockCheck, 'lock.json is readable'),
     validateRequiredD1Bindings(lock),
+    validateMigrationReleaseR2Binding(lock),
     validateLoggingR2Bindings(config, lock),
     validateLoggingQueueBindings(config, lock),
     validateDefaultProfileReferences(config),
@@ -1370,7 +1588,25 @@ export async function validateGeneratedEnvironment(
       config,
       options.keysBaseDir
     ),
-    await validateDeployWranglers(baseDir, options.env, config, lock, packagesDir),
+    await validateGeneratedArtifactsAreSecretFree({
+      baseDir,
+      env: options.env,
+      envPaths,
+      config,
+      configPath,
+      lockPath: loadedLock.path,
+      packagesDir,
+      enabledComponents,
+      keysBaseDir: options.keysBaseDir,
+    }),
+    await validateDeployWranglers(
+      baseDir,
+      options.env,
+      config,
+      lock,
+      packagesDir,
+      options.liveCloudflare === true
+    ),
     await validateMasterWranglers(baseDir, options.env, envPaths, packagesDir),
   ];
 
@@ -1380,7 +1616,7 @@ export async function validateGeneratedEnvironment(
       await validateLiveCloudflareKV(lock),
       await validateLiveCloudflareR2(lock),
       await validateLiveRuntimeD1Schema(lock),
-      await validateLiveTenantD1Slots(config, lock)
+      await validateLiveTenantD1Bootstrap(config, lock)
     );
   }
 

@@ -39,6 +39,9 @@ export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:saml_providers:*',
   'admin:saml_attribute_presets:*',
   'admin:tenant_domains:*',
+  'admin:control_plane:read',
+  'admin:control_plane:rotate',
+  'admin:control_plane:provision',
 ] as const;
 
 export interface AdminMachineTokenRequest {

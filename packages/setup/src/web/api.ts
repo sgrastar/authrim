@@ -38,13 +38,14 @@ import {
   cleanupSetupMachineAccessInD1,
   ensureSetupMachineAccessInD1,
   ensureInitialTenantInD1,
-  queryD1Rows,
   seedDefaultCanonicalCatalog,
   seedRuntimeProfiles,
   getWorkerDeployments,
   listR2Buckets,
   type CloudflareAuth,
   findMigrationsRoot,
+  getAccountId,
+  getCloudflareApiToken,
 } from '../core/cloudflare.js';
 import { isWildcardDnsPermissionError } from '../core/wildcard-dns-manual-action.js';
 import {
@@ -80,8 +81,10 @@ import {
   type EnvironmentPaths,
   type LegacyPaths,
 } from '../core/paths.js';
-import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../core/wrangler.js';
+import { generateWranglerConfig, toToml } from '../core/wrangler.js';
 import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../core/wrangler-sync.js';
+import { buildWorkerDeploymentResourceIds } from '../core/deployment-resource-ids.js';
+import { refreshWorkerDeploymentArtifacts } from '../core/worker-deployment-artifacts.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import {
   buildInitialAdminSetupUrl,
@@ -100,6 +103,24 @@ import {
   publishInitialTenantD1RuntimeSnapshot,
 } from '../core/tenant-d1-bootstrap.js';
 import {
+  reconcileInitialBootstrapHandoffAsOperator,
+  recordInitialBootstrapWorkerEvidence,
+  registerInitialControlTopology,
+  waitForInitialBootstrapHandoff,
+} from '../core/control-bootstrap-handoff.js';
+import {
+  compileControlWorkerInventoryFromArtifacts,
+  registerControlWorkerInventory,
+  registerUiWorkerInventoryFromArtifacts,
+} from '../core/control-worker-inventory.js';
+import {
+  discoverExternalCapabilities,
+  registerExternalCapabilities,
+} from '../core/external-capability-registration.js';
+import { publishDynamicPluginWorkerBundles } from '../core/dynamic-plugin-publication.js';
+import { publishAndActivateMigrationRelease } from '../core/migration-release-publication.js';
+import { ensureInitialNotificationProviderConfiguration } from '../core/notification-provider-bootstrap.js';
+import {
   deployAll,
   buildApiPackages,
   deployAllUiWorkers,
@@ -114,12 +135,7 @@ import {
   type DeployResult,
   type UiWorkerComponent,
 } from '../core/deploy.js';
-import {
-  getD1DatabaseName,
-  getEnabledComponents,
-  WORKER_COMPONENTS,
-  type WorkerComponent,
-} from '../core/naming.js';
+import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
 import {
   getLocalPackageVersions,
   getPackageVersion,
@@ -143,6 +159,10 @@ import {
   resolveReleaseMigrationTargets,
 } from '../core/release-migrations.js';
 import {
+  applyReleaseSchemaUpdatePlan,
+  buildReleaseSchemaUpdatePlan,
+} from '../core/release-update.js';
+import {
   withRecordedReleaseSchemaTargets,
   withReleaseUpdateState,
   withSchemaTargetStates,
@@ -163,6 +183,45 @@ import { prepareAdminUiBffDeployment } from '../core/admin-ui-bff-deployment.js'
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
+import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
+import {
+  buildCloudflareBootstrapTemplateUrl,
+  cleanupCloudflareBootstrapToken,
+  CloudflareTokenBootstrapError,
+  detectCloudflareTokenOwnership,
+  selectPreferredCloudflareTokenOwnership,
+  WranglerControlSecretSink,
+  type CloudflareTokenOwnership,
+} from '../core/cloudflare-control-token-bootstrap.js';
+import {
+  completeControlTokenBootstrap,
+  findMissingControlTokenResourceClasses,
+  resolveControlTokenResourceClasses,
+} from '../core/control-token-bootstrap-orchestrator.js';
+import {
+  isTokenlessPendingControlProvisioningAuthority,
+  readControlProvisioningAuthority,
+  writeControlProvisioningAuthority,
+} from '../core/control-provisioning-authority.js';
+import {
+  listPendingControlOperatorOperations,
+  listPendingPluginControlCleanupOperations,
+  listPendingPluginControlOperatorOperations,
+  listPendingTenantDisasterRecoveryOperatorOperations,
+} from '../core/control-operator-operations.js';
+import { executeSetupPluginCleanupOperator } from '../core/plugin-control-cleanup-operator-executor.js';
+import { executeSetupPluginControlOperator } from '../core/plugin-control-operator-executor.js';
+import {
+  listSetupExclusiveCapacityTenants,
+  previewSetupControlCapacity,
+  requestSetupControlCapacity,
+} from '../core/control-capacity-client.js';
+import { withEphemeralSetupMachineAccess } from '../core/setup-machine-access-lifecycle.js';
+import {
+  executeSetupControlOperatorCreate,
+  executeSetupControlOperatorMigration,
+  executeSetupControlOperatorWorkerBindings,
+} from '../core/control-operator-executor.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
@@ -211,19 +270,17 @@ let operationLock: Promise<void> = Promise.resolve();
  * Acquire operation lock to serialize state mutations
  */
 async function withLock<T>(operation: () => Promise<T>): Promise<T> {
-  // Wait for previous operation to complete
-  await operationLock;
-
-  // Create new lock for this operation
-  let releaseLock: () => void;
+  const previousOperation = operationLock;
+  let releaseLock!: () => void;
   operationLock = new Promise((resolve) => {
     releaseLock = resolve;
   });
+  await previousOperation;
 
   try {
     return await operation();
   } finally {
-    releaseLock!();
+    releaseLock();
   }
 }
 
@@ -583,6 +640,18 @@ function sanitizeError(error: unknown): string {
     .replace(/[a-f0-9]{32,}/gi, '[redacted]');
 }
 
+function isSameLoopbackOrigin(requestUrl: string, origin: string | undefined): boolean {
+  if (!origin) return false;
+  try {
+    const request = new URL(requestUrl);
+    const source = new URL(origin);
+    const loopback = new Set(['localhost', '127.0.0.1', '[::1]']);
+    return source.origin === request.origin && loopback.has(source.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function getWildcardDnsManualActionPayload(
   cfg: Partial<AuthrimConfig> | null | undefined
 ): { kind: 'wildcard-dns'; baseDomain: string } | null {
@@ -679,6 +748,8 @@ export function createApiRoutes(): Hono {
   api.use('/reset', validateSession);
   api.use('/admin/*', validateSession);
   api.use('/cloudflare/*', validateSession);
+  api.use('/control', validateSession);
+  api.use('/control/*', validateSession);
   api.use('/tenant-d1/*', validateSession);
   api.use('/r2/*', validateSession);
 
@@ -719,6 +790,432 @@ export function createApiRoutes(): Hono {
         500
       );
     }
+  });
+
+  api.post('/cloudflare/control-token-template', async (c) => {
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({ env: EnvNameSchema })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid environment name' }, 400);
+    }
+    try {
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const resolved = resolvePaths({ baseDir, env: parsed.data.env });
+      const configPath =
+        resolved.type === 'new'
+          ? (resolved.paths as EnvironmentPaths).config
+          : (resolved.paths as LegacyPaths).config;
+      const config = existsSync(configPath)
+        ? parseEnvironmentConfigForEnv(
+            JSON.parse(await readFile(configPath, 'utf-8')),
+            parsed.data.env
+          )
+        : getStateConfigForEnv(parsed.data.env);
+      if (!config || config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
+        return c.json({ success: false, error: 'Tenant D1 is not enabled' }, 409);
+      }
+      const wranglerAccountId = await getAccountId();
+      if (!wranglerAccountId) {
+        return c.json({ success: false, error: 'Wrangler account is unavailable' }, 409);
+      }
+      if (config.cloudflare?.accountId && config.cloudflare.accountId !== wranglerAccountId) {
+        return c.json({ success: false, error: 'Cloudflare account mismatch' }, 409);
+      }
+      const credential = await getCloudflareApiToken();
+      const ownership: CloudflareTokenOwnership =
+        credential?.source === 'oauth'
+          ? await selectPreferredCloudflareTokenOwnership({
+              accountId: wranglerAccountId,
+              wranglerOAuthToken: credential.token,
+            })
+          : 'user';
+      return c.json({
+        success: true,
+        ownership,
+        url: buildCloudflareBootstrapTemplateUrl({
+          accountId: wranglerAccountId,
+          environment: parsed.data.env,
+          ownership,
+        }),
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.get('/control/automatic-provisioning/status', async (c) => {
+    const parsed = EnvNameSchema.safeParse(c.req.query('env'));
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid environment name' }, 400);
+    }
+    try {
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const { config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data);
+      const { lock } = await loadLockFileAuto(baseDir, parsed.data);
+      const controlDatabaseName = lock?.d1.CONTROL_DB?.name;
+      const authority = controlDatabaseName
+        ? await readControlProvisioningAuthority({
+            controlDatabaseName,
+            environmentId: parsed.data,
+          })
+        : null;
+      const requiredResourceClasses = resolveControlTokenResourceClasses(config);
+      const missingResourceClasses =
+        authority?.automaticProvisioningEnabled === true && authority.capabilityState === 'ready'
+          ? await findMissingControlTokenResourceClasses({
+              resourceClasses: requiredResourceClasses,
+              secretSink: new WranglerControlSecretSink({
+                workerName: `${parsed.data}-ar-control`,
+                cwd: baseDir,
+              }),
+            })
+          : [];
+      const effectiveAuthority =
+        authority && missingResourceClasses.length > 0
+          ? { ...authority, capabilityState: 'blocked' as const }
+          : authority;
+      return c.json({
+        success: true,
+        tenantD1: config.profiles.defaults.storage === 'builtin:storage:tenant-d1',
+        enabled: config.tenantD1?.automaticProvisioning === true,
+        authority: effectiveAuthority,
+        missingResourceClasses,
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/control/automatic-provisioning/prepare', async (c) => {
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({
+        env: EnvNameSchema,
+        ownership: z.enum(['account', 'user']).optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid Automatic provisioning request' }, 400);
+    }
+    return withLock(async () => {
+      let operationLock:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const { envPaths, config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
+        if (config.profiles.defaults.storage !== 'builtin:storage:tenant-d1') {
+          return c.json({ success: false, error: 'Tenant D1 is not enabled' }, 409);
+        }
+        operationLock = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: parsed.data.env,
+          operation: 'web-control-automatic-provisioning-prepare',
+          requireExisting: true,
+        });
+        const controlDatabaseName = operationLock.lock?.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) {
+          return c.json({ success: false, error: 'Control database is not configured' }, 409);
+        }
+        const updatedConfig = AuthrimConfigSchema.parse({
+          ...config,
+          tenantD1: { automaticProvisioning: true },
+          updatedAt: new Date().toISOString(),
+        });
+        await saveEnvironmentConfig(envPaths, updatedConfig);
+        try {
+          await writeControlProvisioningAuthority({
+            controlDatabaseName,
+            environmentId: parsed.data.env,
+            automaticProvisioningEnabled: true,
+            tokenOwnership: 'none',
+            capabilityState: 'pending',
+          });
+        } catch (error) {
+          await saveEnvironmentConfig(envPaths, config).catch(() => undefined);
+          throw error;
+        }
+        state.config = updatedConfig;
+        return c.json({ success: true, enabled: true, capabilityState: 'pending' });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      } finally {
+        await operationLock?.release();
+      }
+    });
+  });
+
+  api.post('/control/automatic-provisioning/cancel-pending', async (c) => {
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({ env: EnvNameSchema })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid Automatic provisioning request' }, 400);
+    }
+    return withLock(async () => {
+      let operationLock:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const { envPaths, config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
+        operationLock = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: parsed.data.env,
+          operation: 'web-control-automatic-provisioning-cancel-pending',
+          requireExisting: true,
+        });
+        const controlDatabaseName = operationLock.lock?.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) {
+          return c.json({ success: false, error: 'Control database is not configured' }, 409);
+        }
+        const authority = await readControlProvisioningAuthority({
+          controlDatabaseName,
+          environmentId: parsed.data.env,
+        });
+        if (!isTokenlessPendingControlProvisioningAuthority(authority)) {
+          return c.json(
+            { success: false, error: 'Only tokenless pending authority can be canceled' },
+            409
+          );
+        }
+        const disabledConfig = AuthrimConfigSchema.parse({
+          ...config,
+          tenantD1: { automaticProvisioning: false },
+          updatedAt: new Date().toISOString(),
+        });
+        await saveEnvironmentConfig(envPaths, disabledConfig);
+        try {
+          const disabledAuthority = await writeControlProvisioningAuthority({
+            controlDatabaseName,
+            environmentId: parsed.data.env,
+            automaticProvisioningEnabled: false,
+            tokenOwnership: 'none',
+            capabilityState: 'disabled',
+          });
+          state.config = disabledConfig;
+          return c.json({ success: true, enabled: false, authority: disabledAuthority });
+        } catch (error) {
+          await saveEnvironmentConfig(envPaths, config).catch(() => undefined);
+          throw error;
+        }
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      } finally {
+        await operationLock?.release();
+      }
+    });
+  });
+
+  api.post('/control/automatic-provisioning/complete', async (c) => {
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({
+        env: EnvNameSchema,
+        bootstrapToken: z.string().min(20).max(4096).regex(/^\S+$/u),
+        ownership: z.enum(['account', 'user']).optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid bootstrap token input' }, 400);
+    }
+
+    let bootstrapToken = parsed.data.bootstrapToken;
+    return withLock(async () => {
+      let operationLock:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operationLock = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: parsed.data.env,
+          operation: 'web-control-automatic-provisioning-complete',
+          requireExisting: true,
+        });
+        const { config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
+        if (
+          config.profiles.defaults.storage !== 'builtin:storage:tenant-d1' ||
+          config.tenantD1?.automaticProvisioning !== true
+        ) {
+          return c.json(
+            { success: false, error: 'Automatic provisioning is not pending for this environment' },
+            409
+          );
+        }
+
+        const lock = operationLock.lock;
+        const controlDatabaseName = lock?.d1.CONTROL_DB?.name;
+        const controlWorker = lock?.workers?.['ar-control'];
+        if (!controlDatabaseName || !controlWorker) {
+          return c.json(
+            { success: false, error: 'Control Worker deployment is not available' },
+            409
+          );
+        }
+        const pendingAuthority = await readControlProvisioningAuthority({
+          controlDatabaseName,
+          environmentId: parsed.data.env,
+        });
+        const deployedAt = controlWorker.deployedAt
+          ? Date.parse(controlWorker.deployedAt)
+          : Number.NaN;
+        if (
+          pendingAuthority?.automaticProvisioningEnabled !== true ||
+          pendingAuthority.capabilityState !== 'pending' ||
+          pendingAuthority.tokenOwnership !== 'none' ||
+          !Number.isFinite(deployedAt) ||
+          deployedAt <= pendingAuthority.updatedAt * 1000
+        ) {
+          return c.json(
+            {
+              success: false,
+              error: 'Control Worker must be redeployed after Automatic provisioning preparation',
+            },
+            409
+          );
+        }
+
+        const wranglerAccountId = await getAccountId();
+        if (
+          !wranglerAccountId ||
+          (config.cloudflare?.accountId && config.cloudflare.accountId !== wranglerAccountId)
+        ) {
+          return c.json({ success: false, error: 'Cloudflare account mismatch' }, 409);
+        }
+
+        const detectedOwnership = await detectCloudflareTokenOwnership({
+          accountId: wranglerAccountId,
+          token: bootstrapToken,
+        });
+        if (!detectedOwnership) {
+          throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_inactive');
+        }
+        if (parsed.data.ownership && parsed.data.ownership !== detectedOwnership) {
+          throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_ownership_mismatch');
+        }
+
+        await completeControlTokenBootstrap({
+          accountId: wranglerAccountId,
+          environment: parsed.data.env,
+          rootDir: baseDir,
+          controlDatabaseName,
+          bootstrapToken,
+          ownership: detectedOwnership,
+          resourceClasses: resolveControlTokenResourceClasses(config),
+        });
+        bootstrapToken = '';
+        const authority = await readControlProvisioningAuthority({
+          controlDatabaseName,
+          environmentId: parsed.data.env,
+        });
+        if (
+          authority?.automaticProvisioningEnabled !== true ||
+          authority.capabilityState !== 'ready' ||
+          authority.tokenOwnership !== detectedOwnership
+        ) {
+          throw new Error('control_provisioning_authority_reflection_failed');
+        }
+        return c.json({ success: true, authority });
+      } catch (error) {
+        return c.json(
+          {
+            success: false,
+            error: sanitizeError(error),
+            cleanupRequired:
+              error instanceof CloudflareTokenBootstrapError && error.cleanupRequired,
+            capabilityDiagnostic:
+              error instanceof CloudflareTokenBootstrapError
+                ? error.capabilityDiagnostic
+                : undefined,
+          },
+          500
+        );
+      } finally {
+        bootstrapToken = '';
+        await operationLock?.release();
+      }
+    });
+  });
+
+  api.post('/control/automatic-provisioning/cleanup-bootstrap', async (c) => {
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({
+        env: EnvNameSchema,
+        bootstrapToken: z.string().min(20).max(4096).regex(/^\S+$/u),
+        ownership: z.enum(['account', 'user']).optional(),
+      })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid bootstrap cleanup input' }, 400);
+    }
+
+    let bootstrapToken = parsed.data.bootstrapToken;
+    return withLock(async () => {
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const { config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
+        const wranglerAccountId = await getAccountId();
+        if (
+          !wranglerAccountId ||
+          (config.cloudflare?.accountId && config.cloudflare.accountId !== wranglerAccountId)
+        ) {
+          return c.json({ success: false, error: 'Cloudflare account mismatch' }, 409);
+        }
+        const detectedOwnership = await detectCloudflareTokenOwnership({
+          accountId: wranglerAccountId,
+          token: bootstrapToken,
+        });
+        if (!detectedOwnership) {
+          bootstrapToken = '';
+          return c.json({ success: true, revoked: true });
+        }
+        if (parsed.data.ownership && parsed.data.ownership !== detectedOwnership) {
+          throw new CloudflareTokenBootstrapError(
+            'cloudflare_bootstrap_token_ownership_mismatch',
+            true
+          );
+        }
+        await cleanupCloudflareBootstrapToken({
+          accountId: wranglerAccountId,
+          environment: parsed.data.env,
+          ownership: detectedOwnership,
+          bootstrapToken,
+        });
+        bootstrapToken = '';
+        return c.json({ success: true, revoked: true });
+      } catch (error) {
+        return c.json(
+          {
+            success: false,
+            error: sanitizeError(error),
+            cleanupRequired: true,
+          },
+          500
+        );
+      } finally {
+        bootstrapToken = '';
+      }
+    });
   });
 
   // Get current state (no auth required - read-only)
@@ -1275,6 +1772,8 @@ export function createApiRoutes(): Hono {
             features: {
               queue: stateConfig.features?.queue ?? defaultFeatures.queue,
               r2: stateConfig.features?.r2 ?? defaultFeatures.r2,
+              pluginDynamicWorkers:
+                stateConfig.features?.pluginDynamicWorkers ?? defaultFeatures.pluginDynamicWorkers,
               email: {
                 ...stateConfig.features?.email,
                 ...emailConfig,
@@ -1433,7 +1932,13 @@ export function createApiRoutes(): Hono {
             : 'Service Site binding disabled'
         );
 
-        const resourceIds = buildResourceIdsFromLock(lock, updatedConfig);
+        const resourceIds = await buildWorkerDeploymentResourceIds({
+          lock,
+          config: updatedConfig,
+          environmentId: env,
+          components: ['ar-router'],
+          onProgress: addProgress,
+        });
         addProgress('Refreshing ar-router wrangler config...');
         const masterResult = await saveMasterWranglerConfigs(updatedConfig, resourceIds, {
           baseDir,
@@ -1720,7 +2225,12 @@ export function createApiRoutes(): Hono {
         });
         addProgress(`Saved email bootstrap files to ${envPaths.keys}`);
 
-        const resourceIds = buildResourceIdsFromLock(lock, updatedConfig);
+        const resourceIds = await buildWorkerDeploymentResourceIds({
+          lock,
+          config: updatedConfig,
+          environmentId: env,
+          onProgress: addProgress,
+        });
         addProgress('Refreshing generated wrangler configs...');
         const masterResult = await saveMasterWranglerConfigs(updatedConfig, resourceIds, {
           baseDir: rootDir,
@@ -1886,6 +2396,7 @@ export function createApiRoutes(): Hono {
     createQueues: z.boolean().optional(),
     createR2: z.boolean().optional(),
     storageProfileId: ProfileIdSchema.optional(),
+    automaticProvisioning: z.boolean().optional(),
   });
 
   // Provision Cloudflare resources (with lock)
@@ -1910,7 +2421,14 @@ export function createApiRoutes(): Hono {
           );
         }
 
-        const { env, databaseConfig, createQueues, createR2, storageProfileId } = parseResult.data;
+        const {
+          env,
+          databaseConfig,
+          createQueues,
+          createR2,
+          storageProfileId,
+          automaticProvisioning,
+        } = parseResult.data;
         const rootDir = findAuthrimBaseDir(process.cwd());
         const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
         operationLock = await acquireEnvironmentOperationForEnvironment({
@@ -1943,7 +2461,8 @@ export function createApiRoutes(): Hono {
           storageProfileId ||
           databaseConfig ||
           createQueues !== undefined ||
-          createR2 !== undefined
+          createR2 !== undefined ||
+          automaticProvisioning !== undefined
         ) {
           const baseConfig = getStateConfigForEnv(env) ?? createDefaultConfig(env);
           state.config = AuthrimConfigSchema.parse({
@@ -1972,6 +2491,12 @@ export function createApiRoutes(): Hono {
                 ...baseConfig.profiles?.defaults,
                 storage: storageProfileId ?? baseConfig.profiles?.defaults?.storage,
               },
+            },
+            tenantD1: {
+              automaticProvisioning:
+                automaticProvisioning === undefined
+                  ? baseConfig.tenantD1?.automaticProvisioning === true
+                  : automaticProvisioning,
             },
           });
         }
@@ -2007,6 +2532,12 @@ export function createApiRoutes(): Hono {
           : baseConfig;
         config.createdAt = new Date().toISOString();
         config.updatedAt = new Date().toISOString();
+        const wranglerAccountId = await getAccountId();
+        if (!wranglerAccountId) throw new Error('cloudflare_account_id_required_for_provisioning');
+        if (config.cloudflare?.accountId && config.cloudflare.accountId !== wranglerAccountId) {
+          throw new Error('cloudflare_config_account_id_mismatch');
+        }
+        config.cloudflare = { accountId: wranglerAccountId };
 
         // Get workers subdomain and set auto-detected URLs
         const workersSubdomain = await getWorkersSubdomain();
@@ -2046,7 +2577,12 @@ export function createApiRoutes(): Hono {
 
         // Generate wrangler.toml files
         addProgress('Generating wrangler.toml files...');
-        const resourceIds = buildResourceIdsFromLock(lock, config);
+        const resourceIds = await buildWorkerDeploymentResourceIds({
+          lock,
+          config,
+          environmentId: env,
+          onProgress: addProgress,
+        });
 
         const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
           baseDir: rootDir,
@@ -2199,6 +2735,24 @@ export function createApiRoutes(): Hono {
           const tomlContent = toToml(wranglerConfig, env);
           const tomlPath = join(componentDir, 'wrangler.toml');
           await writeFile(tomlPath, tomlContent, 'utf-8');
+          if (component === 'ar-control' || component === 'ar-auth' || component === 'ar-bridge') {
+            const bootstrapConfig = generateWranglerConfig(
+              component,
+              config,
+              resourceIds,
+              workersSubdomain ?? undefined,
+              component === 'ar-control'
+                ? { includeControlSmokeBindings: false }
+                : component === 'ar-auth'
+                  ? { includeAuthAccountProvisioner: false }
+                  : { includeExternalIdpAccountProvisioner: false }
+            );
+            await writeFile(
+              join(componentDir, 'wrangler.bootstrap.toml'),
+              toToml(bootstrapConfig, env),
+              'utf-8'
+            );
+          }
           generatedComponents.push(component);
         }
 
@@ -2221,14 +2775,48 @@ export function createApiRoutes(): Hono {
     return withLock(async () => {
       let cleanupEnv: string | undefined;
       let cleanupKeysDir: string | undefined;
+      let bootstrapToken = '';
+      let bootstrapOwnership: CloudflareTokenOwnership | null = null;
       let environmentOperationLock:
         | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
         | undefined;
       try {
-        const body = await c.req.json();
-        const envParseResult = EnvNameSchema.safeParse(body?.env);
-        if (!envParseResult.success) {
-          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        const bodyResult = z
+          .object({
+            env: EnvNameSchema,
+            rootDir: z.string().min(1).max(4096).optional(),
+            dryRun: z.boolean().optional(),
+            components: z.array(z.string().min(1).max(128)).max(32).optional(),
+            skipBuild: z.boolean().optional(),
+            runMigrations: z.boolean().optional(),
+            externalSchemaReady: z.boolean().optional(),
+            bootstrapToken: z.string().min(20).max(4096).regex(/^\S+$/u).optional(),
+            tokenOwnership: z.enum(['account', 'user']).optional(),
+          })
+          .strict()
+          .safeParse(await c.req.json());
+        if (!bodyResult.success) {
+          const invalidEnvironment = bodyResult.error.issues.some(
+            (issue) => issue.path.length === 1 && issue.path[0] === 'env'
+          );
+          return c.json(
+            {
+              success: false,
+              error: invalidEnvironment ? 'Invalid environment name' : 'Invalid deployment request',
+            },
+            400
+          );
+        }
+        const body = bodyResult.data;
+        if (body.bootstrapToken !== undefined || body.tokenOwnership !== undefined) {
+          if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+            return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+          }
+          if (!body.bootstrapToken || !body.tokenOwnership) {
+            return c.json({ success: false, error: 'Invalid bootstrap token input' }, 400);
+          }
+          bootstrapToken = body.bootstrapToken;
+          bootstrapOwnership = body.tokenOwnership;
         }
         const {
           rootDir = process.cwd(),
@@ -2238,7 +2826,7 @@ export function createApiRoutes(): Hono {
           runMigrations = true,
           externalSchemaReady = false,
         } = body;
-        const env = envParseResult.data;
+        const env = body.env;
         const resolvedRootDir = resolve(rootDir);
         cleanupEnv = env;
 
@@ -2268,10 +2856,14 @@ export function createApiRoutes(): Hono {
         if (!existingDeploymentLock) {
           throw new Error('provisioned_environment_disappeared_while_acquiring_deploy_lock');
         }
+        const interruptedInitialRelease =
+          !existingDeploymentLock.productVersion &&
+          existingDeploymentLock.releaseUpdate !== undefined &&
+          existingDeploymentLock.releaseUpdate.phase !== 'verified';
         if (
-          existingDeploymentLock &&
-          (existingDeploymentLock.productVersion ||
-            Object.keys(existingDeploymentLock.workers ?? {}).length > 0)
+          existingDeploymentLock.productVersion ||
+          (Object.keys(existingDeploymentLock.workers ?? {}).length > 0 &&
+            !interruptedInitialRelease)
         ) {
           return c.json(
             {
@@ -2293,10 +2885,23 @@ export function createApiRoutes(): Hono {
           );
         }
         const productVersion = await getRootProductVersion(resolvedRootDir);
+        const migrationRootResult = await findMigrationsRoot(resolvedRootDir, addProgress);
+        if (!migrationRootResult.path) {
+          throw new Error(
+            `Release migrations directory not found: ${migrationRootResult.searchPaths.join(', ')}`
+          );
+        }
+        const initialRelease = loadTargetReleaseMigrationManifest({
+          migrationsRoot: migrationRootResult.path,
+          productVersion,
+          allowDraft: true,
+        });
+        const initialManifestChecksum = calculateReleaseManifestChecksum(initialRelease.manifest);
         const initialDeploymentGuard = evaluateReleaseDeploymentGuard(
           existingDeploymentLock,
           productVersion,
-          'initial_deploy'
+          'initial_deploy',
+          { releaseManifestChecksum: initialManifestChecksum }
         );
         if (!initialDeploymentGuard.allowed) {
           return c.json(
@@ -2329,6 +2934,18 @@ export function createApiRoutes(): Hono {
           JSON.parse(await readFile(configPath, 'utf-8')),
           env
         );
+        const automaticProvisioning = releaseConfig.tenantD1?.automaticProvisioning === true;
+        if (automaticProvisioning !== Boolean(bootstrapToken && bootstrapOwnership)) {
+          return c.json(
+            {
+              success: false,
+              error: automaticProvisioning
+                ? 'Automatic provisioning requires one bootstrap token'
+                : 'Bootstrap token input is not allowed when Automatic provisioning is off',
+            },
+            409
+          );
+        }
         state.config = releaseConfig;
         addProgress(`Loaded locked config from ${configPath}`);
 
@@ -2387,18 +3004,6 @@ export function createApiRoutes(): Hono {
           addProgress('Packages built successfully');
         }
 
-        const migrationRootResult = await findMigrationsRoot(resolvedRootDir, addProgress);
-        if (!migrationRootResult.path) {
-          throw new Error(
-            `Release migrations directory not found: ${migrationRootResult.searchPaths.join(', ')}`
-          );
-        }
-        const initialRelease = loadTargetReleaseMigrationManifest({
-          migrationsRoot: migrationRootResult.path,
-          productVersion,
-          allowDraft: true,
-        });
-        const initialManifestChecksum = calculateReleaseManifestChecksum(initialRelease.manifest);
         const initialTargets = resolveReleaseMigrationTargets({
           lock: existingDeploymentLock,
           config: releaseConfig,
@@ -2428,6 +3033,49 @@ export function createApiRoutes(): Hono {
           );
         }
 
+        let keysDir: string;
+        const foundKeys = findKeysDirectory({
+          env,
+          sourceDir: baseDir,
+          keysBaseDir: process.cwd(),
+        });
+        if (foundKeys) {
+          keysDir = foundKeys.path;
+        } else if (resolved.type === 'new') {
+          keysDir = (resolved.paths as EnvironmentPaths).keys;
+        } else {
+          keysDir = (resolved.paths as LegacyPaths).keys;
+        }
+        cleanupKeysDir = keysDir;
+
+        let deploymentSecrets: Record<string, string> = {};
+        if (!dryRun) {
+          if (existsSync(keysDir)) {
+            await ensureSupplementalKeysForWebDeploy(keysDir);
+          }
+          deploymentSecrets = await loadDeploySecretsFromKeys(
+            existsSync(keysDir) ? keysDir : undefined,
+            enabledComponents
+          );
+          const missingControlSecrets = getMissingRequiredDeploySecrets(
+            deploymentSecrets,
+            ['ar-control'],
+            { automaticProvisioning: automaticProvisioning && !bootstrapToken }
+          );
+          if (missingControlSecrets.length > 0) {
+            return c.json(
+              {
+                success: false,
+                error: `Missing required Control Worker secrets: ${missingControlSecrets.join(', ')}`,
+              },
+              409
+            );
+          }
+          addProgress(
+            `Prepared ${Object.keys(deploymentSecrets).length} secret value(s) for Worker deployment.`
+          );
+        }
+
         let migrationsResult = null;
         if (!dryRun) {
           let releaseLock = withReleaseUpdateState(existingDeploymentLock, {
@@ -2438,13 +3086,19 @@ export function createApiRoutes(): Hono {
           });
           await saveLockFile(releaseLock, initialLockPath);
           addProgress('📜 Running exact release migrations before Worker deployment...');
-          migrationsResult = await runMigrationsForEnvironment(
-            env,
-            resolvedRootDir,
-            addProgress,
-            cfg,
-            { productVersion, allowDraft: true }
-          );
+          const automaticInitialTargets = initialTargets.filter((target) => target.automatic);
+          const initialSchemaPlan = buildReleaseSchemaUpdatePlan({
+            targetManifest: initialRelease.manifest,
+            targets: automaticInitialTargets,
+          });
+          migrationsResult = await applyReleaseSchemaUpdatePlan({
+            plan: initialSchemaPlan,
+            manifest: initialRelease.manifest,
+            migrationsRoot: migrationRootResult.path,
+            concurrency: 2,
+            backfillLegacyChecksums: !initialRelease.draft,
+            onProgress: addProgress,
+          });
           if (!migrationsResult.success) {
             state.status = 'error';
             state.error = 'Database migration failed before Worker deployment.';
@@ -2459,7 +3113,23 @@ export function createApiRoutes(): Hono {
               500
             );
           }
-          const appliedTargetIds = initialTargets.map((target) => target.id);
+          const migratedTargetIds = new Set(
+            migrationsResult.results.map((target) => target.targetId)
+          );
+          const missingAutomaticTargets = automaticInitialTargets.filter(
+            (target) => !migratedTargetIds.has(target.id)
+          );
+          if (missingAutomaticTargets.length > 0) {
+            throw new Error(
+              `initial_release_schema_evidence_incomplete:${missingAutomaticTargets
+                .map((target) => target.id)
+                .join(',')}`
+            );
+          }
+          const appliedTargetIds = [
+            ...migrationsResult.results.map((target) => target.targetId),
+            ...initialManualTargetIds,
+          ];
           releaseLock = withSchemaTargetStates(releaseLock, {
             targetIds: appliedTargetIds,
             manualTargetIds: initialManualTargetIds,
@@ -2479,34 +3149,6 @@ export function createApiRoutes(): Hono {
           addProgress('✅ Exact release migrations completed before Worker deployment');
         }
 
-        // Upload secrets first (secrets are read but not stored in state)
-        // Check external (.authrim-keys/), new (.authrim/{env}/keys/), and legacy (.keys/{env}/) structures
-        let keysDir: string;
-        const foundKeys = findKeysDirectory({
-          env,
-          sourceDir: baseDir,
-          keysBaseDir: process.cwd(),
-        });
-        if (foundKeys) {
-          keysDir = foundKeys.path;
-        } else if (resolved.type === 'new') {
-          keysDir = (resolved.paths as EnvironmentPaths).keys;
-        } else {
-          keysDir = (resolved.paths as LegacyPaths).keys;
-        }
-        cleanupKeysDir = keysDir;
-
-        let deploymentSecrets: Record<string, string> = {};
-        if (!dryRun && existsSync(keysDir)) {
-          await ensureSupplementalKeysForWebDeploy(keysDir);
-          deploymentSecrets = await loadDeploySecretsFromKeys(keysDir, enabledComponents);
-          addProgress(
-            `Prepared ${Object.keys(deploymentSecrets).length} secret value(s) for Worker deployment.`
-          );
-        } else if (!dryRun) {
-          addProgress(`Warning: Keys directory not found at ${keysDir}`);
-        }
-
         // Regenerate wrangler.toml files from the current config/lock before deploying.
         // This keeps bindings such as send_email aligned even when setup logic evolves.
         if (!dryRun) {
@@ -2517,17 +3159,40 @@ export function createApiRoutes(): Hono {
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
 
             // Get enabled components
-            const enabledForValidation = getEnabledComponents({
-              saml: cfg?.components?.saml,
-              async: cfg?.components?.async,
-              vc: cfg?.components?.vc,
-              bridge: cfg?.components?.bridge,
-              policy: cfg?.components?.policy,
-            });
+            const enabledForValidation = Array.from(
+              getEnabledComponents({
+                saml: cfg?.components?.saml,
+                async: cfg?.components?.async,
+                vc: cfg?.components?.vc,
+                bridge: cfg?.components?.bridge,
+                policy: cfg?.components?.policy,
+              })
+            );
             addProgress('Refreshing wrangler.toml files from current configuration...');
 
             const workersSubdomain = await getWorkersSubdomain();
             const config = releaseConfig;
+
+            const controlDatabase = lock.d1.CONTROL_DB;
+            const migrationReleaseBucket = lock.r2?.MIGRATION_RELEASES;
+            if (!controlDatabase) {
+              throw new Error('control_database_required_for_release_publication');
+            }
+            if (!migrationReleaseBucket) {
+              throw new Error('migration_release_bucket_required_for_release_publication');
+            }
+            const publication = await publishAndActivateMigrationRelease({
+              migrationsRoot: migrationRootResult.path,
+              manifestPath: initialRelease.path,
+              bucketName: migrationReleaseBucket.name,
+              controlDatabaseId: controlDatabase.id,
+              environmentId: env,
+              actorId: 'setup:web-deploy',
+              onProgress: addProgress,
+            });
+            addProgress(
+              `✓ Migration release ${publication.artifact.releaseId} published and activated`
+            );
 
             const tenantD1BootstrapResult = await ensureInitialTenantD1Resources({
               env,
@@ -2558,7 +3223,23 @@ export function createApiRoutes(): Hono {
               );
             }
 
-            const lockResourceIds = buildResourceIdsFromLock(lock, config);
+            const lockResourceIds = await buildWorkerDeploymentResourceIds({
+              lock,
+              config,
+              environmentId: env,
+              components: enabledForValidation,
+              onProgress: addProgress,
+            });
+            const masterResult = await saveMasterWranglerConfigs(config, lockResourceIds, {
+              baseDir,
+              env,
+              capabilityManifestBaseDir: resolvedRootDir,
+              components: enabledForValidation,
+              onProgress: addProgress,
+            });
+            if (!masterResult.success) {
+              throw new Error(`generated_wrangler_config_failed:${masterResult.errors.join(',')}`);
+            }
 
             for (const component of enabledForValidation) {
               const componentDir = join(resolve(rootDir), 'packages', component);
@@ -2575,7 +3256,73 @@ export function createApiRoutes(): Hono {
               const tomlContent = toToml(wranglerConfig, env);
               const tomlPath = join(componentDir, 'wrangler.toml');
               await writeFile(tomlPath, tomlContent, 'utf-8');
+              if (
+                component === 'ar-control' ||
+                component === 'ar-auth' ||
+                component === 'ar-bridge'
+              ) {
+                const bootstrapConfig = generateWranglerConfig(
+                  component,
+                  config,
+                  lockResourceIds,
+                  workersSubdomain ?? undefined,
+                  component === 'ar-control'
+                    ? { includeControlSmokeBindings: false }
+                    : component === 'ar-auth'
+                      ? { includeAuthAccountProvisioner: false }
+                      : { includeExternalIdpAccountProvisioner: false }
+                );
+                await writeFile(
+                  join(componentDir, 'wrangler.bootstrap.toml'),
+                  toToml(bootstrapConfig, env),
+                  'utf-8'
+                );
+              }
             }
+
+            const inventory = await compileControlWorkerInventoryFromArtifacts({
+              baseDir: resolvedRootDir,
+              environmentId: env,
+              environmentName: env,
+              components: enabledForValidation,
+              artifactPaths: masterResult.files,
+            });
+            await registerControlWorkerInventory({
+              controlDatabaseName: controlDatabase.name,
+              records: inventory,
+              environmentBootstrap: {
+                defaultResidencyPolicyId: config.profiles.defaults.residency,
+                automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+              },
+              registeredBy: 'setup:web-deploy',
+              onProgress: addProgress,
+            });
+            await registerInitialControlTopology({
+              environmentId: env,
+              tenantId: config.tenant?.name?.trim() || 'default',
+              controlDatabaseName: controlDatabase.name,
+              lock,
+              release: initialRelease.manifest,
+              releaseDraft: initialRelease.draft,
+              automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+            });
+            const externalSources = await discoverExternalCapabilities({
+              baseDir: resolvedRootDir,
+            });
+            await publishDynamicPluginWorkerBundles({
+              baseDir: resolvedRootDir,
+              enabled: config.features.pluginDynamicWorkers.enabled,
+              sources: externalSources,
+              bucketName: lock.r2?.PLUGIN_BUNDLES?.name,
+              pluginRunnerDatabaseName: lock.d1?.PLUGIN_RUNNER_DB?.name,
+              onProgress: addProgress,
+            });
+            await registerExternalCapabilities({
+              controlDatabaseName: controlDatabase.name,
+              environmentId: env,
+              sources: externalSources,
+              registeredBy: 'setup:web-deploy',
+            });
 
             addProgress('✓ wrangler.toml files refreshed');
           }
@@ -2677,6 +3424,7 @@ export function createApiRoutes(): Hono {
             deploymentStrategy: 'auto',
             existingComponents,
             secrets: deploymentSecrets,
+            automaticProvisioning: automaticProvisioning && !bootstrapToken,
             cleanupLegacyStaticSecrets: true,
             onProgress: addProgress,
             onError: (comp, error) => {
@@ -2761,6 +3509,28 @@ export function createApiRoutes(): Hono {
             );
           }
 
+          if (bootstrapToken && bootstrapOwnership) {
+            const accountId = releaseConfig.cloudflare?.accountId ?? (await getAccountId());
+            const { lock: bootstrapLock } = await loadLockFileAuto(rootDir, env);
+            const controlDatabaseName = bootstrapLock?.d1.CONTROL_DB?.name;
+            if (!accountId || !controlDatabaseName) {
+              throw new Error('control_token_bootstrap_target_missing');
+            }
+            await completeControlTokenBootstrap({
+              accountId,
+              environment: env,
+              rootDir: resolvedRootDir,
+              controlDatabaseName,
+              bootstrapToken,
+              ownership: bootstrapOwnership,
+              resourceClasses: resolveControlTokenResourceClasses(releaseConfig),
+            });
+            bootstrapToken = '';
+            addProgress(
+              'Automatic provisioning credentials registered and bootstrap token revoked.'
+            );
+          }
+
           const workersSubdomain = await getWorkersSubdomain();
           const workerHttpTargets = buildWorkerHttpReadinessTargets(
             summary.results.filter((result) => result.success),
@@ -2791,10 +3561,41 @@ export function createApiRoutes(): Hono {
               addProgress
             );
           }
+
+          const { lock: handoffLock } = await loadLockFileAuto(rootDir, env);
+          const controlDatabaseName = handoffLock?.d1.CONTROL_DB?.name;
+          const controlDatabaseId = handoffLock?.d1.CONTROL_DB?.id;
+          if (!controlDatabaseName || !controlDatabaseId) {
+            throw new Error('control_database_required');
+          }
+          const evidence = await recordInitialBootstrapWorkerEvidence({
+            environmentId: env,
+            controlDatabaseName,
+            deployments: summary.results,
+          });
+          addProgress(
+            `Waiting for Control bootstrap verification of ${evidence.workerCount} Worker(s)...`
+          );
+          await waitForInitialBootstrapHandoff({
+            environmentId: env,
+            controlDatabaseName,
+            timeoutMs: 15 * 60_000,
+            pollIntervalMs: 30_000,
+            onProgress: addProgress,
+            reconcile: () =>
+              reconcileInitialBootstrapHandoffAsOperator({
+                controlDatabaseId,
+                controlDatabaseName,
+                environmentId: env,
+                executeWorkerBindings: !automaticProvisioning,
+              }),
+          });
+          addProgress('✓ Initial D1 topology accepted by Control');
         }
 
         // Complete post-deploy bootstrap only after the schema-first step above.
         let initialTenantResult = null;
+        let initialNotificationProviderSuccess = true;
         let initialAdminRolesResult = null;
         let setupMachineAccessResult = null;
         let adminUiBffMachineAccessResult = null;
@@ -2811,6 +3612,31 @@ export function createApiRoutes(): Hono {
               addProgress(
                 `⚠️ Initial tenant bootstrap failed: ${initialTenantResult.error || 'unknown error'}`
               );
+            }
+
+            if (initialTenantResult.success) {
+              addProgress('🔧 Materializing initial notification provider order...');
+              try {
+                const notificationProviderResult =
+                  await ensureInitialNotificationProviderConfiguration({
+                    environmentId: env,
+                    config: bootstrapConfig,
+                    lock: existingDeploymentLock,
+                    keysDir,
+                  });
+                addProgress(
+                  notificationProviderResult.providerId
+                    ? `✅ Initial notification provider ready: ${notificationProviderResult.providerId}`
+                    : '✅ Notification delivery explicitly disabled'
+                );
+              } catch (error) {
+                initialNotificationProviderSuccess = false;
+                addProgress(
+                  `⚠️ Initial notification provider bootstrap failed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`
+                );
+              }
             }
 
             addProgress(
@@ -2912,10 +3738,6 @@ export function createApiRoutes(): Hono {
                 }`
               );
             }
-          } else {
-            addProgress(
-              `⚠️ Some migrations failed - core: ${migrationsResult.core.error || 'ok'}, pii: ${migrationsResult.pii.error || 'ok'}, admin: ${migrationsResult.admin.error || 'ok'}`
-            );
           }
         }
 
@@ -2940,6 +3762,7 @@ export function createApiRoutes(): Hono {
         const bootstrapSuccess =
           migrationsSuccess &&
           initialTenantSuccess &&
+          initialNotificationProviderSuccess &&
           initialAdminRolesSuccess &&
           setupMachineAccessSuccess &&
           adminUiBffMachineAccessSuccess &&
@@ -3125,6 +3948,33 @@ export function createApiRoutes(): Hono {
             }
           }
 
+          if (
+            !dryRun &&
+            uiWorkersSummary.failedCount === 0 &&
+            uiWorkersHealthReady &&
+            uiWorkersSummary.results.length > 0
+          ) {
+            const { lock: currentLock } = await loadLockFileAuto(rootDir, env);
+            const controlDatabaseName = currentLock?.d1.CONTROL_DB?.name;
+            if (!controlDatabaseName) {
+              throw new Error('control_database_required_for_ui_worker_inventory');
+            }
+            await registerUiWorkerInventoryFromArtifacts({
+              baseDir: resolve(rootDir),
+              environmentId: env,
+              environmentName: env,
+              controlDatabaseName,
+              components: uiWorkersSummary.results.map((result) => result.component),
+              environmentBootstrap: {
+                defaultResidencyPolicyId: (cfg as AuthrimConfig).profiles.defaults.residency,
+                automaticProvisioning:
+                  (cfg as AuthrimConfig).tenantD1?.automaticProvisioning === true,
+              },
+              registeredBy: 'setup:web-deploy-ui',
+              onProgress: addProgress,
+            });
+          }
+
           if (uiWorkersSummary.failedCount === 0) {
             addProgress('✓ All UI packages deployed to Workers');
             for (const result of uiWorkersSummary.results) {
@@ -3189,11 +4039,10 @@ export function createApiRoutes(): Hono {
             const failedUiWorkers = uiWorkersSummary?.results.filter((r) => !r.success) ?? [];
             state.error = `UI Worker deployment failed: ${failedUiWorkers.map((r) => `${r.component}: ${r.error}`).join(', ')}`;
           } else if (!migrationsSuccess) {
-            const errors = [];
-            if (migrationsResult?.core.error) errors.push(`core: ${migrationsResult.core.error}`);
-            if (migrationsResult?.pii.error) errors.push(`pii: ${migrationsResult.pii.error}`);
-            if (migrationsResult?.admin.error)
-              errors.push(`admin: ${migrationsResult.admin.error}`);
+            const errors =
+              migrationsResult?.results
+                .filter((result) => !result.success)
+                .map((result) => `${result.targetId}: ${result.error ?? 'unknown error'}`) ?? [];
             state.error = `Migrations failed: ${errors.join(', ')}`;
           } else if (!initialTenantSuccess) {
             state.error = `Initial tenant bootstrap failed: ${initialTenantResult?.error || 'unknown error'}`;
@@ -3235,6 +4084,7 @@ export function createApiRoutes(): Hono {
         await flushProgressLog();
         return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
       } finally {
+        bootstrapToken = '';
         await environmentOperationLock?.release();
       }
     });
@@ -3519,6 +4369,296 @@ export function createApiRoutes(): Hono {
   // Environment Management
   // =============================================================================
 
+  const WebCapacityRequestSchema = z
+    .object({
+      environmentId: EnvNameSchema,
+      profile: z.enum(['minimum', 'recommended', 'extra_headroom']),
+      scope: z.enum(['shared_pool', 'tenant_exclusive']),
+      tenantId: z
+        .string()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)
+        .nullable(),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (
+        (value.scope === 'shared_pool' && value.tenantId !== null) ||
+        (value.scope === 'tenant_exclusive' && value.tenantId === null)
+      ) {
+        context.addIssue({ code: 'custom', message: 'Invalid capacity scope owner' });
+      }
+    });
+
+  async function loadWebCapacityContext(environmentId: string) {
+    const baseDir = findAuthrimBaseDir(process.cwd());
+    const paths = getEnvironmentPaths({ baseDir, env: environmentId });
+    if (!existsSync(paths.config)) throw new Error('Control environment config is unavailable');
+    const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(paths.config, 'utf8')));
+    const { lock } = await loadLockFileAuto(baseDir, environmentId);
+    const controlDatabaseName = lock?.d1.CONTROL_DB?.name;
+    if (!controlDatabaseName) throw new Error('Control database is not configured');
+    return {
+      baseDir,
+      apiBaseUrl: resolveIssuerUrl(config, { env: environmentId }),
+      keysDir: resolveWebDeploymentKeysDir(baseDir, environmentId),
+      controlDatabaseName,
+      config,
+    };
+  }
+
+  api.get('/control/capacity/tenants', async (c) => {
+    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
+      return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
+    }
+    const parsed = EnvNameSchema.safeParse(c.req.query('environmentId'));
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid capacity environment' }, 400);
+    }
+    try {
+      const context = await loadWebCapacityContext(parsed.data);
+      const tenants = await listSetupExclusiveCapacityTenants({
+        controlDatabaseName: context.controlDatabaseName,
+        environmentId: parsed.data,
+      });
+      return c.json({ success: true, tenants });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  for (const action of ['preview', 'request'] as const) {
+    api.post(`/control/capacity/${action}`, async (c) => {
+      return withLock(async () => {
+        if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
+          return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
+        }
+        if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+          return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+        }
+        const parsed = WebCapacityRequestSchema.safeParse(await c.req.json());
+        if (!parsed.success) {
+          return c.json({ success: false, error: 'Invalid capacity request' }, 400);
+        }
+        try {
+          const context = await loadWebCapacityContext(parsed.data.environmentId);
+          const request = {
+            profile: parsed.data.profile,
+            scope: parsed.data.scope,
+            tenantId: parsed.data.tenantId,
+          };
+          const capacityInput = {
+            apiBaseUrl: context.apiBaseUrl,
+            keysDir: context.keysDir,
+            controlDatabaseName: context.controlDatabaseName,
+            request,
+          };
+          if (action === 'preview') {
+            const preview = await withEphemeralSetupMachineAccess({
+              baseDir: context.baseDir,
+              env: parsed.data.environmentId,
+              config: context.config,
+              keysDir: context.keysDir,
+              action: () => previewSetupControlCapacity(capacityInput),
+            });
+            return c.json({ success: true, preview });
+          }
+          const result = await withEphemeralSetupMachineAccess({
+            baseDir: context.baseDir,
+            env: parsed.data.environmentId,
+            config: context.config,
+            keysDir: context.keysDir,
+            action: () => requestSetupControlCapacity(capacityInput),
+          });
+          return c.json(
+            {
+              success: true,
+              ...result,
+            },
+            202
+          );
+        } catch (error) {
+          return c.json({ success: false, error: sanitizeError(error) }, 500);
+        }
+      });
+    });
+  }
+
+  api.get('/control/pending-operations', async (c) => {
+    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
+      return c.json({ error: 'Invalid or missing session token' }, 401);
+    }
+    try {
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const operations = [];
+      const warnings: Array<{ environmentId: string; code: string }> = [];
+      for (const environmentId of listEnvironments(baseDir, process.cwd())) {
+        const { lock } = await loadLockFileAuto(baseDir, environmentId);
+        const controlDatabaseName = lock?.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) continue;
+        try {
+          const [shardOperations, pluginOperations, pluginCleanupOperations, tenantDrOperations] =
+            await Promise.all([
+              listPendingControlOperatorOperations({ controlDatabaseName }),
+              listPendingPluginControlOperatorOperations({ controlDatabaseName }),
+              listPendingPluginControlCleanupOperations({ controlDatabaseName }),
+              listPendingTenantDisasterRecoveryOperatorOperations({ controlDatabaseName }),
+            ]);
+          operations.push(
+            ...shardOperations,
+            ...pluginOperations,
+            ...pluginCleanupOperations,
+            ...tenantDrOperations
+          );
+        } catch {
+          warnings.push({ environmentId, code: 'control_operation_status_unavailable' });
+        }
+      }
+      return c.json({ success: true, operations, warnings });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.post('/control/pending-operations/execute', async (c) => {
+    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
+      return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
+    }
+    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
+    }
+    const parsed = z
+      .object({
+        environmentId: EnvNameSchema,
+        operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u),
+      })
+      .strict()
+      .safeParse(await c.req.json());
+    if (!parsed.success) {
+      return c.json({ success: false, error: 'Invalid Control operation request' }, 400);
+    }
+    try {
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const { lock, path: lockPath } = await loadLockFileAuto(baseDir, parsed.data.environmentId);
+      const controlDatabase = lock?.d1.CONTROL_DB;
+      if (!controlDatabase) {
+        return c.json({ success: false, error: 'Control database is not configured' }, 409);
+      }
+      const [shardOperations, pluginOperations, pluginCleanupOperations, tenantDrOperations] =
+        await Promise.all([
+          listPendingControlOperatorOperations({ controlDatabaseName: controlDatabase.name }),
+          listPendingPluginControlOperatorOperations({ controlDatabaseName: controlDatabase.name }),
+          listPendingPluginControlCleanupOperations({
+            controlDatabaseName: controlDatabase.name,
+          }),
+          listPendingTenantDisasterRecoveryOperatorOperations({
+            controlDatabaseName: controlDatabase.name,
+          }),
+        ]);
+      const operations = [
+        ...shardOperations,
+        ...pluginOperations,
+        ...pluginCleanupOperations,
+        ...tenantDrOperations,
+      ];
+      const operation = operations.find(
+        (candidate) =>
+          candidate.operationId === parsed.data.operationId &&
+          candidate.environmentId === parsed.data.environmentId
+      );
+      if (!operation) {
+        return c.json({ success: false, error: 'Pending Control operation was not found' }, 404);
+      }
+      if (
+        operation.operationKind !== 'provision_plugin_resources' &&
+        operation.operationKind !== 'cleanup_plugin_resources' &&
+        operation.currentStep !== 'create_d1' &&
+        operation.currentStep !== 'apply_migrations' &&
+        operation.currentStep !== 'reconcile_worker_bindings'
+      ) {
+        return c.json(
+          {
+            success: false,
+            error: 'This Control operation step is not executable by this setup version',
+            operation,
+          },
+          409
+        );
+      }
+      const resolved = resolvePaths({ baseDir, env: parsed.data.environmentId });
+      const configPath =
+        resolved.type === 'new'
+          ? (resolved.paths as EnvironmentPaths).config
+          : (resolved.paths as LegacyPaths).config;
+      const config = existsSync(configPath)
+        ? parseEnvironmentConfigForEnv(
+            JSON.parse(await readFile(configPath, 'utf-8')),
+            parsed.data.environmentId
+          )
+        : null;
+      if (
+        (operation.operationKind === 'provision_plugin_resources' ||
+          operation.operationKind === 'cleanup_plugin_resources') &&
+        !config
+      ) {
+        return c.json({ success: false, error: 'Control environment config is unavailable' }, 409);
+      }
+      const result =
+        operation.operationKind === 'provision_plugin_resources'
+          ? await executeSetupPluginControlOperator({
+              controlDatabaseId: controlDatabase.id,
+              migrationReleaseBucketName:
+                lock.r2?.MIGRATION_RELEASES?.name ??
+                `${parsed.data.environmentId}-migration-releases`,
+              operation,
+              expectedAccountId: config?.cloudflare?.accountId,
+            })
+          : operation.operationKind === 'cleanup_plugin_resources'
+            ? await executeSetupPluginCleanupOperator({
+                controlDatabaseId: controlDatabase.id,
+                operation,
+                expectedAccountId: config?.cloudflare?.accountId,
+              })
+            : operation.currentStep === 'create_d1'
+              ? await executeSetupControlOperatorCreate({
+                  controlDatabaseId: controlDatabase.id,
+                  operation,
+                  expectedAccountId: config?.cloudflare?.accountId,
+                })
+              : operation.currentStep === 'apply_migrations'
+                ? await executeSetupControlOperatorMigration({
+                    controlDatabaseId: controlDatabase.id,
+                    migrationReleaseBucketName:
+                      lock.r2?.MIGRATION_RELEASES?.name ??
+                      `${parsed.data.environmentId}-migration-releases`,
+                    operation,
+                    expectedAccountId: config?.cloudflare?.accountId,
+                  })
+                : await executeSetupControlOperatorWorkerBindings({
+                    controlDatabaseId: controlDatabase.id,
+                    operation,
+                    expectedAccountId: config?.cloudflare?.accountId,
+                  });
+      if (
+        operation.operationKind === 'cleanup_plugin_resources' ||
+        (operation.operationKind === 'provision_plugin_resources' &&
+          result.state === 'awaiting_smoke')
+      ) {
+        await refreshWorkerDeploymentArtifacts({
+          baseDir,
+          env: parsed.data.environmentId,
+          config: config!,
+          lock,
+          lockPath,
+          components: ['ar-plugin-runner'],
+          registeredBy: 'setup:web-control-provision-plugin-resources',
+        });
+      }
+      return c.json({ success: true, result });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
   // List all detected Authrim environments (no auth required - read-only)
   api.get('/environments', async (c) => {
     try {
@@ -3538,276 +4678,6 @@ export function createApiRoutes(): Hono {
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
     }
-  });
-
-  interface TenantD1PoolCountRow extends Record<string, unknown> {
-    state: string;
-    count: number | string;
-  }
-
-  interface TenantD1PoolSlotRow extends Record<string, unknown> {
-    slot_number: number;
-    slot_id: string;
-    state: string;
-    assigned_tenant_id: string | null;
-    updated_at: number | string;
-  }
-
-  function countValue(value: unknown): number {
-    if (typeof value === 'number') return value;
-    if (typeof value === 'string') return Number.parseInt(value, 10) || 0;
-    return 0;
-  }
-
-  async function loadEnvironmentConfigForWeb(env: string): Promise<{
-    config: AuthrimConfig | null;
-    configPath: string;
-  }> {
-    const baseDir = findAuthrimBaseDir(process.cwd());
-    const envPaths = getEnvironmentPaths({ baseDir, env });
-    if (!existsSync(envPaths.config)) {
-      return { config: null, configPath: envPaths.config };
-    }
-    const config = parseEnvironmentConfigForEnv(
-      JSON.parse(await readFile(envPaths.config, 'utf-8')),
-      env
-    );
-    return { config, configPath: envPaths.config };
-  }
-
-  api.get('/tenant-d1/pool/:env/status', async (c) => {
-    try {
-      const envParam = c.req.param('env');
-      const parseResult = EnvNameSchema.safeParse(envParam);
-      if (!parseResult.success) {
-        return c.json({ success: false, error: 'Invalid environment name' }, 400);
-      }
-      const env = parseResult.data;
-      const { config, configPath } = await loadEnvironmentConfigForWeb(env);
-      if (!config) {
-        return c.json({ success: false, error: `Config file not found: ${configPath}` }, 404);
-      }
-
-      const storageProfile = config.profiles?.defaults?.storage ?? 'builtin:storage:shared-d1';
-      if (storageProfile !== 'builtin:storage:tenant-d1') {
-        return c.json({
-          success: true,
-          env,
-          storageProfile,
-          tenantD1Pool: {
-            enabled: false,
-            tableReady: false,
-            capacity: 0,
-            available: null,
-            counts: {},
-            slots: [],
-          },
-          message: 'Shared D1 mode does not require tenant D1 pool operations.',
-        });
-      }
-
-      const adminDbName = getD1DatabaseName(env, 'admin-db');
-      try {
-        const [counts, slots] = await Promise.all([
-          queryD1Rows<TenantD1PoolCountRow>(
-            adminDbName,
-            'SELECT state, COUNT(*) AS count FROM tenant_database_slots GROUP BY state ORDER BY state;'
-          ),
-          queryD1Rows<TenantD1PoolSlotRow>(
-            adminDbName,
-            `SELECT slot_number, slot_id, state, assigned_tenant_id, updated_at
-               FROM tenant_database_slots
-              ORDER BY slot_number ASC;`
-          ),
-        ]);
-        const summary = Object.fromEntries(counts.map((row) => [row.state, countValue(row.count)]));
-        const capacity = Object.values(summary).reduce((total, count) => total + count, 0);
-
-        return c.json({
-          success: true,
-          env,
-          storageProfile,
-          tenantD1Pool: {
-            enabled: true,
-            tableReady: true,
-            configuredSlots: config.tenantD1?.preallocatedSlots ?? 3,
-            capacity,
-            available: summary.available ?? 0,
-            counts: summary,
-            slots,
-          },
-        });
-      } catch (error) {
-        return c.json({
-          success: true,
-          env,
-          storageProfile,
-          tenantD1Pool: {
-            enabled: true,
-            tableReady: false,
-            configuredSlots: config.tenantD1?.preallocatedSlots ?? 3,
-            capacity: 0,
-            available: null,
-            counts: {},
-            slots: [],
-          },
-          warning: sanitizeError(error),
-        });
-      }
-    } catch (error) {
-      return c.json({ success: false, error: sanitizeError(error) }, 500);
-    }
-  });
-
-  api.post('/tenant-d1/pool/:env/expand', async (c) => {
-    return withLock(async () => {
-      let operationLock:
-        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
-        | undefined;
-      try {
-        const envParam = c.req.param('env');
-        const parseResult = EnvNameSchema.safeParse(envParam);
-        if (!parseResult.success) {
-          return c.json({ success: false, error: 'Invalid environment name' }, 400);
-        }
-        const env = parseResult.data;
-        const body = await c.req.json();
-        const addSlots = Number.parseInt(String(body?.addSlots ?? '0'), 10);
-        if (!Number.isInteger(addSlots) || addSlots < 1) {
-          return c.json({ success: false, error: 'addSlots must be a positive integer' }, 400);
-        }
-        const baseDir = findAuthrimBaseDir(process.cwd());
-        operationLock = await acquireEnvironmentOperationForEnvironment({
-          baseDir,
-          env,
-          operation: 'web-tenant-d1-pool-expand',
-        });
-        const targetProductVersion = operationLock.lock
-          ? await getRootProductVersion(baseDir)
-          : undefined;
-        const decision = evaluateEnvironmentOperation({
-          operation: 'topology_change',
-          lock: operationLock.lock,
-          targetVersion: targetProductVersion,
-        });
-        if (!decision.allowed) {
-          return c.json(
-            {
-              success: false,
-              error: environmentOperationBlockMessage(decision, targetProductVersion),
-              requiredCommand: `authrim-setup update --env ${env}`,
-            },
-            409
-          );
-        }
-        const loadedConfig = await loadEnvironmentConfigForWeb(env);
-        if (!loadedConfig.config) {
-          return c.json(
-            { success: false, error: `Config file not found: ${loadedConfig.configPath}` },
-            404
-          );
-        }
-        let config = loadedConfig.config;
-        const configPath = loadedConfig.configPath;
-        let lock = operationLock.lock;
-        const lockPath = operationLock.lockFilePath;
-        if (!lock || !lockPath) {
-          return c.json({ success: false, error: `Lock file not found for ${env}` }, 404);
-        }
-        config = await readEffectiveTopologyConfig(lock, configPath);
-        if (config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
-          return c.json(
-            {
-              success: false,
-              error: 'Tenant D1 pool is not enabled for this environment.',
-              storageProfile: config.profiles?.defaults?.storage ?? 'unknown',
-            },
-            409
-          );
-        }
-
-        const currentSlots = config.tenantD1?.preallocatedSlots ?? 3;
-        const resuming = lock.topologyUpdate !== undefined;
-        if (resuming) {
-          assertPendingTopologyUpdate(lock, {
-            kind: 'tenant_d1_pool',
-            targetProductVersion: targetProductVersion!,
-            config,
-          });
-        }
-        const nextSlots = resuming ? currentSlots : currentSlots + addSlots;
-        if (nextSlots > 500) {
-          return c.json(
-            {
-              success: false,
-              error: `Tenant D1 slot hard limit exceeded: ${nextSlots}/500`,
-              currentSlots,
-              maxAddSlots: Math.max(0, 500 - currentSlots),
-            },
-            400
-          );
-        }
-
-        const updatedConfig: AuthrimConfig = resuming
-          ? config
-          : {
-              ...config,
-              tenantD1: {
-                ...(config.tenantD1 ?? { preallocatedSlots: currentSlots }),
-                preallocatedSlots: nextSlots,
-              },
-              updatedAt: new Date().toISOString(),
-            };
-        const prepared = !resuming
-          ? await commitTopologyConfigTransaction({
-              lock,
-              lockPath,
-              configPath,
-              kind: 'tenant_d1_pool',
-              targetProductVersion: targetProductVersion!,
-              config: updatedConfig,
-            })
-          : lock.topologyUpdate?.phase === 'config_staged'
-            ? await recoverTopologyConfigTransaction({
-                lock,
-                lockPath,
-                configPath,
-                kind: 'tenant_d1_pool',
-                targetProductVersion: targetProductVersion!,
-              })
-            : prepareTopologyUpdate(lock, {
-                kind: 'tenant_d1_pool',
-                targetProductVersion: targetProductVersion!,
-                config: updatedConfig,
-              });
-        if (resuming && lock.topologyUpdate?.phase !== 'config_staged') {
-          await saveLockFile(prepared.lock, lockPath);
-        }
-        state.config = updatedConfig;
-        addProgress(
-          resuming
-            ? `Resuming pending tenant D1 pool deployment at ${currentSlots} slots`
-            : `Tenant D1 pool config updated: ${currentSlots} -> ${nextSlots} slots`
-        );
-
-        return c.json({
-          success: true,
-          env,
-          currentSlots,
-          addSlots: resuming ? 0 : addSlots,
-          nextSlots,
-          configPath,
-          deployRequired: true,
-          topologyDeploymentToken: prepared.authorizationToken,
-          message:
-            'Tenant D1 pool capacity was updated. Run deploy to create D1 slots, refresh bindings, and publish slot inventory.',
-        });
-      } catch (error) {
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
-      } finally {
-        await operationLock?.release();
-      }
-    });
   });
 
   api.get('/r2/:env/status', async (c) => {
@@ -4192,7 +5062,6 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: 'Invalid environment name' }, 400);
         }
         const env = parseResult.data;
-        let topologyAuthorization: 'tenant_d1_pool' | 'r2' | null = null;
         const operationKind = topologyDeploymentToken ? 'topology_change' : 'worker_redeploy';
 
         state.status = 'deploying';
@@ -4308,10 +5177,9 @@ export function createApiRoutes(): Hono {
               authorizationToken: topologyDeploymentToken,
             });
             const kind = lock.topologyUpdate?.kind;
-            if (kind !== 'tenant_d1_pool' && kind !== 'r2') {
+            if (kind !== 'r2') {
               throw new Error(`unsupported_web_topology_update:${kind ?? 'missing'}`);
             }
-            topologyAuthorization = kind;
           } catch {
             state.status = 'error';
             state.error = 'Invalid or stale topology deployment authorization.';
@@ -4329,51 +5197,28 @@ export function createApiRoutes(): Hono {
             productVersion: targetProductVersion,
             lock,
           });
-          if (topologyAuthorization === 'tenant_d1_pool') {
-            const tenantD1Result = await ensureInitialTenantD1Resources({
-              env,
-              config,
-              lock,
-              rootDir,
-              release: installedRelease,
-              onProgress: addProgress,
-            });
-            if (!tenantD1Result.success) {
-              throw new Error(tenantD1Result.error ?? 'Tenant D1 topology reconciliation failed.');
-            }
-            const tenantTargets = resolveReleaseMigrationTargets({ lock, config }).filter(
-              (target) => target.scope === 'tenant' && target.automatic
+          const topologyIssues = inspectTenantD1Topology({
+            env,
+            config,
+            lock,
+            productVersion: targetProductVersion,
+            manifest: installedRelease.manifest,
+          });
+          if (topologyIssues.length > 0) {
+            state.status = 'error';
+            state.error =
+              'Tenant D1 bootstrap topology is incomplete. Re-run setup init before handoff acceptance or repair it from Admin UI after handoff.';
+            await flushProgressLog();
+            return c.json(
+              {
+                success: false,
+                error: state.error,
+                topologyIssues,
+                progress: state.progress,
+                logPath: state.logPath,
+              },
+              409
             );
-            lock = withRecordedReleaseSchemaTargets(lock, {
-              productVersion: targetProductVersion,
-              manifest: installedRelease.manifest,
-              targets: tenantTargets,
-            });
-            await saveLock(lock, lockPath);
-          } else {
-            const topologyIssues = inspectTenantD1Topology({
-              env,
-              config,
-              lock,
-              productVersion: targetProductVersion,
-              manifest: installedRelease.manifest,
-            });
-            if (topologyIssues.length > 0) {
-              state.status = 'error';
-              state.error =
-                'Tenant D1 topology is incomplete. Use the tenant pool operation before redeploying Workers.';
-              await flushProgressLog();
-              return c.json(
-                {
-                  success: false,
-                  error: state.error,
-                  topologyIssues,
-                  progress: state.progress,
-                  logPath: state.logPath,
-                },
-                409
-              );
-            }
           }
         }
         if (componentsToUpdate.length === 0) {
@@ -4392,7 +5237,13 @@ export function createApiRoutes(): Hono {
             logPath: state.logPath,
           });
         }
-        const resourceIds = buildResourceIdsFromLock(lock, config);
+        const resourceIds = await buildWorkerDeploymentResourceIds({
+          lock,
+          config,
+          environmentId: env,
+          components: componentsToUpdate,
+          onProgress: addProgress,
+        });
 
         addProgress('Refreshing generated wrangler configs...');
         const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
@@ -4825,6 +5676,39 @@ export function createApiRoutes(): Hono {
             if (componentName === 'ar-login-ui' && !dryRun) {
               let setupMachineReady = false;
               try {
+                const initialTenantResult = await ensureInitialTenantInD1(
+                  env,
+                  cfg as AuthrimConfig,
+                  addProgress
+                );
+                if (!initialTenantResult.success) {
+                  throw new Error(
+                    `Initial tenant prerequisite failed: ${initialTenantResult.error || 'unknown error'}`
+                  );
+                }
+                const migrationRoot = await findMigrationsRoot(rootDir, addProgress);
+                if (!migrationRoot.path) {
+                  throw new Error('Release migrations directory not found');
+                }
+                const installedRelease = loadInstalledReleaseMigrationManifest({
+                  migrationsRoot: migrationRoot.path,
+                  productVersion: targetProductVersion,
+                  lock: componentDeploymentLock,
+                });
+                const snapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+                  env,
+                  config: cfg as AuthrimConfig,
+                  lock: componentDeploymentLock,
+                  rootDir,
+                  keysDir,
+                  release: installedRelease.manifest,
+                  onProgress: addProgress,
+                });
+                if (!snapshotResult.success) {
+                  throw new Error(
+                    `Initial tenant runtime snapshot failed: ${snapshotResult.error || 'unknown error'}`
+                  );
+                }
                 const setupMachineResult = await ensureSetupMachineAccessInD1(
                   env,
                   cfg as AuthrimConfig,
@@ -4980,6 +5864,25 @@ export function createApiRoutes(): Hono {
                   `UI Worker HTTP readiness failed: ${httpReadiness.error ?? 'unknown error'}`
                 );
               }
+              const controlDatabaseName = componentDeploymentLock.d1.CONTROL_DB?.name;
+              if (!controlDatabaseName) {
+                throw new Error('control_database_required_for_ui_worker_inventory');
+              }
+              await registerUiWorkerInventoryFromArtifacts({
+                baseDir: rootDir,
+                environmentId: env,
+                environmentName: env,
+                controlDatabaseName,
+                components: [componentName as UiWorkerComponent],
+                environmentBootstrap: {
+                  defaultResidencyPolicyId: (cfg as AuthrimConfig).profiles.defaults.residency,
+                  automaticProvisioning:
+                    (cfg as AuthrimConfig).tenantD1?.automaticProvisioning === true,
+                },
+                registeredBy: 'setup:web-upgrade-ui',
+                disableMissing: false,
+                onProgress: addProgress,
+              });
               state.status = 'complete';
               addProgress(`✓ ${componentName} deployed successfully`);
               return c.json({
@@ -5031,7 +5934,13 @@ export function createApiRoutes(): Hono {
             } else {
               const configContent = await readFile(envPaths.config, 'utf-8');
               const parsedConfig = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
-              const resourceIds = buildResourceIdsFromLock(currentLock, parsedConfig);
+              const resourceIds = await buildWorkerDeploymentResourceIds({
+                lock: currentLock,
+                config: parsedConfig,
+                environmentId: env,
+                components: [componentName as WorkerComponent],
+                onProgress: addProgress,
+              });
 
               const masterResult = await saveMasterWranglerConfigs(parsedConfig, resourceIds, {
                 baseDir: rootDir,

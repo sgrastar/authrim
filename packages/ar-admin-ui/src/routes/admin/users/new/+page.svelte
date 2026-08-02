@@ -12,6 +12,23 @@
 
 	let saving = $state(false);
 	let error = $state('');
+	let pendingOperationId = $state<string | null>(null);
+	let pendingOperationState = $state<string | null>(null);
+	let statusTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function createIdempotencyKey(): string {
+		if (typeof globalThis.crypto?.randomUUID === 'function') {
+			return globalThis.crypto.randomUUID();
+		}
+		if (typeof globalThis.crypto?.getRandomValues !== 'function') {
+			throw new Error('Secure random generation is unavailable');
+		}
+		const bytes = new Uint8Array(16);
+		globalThis.crypto.getRandomValues(bytes);
+		return `admin-user-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+	}
+
+	const idempotencyKey = createIdempotencyKey();
 
 	// Form state
 	let form = $state<CreateUserInput>({
@@ -22,6 +39,31 @@
 		email_verified: false
 	});
 	const canCreateUsers = $derived(adminAuth.hasPermission('admin:users:write'));
+
+	function scheduleStatusPoll() {
+		if (statusTimer !== null) clearTimeout(statusTimer);
+		statusTimer = setTimeout(pollCreationStatus, 2000);
+	}
+
+	async function pollCreationStatus() {
+		if (!pendingOperationId) return;
+		try {
+			const operation = await adminUsersAPI.getCreationOperation(pendingOperationId);
+			pendingOperationState = operation.state;
+			if (operation.state === 'succeeded' && operation.user_id) {
+				await goto(`/admin/users/${operation.user_id}`);
+				return;
+			}
+			if (operation.state === 'blocked' || operation.state === 'canceled') {
+				error = $LL.admin_users_error_create();
+				return;
+			}
+			scheduleStatusPoll();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_users_error_create();
+			scheduleStatusPoll();
+		}
+	}
 
 	async function handleSubmit() {
 		if (!canCreateUsers) return;
@@ -34,14 +76,23 @@
 		error = '';
 
 		try {
-			const user = await adminUsersAPI.create({
-				email: form.email.trim(),
-				name: form.name?.trim() || undefined,
-				given_name: form.given_name?.trim() || undefined,
-				family_name: form.family_name?.trim() || undefined,
-				email_verified: form.email_verified
-			});
-			goto(`/admin/users/${user.id}`);
+			const result = await adminUsersAPI.create(
+				{
+					email: form.email.trim(),
+					name: form.name?.trim() || undefined,
+					given_name: form.given_name?.trim() || undefined,
+					family_name: form.family_name?.trim() || undefined,
+					email_verified: form.email_verified
+				},
+				{ idempotencyKey }
+			);
+			if (result.status === 'pending') {
+				pendingOperationId = result.operation_id;
+				pendingOperationState = result.state;
+				scheduleStatusPoll();
+				return;
+			}
+			goto(`/admin/users/${result.user.id}`);
 		} catch (err) {
 			console.error('Failed to create user:', err);
 			error = err instanceof Error ? err.message : $LL.admin_users_error_create();
@@ -50,8 +101,11 @@
 		}
 	}
 
-	onMount(async () => {
-		await settingsContext.initialize();
+	onMount(() => {
+		void settingsContext.initialize();
+		return () => {
+			if (statusTimer !== null) clearTimeout(statusTimer);
+		};
 	});
 </script>
 
@@ -71,6 +125,14 @@
 
 	{#if error}
 		<div class="alert alert-error">{error}</div>
+	{/if}
+	{#if pendingOperationId}
+		<div class="alert alert-info">
+			{$LL.admin_users_creation_pending({ operationId: pendingOperationId })}
+			{#if pendingOperationState}
+				<span class="admin-user-form__operation-state">{pendingOperationState}</span>
+			{/if}
+		</div>
 	{/if}
 
 	<AdminSection>
@@ -170,6 +232,13 @@
 		gap: 12px;
 		flex-wrap: wrap;
 		margin-top: 24px;
+	}
+
+	.admin-user-form__operation-state {
+		display: block;
+		margin-top: 4px;
+		font-family: var(--font-mono, monospace);
+		font-size: 0.8125rem;
 	}
 
 	.required-marker {

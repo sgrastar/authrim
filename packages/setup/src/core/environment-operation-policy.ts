@@ -77,13 +77,16 @@ export function evaluateEnvironmentOperation(input: {
   operation: EnvironmentOperationKind;
   lock?: AuthrimLock | null;
   targetVersion?: string;
+  releaseManifestChecksum?: string;
+  environmentObservedRemotely?: boolean;
 }): EnvironmentOperationDecision {
-  const { operation, lock, targetVersion } = input;
+  const { operation, lock, targetVersion, releaseManifestChecksum, environmentObservedRemotely } =
+    input;
   const lifecycle = classifyEnvironmentLifecycle(lock);
   const currentVersion = lock?.productVersion;
 
   if (operation === 'delete') {
-    return lifecycle === 'absent'
+    return lifecycle === 'absent' && !environmentObservedRemotely
       ? denied(operation, lifecycle, 'environment_not_found')
       : { allowed: true, lifecycle, operation, ...(currentVersion ? { currentVersion } : {}) };
   }
@@ -130,6 +133,20 @@ export function evaluateEnvironmentOperation(input: {
   }
 
   if (lifecycle === 'updating') {
+    const workers = Object.values(lock?.workers ?? {});
+    const release = lock?.releaseUpdate;
+    const resumableInitialDeploy =
+      operation === 'initial_deploy' &&
+      !currentVersion &&
+      Boolean(targetVersion) &&
+      Boolean(releaseManifestChecksum) &&
+      release?.targetVersion === targetVersion &&
+      release?.manifestChecksum === releaseManifestChecksum &&
+      release?.phase !== 'verified' &&
+      workers.every((worker) => worker.version === targetVersion);
+    if (resumableInitialDeploy) {
+      return { allowed: true, lifecycle, operation };
+    }
     if (operation === 'release_update' && lock?.releaseUpdate?.targetVersion === targetVersion) {
       return { allowed: true, lifecycle, operation, ...(currentVersion ? { currentVersion } : {}) };
     }
