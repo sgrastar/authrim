@@ -400,6 +400,7 @@ function slug(value: string): string {
     }
     if (result.length >= 24) break;
   }
+  while (result.endsWith('-')) result = result.slice(0, -1);
   return result.slice(0, 24);
 }
 
