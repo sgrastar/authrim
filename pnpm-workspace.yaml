@@ -39,6 +39,7 @@ overrides:
   '@xmldom/xmldom': '^0.8.13'
   'dompurify': '3.4.12'
   'esbuild': '0.28.1'
+  'degit': '2.8.6'
 allowBuilds:
   esbuild: set this to true or false
   sharp: set this to true or false
