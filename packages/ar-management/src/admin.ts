@@ -43,7 +43,13 @@ import {
   CanonicalRuntimeUserStore,
   buildTenantSystemSettingsKey,
   getTenantMetadataContextFromHono,
-  resolveAccountDataContextByIdentifierFromHono,
+  resolveOtpAccountCoreDataContextByIdentifierFromHono,
+  BUILTIN_RUNTIME_PROFILES,
+  resolveTransientAuthStoragePolicy,
+  createDataTemporarilyUnavailableResponse,
+  transitionAccountAuthenticationState,
+  type StorageProfile,
+  type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -159,10 +165,10 @@ async function updateCanonicalAccountStatus(
   tenantId: string,
   userId: string,
   status: string,
-  metadataPatch: Record<string, unknown> = {}
+  metadataPatch: Record<string, unknown> = {},
+  now = Date.now()
 ) {
   const lifecycleState = status === 'active' ? 'active' : status;
-  const now = Date.now();
   const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
     'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
     [userId, tenantId]
@@ -651,27 +657,33 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status ?? 'active';
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'suspended', {
-      suspended_at: nowTs,
-      suspended_until: expiresAt,
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'suspended',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
     });
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'suspended',
+      {
+        suspended_at: nowTs,
+        suspended_until: expiresAt,
+      },
+      lifecycleVersionMs
+    );
 
-    // Token/Session Revocation Strategy (Authrim Architecture):
-    // =========================================================
-    // Authrim uses user status-based token invalidation rather than individual token revocation.
-    // When user.status = 'suspended' or 'locked':
-    // 1. Introspection endpoint checks user status and returns active: false for all tokens
-    // 2. This is more efficient for distributed systems (no need to update each token in DO)
-    //
-    // Session invalidation via SessionStore DO is a future enhancement.
-    // For now, sessions will expire naturally. The login flow checks user status
-    // and blocks suspended/locked users from creating new sessions.
-    //
-    // The revoke_tokens/revoke_sessions flags are kept for API compatibility
-    // and future implementation of explicit DO-based revocation.
+    // AccountAuthState DO already rejects new authentication and advances the user session
+    // revocation epoch. Token introspection also retains its status-based invalidation check.
+    // The flags remain API-compatible indicators; -1 means the account-wide controls apply.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
@@ -830,16 +842,30 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status ?? 'active';
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'locked', {
-      locked_at: nowTs,
-      locked_until: unlockAtTs,
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'locked',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
     });
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'locked',
+      {
+        locked_at: nowTs,
+        locked_until: unlockAtTs,
+      },
+      lifecycleVersionMs
+    );
 
-    // Token/Session Revocation Strategy (Authrim Architecture):
-    // Same as suspend - user status-based token invalidation via introspection.
-    // See suspend handler comments for details.
+    // Same account-wide DO session revocation and token status invalidation as suspension.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
@@ -1022,13 +1048,29 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status;
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'active', {
-      suspended_at: null,
-      suspended_until: null,
-      locked_at: null,
-      locked_until: null,
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'active',
+      {
+        suspended_at: null,
+        suspended_until: null,
+        locked_at: null,
+        locked_until: null,
+      },
+      lifecycleVersionMs
+    );
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'active',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: false,
     });
 
     // Write audit log (reason_code only, not reason_detail for privacy)
@@ -1234,6 +1276,15 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       | { adminId?: string; userId?: string }
       | undefined;
     const deletedBy = adminAuth?.adminId ?? adminAuth?.userId ?? 'unknown';
+    const deletingVersionMs = Date.now();
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleting',
+      sourceVersionMs: deletingVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
 
     let retentionUntil = nowTs + 90 * 24 * 60 * 60;
     let tombstoneId: string | null = null;
@@ -1312,6 +1363,14 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     ]);
 
     await runtimeUsers.deleteUser(userId);
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleted',
+      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
     await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
     await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 
@@ -2700,7 +2759,17 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const createUser = body.create_user !== false;
     const tenantD1 =
       getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
-    let routedLegacyUserId: string | null = null;
+    const effectiveStorageProfileId =
+      getTenantMetadataContextFromHono(c)?.storageProfileId ?? 'unknown';
+    const effectiveStorageProfile = BUILTIN_RUNTIME_PROFILES.find(
+      (profile): profile is StorageProfile =>
+        profile.kind === 'storage' && profile.id === effectiveStorageProfileId
+    );
+    if (!effectiveStorageProfile) {
+      throw new Error('test_email_code_effective_storage_profile_unavailable');
+    }
+    const transientAuth = resolveTransientAuthStoragePolicy(effectiveStorageProfile);
+    let resolvedOtpUser: CanonicalOtpLoginUser | null = null;
 
     if (tenantD1) {
       try {
@@ -2708,12 +2777,13 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
           c,
           'mg_otp_route_lookup',
           () =>
-            resolveAccountDataContextByIdentifierFromHono(c, {
+            resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
               indexKind: 'email_exact',
               identifier: email.toLowerCase(),
+              trustedEmail: email,
             })
         );
-        routedLegacyUserId = accountData.legacyUserId;
+        resolvedOtpUser = accountData.user;
       } catch (error) {
         if (error instanceof Error && error.message === 'account_data_route_not_found') {
           if (!createUser) {
@@ -2738,29 +2808,28 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const authCtx = createAccountAuthContextFromHono(c, tenantId);
-    const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: piiCtx.defaultPiiAdapter,
-      tenantId,
-    });
+    const runtimeUsers = tenantD1
+      ? null
+      : new CanonicalRuntimeUserStore({
+          coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+          tenantId,
+        });
     let userId: string | null = null;
     let userEmail: string | null = null;
     let userName: string | null = null;
 
-    const routedUser = await timeManagementRequestDiagnosticOperation(
+    const lookupUser = await timeManagementRequestDiagnosticOperation(
       c,
       'mg_otp_user_lookup',
-      () =>
-        routedLegacyUserId
-          ? runtimeUsers.findById(routedLegacyUserId, { includeInactive: true })
-          : runtimeUsers.findByEmail(email.toLowerCase(), { includeInactive: true })
+      (): Promise<{ id: string; email: string | null; name: string | null } | null> =>
+        tenantD1
+          ? Promise.resolve(resolvedOtpUser)
+          : runtimeUsers
+            ? runtimeUsers.findByEmail(email.toLowerCase(), { includeInactive: true })
+            : Promise.reject(new Error('test_email_code_runtime_user_store_unavailable'))
     );
-    const existingUser =
-      routedLegacyUserId && routedUser?.email?.toLowerCase() !== email.toLowerCase()
-        ? null
-        : routedUser;
+    const existingUser = lookupUser;
     if (existingUser) {
       userId = existingUser.id;
       userEmail = existingUser.email;
@@ -2782,6 +2851,9 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       const preferredUsername = email.split('@')[0];
 
       userId = generateId();
+      if (!runtimeUsers) {
+        throw new Error('test_email_code_runtime_user_store_unavailable');
+      }
       await runtimeUsers.syncUser({
         userId,
         email: email.toLowerCase(),
@@ -2857,10 +2929,16 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         otpSessionId,
         expiresAt: Math.floor(expiresAt / 1000),
         userId: userId,
+        runtime_profile: {
+          storage_profile_id: effectiveStorageProfile.id,
+          session_cold_persistence: transientAuth.sessionColdPersistence,
+        },
       },
       201
     );
   } catch (error) {
+    const unavailableResponse = createDataTemporarilyUnavailableResponse(c, error);
+    if (unavailableResponse) return unavailableResponse;
     logSanitizedError('Admin test email code error', error);
     return c.json(
       {

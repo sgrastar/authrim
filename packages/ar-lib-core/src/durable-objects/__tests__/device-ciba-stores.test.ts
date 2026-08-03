@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { CIBARequestMetadata, DeviceCodeMetadata } from '../../types/oidc';
+import { TENANT_D1_STORAGE_PROFILE_ID } from '../../types/runtime-profile';
 import { CIBARequestStore } from '../CIBARequestStore';
 import { DeviceCodeStore } from '../DeviceCodeStore';
 
 const audit = vi.hoisted(() => ({ create: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../../utils/audit-log', () => ({ createAuditLog: audit.create }));
 
+const LEGACY_AUTH_CORE_PERSISTENCE_CONTEXT_KEY = 'm:auth-core-persistence-context';
+const disabledColdPersistenceEnv = {
+  DEFAULT_STORAGE_PROFILE_ID: TENANT_D1_STORAGE_PROFILE_ID,
+} as never;
+
 class MemoryStorage {
-  readonly values = new Map<string, unknown>([
-    [
-      'm:auth-core-persistence-context',
-      { version: 1, transientAuth: { deviceCibaColdPersistence: 'disabled' } },
-    ],
-  ]);
+  readonly values = new Map<string, unknown>();
   readonly alarms: number[] = [];
 
   async list<T>(options?: { prefix?: string }): Promise<Map<string, T>> {
@@ -126,7 +127,7 @@ describe('DeviceCodeStore state transitions', () => {
 
   it('stores, resolves by both codes, approves, polls, and issues exactly once', async () => {
     const harness = state();
-    const store = new DeviceCodeStore(harness.state, {} as never);
+    const store = new DeviceCodeStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
 
     expect(await json(await store.fetch(request('/store', device())))).toEqual({ success: true });
@@ -178,7 +179,7 @@ describe('DeviceCodeStore state transitions', () => {
 
   it('enforces pending-only approval/denial and hides internal failures', async () => {
     const harness = state();
-    const store = new DeviceCodeStore(harness.state, {} as never);
+    const store = new DeviceCodeStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     await store.fetch(request('/store', device()));
     await store.fetch(request('/deny', { user_code: 'ABCD-EFGH' }));
@@ -200,7 +201,7 @@ describe('DeviceCodeStore state transitions', () => {
     storage.values.set('d:expired', device({ device_code: 'expired', expires_at: Date.now() - 1 }));
     storage.values.set('u:ABCD-EFGH', 'expired');
     const harness = state(storage);
-    const store = new DeviceCodeStore(harness.state, {} as never);
+    const store = new DeviceCodeStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     expect(
       await json(await store.fetch(request('/get-by-device-code', { device_code: 'expired' })))
@@ -213,7 +214,7 @@ describe('DeviceCodeStore state transitions', () => {
 
   it('deletes codes and makes cleanup alarms idempotent', async () => {
     const harness = state();
-    const store = new DeviceCodeStore(harness.state, {} as never);
+    const store = new DeviceCodeStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     await store.fetch(request('/store', device()));
     await store.fetch(request('/delete', { device_code: 'device-1' }));
@@ -225,6 +226,22 @@ describe('DeviceCodeStore state transitions', () => {
     const alarmCount = harness.storage.alarms.length;
     await store.alarm();
     expect(harness.storage.alarms).toHaveLength(alarmCount + 1);
+  });
+
+  it('ignores a stale persisted runtime profile and applies the current deployment profile', async () => {
+    const storage = new MemoryStorage();
+    storage.values.set(LEGACY_AUTH_CORE_PERSISTENCE_CONTEXT_KEY, {
+      storageProfileId: 'builtin:storage:shared-d1',
+      transientAuth: { deviceCibaColdPersistence: 'enabled' },
+    });
+    const harness = state(storage);
+    const store = new DeviceCodeStore(harness.state, disabledColdPersistenceEnv);
+    await harness.initialized;
+
+    expect(await json(await store.fetch(request('/store', device())))).toEqual({ success: true });
+    expect(storage.values.get(LEGACY_AUTH_CORE_PERSISTENCE_CONTEXT_KEY)).toMatchObject({
+      transientAuth: { deviceCibaColdPersistence: 'enabled' },
+    });
   });
 });
 
@@ -242,7 +259,7 @@ describe('CIBARequestStore state transitions', () => {
 
   it('stores, resolves, approves with nonce, polls, and issues exactly once', async () => {
     const harness = state();
-    const store = new CIBARequestStore(harness.state, {} as never);
+    const store = new CIBARequestStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     await store.fetch(request('/store', ciba()));
     expect(
@@ -289,7 +306,7 @@ describe('CIBARequestStore state transitions', () => {
 
   it('denies pending requests and rejects missing or completed requests', async () => {
     const harness = state();
-    const store = new CIBARequestStore(harness.state, {} as never);
+    const store = new CIBARequestStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     await store.fetch(request('/store', ciba()));
     await store.fetch(request('/deny', { auth_req_id: 'request-1' }));
@@ -310,7 +327,7 @@ describe('CIBARequestStore state transitions', () => {
     storage.values.set('r:expired', ciba({ auth_req_id: 'expired', expires_at: Date.now() - 1 }));
     storage.values.set('u:CIBA-123', 'expired');
     const harness = state(storage);
-    const store = new CIBARequestStore(harness.state, {} as never);
+    const store = new CIBARequestStore(harness.state, disabledColdPersistenceEnv);
     await harness.initialized;
     expect(
       await json(await store.fetch(request('/get-by-auth-req-id', { auth_req_id: 'expired' })))
@@ -332,5 +349,21 @@ describe('CIBARequestStore state transitions', () => {
     await store.alarm();
     expect(storage.alarms.length).toBeGreaterThanOrEqual(2);
     expect((await store.fetch(request('/unknown'))).status).toBe(404);
+  });
+
+  it('ignores a stale persisted runtime profile and applies the current deployment profile', async () => {
+    const storage = new MemoryStorage();
+    storage.values.set(LEGACY_AUTH_CORE_PERSISTENCE_CONTEXT_KEY, {
+      storageProfileId: 'builtin:storage:shared-d1',
+      transientAuth: { deviceCibaColdPersistence: 'enabled' },
+    });
+    const harness = state(storage);
+    const store = new CIBARequestStore(harness.state, disabledColdPersistenceEnv);
+    await harness.initialized;
+
+    expect(await json(await store.fetch(request('/store', ciba())))).toEqual({ success: true });
+    expect(storage.values.get(LEGACY_AUTH_CORE_PERSISTENCE_CONTEXT_KEY)).toMatchObject({
+      transientAuth: { deviceCibaColdPersistence: 'enabled' },
+    });
   });
 });

@@ -199,6 +199,7 @@ interface PendingMigrationRow {
 export interface ControlRepository {
   getEnvironment(environmentId: string): Promise<EnvironmentRow | null>;
   getProvisioningAuthority?(environmentId: string): Promise<ProvisioningAuthorityRow | null>;
+  resumeAutomaticBootstrapOperations?(environmentId: string, now: number): Promise<number>;
   markOperationAwaitingOperator?(operationId: string, now: number): Promise<ControlOperationView>;
   getResidencyPartition(
     environmentId: string,
@@ -586,6 +587,79 @@ export class D1ControlRepository implements ControlRepository {
       )
       .first<{ ready: number }>();
     return row?.ready === 1;
+  }
+
+  async resumeAutomaticBootstrapOperations(environmentId: string, now: number): Promise<number> {
+    const rows = await this.db
+      .prepare(
+        `SELECT operation_id
+           FROM control_operations
+          WHERE environment_id = ?
+            AND operation_id LIKE 'op_bootstrap_%'
+            AND operation_kind = 'provision_shard'
+            AND requested_by_type = 'setup'
+            AND requested_by_id = 'setup:init'
+            AND status IN ('blocked', 'waiting_retry')
+            AND (
+              last_error_code = 'operator_action_required'
+              OR status = 'waiting_retry'
+            )
+            AND EXISTS (
+              SELECT 1 FROM control_bootstrap_handoffs handoff
+               WHERE handoff.environment_id = control_operations.environment_id
+                 AND handoff.state IN ('creating', 'pending_verification')
+            )
+          ORDER BY operation_id`
+      )
+      .bind(environmentId)
+      .all<{ operation_id: string }>();
+    if (rows.results.length === 0) return 0;
+
+    // A Cron tick may have handed initial setup operations to the operator during the short
+    // window before bootstrap credentials became ready. Move only those immutable bootstrap
+    // operations back into the normal retry path once Automatic provisioning is available.
+    await this.db.batch(
+      rows.results.flatMap(({ operation_id }) => [
+        this.db
+          .prepare(
+            `UPDATE control_operations
+                SET status = 'running', started_at = COALESCE(started_at, ?),
+                    completed_at = NULL, next_attempt_at = NULL,
+                    last_error_code = NULL, last_error_redacted = NULL,
+                    lock_owner = NULL, lock_expires_at = NULL, updated_at = ?
+              WHERE operation_id = ? AND environment_id = ?
+                AND status = 'blocked' AND last_error_code = 'operator_action_required'`
+          )
+          .bind(now, now, operation_id, environmentId),
+        this.db
+          .prepare(
+            `UPDATE control_operations
+                SET status = 'waiting_retry', started_at = NULL, updated_at = ?
+              WHERE operation_id = ? AND environment_id = ? AND status = 'running'`
+          )
+          .bind(now, operation_id, environmentId),
+        this.db
+          .prepare(
+            `UPDATE control_operation_steps
+                SET status = 'running', started_at = COALESCE(started_at, ?),
+                    completed_at = NULL, next_attempt_at = NULL,
+                    last_error_code = NULL, last_error_redacted = NULL, updated_at = ?
+              WHERE operation_id = ? AND status = 'blocked'
+                AND last_error_code = 'operator_action_required'`
+          )
+          .bind(now, now, operation_id),
+        this.db
+          .prepare(
+            `UPDATE control_operation_steps
+                SET status = 'running', started_at = COALESCE(started_at, ?),
+                    completed_at = NULL, next_attempt_at = NULL,
+                    last_error_code = NULL, last_error_redacted = NULL, updated_at = ?
+              WHERE operation_id = ? AND status = 'waiting_retry'`
+          )
+          .bind(now, now, operation_id),
+      ])
+    );
+    return rows.results.length;
   }
 
   async markOperationAwaitingOperator(

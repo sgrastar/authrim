@@ -40,6 +40,14 @@ const mockSessionStoreStub = vi.hoisted(() => ({
   createSessionRpc: vi.fn(),
 }));
 
+const mockAccountAuthStateStub = vi.hoisted(() => ({
+  getAccountStateRpc: vi.fn(),
+  initializeAccountStateRpc: vi.fn(),
+  advancePasskeyCounterRpc: vi.fn(),
+}));
+
+const mockAdvancePasskeyAuthenticationState = vi.hoisted(() => vi.fn());
+
 const mockChallengeStoreStub = vi.hoisted(() => ({
   storeChallengeRpc: vi.fn(),
   consumeChallengeRpc: vi.fn(),
@@ -68,6 +76,7 @@ const mockPasskeyRepository = {
   create: vi.fn().mockResolvedValue('new-passkey-id'),
   updateCounter: vi.fn().mockResolvedValue(true),
   updateCounterAfterAuth: vi.fn().mockResolvedValue(true),
+  mirrorCounterAfterAuth: vi.fn().mockResolvedValue(true),
 };
 const mockCoreAdapter = {
   execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -136,6 +145,29 @@ vi.mock('@authrim/ar-lib-core', async () => {
         if (!pii) return null;
         return this.findById(pii.id);
       }
+      async findAccountAuthenticationState(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        if (!core) return null;
+        return {
+          userId,
+          accountType: core.user_type === 'admin' ? 'admin' : 'user',
+          lifecycle: core.is_active === false ? 'inactive' : 'active',
+          sourceVersionMs: 1_000,
+        };
+      }
+      async findAuthenticationResponseUser(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        const pii = await mockUserPIIRepository.findById(userId);
+        return {
+          id: userId,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          emailVerified: core?.email_verified ? 1 : 0,
+          createdAt: new Date(core?.created_at ?? Date.now()).toISOString(),
+          updatedAt: new Date(core?.updated_at ?? Date.now()).toISOString(),
+          lastLoginAt: core?.last_login_at ?? null,
+        };
+      }
       async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
         await mockUserCoreRepository.createUser({
           id: input.userId,
@@ -175,6 +207,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
     getTenantIdFromContext: () => 'default',
+    advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',
@@ -362,6 +395,10 @@ function createMockContext(options: {
       ALLOWED_ORIGINS: 'https://example.com',
       CHALLENGE_STORE: challengeStore,
       SESSION_STORE: sessionStore,
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => mockAccountAuthStateStub),
+      },
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
     header: vi.fn(),
@@ -482,6 +519,56 @@ describe('Passkey Handlers', () => {
     mockPasskeyRepository.findByCredentialId.mockReset().mockResolvedValue(null);
     mockPasskeyRepository.create.mockReset().mockResolvedValue('new-passkey-id');
     mockPasskeyRepository.updateCounterAfterAuth.mockReset().mockResolvedValue(true);
+    mockPasskeyRepository.mirrorCounterAfterAuth.mockReset().mockResolvedValue(true);
+    mockAccountAuthStateStub.getAccountStateRpc.mockReset().mockResolvedValue({
+      revokedAfterMs: null,
+      lastLoginAtMs: null,
+      lifecycle: null,
+      lifecycleVersionMs: null,
+      lifecycleOperationId: null,
+    });
+    mockAccountAuthStateStub.initializeAccountStateRpc
+      .mockReset()
+      .mockImplementation(
+        async (_tenantId: string, _userId: string, _accountId: string, lifecycle: string) => ({
+          revokedAfterMs: null,
+          lastLoginAtMs: null,
+          lifecycle,
+          lifecycleVersionMs: 1_000,
+          lifecycleOperationId: null,
+        })
+      );
+    mockAccountAuthStateStub.advancePasskeyCounterRpc
+      .mockReset()
+      .mockResolvedValue({ counter: 1, advanced: true });
+    mockAdvancePasskeyAuthenticationState.mockReset().mockImplementation(
+      async (
+        _env: unknown,
+        input: {
+          tenantId: string;
+          userId: string;
+          credentialId: string;
+          storedCounter: number;
+          observedCounter: number;
+          observedAtMs: number;
+        },
+        loader: () => Promise<{ lifecycle: string } | null>
+      ) => {
+        const account = await loader();
+        if (!account || account.lifecycle !== 'active') {
+          throw new Error('account_authentication_not_allowed');
+        }
+        return mockAccountAuthStateStub.advancePasskeyCounterRpc(
+          input.tenantId,
+          input.userId,
+          `account:${input.userId}`,
+          input.credentialId,
+          input.storedCounter,
+          input.observedCounter,
+          input.observedAtMs
+        );
+      }
+    );
     mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
@@ -1150,11 +1237,17 @@ describe('Passkey Handlers', () => {
 
       await passkeyLoginVerifyHandler(c);
 
-      // Should update counter via Repository
-      expect(mockPasskeyRepository.updateCounterAfterAuth).toHaveBeenCalledWith(
+      // The DO accepts the counter before the D1 mirror is scheduled.
+      expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledWith(
+        'default',
+        'user-123',
+        'account:user-123',
         'passkey-1',
-        1 // newCounter from verifyAuthenticationResponse mock
+        0,
+        1,
+        expect.any(Number)
       );
+      expect(mockPasskeyRepository.mirrorCounterAfterAuth).toHaveBeenCalledWith('passkey-1', 1);
     });
 
     it('rejects a consumed authentication challenge before credential lookup', async () => {
@@ -1314,7 +1407,7 @@ describe('Passkey Handlers', () => {
       expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
     });
 
-    it('does not advance the authenticator counter if session creation fails', async () => {
+    it('does not mirror the accepted authenticator counter if session creation fails', async () => {
       mockPasskeyRepository.findByCredentialId.mockResolvedValueOnce({
         id: 'passkey-1',
         user_id: 'user-123',
@@ -1347,7 +1440,8 @@ describe('Passkey Handlers', () => {
       const response = await passkeyLoginVerifyHandler(c);
 
       expect(response.status).toBe(500);
-      expect(mockPasskeyRepository.updateCounterAfterAuth).not.toHaveBeenCalled();
+      expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledOnce();
+      expect(mockPasskeyRepository.mirrorCounterAfterAuth).not.toHaveBeenCalled();
     });
   });
 });

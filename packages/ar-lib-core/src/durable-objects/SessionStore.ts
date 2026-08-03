@@ -29,7 +29,6 @@ import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
 import { createLogger } from '../utils/logger';
 import {
-  AUTH_CORE_PERSISTENCE_CONTEXT_KEY,
   resolveAuthCorePersistenceContextFromEnv,
   resolveAuthCorePersistenceSourceFromContext,
   type AuthCorePersistenceContext,
@@ -42,6 +41,10 @@ import {
   resolveAccountCoreDataContext,
   resolveSessionAccountCoreDataContext,
 } from '../services/runtime-data-context';
+import {
+  getSessionRevocationStore,
+  SESSION_REVOCATION_AUTHORITY,
+} from '../services/session-revocation-store';
 
 const log = createLogger().module('DO-SESSION-STORE');
 
@@ -55,6 +58,8 @@ export interface Session {
   accountId: string;
   expiresAt: number;
   createdAt: number;
+  revocationAuthority?: typeof SESSION_REVOCATION_AUTHORITY;
+  revocationBoundAtMs?: number;
   data?: SessionData;
 }
 
@@ -157,7 +162,6 @@ export class SessionStore extends DurableObject<Env> {
   > = new Map();
   private cleanupInterval: number | null = null;
   private actorCtx: ActorContext;
-  private sessionPersistence: SessionPersistenceAdapter | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
@@ -498,7 +502,6 @@ export class SessionStore extends DurableObject<Env> {
       return;
     }
     this.tenantId = normalizedTenantId;
-    this.sessionPersistence = null;
     await this.actorCtx.storage.put(SESSION_STORE_TENANT_CONTEXT_KEY, normalizedTenantId);
   }
 
@@ -560,10 +563,7 @@ export class SessionStore extends DurableObject<Env> {
     }
 
     const context = await this.ensurePersistenceContext();
-    if (
-      context.transientAuth?.sessionColdPersistence !== 'disabled' &&
-      context.storageProfileId === 'builtin:storage:tenant-d1'
-    ) {
+    if (context.storageProfileId === 'builtin:storage:tenant-d1') {
       const route = this.routeForSession(session);
       const resolved = await resolveSessionAccountCoreDataContext(this.env, {
         tenantId: route.tenantId,
@@ -597,8 +597,36 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   private async isRevokedByUserEpoch(session: Session): Promise<boolean> {
+    if (session.revocationAuthority === SESSION_REVOCATION_AUTHORITY) {
+      const route = this.routeForSession(session);
+      let state: { revokedAfterMs: number | null; lifecycle: string | null };
+      try {
+        state = await getSessionRevocationStore(
+          this.env,
+          route.tenantId,
+          session.userId
+        ).getSessionValidationStateRpc(route.tenantId, session.userId, route.accountId);
+      } catch (error) {
+        log.error(
+          'Session account state DO lookup error',
+          { userId: session.userId },
+          error as Error
+        );
+        throw new Error('session_revocation_epoch_unavailable');
+      }
+      if (state.lifecycle !== null && state.lifecycle !== 'active') return true;
+      const boundAtMs = session.revocationBoundAtMs;
+      if (!Number.isSafeInteger(boundAtMs) || (boundAtMs ?? 0) < 1) {
+        throw new Error('session_revocation_binding_invalid');
+      }
+      return state.revokedAfterMs !== null && (boundAtMs as number) <= state.revokedAfterMs;
+    }
     const revokedAfterMs = await this.getUserSessionsRevokedAfter(session);
-    return revokedAfterMs !== null && session.createdAt <= revokedAfterMs;
+    const boundAtMs = session.createdAt;
+    if (!Number.isSafeInteger(boundAtMs) || (boundAtMs ?? 0) < 1) {
+      throw new Error('session_revocation_binding_invalid');
+    }
+    return revokedAfterMs !== null && (boundAtMs as number) <= revokedAfterMs;
   }
 
   private async dropRevokedSession(session: Session): Promise<void> {
@@ -757,13 +785,31 @@ export class SessionStore extends DurableObject<Env> {
     const resolvedTenantId = this.requireTenantId(tenantId, 'Session creation');
     await this.setTenantContext(resolvedTenantId);
 
+    const accountId = `account:${userId}`;
+    const createdAt = Date.now();
+    const persistenceContext = await this.ensurePersistenceContext();
+    const registration =
+      persistenceContext.storageProfileId === 'builtin:storage:tenant-d1'
+        ? await getSessionRevocationStore(this.env, resolvedTenantId, userId).registerSessionRpc(
+            resolvedTenantId,
+            userId,
+            accountId,
+            createdAt
+          )
+        : null;
     const session: Session = {
       id: sessionId,
       tenantId: resolvedTenantId,
       userId,
-      accountId: `account:${userId}`,
+      accountId,
       expiresAt: Date.now() + ttl * 1000,
-      createdAt: Date.now(),
+      createdAt,
+      ...(registration
+        ? {
+            revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+            revocationBoundAtMs: registration.revocationBoundAtMs,
+          }
+        : {}),
       data,
     };
 
@@ -1088,10 +1134,34 @@ export class SessionStore extends DurableObject<Env> {
     }
 
     const oldUserId = current.userId;
+    const accountId = `account:${newUserId}`;
+    const persistenceContext = await this.ensurePersistenceContext();
+    const registration =
+      persistenceContext.storageProfileId === 'builtin:storage:tenant-d1'
+        ? await getSessionRevocationStore(
+            this.env,
+            this.requireTenantId(current.tenantId, 'Session user update'),
+            newUserId
+          ).registerSessionRpc(
+            this.requireTenantId(current.tenantId, 'Session user update'),
+            newUserId,
+            accountId,
+            Date.now()
+          )
+        : null;
     const session = {
       ...current,
       userId: newUserId,
-      accountId: `account:${newUserId}`,
+      accountId,
+      ...(registration
+        ? {
+            revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+            revocationBoundAtMs: registration.revocationBoundAtMs,
+          }
+        : {
+            revocationAuthority: undefined,
+            revocationBoundAtMs: undefined,
+          }),
     };
     await this.persistSessionAndRoute(session);
     this.sessionCache.set(sessionId, session);
@@ -1130,16 +1200,10 @@ export class SessionStore extends DurableObject<Env> {
       return this.persistenceContext;
     }
 
-    const stored = await this.actorCtx.storage.get<AuthCorePersistenceContext>(
-      AUTH_CORE_PERSISTENCE_CONTEXT_KEY
-    );
-    if (stored) {
-      this.persistenceContext = stored;
-      return stored;
-    }
-
+    // Runtime policy belongs to the deployment, not durable business state. Persisting this
+    // snapshot made profile changes ineffective for every existing DO instance and could leave
+    // tenant-D1 session cold mirroring enabled after the profile disabled it.
     const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
-    await this.actorCtx.storage.put(AUTH_CORE_PERSISTENCE_CONTEXT_KEY, resolved);
     this.persistenceContext = resolved;
     return resolved;
   }
@@ -1182,12 +1246,9 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   private async ensureSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
-    if (this.sessionPersistence) {
-      return this.sessionPersistence;
-    }
-
-    this.sessionPersistence = await this.initializeSessionPersistence();
-    return this.sessionPersistence;
+    // A D1Adapter owns local admission promises. Recreate it inside the current DO invocation so
+    // those promises cannot be retained on actor state and completed by a later RPC request.
+    return this.initializeSessionPersistence();
   }
 
   /**

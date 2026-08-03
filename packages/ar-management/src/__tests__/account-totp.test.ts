@@ -13,6 +13,7 @@ const {
   mockRuntimeUserStore,
   mockRateLimiter,
   mockPasskeyRepo,
+  mockConsumeTotpAuthenticationState,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -57,6 +58,7 @@ const {
     },
     mockRateLimiter: rateLimiter,
     mockPasskeyRepo: { findByUserId: vi.fn() },
+    mockConsumeTotpAuthenticationState: vi.fn(async () => ({ lastAcceptedTimeStep: 1 })),
   };
 });
 
@@ -68,6 +70,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    consumeTotpAuthenticationState: mockConsumeTotpAuthenticationState,
+    getSessionRevocationStore: vi.fn(() => ({
+      consumeTotpTimeStepRpc: vi.fn().mockResolvedValue({ lastAcceptedTimeStep: 1 }),
+      deleteCredentialStateRpc: vi.fn().mockResolvedValue(true),
+    })),
     createAuditLog: vi.fn().mockResolvedValue(undefined),
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
@@ -159,14 +167,13 @@ function createMockContext(
     header: (name: string, value: string) => {
       headers.append(name, value);
     },
-    json: (body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: {
-          'Content-Type': 'application/json',
-          ...Object.fromEntries(headers.entries()),
-        },
-      }),
+    json: (body: unknown, status = 200, responseHeaders?: HeadersInit) => {
+      const mergedHeaders = new Headers(responseHeaders);
+      mergedHeaders.set('Content-Type', 'application/json');
+      for (const [name, value] of headers.entries()) mergedHeaders.set(name, value);
+      return new Response(JSON.stringify(body), { status, headers: mergedHeaders });
+    },
+    executionCtx: { waitUntil: vi.fn() },
   } as any;
 }
 
@@ -576,6 +583,49 @@ describe('Account Page TOTP API', () => {
         amr: ['passkey', 'otp', 'totp'],
       })
     );
+  });
+
+  it('fails closed with 503 when TOTP authentication authority is unavailable', async () => {
+    const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+    const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
+    const profile: TotpProfile = { algorithm: 'SHA1', digits: 6, period: 30, window: 1 };
+    const timeStep = getTotpTimeStep(Date.now(), profile.period);
+    const code = await generateTotpCode(secret, profile, timeStep);
+    mockTotpRepo.findActiveByUserId.mockResolvedValue([
+      {
+        id: 'totp-001',
+        tenant_id: 'default',
+        user_id: 'user-001',
+        secret_encrypted: encrypted.encrypted,
+        secret_key_version: 1,
+        label: 'Authenticator app',
+        ...profile,
+        status: 'active',
+        last_used_time_step: null,
+        created_at: Date.now(),
+        activated_at: Date.now(),
+        last_used_at: null,
+      },
+    ]);
+    mockConsumeTotpAuthenticationState.mockRejectedValueOnce(
+      new Error('account_authentication_state_unavailable')
+    );
+
+    const response = await completeAccountTotpReauthHandler(
+      createMockContext({
+        body: { code },
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.totp.reauth_enabled': true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(mockTotpRepo.markUsed).not.toHaveBeenCalled();
+    expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
   });
 
   it('rate limits TOTP reauthentication before checking active credentials', async () => {

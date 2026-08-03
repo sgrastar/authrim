@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   enabled: vi.fn(),
   findUser: vi.fn(),
   deleteUser: vi.fn(),
+  transitionAccountAuthenticationState: vi.fn(),
   logger: { error: vi.fn() },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
@@ -12,6 +13,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
   createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.adapter })),
   isAnonymousAuthEnabled: mocks.enabled,
+  transitionAccountAuthenticationState: mocks.transitionAccountAuthenticationState,
   getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
   CanonicalRuntimeUserStore: vi.fn(function () {
     return { findById: mocks.findUser, deleteUser: mocks.deleteUser };
@@ -76,6 +78,7 @@ describe('anonymous auth administration', () => {
     mocks.enabled.mockResolvedValue(false);
     mocks.findUser.mockResolvedValue(null);
     mocks.deleteUser.mockResolvedValue(true);
+    mocks.transitionAccountAuthenticationState.mockResolvedValue({ lifecycle: 'active' });
   });
   it.each([
     null,
@@ -243,6 +246,9 @@ describe('anonymous auth administration', () => {
       const response = await deleteAnonymousUser(context({ id: 'user-1' }));
       expect(response.status).toBe(!value ? 404 : value.account_type === 'anonymous' ? 200 : 400);
       expect(mocks.deleteUser).toHaveBeenCalledTimes(value?.account_type === 'anonymous' ? 1 : 0);
+      expect(mocks.transitionAccountAuthenticationState).toHaveBeenCalledTimes(
+        value?.account_type === 'anonymous' ? 2 : 0
+      );
     }
   );
   it('handles anonymous user get/delete failures', async () => {

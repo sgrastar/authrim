@@ -13,6 +13,8 @@ import {
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
   createPIIContextFromHono,
+  ensureAccountAuthenticationState,
+  isAccountAuthenticationDeniedError,
   generateBrowserState,
   findActiveInvitationByToken,
   AUTH_EVENTS,
@@ -61,6 +63,7 @@ import {
 import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import { publishTenantD1PasskeyRoute } from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
@@ -239,6 +242,19 @@ function createCanonicalRuntimeUserStore(
     piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   });
+}
+
+async function ensureDirectoryAccountAuthenticationState(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+  await timeAuthRequestDiagnosticOperation(c, 'auth_account_state_read', () =>
+    ensureAccountAuthenticationState(c.env, tenantId, userId, () =>
+      runtimeUsers.findAccountAuthenticationState(userId)
+    )
+  );
 }
 
 export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordFetch) {
@@ -585,6 +601,21 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       authorizationContinuation = continuation;
     }
 
+    try {
+      await ensureDirectoryAccountAuthenticationState(c, tenantId, runtimeUser.id);
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await sessionStore.createSessionRpc(
       sessionId,
@@ -1613,6 +1644,21 @@ async function createDirectorySessionSuccessResponse(
   }
 ): Promise<Response> {
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
+  try {
+    await ensureDirectoryAccountAuthenticationState(c, input.tenantId, input.user.id);
+  } catch (error) {
+    if (!isAccountAuthenticationDeniedError(error)) {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Authentication state unavailable.',
+        },
+        503,
+        { 'Retry-After': '1' }
+      );
+    }
+    return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+  }
   const sessionTtl = await resolveSessionTtl(c.env, input.tenantId, 'directory_password');
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
     c.env,

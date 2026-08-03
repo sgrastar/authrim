@@ -22,6 +22,11 @@
     { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
     { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
     { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     { "name": "AUTH_CODE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "REFRESH_TOKEN_ROTATOR", "kind": "durable_object_namespace", "required": true },
     { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },

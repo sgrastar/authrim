@@ -23,6 +23,7 @@ import {
   parseShardedSessionId,
   getCachedUser,
   getCachedConsent,
+  upsertOAuthClientConsent,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
@@ -3384,18 +3385,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
 
       if (!existingConsent) {
-        // Auto-grant consent for trusted client
+        // Auto-grant consent for trusted client. The shared consent service
+        // handles a concurrent first-grant race without a database-specific SQL
+        // upsert, preserving the DatabaseAdapter abstraction.
         const consentId = crypto.randomUUID();
         const now = Date.now();
 
-        // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
         await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
-          authCtx.coreAdapter.execute(
-            `INSERT INTO oauth_client_consents
-             (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
-          )
+          upsertOAuthClientConsent(authCtx.coreAdapter, {
+            consentId,
+            tenantId,
+            userId: sub,
+            clientId: validClientId,
+            scope: scope ?? '',
+            grantedAt: now,
+            expiresAt: null,
+            now,
+          })
         );
 
         // getCachedConsent does not negative-cache misses, so there is no stale entry to delete.

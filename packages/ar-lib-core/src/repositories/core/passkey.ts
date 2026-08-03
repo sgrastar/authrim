@@ -346,6 +346,25 @@ export class PasskeyRepository {
   }
 
   /**
+   * Eventually-consistent mirror for the user-scoped authentication-state DO authority.
+   * The predicate prevents out-of-order background completions from decreasing the counter.
+   */
+  async mirrorCounterAfterAuth(id: string, newCounter: number): Promise<boolean> {
+    if (!Number.isSafeInteger(newCounter) || newCounter < 0) {
+      throw new Error('passkey_counter_invalid');
+    }
+    const now = getCurrentTimestamp();
+    const result = await this.adapter.execute(
+      `UPDATE passkeys
+          SET counter = ?, last_used_at = ?
+        WHERE id = ? AND tenant_id = ?
+          AND (counter < ? OR (counter = 0 AND ? = 0))`,
+      [newCounter, now, id, this.tenantId, newCounter, newCounter]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /**
    * Rename a passkey (update device_name)
    *
    * @param id - Passkey ID

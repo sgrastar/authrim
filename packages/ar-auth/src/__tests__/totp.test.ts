@@ -24,6 +24,8 @@ const {
   mockResolveAccountDataContextFromHono,
   mockResolveTenantD1EmailAccountRoute,
   mockUsesTenantD1AccountStorage,
+  mockEnsureAccountAuthenticationState,
+  mockConsumeTotpTimeStepRpc,
 } = vi.hoisted(() => {
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -56,6 +58,8 @@ const {
       findById: vi.fn(),
       syncUser: vi.fn(),
       touchLastLogin: vi.fn(),
+      findAccountAuthenticationState: vi.fn(),
+      findAuthenticationResponseUser: vi.fn(),
     },
     mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue(challengeStore),
     mockGetSessionStoreForNewSession: vi.fn().mockResolvedValue({
@@ -86,6 +90,8 @@ const {
     mockResolveAccountDataContextFromHono: vi.fn(),
     mockResolveTenantD1EmailAccountRoute: vi.fn(),
     mockUsesTenantD1AccountStorage: vi.fn(),
+    mockEnsureAccountAuthenticationState: vi.fn(),
+    mockConsumeTotpTimeStepRpc: vi.fn(),
   };
 });
 
@@ -100,6 +106,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    ensureAccountAuthenticationState: mockEnsureAccountAuthenticationState,
+    consumeTotpAuthenticationState: vi.fn(async (_env, input, loader) => {
+      const account = await loader();
+      if (!account || account.lifecycle !== 'active') {
+        throw new Error('account_authentication_not_allowed');
+      }
+      return mockConsumeTotpTimeStepRpc(
+        input.tenantId,
+        input.userId,
+        `account:${input.userId}`,
+        input.credentialId,
+        input.storedLastUsedTimeStep,
+        input.observedTimeStep,
+        input.observedAtMs
+      );
+    }),
+    getSessionRevocationStore: vi.fn(() => ({
+      consumeTotpTimeStepRpc: mockConsumeTotpTimeStepRpc,
+    })),
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
@@ -200,6 +225,30 @@ describe('TOTP login handlers', () => {
     mockRuntimeUserStore.findByEmail.mockResolvedValue(null);
     mockRuntimeUserStore.findByPreferredUsername.mockResolvedValue(null);
     mockRuntimeUserStore.findById.mockResolvedValue(null);
+    mockRuntimeUserStore.findAccountAuthenticationState.mockImplementation(async (userId) => {
+      const user = await mockRuntimeUserStore.findById(userId);
+      if (!user) return null;
+      return {
+        userId,
+        accountType: user.account_type ?? 'user',
+        lifecycle: user.active === 1 ? 'active' : 'inactive',
+        sourceVersionMs: 1_000,
+      };
+    });
+    mockRuntimeUserStore.findAuthenticationResponseUser.mockImplementation(async (userId) => {
+      const user = await mockRuntimeUserStore.findById(userId);
+      return { id: userId, email: user?.email ?? null, name: user?.name ?? null };
+    });
+    mockEnsureAccountAuthenticationState.mockImplementation(
+      async (_env, _tenant, _user, loader) => {
+        const state = await loader();
+        if (!state || state.lifecycle !== 'active') {
+          throw new Error('account_authentication_not_allowed');
+        }
+        return state;
+      }
+    );
+    mockConsumeTotpTimeStepRpc.mockResolvedValue({ lastAcceptedTimeStep: 1 });
     mockRuntimeUserStore.syncUser.mockResolvedValue(undefined);
     mockRuntimeUserStore.touchLastLogin.mockResolvedValue(true);
     mockResolvePostLoginRedirectUrl.mockResolvedValue({ redirectUrl: '/' });
@@ -657,7 +706,6 @@ describe('TOTP login handlers', () => {
       'user-001',
       expect.any(Number),
       expect.objectContaining({
-        email: 'person@example.com',
         amr: ['otp', 'totp'],
         acr: 'urn:authrim:aal:2',
         authTime: Math.floor(Date.now() / 1000),

@@ -39,6 +39,8 @@ import {
   AdminSessionRepository,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
+  advancePasskeyAuthenticationState,
+  isAccountAuthenticationDeniedError,
   resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
@@ -47,6 +49,7 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
@@ -929,40 +932,75 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
+    const proofVerifiedAtMs = Date.now();
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    const runtimeUser = await runtimeUsers.findById(passkey.user_id);
-    if (!runtimeUser || runtimeUser.active !== 1) {
-      publishEvent(c, {
-        type: AUTH_EVENTS.PASSKEY_FAILED,
-        tenantId,
-        data: {
-          userId: passkey.user_id,
-          method: 'passkey',
-          clientId: 'passkey-auth',
-          errorCode: 'user_inactive',
-        } satisfies AuthEventData,
-      }).catch((err) => {
-        log.error('Failed to publish auth.passkey.failed event', {
-          action: 'event_publish',
-          errorType: err instanceof Error ? err.name : 'Unknown',
-        });
-      });
-
+    const [accountAuthenticationRecord, responseUser] = await Promise.all([
+      runtimeUsers.findAccountAuthenticationState(passkey.user_id),
+      runtimeUsers.findAuthenticationResponseUser(passkey.user_id),
+    ]);
+    if (!accountAuthenticationRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-
-    const now = Date.now();
+    const authTime = Math.floor(proofVerifiedAtMs / 1000);
+    try {
+      await timeAuthRequestDiagnosticOperation(c, 'auth_passkey_counter_advance', () =>
+        advancePasskeyAuthenticationState(
+          c.env,
+          {
+            tenantId,
+            userId: passkey.user_id,
+            credentialId: passkey.id,
+            storedCounter: passkey.counter,
+            observedCounter: authenticationInfo.newCounter,
+            observedAtMs: proofVerifiedAtMs,
+          },
+          () => Promise.resolve(accountAuthenticationRecord)
+        )
+      );
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      c.executionCtx.waitUntil(
+        publishEvent(c, {
+          type: AUTH_EVENTS.PASSKEY_FAILED,
+          tenantId,
+          data: {
+            userId: passkey.user_id,
+            method: 'passkey',
+            clientId: 'passkey-auth',
+            errorCode:
+              error instanceof Error && error.message === 'passkey_counter_replay'
+                ? 'counter_replay'
+                : 'user_inactive',
+          } satisfies AuthEventData,
+        }).catch((eventError: unknown) => {
+          log.error('Failed to publish auth.passkey.failed event', {
+            action: 'event_publish',
+            errorType: eventError instanceof Error ? eventError.name : 'Unknown',
+          });
+        })
+      );
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
     const referer = c.req.header('Referer') || '';
     const isAdminContext = referer.includes('/admin');
-    const isAdminSessionContext = isAdminContext && runtimeUser.account_type === 'admin';
+    const isAdminSessionContext =
+      isAdminContext && accountAuthenticationRecord.accountType === 'admin';
     const sessionTtl = await resolveSessionTtl(
       c.env,
       tenantId,
       isAdminSessionContext ? 'admin_passkey' : 'passkey'
     );
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
-    // This ensures that if session creation fails, we don't update the database
+    // Create a session only after the user-scoped DO accepted the WebAuthn counter.
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
 
     let sessionData: { id: string };
@@ -974,6 +1012,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         {
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
+          authTime,
         },
         tenantId
       )) as Session;
@@ -987,18 +1026,24 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Update counter and last_used_at via Repository
-    await authCtx.repositories.passkey.updateCounterAfterAuth(
-      passkey.id,
-      authenticationInfo.newCounter
+    c.executionCtx.waitUntil(
+      Promise.all([
+        authCtx.repositories.passkey.mirrorCounterAfterAuth(
+          passkey.id,
+          authenticationInfo.newCounter
+        ),
+        runtimeUsers.touchLastLogin(passkey.user_id),
+      ]).catch((error: unknown) => {
+        log.error('Failed to mirror Passkey authentication state', {
+          action: 'passkey_state_mirror',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
+      })
     );
-
-    // Step 3: Update user's last_login_at in canonical runtime metadata.
-    await runtimeUsers.touchLastLogin(passkey.user_id);
 
     // Admin/EndUser Separation: Create session in admin_sessions table for admin users
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
-    if (runtimeUser?.account_type === 'admin' && c.env.DB_ADMIN) {
+    if (accountAuthenticationRecord.accountType === 'admin' && c.env.DB_ADMIN) {
       try {
         const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
         const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
@@ -1014,7 +1059,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           admin_user_id: passkey.user_id,
           ip_address: clientIp || undefined,
           user_agent: userAgent || undefined,
-          expires_at: now + sessionTtl.milliseconds,
+          expires_at: Date.now() + sessionTtl.milliseconds,
           mfa_verified: true, // Passkey is MFA
         });
 
@@ -1128,13 +1173,13 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       sessionId: sessionData.id,
       userId: passkey.user_id,
       user: {
-        id: runtimeUser!.id,
-        email: runtimeUser!.email,
-        name: runtimeUser!.name,
-        email_verified: runtimeUser!.email_verified,
-        created_at: runtimeUser!.created_at,
-        updated_at: runtimeUser!.updated_at,
-        last_login_at: runtimeUser!.last_login_at,
+        id: responseUser.id,
+        email: responseUser.email,
+        name: responseUser.name,
+        email_verified: responseUser.emailVerified,
+        created_at: responseUser.createdAt,
+        updated_at: responseUser.updatedAt,
+        last_login_at: responseUser.lastLoginAt,
       },
     });
   } catch (error) {

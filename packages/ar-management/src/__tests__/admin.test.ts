@@ -19,6 +19,7 @@ const {
   resolveAccountCreationTargets,
   listCrossShardAccounts,
   findExactCrossShardAccounts,
+  resolveOtpAccountCoreDataContextByIdentifier,
   resolveAccountDataContextByIdentifier,
   resolveAccountDataContext,
   prepareAccountRemoval,
@@ -42,6 +43,7 @@ const {
   resolveAccountCreationTargets: vi.fn(),
   listCrossShardAccounts: vi.fn(),
   findExactCrossShardAccounts: vi.fn(),
+  resolveOtpAccountCoreDataContextByIdentifier: vi.fn(),
   resolveAccountDataContextByIdentifier: vi.fn(),
   resolveAccountDataContext: vi.fn(),
   prepareAccountRemoval: vi.fn(async (_env, input) => [
@@ -117,6 +119,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    transitionAccountAuthenticationState: vi.fn(async (_env, input) => ({
+      lifecycle: input.lifecycle,
+    })),
     resolveRuntimeIdentityMappingBinding: resolveIdentityMappingBinding,
     loadDestinationProfileConsentDescriptor: loadDestinationProfileDescriptor,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
@@ -200,6 +205,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       };
     }),
     resolveAccountDataContextByIdentifierFromHono: resolveAccountDataContextByIdentifier,
+    resolveOtpAccountCoreDataContextByIdentifierFromHono:
+      resolveOtpAccountCoreDataContextByIdentifier,
     resolveAccountDataContextFromHono: resolveAccountDataContext,
     PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
       const adapter = mockPostgresAdapterFactory(config);
@@ -356,6 +363,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           }
         }
         return null;
+      }
+
+      async findForOtpLogin(userId: string, trustedEmail: string) {
+        const runtimeUser = canonicalRuntimeUsers.get(userId);
+        if (!runtimeUser) return null;
+        const projection = toCanonicalProjection(userId, runtimeUser, this.tenantId);
+        return {
+          ...projection,
+          email: trustedEmail.trim().toLowerCase(),
+        };
       }
 
       async deleteUser(userId: string) {
@@ -721,8 +738,19 @@ function createMockContext(options: {
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
       SETTINGS: createMockKVNamespace(),
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          setAccountLifecycleRpc: vi.fn(async (_tenant, _user, _account, lifecycle) => ({
+            lifecycle,
+          })),
+        })),
+      },
     } as unknown as Env,
-    json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    json: vi.fn(
+      (body, status = 200, headers?: Record<string, string>) =>
+        new Response(JSON.stringify(body), { status, headers })
+    ),
     header: vi.fn((name: string, value: string) => {
       responseHeaders.set(name, value);
     }),
@@ -817,6 +845,7 @@ describe('Admin API Handlers', () => {
     canonicalRuntimeUsers.clear();
     listCrossShardAccounts.mockReset();
     findExactCrossShardAccounts.mockReset();
+    resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
     executeDurableAccountCreation.mockImplementation(async (_env, input) => {
@@ -868,14 +897,7 @@ describe('Admin API Handlers', () => {
       storageProfileId: 'builtin:storage:tenant-d1',
     };
 
-    it('resolves the account route before reading tenant-D1 Core and PII data', async () => {
-      canonicalRuntimeUsers.set('user-1', {
-        id: 'user-1',
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        email: 'user@example.com',
-        name: 'User One',
-      });
+    it('uses the route-bound Core projection without reading tenant-D1 PII data', async () => {
       const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
       const c = createMockContext({
         method: 'POST',
@@ -889,61 +911,82 @@ describe('Admin API Handlers', () => {
           } as unknown as Env['CHALLENGE_STORE'],
         },
       });
-      resolveAccountDataContextByIdentifier.mockImplementationOnce(async (context) => {
-        const accountDataContext = {
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => {
+        return {
           tenantId: 'default',
           accountId: 'account-1',
           legacyUserId: 'user-1',
           coreDb: context.env.DB,
-          piiDb: context.env.DB_PII,
+          user: {
+            id: 'user-1',
+            email: 'user@example.com',
+            name: 'User One',
+            active: 1,
+            email_verified: 0,
+            account_type: 'end_user',
+            created_at: '2023-11-14T22:13:20.000Z',
+          },
         };
-        context.set('accountDataContext', accountDataContext);
-        return accountDataContext;
       });
 
       const response = await adminTestEmailCodeHandler(c);
 
       expect(response.status).toBe(201);
-      expect(resolveAccountDataContextByIdentifier).toHaveBeenCalledWith(c, {
+      await expect(response.clone().json()).resolves.toMatchObject({
+        runtime_profile: {
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'disabled',
+        },
+      });
+      expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
         indexKind: 'email_exact',
         identifier: 'user@example.com',
+        trustedEmail: 'USER@example.com',
       });
+      expect(resolveAccountDataContextByIdentifier).not.toHaveBeenCalled();
+      expect(c.get('accountDataContext')).toBeUndefined();
       expect(storeChallengeRpc).toHaveBeenCalledOnce();
     });
 
-    it('fails closed when a stale identifier route resolves to a different authoritative email', async () => {
-      canonicalRuntimeUsers.set('user-1', {
-        id: 'user-1',
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        email: 'new-address@example.com',
-        name: 'User One',
-      });
-      resolveAccountDataContextByIdentifier.mockImplementationOnce(async (context) => {
-        const accountDataContext = {
+    it('uses the identifier route as the authoritative email binding without rereading PII', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => {
+        return {
           tenantId: 'default',
           accountId: 'account-1',
           legacyUserId: 'user-1',
           coreDb: context.env.DB,
-          piiDb: context.env.DB_PII,
+          user: {
+            id: 'user-1',
+            email: 'old-address@example.com',
+            name: 'User One',
+            active: 1,
+            email_verified: 0,
+            account_type: 'end_user',
+            created_at: '2023-11-14T22:13:20.000Z',
+          },
         };
-        context.set('accountDataContext', accountDataContext);
-        return accountDataContext;
       });
       const c = createMockContext({
         method: 'POST',
         body: { email: 'old-address@example.com', create_user: false },
         tenantMetadataContext,
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc: vi.fn().mockResolvedValue(undefined) })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
       });
 
       const response = await adminTestEmailCodeHandler(c);
 
-      expect(response.status).toBe(404);
-      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ success: true, userId: 'user-1' });
     });
 
     it('returns the existing not-found contract when a pre-seeded route is absent', async () => {
-      resolveAccountDataContextByIdentifier.mockRejectedValueOnce(
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
       );
       const c = createMockContext({
@@ -961,7 +1004,7 @@ describe('Admin API Handlers', () => {
     });
 
     it('does not create an unallocated tenant-D1 user through the test endpoint', async () => {
-      resolveAccountDataContextByIdentifier.mockRejectedValueOnce(
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
       );
       const c = createMockContext({
@@ -977,7 +1020,7 @@ describe('Admin API Handlers', () => {
     });
 
     it('fails closed when identifier routing rejects the tenant boundary', async () => {
-      resolveAccountDataContextByIdentifier.mockRejectedValueOnce(
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('account_data_context_conflict')
       );
       const c = createMockContext({
@@ -990,6 +1033,26 @@ describe('Admin API Handlers', () => {
 
       expect(response.status).toBe(500);
       expect(c.get('accountDataContext')).toBeUndefined();
+    });
+
+    it('returns retryable 503 when tenant-D1 routing is overloaded', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
+        new Error('D1 DB is overloaded')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'user@example.com', create_user: false },
+        tenantMetadataContext,
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('1');
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'temporarily_unavailable',
+        extensions: { reason: 'data_store_overloaded', retryable: true },
+      });
     });
   });
 
@@ -1669,12 +1732,27 @@ describe('Admin API Handlers', () => {
       // 2. Core DB is queried for user_core data with those IDs
       // 3. PII DB is queried again for full PII data
 
-      // Core DB returns user core data (no PII)
+      canonicalRuntimeUsers.set('user-1', {
+        id: 'user-1',
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'john@example.com',
+        name: 'John Doe',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_login_at: null,
+      });
+
+      // Core DB returns the canonical account key used by the projection repository.
       const mockDB = createMockDB({
         firstResult: { count: 1 },
         allResults: [
           {
-            id: 'user-1',
+            legacy_user_id: 'user-1',
+            user_id: 'user-1',
             tenant_id: 'default',
             email_verified: 1,
             phone_number_verified: 0,

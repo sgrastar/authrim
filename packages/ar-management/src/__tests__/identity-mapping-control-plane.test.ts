@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type {
   DatabaseAdapter,
@@ -2506,6 +2506,31 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       expect.stringContaining('INSERT INTO provisioning_revocation_events'),
       expect.stringContaining('UPDATE external_lifecycle_signal_events'),
     ]);
+  });
+
+  it('invokes the account suspension fence before applying a SCIM account signal', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const fence = vi.fn(async () => {
+      expect(adapter.executes).toHaveLength(0);
+    });
+    const repository = new IdentityMappingControlPlaneRepository(
+      adapter,
+      () => 1000,
+      undefined,
+      fence
+    );
+
+    await repository.recordExternalLifecycleSignal('tenant_a', {
+      sourceType: 'scim',
+      sourceId: 'directory-1',
+      sourceEventId: 'event-1',
+      signalType: 'scim_active_false',
+      accountId: 'account-1',
+      targetType: 'account',
+      targetId: 'account-1',
+    });
+
+    expect(fence).toHaveBeenCalledWith('tenant_a', 'account-1', 1000, expect.any(String));
   });
 
   it('routes protected SCIM group removal, CSV diff, and claim disappearance to review instead of silent revoke', async () => {

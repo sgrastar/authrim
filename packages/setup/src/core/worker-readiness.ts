@@ -140,6 +140,28 @@ async function describeReadinessFailure(response: Response): Promise<string> {
   return compactBody ? `HTTP ${response.status}: ${compactBody}` : `HTTP ${response.status}`;
 }
 
+async function hasExpectedMissingTenantSnapshot(
+  response: Response,
+  workerName: string,
+  allowMissingTenantSnapshot: boolean
+): Promise<boolean> {
+  if (
+    !allowMissingTenantSnapshot ||
+    response.status !== 409 ||
+    (!workerName.endsWith('-ar-auth') && !workerName.endsWith('-ar-saml'))
+  ) {
+    return false;
+  }
+
+  const body = await readResponseTextWithLimit(response, 2048).catch(() => '');
+  try {
+    const payload = JSON.parse(body) as { error?: unknown };
+    return payload.error === 'missing_snapshot';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Wait until the API router Worker is actually reachable through its public route.
  *
@@ -365,6 +387,8 @@ export async function waitForWorkerHttpReady(options: {
   initialDelayMs?: number;
   maxDelayMs?: number;
   requestTimeoutMs?: number;
+  /** Initial tenant-D1 deploys may not have a Runtime Registry snapshot yet. */
+  allowMissingTenantSnapshot?: boolean;
   onProgress?: (message: string) => void;
 }): Promise<WorkerHttpReadinessResult> {
   const targets = options.targets.filter((target) => target.workerName && target.url);
@@ -409,6 +433,15 @@ export async function waitForWorkerHttpReady(options: {
             requestTimeoutMs
           );
           if (response.ok) {
+            return null;
+          }
+          if (
+            await hasExpectedMissingTenantSnapshot(
+              response.clone(),
+              target.workerName,
+              options.allowMissingTenantSnapshot === true
+            )
+          ) {
             return null;
           }
           return {

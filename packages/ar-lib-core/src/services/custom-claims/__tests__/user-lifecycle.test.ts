@@ -35,11 +35,17 @@ function makeSchema(overrides: Partial<CustomClaimSchema> = {}): CustomClaimSche
   };
 }
 
-function createMockCoreDb(state: {
-  schemas: CustomClaimSchema[];
-  userCustomFields: Map<string, Record<string, string>>;
-  lifecycleStates: Map<string, string | null>;
-}) {
+function createMockCoreDb(
+  state: {
+    schemas: CustomClaimSchema[];
+    userCustomFields: Map<string, Record<string, string>>;
+    lifecycleStates: Map<string, string | null>;
+    subjectLifecycleStates?: Map<string, string | null>;
+    directoryPublicationStates?: Map<string, string | null>;
+    accountUpdatedAt?: Map<string, number>;
+  },
+  operations?: string[]
+) {
   return {
     prepare: vi.fn((sql: string) => ({
       bind: vi.fn((...args: any[]) => ({
@@ -60,11 +66,15 @@ function createMockCoreDb(state: {
           return { results: [] };
         }),
         first: vi.fn(async () => {
-          if (sql.includes('SELECT id, lifecycle_state FROM identity_accounts')) {
+          if (sql.includes('FROM identity_accounts account')) {
             const [userId] = args;
             return {
               id: `account-${userId}`,
               lifecycle_state: state.lifecycleStates.get(userId) ?? null,
+              subject_lifecycle_state: state.subjectLifecycleStates?.get(userId) ?? 'active',
+              directory_publication_state:
+                state.directoryPublicationStates?.get(userId) ?? 'active',
+              account_updated_at: state.accountUpdatedAt?.get(userId) ?? 1_000,
             };
           }
 
@@ -72,6 +82,7 @@ function createMockCoreDb(state: {
         }),
         run: vi.fn(async () => {
           if (sql.includes('UPDATE identity_accounts SET lifecycle_state = ?')) {
+            operations?.push('d1');
             const [lifecycleState, _updatedAt, accountId] = args;
             const userId = String(accountId).replace(/^account-/, '');
             state.lifecycleStates.set(userId, lifecycleState);
@@ -85,6 +96,34 @@ function createMockCoreDb(state: {
 }
 
 describe('user-lifecycle', () => {
+  function accountAuthenticationEnv(
+    operations: string[],
+    lifecycles?: string[],
+    accountState: { lifecycle: string | null; lifecycleVersionMs: number | null } = {
+      lifecycle: 'active',
+      lifecycleVersionMs: 1_000,
+    }
+  ) {
+    return {
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          getAccountStateRpc: vi.fn(async () => ({
+            revokedAfterMs: null,
+            lastLoginAtMs: null,
+            lifecycleOperationId: null,
+            ...accountState,
+          })),
+          setAccountLifecycleRpc: vi.fn(async (...args: unknown[]) => {
+            operations.push('do');
+            lifecycles?.push(String(args[3]));
+            return { lifecycle: 'active' };
+          }),
+        })),
+      },
+    } as never;
+  }
+
   it('materializes incomplete when required custom claims are missing', async () => {
     const state = {
       schemas: [makeSchema()],
@@ -159,5 +198,117 @@ describe('user-lifecycle', () => {
     expect(result.lifecycleState).toBe('active');
     expect(result.missingRequiredFields).toEqual([]);
     expect(stateDb.lifecycleStates.get('user-1')).toBe('active');
+  });
+
+  it('restricts the account DO before materializing an incomplete lifecycle in D1', async () => {
+    const operations: string[] = [];
+    const state = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>(),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'active']]),
+    };
+
+    await syncUserLifecycleState({
+      db: createMockCoreDb(state, operations),
+      tenantId: 'default',
+      userId: 'user-1',
+      accountAuthenticationEnv: accountAuthenticationEnv(operations),
+    });
+
+    expect(operations).toEqual(['do', 'd1']);
+  });
+
+  it('materializes an active lifecycle in D1 before enabling the account DO', async () => {
+    const operations: string[] = [];
+    const state = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>([
+        ['user-1', { department: 'Engineering' }],
+      ]),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'incomplete']]),
+    };
+
+    await syncUserLifecycleState({
+      db: createMockCoreDb(state, operations),
+      tenantId: 'default',
+      userId: 'user-1',
+      accountAuthenticationEnv: accountAuthenticationEnv(operations),
+    });
+
+    expect(operations).toEqual(['d1', 'do']);
+  });
+
+  it('does not enable authentication when required claims complete on a suspended subject', async () => {
+    const operations: string[] = [];
+    const lifecycles: string[] = [];
+    const state = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>([
+        ['user-1', { department: 'Engineering' }],
+      ]),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'incomplete']]),
+      subjectLifecycleStates: new Map<string, string | null>([['user-1', 'suspended']]),
+    };
+
+    await syncUserLifecycleState({
+      db: createMockCoreDb(state, operations),
+      tenantId: 'default',
+      userId: 'user-1',
+      accountAuthenticationEnv: accountAuthenticationEnv(operations, lifecycles),
+    });
+
+    expect(operations).toEqual(['do', 'd1']);
+    expect(lifecycles).toEqual(['suspended']);
+  });
+
+  it('repairs an older DO when the D1 lifecycle write already completed', async () => {
+    const operations: string[] = [];
+    const lifecycles: string[] = [];
+    const state = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>([
+        ['user-1', { department: 'Engineering' }],
+      ]),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'active']]),
+      accountUpdatedAt: new Map<string, number>([['user-1', 1_700_000_002_000]]),
+    };
+
+    await syncUserLifecycleState({
+      db: createMockCoreDb(state, operations),
+      tenantId: 'default',
+      userId: 'user-1',
+      accountAuthenticationEnv: accountAuthenticationEnv(operations, lifecycles, {
+        lifecycle: 'inactive',
+        lifecycleVersionMs: 1_700_000_001_000,
+      }),
+    });
+
+    expect(operations).toEqual(['do']);
+    expect(lifecycles).toEqual(['active']);
+  });
+
+  it('does not overwrite a newer restrictive DO from an older D1 lifecycle', async () => {
+    const operations: string[] = [];
+    const state = {
+      schemas: [makeSchema()],
+      userCustomFields: new Map<string, Record<string, string>>([
+        ['user-1', { department: 'Engineering' }],
+      ]),
+      lifecycleStates: new Map<string, string | null>([['user-1', 'active']]),
+      accountUpdatedAt: new Map<string, number>([['user-1', 1_700_000_002_000]]),
+    };
+
+    await expect(
+      syncUserLifecycleState({
+        db: createMockCoreDb(state, operations),
+        tenantId: 'default',
+        userId: 'user-1',
+        accountAuthenticationEnv: accountAuthenticationEnv(operations, undefined, {
+          lifecycle: 'suspended',
+          lifecycleVersionMs: 1_700_000_003_000,
+        }),
+      })
+    ).rejects.toThrow('account_authentication_lifecycle_reconciliation_conflict');
+    expect(operations).toEqual([]);
   });
 });

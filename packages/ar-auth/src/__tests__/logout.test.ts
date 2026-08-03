@@ -58,7 +58,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
-    recordUserSessionRevocationEpoch: vi.fn().mockResolvedValue(1_750_000_000_000),
+    recordHybridUserSessionRevocationEpoch: vi.fn().mockResolvedValue(1_750_000_000_000),
   };
 });
 
@@ -72,7 +72,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
-  recordUserSessionRevocationEpoch,
+  recordHybridUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -1047,7 +1047,8 @@ describe('Back-channel Logout', () => {
 
       // Should NOT call the sharded session store (no sid means cannot locate shard)
       expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
-      expect(recordUserSessionRevocationEpoch).toHaveBeenCalledWith(
+      expect(recordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
+        expect.anything(),
         expect.anything(),
         'default',
         'user-123'

@@ -308,6 +308,18 @@ describe('D1ControlRepository lease and budget integration', () => {
     );
     database.exec(
       readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/010_bootstrap_handoff_worker_evidence.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/015_bootstrap_worker_evidence_refresh.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
+      readFileSync(
         resolve(REPO_ROOT, 'migrations/control/020_lookup_worker_binding_reconciliations.sql'),
         'utf8'
       )
@@ -346,6 +358,79 @@ describe('D1ControlRepository lease and budget integration', () => {
   });
 
   afterEach(() => database.close());
+
+  it('resumes only initial bootstrap operations handed to the operator before credentials were ready', async () => {
+    database.exec(`
+      INSERT INTO control_bootstrap_handoffs (
+        environment_id, state, ownership_fingerprint, release_manifest_digest, updated_at
+      ) VALUES ('env-test', 'pending_verification', '${'a'.repeat(64)}', '${'b'.repeat(64)}', 10);
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, requested_by_id, attempt_count, last_error_code, created_at, updated_at
+      ) VALUES (
+        'op_bootstrap_requeue', 'env-test', 'provision_shard', 'bootstrap-requeue', 'blocked',
+        'setup', 'setup:init', 1, 'operator_action_required', 10, 10
+      );
+      INSERT INTO control_operation_steps (
+        operation_id, step_key, display_order, status, attempt_count, last_error_code, updated_at
+      ) VALUES
+        ('op_bootstrap_requeue', 'reconcile_worker_bindings', 30, 'blocked', 0, 'operator_action_required', 10),
+        ('op_bootstrap_requeue', 'smoke_bindings', 40, 'blocked', 0, 'operator_action_required', 10),
+        ('op_bootstrap_requeue', 'stabilize_bindings', 50, 'blocked', 0, 'operator_action_required', 10);
+    `);
+
+    await expect(repository.resumeAutomaticBootstrapOperations('env-test', 100)).resolves.toBe(1);
+    expect(
+      database
+        .prepare(
+          `SELECT status, last_error_code FROM control_operations
+            WHERE operation_id = 'op_bootstrap_requeue'`
+        )
+        .get()
+    ).toEqual({ status: 'waiting_retry', last_error_code: null });
+    expect(
+      database
+        .prepare(
+          `SELECT step_key, status, last_error_code FROM control_operation_steps
+            WHERE operation_id = 'op_bootstrap_requeue' ORDER BY display_order`
+        )
+        .all()
+    ).toEqual([
+      { step_key: 'reconcile_worker_bindings', status: 'running', last_error_code: null },
+      { step_key: 'smoke_bindings', status: 'running', last_error_code: null },
+      { step_key: 'stabilize_bindings', status: 'running', last_error_code: null },
+    ]);
+
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, requested_by_id, attempt_count, last_error_code, created_at, updated_at
+      ) VALUES (
+        'op_bootstrap_waiting', 'env-test', 'provision_shard', 'bootstrap-waiting', 'waiting_retry',
+        'setup', 'setup:init', 1, 'control_worker_binding_reconciliation_failed', 10, 10
+      );
+      INSERT INTO control_operation_steps (
+        operation_id, step_key, display_order, status, attempt_count, updated_at
+      ) VALUES
+        ('op_bootstrap_waiting', 'reconcile_worker_bindings', 30, 'waiting_retry', 0, 10),
+        ('op_bootstrap_waiting', 'smoke_bindings', 40, 'waiting_retry', 0, 10),
+        ('op_bootstrap_waiting', 'stabilize_bindings', 50, 'waiting_retry', 0, 10);
+    `);
+
+    await expect(repository.resumeAutomaticBootstrapOperations('env-test', 101)).resolves.toBe(2);
+    expect(
+      database
+        .prepare(
+          `SELECT step_key, status, last_error_code FROM control_operation_steps
+            WHERE operation_id = 'op_bootstrap_waiting' ORDER BY display_order`
+        )
+        .all()
+    ).toEqual([
+      { step_key: 'reconcile_worker_bindings', status: 'running', last_error_code: null },
+      { step_key: 'smoke_bindings', status: 'running', last_error_code: null },
+      { step_key: 'stabilize_bindings', status: 'running', last_error_code: null },
+    ]);
+  });
 
   it('activates a placement policy only with a matching observed Runtime Registry route', async () => {
     database.exec(`

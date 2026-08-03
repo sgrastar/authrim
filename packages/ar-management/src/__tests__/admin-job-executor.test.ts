@@ -57,6 +57,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
     resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
     emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
+    transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'suspended' })),
   };
 });
 

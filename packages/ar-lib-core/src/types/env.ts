@@ -2,6 +2,7 @@
 import type { KeyManager } from '../durable-objects/KeyManager';
 import type { VersionManager } from '../durable-objects/VersionManager';
 import type { SessionStore } from '../durable-objects/SessionStore';
+import type { SessionRevocationStore } from '../durable-objects/SessionRevocationStore';
 import type { SessionClientStore } from '../durable-objects/SessionClientStore';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
 import type { RefreshTokenRotator } from '../durable-objects/RefreshTokenRotator';
@@ -377,6 +378,7 @@ export interface Env {
   // Durable Objects with RPC type support
   KEY_MANAGER: DurableObjectNamespace<KeyManager>;
   SESSION_STORE: DurableObjectNamespace<SessionStore>;
+  SESSION_REVOCATION_STORE: DurableObjectNamespace<SessionRevocationStore>;
   SESSION_CLIENT_STORE?: DurableObjectNamespace<SessionClientStore>;
   AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   REFRESH_TOKEN_ROTATOR: DurableObjectNamespace<RefreshTokenRotator>;

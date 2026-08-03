@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   resolveMissingUiWorkerBindingTargets: vi.fn(),
   isWranglerInstalled: vi.fn(),
   checkAuth: vi.fn(),
+  validateDirectControlTokens: vi.fn(),
+  writeControlProvisioningAuthority: vi.fn(),
   getWorkersSubdomain: vi.fn(),
   runMigrationsForEnvironment: vi.fn(),
   applyReleaseSchemaUpdatePlan: vi.fn(),
@@ -111,6 +113,23 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     listD1Databases: mocks.listD1Databases,
     listKVNamespaces: mocks.listKVNamespaces,
     queryD1Rows: mocks.queryD1Rows,
+  };
+});
+
+vi.mock('../core/cloudflare-control-token-bootstrap.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../core/cloudflare-control-token-bootstrap.js')>();
+  return {
+    ...actual,
+    validateDirectControlTokens: mocks.validateDirectControlTokens,
+  };
+});
+
+vi.mock('../core/control-provisioning-authority.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/control-provisioning-authority.js')>();
+  return {
+    ...actual,
+    writeControlProvisioningAuthority: mocks.writeControlProvisioningAuthority,
   };
 });
 
@@ -334,6 +353,8 @@ describe('CLI initial deployment', () => {
       email: 'test@example.com',
       accountId: '0123456789abcdef0123456789abcdef',
     });
+    mocks.validateDirectControlTokens.mockResolvedValue('user');
+    mocks.writeControlProvisioningAuthority.mockResolvedValue(undefined);
     mocks.getWorkersSubdomain.mockResolvedValue('example-subdomain');
     mocks.loadDeploySecretsFromKeys.mockResolvedValue({
       RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
@@ -685,5 +706,54 @@ describe('CLI initial deployment', () => {
     expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
     expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
     expect(mocks.deployAll).not.toHaveBeenCalled();
+  });
+
+  it('does not query the empty Control D1 during a fresh Automatic provisioning deploy', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env, true);
+    const events: string[] = [];
+    mocks.queryD1Rows.mockImplementation(async () => {
+      events.push('query');
+      return [];
+    });
+    mocks.applyReleaseSchemaUpdatePlan.mockImplementation(async () => {
+      events.push('schema');
+      return {
+        success: true,
+        results: [
+          'd1:admin-id:d1-admin',
+          'd1:control-id:d1-control',
+          'd1:core-id:d1-core',
+          'd1:lookup-id:d1-lookup',
+          'd1:pii-id:d1-pii',
+          'd1:plugin-runner-id:d1-plugin-runner',
+        ].map((targetId) => ({
+          targetId,
+          success: true,
+          appliedCount: 1,
+          skippedCount: 0,
+        })),
+      };
+    });
+
+    const previousD1Token = process.env.CLOUDFLARE_D1_API_TOKEN;
+    const previousWorkersToken = process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+    process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
+    process.env.CLOUDFLARE_WORKERS_API_TOKEN = 'workers-token';
+    try {
+      await deployCommand({ env, source: root, skipBuild: true, yes: true });
+    } finally {
+      if (previousD1Token === undefined) delete process.env.CLOUDFLARE_D1_API_TOKEN;
+      else process.env.CLOUDFLARE_D1_API_TOKEN = previousD1Token;
+      if (previousWorkersToken === undefined) delete process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+      else process.env.CLOUDFLARE_WORKERS_API_TOKEN = previousWorkersToken;
+    }
+
+    expect(mocks.applyReleaseSchemaUpdatePlan).toHaveBeenCalledOnce();
+    expect(mocks.deployAll).toHaveBeenCalledOnce();
+    const schemaIndex = events.indexOf('schema');
+    const firstQueryIndex = events.indexOf('query');
+    expect(schemaIndex).toBeGreaterThanOrEqual(0);
+    expect(firstQueryIndex === -1 || firstQueryIndex > schemaIndex).toBe(true);
   });
 });

@@ -336,6 +336,9 @@ export {
   createTenantPlacementWriteFenceResponse,
   isTenantPlacementWriteFenceError,
   TENANT_PLACEMENT_WRITE_FENCE_RETRY_AFTER_MS,
+  createDataTemporarilyUnavailableResponse,
+  isDataTemporarilyUnavailableError,
+  DATA_TEMPORARILY_UNAVAILABLE_RETRY_AFTER_MS,
 } from './errors';
 
 // Phase 9: VC (Verifiable Credentials)
@@ -367,6 +370,16 @@ export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
 export { recordUserSessionRevocationEpoch } from './services/session-persistence';
+export {
+  advancePasskeyAuthenticationState,
+  consumeTotpAuthenticationState,
+  ensureAccountAuthenticationState,
+  getSessionRevocationStore,
+  isAccountAuthenticationDeniedError,
+  recordHybridUserSessionRevocationEpoch,
+  SESSION_REVOCATION_AUTHORITY,
+  transitionAccountAuthenticationState,
+} from './services/session-revocation-store';
 export * from './services/storage-target-resolver';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
@@ -490,6 +503,11 @@ export * from './db';
 export * from './repositories';
 export {
   CanonicalRuntimeUserStore,
+  findCanonicalAccountAuthenticationState,
+  markOtpLoginEmailVerified,
+  type CanonicalAccountAuthenticationState,
+  type CanonicalAuthenticationResponseUser,
+  type CanonicalOtpLoginUser,
   type CanonicalRuntimeUserCreateInput,
   type CanonicalRuntimeUserStoreOptions,
 } from './repositories/identity';
@@ -521,6 +539,12 @@ export { SAMLRequestStore } from './durable-objects/SAMLRequestStore';
 export { SAMLAggregateMetadataStore } from './durable-objects/SAMLAggregateMetadataStore';
 export { SessionStore } from './durable-objects/SessionStore';
 export type { Session, SessionData, SessionResponse } from './durable-objects/SessionStore';
+export { SessionRevocationStore } from './durable-objects/SessionRevocationStore';
+export type {
+  AccountAuthenticationLifecycle,
+  AccountAuthenticationSnapshot,
+  SessionRegistrationResult,
+} from './durable-objects/SessionRevocationStore';
 export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
 export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';

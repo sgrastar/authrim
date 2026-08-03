@@ -11,6 +11,7 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   resolveCustomClaimRuntimeSourcesFromEnv,
   syncUserLifecycleState,
+  transitionAccountAuthenticationState,
   validateCustomClaimWrite,
 } from '@authrim/ar-lib-core';
 import { loadCatalogObjectJson } from '@authrim/ar-lib-core/services/object-artifact-store';
@@ -572,6 +573,15 @@ function isImportedUserActive(input: Pick<ImportedUserRowInput, 'status' | 'life
   return true;
 }
 
+function importedAccountAuthenticationLifecycle(
+  input: Pick<ImportedUserRowInput, 'status' | 'lifecycle_state'>
+): 'active' | 'suspended' | 'locked' | 'inactive' | null {
+  const state = input.lifecycle_state ?? input.status;
+  if (!state) return null;
+  if (state === 'active' || state === 'suspended' || state === 'locked') return state;
+  return 'inactive';
+}
+
 async function createImportedUser(
   runtime: UserImportRuntime,
   input: ImportedUserRowInput,
@@ -636,6 +646,15 @@ async function createImportedUser(
       ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
     },
   });
+  const createdLifecycle = importedAccountAuthenticationLifecycle(input) ?? 'active';
+  await transitionAccountAuthenticationState(runtime.env, {
+    tenantId: runtime.tenantId,
+    userId,
+    lifecycle: createdLifecycle,
+    sourceVersionMs: Date.now(),
+    operationId: crypto.randomUUID(),
+    revokeSessions: createdLifecycle !== 'active',
+  });
 
   try {
     await persistCustomClaimWrite({
@@ -652,6 +671,7 @@ async function createImportedUser(
       stateDb: runtime.coreAdapter,
       tenantId: runtime.tenantId,
       userId,
+      accountAuthenticationEnv: runtime.env,
     });
   } catch (customFieldError) {
     try {
@@ -663,6 +683,14 @@ async function createImportedUser(
         userId,
       ]);
       await runtime.runtimeUsers.deleteUser(userId);
+      await transitionAccountAuthenticationState(runtime.env, {
+        tenantId: runtime.tenantId,
+        userId,
+        lifecycle: 'deleted',
+        sourceVersionMs: Date.now(),
+        operationId: crypto.randomUUID(),
+        revokeSessions: true,
+      });
     } catch {
       // Best effort rollback only.
     }
@@ -711,6 +739,19 @@ async function updateImportedUser(
     };
   }
 
+  const targetLifecycle = importedAccountAuthenticationLifecycle(input);
+  const lifecycleVersionMs = Date.now();
+  if (targetLifecycle && targetLifecycle !== 'active') {
+    await transitionAccountAuthenticationState(runtime.env, {
+      tenantId: runtime.tenantId,
+      userId,
+      lifecycle: targetLifecycle,
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+  }
+
   await runtime.runtimeUsers.syncUser({
     userId,
     email: input.email,
@@ -748,6 +789,16 @@ async function updateImportedUser(
       ...(input.lifecycle_state ? { 'runtime.lifecycle_state': input.lifecycle_state } : {}),
     },
   });
+  if (targetLifecycle === 'active') {
+    await transitionAccountAuthenticationState(runtime.env, {
+      tenantId: runtime.tenantId,
+      userId,
+      lifecycle: 'active',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: false,
+    });
+  }
 
   const hasCustomFieldChanges =
     Object.keys(customFieldValidation.nonPiiValues).length > 0 ||
@@ -770,6 +821,7 @@ async function updateImportedUser(
       stateDb: runtime.coreAdapter,
       tenantId: runtime.tenantId,
       userId,
+      accountAuthenticationEnv: runtime.env,
     });
   }
 

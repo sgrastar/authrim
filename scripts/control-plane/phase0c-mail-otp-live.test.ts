@@ -1,22 +1,160 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildPhase0cK6Environment,
   createPhase0cMailRunId,
+  formatPhase0cCleanupProgress,
+  formatPhase0cSeedProgress,
+  isRunScopedPhase0cCleanup,
+  mapPhase0cBounded,
   parsePhase0cMailOtpLiveArgs,
+  parsePhase0cStepFailure,
   PHASE0C_MACHINE_PRINCIPAL_TYPE,
+  resolvePhase0cMailRunId,
   safeAdminErrorDetails,
   safePhase0cCleanupError,
   safePhase0cExecutionError,
   strictTenantPiiDatabaseNames,
   strictTenantUsersDatabaseNames,
+  validatePhase0cMailLoadEvidence,
   validatePhase0cMailPreGateEvidence,
   validatePhase0cMailSampleEvidence,
   validatePhase0cMailSmokeEvidence,
+  validatePhase0cRuntimeProfile,
 } from './phase0c-mail-otp-live.js';
 
 describe('Phase 0c Mail OTP live runner', () => {
+  const runtimeProfile = {
+    storageProfile: 'builtin:storage:tenant-d1' as const,
+    transientAuthMirrorMode: 'session-do-no-cold-mirror' as const,
+  };
+
+  it('formats bounded seed progress without exposing user identifiers', () => {
+    expect(
+      formatPhase0cSeedProgress({
+        completed: 250,
+        total: 1000,
+        retries: 3,
+        recovered: 2,
+        elapsedMs: 50_000,
+        status: 'running',
+      })
+    ).toBe(
+      '[seed] 250/1000 (25.0%) | status=running | retries=3 | recovered=2 | rate=5.0 users/s | elapsed=50s | ETA=2m30s'
+    );
+  });
+
+  it('formats bounded cleanup progress without exposing user identifiers', () => {
+    expect(
+      formatPhase0cCleanupProgress({
+        completed: 500,
+        total: 1000,
+        errors: 2,
+        elapsedMs: 250_000,
+        status: 'running',
+      })
+    ).toBe(
+      '[cleanup] 500/1000 (50.0%) | status=running | errors=2 | rate=2.0 users/s | elapsed=4m10s | ETA=4m10s'
+    );
+  });
+
+  it('waits for admitted seed operations before surfacing a worker failure', async () => {
+    let releaseFailure!: () => void;
+    let releaseInFlight!: () => void;
+    const failureGate = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    const inFlightGate = new Promise<void>((resolve) => {
+      releaseInFlight = resolve;
+    });
+    const started: number[] = [];
+    let inFlightCompleted = false;
+    const mapped = mapPhase0cBounded([0, 1, 2], 2, async (_value, index) => {
+      started.push(index);
+      if (index === 0) {
+        await failureGate;
+        throw new Error('seed_failed');
+      }
+      await inFlightGate;
+      inFlightCompleted = true;
+      return index;
+    });
+
+    await vi.waitFor(() => expect(started).toEqual([0, 1]));
+    releaseFailure();
+    let settled = false;
+    void mapped.catch(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    releaseInFlight();
+    await expect(mapped).rejects.toThrow('seed_failed');
+    expect(inFlightCompleted).toBe(true);
+    expect(started).toEqual([0, 1]);
+  });
+
+  it('parses only bounded secret-free k6 step failure signatures', () => {
+    expect(
+      parsePhase0cStepFailure(
+        'time="x" level=error msg="PHASE0C_STEP_FAILURE ts=1785715200123 step=email_code_verify status=500 code=server_error marker_end=1"'
+      )
+    ).toEqual({
+      step: 'email_code_verify',
+      status: 500,
+      code: 'server_error',
+      firstTimestampMs: 1785715200123,
+      lastTimestampMs: 1785715200123,
+    });
+    expect(
+      parsePhase0cStepFailure(
+        'PHASE0C_STEP_FAILURE ts=1785715200123 step=email_code_verify status=500 code=bad value marker_end=1'
+      )
+    ).toBeNull();
+  });
+
+  it('derives benchmark labels from the server-verified runtime profile', () => {
+    expect(
+      validatePhase0cRuntimeProfile({
+        runtime_profile: {
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'disabled',
+        },
+      })
+    ).toEqual(runtimeProfile);
+    expect(() =>
+      validatePhase0cRuntimeProfile({
+        runtime_profile: {
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'enabled',
+        },
+      })
+    ).toThrow('phase0c_mail_session_cold_persistence_must_be_disabled');
+  });
   it('uses a principal type accepted by the Admin D1 schema', () => {
     expect(PHASE0C_MACHINE_PRINCIPAL_TYPE).toBe('automation');
+  });
+
+  it('reuses the interrupted run id for cleanup credentials and reconciliation', () => {
+    const cleanupRunId = 'phase0c-mail-20260803113902-222f43';
+    expect(
+      resolvePhase0cMailRunId(
+        {
+          environment: 'test',
+          confirmTestData: true,
+          mode: 'cleanup_interrupted',
+          cleanupRunId,
+        },
+        'phase0c-mail-20260803120000-abcdef'
+      )
+    ).toBe(cleanupRunId);
+    expect(
+      isRunScopedPhase0cCleanup({
+        environment: 'test',
+        confirmTestData: true,
+        mode: 'cleanup_interrupted',
+        cleanupRunId,
+      })
+    ).toBe(true);
   });
 
   it('keeps admin failure diagnostics bounded and redacts email addresses', () => {
@@ -221,6 +359,50 @@ describe('Phase 0c Mail OTP live runner', () => {
     ).toThrow('phase0c_mail_mode_conflict');
   });
 
+  it('supports separate 25-LPS contention and unique-user load diagnostics', () => {
+    expect(
+      parsePhase0cMailOtpLiveArgs([
+        '--env',
+        'test',
+        '--confirm-test-data',
+        '--contention',
+        '--result',
+        '/private/tmp/contention.json',
+      ])
+    ).toEqual({
+      environment: 'test',
+      confirmTestData: true,
+      mode: 'contention',
+      resultPath: '/private/tmp/contention.json',
+    });
+    expect(
+      parsePhase0cMailOtpLiveArgs([
+        '--env',
+        'test',
+        '--confirm-test-data',
+        '--load',
+        '--result',
+        '/private/tmp/load.json',
+      ])
+    ).toEqual({
+      environment: 'test',
+      confirmTestData: true,
+      mode: 'load',
+      resultPath: '/private/tmp/load.json',
+    });
+    expect(() =>
+      parsePhase0cMailOtpLiveArgs([
+        '--env',
+        'test',
+        '--confirm-test-data',
+        '--load',
+        '--contention',
+        '--result',
+        '/private/tmp/load.json',
+      ])
+    ).toThrow('phase0c_mail_mode_conflict');
+  });
+
   it('configures prompt=none and a token target only on the disposable benchmark client', async () => {
     const source = await import('node:fs/promises').then(({ readFile }) =>
       readFile(new URL('./phase0c-mail-otp-live.ts', import.meta.url), 'utf8')
@@ -234,6 +416,8 @@ describe('Phase 0c Mail OTP live runner', () => {
     expect(source).not.toContain("'client.consent_required': false");
     expect(source).toContain('default_resource: baseUrl');
     expect(source).toContain('phase0c_mail_client_settings_version_missing');
+    expect(source).toContain('email_verified: true');
+    expect(source).not.toContain('email_verified: false');
   });
 
   it('selects only valid tenant users D1 resources for interrupted cleanup', () => {
@@ -296,6 +480,7 @@ describe('Phase 0c Mail OTP live runner', () => {
       userListPath: '/private/tmp/users.txt',
       resultPath: '/private/tmp/result.json',
       runId,
+      runtimeProfile,
       parentEnv: {
         PATH: '/usr/bin',
         CLOUDFLARE_API_TOKEN: 'must-not-propagate',
@@ -315,6 +500,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
+        runtimeProfile,
         preset: 'phase0c-smoke',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
@@ -329,6 +515,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
+        runtimeProfile,
         preset: 'phase0c-sample',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
@@ -343,10 +530,42 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
+        runtimeProfile,
         preset: 'phase0c-pre-gate',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
     ).toBe('phase0c-pre-gate');
+    expect(
+      buildPhase0cK6Environment({
+        baseUrl: 'https://test.authrim.com',
+        tenantId: 'default',
+        clientId: 'client',
+        clientSecret: 'client-secret',
+        accessToken: 'access-token',
+        userListPath: '/private/tmp/users.txt',
+        resultPath: '/private/tmp/result.json',
+        runId,
+        runtimeProfile,
+        preset: 'phase0c-load',
+        parentEnv: { PATH: '/usr/bin' },
+      }).PRESET
+    ).toBe('phase0c-load');
+  });
+
+  it('accepts a secret-free load result without applying a release gate', () => {
+    const evidence = {
+      runId: 'phase0c-mail-20260731102030-abcdef',
+      tenantId: 'default',
+      metrics: { iterations: 7500, flow_success_rate: 0.99 },
+    };
+    expect(
+      validatePhase0cMailLoadEvidence({
+        evidence,
+        runId: evidence.runId,
+        tenantId: evidence.tenantId,
+        forbiddenValues: ['access-token', 'client-secret'],
+      })
+    ).toBe(evidence);
   });
 
   it('accepts only one successful secret-free smoke iteration', () => {

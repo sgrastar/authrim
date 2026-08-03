@@ -7,6 +7,8 @@ import {
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
+  ensureAccountAuthenticationState,
+  findCanonicalAccountAuthenticationState,
   getRuntimeUserStoreSourcesFromHonoContext,
   resolveCustomClaimRuntimeSourcesFromHono,
   registerSessionClientInStore,
@@ -2112,6 +2114,23 @@ async function handleAuthorizationCodeGrant(
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  try {
+    await timeTokenRequestDiagnosticOperation(c, 'token_account_state_assert', () =>
+      ensureAccountAuthenticationState(c.env, tenantId, authCodeData.sub, () =>
+        findCanonicalAccountAuthenticationState(authCtx.coreAdapter, tenantId, authCodeData.sub)
+      )
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_authentication_not_allowed') {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+    return oauthError(c, 'temporarily_unavailable', 'Authentication state is unavailable', 503);
+  }
   let subjectAccount: Awaited<ReturnType<typeof findCanonicalRuntimeAccount>> = null;
   const [subjectAccountResult, tenantRBACClaimsConfigResult] = await Promise.allSettled([
     timeTokenRequestDiagnosticOperation(c, 'token_subject_account', () =>

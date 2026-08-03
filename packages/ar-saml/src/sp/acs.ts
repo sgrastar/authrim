@@ -1552,6 +1552,7 @@ async function findOrCreateUser(
       stateDb: coreAdapter,
       tenantId,
       userId,
+      accountAuthenticationEnv: env,
     });
 
     const linkedIdentityId = await createSAMLLinkedIdentity({

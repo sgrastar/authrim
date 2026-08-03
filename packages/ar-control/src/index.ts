@@ -2198,6 +2198,16 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       Boolean(workersToken) &&
       d1Token !== workersToken &&
       (await repository.hasReadyAutomaticProvisioning());
+    if (
+      automaticProvisioningReady &&
+      this.env.AUTHRIM_ENVIRONMENT_NAME &&
+      repository.resumeAutomaticBootstrapOperations
+    ) {
+      await repository.resumeAutomaticBootstrapOperations(
+        this.env.AUTHRIM_ENVIRONMENT_NAME,
+        Math.floor(Date.now() / 1000)
+      );
+    }
     // Always reconcile existing operations. When automatic execution is unavailable the service
     // atomically hands them to setup instead of leaving a partially provisioned shard stranded.
     tasks.push(scheduledTask('pending_operation_handoff', control.reconcilePending()));

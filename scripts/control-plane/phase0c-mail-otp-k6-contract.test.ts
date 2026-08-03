@@ -29,6 +29,7 @@ describe('Phase 0c Mail OTP k6 diagnostic contract', () => {
   it('counts timeout, overloaded D1, and routing 5xx separately', async () => {
     const source = await readFile(SCRIPT, 'utf8');
     expect(source).toContain("new Counter('timeout_errors')");
+    expect(source).toContain("new Counter('status_zero_errors')");
     expect(source).toContain("new Counter('d1_overloaded_errors')");
     expect(source).toContain('recordInfrastructureFailure(step1Response)');
     expect(source).toContain('recordInfrastructureFailure(step5Response)');
@@ -98,7 +99,7 @@ describe('Phase 0c Mail OTP k6 diagnostic contract', () => {
 
   it('collects bounded secret-free server timing only for the one-flow smoke', async () => {
     const source = await readFile(SCRIPT, 'utf8');
-    expect(source).toContain('const phase0cDiagnosticHeaders = isPhase0cSmoke');
+    expect(source).toContain('const phase0cDiagnosticHeaders = isPhase0cFamily');
     expect(source).toContain("'X-Diagnostic-Session-Id': PHASE0C_RUN_ID");
     expect(source).toContain("recordPhase0cServerTiming('authorize_init', step1Response)");
     expect(source).toContain("recordPhase0cServerTiming('email_code_generate', step2Response)");
@@ -108,5 +109,35 @@ describe('Phase 0c Mail OTP k6 diagnostic contract', () => {
     expect(source).toContain('.slice(0, 32)');
     expect(source).toContain('(?:auth|mg|token)_[a-z0-9_]{1,63}');
     expect(source).not.toContain('console.log(raw)');
+  });
+
+  it('provides separate contention and unique-user 25 LPS diagnostic profiles', async () => {
+    const source = await readFile(SCRIPT, 'utf8');
+    expect(source).toContain("'phase0c-contention'");
+    expect(source).toContain("'phase0c-load'");
+    expect(source).toContain("duration: '30s'");
+    expect(source).toContain("duration: '300s'");
+    expect(source).toContain("exec: 'phase0cWarmup'");
+    expect(source).toContain("startTime: '20s'");
+    expect(source).toContain('phase0c_load');
+    expect(source).toContain("'flow_success{scenario:mail_otp_full_login}': ['rate>=0']");
+    expect(source).toContain("'server_errors{scenario:mail_otp_full_login}': ['count>=0']");
+    expect(source).toContain('userCount: 1000');
+    expect(source).toContain('userList.length < selectedPreset.maxVUs');
+    expect(source).toContain('Status 0 / interrupted transport');
+    expect(source).toContain("body.includes('data_store_overloaded')");
+  });
+
+  it('records exact step status counts and emits safe failure signatures', async () => {
+    const source = await readFile(SCRIPT, 'utf8');
+    expect(source).toContain("new Counter('authorize_init_status_200')");
+    expect(source).toContain("new Counter('email_code_generate_status_201')");
+    expect(source).toContain("new Counter('authorize_code_status_302')");
+    expect(source).toContain('step_http_status');
+    expect(source).toContain('PHASE0C_STEP_FAILURE ts=');
+    expect(source).toContain(
+      "recordPhase0cStepFailure('email_code_verify', step3Response, undefined, userIndex)"
+    );
+    expect(source).toContain('user_slot=${safeUserSlot}');
   });
 });

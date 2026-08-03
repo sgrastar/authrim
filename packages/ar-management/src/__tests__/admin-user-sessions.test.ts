@@ -12,6 +12,7 @@ const {
   mockIsShardedSessionId,
   mockDetectImageType,
   mockLogSanitizedError,
+  mockRecordHybridUserSessionRevocationEpoch,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -40,6 +41,7 @@ const {
     mockIsShardedSessionId: vi.fn(),
     mockDetectImageType: vi.fn(),
     mockLogSanitizedError: vi.fn(),
+    mockRecordHybridUserSessionRevocationEpoch: vi.fn(),
   };
 });
 
@@ -62,6 +64,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: mockGetLogger,
     invalidateUserCache: mockInvalidateUserCache,
     isShardedSessionId: mockIsShardedSessionId,
+    recordHybridUserSessionRevocationEpoch: mockRecordHybridUserSessionRevocationEpoch,
     createErrorResponse: vi.fn((c, code) =>
       c.json({ error: code }, code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500)
     ),
@@ -151,6 +154,7 @@ describe('admin user session revocation', () => {
     mockInvalidateUserCache.mockResolvedValue(undefined);
     mockIsShardedSessionId.mockImplementation((id: string) => id.startsWith('g1:'));
     mockSessionStore.getSessionRpc.mockResolvedValue(null);
+    mockRecordHybridUserSessionRevocationEpoch.mockResolvedValue(1_750_000_000_000);
     mockDetectImageType.mockReturnValue({ extension: 'png', mimeType: 'image/png' });
   });
 
@@ -169,9 +173,12 @@ describe('admin user session revocation', () => {
       'tenant-1'
     );
     expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_one');
-    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-      'INSERT INTO session_revocation_epochs (tenant_id, user_id, revoked_after_ms, updated_at) VALUES (?, ?, ?, ?)',
-      ['tenant-1', 'user-1', expect.any(Number), expect.any(Number)]
+    expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
+      expect.anything(),
+      mockCoreAdapter,
+      'tenant-1',
+      'user-1',
+      expect.any(Number)
     );
     expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
       'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
@@ -292,6 +299,24 @@ describe('admin user session revocation', () => {
       expect(mockInvalidateUserCache).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'user-1');
     });
 
+    it('does not reactivate an inactive user when updating an avatar', async () => {
+      mockRuntimeUsers.findById.mockResolvedValueOnce({
+        id: 'user-1',
+        active: 0,
+        email_verified: 1,
+        phone_number_verified: 0,
+        picture: null,
+      });
+      const file = new File(['png'], 'avatar.png', { type: 'image/png' });
+
+      expect(
+        (await adminUserAvatarUploadHandler(createContext({ parsedBody: { avatar: file } }))).status
+      ).toBe(200);
+      expect(mockRuntimeUsers.syncUser).toHaveBeenCalledWith(
+        expect.objectContaining({ active: false })
+      );
+    });
+
     it('returns server_error when avatar persistence fails', async () => {
       const file = new File(['png'], 'avatar.png', { type: 'image/png' });
       const avatars = {
@@ -332,6 +357,21 @@ describe('admin user session revocation', () => {
       expect(avatars.delete).toHaveBeenCalledWith('avatars/user-1.png');
       expect(mockRuntimeUsers.syncUser).toHaveBeenCalledWith(
         expect.objectContaining({ sensitiveValues: { picture: null } })
+      );
+    });
+
+    it('does not reactivate an inactive user when deleting an avatar', async () => {
+      mockRuntimeUsers.findById.mockResolvedValueOnce({
+        id: 'user-1',
+        active: 0,
+        picture: 'https://tenant.example.com/avatars/user-1.png',
+        email_verified: 0,
+        phone_number_verified: 1,
+      });
+
+      expect((await adminUserAvatarDeleteHandler(createContext())).status).toBe(200);
+      expect(mockRuntimeUsers.syncUser).toHaveBeenCalledWith(
+        expect.objectContaining({ active: false })
       );
     });
 
@@ -514,8 +554,7 @@ describe('admin user session revocation', () => {
       expect((await adminUserRevokeAllSessionsHandler(createContext())).status).toBe(404);
     });
 
-    it('updates an existing revocation epoch and counts only confirmed DO invalidations', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ tenant_id: 'tenant-1' });
+    it('advances both revocation authorities and counts only confirmed DO invalidations', async () => {
       mockCoreAdapter.query.mockResolvedValueOnce([
         { id: 'g1:apac:3:one' },
         { id: 'g1:apac:3:two' },
@@ -526,21 +565,15 @@ describe('admin user session revocation', () => {
         .mockResolvedValueOnce(false);
       const response = await adminUserRevokeAllSessionsHandler(createContext());
       await expect(response.json()).resolves.toMatchObject({ storeRevokedCount: 1 });
-      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE session_revocation_epochs'),
-        expect.arrayContaining(['tenant-1', 'user-1'])
-      );
+      expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledOnce();
     });
 
     it('continues bulk revocation when one DO route fails and defaults missing row count to zero', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce(null);
       mockCoreAdapter.query.mockResolvedValueOnce([{ id: 'g1:apac:3:one' }]);
       mockGetSessionStoreBySessionId.mockImplementationOnce(() => {
         throw new Error('route failure');
       });
-      mockCoreAdapter.execute
-        .mockResolvedValueOnce({ rowsAffected: 1 })
-        .mockResolvedValueOnce({ rowsAffected: undefined });
+      mockCoreAdapter.execute.mockResolvedValueOnce({ rowsAffected: undefined });
       const response = await adminUserRevokeAllSessionsHandler(createContext());
       await expect(response.json()).resolves.toMatchObject({
         revokedCount: 0,

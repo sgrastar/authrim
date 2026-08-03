@@ -4,7 +4,7 @@
  * Purpose:
  * - Reproduce Authrim's full login flow and measure load points
  * - Full flow: OTP auth → Session issuance → Authorization code → Token issuance
- * - Uses pre-seeded existing users (no D1 writes)
+ * - Uses pre-seeded existing users (no account-creation writes)
  *
  * Prerequisites:
  * - Create users in advance with seed-otp-users.js
@@ -17,11 +17,14 @@
  * 4. GET /authorize (with Cookie) - Generate authorization code (AuthCodeStore DO write)
  * 5. POST /token - Issue token (RefreshTokenRotator write, JWT signing)
  *
- * Load points (no D1 writes - using existing users):
+ * Load points (session and user-wide revocation state are DO-primary):
  * - ChallengeStore DO write (Step 2)
  * - ChallengeStore consume + SessionStore DO write (Step 3)
  * - AuthCodeStore DO write (Step 4)
  * - RefreshTokenRotator DO write + JWT signing (Step 5)
+ * - Minimal Tenant Core D1 read for OTP user state
+ * - User-scoped SessionRevocationStore DO registration (Step 3)
+ * - A single background Core update only when the email is not already verified
  *
  * Environment variables:
  *   BASE_URL          - Authrim URL (default: https://your-authrim.example.com)
@@ -91,7 +94,33 @@ const codeErrors = new Counter('code_errors');
 const rateLimitErrors = new Counter('rate_limit_errors');
 const serverErrors = new Counter('server_errors');
 const timeoutErrors = new Counter('timeout_errors');
+const statusZeroErrors = new Counter('status_zero_errors');
 const d1OverloadedErrors = new Counter('d1_overloaded_errors');
+
+const stepHttpStatusCounters = {
+  authorize_init: {
+    200: new Counter('authorize_init_status_200'),
+    302: new Counter('authorize_init_status_302'),
+    other: new Counter('authorize_init_status_other'),
+  },
+  email_code_generate: {
+    200: new Counter('email_code_generate_status_200'),
+    201: new Counter('email_code_generate_status_201'),
+    other: new Counter('email_code_generate_status_other'),
+  },
+  email_code_verify: {
+    200: new Counter('email_code_verify_status_200'),
+    other: new Counter('email_code_verify_status_other'),
+  },
+  authorize_code: {
+    302: new Counter('authorize_code_status_302'),
+    other: new Counter('authorize_code_status_other'),
+  },
+  token: {
+    200: new Counter('token_status_200'),
+    other: new Counter('token_status_other'),
+  },
+};
 
 // Environment variables
 const BASE_URL = __ENV.BASE_URL || '';
@@ -159,6 +188,25 @@ const PRESETS = {
     maxVUs: 50,
     userCount: 32,
   },
+  'phase0c-contention': {
+    description:
+      'Phase 0c 25 LPS contention diagnostic - 30s with a 32-user pool after 15s warm-up',
+    rate: 25,
+    duration: '30s',
+    gracefulStop: '60s',
+    preAllocatedVUs: 400,
+    maxVUs: 800,
+    userCount: 32,
+  },
+  'phase0c-load': {
+    description: 'Phase 0c 25 LPS pseudo-OTP load - 5m with a 1,000-user pool after 15s warm-up',
+    rate: 25,
+    duration: '300s',
+    gracefulStop: '60s',
+    preAllocatedVUs: 400,
+    maxVUs: 800,
+    userCount: 1000,
+  },
   rps10: {
     description: '10 RPS - Smoke test (30s)',
     stages: [
@@ -225,16 +273,20 @@ const selectedPreset = PRESETS[PRESET] || PRESETS.rps10;
 const isPhase0cSmoke = PRESET === 'phase0c-smoke';
 const isPhase0cSample = PRESET === 'phase0c-sample';
 const isPhase0cPreGate = PRESET === 'phase0c-pre-gate';
-const isPhase0cFamily = isPhase0cSmoke || isPhase0cSample || isPhase0cPreGate;
+const isPhase0cContention = PRESET === 'phase0c-contention';
+const isPhase0cLoad = PRESET === 'phase0c-load';
+const isPhase0cFamily =
+  isPhase0cSmoke || isPhase0cSample || isPhase0cPreGate || isPhase0cContention || isPhase0cLoad;
 const boundedSampleRate = isPhase0cPreGate ? 2 : 1;
 const boundedSampleMaximumIterations = isPhase0cPreGate ? 122 : 61;
-const phase0cDiagnosticHeaders = isPhase0cSmoke
+const phase0cDiagnosticHeaders = isPhase0cFamily
   ? { 'X-Diagnostic-Session-Id': PHASE0C_RUN_ID }
   : {};
 
 // K6 options configuration
 export const options = {
-  scenarios: isPhase0cSample || isPhase0cPreGate
+  scenarios:
+    isPhase0cSample || isPhase0cPreGate
       ? {
           warmup: {
             executor: 'constant-arrival-rate',
@@ -264,38 +316,69 @@ export const options = {
             },
           },
         }
-      : isPhase0cSmoke
+      : isPhase0cContention || isPhase0cLoad
         ? {
-            mail_otp_full_login: {
-              executor: 'shared-iterations',
-              iterations: 1,
-              vus: 1,
-              maxDuration: '90s',
+            warmup: {
+              executor: 'constant-arrival-rate',
+              exec: 'phase0cWarmup',
+              rate: 1,
+              timeUnit: '1s',
+              duration: '15s',
+              preAllocatedVUs: selectedPreset.preAllocatedVUs,
+              maxVUs: selectedPreset.maxVUs,
               gracefulStop: '5s',
+              tags: { phase: 'warmup', test_id: TEST_ID },
+            },
+            mail_otp_full_login: {
+              executor: 'constant-arrival-rate',
+              rate: selectedPreset.rate,
+              timeUnit: '1s',
+              duration: selectedPreset.duration,
+              startTime: '20s',
+              preAllocatedVUs: selectedPreset.preAllocatedVUs,
+              maxVUs: selectedPreset.maxVUs,
+              gracefulStop: selectedPreset.gracefulStop,
               tags: {
-                phase: 'smoke',
+                phase: 'measurement',
                 test_id: TEST_ID,
                 storage_profile: STORAGE_PROFILE,
                 transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
               },
             },
           }
-        : {
-            mail_otp_full_login: {
-              executor: 'ramping-arrival-rate',
-              startRate: 0,
-              timeUnit: '1s',
-              preAllocatedVUs: selectedPreset.preAllocatedVUs,
-              maxVUs: selectedPreset.maxVUs,
-              stages: selectedPreset.stages,
-              tags: {
-                test_id: TEST_ID,
-                storage_profile: STORAGE_PROFILE,
-                transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
+        : isPhase0cSmoke
+          ? {
+              mail_otp_full_login: {
+                executor: 'shared-iterations',
+                iterations: 1,
+                vus: 1,
+                maxDuration: '90s',
+                gracefulStop: '5s',
+                tags: {
+                  phase: 'smoke',
+                  test_id: TEST_ID,
+                  storage_profile: STORAGE_PROFILE,
+                  transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
+                },
+              },
+            }
+          : {
+              mail_otp_full_login: {
+                executor: 'ramping-arrival-rate',
+                startRate: 0,
+                timeUnit: '1s',
+                preAllocatedVUs: selectedPreset.preAllocatedVUs,
+                maxVUs: selectedPreset.maxVUs,
+                stages: selectedPreset.stages,
+                tags: {
+                  test_id: TEST_ID,
+                  storage_profile: STORAGE_PROFILE,
+                  transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
+                },
               },
             },
-          },
-  thresholds: isPhase0cSample || isPhase0cPreGate
+  thresholds:
+    isPhase0cSample || isPhase0cPreGate
       ? {
           'full_flow_latency{scenario:mail_otp_full_login}': ['p(95)>=0'],
           'flow_success{scenario:mail_otp_full_login}': ['rate==1'],
@@ -309,16 +392,41 @@ export const options = {
             `count<=${boundedSampleMaximumIterations}`,
           ],
         }
-      : isPhase0cSmoke
+      : isPhase0cContention || isPhase0cLoad
         ? {
-            'flow_success{scenario:mail_otp_full_login}': ['rate==1'],
-            'server_errors{scenario:mail_otp_full_login}': ['count==0'],
-            'timeout_errors{scenario:mail_otp_full_login}': ['count==0'],
-            'd1_overloaded_errors{scenario:mail_otp_full_login}': ['count==0'],
-            'dropped_iterations{scenario:mail_otp_full_login}': ['count==0'],
-            'iterations{scenario:mail_otp_full_login}': ['count==1'],
+            // k6 only materializes tagged submetrics in handleSummary when a threshold
+            // references them. These non-gating thresholds preserve measurement-only
+            // evidence while keeping sustained diagnostics informational.
+            'full_flow_latency{scenario:mail_otp_full_login}': ['p(95)>=0'],
+            'flow_success{scenario:mail_otp_full_login}': ['rate>=0'],
+            'rate_limit_errors{scenario:mail_otp_full_login}': ['count>=0'],
+            'server_errors{scenario:mail_otp_full_login}': ['count>=0'],
+            'timeout_errors{scenario:mail_otp_full_login}': ['count>=0'],
+            'd1_overloaded_errors{scenario:mail_otp_full_login}': ['count>=0'],
+            'dropped_iterations{scenario:mail_otp_full_login}': ['count>=0'],
+            'authorize_init_status_200{scenario:mail_otp_full_login}': ['count>=0'],
+            'authorize_init_status_302{scenario:mail_otp_full_login}': ['count>=0'],
+            'authorize_init_status_other{scenario:mail_otp_full_login}': ['count>=0'],
+            'email_code_generate_status_200{scenario:mail_otp_full_login}': ['count>=0'],
+            'email_code_generate_status_201{scenario:mail_otp_full_login}': ['count>=0'],
+            'email_code_generate_status_other{scenario:mail_otp_full_login}': ['count>=0'],
+            'email_code_verify_status_200{scenario:mail_otp_full_login}': ['count>=0'],
+            'email_code_verify_status_other{scenario:mail_otp_full_login}': ['count>=0'],
+            'authorize_code_status_302{scenario:mail_otp_full_login}': ['count>=0'],
+            'authorize_code_status_other{scenario:mail_otp_full_login}': ['count>=0'],
+            'token_status_200{scenario:mail_otp_full_login}': ['count>=0'],
+            'token_status_other{scenario:mail_otp_full_login}': ['count>=0'],
           }
-        : selectedPreset.thresholds,
+        : isPhase0cSmoke
+          ? {
+              'flow_success{scenario:mail_otp_full_login}': ['rate==1'],
+              'server_errors{scenario:mail_otp_full_login}': ['count==0'],
+              'timeout_errors{scenario:mail_otp_full_login}': ['count==0'],
+              'd1_overloaded_errors{scenario:mail_otp_full_login}': ['count==0'],
+              'dropped_iterations{scenario:mail_otp_full_login}': ['count==0'],
+              'iterations{scenario:mail_otp_full_login}': ['count==1'],
+            }
+          : selectedPreset.thresholds,
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)'],
 };
 
@@ -332,7 +440,6 @@ try {
       .split('\n')
       .filter((line) => line.length > 0);
   });
-  console.log(`📂 Loaded ${userList.length} users from ${USER_LIST_PATH}`);
 } catch (e) {
   console.warn(`⚠️  Could not load user list: ${e.message}`);
   console.warn('   Will generate random email addresses');
@@ -381,16 +488,34 @@ function generateRandomEmail() {
 
 function recordInfrastructureFailure(response) {
   if (response.status === 0) {
-    timeoutErrors.add(1);
+    statusZeroErrors.add(1);
+    if (/timeout/iu.test(String(response.error || ''))) timeoutErrors.add(1);
   }
   const body = String(response.body || '').toLowerCase();
   if (
     body.includes('d1 overloaded') ||
     body.includes('d1_overloaded') ||
+    body.includes('data_store_overloaded') ||
     (body.includes('d1_error') && body.includes('overload'))
   ) {
     d1OverloadedErrors.add(1);
   }
+}
+
+function recordStepHttpStatus(step, response) {
+  const counters = stepHttpStatusCounters[step];
+  const counter = counters[String(response.status)] || counters.other;
+  counter.add(1);
+}
+
+function recordPhase0cStepFailure(step, response, errorCode, userSlot) {
+  if (!isPhase0cFamily) return;
+  const code = String(errorCode || extractPublicErrorCode(response.body));
+  const safeCode = /^[A-Za-z0-9_.:-]{1,80}$/.test(code) ? code : 'unknown';
+  const safeUserSlot = Number.isInteger(userSlot) && userSlot >= 0 ? userSlot : -1;
+  console.error(
+    `PHASE0C_STEP_FAILURE ts=${Date.now()} step=${step} status=${response.status} code=${safeCode} marker_end=1 user_slot=${safeUserSlot}`
+  );
 }
 
 function recordStepTiming(response, durationMetric, waitingMetric, transportMetric) {
@@ -451,7 +576,13 @@ export function setup() {
       `Phase 0c requires at least ${selectedPreset.userCount} pre-seeded users in USER_LIST_PATH`
     );
   }
+  if (isPhase0cLoad && (!userList || userList.length < selectedPreset.maxVUs)) {
+    throw new Error(
+      `Phase 0c unique-user load requires at least ${selectedPreset.maxVUs} users so concurrent VUs cannot share a fixture`
+    );
+  }
   if (userList && userList.length > 0) {
+    console.log(`📂 Loaded ${userList.length} users from ${USER_LIST_PATH}`);
     // Get email addresses from user list
     for (let i = 0; i < Math.min(userList.length, selectedPreset.userCount); i++) {
       users.push({ email: userList[i] });
@@ -554,6 +685,7 @@ export default function runMailOtpFlow(data) {
     redirects: 0,
     tags: { name: 'AuthorizeInit' },
   });
+  recordStepHttpStatus('authorize_init', step1Response);
   recordInfrastructureFailure(step1Response);
   recordStepTiming(
     step1Response,
@@ -565,6 +697,7 @@ export default function runMailOtpFlow(data) {
 
   if (step1Response.status !== 200 && step1Response.status !== 302) {
     success = false;
+    recordPhase0cStepFailure('authorize_init', step1Response, undefined, userIndex);
     if (step1Response.status >= 500) serverErrors.add(1);
     if (step1Response.status === 429) rateLimitErrors.add(1);
   }
@@ -592,6 +725,7 @@ export default function runMailOtpFlow(data) {
         tags: { name: 'EmailCodeGenerate' },
       }
     );
+    recordStepHttpStatus('email_code_generate', step2Response);
     recordPhase0cServerTiming('email_code_generate', step2Response);
     recordInfrastructureFailure(step2Response);
     recordStepTiming(
@@ -604,6 +738,7 @@ export default function runMailOtpFlow(data) {
     if (step2Response.status !== 200 && step2Response.status !== 201) {
       success = false;
       otpGenerateErrors.add(1);
+      recordPhase0cStepFailure('email_code_generate', step2Response, undefined, userIndex);
       if (isPhase0cSmoke) {
         console.error(
           `OTP generate diagnostic: status=${step2Response.status} code=${extractPublicErrorCode(step2Response.body)}`
@@ -619,9 +754,20 @@ export default function runMailOtpFlow(data) {
         const otpData = JSON.parse(step2Response.body);
         otpCode = otpData.code;
         otpSessionId = otpData.otpSessionId;
+        if (!otpCode || !otpSessionId) {
+          success = false;
+          otpGenerateErrors.add(1);
+          recordPhase0cStepFailure(
+            'email_code_generate',
+            step2Response,
+            'invalid_response',
+            userIndex
+          );
+        }
       } catch (e) {
         success = false;
         otpGenerateErrors.add(1);
+        recordPhase0cStepFailure('email_code_generate', step2Response, 'invalid_json', userIndex);
         console.error(`❌ Failed to parse OTP response: ${e.message}`);
       }
     }
@@ -645,6 +791,7 @@ export default function runMailOtpFlow(data) {
         tags: { name: 'EmailCodeVerify' },
       }
     );
+    recordStepHttpStatus('email_code_verify', step3Response);
     recordPhase0cServerTiming('email_code_verify', step3Response);
     recordInfrastructureFailure(step3Response);
     recordStepTiming(
@@ -658,6 +805,7 @@ export default function runMailOtpFlow(data) {
       success = false;
       otpVerifyErrors.add(1);
       sessionErrors.add(1);
+      recordPhase0cStepFailure('email_code_verify', step3Response, undefined, userIndex);
       if (PRESET === 'phase0c-smoke') {
         console.error(
           `OTP verify diagnostic: status=${step3Response.status} code=${extractPublicErrorCode(step3Response.body)}`
@@ -681,6 +829,12 @@ export default function runMailOtpFlow(data) {
       if (!sessionCookie) {
         success = false;
         sessionErrors.add(1);
+        recordPhase0cStepFailure(
+          'email_code_verify',
+          step3Response,
+          'session_id_missing',
+          userIndex
+        );
         console.error('❌ No session ID returned from verify endpoint');
       }
     }
@@ -714,6 +868,7 @@ export default function runMailOtpFlow(data) {
       redirects: 0,
       tags: { name: 'AuthorizeCode' },
     });
+    recordStepHttpStatus('authorize_code', step4Response);
     recordPhase0cServerTiming('authorize_code', step4Response);
     recordInfrastructureFailure(step4Response);
     recordStepTiming(
@@ -737,8 +892,14 @@ export default function runMailOtpFlow(data) {
     if (!authCode) {
       success = false;
       codeErrors.add(1);
+      const location = step4Response.headers['Location'] || step4Response.headers['location'];
+      recordPhase0cStepFailure(
+        'authorize_code',
+        step4Response,
+        extractOAuthRedirectError(location) || extractPublicErrorCode(step4Response.body),
+        userIndex
+      );
       if (PRESET === 'phase0c-smoke') {
-        const location = step4Response.headers['Location'] || step4Response.headers['location'];
         console.error(
           `Authorize code diagnostic: status=${step4Response.status} oauth_error=${extractOAuthRedirectError(location)} body_code=${extractPublicErrorCode(step4Response.body)}`
         );
@@ -772,12 +933,14 @@ export default function runMailOtpFlow(data) {
         tags: { name: 'Token' },
       }
     );
+    recordStepHttpStatus('token', step5Response);
     recordPhase0cServerTiming('token', step5Response);
     recordInfrastructureFailure(step5Response);
     recordStepTiming(step5Response, tokenLatency, tokenWaiting, tokenTransport);
 
     if (step5Response.status !== 200) {
       success = false;
+      recordPhase0cStepFailure('token', step5Response, undefined, userIndex);
       if (PRESET === 'phase0c-smoke') {
         console.error(
           `Token diagnostic: status=${step5Response.status} code=${extractPublicErrorCode(step5Response.body)}`
@@ -790,9 +953,11 @@ export default function runMailOtpFlow(data) {
         const tokenData = JSON.parse(step5Response.body);
         if (!tokenData.access_token) {
           success = false;
+          recordPhase0cStepFailure('token', step5Response, 'access_token_missing', userIndex);
         }
       } catch (e) {
         success = false;
+        recordPhase0cStepFailure('token', step5Response, 'invalid_json', userIndex);
       }
     }
   }
@@ -898,6 +1063,7 @@ export function handleSummary(data) {
    Rate limit (429): ${getCount('rate_limit_errors')}
    Server errors (5xx): ${getCount('server_errors')}
    Timeouts: ${getCount('timeout_errors')}
+   Status 0 / interrupted transport: ${getCount('status_zero_errors')}
    D1 overloaded: ${getCount('d1_overloaded_errors')}
 
  🚀 Throughput: ${getMetric('iterations', 'rate').toFixed(2)} flows/s
@@ -910,6 +1076,30 @@ export function handleSummary(data) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const measurementSuffix = '{scenario:mail_otp_full_login}';
   const measurementValues = (name) => metrics[`${name}${measurementSuffix}`]?.values || {};
+  const measurementHttpStatus = () => ({
+    authorizeInit: {
+      200: measurementValues('authorize_init_status_200').count || 0,
+      302: measurementValues('authorize_init_status_302').count || 0,
+      other: measurementValues('authorize_init_status_other').count || 0,
+    },
+    emailCodeGenerate: {
+      200: measurementValues('email_code_generate_status_200').count || 0,
+      201: measurementValues('email_code_generate_status_201').count || 0,
+      other: measurementValues('email_code_generate_status_other').count || 0,
+    },
+    emailCodeVerify: {
+      200: measurementValues('email_code_verify_status_200').count || 0,
+      other: measurementValues('email_code_verify_status_other').count || 0,
+    },
+    authorizeCode: {
+      302: measurementValues('authorize_code_status_302').count || 0,
+      other: measurementValues('authorize_code_status_other').count || 0,
+    },
+    token: {
+      200: measurementValues('token_status_200').count || 0,
+      other: measurementValues('token_status_other').count || 0,
+    },
+  });
   const timingBreakdown = (prefix) => ({
     waiting: {
       p50: getMetric(`${prefix}_waiting`, 'med'),
@@ -964,6 +1154,29 @@ export function handleSummary(data) {
         },
       }
     : undefined;
+  const phase0cSustained =
+    isPhase0cContention || isPhase0cLoad
+      ? {
+          warmup: { durationSeconds: 15, ratePerSecond: 1, excludedFromMeasurement: true },
+          measurement: {
+            durationSeconds: isPhase0cLoad ? 300 : 30,
+            ratePerSecond: selectedPreset.rate,
+            successCount: measurementValues('flow_success').passes || 0,
+            failureCount: measurementValues('flow_success').fails || 0,
+            droppedIterations: measurementValues('dropped_iterations').count || 0,
+            p50Ms: measurementValues('full_flow_latency')['p(50)'] || 0,
+            p95Ms: measurementValues('full_flow_latency')['p(95)'] || 0,
+            p99Ms: measurementValues('full_flow_latency')['p(99)'] || 0,
+          },
+          errors: {
+            rateLimited: measurementValues('rate_limit_errors').count || 0,
+            routing5xx: measurementValues('server_errors').count || 0,
+            timeouts: measurementValues('timeout_errors').count || 0,
+            d1Overloaded: measurementValues('d1_overloaded_errors').count || 0,
+          },
+          httpStatus: measurementHttpStatus(),
+        }
+      : undefined;
   const jsonResult = {
     ...(isPhase0cFamily ? { runId: PHASE0C_RUN_ID, tenantId: TENANT_ID } : {}),
     test_id: TEST_ID,
@@ -976,6 +1189,8 @@ export function handleSummary(data) {
     target: BASE_URL,
     ...(phase0cSample ? { phase0c_sample: phase0cSample } : {}),
     ...(phase0cPreGate ? { phase0c_pre_gate: phase0cPreGate } : {}),
+    ...(isPhase0cContention && phase0cSustained ? { phase0c_contention: phase0cSustained } : {}),
+    ...(isPhase0cLoad && phase0cSustained ? { phase0c_load: phase0cSustained } : {}),
     metrics: {
       iterations: getCount('iterations'),
       flow_success_rate: getRate('flow_success'),
@@ -1029,7 +1244,32 @@ export function handleSummary(data) {
         rate_limit: getCount('rate_limit_errors'),
         server: getCount('server_errors'),
         timeout: getCount('timeout_errors'),
+        status_zero: getCount('status_zero_errors'),
         d1_overloaded: getCount('d1_overloaded_errors'),
+      },
+      step_http_status: {
+        authorize_init: {
+          200: getCount('authorize_init_status_200'),
+          302: getCount('authorize_init_status_302'),
+          other: getCount('authorize_init_status_other'),
+        },
+        email_code_generate: {
+          200: getCount('email_code_generate_status_200'),
+          201: getCount('email_code_generate_status_201'),
+          other: getCount('email_code_generate_status_other'),
+        },
+        email_code_verify: {
+          200: getCount('email_code_verify_status_200'),
+          other: getCount('email_code_verify_status_other'),
+        },
+        authorize_code: {
+          302: getCount('authorize_code_status_302'),
+          other: getCount('authorize_code_status_other'),
+        },
+        token: {
+          200: getCount('token_status_200'),
+          other: getCount('token_status_other'),
+        },
       },
       throughput: getMetric('iterations', 'rate'),
     },

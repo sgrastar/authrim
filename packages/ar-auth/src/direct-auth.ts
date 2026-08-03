@@ -67,14 +67,20 @@ import {
   expireRefreshTokenFamiliesByUser,
   createCompatibilityErrorResponse,
   generateBrowserState,
+  advancePasskeyAuthenticationState,
+  isAccountAuthenticationDeniedError,
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
   produceNotificationDelivery,
   resolvePostLoginRedirectUrl,
   CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
-  resolveAccountDataContextByIdentifierFromHono,
+  markOtpLoginEmailVerified,
+  resolveOtpAccountCoreDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
+  type CanonicalOtpLoginUser,
+  type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -811,7 +817,8 @@ async function generateAuthCode(
     scope,
     codeChallenge,
     codeChallengeMethod: 'S256',
-    authTime: Math.floor(Date.now() / 1000),
+    authTime:
+      typeof metadata?.auth_time === 'number' ? metadata.auth_time : Math.floor(Date.now() / 1000),
     acr: 'urn:mace:incommon:iap:bronze',
   });
 
@@ -1136,14 +1143,56 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
-    // Update counter
-    await authCtx.repositories.passkey.updateCounterAfterAuth(
-      passkey.id,
-      authenticationInfo.newCounter
+    const proofVerifiedAtMs = Date.now();
+    const authTime = Math.floor(proofVerifiedAtMs / 1000);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const accountAuthentication = await runtimeUsers.findAccountAuthenticationState(
+      passkey.user_id
     );
+    if (!accountAuthentication) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+    try {
+      await advancePasskeyAuthenticationState(
+        c.env,
+        {
+          tenantId,
+          userId: passkey.user_id,
+          credentialId: passkey.id,
+          storedCounter: passkey.counter,
+          observedCounter: authenticationInfo.newCounter,
+          observedAtMs: proofVerifiedAtMs,
+        },
+        () => Promise.resolve(accountAuthentication)
+      );
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
 
-    // Update last_login_at in canonical runtime metadata.
-    await createCanonicalRuntimeUserStore(c, tenantId).touchLastLogin(passkey.user_id);
+    c.executionCtx.waitUntil(
+      Promise.all([
+        authCtx.repositories.passkey.mirrorCounterAfterAuth(
+          passkey.id,
+          authenticationInfo.newCounter
+        ),
+        runtimeUsers.touchLastLogin(passkey.user_id),
+      ]).catch((error: unknown) => {
+        log.error('Failed to mirror direct Passkey authentication state', {
+          action: 'passkey_state_mirror',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
+      })
+    );
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1158,6 +1207,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         scope: challengeData.metadata?.scope,
         transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
+        auth_time: authTime,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
       }
     );
@@ -1738,6 +1788,7 @@ type DirectEmailVerificationMethod = 'email_code' | 'email_verification_protocol
 interface DirectEmailVerificationCompletionInput {
   tenantId: string;
   userId: string;
+  trustedEmail: string;
   channel: DirectAuthChannel;
   transactionId: string;
   method: DirectEmailVerificationMethod;
@@ -1808,20 +1859,52 @@ async function completeDirectEmailVerification(
   c: Context<{ Bindings: Env }>,
   input: DirectEmailVerificationCompletionInput
 ): Promise<Response> {
-  const { tenantId, userId, channel, transactionId, method, metadata } = input;
+  const { tenantId, userId, trustedEmail, channel, transactionId, method, metadata } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-  const runtimeUser = await runtimeUsers.findById(userId, {
-    includeInactive: true,
-  });
+  const tenantD1 = usesTenantD1AccountStorage(c);
+  let runtimeUser: CanonicalOtpLoginUser | null;
+  let coreAdapter: DatabaseAdapter;
+
+  if (tenantD1) {
+    const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+      indexKind: 'account_id',
+      identifier: `account:${userId}`,
+      expectedAccountId: `account:${userId}`,
+      expectedLegacyUserId: userId,
+      trustedEmail,
+    });
+    runtimeUser = accountData.user;
+    coreAdapter = ensureDatabaseAdapter(accountData.coreDb, 'otp-account-core');
+  } else {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    runtimeUser = await runtimeUsers.findForOtpLogin(userId, trustedEmail, {
+      includeInactive: true,
+    });
+    coreAdapter = authCtx.coreAdapter;
+  }
 
   if (!runtimeUser || runtimeUser.active !== 1) {
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
   }
 
   const now = Date.now();
-  await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+  if (tenantD1) {
+    if (runtimeUser.email_verified !== 1) {
+      c.executionCtx.waitUntil(
+        markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now).catch((error: unknown) => {
+          log.error(
+            'Failed to update user after direct OTP login',
+            { action: 'direct_email_user_update' },
+            error as Error
+          );
+        })
+      );
+    }
+  } else {
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+  }
 
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
 
@@ -1832,30 +1915,21 @@ async function completeDirectEmailVerification(
   if (inviteId && inviteToken) {
     const inviteNow = Math.floor(now / 1000);
     try {
-      const invitation = await findActiveInvitationByToken(
-        authCtx.coreAdapter,
-        inviteToken,
-        inviteNow
-      );
+      const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
       if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
         log.warn('Invitation metadata no longer matches an active tenant invitation', {
           invite_id: inviteId,
           tenant_id: tenantId,
         });
       } else if (
-        !(await consumeInvitationUse(
-          authCtx.coreAdapter,
-          invitation.id,
-          invitation.tenant_id,
-          inviteNow
-        ))
+        !(await consumeInvitationUse(coreAdapter, invitation.id, invitation.tenant_id, inviteNow))
       ) {
         log.warn('Invitation use_count increment was skipped during email verification', {
           invite_id: inviteId,
           tenant_id: tenantId,
         });
       } else {
-        const assignmentResults = await applyInvitationAssignments(authCtx.coreAdapter, {
+        const assignmentResults = await applyInvitationAssignments(coreAdapter, {
           userId,
           tenantId,
           roleId: invitation.role_id,
@@ -2086,6 +2160,7 @@ async function tryEmailVerificationProtocol(
   return completeDirectEmailVerification(c, {
     tenantId,
     userId,
+    trustedEmail: normalizedEmail,
     channel,
     transactionId: challengeId,
     method: 'email_verification_protocol',
@@ -2251,15 +2326,17 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
 
     let runtimeUsers: CanonicalRuntimeUserStore | null = null;
     let user: { id: string; email: string; name: string | null } | null = null;
+    let routedUser: CanonicalOtpLoginUser | null = null;
     let customFieldValues: Record<string, string> = {};
 
     if (tenantD1) {
       try {
-        await resolveAccountDataContextByIdentifierFromHono(c, {
+        const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
           indexKind: 'email_exact',
           identifier: normalizedEmail,
+          trustedEmail: normalizedEmail,
         });
-        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        routedUser = accountData.user.active === 1 ? accountData.user : null;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
           throw error;
@@ -2269,7 +2346,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     }
 
-    const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
+    const existingUser = tenantD1 ? routedUser : await runtimeUsers?.findByEmail(normalizedEmail);
     if (existingUser) {
       user = {
         id: existingUser.id,
@@ -2386,8 +2463,6 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
             runtimeUser,
           });
           if (provisioned.status === 'pending') return provisioned.response;
-          await resolveAccountDataContextFromHono(c, provisioned.accountId);
-          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
           user = {
             id: provisioned.userId,
             email: normalizedEmail,
@@ -2678,6 +2753,7 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     return completeDirectEmailVerification(c, {
       tenantId,
       userId: challengeData.userId,
+      trustedEmail: challengeData.email ?? '',
       channel,
       transactionId: attempt_id,
       method: 'email_code',

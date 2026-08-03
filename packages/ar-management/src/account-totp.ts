@@ -12,6 +12,10 @@ import {
   generateTotpBackupCodes,
   generateTotpSecret,
   getSessionStoreBySessionId,
+  getSessionRevocationStore,
+  getLogger,
+  consumeTotpAuthenticationState,
+  isAccountAuthenticationDeniedError,
   getTenantIdFromContext,
   hashTotpBackupCode,
   profileForTotpPreset,
@@ -246,10 +250,10 @@ async function verifyTotpCredentialCode(
   c: Context<{ Bindings: Env }>,
   credential: TotpCredential,
   code: string
-): Promise<boolean> {
+): Promise<number | null> {
   const encryptionKey = c.env.PII_ENCRYPTION_KEY;
   if (!encryptionKey) {
-    return false;
+    return null;
   }
   const { decrypted } = await decryptValue(credential.secret_encrypted, encryptionKey);
   const verification = await verifyTotpCode({
@@ -264,28 +268,61 @@ async function verifyTotpCredentialCode(
     lastUsedTimeStep: credential.last_used_time_step,
   });
   if (!verification.valid || verification.timeStep === null) {
-    return false;
+    return null;
   }
+  const proofVerifiedAtMs = Date.now();
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
-  return authCtx.repositories.totp.markUsed(
-    credential.id,
-    credential.user_id,
-    verification.timeStep
+  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
+    tenantId,
+  });
+  try {
+    await consumeTotpAuthenticationState(
+      c.env,
+      {
+        tenantId,
+        userId: credential.user_id,
+        credentialId: credential.id,
+        storedLastUsedTimeStep: credential.last_used_time_step,
+        observedTimeStep: verification.timeStep,
+        observedAtMs: proofVerifiedAtMs,
+      },
+      () => runtimeUsers.findAccountAuthenticationState(credential.user_id)
+    );
+  } catch (error) {
+    if (isAccountAuthenticationDeniedError(error)) return null;
+    throw error;
+  }
+  c.executionCtx.waitUntil(
+    authCtx.repositories.totp
+      .markUsed(credential.id, credential.user_id, verification.timeStep)
+      .catch((error: unknown) => {
+        getLogger(c)
+          .module('ACCOUNT_TOTP')
+          .error('Failed to mirror TOTP time-step', {
+            action: 'totp_state_mirror',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+      })
   );
+  return proofVerifiedAtMs;
 }
 
 async function verifyAnyActiveTotpCode(
   c: Context<{ Bindings: Env }>,
   userId: string,
   code: string
-): Promise<TotpCredential | null> {
+): Promise<{ credential: TotpCredential; verifiedAtMs: number } | null> {
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAuthContextFromHono(c, tenantId);
   const credentials = await authCtx.repositories.totp.findActiveByUserId(userId);
   for (const credential of credentials) {
-    if (await verifyTotpCredentialCode(c, credential, code)) {
-      return credential;
+    const verifiedAtMs = await verifyTotpCredentialCode(c, credential, code);
+    if (verifiedAtMs !== null) {
+      return { credential, verifiedAtMs };
     }
   }
   return null;
@@ -385,10 +422,11 @@ async function createBackupCodes(
 
 async function refreshTotpReauthSession(
   c: Context<{ Bindings: Env }>,
-  accountSession: AccountSession
+  accountSession: AccountSession,
+  authenticatedAtMs: number
 ): Promise<Response> {
   const tenantId = getTenantIdFromContext(c);
-  const authTime = Math.floor(Date.now() / 1000);
+  const authTime = Math.floor(authenticatedAtMs / 1000);
   const reauthMethods = Array.from(new Set([...(accountSession.amr ?? []), 'otp', 'totp']));
   const { stub: sessionStore } = getSessionStoreBySessionId(
     c.env,
@@ -726,11 +764,22 @@ export async function deleteAccountTotpCredentialHandler(
     if (rateLimited) {
       return rateLimited;
     }
-    proofOk =
-      (typeof body.code === 'string' &&
-        (await verifyTotpCredentialCode(c, credential, body.code))) ||
-      (typeof body.backup_code === 'string' &&
-        (await consumeBackupCode(c, accountSession.userId, body.backup_code)));
+    try {
+      proofOk =
+        (typeof body.code === 'string' &&
+          (await verifyTotpCredentialCode(c, credential, body.code)) !== null) ||
+        (typeof body.backup_code === 'string' &&
+          (await consumeBackupCode(c, accountSession.userId, body.backup_code)));
+    } catch {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Authentication state unavailable.',
+        },
+        503,
+        { 'Retry-After': '1' }
+      );
+    }
   }
   if (!proofOk) {
     return c.json(
@@ -743,6 +792,24 @@ export async function deleteAccountTotpCredentialHandler(
   if (!deleted) {
     return c.json({ error: 'not_found', error_description: 'TOTP credential was not found' }, 404);
   }
+  c.executionCtx.waitUntil(
+    getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+      .deleteCredentialStateRpc(
+        tenantId,
+        accountSession.userId,
+        `account:${accountSession.userId}`,
+        'totp',
+        credential.id
+      )
+      .catch((error: unknown) => {
+        getLogger(c)
+          .module('ACCOUNT_TOTP')
+          .error('Failed to clean TOTP DO state', {
+            action: 'totp_state_cleanup',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+      })
+  );
 
   await recordAccountOperation(c, {
     userId: accountSession.userId,
@@ -799,9 +866,20 @@ export async function regenerateAccountTotpBackupCodesHandler(
     if (rateLimited) {
       return rateLimited;
     }
-    proofOk =
-      typeof body.code === 'string' &&
-      (await verifyAnyActiveTotpCode(c, accountSession.userId, body.code)) !== null;
+    try {
+      proofOk =
+        typeof body.code === 'string' &&
+        (await verifyAnyActiveTotpCode(c, accountSession.userId, body.code)) !== null;
+    } catch {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Authentication state unavailable.',
+        },
+        503,
+        { 'Retry-After': '1' }
+      );
+    }
   }
   if (!proofOk) {
     return c.json(
@@ -861,8 +939,20 @@ export async function completeAccountTotpReauthHandler(
   if (rateLimited) {
     return rateLimited;
   }
-  const verifiedCredential = await verifyAnyActiveTotpCode(c, accountSession.userId, body.code);
-  if (!verifiedCredential) {
+  let verificationResult: { credential: TotpCredential; verifiedAtMs: number } | null;
+  try {
+    verificationResult = await verifyAnyActiveTotpCode(c, accountSession.userId, body.code);
+  } catch {
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication state unavailable.',
+      },
+      503,
+      { 'Retry-After': '1' }
+    );
+  }
+  if (!verificationResult) {
     return c.json(
       { error: 'invalid_code', error_description: 'The verification code is invalid or expired' },
       400
@@ -873,8 +963,8 @@ export async function completeAccountTotpReauthHandler(
     userId: accountSession.userId,
     action: 'account.totp.reauthenticated',
     resourceType: 'totp_credential',
-    resourceId: verifiedCredential.id,
+    resourceId: verificationResult.credential.id,
   });
 
-  return refreshTotpReauthSession(c, accountSession);
+  return refreshTotpReauthSession(c, accountSession, verificationResult.verifiedAtMs);
 }

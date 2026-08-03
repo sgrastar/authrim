@@ -20,6 +20,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     storeOperationalLog: mocks.operationalLog,
     getOperationalLogRetentionDays: mocks.retention,
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
+    transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     createErrorResponse: vi.fn((c, code, options) => {
       const status =
         code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND

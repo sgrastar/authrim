@@ -194,6 +194,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<object>();
   return {
     ...actual,
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    findCanonicalAccountAuthenticationState: vi.fn(async (_adapter, _tenantId, userId) => ({
+      userId,
+      accountType: 'user',
+      lifecycle: 'active',
+      sourceVersionMs: 1_000,
+    })),
     // Logging
     getLogger: mocks.mockGetLogger,
     createLogger: mocks.mockCreateLogger,
