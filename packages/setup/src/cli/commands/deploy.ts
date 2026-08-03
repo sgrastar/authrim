@@ -794,6 +794,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     (Object.keys(loadedLock.lock.workers ?? {}).length === 0 ||
       (loadedLock.lock.releaseUpdate !== undefined &&
         loadedLock.lock.releaseUpdate.phase !== 'verified'));
+  // A newly provisioned environment has an empty Control D1. Its authority table is
+  // created by the schema phase below, so querying it here would abort the first deploy
+  // with `no such table: control_environments`. Resumed initial deployments have either
+  // a release checkpoint or deployed workers and can safely inspect the authority.
+  const hasInitialDeploymentProgress =
+    Object.keys(loadedLock.lock.workers ?? {}).length > 0 ||
+    loadedLock.lock.releaseUpdate !== undefined;
 
   let pendingControlTokenBootstrap: PendingControlTokenBootstrap | null = null;
   let directControlTokenOwnership: CloudflareTokenOwnership | null = null;
@@ -815,7 +822,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     })
   ) {
     const controlDatabaseName = loadedLock.lock.d1.CONTROL_DB?.name;
-    if (controlDatabaseName) {
+    if (controlDatabaseName && hasInitialDeploymentProgress) {
       existingControlTokenBootstrapReady = await hasReadyControlTokenBootstrap({
         environmentId: env,
         controlDatabaseName,
@@ -2218,7 +2225,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
     }
 
-    let deploymentApiBaseUrl = resolveIssuerUrl(config, { env });
+    // Re-resolve workers.dev URLs with the current account subdomain. Init may have run while
+    // Wrangler OAuth was expired and therefore persisted the unsuffixed fallback URL.
+    const deploymentWorkersSubdomain = await getWorkersSubdomain();
+    let deploymentApiBaseUrl = resolveIssuerUrl(config, {
+      env,
+      workersSubdomain: deploymentWorkersSubdomain,
+    });
     if (!options.dryRun && !options.component && summary.failedCount === 0) {
       const workerDeploymentSpinner = ora('Verifying Worker deployments...').start();
       const workerDeploymentResult = await waitForWorkerDeploymentsReady({
@@ -2337,6 +2350,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         const workerHttpSpinner = ora('Verifying Worker HTTP health...').start();
         const workerHttpResult = await waitForWorkerHttpReady({
           targets: workerHttpTargets,
+          allowMissingTenantSnapshot: isInitialDeployment,
           onProgress: (msg) => {
             workerHttpSpinner.text = msg;
           },

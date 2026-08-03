@@ -73,6 +73,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getSessionStoreForNewSession: mocks.getSessionStoreForNewSession,
     generateUserIdFromSettings: mocks.generateUserIdFromSettings,

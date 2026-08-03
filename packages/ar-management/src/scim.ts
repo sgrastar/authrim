@@ -47,6 +47,7 @@ import {
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
   ensureDatabaseAdapter,
+  transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
@@ -169,6 +170,18 @@ async function maybeSyncCanonicalRuntimeUser(
   userId: string,
   internalUser: Partial<InternalUser>
 ): Promise<void> {
+  const active = internalUser.active === undefined ? true : internalUser.active !== 0;
+  const lifecycleVersionMs = Date.now();
+  if (!active) {
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'inactive',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+  }
   const writer = new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
     piiAdapter
@@ -176,7 +189,7 @@ async function maybeSyncCanonicalRuntimeUser(
   await writer.syncFromRuntimeUser({
     userId,
     tenantId,
-    active: internalUser.active === undefined ? true : internalUser.active !== 0,
+    active,
     emailVerified: Boolean(internalUser.email_verified),
     phoneNumberVerified: Boolean(internalUser.phone_number_verified),
     userType: 'end_user',
@@ -223,6 +236,16 @@ async function maybeSyncCanonicalRuntimeUser(
       locale: internalUser.locale,
     },
   });
+  if (active) {
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'active',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: false,
+    });
+  }
 }
 
 async function maybeDeleteCanonicalRuntimeUser(
@@ -232,11 +255,28 @@ async function maybeDeleteCanonicalRuntimeUser(
   tenantId: string,
   userId: string
 ): Promise<void> {
+  const deletingVersionMs = Date.now();
+  await transitionAccountAuthenticationState(c.env, {
+    tenantId,
+    userId,
+    lifecycle: 'deleting',
+    sourceVersionMs: deletingVersionMs,
+    operationId: crypto.randomUUID(),
+    revokeSessions: true,
+  });
   const writer = new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
     piiAdapter
   );
   await writer.deleteRuntimeUser(userId);
+  await transitionAccountAuthenticationState(c.env, {
+    tenantId,
+    userId,
+    lifecycle: 'deleted',
+    sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+    operationId: crypto.randomUUID(),
+    revokeSessions: true,
+  });
 }
 
 /**
@@ -315,6 +355,8 @@ async function persistScimCustomClaimWrite(
     validation,
   });
 
+  // Validation requires a complete custom-claim record. Keep this lifecycle write D1-only; the
+  // caller performs the single ordered AccountAuthState transition from the SCIM `active` value.
   await syncUserLifecycleState({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
@@ -423,6 +465,7 @@ async function executeScimAccountCreation(
           stateDb: context.tenantCoreUsers,
           tenantId,
           userId,
+          accountAuthenticationEnv: c.env,
         });
       },
     }

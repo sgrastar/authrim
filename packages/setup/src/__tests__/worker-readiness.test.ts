@@ -280,4 +280,46 @@ describe('Worker HTTP readiness helpers', () => {
     ]);
     expect(result.error).toContain('dev-ar-auth');
   });
+
+  it('allows the initial tenant snapshot gap only for auth and SAML health checks', async () => {
+    fetchMock.mockResolvedValue(
+      textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+        {
+          workerName: 'dev-ar-saml',
+          url: 'https://dev-ar-saml.example.workers.dev/saml/health',
+        },
+      ],
+      allowMissingTenantSnapshot: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+  });
+
+  it('does not hide a missing tenant snapshot outside the initial deploy gate', async () => {
+    fetchMock.mockResolvedValue(
+      textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.error).toContain('missing_snapshot');
+  });
 });

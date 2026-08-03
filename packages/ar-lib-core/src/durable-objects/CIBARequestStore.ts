@@ -30,7 +30,6 @@ import { retryD1Operation } from '../utils/d1-retry';
 import { createAuditLog } from '../utils/audit-log';
 import { createLogger, type Logger } from '../utils/logger';
 import {
-  AUTH_CORE_PERSISTENCE_CONTEXT_KEY,
   resolveAuthCorePersistenceContextFromEnv,
   resolveAuthCorePersistenceSourceFromContext,
   type AuthCorePersistenceContext,
@@ -93,7 +92,6 @@ export class CIBARequestStore {
   private pendingAuditLogs: AuditLogEntry[] = [];
   private flushScheduled: boolean = false;
   private readonly AUDIT_FLUSH_DELAY = 100; // ms
-  private requestPersistence: CIBARequestPersistenceAdapter | null = null;
   private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
@@ -949,16 +947,9 @@ export class CIBARequestStore {
       return this.persistenceContext;
     }
 
-    const stored = await this.state.storage.get<AuthCorePersistenceContext>(
-      AUTH_CORE_PERSISTENCE_CONTEXT_KEY
-    );
-    if (stored) {
-      this.persistenceContext = stored;
-      return stored;
-    }
-
+    // Runtime policy is deployment configuration, not durable CIBA request state. Keeping a
+    // snapshot in DO Storage made profile changes ineffective for existing actors.
     const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
-    await this.state.storage.put(AUTH_CORE_PERSISTENCE_CONTEXT_KEY, resolved);
     this.persistenceContext = resolved;
     return resolved;
   }
@@ -977,12 +968,7 @@ export class CIBARequestStore {
   }
 
   private async ensureRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
-    if (this.requestPersistence) {
-      return this.requestPersistence;
-    }
-
-    this.requestPersistence = await this.initializeRequestPersistence();
-    return this.requestPersistence;
+    return this.initializeRequestPersistence();
   }
 
   private configureTenantFromRequest(request: Request): void {
@@ -1006,6 +992,5 @@ export class CIBARequestStore {
     }
 
     this.tenantId = tenantId;
-    this.requestPersistence = null;
   }
 }

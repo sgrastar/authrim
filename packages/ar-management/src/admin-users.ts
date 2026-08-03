@@ -33,6 +33,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveCustomClaimRuntimeSourcesFromHono,
   resolveAccountDataContextFromHono,
+  transitionAccountAuthenticationState,
   type CanonicalRuntimeUserProjection,
 } from '@authrim/ar-lib-core';
 import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
@@ -1125,6 +1126,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
             stateDb: context.tenantCoreUsers,
             tenantId,
             userId,
+            accountAuthenticationEnv: c.env,
           });
         },
       }
@@ -1376,6 +1378,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
         stateDb: authCtx.coreAdapter,
         tenantId,
         userId,
+        accountAuthenticationEnv: c.env,
       });
     }
 
@@ -1489,6 +1492,15 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       ) {
         throw new Error('admin_user_route_projection_invalid');
       }
+      const deletingVersionMs = Date.now();
+      await transitionAccountAuthenticationState(c.env, {
+        tenantId,
+        userId,
+        lifecycle: 'deleting',
+        sourceVersionMs: deletingVersionMs,
+        operationId: crypto.randomUUID(),
+        revokeSessions: true,
+      });
       const removals = await prepareAccountDirectoryRemoval(c.env, {
         tenantId,
         userId,
@@ -1515,6 +1527,14 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
         new CanonicalIdentityRepository(core, tenantId),
         pii
       ).deleteRuntimeUser(userId);
+      await transitionAccountAuthenticationState(c.env, {
+        tenantId,
+        userId,
+        lifecycle: 'deleted',
+        sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+        operationId: crypto.randomUUID(),
+        revokeSessions: true,
+      });
       await markAccountDirectoryRemovalsReady(core, removals);
       await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
       await invalidateUserCache(c.env, tenantId, userId);
@@ -1548,6 +1568,16 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const deletingVersionMs = Date.now();
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleting',
+      sourceVersionMs: deletingVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+
     if (hasPIIDatabase(c)) {
       const piiCtx = createPIIContextFromHono(c, tenantId);
 
@@ -1569,6 +1599,14 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
     }
 
     await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleted',
+      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
     await invalidateUserCache(c.env, tenantId, userId);
 
     const log = getLogger(c).module('ADMIN-USER');

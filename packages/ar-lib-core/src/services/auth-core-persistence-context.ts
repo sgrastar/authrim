@@ -21,8 +21,6 @@ import {
   type TenantDatabaseRequestCache,
 } from './tenant-database-resolver';
 
-export const AUTH_CORE_PERSISTENCE_CONTEXT_KEY = 'm:auth-core-persistence-context';
-
 export interface AuthCorePersistenceContext {
   storageProfileId: string;
   storageProfile: StorageProfile;
@@ -52,7 +50,7 @@ function defaultTransientAuthStoragePolicy(
 ): TransientAuthStoragePolicy {
   if (deploymentProfile === 'tenant-d1') {
     return {
-      sessionColdPersistence: 'enabled',
+      sessionColdPersistence: 'disabled',
       sessionClientMirror: 'async',
       deviceCibaColdPersistence: 'disabled',
       externalDurableMirror: 'disabled',

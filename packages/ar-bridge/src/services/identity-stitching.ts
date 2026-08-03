@@ -1009,6 +1009,7 @@ async function applyTenantD1JITPlan(
     stateDb: ensureDatabaseAdapter(account.coreDb, 'external-idp-jit-lifecycle'),
     tenantId: input.tenantId,
     userId: input.userId,
+    accountAuthenticationEnv: env,
   });
   await activatePendingLinkedIdentity(env, pending, account.piiDb);
   return { linkedIdentityId: pending.id, roles_assigned: rolesAssigned, orgs_joined: orgsJoined };
@@ -1675,6 +1676,7 @@ async function createUserWithJITProvisioning(
     stateDb: coreAdapter,
     tenantId: params.tenantId,
     userId: id,
+    accountAuthenticationEnv: env,
   });
 
   return result;

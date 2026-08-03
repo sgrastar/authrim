@@ -25,6 +25,11 @@
     { "name": "REFRESH_TOKEN_ROTATOR", "kind": "durable_object_namespace", "required": true },
     { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
     { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "VERSION_MANAGER", "kind": "durable_object_namespace", "required": true },
     { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },

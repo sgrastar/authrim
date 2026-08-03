@@ -20,6 +20,11 @@
       "required": true
     },
     { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
     { "name": "SESSION_CLIENT_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
     { "name": "AUTH_CODE_STORE", "kind": "durable_object_namespace", "required": true },

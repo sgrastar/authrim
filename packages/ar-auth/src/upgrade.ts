@@ -462,6 +462,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       stateDb: authCtx.coreAdapter,
       tenantId,
       userId: finalUserId,
+      accountAuthenticationEnv: c.env,
     });
     const missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
       field_key: field.fieldKey,
@@ -603,6 +604,7 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
         stateDb: authCtx.coreAdapter,
         tenantId,
         userId: session.userId,
+        accountAuthenticationEnv: c.env,
       });
       missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
         field_key: field.fieldKey,

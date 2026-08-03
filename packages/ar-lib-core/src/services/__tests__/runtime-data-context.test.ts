@@ -6,6 +6,7 @@ import {
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
+  resolveOtpAccountCoreDataContextByIdentifier,
   resolveSessionAccountCoreDataContext,
 } from '../runtime-data-context';
 
@@ -95,6 +96,8 @@ function d1(input: {
   revokedAfterMs?: number;
   legacyUserId?: string;
   accountId?: string;
+  subjectLifecycleState?: string;
+  emailVerified?: number;
 }): D1Database {
   const session = {
     prepare: vi.fn((sql: string) => {
@@ -116,6 +119,11 @@ function d1(input: {
               lifecycle_state: 'active',
               directory_publication_state: 'active',
               account_route_generation: input.accountRouteGeneration ?? 3,
+              account_type: 'end_user',
+              subject_lifecycle_state: input.subjectLifecycleState ?? 'active',
+              display_name: 'OTP User',
+              email_verified: input.emailVerified ?? 1,
+              created_at: 1_700_000_000_000,
             };
           }
           if (sql.includes('FROM session_revocation_epochs')) {
@@ -200,7 +208,7 @@ describe('runtime account data context', () => {
     }
   );
 
-  it('resolves session revocation state with one primary Core batch and retained PII validation', async () => {
+  it('resolves session revocation state with one primary Core batch and no PII round trip', async () => {
     const bindings = env();
     const usersD1 = d1({
       role: 'tenant_core/users',
@@ -220,7 +228,78 @@ describe('runtime account data context', () => {
     expect(context.revokedAfterMs).toBe(1234);
     expect(usersD1._session.batch).toHaveBeenCalledTimes(1);
     expect(usersD1._session.batch.mock.calls[0]?.[0]).toHaveLength(3);
-    expect(piiD1.withSession).toHaveBeenCalledWith('first-primary');
+    expect(piiD1.withSession).not.toHaveBeenCalled();
+  });
+
+  it('resolves the minimal OTP user in the Core revalidation batch without touching PII', async () => {
+    const bindings = env();
+    const usersD1 = (bindings as unknown as Record<string, D1Database>)
+      .TDB_USERS_A as D1Database & {
+      _session: { batch: ReturnType<typeof vi.fn>; prepare: ReturnType<typeof vi.fn> };
+    };
+    const piiD1 = (bindings as unknown as Record<string, D1Database>).TDB_PII_A;
+
+    const context = await resolveOtpAccountCoreDataContextByIdentifier(bindings, {
+      tenantId: 'tenant-a',
+      indexKind: 'email_exact',
+      identifier: 'User-A@Example.com',
+      trustedEmail: 'User-A@Example.com',
+    });
+
+    expect(context.accountId).toBe('account:user-a');
+    expect(context.user).toEqual({
+      id: 'user-a',
+      email: 'user-a@example.com',
+      name: 'OTP User',
+      active: 1,
+      email_verified: 1,
+      account_type: 'end_user',
+      created_at: '2023-11-14T22:13:20.000Z',
+    });
+    expect(usersD1._session.batch).toHaveBeenCalledTimes(1);
+    expect(usersD1._session.batch.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(
+      usersD1._session.prepare.mock.calls.some(([sql]) =>
+        String(sql).includes('JOIN identity_subjects subject')
+      )
+    ).toBe(true);
+    const otpSql = usersD1._session.prepare.mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('JOIN identity_subjects subject'));
+    expect(otpSql).toContain('contact.subject_id = subject.id');
+    expect(otpSql).toContain('contact.account_id = account.id');
+    expect(otpSql).not.toContain('contact.account_id = account.id OR');
+    expect(piiD1.withSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects an OTP email projection that is not bound to the routed identifier', async () => {
+    await expect(
+      resolveOtpAccountCoreDataContextByIdentifier(env(), {
+        tenantId: 'tenant-a',
+        indexKind: 'email_exact',
+        identifier: 'routed@example.com',
+        trustedEmail: 'different@example.com',
+      })
+    ).rejects.toThrow('account_data_otp_email_route_mismatch');
+  });
+
+  it('rejects an OTP account route whose legacy user differs from the challenge user', async () => {
+    const bindings = env();
+    (bindings as unknown as Record<string, unknown>).TDB_USERS_A = d1({
+      role: 'tenant_core/users',
+      legacyUserId: 'user-b',
+    });
+
+    await expect(
+      resolveOtpAccountCoreDataContextByIdentifier(bindings, {
+        tenantId: 'tenant-a',
+        indexKind: 'account_id',
+        identifier: 'account:user-a',
+        expectedAccountId: 'account:user-a',
+        expectedLegacyUserId: 'user-a',
+        trustedEmail: 'user-a@example.com',
+      })
+    ).rejects.toThrow('account_data_otp_route_mismatch');
   });
 
   it('rejects a session route whose account or authoritative legacy user differs', async () => {

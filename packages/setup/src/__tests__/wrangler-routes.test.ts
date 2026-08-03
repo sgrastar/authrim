@@ -219,6 +219,11 @@ describe('generateRoutes', () => {
 
     expect(tokenConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          name: 'SESSION_REVOCATION_STORE',
+          class_name: 'SessionRevocationStore',
+          script_name: 'emailtest-ar-lib-core',
+        }),
         expect.objectContaining({ name: 'DEVICE_CODE_STORE' }),
         expect.objectContaining({ name: 'CIBA_REQUEST_STORE' }),
       ])
@@ -234,6 +239,11 @@ describe('generateRoutes', () => {
     expect(bridgeConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: 'KEY_MANAGER', script_name: 'emailtest-ar-lib-core' }),
+        expect.objectContaining({
+          name: 'SESSION_REVOCATION_STORE',
+          class_name: 'SessionRevocationStore',
+          script_name: 'emailtest-ar-lib-core',
+        }),
       ])
     );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');

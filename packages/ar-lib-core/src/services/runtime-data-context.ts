@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Context as HonoContext } from 'hono';
 import type { DatabaseSource } from '../db';
+import type { CanonicalOtpLoginUser } from '../repositories/identity/canonical-runtime-user-store';
 import type { Env } from '../types/env';
 import { isCanonicalAccountIdForUser, isValidPersistedUserId } from '../utils/id';
 import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
@@ -34,6 +35,14 @@ interface AccountDestinationRow {
   lifecycle_state: string;
   directory_publication_state: string;
   account_route_generation: number | string;
+}
+
+interface OtpAccountDestinationRow extends AccountDestinationRow {
+  account_type: string;
+  subject_lifecycle_state: string;
+  display_name: string | null;
+  email_verified: number | string;
+  created_at: number | string;
 }
 
 interface ShardMetadataRow {
@@ -85,6 +94,10 @@ export interface SessionAccountCoreDataContext extends AccountCoreDataContext {
   revokedAfterMs: number | null;
 }
 
+export interface OtpAccountCoreDataContext extends AccountCoreDataContext {
+  user: CanonicalOtpLoginUser;
+}
+
 interface AccountRouteResolutionBase {
   resolver: LookupRouteResolver;
   membership: ResolvedLookupMembership;
@@ -122,6 +135,22 @@ function normalizeAccountId(value: string): string {
   const accountId = normalized.startsWith('account:') ? normalized : `account:${normalized}`;
   if (!SAFE_ID.test(accountId)) throw new Error('account_data_account_id_invalid');
   return accountId;
+}
+
+function timestampToIso(value: number | string): string | null {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) return null;
+  const absolute = Math.abs(timestamp);
+  const milliseconds =
+    absolute < 100_000_000_000
+      ? timestamp * 1000
+      : absolute < 100_000_000_000_000
+        ? timestamp
+        : absolute < 100_000_000_000_000_000
+          ? timestamp / 1000
+          : timestamp / 1_000_000;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 async function loadHmacKeys(env: Env, now: number): Promise<ResolvedLookupHmacKeys> {
@@ -238,14 +267,20 @@ async function resolveAccountRouteBaseByIdentifier(
 async function resolveCoreAccountDestination(
   base: AccountRouteResolutionBase,
   tenantId: string,
-  revocationUserId?: string
+  options: { revocationUserId?: string; otpTrustedEmail?: string } = {}
 ): Promise<{
   target: ResolvedLookupTarget;
   account: AccountDestinationRow;
   revokedAfterMs: number | null;
+  otpUser: CanonicalOtpLoginUser | null;
 }> {
   const account: { value: AccountDestinationRow | null } = { value: null };
+  const otpUser: { value: CanonicalOtpLoginUser | null } = { value: null };
   let revokedAfterMs: number | null = null;
+  const otpTrustedEmail = options.otpTrustedEmail?.trim().toLowerCase() || null;
+  if (options.otpTrustedEmail !== undefined && !otpTrustedEmail) {
+    throw new Error('account_data_otp_email_invalid');
+  }
   const target = await base.resolver.resolveTargetAndRevalidate({
     membership: base.membership,
     dataRole: 'tenant_core/users',
@@ -258,15 +293,56 @@ async function resolveCoreAccountDestination(
           `SELECT binding_ref, data_role, residency_partition
              FROM authrim_control_plane_shard_metadata WHERE singleton_id = 1`
         ),
-        session
-          .prepare(
-            `SELECT id, legacy_user_id, lifecycle_state, directory_publication_state,
-                    account_route_generation
-               FROM identity_accounts WHERE tenant_id = ? AND id = ? LIMIT 1`
-          )
-          .bind(tenantId, base.accountId),
+        otpTrustedEmail
+          ? session
+              .prepare(
+                `SELECT account.id,
+                        account.legacy_user_id,
+                        account.lifecycle_state,
+                        account.directory_publication_state,
+                        account.account_route_generation,
+                        account.account_type,
+                        account.created_at,
+                        subject.lifecycle_state AS subject_lifecycle_state,
+                        COALESCE(subject.display_label, account.display_label) AS display_name,
+                        COALESCE(
+                          (
+                            SELECT CASE WHEN contact.verification_state = 'verified' THEN 1 ELSE 0 END
+                              FROM contact_points contact
+                             WHERE contact.tenant_id = account.tenant_id
+                               AND contact.subject_id = subject.id
+                               AND contact.contact_type = 'email'
+                               AND contact.lifecycle_state = 'active'
+                             LIMIT 1
+                          ),
+                          (
+                            SELECT CASE WHEN contact.verification_state = 'verified' THEN 1 ELSE 0 END
+                              FROM contact_points contact
+                             WHERE contact.tenant_id = account.tenant_id
+                               AND contact.account_id = account.id
+                               AND contact.contact_type = 'email'
+                               AND contact.lifecycle_state = 'active'
+                             LIMIT 1
+                          ),
+                          0
+                        ) AS email_verified
+                   FROM identity_accounts account
+                   JOIN identity_subjects subject
+                     ON subject.id = account.primary_subject_id
+                    AND subject.tenant_id = account.tenant_id
+                  WHERE account.tenant_id = ? AND account.id = ?
+                  LIMIT 1`
+              )
+              .bind(tenantId, base.accountId)
+          : session
+              .prepare(
+                `SELECT id, legacy_user_id, lifecycle_state, directory_publication_state,
+                        account_route_generation
+                   FROM identity_accounts WHERE tenant_id = ? AND id = ? LIMIT 1`
+              )
+              .bind(tenantId, base.accountId),
       ];
-      if (revocationUserId) {
+      if (options.revocationUserId) {
         statements.push(
           session
             .prepare(
@@ -274,7 +350,7 @@ async function resolveCoreAccountDestination(
                  FROM session_revocation_epochs
                 WHERE tenant_id = ? AND user_id = ? LIMIT 1`
             )
-            .bind(tenantId, revocationUserId)
+            .bind(tenantId, options.revocationUserId)
         );
       }
       const results = await session.batch(statements);
@@ -286,7 +362,7 @@ async function resolveCoreAccountDestination(
       }
       const metadata = results[0]?.results[0] as ShardMetadataRow | undefined;
       account.value = (results[1]?.results[0] as AccountDestinationRow | undefined) ?? null;
-      const epoch = revocationUserId
+      const epoch = options.revocationUserId
         ? ((results[2]?.results[0] as SessionRevocationEpochRow | undefined) ?? null)
         : null;
       if (
@@ -297,9 +373,24 @@ async function resolveCoreAccountDestination(
         account.value.lifecycle_state !== 'active' ||
         account.value.directory_publication_state !== 'active' ||
         Number(account.value.account_route_generation) !== base.membership.accountRouteGeneration ||
-        (revocationUserId !== undefined && account.value.legacy_user_id !== revocationUserId)
+        (options.revocationUserId !== undefined &&
+          account.value.legacy_user_id !== options.revocationUserId)
       ) {
         return false;
+      }
+      if (otpTrustedEmail) {
+        const otpRow = account.value as OtpAccountDestinationRow;
+        const createdAt = timestampToIso(otpRow.created_at);
+        if (!otpRow.account_type || !otpRow.subject_lifecycle_state || !createdAt) return false;
+        otpUser.value = {
+          id: otpRow.legacy_user_id,
+          email: otpTrustedEmail,
+          name: otpRow.display_name,
+          active: otpRow.subject_lifecycle_state === 'active' ? 1 : 0,
+          email_verified: Number(otpRow.email_verified) === 1 ? 1 : 0,
+          account_type: otpRow.account_type,
+          created_at: createdAt,
+        };
       }
       if (epoch) {
         const normalizedEpoch = Number(epoch.revoked_after_ms);
@@ -312,7 +403,7 @@ async function resolveCoreAccountDestination(
   if (!account.value || !isValidPersistedUserId(account.value.legacy_user_id)) {
     throw new Error('account_data_destination_account_invalid');
   }
-  return { target, account: account.value, revokedAfterMs };
+  return { target, account: account.value, revokedAfterMs, otpUser: otpUser.value };
 }
 
 function piiCacheMode(env: Env): UserPiiCacheMode {
@@ -398,16 +489,7 @@ export async function resolveAccountCoreDataContext(
     expectedAccountId: accountId,
     nowMs: input.nowMs,
   });
-  const [{ target, account }] = await Promise.all([
-    resolveCoreAccountDestination(base, input.tenantId),
-    base.resolver.resolveTargetAndRevalidate({
-      membership: base.membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: base.piiResidency,
-      observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => verifyShardMetadata(target, 'tenant_pii'),
-    }),
-  ]);
+  const { target, account } = await resolveCoreAccountDestination(base, input.tenantId);
   return {
     tenantId: input.tenantId,
     accountId,
@@ -418,6 +500,66 @@ export async function resolveAccountCoreDataContext(
     coreBindingRef: target.bindingRef,
     coreResidencyPartition: target.residencyPartition,
     accountRouteGeneration: base.membership.accountRouteGeneration,
+  };
+}
+
+/**
+ * Resolve an OTP identifier to its authoritative Core shard and return the complete minimal
+ * login projection from the destination revalidation batch. The trusted email is already bound
+ * to the account by the Lookup membership, so this path intentionally does not touch tenant PII.
+ */
+export async function resolveOtpAccountCoreDataContextByIdentifier(
+  env: Env,
+  input: {
+    tenantId: string;
+    indexKind: 'email_exact' | 'account_id';
+    identifier: string;
+    trustedEmail: string;
+    expectedAccountId?: string;
+    expectedLegacyUserId?: string;
+    nowMs?: number;
+  }
+): Promise<OtpAccountCoreDataContext> {
+  const identifier =
+    input.indexKind === 'account_id' ? normalizeAccountId(input.identifier) : input.identifier;
+  const expectedAccountId =
+    input.expectedAccountId !== undefined
+      ? normalizeAccountId(input.expectedAccountId)
+      : input.indexKind === 'account_id'
+        ? identifier
+        : undefined;
+  const trustedEmail = input.trustedEmail.trim().toLowerCase();
+  if (input.indexKind === 'email_exact' && input.identifier.trim().toLowerCase() !== trustedEmail) {
+    throw new Error('account_data_otp_email_route_mismatch');
+  }
+  const base = await resolveAccountRouteBaseByIdentifier(env, {
+    tenantId: input.tenantId,
+    indexKind: input.indexKind,
+    identifier,
+    expectedAccountId,
+    nowMs: input.nowMs,
+  });
+  const { target, account, otpUser } = await resolveCoreAccountDestination(base, input.tenantId, {
+    otpTrustedEmail: trustedEmail,
+  });
+  if (
+    input.expectedLegacyUserId !== undefined &&
+    account.legacy_user_id !== input.expectedLegacyUserId
+  ) {
+    throw new Error('account_data_otp_route_mismatch');
+  }
+  if (!otpUser) throw new Error('account_data_otp_projection_invalid');
+  return {
+    tenantId: input.tenantId,
+    accountId: base.accountId,
+    legacyUserId: account.legacy_user_id,
+    storageProfileId: base.storageProfileId,
+    membership: base.membership,
+    coreDb: target.source,
+    coreBindingRef: target.bindingRef,
+    coreResidencyPartition: target.residencyPartition,
+    accountRouteGeneration: base.membership.accountRouteGeneration,
+    user: otpUser,
   };
 }
 
@@ -437,16 +579,13 @@ export async function resolveSessionAccountCoreDataContext(
     expectedAccountId: accountId,
     nowMs: input.nowMs,
   });
-  const [{ target, account, revokedAfterMs }] = await Promise.all([
-    resolveCoreAccountDestination(base, input.tenantId, userId),
-    base.resolver.resolveTargetAndRevalidate({
-      membership: base.membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: base.piiResidency,
-      observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => verifyShardMetadata(target, 'tenant_pii'),
-    }),
-  ]);
+  const { target, account, revokedAfterMs } = await resolveCoreAccountDestination(
+    base,
+    input.tenantId,
+    {
+      revocationUserId: userId,
+    }
+  );
   return {
     tenantId: input.tenantId,
     accountId,
@@ -496,6 +635,24 @@ export async function resolveAccountDataContextByIdentifierFromHono(
   });
   (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', resolved);
   return resolved;
+}
+
+export async function resolveOtpAccountCoreDataContextByIdentifierFromHono(
+  c: HonoContext<{ Bindings: Env }>,
+  input: {
+    indexKind: 'email_exact' | 'account_id';
+    identifier: string;
+    trustedEmail: string;
+    expectedAccountId?: string;
+    expectedLegacyUserId?: string;
+  }
+): Promise<OtpAccountCoreDataContext> {
+  const tenantId =
+    ((c as unknown as { get(key: string): unknown }).get('tenantId') as string) ?? '';
+  return resolveOtpAccountCoreDataContextByIdentifier(c.env, {
+    tenantId,
+    ...input,
+  });
 }
 
 export function getTenantMetadataContextFromHono(

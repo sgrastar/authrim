@@ -16,6 +16,9 @@ import {
   produceNotificationDelivery,
   resolveAccountDataContextFromHono,
   getSessionStoreBySessionId,
+  getSessionRevocationStore,
+  advancePasskeyAuthenticationState,
+  isAccountAuthenticationDeniedError,
   getTenantIdFromContext,
   type AccountDirectoryRemovalPublication,
   type ExecuteResult,
@@ -479,10 +482,11 @@ function escapeHtml(value: string): string {
 async function refreshAccountReauthSession(
   c: Context<{ Bindings: Env }>,
   accountSession: AccountSession,
-  method: string
+  method: string,
+  authenticatedAtMs = Date.now()
 ): Promise<Response> {
   const tenantId = getTenantIdFromContext(c);
-  const authTime = Math.floor(Date.now() / 1000);
+  const authTime = Math.floor(authenticatedAtMs / 1000);
   const reauthMethods = Array.from(new Set([...(accountSession.amr ?? []), method]));
   const { stub: sessionStore } = getSessionStoreBySessionId(
     c.env,
@@ -692,9 +696,55 @@ export async function completeAccountPasskeyReauthHandler(
       400
     );
   }
+  const proofVerifiedAtMs = Date.now();
 
-  await passkeyRepo.updateCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter);
-  return refreshAccountReauthSession(c, accountSession, 'passkey');
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+    tenantId,
+  });
+  try {
+    await advancePasskeyAuthenticationState(
+      c.env,
+      {
+        tenantId,
+        userId: accountSession.userId,
+        credentialId: passkey.id,
+        storedCounter: passkey.counter,
+        observedCounter: verification.authenticationInfo.newCounter,
+        observedAtMs: proofVerifiedAtMs,
+      },
+      () => runtimeUsers.findAccountAuthenticationState(accountSession.userId)
+    );
+  } catch (error) {
+    if (isAccountAuthenticationDeniedError(error)) {
+      return c.json(
+        { error: 'verification_failed', error_description: 'Passkey was not verified' },
+        400
+      );
+    }
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication state unavailable.',
+      },
+      503,
+      { 'Retry-After': '1' }
+    );
+  }
+  c.executionCtx.waitUntil(
+    passkeyRepo
+      .mirrorCounterAfterAuth(passkey.id, verification.authenticationInfo.newCounter)
+      .catch((error: unknown) => {
+        getLogger(c)
+          .module('ACCOUNT-REAUTH')
+          .error('Failed to mirror Passkey counter', {
+            action: 'passkey_state_mirror',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+      })
+  );
+  return refreshAccountReauthSession(c, accountSession, 'passkey', proofVerifiedAtMs);
 }
 
 export async function sendAccountEmailCodeReauthHandler(
@@ -950,7 +1000,7 @@ export async function completeAccountEmailCodeReauthHandler(
     );
   }
 
-  return refreshAccountReauthSession(c, accountSession, 'email_code');
+  return refreshAccountReauthSession(c, accountSession, 'email_code', Date.now());
 }
 
 async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {
@@ -1431,6 +1481,24 @@ export async function deleteAccountPasskeyHandler(
   if (removal) {
     await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, [removal]);
   }
+  c.executionCtx.waitUntil(
+    getSessionRevocationStore(c.env, tenantId, accountSession.userId)
+      .deleteCredentialStateRpc(
+        tenantId,
+        accountSession.userId,
+        `account:${accountSession.userId}`,
+        'passkey',
+        existing.id
+      )
+      .catch((error: unknown) => {
+        getLogger(c)
+          .module('ACCOUNT_PASSKEY')
+          .error('Failed to clean Passkey DO state', {
+            action: 'passkey_state_cleanup',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+      })
+  );
 
   await recordAccountOperation(c, {
     userId: accountSession.userId,

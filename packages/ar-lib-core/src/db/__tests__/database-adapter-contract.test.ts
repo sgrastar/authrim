@@ -153,9 +153,13 @@ describe('durable database adapter contract', () => {
       retryConfig: { maxRetries: 0 },
     });
 
-    await expect(failedAdapter.queryOne('SELECT id FROM users_core')).rejects.toThrow(
-      'D1Adapter.queryOne failed after retries exhausted'
-    );
+    await expect(failedAdapter.queryOne('SELECT id FROM users_core')).rejects.toMatchObject({
+      name: 'D1OperationError',
+      code: 'd1_operation_failed',
+      retryable: false,
+      attempts: 1,
+      cause: expect.objectContaining({ message: 'simulated_database_unavailable' }),
+    });
   });
 
   it('maps D1 query consistency classes to Sessions API constraints', async () => {
@@ -194,6 +198,71 @@ describe('durable database adapter contract', () => {
     await expect(
       adapter.queryOne('SELECT 1', [], { consistencyClass: 'replica_eligible' })
     ).rejects.toThrow('d1_sessions_api_required');
+  });
+
+  it('bounds concurrent operations within one adapter request context', async () => {
+    let releaseFirst: (() => void) | undefined;
+    let active = 0;
+    let maxActive = 0;
+    const first = vi.fn(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (first.mock.calls.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      active -= 1;
+      return { id: `row-${first.mock.calls.length}` };
+    });
+    const statement = { first } as unknown as D1PreparedStatement;
+    const db = {
+      prepare: vi.fn(() => statement),
+      withSession: vi.fn(() => ({ prepare: vi.fn(() => statement) })),
+    } as unknown as D1Database;
+    const adapter = new D1Adapter({
+      db,
+      partition: 'core',
+      maxConcurrentOperations: 1,
+      maxQueuedOperations: 1,
+    });
+
+    const firstQuery = adapter.queryOne('SELECT 1');
+    await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+    const secondQuery = adapter.queryOne('SELECT 2');
+    await Promise.resolve();
+    expect(first).toHaveBeenCalledTimes(1);
+
+    releaseFirst?.();
+    await expect(Promise.all([firstQuery, secondQuery])).resolves.toHaveLength(2);
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(maxActive).toBe(1);
+  });
+
+  it('does not share admission promises across adapter request contexts', async () => {
+    let releaseFirst: (() => void) | undefined;
+    const first = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            releaseFirst = () => resolve({ id: 'row-1' });
+          })
+      )
+      .mockResolvedValueOnce({ id: 'row-2' });
+    const statement = { first } as unknown as D1PreparedStatement;
+    const db = {
+      prepare: vi.fn(() => statement),
+      withSession: vi.fn(() => ({ prepare: vi.fn(() => statement) })),
+    } as unknown as D1Database;
+    const requestOneAdapter = new D1Adapter({ db, maxConcurrentOperations: 1 });
+    const requestTwoAdapter = new D1Adapter({ db, maxConcurrentOperations: 1 });
+
+    const requestOne = requestOneAdapter.queryOne('SELECT 1');
+    await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
+    await expect(requestTwoAdapter.queryOne('SELECT 2')).resolves.toEqual({ id: 'row-2' });
+    releaseFirst?.();
+    await expect(requestOne).resolves.toEqual({ id: 'row-1' });
   });
 
   it('keeps Postgres compatible with the shared durable adapter contract', async () => {

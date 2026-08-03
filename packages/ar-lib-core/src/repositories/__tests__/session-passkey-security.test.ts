@@ -78,6 +78,23 @@ describe('PasskeyRepository clone-detection invariants', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('mirrors only a monotonic counter without a read-before-write', async () => {
+    const execute = vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 });
+    const queryOne = vi.fn();
+    const repository = new PasskeyRepository(adapterWith({ execute, queryOne }), 'tenant-a');
+
+    await expect(repository.mirrorCounterAfterAuth('pk-1', 8)).resolves.toBe(true);
+    expect(queryOne).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('counter < ?'), [
+      8,
+      expect.any(Number),
+      'pk-1',
+      'tenant-a',
+      8,
+      8,
+    ]);
+  });
+
   it('does not convert malformed stored transports into trusted authenticator capabilities', async () => {
     const repository = new PasskeyRepository(
       adapterWith({

@@ -455,7 +455,7 @@ export const BUILTIN_RUNTIME_PROFILES: RuntimeProfile[] = [
       },
     },
     transientAuth: {
-      sessionColdPersistence: 'enabled',
+      sessionColdPersistence: 'disabled',
       sessionClientMirror: 'async',
       deviceCibaColdPersistence: 'disabled',
       externalDurableMirror: 'disabled',

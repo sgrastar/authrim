@@ -128,6 +128,7 @@ const mocks = vi.hoisted(() => {
     mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
     mockFindCanonicalRuntimeUserProjection: vi.fn(),
     mockFindCanonicalRuntimeAccount: vi.fn(),
+    mockEnsureAccountAuthenticationState: vi.fn().mockResolvedValue({ lifecycle: 'active' }),
 
     // Native SSO
     mockDeviceSecretRepository: {
@@ -183,6 +184,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<object>();
   return {
     ...actual,
+    ensureAccountAuthenticationState: mocks.mockEnsureAccountAuthenticationState,
+    findCanonicalAccountAuthenticationState: vi.fn(async (_adapter, _tenantId, userId) => ({
+      userId,
+      accountType: 'user',
+      lifecycle: 'active',
+      sourceVersionMs: 1_000,
+    })),
     getLogger: mocks.mockGetLogger,
     createLogger: mocks.mockCreateLogger,
     validateGrantType: mocks.mockValidateGrantType,
@@ -465,6 +473,7 @@ function resetAllMocks() {
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsIdLevelPermissionsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockGetCachedUserCore.mockReset().mockResolvedValue(null);
+  mocks.mockEnsureAccountAuthenticationState.mockReset().mockResolvedValue({ lifecycle: 'active' });
   mocks.mockFindCanonicalRuntimeUserProjection
     .mockReset()
     .mockImplementation(async (userId: string) => ({
@@ -1683,6 +1692,39 @@ describe('Client Authentication Tests', () => {
   });
 
   describe('Authorization code ID token claims', () => {
+    function configureAuthorizationCodeExchange() {
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+      });
+      const authCodeData = createAuthCodeData();
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
+      });
+      return { client, authCodeData };
+    }
+
+    async function exchangeAuthorizationCode() {
+      const { client, authCodeData } = configureAuthorizationCodeExchange();
+      const response = await tokenHandler(
+        createMockContext({
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      return {
+        response,
+        body: await parseJsonResponse<{ error: string; error_description: string }>(response),
+      };
+    }
+
     it('should preserve OIDC auth_time, acr, and amr from the authorization code', async () => {
       const client = createConfidentialClient({
         token_endpoint_auth_method: 'client_secret_post',
@@ -1725,6 +1767,40 @@ describe('Client Authentication Tests', () => {
         expect.any(Number),
         'RS256'
       );
+    });
+
+    it('rejects token issuance when the account is no longer allowed to authenticate', async () => {
+      mocks.mockEnsureAccountAuthenticationState.mockRejectedValueOnce(
+        new Error('account_authentication_not_allowed')
+      );
+
+      const { response, body } = await exchangeAuthorizationCode();
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_grant',
+        error_description: 'The provided authorization grant is invalid, expired, or revoked',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
+    });
+
+    it('returns temporarily_unavailable when account authentication state cannot be loaded', async () => {
+      mocks.mockEnsureAccountAuthenticationState.mockRejectedValueOnce(
+        new Error('session revocation store unavailable')
+      );
+
+      const { response, body } = await exchangeAuthorizationCode();
+
+      expect(response.status).toBe(503);
+      expect(body).toEqual({
+        error: 'temporarily_unavailable',
+        error_description: 'Authentication state is unavailable',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
     });
   });
 

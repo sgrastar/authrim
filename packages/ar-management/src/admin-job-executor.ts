@@ -17,6 +17,7 @@ import {
   tombstoneObjectCatalogEntryForTenant,
   putTenantExistsCache,
   deleteTenantExistsCache,
+  transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
@@ -1717,7 +1718,7 @@ async function processTenantDatabasePurgeBackupJob(
 }
 
 async function processBulkUserUpdateJob(
-  _env: Env,
+  env: Env,
   adapter: DatabaseAdapter,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
@@ -1725,7 +1726,7 @@ async function processBulkUserUpdateJob(
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(job.tenant_id, config.filter);
   const total = await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
-  const nowTs = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
 
   if (config.dry_run) {
     return {
@@ -1794,14 +1795,54 @@ async function processBulkUserUpdateJob(
     }
   }
   assignments.push('updated_at = ?');
-  values.push(nowTs);
+  values.push(nowMs);
 
   const ids = selected.map((row) => row.id);
+  const requestedStatus =
+    typeof config.values.status === 'string' ? config.values.status : undefined;
+  const requestedActive =
+    typeof config.values.is_active === 'boolean' ? config.values.is_active : undefined;
+  const targetLifecycle =
+    requestedActive === false
+      ? 'inactive'
+      : requestedActive === true || requestedStatus === 'active'
+        ? 'active'
+        : requestedStatus === 'suspended' || requestedStatus === 'locked'
+          ? requestedStatus
+          : null;
+  if (targetLifecycle && targetLifecycle !== 'active') {
+    await Promise.all(
+      ids.map((userId) =>
+        transitionAccountAuthenticationState(env, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: targetLifecycle,
+          sourceVersionMs: nowMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: true,
+        })
+      )
+    );
+  }
   const idPlaceholders = ids.map(() => '?').join(', ');
   const updateResult = await adapter.execute(
     `UPDATE identity_accounts SET ${assignments.join(', ')} WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})`,
     [...values, job.tenant_id, ...ids]
   );
+  if (targetLifecycle === 'active') {
+    await Promise.all(
+      ids.map((userId) =>
+        transitionAccountAuthenticationState(env, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: 'active',
+          sourceVersionMs: nowMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: false,
+        })
+      )
+    );
+  }
   const batchSucceeded = updateResult.rowsAffected ?? selected.length;
   const processed = (previous.processed ?? 0) + selected.length;
   const succeeded = (previous.succeeded ?? 0) + batchSucceeded;

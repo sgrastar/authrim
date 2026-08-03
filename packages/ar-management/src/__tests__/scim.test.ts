@@ -348,6 +348,10 @@ describe('SCIM 2.0 Endpoints', () => {
   let mockGroups: Map<string, any>;
   let mockUserRoles: Map<string, any[]>;
   let mockCustomClaimSchemas: Array<Record<string, unknown>>;
+  let sessionRevocationStates: Map<
+    string,
+    { lifecycle: string; lifecycleVersionMs: number | null }
+  >;
 
   function createCustomClaimSchemaRow(overrides: Record<string, unknown> = {}) {
     return {
@@ -393,6 +397,7 @@ describe('SCIM 2.0 Endpoints', () => {
     mockGroups = new Map();
     mockUserRoles = new Map();
     mockCustomClaimSchemas = [];
+    sessionRevocationStates = new Map();
 
     // Seed some test data (timestamps as Unix seconds, matching D1 database format)
     const jan15 = Math.floor(new Date('2024-01-15T10:00:00Z').getTime() / 1000);
@@ -451,6 +456,8 @@ describe('SCIM 2.0 Endpoints', () => {
                     tenant_id: user.tenant_id || 'default',
                     account_type: 'user',
                     lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                    subject_lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                    directory_publication_state: 'active',
                     legacy_user_id: user.id,
                     primary_subject_id: `subject:${user.id}`,
                     display_label: null,
@@ -460,6 +467,7 @@ describe('SCIM 2.0 Endpoints', () => {
                     }),
                     created_at: user.created_at,
                     updated_at: user.updated_at,
+                    account_updated_at: user.updated_at,
                     deleted_at: null,
                   };
                 }
@@ -866,6 +874,24 @@ describe('SCIM 2.0 Endpoints', () => {
       } as any,
       INITIAL_ACCESS_TOKENS: {
         get: vi.fn().mockResolvedValue(JSON.stringify({ enabled: true })),
+      } as any,
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          getAccountStateRpc: vi.fn(async (_tenant, _user, account) => {
+            const state = sessionRevocationStates.get(account);
+            return {
+              lifecycle: state?.lifecycle ?? null,
+              lifecycleVersionMs: state?.lifecycleVersionMs ?? null,
+            };
+          }),
+          setAccountLifecycleRpc: vi.fn(
+            async (_tenant, _user, account, lifecycle, lifecycleVersionMs) => {
+              sessionRevocationStates.set(account, { lifecycle, lifecycleVersionMs });
+              return { lifecycle, lifecycleVersionMs };
+            }
+          ),
+        })),
       } as any,
     };
 
@@ -1553,6 +1579,11 @@ describe('SCIM 2.0 Endpoints', () => {
       // Verify response structure - the actual active value depends on mock implementation
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:core:2.0:User');
       expect(body.id).toBe('user-001');
+      const namespace = mockEnv.SESSION_REVOCATION_STORE as any;
+      expect(namespace.get).toHaveBeenCalledOnce();
+      expect(namespace.get.mock.results[0].value.setAccountLifecycleRpc.mock.calls[0][3]).toBe(
+        'inactive'
+      );
     });
 
     it('should reject SCIM password on patch without changing an existing password hash', async () => {
@@ -1622,6 +1653,14 @@ describe('SCIM 2.0 Endpoints', () => {
       const res = await app.fetch(req, mockEnv as Env);
 
       expect(res.status).toBe(204);
+      const namespace = mockEnv.SESSION_REVOCATION_STORE as any;
+      expect(namespace.get).toHaveBeenCalledTimes(2);
+      expect(
+        namespace.get.mock.results.map(
+          (result: { value: { setAccountLifecycleRpc: ReturnType<typeof vi.fn> } }) =>
+            result.value.setAccountLifecycleRpc.mock.calls[0][3]
+        )
+      ).toEqual(['deleting', 'deleted']);
     });
 
     it('should return 404 for non-existent user', async () => {

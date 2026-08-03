@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     findByUserId: vi.fn(),
     findByCredentialId: vi.fn(),
     updateCounterAfterAuth: vi.fn(),
+    mirrorCounterAfterAuth: vi.fn(),
     create: vi.fn(),
   };
   const emailNotifier = {
@@ -71,6 +72,9 @@ const mocks = vi.hoisted(() => {
     persistRegistrationFieldValuesFromEnv: vi.fn(),
     verifyHumanVerificationForAction: vi.fn(),
     verifyEmailVerificationProtocol: vi.fn(),
+    markOtpLoginEmailVerified: vi.fn(),
+    ensureDatabaseAdapter: vi.fn((source) => source),
+    resolveOtpAccountCoreDataContextByIdentifierFromHono: vi.fn(),
     resolveAccountDataContextByIdentifierFromHono: vi.fn(),
     resolveAccountDataContextFromHono: vi.fn(),
     provisionTenantD1EmailAccount: vi.fn(),
@@ -78,6 +82,7 @@ const mocks = vi.hoisted(() => {
     getCookie: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
+    advancePasskeyCounterRpc: vi.fn(),
   };
 });
 
@@ -159,6 +164,29 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         if (!pii) return null;
         return this.findById(pii.id);
       }
+      async findForOtpLogin(userId: string, trustedEmail: string) {
+        const core = await mocks.userCore.findById(userId);
+        if (!core?.is_active) return null;
+        return {
+          id: core.id,
+          account_type: core.user_type === 'admin' ? 'admin' : 'end_user',
+          active: 1,
+          email: trustedEmail.toLowerCase(),
+          name: null,
+          email_verified: core.email_verified ? 1 : 0,
+          created_at: new Date(core.created_at ?? Date.now()).toISOString(),
+        };
+      }
+      async findAccountAuthenticationState(userId: string) {
+        const core = await mocks.userCore.findById(userId);
+        if (!core) return null;
+        return {
+          userId,
+          accountType: core.user_type === 'admin' ? 'admin' : 'user',
+          lifecycle: core.is_active ? 'active' : 'inactive',
+          sourceVersionMs: 1_000,
+        };
+      }
       async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
         await mocks.userCore.createUser({
           id: input.userId,
@@ -206,7 +234,30 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveTenantFromEmailDomain: mocks.resolveTenantFromEmailDomain,
     resolveAccountDataContextByIdentifierFromHono:
       mocks.resolveAccountDataContextByIdentifierFromHono,
+    resolveOtpAccountCoreDataContextByIdentifierFromHono:
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono,
+    markOtpLoginEmailVerified: mocks.markOtpLoginEmailVerified,
+    ensureDatabaseAdapter: mocks.ensureDatabaseAdapter,
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
+    ensureAccountAuthenticationState: vi.fn(async (_env, _tenant, _user, loader) => loader()),
+    advancePasskeyAuthenticationState: vi.fn(async (_env, input, loader) => {
+      const account = await loader();
+      if (!account || account.lifecycle !== 'active') {
+        throw new Error('account_authentication_not_allowed');
+      }
+      return mocks.advancePasskeyCounterRpc(
+        input.tenantId,
+        input.userId,
+        `account:${input.userId}`,
+        input.credentialId,
+        input.storedCounter,
+        input.observedCounter,
+        input.observedAtMs
+      );
+    }),
+    getSessionRevocationStore: vi.fn(() => ({
+      advancePasskeyCounterRpc: mocks.advancePasskeyCounterRpc,
+    })),
     createAuthContextFromHono: vi.fn(() => ({
       coreAdapter: mocks.coreAdapter,
       repositories: {
@@ -305,6 +356,11 @@ function createContext(
     },
     env: createEnv(),
     get: vi.fn((key: string) => (key === 'tenantId' ? 'tenant_test' : undefined)),
+    executionCtx: {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    },
     json: (payload: unknown, status = 200, responseHeaders: Record<string, string> = {}) =>
       new Response(JSON.stringify(payload), {
         status,
@@ -412,6 +468,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       counter: 4,
     });
     mocks.passkey.updateCounterAfterAuth.mockResolvedValue(undefined);
+    mocks.passkey.mirrorCounterAfterAuth.mockResolvedValue(true);
+    mocks.advancePasskeyCounterRpc.mockResolvedValue({ counter: 5, advanced: true });
     mocks.passkey.create.mockResolvedValue(undefined);
     mocks.emailNotifier.send.mockResolvedValue({ success: true, messageId: 'message_1' });
     mocks.getNotifier.mockReturnValue(mocks.emailNotifier);
@@ -472,6 +530,27 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
     mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({});
     mocks.resolveAccountDataContextFromHono.mockResolvedValue({});
+    mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant_test',
+      accountId: 'account:user_existing',
+      legacyUserId: 'user_existing',
+      storageProfileId: 'builtin:storage:tenant-d1',
+      coreDb: { adapter: 'tenant-core' },
+      coreBindingRef: 'TDB_USERS',
+      coreResidencyPartition: 'default',
+      accountRouteGeneration: 1,
+      membership: {},
+      user: {
+        id: 'user_existing',
+        email: 'user@example.com',
+        name: 'Example User',
+        active: 1,
+        email_verified: 0,
+        account_type: 'end_user',
+        created_at: new Date(Date.now() - 120_000).toISOString(),
+      },
+    });
+    mocks.markOtpLoginEmailVerified.mockResolvedValue(true);
     mocks.provisionTenantD1EmailAccount.mockResolvedValue({
       status: 'ready',
       accountId: 'account:user_new',
@@ -731,7 +810,16 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       direct_auth_artifact: expect.any(String),
       expires_in: 60,
     });
-    expect(mocks.passkey.updateCounterAfterAuth).toHaveBeenCalledWith('passkey_1', 5);
+    expect(mocks.advancePasskeyCounterRpc).toHaveBeenCalledWith(
+      'tenant_test',
+      'user_existing',
+      'account:user_existing',
+      'passkey_1',
+      4,
+      5,
+      expect.any(Number)
+    );
+    expect(mocks.passkey.mirrorCounterAfterAuth).toHaveBeenCalledWith('passkey_1', 5);
     expect(mocks.userCore.updateLastLogin).toHaveBeenCalledWith('user_existing');
     expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -755,7 +843,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
-  it('returns a retryable 503 when passkey login reaches the placement write fence', async () => {
+  it('keeps login successful when the asynchronous Passkey D1 mirror is write-fenced', async () => {
     const codeVerifier = 'passkey-login-code-verifier';
     const codeChallenge = await s256Challenge(codeVerifier);
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
@@ -770,7 +858,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         rpID: 'app.example.com',
       },
     });
-    mocks.passkey.updateCounterAfterAuth.mockRejectedValue(
+    mocks.passkey.mirrorCounterAfterAuth.mockRejectedValue(
       new Error('D1_ERROR: tenant_placement_migration_write_fenced private-row')
     );
     const { directPasskeyLoginFinishHandler } = await import('../direct-auth');
@@ -790,18 +878,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(503);
-    expect(response.headers.get('Retry-After')).toBe('1');
-    expect(body).toMatchObject({
-      error: 'temporarily_unavailable',
-      extensions: {
-        reason: 'tenant_placement_write_fence',
-        retryable: true,
-        retry_after_ms: 500,
-      },
-    });
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ direct_auth_artifact: expect.any(String) });
     expect(JSON.stringify(body)).not.toContain('private-row');
-    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    expect(mocks.authCodeStore.storeCodeRpc).toHaveBeenCalled();
   });
 
   it('marks passkey login credential misses as safe for signalUnknownCredential', async () => {
@@ -1330,7 +1410,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
   });
 
   it('returns 202 without sending an OTP while a tenant-D1 account route is pending', async () => {
-    mocks.resolveAccountDataContextByIdentifierFromHono.mockRejectedValueOnce(
+    mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
       new Error('account_data_route_not_found')
     );
     mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
@@ -1384,6 +1464,50 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
     expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
+  });
+
+  it('uses the routed Core-only OTP read for an existing tenant-D1 account', async () => {
+    const context = enableEmailOtp(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'USER@example.com',
+          code_challenge: 'email-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      )
+    );
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
+      context,
+      {
+        indexKind: 'email_exact',
+        identifier: 'user@example.com',
+        trustedEmail: 'user@example.com',
+      }
+    );
+    expect(mocks.userCore.findById).not.toHaveBeenCalled();
+    expect(mocks.userPII.findByTenantAndEmail).not.toHaveBeenCalled();
+    expect(mocks.userPII.createPII).not.toHaveBeenCalled();
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'user_existing',
+        email: 'user@example.com',
+      })
+    );
   });
 
   it('accepts a valid email verification presentation without sending an OTP', async () => {
@@ -2179,6 +2303,63 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         codeChallenge,
       })
     );
+  });
+
+  it('verifies tenant-D1 email OTP with the routed Core projection and one focused update', async () => {
+    const codeVerifier = 'tenant-d1-email-code-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    const challengeData = {
+      challenge: 'hashed-email-code',
+      userId: 'user_existing',
+      email: 'user@example.com',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        scope: 'openid email',
+        transaction_id: 'attempt_tenant_d1',
+        issued_at: Date.now() - 10_000,
+      },
+    };
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
+    const context = createContext({
+      attempt_id: 'attempt_tenant_d1',
+      code: '123456',
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+    const { directEmailCodeVerifyHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeVerifyHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
+      context,
+      {
+        indexKind: 'account_id',
+        identifier: 'account:user_existing',
+        expectedAccountId: 'account:user_existing',
+        expectedLegacyUserId: 'user_existing',
+        trustedEmail: 'user@example.com',
+      }
+    );
+    expect(mocks.userCore.findById).not.toHaveBeenCalled();
+    expect(mocks.userPII.findById).not.toHaveBeenCalled();
+    expect(mocks.markOtpLoginEmailVerified).toHaveBeenCalledWith(
+      { adapter: 'tenant-core' },
+      'tenant_test',
+      'user_existing',
+      expect.any(Number)
+    );
+    expect(context.executionCtx.waitUntil).toHaveBeenCalledOnce();
   });
 
   it('keeps an email-code challenge available after an invalid code', async () => {

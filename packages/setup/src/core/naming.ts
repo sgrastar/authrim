@@ -59,6 +59,7 @@ export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [];
 
 export const DURABLE_OBJECTS = [
   { name: 'SESSION_STORE', className: 'SessionStore' },
+  { name: 'SESSION_REVOCATION_STORE', className: 'SessionRevocationStore' },
   { name: 'SESSION_CLIENT_STORE', className: 'SessionClientStore' },
   { name: 'KEY_MANAGER', className: 'KeyManager' },
   { name: 'AUTH_CODE_STORE', className: 'AuthorizationCodeStore' },

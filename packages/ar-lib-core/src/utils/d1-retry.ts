@@ -24,17 +24,86 @@ export interface RetryConfig {
   initialDelayMs?: number; // Initial delay in milliseconds (default: 100)
   maxDelayMs?: number; // Maximum delay in milliseconds (default: 5000)
   backoffMultiplier?: number; // Backoff multiplier (default: 2)
+  jitterRatio?: number; // Symmetric random jitter ratio (default: 0)
+  maxElapsedMs?: number; // Stop scheduling retries after this deadline (default: unlimited)
+  shouldRetry?: (error: Error) => boolean; // Optional error classifier
+  throwOnExhausted?: boolean; // Preserve the final cause for request-serving adapters
 }
 
 /**
  * Default retry configuration
  */
-const DEFAULT_RETRY_CONFIG: Required<RetryConfig> = {
+const DEFAULT_RETRY_CONFIG = {
   maxRetries: 3,
   initialDelayMs: 100,
   maxDelayMs: 5000,
   backoffMultiplier: 2,
+  jitterRatio: 0,
+  maxElapsedMs: Number.POSITIVE_INFINITY,
+  shouldRetry: () => true,
+  throwOnExhausted: false,
 };
+
+export class D1OperationError extends Error {
+  readonly code: 'd1_temporarily_unavailable' | 'd1_operation_failed';
+  readonly retryable: boolean;
+  readonly attempts: number;
+  readonly cause: Error;
+
+  constructor(operationName: string, attempts: number, cause: Error, retryable: boolean) {
+    super(
+      retryable
+        ? `${operationName} temporarily unavailable`
+        : `${operationName} failed after retries exhausted`,
+      { cause }
+    );
+    this.name = 'D1OperationError';
+    this.code = retryable ? 'd1_temporarily_unavailable' : 'd1_operation_failed';
+    this.retryable = retryable;
+    this.attempts = attempts;
+    // Keep an explicit typed own property so callers can classify the original database error
+    // without depending on how ErrorOptions.cause is represented by the runtime or bundler.
+    this.cause = cause;
+  }
+}
+
+export function isTransientD1Error(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  if (
+    message.includes('unique constraint') ||
+    message.includes('foreign key constraint') ||
+    message.includes('not null constraint') ||
+    message.includes('syntax error') ||
+    message.includes('no such table') ||
+    message.includes('no such column') ||
+    message.includes('tenant_placement_write_fence') ||
+    message.includes('d1_admission_queue')
+  ) {
+    return false;
+  }
+  return (
+    message.includes('d1') ||
+    message.includes('overload') ||
+    message.includes('queued for too long') ||
+    message.includes('network') ||
+    message.includes('timeout') ||
+    message.includes('temporar') ||
+    message.includes('internal error')
+  );
+}
+
+function secureRandomFraction(): number {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return value[0] / 0x1_0000_0000;
+}
+
+function jitterDelay(delay: number, ratio: number): number {
+  if (ratio <= 0) return delay;
+  const boundedRatio = Math.min(1, ratio);
+  const multiplier = 1 - boundedRatio + secureRandomFraction() * boundedRatio * 2;
+  return Math.max(0, Math.round(delay * multiplier));
+}
 
 /**
  * Sleep utility for exponential backoff
@@ -67,8 +136,11 @@ export async function retryD1Operation<T>(
 ): Promise<T | null> {
   const cfg = { ...DEFAULT_RETRY_CONFIG, ...config };
   let lastError: Error | null = null;
+  const startedAt = Date.now();
+  let attempts = 0;
 
   for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
+    attempts = attempt + 1;
     try {
       // Execute the operation
       return await operation();
@@ -80,15 +152,16 @@ export async function retryD1Operation<T>(
       if (isTenantPlacementWriteFenceError(lastError)) throw lastError;
 
       // If this was the last attempt, don't retry
-      if (attempt === cfg.maxRetries) {
+      if (attempt === cfg.maxRetries || !cfg.shouldRetry(lastError)) {
         break;
       }
 
       // Calculate delay with exponential backoff
-      const delay = Math.min(
-        cfg.initialDelayMs * Math.pow(cfg.backoffMultiplier, attempt),
-        cfg.maxDelayMs
+      const delay = jitterDelay(
+        Math.min(cfg.initialDelayMs * Math.pow(cfg.backoffMultiplier, attempt), cfg.maxDelayMs),
+        cfg.jitterRatio
       );
+      if (Date.now() - startedAt + delay > cfg.maxElapsedMs) break;
 
       log.warn(`${operationName}: Attempt ${attempt + 1}/${cfg.maxRetries + 1} failed`, {
         errorMessage: lastError.message,
@@ -104,12 +177,18 @@ export async function retryD1Operation<T>(
 
   // All retries exhausted
   log.error(
-    `${operationName}: All ${cfg.maxRetries + 1} attempts failed`,
+    `${operationName}: All ${attempts} attempts failed`,
     {
       operationName,
     },
     lastError ?? undefined
   );
+
+  if (cfg.throwOnExhausted && lastError) {
+    const retryableForCaller =
+      cfg.shouldRetry(lastError) || lastError.message.toLowerCase().includes('d1_admission_queue');
+    throw new D1OperationError(operationName, attempts, lastError, retryableForCaller);
+  }
 
   // CRITICAL: This should trigger monitoring/alerting in production
   // Consider integrating with error tracking service (Sentry, etc.)

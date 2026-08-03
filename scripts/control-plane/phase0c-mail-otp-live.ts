@@ -24,8 +24,11 @@ const K6_SCRIPT = resolve(
   'load-testing/scripts/benchmarks/test-mail-otp-full-login-benchmark.js'
 );
 const SAMPLE_USER_COUNT = 32;
+const CONTENTION_USER_COUNT = 32;
+const UNIQUE_LOAD_USER_COUNT = 1000;
 const SEED_CONCURRENCY = 4;
 const SEED_ATTEMPTS = 5;
+const SEED_PROGRESS_INTERVAL_MS = 5_000;
 const CLEANUP_CONCURRENCY = 4;
 const MAX_INTERRUPTED_CLEANUP_USERS = 500;
 const MAX_RESPONSE_BYTES = 128 * 1024;
@@ -42,6 +45,8 @@ export type Phase0cMailOtpLiveOptions = {
   | { mode: 'sample'; resultPath: string }
   | { mode: 'pre_gate'; resultPath: string }
   | { mode: 'smoke'; resultPath: string }
+  | { mode: 'contention'; resultPath: string }
+  | { mode: 'load'; resultPath: string }
   | { mode: 'cleanup_interrupted'; resultPath?: never; cleanupRunId?: string }
 );
 
@@ -64,6 +69,11 @@ interface AdminClient {
 interface AdminUser {
   id?: unknown;
   email?: unknown;
+}
+
+export interface Phase0cVerifiedRuntimeProfile {
+  storageProfile: 'builtin:storage:tenant-d1';
+  transientAuthMirrorMode: 'session-do-no-cold-mirror';
 }
 
 interface MailOtpEvidence {
@@ -123,6 +133,150 @@ interface MailOtpEvidence {
   };
 }
 
+export interface Phase0cStepFailure {
+  step: string;
+  status: number;
+  code: string;
+  count: number;
+  firstTimestampMs: number;
+  lastTimestampMs: number;
+}
+
+export interface Phase0cSeedProgress {
+  completed: number;
+  total: number;
+  retries: number;
+  recovered: number;
+  elapsedMs: number;
+  status: 'running' | 'complete' | 'aborted';
+}
+
+export interface Phase0cCleanupProgress {
+  completed: number;
+  total: number;
+  errors: number;
+  elapsedMs: number;
+  status: 'running' | 'complete';
+}
+
+function formatDuration(seconds: number): string {
+  const bounded = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(bounded / 60);
+  const remainingSeconds = bounded % 60;
+  return minutes > 0 ? `${minutes}m${String(remainingSeconds).padStart(2, '0')}s` : `${bounded}s`;
+}
+
+export function formatPhase0cSeedProgress(input: Phase0cSeedProgress): string {
+  const percentage = input.total > 0 ? (input.completed / input.total) * 100 : 100;
+  const elapsedSeconds = input.elapsedMs / 1_000;
+  const rate = elapsedSeconds > 0 ? input.completed / elapsedSeconds : 0;
+  const eta = rate > 0 ? formatDuration((input.total - input.completed) / rate) : '--';
+  return (
+    `[seed] ${input.completed}/${input.total} (${percentage.toFixed(1)}%)` +
+    ` | status=${input.status} | retries=${input.retries} | recovered=${input.recovered}` +
+    ` | rate=${rate.toFixed(1)} users/s | elapsed=${formatDuration(elapsedSeconds)} | ETA=${eta}`
+  );
+}
+
+export function formatPhase0cCleanupProgress(input: Phase0cCleanupProgress): string {
+  const percentage = input.total > 0 ? (input.completed / input.total) * 100 : 100;
+  const elapsedSeconds = input.elapsedMs / 1_000;
+  const rate = elapsedSeconds > 0 ? input.completed / elapsedSeconds : 0;
+  const eta = rate > 0 ? formatDuration((input.total - input.completed) / rate) : '--';
+  return (
+    `[cleanup] ${input.completed}/${input.total} (${percentage.toFixed(1)}%)` +
+    ` | status=${input.status} | errors=${input.errors}` +
+    ` | rate=${rate.toFixed(1)} users/s | elapsed=${formatDuration(elapsedSeconds)} | ETA=${eta}`
+  );
+}
+
+function createPhase0cSeedProgressReporter(total: number): {
+  recordRetry(): void;
+  recordRecovered(): void;
+  recordCompleted(): void;
+  finish(status: 'complete' | 'aborted'): void;
+} {
+  const startedAt = Date.now();
+  const milestone = Math.max(1, Math.ceil(total / 20));
+  let completed = 0;
+  let retries = 0;
+  let recovered = 0;
+  let finished = false;
+  const emit = (status: Phase0cSeedProgress['status']) => {
+    console.log(
+      formatPhase0cSeedProgress({
+        completed,
+        total,
+        retries,
+        recovered,
+        elapsedMs: Date.now() - startedAt,
+        status,
+      })
+    );
+  };
+  console.log(`[seed] Starting ${total} users with concurrency=${SEED_CONCURRENCY}`);
+  emit('running');
+  const heartbeat = setInterval(() => emit('running'), SEED_PROGRESS_INTERVAL_MS);
+  heartbeat.unref();
+  return {
+    recordRetry: () => {
+      retries += 1;
+    },
+    recordRecovered: () => {
+      recovered += 1;
+    },
+    recordCompleted: () => {
+      completed += 1;
+      if (completed % milestone === 0 || completed === total) emit('running');
+    },
+    finish: (status) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(heartbeat);
+      emit(status);
+    },
+  };
+}
+
+function createPhase0cCleanupProgressReporter(total: number): {
+  recordCompleted(failed: boolean): void;
+  finish(): void;
+} {
+  const startedAt = Date.now();
+  const milestone = Math.max(1, Math.ceil(total / 20));
+  let completed = 0;
+  let errors = 0;
+  let finished = false;
+  const emit = (status: Phase0cCleanupProgress['status']) => {
+    console.log(
+      formatPhase0cCleanupProgress({
+        completed,
+        total,
+        errors,
+        elapsedMs: Date.now() - startedAt,
+        status,
+      })
+    );
+  };
+  console.log(`[cleanup] Starting ${total} users with concurrency=${CLEANUP_CONCURRENCY}`);
+  emit('running');
+  const heartbeat = setInterval(() => emit('running'), SEED_PROGRESS_INTERVAL_MS);
+  heartbeat.unref();
+  return {
+    recordCompleted: (failed) => {
+      completed += 1;
+      if (failed) errors += 1;
+      if (completed % milestone === 0 || completed === total) emit('running');
+    },
+    finish: () => {
+      if (finished) return;
+      finished = true;
+      clearInterval(heartbeat);
+      emit('complete');
+    },
+  };
+}
+
 function requiredString(value: unknown, code: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) throw new Error(code);
   return value.trim();
@@ -145,6 +299,8 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
   let smoke = false;
   let sample = false;
   let preGate = false;
+  let contention = false;
+  let load = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === '--env') environment = argv[++index];
@@ -157,13 +313,15 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
     } else if (argument === '--smoke') smoke = true;
     else if (argument === '--sample') sample = true;
     else if (argument === '--pre-gate') preGate = true;
+    else if (argument === '--contention') contention = true;
+    else if (argument === '--load') load = true;
     else throw new Error(`unknown_argument:${argument}`);
   }
   if (environment !== 'test') throw new Error('phase0c_mail_test_environment_required');
   if (!confirmTestData) throw new Error('phase0c_mail_test_data_confirmation_required');
   if (
-    (cleanupInterrupted && (smoke || sample || preGate)) ||
-    Number(smoke) + Number(sample) + Number(preGate) > 1
+    (cleanupInterrupted && (smoke || sample || preGate || contention || load)) ||
+    Number(smoke) + Number(sample) + Number(preGate) + Number(contention) + Number(load) > 1
   ) {
     throw new Error('phase0c_mail_mode_conflict');
   }
@@ -188,7 +346,17 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
   return {
     environment: 'test',
     confirmTestData: true,
-    mode: smoke ? 'smoke' : sample ? 'sample' : 'pre_gate',
+    mode: smoke
+      ? 'smoke'
+      : sample
+        ? 'sample'
+        : preGate
+          ? 'pre_gate'
+          : contention
+            ? 'contention'
+            : load
+              ? 'load'
+              : 'pre_gate',
     resultPath: safeResultPath(resultPath),
   };
 }
@@ -205,6 +373,19 @@ export function createPhase0cMailRunId(now = new Date(), nonce = randomUUID()): 
   return `phase0c-mail-${timestamp}-${suffix}`;
 }
 
+export function resolvePhase0cMailRunId(
+  options: Phase0cMailOtpLiveOptions,
+  generatedRunId = createPhase0cMailRunId()
+): string {
+  return options.mode === 'cleanup_interrupted' && options.cleanupRunId
+    ? options.cleanupRunId
+    : generatedRunId;
+}
+
+export function isRunScopedPhase0cCleanup(options: Phase0cMailOtpLiveOptions): boolean {
+  return options.mode === 'cleanup_interrupted' && options.cleanupRunId !== undefined;
+}
+
 export function buildPhase0cK6Environment(input: {
   baseUrl: string;
   tenantId: string;
@@ -214,7 +395,13 @@ export function buildPhase0cK6Environment(input: {
   userListPath: string;
   resultPath: string;
   runId: string;
-  preset?: 'phase0c-sample' | 'phase0c-pre-gate' | 'phase0c-smoke';
+  runtimeProfile: Phase0cVerifiedRuntimeProfile;
+  preset?:
+    | 'phase0c-sample'
+    | 'phase0c-pre-gate'
+    | 'phase0c-smoke'
+    | 'phase0c-contention'
+    | 'phase0c-load';
   parentEnv?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
   const parent = input.parentEnv ?? process.env;
@@ -233,8 +420,24 @@ export function buildPhase0cK6Environment(input: {
     USER_LIST_PATH: input.userListPath,
     PHASE0C_RESULT: input.resultPath,
     PHASE0C_RUN_ID: input.runId,
-    STORAGE_PROFILE: 'builtin:storage:tenant-d1',
-    TRANSIENT_AUTH_MIRROR_MODE: 'account-routed-session-do-cold-mirror',
+    STORAGE_PROFILE: input.runtimeProfile.storageProfile,
+    TRANSIENT_AUTH_MIRROR_MODE: input.runtimeProfile.transientAuthMirrorMode,
+  };
+}
+
+export function validatePhase0cRuntimeProfile(payload: unknown): Phase0cVerifiedRuntimeProfile {
+  const runtimeProfile = (payload as { runtime_profile?: unknown } | null)?.runtime_profile as
+    | { storage_profile_id?: unknown; session_cold_persistence?: unknown }
+    | undefined;
+  if (runtimeProfile?.storage_profile_id !== 'builtin:storage:tenant-d1') {
+    throw new Error('phase0c_mail_storage_profile_mismatch');
+  }
+  if (runtimeProfile.session_cold_persistence !== 'disabled') {
+    throw new Error('phase0c_mail_session_cold_persistence_must_be_disabled');
+  }
+  return {
+    storageProfile: 'builtin:storage:tenant-d1',
+    transientAuthMirrorMode: 'session-do-no-cold-mirror',
   };
 }
 
@@ -258,6 +461,32 @@ export function validatePhase0cMailSmokeEvidence(input: {
     errors.d1_overloaded !== 0
   ) {
     throw new Error('phase0c_mail_smoke_evidence_invalid');
+  }
+  const serialized = JSON.stringify(evidence);
+  if (
+    input.forbiddenValues.some((value) => value.length >= 4 && serialized.includes(value)) ||
+    /authorization|bearer|client_secret|access_token|otpSessionId|@test\.authrim\.internal/iu.test(
+      serialized
+    )
+  ) {
+    throw new Error('phase0c_mail_evidence_contains_sensitive_value');
+  }
+  return evidence;
+}
+
+export function validatePhase0cMailLoadEvidence(input: {
+  evidence: unknown;
+  runId: string;
+  tenantId: string;
+  forbiddenValues: readonly string[];
+}): MailOtpEvidence {
+  const evidence = input.evidence as MailOtpEvidence;
+  if (
+    evidence?.runId !== input.runId ||
+    evidence?.tenantId !== input.tenantId ||
+    typeof evidence?.metrics?.iterations !== 'number'
+  ) {
+    throw new Error('phase0c_mail_load_evidence_invalid');
   }
   const serialized = JSON.stringify(evidence);
   if (
@@ -488,7 +717,6 @@ async function abandonedPhase0cUserIds(input: {
             WHERE tenant_id = '${input.tenantId}'
               AND owner_type = 'runtime_user'
               AND value_key = 'email'
-              AND lifecycle_state = 'active'
               AND instr(value_json, '"${input.runId}-') = 1
               AND substr(value_json, -length('@test.authrim.internal"')) = '@test.authrim.internal"'
             ORDER BY owner_id
@@ -680,7 +908,9 @@ async function createPhase0cUser(input: {
     body: {
       email: input.email,
       preferred_username: input.email.split('@')[0],
-      email_verified: false,
+      // Match the historical OTP benchmark seed contract. The load phase measures recurring
+      // login work, not the one-time transition of a newly introduced email contact.
+      email_verified: true,
       user_type: 'end_user',
     },
   })) as {
@@ -759,30 +989,110 @@ export async function mapPhase0cBounded<T, R>(
   concurrency: number,
   operation: (value: T, index: number) => Promise<R>
 ): Promise<R[]> {
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new Error('phase0c_bounded_concurrency_invalid');
+  }
   const output = new Array<R>(values.length);
   let nextIndex = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (nextIndex < values.length) {
-        const index = nextIndex++;
+  let firstError: unknown;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (firstError === undefined && nextIndex < values.length) {
+      const index = nextIndex++;
+      try {
         output[index] = await operation(values[index], index);
+      } catch (error) {
+        firstError ??= error;
       }
-    })
-  );
+    }
+  });
+  // Wait for every operation that was already admitted before surfacing the first error. This
+  // prevents seed creation from continuing concurrently with the runner's cleanup phase.
+  await Promise.all(workers);
+  if (firstError !== undefined) throw firstError;
   return output;
 }
 
-async function runK6(environment: NodeJS.ProcessEnv): Promise<number> {
+export function parsePhase0cStepFailure(line: string): Omit<Phase0cStepFailure, 'count'> | null {
+  const match =
+    /PHASE0C_STEP_FAILURE ts=(\d{13}) step=([a-z_]{1,40}) status=(\d{1,3}) code=([A-Za-z0-9_.:-]{1,80}) marker_end=1/u.exec(
+      line
+    );
+  if (!match) return null;
+  const timestampMs = Number(match[1]);
+  const status = Number(match[3]);
+  if (!Number.isSafeInteger(timestampMs) || !Number.isSafeInteger(status) || status > 599) {
+    return null;
+  }
+  return {
+    step: match[2],
+    status,
+    code: match[4],
+    firstTimestampMs: timestampMs,
+    lastTimestampMs: timestampMs,
+  };
+}
+
+async function runK6(environment: NodeJS.ProcessEnv): Promise<{
+  exitCode: number;
+  stepFailures: Phase0cStepFailure[];
+}> {
   return new Promise((resolveExit, reject) => {
     const child = spawn('k6', ['run', K6_SCRIPT], {
       cwd: REPO_ROOT,
       env: environment,
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
+    const failures = new Map<string, Phase0cStepFailure>();
+    const collect = () => {
+      let remainder = '';
+      return (chunk: Buffer | null): void => {
+        const input = remainder + (chunk?.toString('utf8') ?? '');
+        const lines = input.split(/\r?\n/u);
+        remainder = chunk ? (lines.pop() ?? '') : '';
+        for (const line of lines) {
+          const failure = parsePhase0cStepFailure(line);
+          if (!failure) continue;
+          const key = `${failure.step}\u0000${failure.status}\u0000${failure.code}`;
+          const existing = failures.get(key);
+          if (existing) {
+            existing.count += 1;
+            existing.firstTimestampMs = Math.min(
+              existing.firstTimestampMs,
+              failure.firstTimestampMs
+            );
+            existing.lastTimestampMs = Math.max(existing.lastTimestampMs, failure.lastTimestampMs);
+          } else {
+            failures.set(key, { ...failure, count: 1 });
+          }
+        }
+      };
+    };
+    const stdoutCollector = collect();
+    const stderrCollector = collect();
+    child.stdout?.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      stdoutCollector(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      process.stderr.write(chunk);
+      stderrCollector(chunk);
     });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
       if (signal) reject(new Error(`phase0c_mail_k6_signaled:${signal}`));
-      else resolveExit(code ?? 1);
+      else {
+        stdoutCollector(null);
+        stderrCollector(null);
+        resolveExit({
+          exitCode: code ?? 1,
+          stepFailures: [...failures.values()].sort(
+            (left, right) =>
+              left.step.localeCompare(right.step) ||
+              left.status - right.status ||
+              left.code.localeCompare(right.code)
+          ),
+        });
+      }
     });
   });
 }
@@ -801,7 +1111,7 @@ async function main(): Promise<void> {
   const piiDatabaseNames = strictTenantPiiDatabaseNames(lock);
   const tenantId = config.tenant.name;
   const baseUrl = resolvePhase0cTenantApiBaseUrl(config, options.environment);
-  const runId = createPhase0cMailRunId();
+  const runId = resolvePhase0cMailRunId(options);
   if (!RUN_ID_PATTERN.test(runId)) throw new Error('phase0c_mail_run_id_invalid');
 
   const tempDir = await mkdtemp('/private/tmp/authrim-phase0c-mail-otp-');
@@ -822,7 +1132,14 @@ async function main(): Promise<void> {
         ] as const);
   const clientName = `Phase 0c Mail OTP ${options.mode === 'smoke' ? 'Smoke ' : ''}${runId}`;
   const redirectUri = 'https://localhost:3000/callback';
-  const userCount = options.mode === 'smoke' ? 1 : SAMPLE_USER_COUNT;
+  const userCount =
+    options.mode === 'smoke'
+      ? 1
+      : options.mode === 'contention'
+        ? CONTENTION_USER_COUNT
+        : options.mode === 'load'
+          ? UNIQUE_LOAD_USER_COUNT
+          : SAMPLE_USER_COUNT;
   const emails = Array.from(
     { length: userCount },
     (_, index) => `${runId}-${String(index).padStart(3, '0')}@test.authrim.internal`
@@ -835,6 +1152,7 @@ async function main(): Promise<void> {
   let previousRateLimitOverride: RateLimitProfileName | null | undefined;
   let rateLimitOverrideMutationStarted = false;
   let executionError: unknown = null;
+  let runtimeProfile: Phase0cVerifiedRuntimeProfile | null = null;
   const cleanupErrors: string[] = [];
 
   try {
@@ -868,8 +1186,10 @@ async function main(): Promise<void> {
 
     if (options.mode === 'cleanup_interrupted') {
       createdUserIds.push(
-        ...(await interruptedDeletionUserIds({ databaseNames: usersDatabaseNames, tenantId })),
-        ...(options.cleanupRunId
+        ...(isRunScopedPhase0cCleanup(options)
+          ? []
+          : await interruptedDeletionUserIds({ databaseNames: usersDatabaseNames, tenantId })),
+        ...(isRunScopedPhase0cCleanup(options) && options.cleanupRunId
           ? await abandonedPhase0cUserIds({
               databaseNames: piiDatabaseNames,
               tenantId,
@@ -943,38 +1263,48 @@ async function main(): Promise<void> {
         },
       });
 
-      await mapPhase0cBounded(emails, SEED_CONCURRENCY, async (email, index) => {
-        const idempotencyKey = `${runId}-user-${String(index).padStart(3, '0')}`;
-        let userId: string | null = null;
-        let lastError: unknown = new Error('phase0c_mail_seed_user_failed');
-        for (let attempt = 0; attempt < SEED_ATTEMPTS && !userId; attempt += 1) {
-          try {
-            userId = await createPhase0cUser({
-              baseUrl,
-              token: adminToken,
-              tenantId,
-              email,
-              idempotencyKey,
-            });
-          } catch (error) {
-            lastError = error;
-            userId = await findPhase0cUserIdByExactEmail({
-              baseUrl,
-              token: adminToken,
-              tenantId,
-              email,
-            }).catch(() => null);
-            if (!userId && attempt + 1 < SEED_ATTEMPTS) {
-              await new Promise((resolveDelay) =>
-                setTimeout(resolveDelay, Math.min(2_000, 200 * 2 ** attempt))
-              );
+      const seedProgress = createPhase0cSeedProgressReporter(emails.length);
+      let seedCompleted = false;
+      try {
+        await mapPhase0cBounded(emails, SEED_CONCURRENCY, async (email, index) => {
+          const idempotencyKey = `${runId}-user-${String(index).padStart(3, '0')}`;
+          let userId: string | null = null;
+          let lastError: unknown = new Error('phase0c_mail_seed_user_failed');
+          for (let attempt = 0; attempt < SEED_ATTEMPTS && !userId; attempt += 1) {
+            try {
+              userId = await createPhase0cUser({
+                baseUrl,
+                token: adminToken,
+                tenantId,
+                email,
+                idempotencyKey,
+              });
+            } catch (error) {
+              seedProgress.recordRetry();
+              lastError = error;
+              userId = await findPhase0cUserIdByExactEmail({
+                baseUrl,
+                token: adminToken,
+                tenantId,
+                email,
+              }).catch(() => null);
+              if (userId) seedProgress.recordRecovered();
+              if (!userId && attempt + 1 < SEED_ATTEMPTS) {
+                await new Promise((resolveDelay) =>
+                  setTimeout(resolveDelay, Math.min(2_000, 200 * 2 ** attempt))
+                );
+              }
             }
           }
-        }
-        if (!userId) throw lastError;
-        createdUserIds.push(userId);
-        return userId;
-      });
+          if (!userId) throw lastError;
+          createdUserIds.push(userId);
+          seedProgress.recordCompleted();
+          return userId;
+        });
+        seedCompleted = true;
+      } finally {
+        seedProgress.finish(seedCompleted ? 'complete' : 'aborted');
+      }
       await writeFile(userListPath, `${emails.join('\n')}\n`, { mode: 0o600 });
       await chmod(userListPath, 0o600);
 
@@ -994,7 +1324,23 @@ async function main(): Promise<void> {
       }
       adminToken = measurementToken.accessToken;
 
-      if (options.mode === 'sample' || options.mode === 'pre_gate') {
+      runtimeProfile = validatePhase0cRuntimeProfile(
+        await phase0cAdminJson({
+          baseUrl,
+          path: '/api/admin/test/email-codes',
+          method: 'POST',
+          token: adminToken,
+          tenantId,
+          body: { email: emails[0], create_user: false },
+        })
+      );
+
+      if (
+        options.mode === 'sample' ||
+        options.mode === 'pre_gate' ||
+        options.mode === 'contention' ||
+        options.mode === 'load'
+      ) {
         previousRateLimitOverride = parsePhase0cRateLimitOverride(
           await phase0cAdminJson({
             baseUrl,
@@ -1019,7 +1365,7 @@ async function main(): Promise<void> {
         });
       }
 
-      const k6Exit = await runK6(
+      const k6Run = await runK6(
         buildPhase0cK6Environment({
           baseUrl,
           tenantId,
@@ -1029,26 +1375,44 @@ async function main(): Promise<void> {
           userListPath,
           resultPath: options.resultPath,
           runId,
+          runtimeProfile,
           preset:
             options.mode === 'smoke'
               ? 'phase0c-smoke'
               : options.mode === 'sample'
                 ? 'phase0c-sample'
-                : 'phase0c-pre-gate',
+                : options.mode === 'pre_gate'
+                  ? 'phase0c-pre-gate'
+                  : options.mode === 'contention'
+                    ? 'phase0c-contention'
+                    : 'phase0c-load',
         })
       );
       await chmod(options.resultPath, 0o600);
       const evidence = await readPhase0cJson(options.resultPath);
+      if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+        throw new Error('phase0c_mail_load_evidence_invalid');
+      }
+      const enrichedEvidence = {
+        ...(evidence as Record<string, unknown>),
+        step_http_failures: k6Run.stepFailures,
+      };
+      await writeFile(options.resultPath, `${JSON.stringify(enrichedEvidence, null, 2)}\n`, {
+        mode: 0o600,
+      });
       const validation = {
-        evidence,
+        evidence: enrichedEvidence,
         runId,
         tenantId,
         forbiddenValues: [adminToken, oauthClientSecret, ...emails],
       };
       if (options.mode === 'smoke') validatePhase0cMailSmokeEvidence(validation);
       else if (options.mode === 'sample') validatePhase0cMailSampleEvidence(validation);
-      else validatePhase0cMailPreGateEvidence(validation);
-      if (k6Exit !== 0) throw new Error(`phase0c_mail_k6_gate_failed:${k6Exit}`);
+      else if (options.mode === 'pre_gate') validatePhase0cMailPreGateEvidence(validation);
+      else validatePhase0cMailLoadEvidence(validation);
+      if (k6Run.exitCode !== 0) {
+        throw new Error(`phase0c_mail_k6_gate_failed:${k6Run.exitCode}`);
+      }
       console.log(`Phase 0c Mail OTP ${options.mode} evidence: ${options.resultPath}`);
     }
   } catch (error) {
@@ -1098,34 +1462,49 @@ async function main(): Promise<void> {
     }
     if (adminToken) {
       const uniqueUserIds = [...new Set(createdUserIds)];
-      const deletionResults = await mapPhase0cBounded(
-        uniqueUserIds,
-        CLEANUP_CONCURRENCY,
-        async (userId) => {
-          try {
-            await phase0cAdminJson({
-              baseUrl,
-              path: `/api/admin/users/${encodeURIComponent(userId)}`,
-              method: 'DELETE',
-              token: adminToken,
-              tenantId,
-            });
-            return null;
-          } catch (error) {
-            return safePhase0cCleanupError(error);
+      const cleanupProgress = createPhase0cCleanupProgressReporter(uniqueUserIds.length);
+      let deletionResults: Array<string | null> = [];
+      try {
+        deletionResults = await mapPhase0cBounded(
+          uniqueUserIds,
+          CLEANUP_CONCURRENCY,
+          async (userId) => {
+            let result: string | null = null;
+            try {
+              await phase0cAdminJson({
+                baseUrl,
+                path: `/api/admin/users/${encodeURIComponent(userId)}`,
+                method: 'DELETE',
+                token: adminToken,
+                tenantId,
+              });
+            } catch (error) {
+              result = safePhase0cCleanupError(error);
+            }
+            cleanupProgress.recordCompleted(result !== null);
+            return result;
           }
-        }
-      );
+        );
+      } finally {
+        cleanupProgress.finish();
+      }
       const deletionErrors = deletionResults.filter((error): error is string => error !== null);
       if (deletionErrors.length > 0) {
         cleanupErrors.push(`user_cleanup_failed:${deletionErrors.length}:${deletionErrors[0]}`);
       }
       if (options.mode === 'cleanup_interrupted') {
         try {
-          const remaining = await interruptedDeletionUserIds({
-            databaseNames: usersDatabaseNames,
-            tenantId,
-          });
+          const remaining =
+            isRunScopedPhase0cCleanup(options) && options.cleanupRunId
+              ? await abandonedPhase0cUserIds({
+                  databaseNames: piiDatabaseNames,
+                  tenantId,
+                  runId: options.cleanupRunId,
+                })
+              : await interruptedDeletionUserIds({
+                  databaseNames: usersDatabaseNames,
+                  tenantId,
+                });
           if (remaining.length > 0) {
             cleanupErrors.push(`user_cleanup_reconciliation_failed:${remaining.length}`);
           }

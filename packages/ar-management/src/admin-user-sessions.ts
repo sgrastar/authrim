@@ -12,6 +12,7 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
+  recordHybridUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
@@ -181,7 +182,7 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
 
     await runtimeUsers.syncUser({
       userId,
-      active: true,
+      active: runtimeUser.active === 1,
       emailVerified: runtimeUser.email_verified === 1,
       phoneNumberVerified: runtimeUser.phone_number_verified === 1,
       piiFields: { picture: true },
@@ -254,7 +255,7 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
 
     await runtimeUsers.syncUser({
       userId,
-      active: true,
+      active: runtimeUser.active === 1,
       emailVerified: runtimeUser.email_verified === 1,
       phoneNumberVerified: runtimeUser.phone_number_verified === 1,
       piiFields: { picture: true },
@@ -587,21 +588,13 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
 
     const log = getLogger(c).module('ADMIN');
     const revokedAfterMs = Date.now();
-    const existingEpoch = await authCtx.coreAdapter.queryOne<{ tenant_id: string }>(
-      'SELECT tenant_id FROM session_revocation_epochs WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
+    await recordHybridUserSessionRevocationEpoch(
+      c.env,
+      authCtx.coreAdapter,
+      tenantId,
+      userId,
+      revokedAfterMs
     );
-    if (existingEpoch) {
-      await authCtx.coreAdapter.execute(
-        'UPDATE session_revocation_epochs SET revoked_after_ms = ?, updated_at = ? WHERE tenant_id = ? AND user_id = ?',
-        [revokedAfterMs, Math.floor(revokedAfterMs / 1000), tenantId, userId]
-      );
-    } else {
-      await authCtx.coreAdapter.execute(
-        'INSERT INTO session_revocation_epochs (tenant_id, user_id, revoked_after_ms, updated_at) VALUES (?, ?, ?, ?)',
-        [tenantId, userId, revokedAfterMs, Math.floor(revokedAfterMs / 1000)]
-      );
-    }
 
     const sessions = await authCtx.coreAdapter.query<{ id: string }>(
       'SELECT id FROM sessions WHERE tenant_id = ? AND user_id = ?',

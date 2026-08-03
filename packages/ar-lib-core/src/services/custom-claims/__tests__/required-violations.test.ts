@@ -71,11 +71,13 @@ function createMockCoreDb(state: {
           return { results: [] };
         }),
         first: vi.fn(async () => {
-          if (sql.includes('SELECT id, lifecycle_state FROM identity_accounts')) {
+          if (sql.includes('FROM identity_accounts account')) {
             const [userId] = args;
             return {
               id: `account-${userId}`,
               lifecycle_state: state.lifecycleStates.get(userId) ?? null,
+              subject_lifecycle_state: 'active',
+              directory_publication_state: 'active',
             };
           }
 

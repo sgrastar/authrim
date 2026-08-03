@@ -339,6 +339,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-auth': [
     'KEY_MANAGER',
     'SESSION_STORE',
+    'SESSION_REVOCATION_STORE',
     'AUTH_CODE_STORE',
     'CHALLENGE_STORE',
     'RATE_LIMITER',
@@ -348,6 +349,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
   'ar-token': [
     'KEY_MANAGER',
     'SESSION_STORE',
+    'SESSION_REVOCATION_STORE',
     'AUTH_CODE_STORE',
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',
@@ -369,6 +371,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'REFRESH_TOKEN_ROTATOR',
     'RATE_LIMITER',
     'SESSION_STORE',
+    'SESSION_REVOCATION_STORE',
     'TOKEN_REVOCATION_STORE',
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
@@ -382,9 +385,10 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'SAML_REQUEST_STORE',
     'SAML_AGGREGATE_METADATA_STORE',
     'SESSION_STORE',
+    'SESSION_REVOCATION_STORE',
     'CHALLENGE_STORE',
   ],
-  'ar-bridge': ['KEY_MANAGER', 'SESSION_STORE', 'CHALLENGE_STORE'],
+  'ar-bridge': ['KEY_MANAGER', 'SESSION_STORE', 'SESSION_REVOCATION_STORE', 'CHALLENGE_STORE'],
   'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
 };
 
@@ -1553,6 +1557,10 @@ function generateDOMigrations(): WranglerConfig['migrations'] {
     {
       tag: 'v11',
       new_sqlite_classes: ['DeviceSecretRouteStore'],
+    },
+    {
+      tag: 'v12',
+      new_sqlite_classes: ['SessionRevocationStore'],
     },
   ];
 }

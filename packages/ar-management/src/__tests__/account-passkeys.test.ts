@@ -19,6 +19,7 @@ const {
   mockGenerateRegistrationOptions,
   mockVerifyAuthenticationResponse,
   mockVerifyRegistrationResponse,
+  mockAdvancePasskeyAuthenticationState,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -45,6 +46,7 @@ const {
     findByCredentialId: vi.fn(),
     create: vi.fn(),
     updateCounterAfterAuth: vi.fn(),
+    mirrorCounterAfterAuth: vi.fn().mockResolvedValue(true),
   };
   return {
     mockSessionStore: sessionStore,
@@ -66,6 +68,10 @@ const {
     mockGenerateRegistrationOptions: vi.fn(),
     mockVerifyAuthenticationResponse: vi.fn(),
     mockVerifyRegistrationResponse: vi.fn(),
+    mockAdvancePasskeyAuthenticationState: vi.fn(async () => ({
+      counter: 13,
+      advanced: true,
+    })),
   };
 });
 
@@ -101,6 +107,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuditLog: vi.fn().mockResolvedValue(undefined),
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
+    getSessionRevocationStore: vi.fn(() => ({
+      advancePasskeyCounterRpc: vi.fn().mockResolvedValue({ counter: 13, advanced: true }),
+      deleteCredentialStateRpc: vi.fn().mockResolvedValue(true),
+    })),
     generateId: vi.fn(() => 'challenge-001'),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     PasskeyRepository: vi.fn(function PasskeyRepositoryMock() {
@@ -240,14 +252,13 @@ function createMockContext(
     header: (name: string, value: string) => {
       headers.append(name, value);
     },
-    json: (body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: {
-          'Content-Type': 'application/json',
-          ...Object.fromEntries(headers.entries()),
-        },
-      }),
+    json: (body: unknown, status = 200, responseHeaders?: HeadersInit) => {
+      const mergedHeaders = new Headers(responseHeaders);
+      mergedHeaders.set('Content-Type', 'application/json');
+      for (const [name, value] of headers.entries()) mergedHeaders.set(name, value);
+      return new Response(JSON.stringify(body), { status, headers: mergedHeaders });
+    },
+    executionCtx: { waitUntil: vi.fn() },
   } as any;
 }
 
@@ -487,7 +498,7 @@ describe('Account Page passkey management API', () => {
         requireUserVerification: true,
       })
     );
-    expect(mockPasskeyRepo.updateCounterAfterAuth).toHaveBeenCalledWith('pk_001', 13);
+    expect(mockPasskeyRepo.mirrorCounterAfterAuth).toHaveBeenCalledWith('pk_001', 13);
     expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
       'g1:apac:3:session_current',
       expect.objectContaining({
@@ -497,6 +508,38 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.expires_at).toBe(body.reauth.authenticated_at + 300);
+  });
+
+  it('fails closed with 503 when Passkey authentication authority is unavailable', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'reauth-challenge-value',
+      metadata: {
+        rpID: 'op.example.com',
+        origin: 'https://op.example.com',
+        sessionId: 'g1:apac:3:session_current',
+      },
+    });
+    mockPasskeyRepo.findByCredentialId.mockResolvedValueOnce(basePasskey);
+    mockAdvancePasskeyAuthenticationState.mockRejectedValueOnce(
+      new Error('account_authentication_state_unavailable')
+    );
+
+    const response = await completeAccountPasskeyReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        body: {
+          challenge_id: 'challenge-001',
+          credential: { id: 'credential-secret' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
+    expect(mockPasskeyRepo.mirrorCounterAfterAuth).not.toHaveBeenCalled();
   });
 
   it('uses the browser origin when completing passkey re-authentication through the Login UI proxy', async () => {

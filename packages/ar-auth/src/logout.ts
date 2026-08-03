@@ -27,7 +27,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
-  recordUserSessionRevocationEpoch,
+  recordHybridUserSessionRevocationEpoch,
   isShardedSessionId,
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -1253,7 +1253,7 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     } else {
       // A subject-only logout cannot locate every shard, so advance the user's
       // revocation epoch. SessionStore checks this epoch on active-session reads.
-      await recordUserSessionRevocationEpoch(authCtx.coreAdapter, tenantId, userId);
+      await recordHybridUserSessionRevocationEpoch(c.env, authCtx.coreAdapter, tenantId, userId);
       sessionDeleted = true;
       log.info('Invalidated all user sessions by revocation epoch', {
         userId,

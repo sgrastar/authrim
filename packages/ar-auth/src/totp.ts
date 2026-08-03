@@ -18,9 +18,11 @@ import {
   generateBrowserState,
   generateTotpSecret,
   generateUserIdFromSettings,
+  consumeTotpAuthenticationState,
   getBrowserStateCookieSameSite,
   getChallengeStoreByChallengeId,
   getLogger,
+  isAccountAuthenticationDeniedError,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
   getTenantIdFromContext,
@@ -584,6 +586,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       publishTotpFailure(c, tenantId, 'signup_invalid_code');
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
     }
+    const proofVerifiedAtMs = Date.now();
 
     const existingByEmail = await runtimeUsers?.findByEmail(signupEmail, {
       includeInactive: true,
@@ -714,8 +717,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
 
     activationStage = 'session_config';
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');
-    const now = Date.now();
-    const authTime = Math.floor(now / 1000);
+    const authTime = Math.floor(proofVerifiedAtMs / 1000);
     const defaultAcr = await resolveTotpDefaultAcr(c.env, tenantId);
     const authorizationChallengeId = challengeData.metadata?.authorization_challenge_id;
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
@@ -735,6 +737,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     activationStage = 'session_create';
+    const sessionCreatedAtMs = Date.now();
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await sessionStore.createSessionRpc(
       sessionId,
@@ -830,8 +833,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       expires_in: sessionTtl.seconds,
       session: {
         userId: runtimeUser.id,
-        createdAt: now,
-        expiresAt: now + sessionTtl.milliseconds,
+        createdAt: sessionCreatedAtMs,
+        expiresAt: sessionCreatedAtMs + sessionTtl.milliseconds,
         authTime,
         acr: defaultAcr,
         amr: ['otp', 'totp'],
@@ -1091,23 +1094,22 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       }
       const authCtx = createAccountAuthContextFromHono(c, tenantId);
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-      const [runtimeUser, credentials] = await timeAuthRequestDiagnosticOperation(
-        c,
-        'auth_totp_identity_read',
-        () =>
+      const [accountAuthentication, responseUser, credentials] =
+        await timeAuthRequestDiagnosticOperation(c, 'auth_totp_identity_read', () =>
           Promise.all([
-            runtimeUsers.findById(userId, { includeInactive: true }),
+            runtimeUsers.findAccountAuthenticationState(userId),
+            runtimeUsers.findAuthenticationResponseUser(userId),
             authCtx.repositories.totp.findActiveByUserId(userId),
           ])
-      );
+        );
 
-      if (!runtimeUser || runtimeUser.active !== 1 || credentials.length === 0) {
+      if (!accountAuthentication || credentials.length === 0) {
         publishTotpFailure(c, tenantId, 'credential_not_found');
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
-
       let verifiedCredentialId: string | null = null;
       let verifiedTimeStep: number | null = null;
+      let proofVerifiedAtMs: number | null = null;
       for (const credential of credentials) {
         const { decrypted } = await decryptValue(credential.secret_encrypted, encryptionKey);
         const verification = await verifyTotpCode({
@@ -1124,35 +1126,58 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         if (!verification.valid || verification.timeStep === null) {
           continue;
         }
-        const marked = await authCtx.repositories.totp.markUsed(
-          credential.id,
-          userId,
-          verification.timeStep
-        );
-        if (!marked) {
+        const acceptedTimeStep = verification.timeStep;
+        const observedAtMs = Date.now();
+        try {
+          await timeAuthRequestDiagnosticOperation(c, 'auth_totp_time_step_consume', () =>
+            consumeTotpAuthenticationState(
+              c.env,
+              {
+                tenantId,
+                userId,
+                credentialId: credential.id,
+                storedLastUsedTimeStep: credential.last_used_time_step,
+                observedTimeStep: acceptedTimeStep,
+                observedAtMs,
+              },
+              () => Promise.resolve(accountAuthentication)
+            )
+          );
+        } catch (error) {
+          if (!isAccountAuthenticationDeniedError(error)) {
+            return c.json(
+              {
+                error: 'temporarily_unavailable',
+                error_description: 'Authentication state unavailable.',
+              },
+              503,
+              { 'Retry-After': '1' }
+            );
+          }
           publishTotpFailure(c, tenantId, 'replay_detected');
           return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
         }
         verifiedCredentialId = credential.id;
-        verifiedTimeStep = verification.timeStep;
+        verifiedTimeStep = acceptedTimeStep;
+        proofVerifiedAtMs = observedAtMs;
         break;
       }
 
-      if (!verifiedCredentialId || verifiedTimeStep === null) {
+      if (!verifiedCredentialId || verifiedTimeStep === null || proofVerifiedAtMs === null) {
         publishTotpFailure(c, tenantId, 'invalid_code');
         return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
       }
 
       const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'totp');
       const now = Date.now();
-      const authTime = Math.floor(now / 1000);
+      const authTime = Math.floor(proofVerifiedAtMs / 1000);
       let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
       if (authorizationChallengeId && !deferAuthorizationContinuation) {
         const continuation = await consumeAuthorizationChallengeContinuation(
           c.env,
           tenantId,
           authorizationChallengeId,
-          runtimeUser.id,
+          userId,
           authTime,
           new URL(c.req.url).origin
         );
@@ -1167,11 +1192,9 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       await timeAuthRequestDiagnosticOperation(c, 'auth_totp_session_create', () =>
         sessionStore.createSessionRpc(
           sessionId,
-          runtimeUser.id,
+          userId,
           sessionTtl.seconds,
           {
-            email: runtimeUser.email,
-            name: runtimeUser.name,
             amr: ['otp', 'totp'],
             acr: defaultAcr,
             authTime,
@@ -1197,19 +1220,23 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         maxAge: sessionTtl.seconds,
       });
 
-      runtimeUsers.touchLastLogin(runtimeUser.id).catch((error: unknown) => {
-        log.error(
-          'Failed to update TOTP login timestamp',
-          { action: 'user_update' },
-          error as Error
-        );
-      });
+      c.executionCtx.waitUntil(
+        Promise.all([
+          authCtx.repositories.totp.markUsed(verifiedCredentialId, userId, verifiedTimeStep),
+          runtimeUsers.touchLastLogin(userId),
+        ]).catch((error: unknown) => {
+          log.error('Failed to mirror TOTP authentication state', {
+            action: 'totp_state_mirror',
+            errorType: error instanceof Error ? error.name : 'Unknown',
+          });
+        })
+      );
 
       publishEvent(c, {
         type: AUTH_EVENTS.TOTP_SUCCEEDED,
         tenantId,
         data: {
-          userId: runtimeUser.id,
+          userId,
           method: 'totp',
           clientId: 'totp-auth',
           sessionId,
@@ -1224,7 +1251,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       const auditPromise = createAuditLog(c.env, {
         tenantId,
-        userId: runtimeUser.id,
+        userId,
         action: 'user.login',
         resource: 'session',
         resourceId: sessionId,
@@ -1253,7 +1280,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         sessionId,
         expires_in: sessionTtl.seconds,
         session: {
-          userId: runtimeUser.id,
+          userId,
           createdAt: now,
           expiresAt: now + sessionTtl.milliseconds,
           authTime,
@@ -1261,9 +1288,9 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           amr: ['otp', 'totp'],
         },
         user: {
-          id: runtimeUser.id,
-          email: runtimeUser.email,
-          name: runtimeUser.name,
+          id: responseUser.id,
+          email: responseUser.email,
+          name: responseUser.name,
         },
         ...(authorizationContinuation
           ? {

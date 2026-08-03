@@ -4,6 +4,7 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
+  transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import type {
   LifecycleSignalType,
@@ -1384,7 +1385,13 @@ export class IdentityMappingControlPlaneRepository {
   constructor(
     private readonly adapter: DatabaseAdapter,
     private readonly now: () => number = () => Date.now(),
-    private readonly coreAdapter?: DatabaseAdapter
+    private readonly coreAdapter?: DatabaseAdapter,
+    private readonly beforeAccountSuspension?: (
+      tenantId: string,
+      accountId: string,
+      sourceVersionMs: number,
+      operationId: string
+    ) => Promise<void>
   ) {}
 
   async listSchemaReadiness() {
@@ -4722,6 +4729,13 @@ export class IdentityMappingControlPlaneRepository {
 
     const eventId = existingEvent?.id ?? createId('external_lifecycle_signal_event');
     const signalEventId = eventId;
+    if (
+      input.signalType === 'scim_active_false' &&
+      input.targetType === 'account' &&
+      this.beforeAccountSuspension
+    ) {
+      await this.beforeAccountSuspension(tenantId, input.targetId, now, signalEventId);
+    }
     const lifecycleDecision = await this.adapter.transaction(async (tx) => {
       if (!existingEvent) {
         await tx.execute(
@@ -6772,10 +6786,28 @@ async function handleMutation<T>(
 
 function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
   const tenantId = getTenantIdFromContext(c);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   return new IdentityMappingControlPlaneRepository(
     requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane'),
     () => Date.now(),
-    createAuthContextFromHono(c, tenantId).coreAdapter
+    coreAdapter,
+    async (targetTenantId, accountId, sourceVersionMs, operationId) => {
+      const account = await coreAdapter.queryOne<{ legacy_user_id: string | null }>(
+        'SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ? AND id = ?',
+        [targetTenantId, accountId]
+      );
+      if (!account?.legacy_user_id) {
+        throw new Error('account_authentication_subject_unavailable');
+      }
+      await transitionAccountAuthenticationState(c.env, {
+        tenantId: targetTenantId,
+        userId: account.legacy_user_id,
+        lifecycle: 'suspended',
+        sourceVersionMs,
+        operationId,
+        revokeSessions: true,
+      });
+    }
   );
 }
 
