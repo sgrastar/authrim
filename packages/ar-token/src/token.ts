@@ -2926,12 +2926,14 @@ async function handleAuthorizationCodeGrant(
   // This enables frontchannel/backchannel logout to notify the correct RPs
   log.debug('Session-client check', {
     sidPresent: !!authCodeData.sid,
-    storePresent: !!c.env.SESSION_CLIENT_STORE,
+    dbPresent: !!authCtx.coreAdapter,
     action: 'Logout',
   });
   if (authCodeData.sid) {
     try {
       log.debug('Attempting to register session-client', {
+        sid: authCodeData.sid,
+        clientId: client_id,
         action: 'Logout',
       });
       const registrationInput = {
@@ -2948,6 +2950,9 @@ async function handleAuthorizationCodeGrant(
             return;
           }
           log.debug('Successfully registered session-client in DO', {
+            id: result.id,
+            sidPrefix: authCodeData.sid?.substring(0, 25),
+            clientIdPrefix: client_id.substring(0, 25),
             action: 'Logout',
           });
         })
@@ -2965,7 +2970,8 @@ async function handleAuthorizationCodeGrant(
     }
   } else {
     log.warn('Skipped session-client registration', {
-      reason: 'session_id_missing',
+      sid: authCodeData.sid,
+      dbAvailable: !!authCtx.coreAdapter,
       action: 'Logout',
     });
   }
@@ -6638,27 +6644,29 @@ async function handleNativeSSOTokenExchange(
   // 4. Validate device_secret (this also marks it as used)
   // Pass maxUseCountPerSecret from config for replay attack prevention
   let deviceSecretRouteHint: Awaited<ReturnType<typeof resolveDeviceSecretRouteHint>> = null;
-  try {
-    deviceSecretRouteHint = await resolveDeviceSecretRouteHint(c.env, {
-      secret: deviceSecret,
-      tenantId,
-    });
-    if (!deviceSecretRouteHint) {
-      return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+  {
+    try {
+      deviceSecretRouteHint = await resolveDeviceSecretRouteHint(c.env, {
+        secret: deviceSecret,
+        tenantId,
+      });
+      if (!deviceSecretRouteHint) {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      await resolveAccountDataContextFromHono(c, deviceSecretRouteHint.accountId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      return exchangeError(
+        'temporarily_unavailable',
+        'Native SSO account data is unavailable',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'warning' }
+      );
     }
-    await resolveAccountDataContextFromHono(c, deviceSecretRouteHint.accountId);
-  } catch (error) {
-    if (error instanceof Error && error.message === 'account_data_route_not_found') {
-      return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
-    }
-    return exchangeError(
-      'temporarily_unavailable',
-      'Native SSO account data is unavailable',
-      'native_sso_server_error',
-      503,
-      'retry',
-      { retryable: true, severity: 'warning' }
-    );
   }
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);

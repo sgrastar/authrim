@@ -22,10 +22,10 @@ const {
   mockBuildCanonicalProfileRuntimeUserFields,
   mockTotpLogWarn,
   mockResolveAccountDataContextFromHono,
-  mockResolveEmailAccountRoute,
+  mockResolveTenantD1EmailAccountRoute,
+  mockUsesTenantD1AccountStorage,
   mockEnsureAccountAuthenticationState,
   mockConsumeTotpTimeStepRpc,
-  mockProvisionEmailAccount,
 } = vi.hoisted(() => {
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -88,10 +88,10 @@ const {
     }),
     mockTotpLogWarn: vi.fn(),
     mockResolveAccountDataContextFromHono: vi.fn(),
-    mockResolveEmailAccountRoute: vi.fn(),
+    mockResolveTenantD1EmailAccountRoute: vi.fn(),
+    mockUsesTenantD1AccountStorage: vi.fn(),
     mockEnsureAccountAuthenticationState: vi.fn(),
     mockConsumeTotpTimeStepRpc: vi.fn(),
-    mockProvisionEmailAccount: vi.fn(),
   };
 });
 
@@ -154,8 +154,8 @@ vi.mock('../account-provisioning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../account-provisioning')>();
   return {
     ...actual,
-    resolveEmailAccountRoute: mockResolveEmailAccountRoute,
-    provisionEmailAccount: mockProvisionEmailAccount,
+    resolveTenantD1EmailAccountRoute: mockResolveTenantD1EmailAccountRoute,
+    usesTenantD1AccountStorage: mockUsesTenantD1AccountStorage,
   };
 });
 
@@ -270,12 +270,8 @@ describe('TOTP login handlers', () => {
       accountId: 'account:user-001',
       legacyUserId: 'user-001',
     });
-    mockResolveEmailAccountRoute.mockResolvedValue('not_required');
-    mockProvisionEmailAccount.mockResolvedValue({
-      status: 'ready',
-      accountId: 'account:user-signup-001',
-      userId: 'user-signup-001',
-    });
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValue('not_required');
+    mockUsesTenantD1AccountStorage.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -516,7 +512,8 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts a login challenge without exposing unknown identifiers', async () => {
-    mockResolveEmailAccountRoute.mockResolvedValueOnce('not_found');
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValueOnce('not_found');
     const app = createApp();
     const responsePromise = app.request(
       '/api/auth/totp/login/start',
@@ -538,7 +535,7 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(200);
     expect(body.challenge_id).toEqual(expect.any(String));
     expect(body.expires_in).toBe(300);
-    expect(mockResolveEmailAccountRoute).toHaveBeenCalledWith(
+    expect(mockResolveTenantD1EmailAccountRoute).toHaveBeenCalledWith(
       expect.anything(),
       'unknown@example.com'
     );
@@ -553,6 +550,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('starts reauthentication from the bound OAuth challenge without exposing an identifier', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
       tenantId: 'default',
       type: 'reauth',
@@ -631,6 +629,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('verifies a TOTP code and creates an otp/totp session', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     const app = createApp();
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
     const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
@@ -718,6 +717,7 @@ describe('TOTP login handlers', () => {
   });
 
   it('fails closed before reading credentials when the account route is missing', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     mockResolveAccountDataContextFromHono.mockRejectedValueOnce(
       new Error('account_data_route_not_found')
     );
@@ -1072,17 +1072,13 @@ describe('TOTP login handlers', () => {
         }),
       ])
     );
-    expect(mockProvisionEmailAccount).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(mockRuntimeUserStore.syncUser).toHaveBeenCalledWith(
       expect.objectContaining({
-        candidateUserId: 'user-signup-001',
+        userId: 'user-signup-001',
         email: 'new@example.com',
-        flow: 'totp',
-        runtimeUser: expect.objectContaining({
-          active: true,
-          displayName: 'New User',
-          sourceRef: 'auth:totp',
-        }),
+        name: 'New User',
+        active: true,
+        sourceRef: 'direct_auth_totp',
       })
     );
     expect(mockCreateAuthContextFromHono).toHaveBeenCalled();

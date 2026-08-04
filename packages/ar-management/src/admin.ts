@@ -43,10 +43,7 @@ import {
   CanonicalRuntimeUserStore,
   buildTenantSystemSettingsKey,
   getTenantMetadataContextFromHono,
-  resolveAccountDataContext,
-  resolveAccountDataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
-  ensureDatabaseAdapter,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
   type CanonicalOtpLoginUser,
@@ -124,13 +121,11 @@ async function findCanonicalRuntimeUser(
   userId: string,
   options?: { includeInactive?: boolean }
 ) {
-  const account = await resolveAccountDataContext(c.env, {
-    tenantId,
-    accountId: userId,
-  });
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
-    coreAdapter: ensureDatabaseAdapter(account.coreDb, 'admin-runtime-user-core'),
-    piiAdapter: ensureDatabaseAdapter(account.piiDb, 'admin-runtime-user-pii'),
+    coreAdapter: authCtx.coreAdapter,
+    piiAdapter: piiCtx.defaultPiiAdapter,
     tenantId,
   }).findById(userId, options);
 }
@@ -1218,8 +1213,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    await resolveAccountDataContextFromHono(c, userId);
-    const authCtx = createAccountAuthContextFromHono(c, tenantId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     const nowTs = Math.floor(Date.now() / 1000);
 
     const runtimeUsers = new CanonicalRuntimeUserStore({
@@ -2552,6 +2546,7 @@ export async function adminTokenRegisterHandler(c: Context<{ Bindings: Env }>) {
 export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     const body = await c.req.json<{
       user_id: string;
@@ -2616,7 +2611,8 @@ export async function adminTestSessionCreateHandler(c: Context<{ Bindings: Env }
       );
     }
 
-    // SessionStore DO is authoritative; test-session creation performs no D1 mirror write.
+    // D1 insert is handled by SessionStore.saveToD1() asynchronously
+    // (removed duplicate blocking D1 INSERT for performance optimization)
 
     const log = getLogger(c).module('ADMIN');
     log.info('Created test session for user', {
@@ -2753,44 +2749,57 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const createUser = body.create_user !== false;
-    const tenantMetadata = getTenantMetadataContextFromHono(c);
-    if (!tenantMetadata) throw new Error('tenant_metadata_context_missing');
+    const tenantD1 = true;
+    const effectiveStorageProfile = {
+      id: 'builtin:storage:tenant-d1',
+      sessionColdPersistence: false,
+    } as const;
     let resolvedOtpUser: CanonicalOtpLoginUser | null = null;
 
-    try {
-      const accountData = await timeManagementRequestDiagnosticOperation(
-        c,
-        'mg_otp_route_lookup',
-        () =>
-          resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
-            indexKind: 'email_exact',
-            identifier: email.toLowerCase(),
-            trustedEmail: email,
-          })
-      );
-      resolvedOtpUser = accountData.user;
-    } catch (error) {
-      if (error instanceof Error && error.message === 'account_data_route_not_found') {
-        if (!createUser) {
+    if (tenantD1) {
+      try {
+        const accountData = await timeManagementRequestDiagnosticOperation(
+          c,
+          'mg_otp_route_lookup',
+          () =>
+            resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+              indexKind: 'email_exact',
+              identifier: email.toLowerCase(),
+              trustedEmail: email,
+            })
+        );
+        resolvedOtpUser = accountData.user;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'account_data_route_not_found') {
+          if (!createUser) {
+            return c.json(
+              {
+                error: 'invalid_request',
+                error_description: 'User does not exist and create_user is false',
+              },
+              404
+            );
+          }
           return c.json(
             {
-              error: 'invalid_request',
-              error_description: 'User does not exist and create_user is false',
+              error: 'conflict',
+              error_description:
+                'Tenant D1 test users must be provisioned before generating an email code',
             },
-            404
+            409
           );
         }
-        return c.json(
-          {
-            error: 'conflict',
-            error_description: 'Test users must be provisioned before generating an email code',
-          },
-          409
-        );
+        throw error;
       }
-      throw error;
     }
 
+    const runtimeUsers = tenantD1
+      ? null
+      : new CanonicalRuntimeUserStore({
+          coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+          tenantId,
+        });
     let userId: string | null = null;
     let userEmail: string | null = null;
     let userName: string | null = null;
@@ -2799,7 +2808,11 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       c,
       'mg_otp_user_lookup',
       (): Promise<{ id: string; email: string | null; name: string | null } | null> =>
-        Promise.resolve(resolvedOtpUser)
+        tenantD1
+          ? Promise.resolve(resolvedOtpUser)
+          : runtimeUsers
+            ? runtimeUsers.findByEmail(email.toLowerCase(), { includeInactive: true })
+            : Promise.reject(new Error('test_email_code_runtime_user_store_unavailable'))
     );
     const existingUser = lookupUser;
     if (existingUser) {
@@ -2820,13 +2833,30 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         );
       }
 
-      return c.json(
-        {
-          error: 'conflict',
-          error_description: 'Test users must be provisioned before generating an email code',
+      const preferredUsername = email.split('@')[0];
+
+      userId = generateId();
+      if (!runtimeUsers) {
+        throw new Error('test_email_code_runtime_user_store_unavailable');
+      }
+      await runtimeUsers.syncUser({
+        userId,
+        email: email.toLowerCase(),
+        active: true,
+        emailVerified: false,
+        phoneNumberVerified: false,
+        userType: 'end_user',
+        sourceRef: 'admin:test-email-code',
+        piiFields: {
+          preferred_username: true,
         },
-        409
-      );
+        sensitiveValues: {
+          preferred_username: preferredUsername,
+        },
+      });
+
+      userEmail = email.toLowerCase();
+      userName = preferredUsername;
     }
 
     // Generate OTP session ID for session binding
@@ -2838,10 +2868,7 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const code = generateEmailCode();
 
     // Get HMAC secret from environment
-    const hmacSecret = c.env.OTP_HMAC_SECRET;
-    if (!hmacSecret) {
-      throw new Error('OTP_HMAC_SECRET must be configured for test email-code generation');
-    }
+    const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
     // Parallelize independent operations: hash computations + DO stub retrieval
     const [codeHash, emailHash, challengeStore] = await timeManagementRequestDiagnosticOperation(
@@ -2888,8 +2915,8 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         expiresAt: Math.floor(expiresAt / 1000),
         userId: userId,
         runtime_profile: {
-          placement_policy: tenantMetadata.route.placementPolicy.isolationPolicy,
-          placement_policy_generation: tenantMetadata.route.placementPolicy.policyGeneration,
+          storage_profile_id: effectiveStorageProfile.id,
+          session_cold_persistence: effectiveStorageProfile.sessionColdPersistence,
         },
       },
       201
@@ -2931,8 +2958,7 @@ export async function adminUserConsentsListHandler(c: Context<{ Bindings: Env }>
     }
 
     const tenantId = getTenantIdFromContext(c);
-    await resolveAccountDataContextFromHono(c, userId);
-    const authCtx = createAccountAuthContextFromHono(c, tenantId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,
@@ -3225,8 +3251,14 @@ export async function adminClientUsageHandler(c: Context<{ Bindings: Env }>) {
         ]
       ),
 
-      // SessionStore DOs are authoritative and intentionally have no global client aggregate.
-      Promise.resolve<{ active_sessions: number }>({ active_sessions: 0 }),
+      // Active sessions count (sessions that haven't expired)
+      coreAdapter.queryOne<{ active_sessions: number }>(
+        `SELECT COUNT(DISTINCT sc.session_id) as active_sessions
+          FROM session_clients sc
+           JOIN sessions s ON s.id = sc.session_id
+          WHERE sc.client_id = ? AND sc.tenant_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
+        [clientId, tenantId, tenantId, nowTs]
+      ),
 
       // Last token issued timestamp
       auditAdapter.queryOne<{ last_token_at: number | null }>(
@@ -3292,9 +3324,9 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
     }
     const context = hotQuery.context;
     const { tableName, actionColumn, detailsColumn } = getAuditHotQuerySqlSpec(context);
+    const coreAdapter = getCoreAdapter(c, tenantId);
     const auditAdapter = context.adapter;
 
-    await resolveAccountDataContextFromHono(c, userId);
     if (!(await findCanonicalRuntimeUser(c, tenantId, userId, { includeInactive: true }))) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
         variables: { resource: 'user', id: userId },
@@ -3486,8 +3518,7 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    await resolveAccountDataContextFromHono(c, userId);
-    const authCtx = createAccountAuthContextFromHono(c, tenantId);
+    const authCtx = createAuthContextFromHono(c, tenantId);
 
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,

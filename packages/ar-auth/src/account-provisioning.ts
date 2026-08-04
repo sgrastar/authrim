@@ -356,6 +356,14 @@ export async function provisionEmailAccount(
   };
 }
 
+// Transitional symbol aliases for authentication handlers; all implementations route through
+// the Control Plane account provisioner above.
+export const resolveTenantD1EmailAccountRoute = resolveEmailAccountRoute;
+export const resolveTenantD1PasskeyAccountRoute = resolvePasskeyAccountRoute;
+export const publishTenantD1PasskeyRoute = publishPasskeyRoute;
+export const provisionTenantD1EmailAccount = provisionEmailAccount;
+export const usesTenantD1AccountStorage = (_c?: unknown): boolean => true;
+
 export async function provisionAnonymousAccount(
   c: Context<{ Bindings: Env }>,
   input: ProvisionAnonymousAccountInput

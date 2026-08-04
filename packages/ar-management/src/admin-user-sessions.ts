@@ -12,8 +12,7 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
-  getSessionRevocationStore,
-  recordUserSessionRevocation,
+  recordHybridUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
@@ -291,71 +290,90 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
 export async function adminSessionsListHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
-    const page = Math.max(1, parseInt(c.req.query('page') || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20', 10)));
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const page = parseInt(c.req.query('page') || '1');
+    const limit = parseInt(c.req.query('limit') || '20');
     const userId = c.req.query('user_id') || c.req.query('userId');
     const status = c.req.query('status');
     const active = c.req.query('active');
-    if (!userId) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'user_id is required for session listing',
-        },
-        400
-      );
-    }
-    if (status === 'expired' || active === 'false') {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Only active Durable Object sessions can be listed',
-        },
-        400
-      );
-    }
 
-    const nowMs = Date.now();
-    const indexedSessions = await getSessionRevocationStore(
-      c.env,
-      tenantId,
-      userId
-    ).listActiveSessionsRpc(tenantId, userId, `account:${userId}`, nowMs);
-    const activeSessions: Session[] = [];
-    for (const indexed of indexedSessions.slice(0, 1_000)) {
-      if (!isShardedSessionId(indexed.sessionId)) continue;
-      try {
-        const { stub } = getSessionStoreBySessionId(c.env, indexed.sessionId, tenantId);
-        const session = (await stub.getSessionRpc(indexed.sessionId)) as Session | null;
-        if (session && session.userId === userId && session.tenantId === tenantId) {
-          activeSessions.push(session);
-        }
-      } catch {
-        getLogger(c).module('ADMIN').warn('Failed to verify indexed session', {
-          action: 'session_list',
-          sessionId: indexed.sessionId,
-        });
-      }
-    }
-
-    const total = activeSessions.length;
-    const totalPages = Math.ceil(total / limit);
     const offset = (page - 1) * limit;
-    const user = await createRuntimeUserStore(c, tenantId).findById(userId, {
-      includeInactive: true,
-    });
-    const formattedSessions = activeSessions.slice(offset, offset + limit).map((session) => {
+    const now = Math.floor(Date.now() / 1000);
+
+    let query = 'SELECT * FROM sessions WHERE tenant_id = ?';
+    let countQuery = 'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ?';
+    const bindings: unknown[] = [tenantId];
+    const countBindings: unknown[] = [tenantId];
+
+    if (userId) {
+      query += ' AND user_id = ?';
+      countQuery += ' AND user_id = ?';
+      bindings.push(userId);
+      countBindings.push(userId);
+    }
+
+    if (status === 'active' || active === 'true') {
+      query += ' AND expires_at > ?';
+      countQuery += ' AND expires_at > ?';
+      bindings.push(now);
+      countBindings.push(now);
+    } else if (status === 'expired' || active === 'false') {
+      query += ' AND expires_at <= ?';
+      countQuery += ' AND expires_at <= ?';
+      bindings.push(now);
+      countBindings.push(now);
+    }
+
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    bindings.push(limit, offset);
+
+    interface SessionRow {
+      id: string;
+      user_id: string;
+      created_at: number;
+      last_accessed_at: number | null;
+      expires_at: number;
+      ip_address: string | null;
+      user_agent: string | null;
+    }
+
+    const [totalResult, sessions] = await Promise.all([
+      authCtx.coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
+      authCtx.coreAdapter.query<SessionRow>(query, bindings),
+    ]);
+
+    const total = totalResult?.count || 0;
+    const totalPages = Math.ceil(total / limit);
+
+    const userContactMap = new Map<string, { email: string | null; name: string | null }>();
+    if (sessions.length > 0) {
+      const runtimeUsers = createRuntimeUserStore(c, tenantId);
+      const userIds = [...new Set(sessions.map((s) => s.user_id).filter(Boolean))];
+      await Promise.all(
+        userIds.map(async (id) => {
+          const user = await runtimeUsers.findById(id, { includeInactive: true });
+          if (user) {
+            userContactMap.set(id, { email: user.email, name: user.name });
+          }
+        })
+      );
+    }
+
+    const formattedSessions = sessions.map((session) => {
+      const userContact = userContactMap.get(session.user_id);
       return {
         id: session.id,
-        user_id: session.userId,
-        user_email: user?.email ?? null,
-        user_name: user?.name ?? null,
-        created_at: new Date(session.createdAt).toISOString(),
-        last_accessed_at: new Date(session.createdAt).toISOString(),
-        expires_at: new Date(session.expiresAt).toISOString(),
-        ip_address: session.data?.ipAddress ?? null,
-        user_agent: session.data?.userAgent ?? null,
-        is_active: session.expiresAt > nowMs,
+        user_id: session.user_id,
+        user_email: userContact?.email ?? null,
+        user_name: userContact?.name ?? null,
+        created_at: new Date(session.created_at * 1000).toISOString(),
+        last_accessed_at: session.last_accessed_at
+          ? new Date(session.last_accessed_at * 1000).toISOString()
+          : new Date(session.created_at * 1000).toISOString(),
+        expires_at: new Date(session.expires_at * 1000).toISOString(),
+        ip_address: session.ip_address || null,
+        user_agent: session.user_agent || null,
+        is_active: session.expires_at > now,
       };
     });
 
@@ -390,7 +408,11 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
   try {
     const sessionId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
     let sessionData: Session | null = null;
+    let isActive = false;
+    let sessionStoreOk = false;
 
     if (isShardedSessionId(sessionId)) {
       try {
@@ -398,7 +420,8 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
         sessionData = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
         if (sessionData) {
-          if (sessionData.tenantId !== tenantId) sessionData = null;
+          isActive = sessionData.expiresAt > Date.now();
+          sessionStoreOk = true;
         }
       } catch {
         const log = getLogger(c).module('ADMIN');
@@ -406,7 +429,18 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    if (!sessionData) {
+    interface SessionRow {
+      id: string;
+      user_id: string;
+      created_at: number;
+      expires_at: number;
+    }
+    const session = await authCtx.coreAdapter.queryOne<SessionRow>(
+      'SELECT * FROM sessions WHERE id = ? AND tenant_id = ?',
+      [sessionId, tenantId]
+    );
+
+    if (!session && !sessionData) {
       return c.json(
         {
           error: 'not_found',
@@ -418,7 +452,7 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
 
     let userEmail: string | null = null;
     let userName: string | null = null;
-    const userId = sessionData.userId;
+    const userId = sessionData?.userId || session?.user_id;
     if (userId) {
       const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId, {
         includeInactive: true,
@@ -432,10 +466,10 @@ export async function adminSessionGetHandler(c: Context<{ Bindings: Env }>) {
       userId,
       userEmail,
       userName,
-      expiresAt: sessionData.expiresAt,
-      createdAt: sessionData.createdAt,
-      isActive: sessionData.expiresAt > Date.now(),
-      source: 'durable_object',
+      expiresAt: sessionData?.expiresAt || (session?.expires_at as number) * 1000,
+      createdAt: sessionData?.createdAt || (session?.created_at as number) * 1000,
+      isActive: isActive || (session?.expires_at as number) > Math.floor(Date.now() / 1000),
+      source: sessionStoreOk ? 'memory' : 'database',
     };
 
     return c.json({
@@ -461,7 +495,14 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
   try {
     const sessionId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    if (!isShardedSessionId(sessionId)) {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+
+    const session = await authCtx.coreAdapter.queryOne<{ id: string; user_id: string }>(
+      'SELECT id, user_id FROM sessions WHERE id = ? AND tenant_id = ?',
+      [sessionId, tenantId]
+    );
+
+    if (!session) {
       return c.json(
         {
           error: 'not_found',
@@ -472,18 +513,36 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const log = getLogger(c).module('ADMIN');
-    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-    if (!session || session.tenantId !== tenantId) {
-      return c.json({ error: 'not_found', error_description: 'Session not found' }, 404);
+    if (isShardedSessionId(sessionId)) {
+      try {
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+        const deleted = await sessionStore.invalidateSessionRpc(sessionId);
+
+        if (!deleted) {
+          log.warn('Failed to delete session from SessionStore', {
+            action: 'session_delete',
+            sessionId,
+          });
+        }
+      } catch {
+        log.warn('Failed to route to session store', { action: 'session_delete', sessionId });
+      }
+    } else {
+      log.warn('Session is not in sharded format, skipping DO deletion', {
+        action: 'session_delete',
+        sessionId,
+      });
     }
-    const deleted = await sessionStore.invalidateSessionRpc(sessionId);
-    if (!deleted) throw new Error('session_revocation_failed');
+
+    await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
+      sessionId,
+      tenantId,
+    ]);
 
     log.info('Admin revoked session', {
       action: 'session_revoke',
       sessionId,
-      userId: session.userId,
+      userId: session.user_id,
     });
 
     return c.json({
@@ -507,12 +566,14 @@ export async function adminSessionRevokeHandler(c: Context<{ Bindings: Env }>) {
  * Revoke all sessions for a user
  * POST /admin/users/:id/revoke-all-sessions
  *
- * Advances the per-user Durable Object revocation epoch.
+ * Deletes persisted session rows and invalidates any sharded SessionStore entries
+ * that can be located from the persistence index.
  */
 export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUser = await createRuntimeUserStore(c, tenantId).findById(userId);
 
     if (!runtimeUser) {
@@ -527,35 +588,74 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
 
     const log = getLogger(c).module('ADMIN');
     const revokedAfterMs = Date.now();
-    const indexedSessions = await getSessionRevocationStore(
+    await recordHybridUserSessionRevocationEpoch(
       c.env,
+      authCtx.coreAdapter,
       tenantId,
-      userId
-    ).listActiveSessionsRpc(tenantId, userId, `account:${userId}`, revokedAfterMs);
-    await recordUserSessionRevocation(c.env, tenantId, userId, revokedAfterMs);
-    const revokedCount = indexedSessions.length;
+      userId,
+      revokedAfterMs
+    );
+
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT id FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
+
+    let storeRevokedCount = 0;
+    for (const session of sessions) {
+      if (!isShardedSessionId(session.id)) {
+        continue;
+      }
+      try {
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, session.id, tenantId);
+        const deleted = await sessionStore.invalidateSessionRpc(session.id);
+        if (deleted) {
+          storeRevokedCount += 1;
+        } else {
+          log.warn('Failed to delete session from SessionStore', {
+            action: 'session_delete',
+            sessionId: session.id,
+          });
+        }
+      } catch {
+        log.warn('Failed to route to session store', {
+          action: 'session_delete',
+          sessionId: session.id,
+        });
+      }
+    }
+
+    const deleteResult = await authCtx.coreAdapter.execute(
+      'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
+
+    const dbRevokedCount = deleteResult.rowsAffected || 0;
 
     log.info('Admin revoked all sessions for user', {
       action: 'revoke_all_sessions',
       userId,
-      revokedCount,
+      revokedCount: dbRevokedCount,
+      storeRevokedCount,
     });
 
     await createAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
-      revoked_count: revokedCount,
+      revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
       revoked_after_ms: revokedAfterMs,
     });
     scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {
-      revoked_count: revokedCount,
+      revoked_count: dbRevokedCount,
+      store_revoked_count: storeRevokedCount,
       revoked_after_ms: revokedAfterMs,
     });
 
     return c.json({
       success: true,
-      message: 'All user sessions were revoked.',
+      message: 'All located user sessions were revoked.',
       userId,
-      revokedCount,
-      storeRevokedCount: revokedCount,
+      revokedCount: dbRevokedCount,
+      storeRevokedCount,
       revokedAfterMs,
     });
   } catch (error) {

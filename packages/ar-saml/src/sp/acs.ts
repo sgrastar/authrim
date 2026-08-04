@@ -24,8 +24,8 @@ import {
   persistCustomClaimWrite,
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
-  resolveAccountDataContextByIdentifier,
-  type AuthAccountProvisioningInput,
+  resolveTenantUserStoreSourcesFromEnv,
+  resolveUserStoreRuntimeSourcesFromEnv,
   getChallengeStoreByChallengeId,
   CanonicalRuntimeUserStore,
   resolveRuntimeIdentityMappingBinding,
@@ -1162,8 +1162,6 @@ type SAMLIdentityResolutionFailureReason =
   | 'missing_email'
   | 'pii_database_unavailable'
   | 'custom_claim_validation_failed'
-  | 'account_provisioning_pending'
-  | 'account_route_inconsistent'
   | 'linked_identity_subject_conflict';
 
 class SamlProvisioningError extends Error {
@@ -1351,56 +1349,30 @@ async function findOrCreateUser(
   idpConfig: SAMLIdPConfig,
   tenantId: string
 ): Promise<SAMLIdentityResolution> {
-  const providerId = idpConfig.entityId;
-  const providerUserKey = buildSAMLProviderUserKey(userInfo);
-  const normalizedEmail = normalizeEmail(userInfo.email);
-  const jitEmailLinkingPolicy = resolveJitEmailLinkingPolicy(idpConfig);
-  let account = null;
-  try {
-    account = await resolveAccountDataContextByIdentifier(env, {
-      tenantId,
-      indexKind: 'external_subject',
-      identifier: { issuer: providerId, subject: providerUserKey },
-    });
-  } catch (error) {
-    if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
+  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(
+    userStoreSources.coreDb,
+    'saml-acs-core'
+  );
+  const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
+    ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
+    : null;
+  if (!piiAdapter) {
+    throw new SamlProvisioningError(
+      'SAML ACS canonical runtime user store requires a PII database',
+      'pii_database_unavailable'
+    );
   }
-  if (!account && normalizedEmail) {
-    try {
-      account = await resolveAccountDataContextByIdentifier(env, {
-        tenantId,
-        indexKind: 'email_exact',
-        identifier: normalizedEmail,
-      });
-    } catch (error) {
-      if (!(error instanceof Error && error.message === 'account_data_route_not_found'))
-        throw error;
-    }
-  }
-  if (!account) {
-    if (jitEmailLinkingPolicy === 'disabled') {
-      throw new SamlProvisioningError(
-        'SAML JIT provisioning is disabled for this IdP',
-        'jit_disabled'
-      );
-    }
-    return provisionSamlJitAccount(env, {
-      tenantId,
-      providerId,
-      providerUserKey,
-      normalizedEmail: normalizedEmail ?? null,
-      userInfo,
-      allowSyntheticEmailFallback: idpConfig.allowSyntheticEmailFallback === true,
-    });
-  }
-  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(account.coreDb, 'saml-acs-core');
-  const piiAdapter = ensureDatabaseAdapter(account.piiDb, 'saml-acs-pii');
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter,
     piiAdapter,
     tenantId,
   });
-  const linkedIdentityAdapter = piiAdapter;
+  const linkedIdentityAdapter = piiAdapter ?? coreAdapter;
+  const providerId = idpConfig.entityId;
+  const providerUserKey = buildSAMLProviderUserKey(userInfo);
+  const normalizedEmail = normalizeEmail(userInfo.email);
+  const jitEmailLinkingPolicy = resolveJitEmailLinkingPolicy(idpConfig);
 
   const existingLink = await findSAMLLinkedIdentity(
     linkedIdentityAdapter,
@@ -1512,14 +1484,6 @@ async function findOrCreateUser(
         userInfo: { ...userInfo, email: normalizedEmail },
         piiShape: Boolean(piiAdapter),
       });
-      await publishSamlExternalRoute(env, {
-        tenantId,
-        accountId: account.accountId,
-        userId: activeUser.id,
-        linkedIdentityId,
-        providerId,
-        providerUserKey,
-      });
 
       return {
         userId: activeUser.id,
@@ -1536,89 +1500,21 @@ async function findOrCreateUser(
     );
   }
 
-  throw new SamlProvisioningError(
-    'SAML account route did not resolve to a usable linked identity',
-    'account_route_inconsistent'
-  );
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function publishSamlExternalRoute(
-  env: Env,
-  input: {
-    tenantId: string;
-    accountId: string;
-    userId: string;
-    linkedIdentityId: string;
-    providerId: string;
-    providerUserKey: string;
-  }
-): Promise<void> {
-  const provisioner = env.SAML_ACCOUNT_PROVISIONER;
-  if (!provisioner) throw new Error('saml_account_provisioner_unavailable');
-  const digest = await sha256Hex(
-    JSON.stringify({
-      tenantId: input.tenantId,
-      accountId: input.accountId,
-      linkedIdentityId: input.linkedIdentityId,
-      providerId: input.providerId,
-      providerUserKey: input.providerUserKey,
-    })
-  );
-  const operationId = `saml-route-${digest.slice(0, 32)}`;
-  const result = await provisioner.publishExternalIdpRoute({
-    schemaVersion: 1,
-    operationId,
-    idempotencyKey: `saml-route:${digest}`,
-    tenantId: input.tenantId,
-    accountId: input.accountId,
-    userId: input.userId,
-    linkedIdentityId: input.linkedIdentityId,
-    providerId: input.providerId,
-    providerUserId: input.providerUserKey,
-  });
-  if (
-    result.operationId !== operationId ||
-    result.accountId !== input.accountId ||
-    (result.status !== 201 && result.status !== 202)
-  ) {
-    throw new Error('saml_external_route_publication_invalid');
-  }
-}
-
-async function provisionSamlJitAccount(
-  env: Env,
-  input: {
-    tenantId: string;
-    providerId: string;
-    providerUserKey: string;
-    normalizedEmail: string | null;
-    userInfo: UserInfo;
-    allowSyntheticEmailFallback: boolean;
-  }
-): Promise<SAMLIdentityResolution> {
-  const provisioner = env.SAML_ACCOUNT_PROVISIONER;
-  if (!provisioner) throw new Error('saml_account_provisioner_unavailable');
-  if (!input.normalizedEmail && !input.allowSyntheticEmailFallback) {
-    throw new SamlProvisioningError(
-      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
-      'missing_email'
-    );
-  }
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, input.tenantId);
+  const tenantUserSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
+  const customClaimSources = {
+    schemaDb: userStoreSources.coreDb,
+    nonPiiDb: tenantUserSources.coreDb,
+    piiDb: tenantUserSources.piiDb,
+  };
   const customClaimValidation = await validateCustomClaimWrite({
-    db: customClaimSources.schemaDb,
-    dbPii: null,
-    piiStorageAvailable: true,
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
     schemaDb: customClaimSources.schemaDb,
-    tenantId: input.tenantId,
-    submitted: input.userInfo.customClaims,
+    tenantId,
+    submitted: userInfo.customClaims,
     requireCompleteRecord: true,
   });
+
   if (!customClaimValidation.ok) {
     throw new SamlProvisioningError(
       customClaimValidation.error,
@@ -1626,89 +1522,93 @@ async function provisionSamlJitAccount(
       customClaimValidation.missingRequiredFields
     );
   }
-  const candidateUserId = crypto.randomUUID();
-  const subjectDigest = await sha256Hex(
-    `${input.tenantId}\u0000${input.providerId}\u0000${input.providerUserKey}`
-  );
-  const email =
-    input.normalizedEmail ?? (await buildSyntheticSAMLEmail(`${subjectDigest.slice(0, 32)}`));
-  const runtimeUser: AuthAccountProvisioningInput['runtimeUser'] = {
+
+  // Create new user (JIT provisioning - canonical graph + PII sensitive value store)
+  const userId = crypto.randomUUID();
+  if (!normalizedEmail && !idpConfig.allowSyntheticEmailFallback) {
+    throw new SamlProvisioningError(
+      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
+      'missing_email'
+    );
+  }
+  const email = normalizedEmail || (await buildSyntheticSAMLEmail(providerUserKey));
+  await runtimeUsers.syncUser({
+    userId,
+    email,
+    name: userInfo.name || null,
     active: true,
     emailVerified: true,
     userType: 'end_user',
-    displayName: input.userInfo.name ?? null,
-    sourceRef: 'auth:saml',
-    piiFields: { email: true, name: Boolean(input.userInfo.name) },
-    sensitiveValues: { email, name: input.userInfo.name ?? null },
-  };
-  const stableRequest = JSON.stringify({
-    tenantId: input.tenantId,
-    providerId: input.providerId,
-    providerUserKey: input.providerUserKey,
-    email,
-    runtimeUser,
+    sourceRef: `saml:${providerId}`,
   });
-  const requestDigest = await sha256Hex(stableRequest);
-  const provisioned = await provisioner.provisionAuthAccount({
-    schemaVersion: 1,
-    operationId: `saml-account-${crypto.randomUUID()}`,
-    idempotencyKey: `saml-account:${requestDigest}`,
-    tenantId: input.tenantId,
-    candidateUserId,
-    flow: 'saml',
-    email,
-    externalSubject: { issuer: input.providerId, subject: input.providerUserKey },
-    runtimeUser,
-  });
-  if (provisioned.status === 202) {
-    throw new SamlProvisioningError(
-      'SAML account provisioning is still pending',
-      'account_provisioning_pending'
-    );
+
+  try {
+    await persistCustomClaimWrite({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      tenantId,
+      userId,
+      validation: customClaimValidation,
+    });
+
+    await syncUserLifecycleState({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      schemaDb: customClaimSources.schemaDb,
+      stateDb: coreAdapter,
+      tenantId,
+      userId,
+      accountAuthenticationEnv: env,
+    });
+
+    const linkedIdentityId = await createSAMLLinkedIdentity({
+      adapter: linkedIdentityAdapter,
+      tenantId,
+      userId,
+      providerId,
+      providerUserKey,
+      userInfo: { ...userInfo, email },
+      piiShape: Boolean(piiAdapter),
+    });
+
+    return {
+      userId,
+      action: 'jit_create',
+      linkedIdentityId,
+    };
+  } catch (jitError) {
+    await cleanupSAMLJitUser({
+      coreAdapter,
+      piiAdapter,
+      runtimeUsers,
+      customClaimDb: customClaimSources.nonPiiDb,
+      userId,
+      tenantId,
+    });
+    throw jitError;
   }
-  const account = await resolveAccountDataContextByIdentifier(env, {
-    tenantId: input.tenantId,
-    indexKind: 'external_subject',
-    identifier: { issuer: input.providerId, subject: input.providerUserKey },
-    expectedAccountId: provisioned.accountId,
-  });
-  if (account.legacyUserId !== provisioned.userId) {
-    throw new Error('saml_account_provisioning_route_mismatch');
-  }
-  await persistCustomClaimWrite({
-    db: account.coreDb,
-    dbPii: account.piiDb,
-    tenantId: input.tenantId,
-    userId: account.legacyUserId,
-    validation: customClaimValidation,
-  });
-  await syncUserLifecycleState({
-    db: account.coreDb,
-    dbPii: account.piiDb,
-    schemaDb: customClaimSources.schemaDb,
-    stateDb: ensureDatabaseAdapter(account.coreDb, 'saml-jit-lifecycle'),
-    tenantId: input.tenantId,
-    userId: account.legacyUserId,
-    accountAuthenticationEnv: env,
-  });
-  const linkedIdentityId = await createSAMLLinkedIdentity({
-    adapter: ensureDatabaseAdapter(account.piiDb, 'saml-jit-linked-identity'),
-    tenantId: input.tenantId,
-    userId: account.legacyUserId,
-    providerId: input.providerId,
-    providerUserKey: input.providerUserKey,
-    userInfo: { ...input.userInfo, email },
-    piiShape: true,
-  });
-  await publishSamlExternalRoute(env, {
-    tenantId: input.tenantId,
-    accountId: account.accountId,
-    userId: account.legacyUserId,
-    linkedIdentityId,
-    providerId: input.providerId,
-    providerUserKey: input.providerUserKey,
-  });
-  return { userId: account.legacyUserId, action: 'jit_create', linkedIdentityId };
+}
+
+async function cleanupSAMLJitUser(params: {
+  coreAdapter: DatabaseAdapter;
+  piiAdapter: DatabaseAdapter | null;
+  runtimeUsers: CanonicalRuntimeUserStore;
+  customClaimDb: Parameters<typeof ensureDatabaseAdapter>[0];
+  userId: string;
+  tenantId: string;
+}): Promise<void> {
+  const operations: Array<Promise<unknown>> = [];
+  void params.coreAdapter;
+  void params.piiAdapter;
+  operations.push(params.runtimeUsers.deleteUser(params.userId));
+  operations.push(
+    ensureDatabaseAdapter(params.customClaimDb, 'saml-acs-custom-claim-cleanup').execute(
+      'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
+      [params.userId, params.tenantId]
+    )
+  );
+
+  await Promise.allSettled(operations);
 }
 
 function buildSAMLProviderUserKey(userInfo: UserInfo): string {

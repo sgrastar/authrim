@@ -4,7 +4,6 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
-  resolveAccountDataContext,
   transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import type {
@@ -6793,13 +6792,16 @@ function createRepository(c: AdminContext): IdentityMappingControlPlaneRepositor
     () => Date.now(),
     coreAdapter,
     async (targetTenantId, accountId, sourceVersionMs, operationId) => {
-      const account = await resolveAccountDataContext(c.env, {
-        tenantId: targetTenantId,
-        accountId,
-      });
+      const account = await coreAdapter.queryOne<{ legacy_user_id: string | null }>(
+        'SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ? AND id = ?',
+        [targetTenantId, accountId]
+      );
+      if (!account?.legacy_user_id) {
+        throw new Error('account_authentication_subject_unavailable');
+      }
       await transitionAccountAuthenticationState(c.env, {
         tenantId: targetTenantId,
-        userId: account.legacyUserId,
+        userId: account.legacy_user_id,
         lifecycle: 'suspended',
         sourceVersionMs,
         operationId,

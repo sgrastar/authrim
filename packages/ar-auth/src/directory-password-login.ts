@@ -9,7 +9,6 @@ import {
   completeDirectoryAuthPasskeyEnrollment,
   createAuditLog,
   createAuthContextFromHono,
-  createAccountAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
@@ -34,9 +33,6 @@ import {
   markDirectoryAuthMigrationUserEnrolled,
   parseAllowedOrigins,
   publishEvent,
-  directoryIdentityLookupSubject,
-  resolveAccountDataContextByIdentifierFromHono,
-  type AccountDataContext,
   resolveDirectoryAuthEmailFallbackRecoveryCampaign,
   resolveDirectoryAuthEffectiveEmailCodeFallbackMode,
   resolveDirectoryAuthMigrationDecision,
@@ -68,7 +64,7 @@ import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
-import { publishPasskeyRoute } from './account-provisioning';
+import { publishTenantD1PasskeyRoute } from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
@@ -261,42 +257,6 @@ async function ensureDirectoryAccountAuthenticationState(
   );
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-async function publishDirectoryAccountRoute(
-  c: Context<{ Bindings: Env }>,
-  account: AccountDataContext,
-  connectorId: string,
-  directorySubject: string
-): Promise<void> {
-  const provisioner = c.env.ACCOUNT_PROVISIONER;
-  if (!provisioner) throw new Error('account_provisioner_unavailable');
-  const digest = await sha256Hex(
-    `${account.tenantId}\u0000${account.accountId}\u0000${connectorId}\u0000${directorySubject}`
-  );
-  const operationId = `directory-route-${digest.slice(0, 32)}`;
-  const result = await provisioner.publishAuthDirectoryRoute({
-    schemaVersion: 1,
-    operationId,
-    idempotencyKey: `auth-directory-route:${digest}`,
-    tenantId: account.tenantId,
-    accountId: account.accountId,
-    userId: account.legacyUserId,
-    connectorId,
-    directorySubject,
-  });
-  if (
-    result.operationId !== operationId ||
-    result.accountId !== account.accountId ||
-    (result.status !== 201 && result.status !== 202)
-  ) {
-    throw new Error('directory_route_publication_result_invalid');
-  }
-}
-
 export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordFetch) {
   return async function directoryPasswordLoginHandler(c: Context<{ Bindings: Env }>) {
     const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
@@ -459,51 +419,16 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
 
     await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
 
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const directoryFacts = buildDirectoryFacts(connector, verdict);
-    const email = directoryEmail(verdict);
-    const externalSubject = directoryIdentityLookupSubject({
-      connectorId: connector.wordwardenConnectorId,
-      directorySubject: verdict.subject.directory_id,
-    });
-    let account: AccountDataContext | null = null;
-    try {
-      account = await resolveAccountDataContextByIdentifierFromHono(c, {
-        indexKind: 'external_subject',
-        identifier: externalSubject,
-      });
-    } catch (error) {
-      if (!(error instanceof Error && error.message === 'account_data_route_not_found'))
-        throw error;
-    }
-    if (!account && email) {
-      try {
-        account = await resolveAccountDataContextByIdentifierFromHono(c, {
-          indexKind: 'email_exact',
-          identifier: email,
-        });
-      } catch (error) {
-        if (!(error instanceof Error && error.message === 'account_data_route_not_found')) {
-          throw error;
-        }
-      }
-    }
-    const authCtx = account
-      ? createAccountAuthContextFromHono(c, tenantId)
-      : createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = account ? createCanonicalRuntimeUserStore(c, tenantId) : null;
-    const linkedUserId = account
-      ? await findDirectoryIdentityLink(
-          authCtx.coreAdapter,
-          tenantId,
-          connector.wordwardenConnectorId,
-          verdict.subject.directory_id
-        )
-      : null;
-    let runtimeUser =
-      linkedUserId && runtimeUsers ? await runtimeUsers.findById(linkedUserId) : null;
-    if (linkedUserId && account && linkedUserId !== account.legacyUserId) {
-      throw new Error('directory_identity_account_route_mismatch');
-    }
+    const linkedUserId = await findDirectoryIdentityLink(
+      authCtx.coreAdapter,
+      tenantId,
+      connector.wordwardenConnectorId,
+      verdict.subject.directory_id
+    );
+    let runtimeUser = linkedUserId ? await runtimeUsers.findById(linkedUserId) : null;
     if (linkedUserId && !runtimeUser) {
       log.warn('Directory identity link references a missing or inactive user', {
         action: 'directory_identity_link_stale',
@@ -518,12 +443,10 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return c.json({ error: 'directory_identity_unmapped' }, 409);
     }
 
-    if (!runtimeUser && email && runtimeUsers && account) {
+    const email = directoryEmail(verdict);
+    if (!runtimeUser && email) {
       runtimeUser = await runtimeUsers.findByEmail(email);
       if (runtimeUser) {
-        if (runtimeUser.id !== account.legacyUserId) {
-          throw new Error('directory_email_account_route_mismatch');
-        }
         try {
           await upsertDirectoryIdentityLink(authCtx.coreAdapter, {
             tenantId,
@@ -532,12 +455,6 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
             userId: runtimeUser.id,
             facts: directoryFacts,
           });
-          await publishDirectoryAccountRoute(
-            c,
-            account,
-            connector.wordwardenConnectorId,
-            verdict.subject.directory_id
-          );
         } catch {
           log.warn('Directory identity link conflict during first login', {
             action: 'directory_identity_link_conflict',
@@ -1059,7 +976,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       device_name: deviceName || 'Directory Migration Passkey',
       aaguid: regInfo.aaguid ?? null,
     });
-    await publishPasskeyRoute(c, {
+    await publishTenantD1PasskeyRoute(c, {
       tenantId,
       userId: transaction.user_id,
       passkeyId,

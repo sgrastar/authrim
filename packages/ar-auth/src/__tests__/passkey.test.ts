@@ -47,10 +47,6 @@ const mockAccountAuthStateStub = vi.hoisted(() => ({
 }));
 
 const mockAdvancePasskeyAuthenticationState = vi.hoisted(() => vi.fn());
-const mockResolvePasskeyAccountRoute = vi.hoisted(() => vi.fn());
-const mockResolveEmailAccountRoute = vi.hoisted(() => vi.fn());
-const mockProvisionEmailAccount = vi.hoisted(() => vi.fn());
-const mockPublishPasskeyRoute = vi.hoisted(() => vi.fn());
 
 const mockChallengeStoreStub = vi.hoisted(() => ({
   storeChallengeRpc: vi.fn(),
@@ -210,28 +206,21 @@ vi.mock('@authrim/ar-lib-core', async () => {
     // Repository pattern mocks - return the pre-defined context objects
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
-    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
-      tenantId: 'default',
-      accountId: `account:${userId}`,
-      legacyUserId: userId,
-    })),
     getTenantIdFromContext: () => 'default',
     advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: 'builtin:storage:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
       schemaDb: env.DB,
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
     })),
   };
 });
-
-vi.mock('../account-provisioning', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../account-provisioning')>()),
-  resolvePasskeyAccountRoute: mockResolvePasskeyAccountRoute,
-  resolveEmailAccountRoute: mockResolveEmailAccountRoute,
-  provisionEmailAccount: mockProvisionEmailAccount,
-  publishPasskeyRoute: mockPublishPasskeyRoute,
-}));
 
 // Helper to create mock D1Database
 function createMockDB(options: {
@@ -580,17 +569,6 @@ describe('Passkey Handlers', () => {
         );
       }
     );
-    mockResolvePasskeyAccountRoute.mockReset().mockResolvedValue({
-      accountId: 'account:user-123',
-      legacyUserId: 'user-123',
-    });
-    mockResolveEmailAccountRoute.mockReset().mockResolvedValue(null);
-    mockProvisionEmailAccount.mockReset().mockResolvedValue({
-      status: 'ready',
-      accountId: 'account:new-user-id',
-      userId: 'new-user-id',
-    });
-    mockPublishPasskeyRoute.mockReset().mockResolvedValue(undefined);
     mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
@@ -675,16 +653,12 @@ describe('Passkey Handlers', () => {
 
       await passkeyRegisterOptionsHandler(c);
 
-      // New accounts go through the authoritative provisioning operation.
-      expect(mockProvisionEmailAccount).toHaveBeenCalledWith(
-        expect.anything(),
+      // Should create new user via Repository
+      expect(mockUserCoreRepository.createUser).toHaveBeenCalledWith(
         expect.objectContaining({
-          flow: 'passkey',
-          email: 'newuser@example.com',
-          runtimeUser: expect.objectContaining({
-            emailVerified: false,
-            userType: 'end_user',
-          }),
+          tenant_id: 'default',
+          email_verified: false,
+          user_type: 'end_user',
         })
       );
       expect(c.json).toHaveBeenCalledWith(
@@ -1253,7 +1227,6 @@ describe('Passkey Handlers', () => {
               clientDataJSON: 'mock-client-data',
               authenticatorData: 'mock-auth-data',
               signature: 'mock-signature',
-              userHandle: 'user-123',
             },
           },
         },
@@ -1262,9 +1235,7 @@ describe('Passkey Handlers', () => {
         sessionStore,
       });
 
-      const response = await passkeyLoginVerifyHandler(c);
-      const responseBody = await response.clone().json();
-      expect(response.status, JSON.stringify(responseBody)).toBe(200);
+      await passkeyLoginVerifyHandler(c);
 
       // The DO accepts the counter before the D1 mirror is scheduled.
       expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledWith(
@@ -1284,7 +1255,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-1', response: { userHandle: 'inactive-user' } },
+          credential: { id: 'credential-1', response: {} },
         },
         headers: { origin: 'https://example.com' },
       });
@@ -1323,7 +1294,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-url', response: { userHandle: 'user-123' } },
+          credential: { id: 'credential-url', response: {} },
         },
         headers: { origin: 'https://example.com' },
       });
@@ -1366,7 +1337,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-1', response: { userHandle: 'user-123' } },
+          credential: { id: 'credential-1', response: {} },
         },
         headers: { origin: 'https://evil.example.com' },
       });
@@ -1397,7 +1368,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-1', response: { userHandle: 'user-123' } },
+          credential: { id: 'credential-1', response: {} },
         },
         headers: { origin: 'https://example.com' },
       });
@@ -1425,7 +1396,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-1', response: { userHandle: 'inactive-user' } },
+          credential: { id: 'credential-1', response: {} },
         },
         headers: { origin: 'https://example.com' },
       });
@@ -1461,7 +1432,7 @@ describe('Passkey Handlers', () => {
       const c = createMockContext({
         body: {
           challengeId: 'challenge-1',
-          credential: { id: 'credential-1', response: { userHandle: 'user-123' } },
+          credential: { id: 'credential-1', response: {} },
         },
         headers: { origin: 'https://example.com' },
       });

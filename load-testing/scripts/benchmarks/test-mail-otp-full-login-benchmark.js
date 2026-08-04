@@ -32,8 +32,7 @@
  *   CLIENT_SECRET     - OAuth client secret (required)
  *   ADMIN_MACHINE_ACCESS_TOKEN  - Admin Machine Access token (required)
  *   PRESET            - Preset name (default: rps10)
- *   TENANT_ID         - Tenant ID for tenant-scoped admin test endpoints (optional)
- *   TENANT_PLACEMENT_POLICY - Server-verified shared_pool or tenant_exclusive label
+ *   TENANT_ID         - Tenant ID for tenant-d1 admin test endpoints (optional)
  *   USER_LIST_PATH    - User list file path (default: ../seeds/otp_user_list.txt)
  *
  * Usage:
@@ -131,7 +130,8 @@ const ADMIN_MACHINE_ACCESS_TOKEN = __ENV.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
 const PRESET = __ENV.PRESET || 'rps10';
 const USER_LIST_PATH = __ENV.USER_LIST_PATH || '../seeds/otp_user_list.txt';
-const TENANT_PLACEMENT_POLICY = __ENV.TENANT_PLACEMENT_POLICY || 'unspecified';
+const STORAGE_PROFILE = __ENV.STORAGE_PROFILE || 'unspecified';
+const TRANSIENT_AUTH_MIRROR_MODE = __ENV.TRANSIENT_AUTH_MIRROR_MODE || 'unspecified';
 const TENANT_ID = __ENV.TENANT_ID || '';
 const PHASE0C_RESULT = __ENV.PHASE0C_RESULT || '';
 const PHASE0C_RUN_ID = __ENV.PHASE0C_RUN_ID || '';
@@ -311,7 +311,8 @@ export const options = {
             tags: {
               phase: 'measurement',
               test_id: TEST_ID,
-              tenant_placement_policy: TENANT_PLACEMENT_POLICY,
+              storage_profile: STORAGE_PROFILE,
+              transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
             },
           },
         }
@@ -340,7 +341,8 @@ export const options = {
               tags: {
                 phase: 'measurement',
                 test_id: TEST_ID,
-                tenant_placement_policy: TENANT_PLACEMENT_POLICY,
+                storage_profile: STORAGE_PROFILE,
+                transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
               },
             },
           }
@@ -355,7 +357,8 @@ export const options = {
                 tags: {
                   phase: 'smoke',
                   test_id: TEST_ID,
-                  tenant_placement_policy: TENANT_PLACEMENT_POLICY,
+                  storage_profile: STORAGE_PROFILE,
+                  transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
                 },
               },
             }
@@ -369,7 +372,8 @@ export const options = {
                 stages: selectedPreset.stages,
                 tags: {
                   test_id: TEST_ID,
-                  tenant_placement_policy: TENANT_PLACEMENT_POLICY,
+                  storage_profile: STORAGE_PROFILE,
+                  transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
                 },
               },
             },
@@ -546,7 +550,8 @@ export function setup() {
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🔑 Client: ${CLIENT_ID}`);
-  console.log(`🧭 Tenant placement: ${TENANT_PLACEMENT_POLICY}`);
+  console.log(`🗄️  Storage profile: ${STORAGE_PROFILE}`);
+  console.log(`🪞 Transient auth mirror mode: ${TRANSIENT_AUTH_MIRROR_MODE}`);
   console.log('');
 
   if (!CLIENT_ID || !CLIENT_SECRET) {
@@ -620,7 +625,8 @@ export function setup() {
     users,
     userCount: users.length,
     preset: PRESET,
-    tenantPlacementPolicy: TENANT_PLACEMENT_POLICY,
+    storageProfile: STORAGE_PROFILE,
+    transientAuthMirrorMode: TRANSIENT_AUTH_MIRROR_MODE,
     baseUrl: BASE_URL,
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
@@ -973,7 +979,8 @@ export function teardown(data) {
   console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
-  console.log(`🧭 Tenant placement: ${data.tenantPlacementPolicy}`);
+  console.log(`🗄️  Storage profile: ${data.storageProfile}`);
+  console.log(`🪞 Transient auth mirror mode: ${data.transientAuthMirrorMode}`);
   console.log(`🎯 Target: ${data.baseUrl}`);
   console.log(`📈 User count: ${data.userCount}`);
 }
@@ -1008,7 +1015,8 @@ export function handleSummary(data) {
 
  🎯 Preset: ${PRESET}
  📝 Description: ${selectedPreset.description}
- 🧭 Tenant placement: ${TENANT_PLACEMENT_POLICY}
+ 🗄️  Storage profile: ${STORAGE_PROFILE}
+ 🪞 Transient auth mirror mode: ${TRANSIENT_AUTH_MIRROR_MODE}
 
  📈 Flow Statistics:
    Total iterations: ${getCount('iterations')}
@@ -1175,7 +1183,8 @@ export function handleSummary(data) {
     test_name: TEST_NAME,
     preset: PRESET,
     description: selectedPreset.description,
-    tenant_placement_policy: TENANT_PLACEMENT_POLICY,
+    storage_profile: STORAGE_PROFILE,
+    transient_auth_mirror_mode: TRANSIENT_AUTH_MIRROR_MODE,
     timestamp: new Date().toISOString(),
     target: BASE_URL,
     ...(phase0cSample ? { phase0c_sample: phase0cSample } : {}),

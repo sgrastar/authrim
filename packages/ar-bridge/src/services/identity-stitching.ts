@@ -29,6 +29,7 @@ import {
   syncUserLifecycleState,
   type ValidatedCustomClaimWriteResult,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveTenantUserStoreSourcesFromEnv,
   CanonicalRuntimeUserStore,
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifier,
@@ -112,6 +113,8 @@ export async function handleIdentity(
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
   const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
+  const tenantD1 = true;
+  const defaultUserStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
 
   // 1. Explicit linking to existing account
   if (linkingUserId) {
@@ -124,20 +127,18 @@ export async function handleIdentity(
       );
     }
 
-    const accountContext = await resolveAccountDataContext(env, {
-      tenantId,
-      accountId: `account:${linkingUserId}`,
-    });
-    if (accountContext.legacyUserId !== linkingUserId) {
+    const accountContext = tenantD1
+      ? await resolveAccountDataContext(env, {
+          tenantId,
+          accountId: `account:${linkingUserId}`,
+        })
+      : undefined;
+    if (accountContext && accountContext.legacyUserId !== linkingUserId) {
       throw new Error('external_idp_link_account_mismatch');
     }
-    const existingIdentity = await findLinkedIdentity(
-      env,
-      tenantId,
-      provider.id,
-      userInfo.sub,
-      accountContext.piiDb
-    );
+    const existingIdentity = accountContext
+      ? await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub, accountContext.piiDb)
+      : null;
     if (existingIdentity && existingIdentity.userId !== linkingUserId) {
       throw new Error('external_idp_link_authority_conflict');
     }
@@ -153,13 +154,17 @@ export async function handleIdentity(
     };
     const linkedIdentityId =
       existingIdentity?.id ??
-      (await createLinkedIdentity(env, identityInput, accountContext.piiDb));
-    await publishExternalIdpRoute(env, {
-      accountContext,
-      linkedIdentityId,
-      providerId: provider.id,
-      providerUserId: userInfo.sub,
-    });
+      (accountContext
+        ? await createLinkedIdentity(env, identityInput, accountContext.piiDb)
+        : await createLinkedIdentity(env, identityInput, defaultUserStoreSources.piiDb));
+    if (accountContext) {
+      await publishTenantD1ExternalIdpRoute(env, {
+        accountContext,
+        linkedIdentityId,
+        providerId: provider.id,
+        providerUserId: userInfo.sub,
+      });
+    }
 
     // Log audit event
     await logAuditEvent(env, {
@@ -182,31 +187,48 @@ export async function handleIdentity(
 
   // 2. Check for existing linked identity
   let externalRoute: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>> | undefined;
-  try {
-    externalRoute = await resolveAccountDataContextByIdentifier(env, {
-      tenantId,
-      indexKind: 'external_subject',
-      identifier: { issuer: provider.id, subject: userInfo.sub },
-    });
-  } catch (routeError) {
-    if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
-      throw routeError;
+  if (tenantD1) {
+    try {
+      externalRoute = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'external_subject',
+        identifier: { issuer: provider.id, subject: userInfo.sub },
+      });
+    } catch (routeError) {
+      if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
+        throw routeError;
+      }
     }
   }
   const existingLink = externalRoute
     ? await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub, externalRoute.piiDb)
-    : null;
+    : await findLinkedIdentity(
+        env,
+        tenantId,
+        provider.id,
+        userInfo.sub,
+        defaultUserStoreSources.piiDb
+      );
   if (existingLink) {
-    if (!externalRoute) throw new Error('external_idp_route_context_missing');
     // Update tokens and last login
     const updates = { tokens, lastLoginAt: Date.now(), rawClaims: userInfo };
-    await updateLinkedIdentity(
-      env,
-      existingLink.tenantId,
-      existingLink.id,
-      updates,
-      externalRoute.piiDb
-    );
+    if (externalRoute) {
+      await updateLinkedIdentity(
+        env,
+        existingLink.tenantId,
+        existingLink.id,
+        updates,
+        externalRoute.piiDb
+      );
+    } else {
+      await updateLinkedIdentity(
+        env,
+        existingLink.tenantId,
+        existingLink.id,
+        updates,
+        defaultUserStoreSources.piiDb
+      );
+    }
 
     return {
       status: 'ready',
@@ -216,8 +238,8 @@ export async function handleIdentity(
       stitchedFromExisting: false,
     };
   }
-  if (externalRoute) {
-    const completed = await completeExternalIdpJIT(env, {
+  if (tenantD1 && externalRoute) {
+    const completed = await completeTenantD1ExternalIdpJIT(env, {
       tenantId,
       userId: externalRoute.legacyUserId,
       providerId: provider.id,
@@ -253,7 +275,7 @@ export async function handleIdentity(
 
   // Check if user with this email already exists
   let emailRoute: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>> | undefined;
-  if (userInfo.email) {
+  if (tenantD1 && userInfo.email) {
     try {
       emailRoute = await resolveAccountDataContextByIdentifier(env, {
         tenantId,
@@ -304,15 +326,19 @@ export async function handleIdentity(
         rawClaims: userInfo,
         tenantId,
       };
-      if (!emailRoute) throw new Error('external_idp_email_route_context_missing');
       const linkedIdentityId =
-        existingIdentity?.id ?? (await createLinkedIdentity(env, identityInput, emailRoute.piiDb));
-      await publishExternalIdpRoute(env, {
-        accountContext: emailRoute,
-        linkedIdentityId,
-        providerId: provider.id,
-        providerUserId: userInfo.sub,
-      });
+        existingIdentity?.id ??
+        (emailRoute
+          ? await createLinkedIdentity(env, identityInput, emailRoute.piiDb)
+          : await createLinkedIdentity(env, identityInput, defaultUserStoreSources.piiDb));
+      if (emailRoute) {
+        await publishTenantD1ExternalIdpRoute(env, {
+          accountContext: emailRoute,
+          linkedIdentityId,
+          providerId: provider.id,
+          providerUserId: userInfo.sub,
+        });
+      }
 
       // Log audit event for automatic stitching
       await logAuditEvent(env, {
@@ -406,11 +432,13 @@ export async function handleIdentity(
       jitConfig,
       customClaims: extractMappedCustomClaims(userInfo, provider.attributeMapping),
     };
-    const jitResult = await createUserWithJITProvisioning(env, {
-      ...jitParams,
-      providerUserId: userInfo.sub,
-      tokens,
-    });
+    const jitResult = tenantD1
+      ? await createTenantD1UserWithJITProvisioning(env, {
+          ...jitParams,
+          providerUserId: userInfo.sub,
+          tokens,
+        })
+      : await createUserWithJITProvisioning(env, jitParams);
 
     // Check if access was denied by policy
     if (jitResult.denied) {
@@ -438,8 +466,22 @@ export async function handleIdentity(
       };
     }
 
-    const linkedIdentityId = jitResult.linkedIdentityId;
-    if (!linkedIdentityId) throw new Error('external_idp_jit_identity_activation_failed');
+    const linkedIdentityId =
+      jitResult.linkedIdentityId ??
+      (await createLinkedIdentity(
+        env,
+        {
+          userId: jitResult.userId,
+          providerId: provider.id,
+          providerUserId: userInfo.sub,
+          providerEmail: userInfo.email,
+          emailVerified: userInfo.email_verified,
+          tokens,
+          rawClaims: userInfo,
+          tenantId,
+        },
+        defaultUserStoreSources.piiDb
+      ));
 
     // Log audit event for JIT provisioning
     await logAuditEvent(env, {
@@ -502,7 +544,14 @@ async function resolveUserStoreAdapters(
       piiAdapter: ensureDatabaseAdapter(accountContext.piiDb, 'identity-stitching-pii'),
     };
   }
-  throw new Error('account_data_context_required');
+  const sources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
+  return {
+    coreSource: sources.coreDb,
+    coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-core'),
+    piiAdapter: sources.piiDb
+      ? ensureDatabaseAdapter(sources.piiDb, 'identity-stitching-pii')
+      : null,
+  };
 }
 
 /**
@@ -515,7 +564,6 @@ async function findUserByEmail(
   tenantId: string,
   accountContext?: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>
 ): Promise<ExistingUser | null> {
-  if (!accountContext) return null;
   const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId, accountContext);
   if (!piiAdapter) return null;
   const runtimeUsers = new CanonicalRuntimeUserStore({ coreAdapter, piiAdapter, tenantId });
@@ -625,10 +673,12 @@ async function validateProvisionedCustomClaims(
 ): Promise<ValidatedCustomClaimWriteResult> {
   const resolvedCustomClaimSources =
     customClaimSources ?? (await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId));
+  if (!resolvedCustomClaimSources.nonPiiDb || !resolvedCustomClaimSources.piiDb) {
+    throw new Error('identity_stitching_account_runtime_sources_required');
+  }
   const validation = await validateCustomClaimWrite({
-    db: resolvedCustomClaimSources.nonPiiDb ?? resolvedCustomClaimSources.schemaDb,
+    db: resolvedCustomClaimSources.nonPiiDb,
     dbPii: resolvedCustomClaimSources.piiDb,
-    piiStorageAvailable: resolvedCustomClaimSources.piiDb === null,
     schemaDb: resolvedCustomClaimSources.schemaDb,
     tenantId,
     submitted,
@@ -647,6 +697,58 @@ async function validateProvisionedCustomClaims(
   }
 
   return validation;
+}
+
+/**
+ * Create user from external identity
+ * PII/Non-PII DB separation: creates records in both Core DB and PII DB
+ */
+async function createUserFromExternalIdentity(
+  env: Env,
+  params: CreateUserParams
+): Promise<{ id: string }> {
+  await validateProvisionedCustomClaims(env, params.tenantId, {});
+
+  const id = crypto.randomUUID();
+
+  // Generate a placeholder email if not provided
+  const email = params.email || `${id}@external.authrim.local`;
+
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, params.tenantId);
+  if (!piiAdapter) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
+      'Canonical runtime user creation requires a PII database.'
+    );
+  }
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId: params.tenantId,
+  });
+  await runtimeUsers.syncUser({
+    userId: id,
+    email: email.toLowerCase(),
+    name: params.name || null,
+    active: true,
+    emailVerified: params.emailVerified,
+    userType: 'end_user',
+    sourceRef: `external-idp:${params.identityProviderId}`,
+    piiFields: {
+      given_name: params.givenName !== undefined,
+      family_name: params.familyName !== undefined,
+      picture: params.picture !== undefined,
+      locale: params.locale !== undefined,
+    },
+    sensitiveValues: {
+      given_name: params.givenName ?? null,
+      family_name: params.familyName ?? null,
+      picture: params.picture ?? null,
+      locale: params.locale ?? null,
+    },
+  });
+
+  return { id };
 }
 
 interface AuditEventParams {
@@ -738,12 +840,12 @@ interface JITProvisioningResult {
   };
 }
 
-interface RoutedAccountJITProvisioningParams extends JITProvisioningParams {
+interface TenantD1JITProvisioningParams extends JITProvisioningParams {
   providerUserId: string;
   tokens: TokenResponse;
 }
 
-interface RoutedAccountJITPlan {
+interface TenantD1JITPlan {
   schemaVersion: 1;
   customClaimValidation: ValidatedCustomClaimWriteResult;
   organizationIds: string[];
@@ -777,7 +879,7 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function publishExternalIdpRoute(
+async function publishTenantD1ExternalIdpRoute(
   env: Env,
   input: {
     accountContext: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>;
@@ -818,14 +920,14 @@ async function publishExternalIdpRoute(
   }
 }
 
-async function applyRoutedAccountJITPlan(
+async function applyTenantD1JITPlan(
   env: Env,
   input: {
     tenantId: string;
     userId: string;
     providerId: string;
     providerUserId: string;
-    plan: RoutedAccountJITPlan;
+    plan: TenantD1JITPlan;
   }
 ): Promise<Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'orgs_joined'>> {
   const account = await resolveAccountDataContextByIdentifier(env, {
@@ -931,7 +1033,7 @@ async function applyRoutedAccountJITPlan(
   return { linkedIdentityId: pending.id, roles_assigned: rolesAssigned, orgs_joined: orgsJoined };
 }
 
-function parseRoutedAccountJITPlan(value: string): RoutedAccountJITPlan {
+function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
   if (new TextEncoder().encode(value).byteLength > 20 * 1024) {
     throw new Error('external_idp_jit_plan_invalid');
   }
@@ -1010,10 +1112,10 @@ function parseRoutedAccountJITPlan(value: string): RoutedAccountJITPlan {
   ) {
     throw new Error('external_idp_jit_plan_invalid');
   }
-  return parsed as RoutedAccountJITPlan;
+  return parsed as TenantD1JITPlan;
 }
 
-export async function completeExternalIdpJIT(
+export async function completeTenantD1ExternalIdpJIT(
   env: Env,
   input: {
     tenantId: string;
@@ -1052,20 +1154,27 @@ export async function completeExternalIdpJIT(
   if (!pending || pending.userId !== input.userId) {
     throw new Error('external_idp_jit_pending_identity_not_found');
   }
-  const plan = parseRoutedAccountJITPlan(
+  const plan = parseTenantD1JITPlan(
     await decrypt(pending.profileDataEncrypted, getEncryptionKey(env))
   );
-  return applyRoutedAccountJITPlan(env, { ...input, plan });
+  return applyTenantD1JITPlan(env, { ...input, plan });
 }
 
-async function createUserWithJITProvisioning(
+export const completeExternalIdpJIT = completeTenantD1ExternalIdpJIT;
+
+async function createTenantD1UserWithJITProvisioning(
   env: Env,
-  params: RoutedAccountJITProvisioningParams
+  params: TenantD1JITProvisioningParams
 ): Promise<JITProvisioningResult> {
   if (!env.EXTERNAL_IDP_ACCOUNT_PROVISIONER) {
     throw new Error('external_idp_account_provisioner_unavailable');
   }
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, params.tenantId);
+  const userStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, params.tenantId);
+  const customClaimSources = {
+    schemaDb: (await resolveTenantMetadataContext(env, params.tenantId)).coreDb,
+    nonPiiDb: userStoreSources.coreDb,
+    piiDb: userStoreSources.piiDb,
+  };
   const tenantMetadata = await resolveTenantMetadataContext(env, params.tenantId);
   const customClaimValidation = await validateProvisionedCustomClaims(
     env,
@@ -1152,14 +1261,14 @@ async function createUserWithJITProvisioning(
           : role.scope_target,
     }))
     .filter((role) => role.scopeTarget !== 'auto');
-  const plan: RoutedAccountJITPlan = {
+  const plan: TenantD1JITPlan = {
     schemaVersion: 1,
     customClaimValidation,
     organizationIds,
     roleAssignments,
     defaultRoleId: params.jitConfig.default_role_id ?? null,
-    matchedRules: ruleResult.matched_rules ?? [],
-    attributesSet: ruleResult.attributes_to_set ?? [],
+    matchedRules: ruleResult.matched_rules,
+    attributesSet: ruleResult.attributes_to_set,
   };
   const planJson = canonicalJson(plan);
   if (new TextEncoder().encode(planJson).byteLength > 20 * 1024) {
@@ -1234,8 +1343,8 @@ async function createUserWithJITProvisioning(
   const provisioned =
     await env.EXTERNAL_IDP_ACCOUNT_PROVISIONER.provisionExternalIdpAccount(request);
   result.userId = provisioned.userId;
-  result.matched_rules = ruleResult.matched_rules ?? [];
-  result.attributes_set = ruleResult.attributes_to_set ?? [];
+  result.matched_rules = ruleResult.matched_rules;
+  result.attributes_set = ruleResult.attributes_to_set;
   if (provisioned.status === 202) {
     result.pending = {
       accountId: provisioned.accountId,
@@ -1245,7 +1354,7 @@ async function createUserWithJITProvisioning(
     };
     return result;
   }
-  const applied = await applyRoutedAccountJITPlan(env, {
+  const applied = await applyTenantD1JITPlan(env, {
     tenantId: params.tenantId,
     userId: provisioned.userId,
     providerId: params.identityProviderId,
@@ -1253,6 +1362,354 @@ async function createUserWithJITProvisioning(
     plan,
   });
   return { ...result, ...applied };
+}
+
+/**
+ * Create user with JIT Provisioning
+ *
+ * This function:
+ * 1. Generates email_domain_hash for the user
+ * 2. Creates the user in Core/PII databases
+ * 3. Evaluates policy rules
+ * 4. Resolves and joins organizations based on domain mapping
+ * 5. Assigns roles based on rule evaluation
+ *
+ * @param env - Environment bindings
+ * @param params - User creation parameters with JIT config
+ * @returns JIT provisioning result
+ */
+async function createUserWithJITProvisioning(
+  env: Env,
+  params: JITProvisioningParams
+): Promise<JITProvisioningResult> {
+  const userStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, params.tenantId);
+  const customClaimSources = {
+    schemaDb: (await resolveTenantMetadataContext(env, params.tenantId)).coreDb,
+    nonPiiDb: userStoreSources.coreDb,
+    piiDb: userStoreSources.piiDb,
+  };
+  const { coreSource, coreAdapter, piiAdapter } = await resolveUserStoreAdapters(
+    env,
+    params.tenantId
+  );
+  if (!piiAdapter) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.ACCOUNT_CREATION_FAILED,
+      'Canonical runtime user creation requires a PII database.'
+    );
+  }
+  const runtimeUsers = new CanonicalRuntimeUserStore({
+    coreAdapter,
+    piiAdapter,
+    tenantId: params.tenantId,
+  });
+  const customClaimValidation = await validateProvisionedCustomClaims(
+    env,
+    params.tenantId,
+    params.customClaims,
+    customClaimSources
+  );
+
+  const result: JITProvisioningResult = {
+    userId: '',
+    denied: false,
+    matched_rules: [],
+    roles_assigned: [],
+    orgs_joined: [],
+    attributes_set: [],
+  };
+
+  const id = crypto.randomUUID();
+  const email = params.email || `${id}@external.authrim.local`;
+
+  // Step 1: Generate email_domain_hash
+  let emailDomainHash: string | undefined;
+  let emailDomainHashVersion: number | undefined;
+
+  if (params.email && params.email.includes('@')) {
+    try {
+      const hashConfig = await getEmailDomainHashConfig(env);
+      const hashResult = await generateEmailDomainHashWithVersion(params.email, hashConfig);
+      emailDomainHash = hashResult.hash;
+      emailDomainHashVersion = hashResult.version;
+    } catch (error) {
+      // If hash generation fails (no secret configured), continue without hash
+      // PII Protection: Don't log full error (may contain email or config details)
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.warn('Failed to generate email_domain_hash', {
+        action: 'generate_hash',
+        errorName: error instanceof Error ? error.name : 'Unknown error',
+      });
+    }
+  }
+
+  await runtimeUsers.syncUser({
+    userId: id,
+    email: email.toLowerCase(),
+    name: params.name || null,
+    active: true,
+    emailVerified: params.emailVerified,
+    userType: 'end_user',
+    sourceRef: `external-idp:${params.identityProviderId}`,
+    piiFields: {
+      given_name: params.givenName !== undefined,
+      family_name: params.familyName !== undefined,
+      picture: params.picture !== undefined,
+      locale: params.locale !== undefined,
+    },
+    sensitiveValues: {
+      given_name: params.givenName ?? null,
+      family_name: params.familyName ?? null,
+      picture: params.picture ?? null,
+      locale: params.locale ?? null,
+    },
+    inlineProfileFields: {
+      ...(emailDomainHash ? { email_domain_hash: emailDomainHash } : {}),
+      ...(emailDomainHashVersion ? { email_domain_hash_version: emailDomainHashVersion } : {}),
+    },
+  });
+
+  result.userId = id;
+
+  try {
+    await persistCustomClaimWrite({
+      db: customClaimSources.nonPiiDb,
+      dbPii: customClaimSources.piiDb,
+      tenantId: params.tenantId,
+      userId: id,
+      validation: customClaimValidation,
+    });
+  } catch (persistError) {
+    try {
+      await runtimeUsers.deleteUser(id);
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-custom-claim-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+    } catch (cleanupError) {
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after custom claim persistence failure',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
+      );
+    }
+
+    throw persistError;
+  }
+
+  // Step 4: Evaluate policy rules
+  const ruleEvaluator = createRuleEvaluator(coreSource, env.SETTINGS);
+
+  const evaluationContext: RuleEvaluationContext = {
+    email_domain_hash: emailDomainHash,
+    email_domain_hash_version: emailDomainHashVersion,
+    email_verified: params.emailVerified,
+    idp_claims: params.rawClaims,
+    provider_id: params.identityProviderId,
+    user_type: 'end_user',
+    tenant_id: params.tenantId,
+  };
+
+  const ruleResult = await ruleEvaluator.evaluate(evaluationContext);
+
+  // Check if access was denied
+  if (ruleResult.denied) {
+    result.denied = true;
+    result.deny_code = ruleResult.deny_code;
+    result.deny_description = ruleResult.deny_description;
+    result.matched_rules = ruleResult.matched_rules;
+
+    // Clean up: delete the user we just created
+    try {
+      await runtimeUsers.deleteUser(id);
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-policy-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+    } catch (cleanupError) {
+      // PII Protection: Don't log full error (may contain DB details)
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after policy denial',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
+      );
+    }
+
+    return result;
+  }
+
+  result.matched_rules = ruleResult.matched_rules;
+  result.attributes_set = ruleResult.attributes_to_set;
+
+  // Step 5: Resolve and join organizations
+  const orgsToJoin: string[] = [];
+
+  // Organizations from rule evaluation
+  for (const orgId of ruleResult.orgs_to_join) {
+    if (orgId === 'auto') {
+      // 'auto' means use domain hash mapping
+      continue;
+    }
+    orgsToJoin.push(orgId);
+  }
+
+  // Organizations from domain hash mapping
+  if (emailDomainHash) {
+    if (params.jitConfig.join_all_matching_orgs) {
+      // Join all matching orgs
+      const matchedOrgs = await resolveAllOrgsByDomainHash(
+        coreSource,
+        emailDomainHash,
+        params.tenantId,
+        params.jitConfig
+      );
+      for (const org of matchedOrgs) {
+        if (!orgsToJoin.includes(org.org_id)) {
+          orgsToJoin.push(org.org_id);
+        }
+      }
+    } else {
+      // Join first matching org only
+      const matchedOrg = await resolveOrgByDomainHash(
+        coreSource,
+        emailDomainHash,
+        params.tenantId,
+        params.jitConfig
+      );
+      if (matchedOrg && !orgsToJoin.includes(matchedOrg.org_id)) {
+        orgsToJoin.push(matchedOrg.org_id);
+      }
+    }
+  }
+
+  // Check if user needs org but no org found
+  if (orgsToJoin.length === 0 && !params.jitConfig.allow_user_without_org) {
+    result.denied = true;
+    result.deny_code = 'access_denied';
+    result.deny_description =
+      'No organization found for this user and standalone users are not allowed.';
+
+    // Clean up
+    try {
+      await runtimeUsers.deleteUser(id);
+      await ensureDatabaseAdapter(
+        customClaimSources.nonPiiDb,
+        'identity-stitching-org-cleanup'
+      ).execute('DELETE FROM user_custom_fields WHERE tenant_id = ? AND user_id = ?', [
+        params.tenantId,
+        id,
+      ]);
+    } catch (cleanupError) {
+      // PII Protection: Don't log full error (may contain DB details)
+      const log = createLogger().module('IDENTITY-STITCHING');
+      log.error(
+        'Failed to cleanup user after no-org denial',
+        {
+          action: 'cleanup_user',
+          errorName: cleanupError instanceof Error ? cleanupError.name : 'Unknown error',
+        },
+        cleanupError as Error
+      );
+    }
+
+    return result;
+  }
+
+  // Actually join the organizations
+  for (const orgId of orgsToJoin) {
+    const joinResult = await joinOrganization(
+      coreSource,
+      id,
+      orgId,
+      params.tenantId,
+      'member' // Default membership type
+    );
+    if (joinResult.success) {
+      result.orgs_joined.push(orgId);
+    }
+  }
+
+  // Step 6: Assign roles from rule evaluation
+  for (const roleAssignment of ruleResult.roles_to_assign) {
+    let scopeTarget = roleAssignment.scope_target;
+
+    // Resolve 'auto' scope target to first joined org
+    if (scopeTarget === 'auto' && result.orgs_joined.length > 0) {
+      scopeTarget = `org:${result.orgs_joined[0]}`;
+    }
+
+    // Skip if scope is 'auto' but no org was joined
+    if (scopeTarget === 'auto') {
+      continue;
+    }
+
+    const assignResult = await assignRoleToUserInternal(
+      coreSource,
+      id,
+      roleAssignment.role_id,
+      roleAssignment.scope_type,
+      scopeTarget,
+      params.tenantId
+    );
+
+    if (assignResult.success) {
+      result.roles_assigned.push({
+        role_id: roleAssignment.role_id,
+        scope_type: roleAssignment.scope_type,
+        scope_target: scopeTarget,
+      });
+    }
+  }
+
+  // Step 7: Assign default role if no roles were assigned
+  if (result.roles_assigned.length === 0 && params.jitConfig.default_role_id) {
+    const defaultScopeTarget =
+      result.orgs_joined.length > 0 ? `org:${result.orgs_joined[0]}` : 'global';
+    const defaultScopeType = result.orgs_joined.length > 0 ? 'org' : 'global';
+
+    const assignResult = await assignRoleToUserInternal(
+      coreSource,
+      id,
+      params.jitConfig.default_role_id,
+      defaultScopeType,
+      defaultScopeTarget,
+      params.tenantId
+    );
+
+    if (assignResult.success) {
+      result.roles_assigned.push({
+        role_id: params.jitConfig.default_role_id,
+        scope_type: defaultScopeType,
+        scope_target: defaultScopeTarget,
+      });
+    }
+  }
+
+  await syncUserLifecycleState({
+    db: customClaimSources.nonPiiDb,
+    dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: coreAdapter,
+    tenantId: params.tenantId,
+    userId: id,
+    accountAuthenticationEnv: env,
+  });
+
+  return result;
 }
 
 /**

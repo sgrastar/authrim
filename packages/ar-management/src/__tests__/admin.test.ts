@@ -22,12 +22,6 @@ const {
   resolveOtpAccountCoreDataContextByIdentifier,
   resolveAccountDataContextByIdentifier,
   resolveAccountDataContext,
-  resolveAccountDataContextForAccount,
-  resolveTenantDatabaseSource,
-  resolveTenantAssignedDatabaseSources,
-  resolveTenantDiscoveryAlias,
-  ensureTenantDiscoveryAlias,
-  disableTenantDiscoveryAlias,
   prepareAccountRemoval,
   markAccountRemovalsReady,
   attemptAccountRemovals,
@@ -52,12 +46,6 @@ const {
   resolveOtpAccountCoreDataContextByIdentifier: vi.fn(),
   resolveAccountDataContextByIdentifier: vi.fn(),
   resolveAccountDataContext: vi.fn(),
-  resolveAccountDataContextForAccount: vi.fn(),
-  resolveTenantDatabaseSource: vi.fn(),
-  resolveTenantAssignedDatabaseSources: vi.fn(),
-  resolveTenantDiscoveryAlias: vi.fn(),
-  ensureTenantDiscoveryAlias: vi.fn(),
-  disableTenantDiscoveryAlias: vi.fn(),
   prepareAccountRemoval: vi.fn(async (_env, input) => [
     {
       operationId: `remove:${input.userId}`,
@@ -80,12 +68,6 @@ vi.mock('../account-directory-removal-producer', () => ({
   markAccountDirectoryRemovalsReady: markAccountRemovalsReady,
   attemptImmediateAccountDirectoryRemovals: attemptAccountRemovals,
   eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
-}));
-
-vi.mock('../tenant-alias-directory', () => ({
-  resolveTenantDiscoveryAliasDirectoryInput: resolveTenantDiscoveryAlias,
-  ensureActiveTenantDiscoveryAliasDirectory: ensureTenantDiscoveryAlias,
-  disableTenantDiscoveryAliasDirectory: disableTenantDiscoveryAlias,
 }));
 
 vi.mock('../cross-shard-account-list', () => ({
@@ -154,6 +136,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         : null
     ),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
       schemaDb: env.DB,
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
@@ -164,6 +152,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           | { coreDb?: unknown; piiDb?: unknown }
           | undefined;
         return {
+          storageProfile: {
+            id: 'builtin:storage:tenant-d1',
+            kind: 'storage',
+            label: 'Tenant D1',
+            slices: {},
+          },
           schemaDb: c.env.DB,
           nonPiiDb: account?.coreDb ?? c.env.DB,
           piiDb: account?.piiDb ?? c.env.DB_PII ?? null,
@@ -214,12 +208,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
       resolveOtpAccountCoreDataContextByIdentifier,
     resolveAccountDataContextFromHono: resolveAccountDataContext,
-    resolveAccountDataContext: resolveAccountDataContextForAccount,
-    resolveTenantDatabaseSourceFromRegistry: resolveTenantDatabaseSource,
-    resolveTenantAssignedDatabaseSourcesFromRegistry: resolveTenantAssignedDatabaseSources,
-    resolveTenantDiscoveryAliasDirectoryInput: resolveTenantDiscoveryAlias,
-    ensureActiveTenantDiscoveryAliasDirectory: ensureTenantDiscoveryAlias,
-    disableTenantDiscoveryAliasDirectory: disableTenantDiscoveryAlias,
     PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
       const adapter = mockPostgresAdapterFactory(config);
       if (!adapter) {
@@ -725,19 +713,9 @@ function createMockContext(options: {
   if (options.runtimeUserStoreSources) {
     contextStore.set('runtimeUserStoreSources', options.runtimeUserStoreSources);
   }
-  contextStore.set(
-    'tenantMetadataContext',
-    options.tenantMetadataContext ?? {
-      tenantId: options.tenantId ?? 'default',
-      coreDb: mockDB,
-      route: {
-        placementPolicy: {
-          isolationPolicy: 'shared_pool',
-          policyGeneration: 1,
-        },
-      },
-    }
-  );
+  if (options.tenantMetadataContext) {
+    contextStore.set('tenantMetadataContext', options.tenantMetadataContext);
+  }
   const normalizedHeaders = new Map(
     Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -756,7 +734,6 @@ function createMockContext(options: {
     },
     env: {
       DB: mockDB,
-      DB_ADMIN: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
@@ -764,7 +741,6 @@ function createMockContext(options: {
       SESSION_REVOCATION_STORE: {
         idFromName: vi.fn((name: string) => name),
         get: vi.fn(() => ({
-          getLastLoginAtRpc: vi.fn(async () => null),
           setAccountLifecycleRpc: vi.fn(async (_tenant, _user, _account, lifecycle) => ({
             lifecycle,
           })),
@@ -872,125 +848,6 @@ describe('Admin API Handlers', () => {
     resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
-    resolveAccountDataContextForAccount.mockReset();
-    resolveTenantDatabaseSource.mockReset();
-    resolveTenantAssignedDatabaseSources.mockReset();
-    resolveTenantDiscoveryAlias.mockReset();
-    ensureTenantDiscoveryAlias.mockReset();
-    disableTenantDiscoveryAlias.mockReset();
-    resolveTenantDatabaseSource.mockImplementation(async (env) => ({
-      source: env.DB,
-      bindingRef: 'DB',
-      dataRole: 'tenant_core/default',
-      residencyPartition: 'default',
-    }));
-    resolveTenantAssignedDatabaseSources.mockImplementation(async (env) => [
-      {
-        source: env.DB,
-        bindingRef: 'DB',
-        dataRole: 'tenant_core/users',
-        residencyPartition: 'default',
-      },
-    ]);
-    resolveTenantDiscoveryAlias.mockImplementation(async (_env, input) => input);
-    ensureTenantDiscoveryAlias.mockResolvedValue(undefined);
-    disableTenantDiscoveryAlias.mockResolvedValue(undefined);
-    const accountContext = (
-      context: { get(key: string): unknown; set(key: string, value: unknown): void; env: Env },
-      userId: string
-    ) => {
-      const tenantId = String(context.get('tenantId') ?? 'default');
-      const normalizedUserId = userId.startsWith('account:')
-        ? userId.slice('account:'.length)
-        : userId;
-      const resolved = {
-        tenantId,
-        accountId: `account:${normalizedUserId}`,
-        legacyUserId: normalizedUserId,
-        membership: {},
-        coreDb: context.env.DB,
-        piiDb: context.env.DB_PII,
-        coreBindingRef: 'DB',
-        piiBindingRef: 'DB_PII',
-        coreResidencyPartition: 'default',
-        piiResidencyPartition: 'default',
-        accountRouteGeneration: 1,
-        userCacheScope: {
-          routeGeneration: 'test',
-          bindingGeneration: 'test',
-          schemaGeneration: 'test',
-        },
-        piiCacheMode: 'no_cross_request_pii',
-      };
-      context.set('accountDataContext', resolved);
-      return resolved;
-    };
-    resolveAccountDataContext.mockImplementation(async (context, accountId) =>
-      accountContext(context, accountId)
-    );
-    resolveAccountDataContextForAccount.mockImplementation(async (env, input) => {
-      const userId = input.accountId.startsWith('account:')
-        ? input.accountId.slice('account:'.length)
-        : input.accountId;
-      return {
-        tenantId: input.tenantId,
-        accountId: `account:${userId}`,
-        legacyUserId: userId,
-        membership: {},
-        coreDb: env.DB,
-        piiDb: env.DB_PII,
-        coreBindingRef: 'DB',
-        piiBindingRef: 'DB_PII',
-        coreResidencyPartition: 'default',
-        piiResidencyPartition: 'default',
-        accountRouteGeneration: 1,
-        userCacheScope: {
-          routeGeneration: 'test',
-          bindingGeneration: 'test',
-          schemaGeneration: 'test',
-        },
-        piiCacheMode: 'no_cross_request_pii',
-      };
-    });
-    resolveAccountDataContextByIdentifier.mockImplementation(async (context, input) => {
-      const identifier =
-        typeof input.identifier === 'string' ? input.identifier : input.identifier.subject;
-      return accountContext(context, identifier.replace(/^account:/u, ''));
-    });
-    listCrossShardAccounts.mockImplementation(async (input) => ({
-      items: [...canonicalRuntimeUsers.entries()].map(([userId, user]) => ({
-        id: `account:${userId}`,
-        legacyUserId: userId,
-        tenantId: input.tenantId,
-        accountType: 'user',
-        lifecycleState: user.lifecycle_state ?? 'active',
-        displayLabel: user.name ?? user.email ?? userId,
-        createdAt: user.created_at ?? Date.now(),
-        coreBindingRef: 'DB',
-        piiBindingRef: 'DB_PII',
-      })),
-      nextCursor: null,
-    }));
-    findExactCrossShardAccounts.mockImplementation(async (input) =>
-      [...canonicalRuntimeUsers.entries()]
-        .filter(
-          ([userId, user]) =>
-            userId === input.identifier ||
-            user.email === input.identifier ||
-            user.phone_number === input.identifier
-        )
-        .map(([userId, user]) => ({
-          id: `account:${userId}`,
-          legacyUserId: userId,
-          tenantId: input.tenantId,
-          accountType: 'user',
-          lifecycleState: user.lifecycle_state ?? 'active',
-          displayLabel: user.name ?? user.email ?? userId,
-          createdAt: user.created_at ?? Date.now(),
-          coreBindingRef: 'DB',
-          piiBindingRef: 'DB_PII',
-        }))
-    );
     executeDurableAccountCreation.mockImplementation(async (_env, input) => {
       const accountId = `account:${input.candidateUserId}`;
       const operationId = input.candidateOperationId;
@@ -1034,18 +891,13 @@ describe('Admin API Handlers', () => {
     vi.restoreAllMocks();
   });
 
-  describe('adminTestEmailCodeHandler routed routing', () => {
+  describe('adminTestEmailCodeHandler tenant D1 routing', () => {
     const tenantMetadataContext = {
       tenantId: 'default',
-      route: {
-        placementPolicy: {
-          isolationPolicy: 'tenant_exclusive',
-          policyGeneration: 3,
-        },
-      },
+      storageProfileId: 'builtin:storage:tenant-d1',
     };
 
-    it('uses the route-bound Core projection without reading routed PII data', async () => {
+    it('uses the route-bound Core projection without reading tenant-D1 PII data', async () => {
       const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
       const c = createMockContext({
         method: 'POST',
@@ -1082,8 +934,8 @@ describe('Admin API Handlers', () => {
       expect(response.status).toBe(201);
       await expect(response.clone().json()).resolves.toMatchObject({
         runtime_profile: {
-          placement_policy: 'tenant_exclusive',
-          placement_policy_generation: 3,
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'disabled',
         },
       });
       expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
@@ -1133,42 +985,6 @@ describe('Admin API Handlers', () => {
       await expect(response.json()).resolves.toMatchObject({ success: true, userId: 'user-1' });
     });
 
-    it('fails closed instead of hashing with the issuer when the OTP secret is missing', async () => {
-      const storeChallengeRpc = vi.fn();
-      resolveOtpAccountCoreDataContextByIdentifier.mockResolvedValueOnce({
-        tenantId: 'default',
-        accountId: 'account-1',
-        legacyUserId: 'user-1',
-        coreDb: createMockDB({ firstResult: null, allResults: [] }),
-        user: {
-          id: 'user-1',
-          email: 'user@example.com',
-          name: 'User One',
-          active: 1,
-          email_verified: 0,
-          account_type: 'end_user',
-          created_at: '2023-11-14T22:13:20.000Z',
-        },
-      });
-      const c = createMockContext({
-        method: 'POST',
-        body: { email: 'user@example.com', create_user: false },
-        tenantMetadataContext,
-        envOverrides: {
-          OTP_HMAC_SECRET: undefined,
-          CHALLENGE_STORE: {
-            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
-            get: vi.fn(() => ({ storeChallengeRpc })),
-          } as unknown as Env['CHALLENGE_STORE'],
-        },
-      });
-
-      const response = await adminTestEmailCodeHandler(c);
-
-      expect(response.status).toBe(500);
-      expect(storeChallengeRpc).not.toHaveBeenCalled();
-    });
-
     it('returns the existing not-found contract when a pre-seeded route is absent', async () => {
       resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
@@ -1187,7 +1003,7 @@ describe('Admin API Handlers', () => {
       });
     });
 
-    it('does not create an unallocated routed user through the test endpoint', async () => {
+    it('does not create an unallocated tenant-D1 user through the test endpoint', async () => {
       resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
       );
@@ -1219,7 +1035,7 @@ describe('Admin API Handlers', () => {
       expect(c.get('accountDataContext')).toBeUndefined();
     });
 
-    it('returns retryable 503 when routed routing is overloaded', async () => {
+    it('returns retryable 503 when tenant-D1 routing is overloaded', async () => {
       resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
         new Error('D1 DB is overloaded')
       );
@@ -1368,38 +1184,6 @@ describe('Admin API Handlers', () => {
 
     it('should include recent activity in response', async () => {
       const now = Date.now();
-      canonicalRuntimeUsers.set('user-1', {
-        id: 'user-1',
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        email: 'new@example.com',
-        name: 'New User',
-        created_at: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString(),
-      });
-      canonicalRuntimeUsers.set('user-2', {
-        id: 'user-2',
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        email: 'another@example.com',
-        name: 'Another',
-        created_at: new Date(now - 1000).toISOString(),
-        updated_at: new Date(now - 1000).toISOString(),
-      });
-      listCrossShardAccounts.mockResolvedValue({
-        items: ['user-1', 'user-2'].map((userId, index) => ({
-          id: `account:${userId}`,
-          legacyUserId: userId,
-          tenantId: 'default',
-          accountType: 'user',
-          lifecycleState: 'active',
-          displayLabel: userId,
-          createdAt: now - index * 1000,
-          coreBindingRef: 'DB',
-          piiBindingRef: 'DB_PII',
-        })),
-        nextCursor: null,
-      });
       // Core DB returns user IDs and timestamps (no PII)
       const mockDB = createMockDB({
         firstResult: { count: 5 },
@@ -1652,7 +1436,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUsersListHandler', () => {
-    it('uses cursor-based routed projection for routed storage without exposing bindings', async () => {
+    it('uses cursor-based routed projection for tenant-D1 storage without exposing bindings', async () => {
       const userId = 'user-route';
       const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
       canonicalRuntimeUsers.set(userId, {
@@ -1689,13 +1473,19 @@ describe('Admin API Handlers', () => {
         db: core,
         dbPII: pii,
         runtimeUserStoreSources: {
+          storageProfile: {
+            id: 'builtin:storage:tenant-d1',
+            kind: 'storage',
+            label: 'Tenant D1',
+            slices: {},
+          },
           coreDb: core,
           piiDb: pii,
           policyDb: core,
           userCacheScope: {
-            routeGeneration: 'test',
-            bindingGeneration: 'test',
-            schemaGeneration: 'test',
+            storageProfileId: 'builtin:storage:tenant-d1',
+            sourceGeneration: 'test',
+            schemaVersion: 'test',
           },
           piiCacheMode: 'no_cross_request_pii',
         },
@@ -1754,6 +1544,7 @@ describe('Admin API Handlers', () => {
           dbPII: pii,
           tenantMetadataContext: {
             tenantId: 'default',
+            storageProfileId: 'builtin:storage:tenant-d1',
             coreDb: core,
           },
         })
@@ -1789,13 +1580,19 @@ describe('Admin API Handlers', () => {
           db: core,
           dbPII: core,
           runtimeUserStoreSources: {
+            storageProfile: {
+              id: 'builtin:storage:tenant-d1',
+              kind: 'storage',
+              label: 'Tenant D1',
+              slices: {},
+            },
             coreDb: core,
             piiDb: core,
             policyDb: core,
             userCacheScope: {
-              routeGeneration: 'test',
-              bindingGeneration: 'test',
-              schemaGeneration: 'test',
+              storageProfileId: 'builtin:storage:tenant-d1',
+              sourceGeneration: 'test',
+              schemaVersion: 'test',
             },
             piiCacheMode: 'no_cross_request_pii',
           },
@@ -1806,27 +1603,36 @@ describe('Admin API Handlers', () => {
       await expect(response.json()).resolves.toMatchObject({ error: 'invalid_cursor' });
     });
 
-    it('returns a cursor page from routed account projections', async () => {
-      for (const [id, email, name] of [
-        ['user-1', 'user1@example.com', 'User One'],
-        ['user-2', 'user2@example.com', 'User Two'],
-      ]) {
-        canonicalRuntimeUsers.set(id, {
-          id,
-          tenant_id: 'default',
-          lifecycle_state: 'active',
-          active: 1,
-          email,
-          name,
-          email_verified: 1,
-          phone_number_verified: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      }
+    it('should return paginated users list', async () => {
+      const mockDB = createMockDB({
+        firstResult: { count: 50 },
+        allResults: [
+          {
+            id: 'user-1',
+            email: 'user1@example.com',
+            name: 'User One',
+            email_verified: 1,
+            phone_number_verified: 0,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            last_login_at: null,
+          },
+          {
+            id: 'user-2',
+            email: 'user2@example.com',
+            name: 'User Two',
+            email_verified: 1,
+            phone_number_verified: 1,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            last_login_at: Date.now(),
+          },
+        ],
+      });
 
       const c = createMockContext({
         query: { page: '1', limit: '20' },
+        db: mockDB,
       });
 
       await adminUsersListHandler(c);
@@ -1834,15 +1640,16 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           users: expect.any(Array),
-          pagination: {
-            mode: 'cursor',
+          pagination: expect.objectContaining({
+            page: 1,
             limit: 20,
-            nextCursor: null,
+            total: 2,
+            totalPages: 1,
             hasNext: false,
-          },
+            hasPrev: false,
+          }),
         })
       );
-      expect((c.json.mock.calls[0]?.[0] as { users: unknown[] }).users).toHaveLength(2);
     });
 
     it('returns normalized creation and last-login timestamps from the canonical projection', async () => {
@@ -1899,14 +1706,16 @@ describe('Admin API Handlers', () => {
       });
       const c = createMockContext({
         query: { page: '1', limit: '20' },
-        envOverrides: {
-          SESSION_REVOCATION_STORE: {
-            idFromName: vi.fn((name: string) => name),
-            get: vi.fn(() => ({
-              getLastLoginAtRpc: vi.fn(async () => lastLoginAt),
-            })),
-          } as unknown as Env['SESSION_REVOCATION_STORE'],
-        },
+        db: createSqlAwareMockDB((sql, _params, operation) => {
+          if (operation !== 'all') return null;
+          if (sql.includes('FROM identity_accounts')) {
+            return [{ legacy_user_id: userId }];
+          }
+          if (sql.includes('FROM sessions')) {
+            return [{ user_id: userId, last_login_at: Math.floor(lastLoginAt / 1000) }];
+          }
+          return [];
+        }),
       });
 
       const response = await adminUsersListHandler(c);
@@ -1917,7 +1726,12 @@ describe('Admin API Handlers', () => {
       expect(body.users[0]?.last_login_at).toBe(lastLoginAt);
     });
 
-    it('supports exact routed search by email', async () => {
+    it('should support search filtering by email or name', async () => {
+      // PII/Non-PII DB Separation:
+      // 1. Search queries PII DB first to get matching user IDs
+      // 2. Core DB is queried for user_core data with those IDs
+      // 3. PII DB is queried again for full PII data
+
       canonicalRuntimeUsers.set('user-1', {
         id: 'user-1',
         tenant_id: 'default',
@@ -1965,7 +1779,7 @@ describe('Admin API Handlers', () => {
       });
 
       const c = createMockContext({
-        query: { search: 'john@example.com' },
+        query: { search: 'john' },
         db: mockDB,
         dbPII: mockDBPII,
       });
@@ -1983,22 +1797,35 @@ describe('Admin API Handlers', () => {
       );
     });
 
-    it('rejects an unbounded verified filter across routed account stores', async () => {
+    it('should support verified filtering', async () => {
+      const mockDB = createMockDB({
+        firstResult: { count: 30 },
+        allResults: [],
+      });
+
       const c = createMockContext({
         query: { verified: 'true' },
+        db: mockDB,
       });
 
-      const response = await adminUsersListHandler(c);
+      await adminUsersListHandler(c);
 
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toMatchObject({
-        error: 'unsupported_sharded_user_filter',
-      });
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          users: [],
+        })
+      );
     });
 
-    it('ignores the retired page offset and returns cursor metadata', async () => {
+    it('should include pagination metadata', async () => {
+      const mockDB = createMockDB({
+        firstResult: { count: 100 },
+        allResults: [],
+      });
+
       const c = createMockContext({
         query: { page: '3', limit: '10' },
+        db: mockDB,
       });
 
       await adminUsersListHandler(c);
@@ -2006,30 +1833,35 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           pagination: expect.objectContaining({
-            mode: 'cursor',
+            page: 3,
             limit: 10,
-            nextCursor: null,
+            total: 0,
+            totalPages: 0,
             hasNext: false,
+            hasPrev: true,
           }),
         })
       );
     });
 
     it('should convert boolean fields correctly', async () => {
-      canonicalRuntimeUsers.set('user-1', {
-        id: 'user-1',
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        active: 1,
-        email: 'test@example.com',
-        name: 'Test User',
-        email_verified: 1,
-        phone_number_verified: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+      const mockDB = createMockDB({
+        firstResult: { count: 1 },
+        allResults: [
+          {
+            id: 'user-1',
+            email: 'test@example.com',
+            name: 'Test User',
+            email_verified: 1,
+            phone_number_verified: 0,
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            last_login_at: null,
+          },
+        ],
       });
 
-      const c = createMockContext({});
+      const c = createMockContext({ db: mockDB });
 
       await adminUsersListHandler(c);
 
@@ -2045,20 +1877,30 @@ describe('Admin API Handlers', () => {
       );
     });
 
-    it('applies lifecycle filtering only after exact routed search', async () => {
-      canonicalRuntimeUsers.set('user-1', {
-        id: 'user-1',
-        tenant_id: 'default',
-        email: 'incomplete@example.com',
-        email_verified: 1,
-        phone_number_verified: 0,
-        lifecycle_state: 'incomplete',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+    it('should support lifecycle_state filtering and include it in results', async () => {
+      const mockDB = createMockDB({
+        firstResult: { count: 1 },
+        allResults: [
+          {
+            id: 'user-1',
+            tenant_id: 'default',
+            email_verified: 1,
+            phone_number_verified: 0,
+            is_active: 1,
+            user_type: 'end_user',
+            pii_partition: 'default',
+            pii_status: 'active',
+            lifecycle_state: 'incomplete',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+            last_login_at: null,
+          },
+        ],
       });
 
       const c = createMockContext({
-        query: { search: 'incomplete@example.com', lifecycle_state: 'incomplete' },
+        query: { lifecycle_state: 'incomplete' },
+        db: mockDB,
       });
 
       await adminUsersListHandler(c);
@@ -2076,7 +1918,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserGetHandler', () => {
-    it('resolves routed account context before reading user details', async () => {
+    it('resolves tenant-D1 account context before reading user details', async () => {
       const userId = 'routed-user';
       canonicalRuntimeUsers.set(userId, {
         id: userId,
@@ -2094,6 +1936,7 @@ describe('Admin API Handlers', () => {
         params: { id: userId },
         tenantMetadataContext: {
           tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
         },
       });
       resolveAccountDataContext.mockImplementationOnce(async (context, accountId) => {
@@ -2522,7 +2365,7 @@ describe('Admin API Handlers', () => {
       );
     });
 
-    it('allocates a routed account before an account data context exists', async () => {
+    it('allocates a tenant-D1 account before an account data context exists', async () => {
       const mockDB = createMockDB({
         runResult: { success: true },
         firstResult: {
@@ -2542,18 +2385,22 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
         firstResult: {
           account_id: 'account:new-user-id',
-          email: 'routed-user@example.com',
-          preferred_username: 'routed-user',
+          email: 'tenant-d1-user@example.com',
+          preferred_username: 'tenant-d1-user',
         },
       });
       const c = createMockContext({
         method: 'POST',
-        headers: { 'Idempotency-Key': 'admin-create-routed-user' },
-        body: { email: 'routed-user@example.com' },
+        headers: { 'Idempotency-Key': 'admin-create-tenant-d1-user' },
+        body: { email: 'tenant-d1-user@example.com' },
         db: mockDB,
         dbPII: mockDBPII,
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+        },
         tenantMetadataContext: {
           tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
           coreDb: mockDB,
         },
       });
@@ -2564,8 +2411,8 @@ describe('Admin API Handlers', () => {
         expect.anything(),
         expect.objectContaining({
           tenantId: 'default',
-          idempotencyKey: 'admin-create-routed-user',
-          email: 'routed-user@example.com',
+          idempotencyKey: 'admin-create-tenant-d1-user',
+          email: 'tenant-d1-user@example.com',
         }),
         expect.anything()
       );
@@ -3139,7 +2986,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserDeleteHandler', () => {
-    it('deletes a routed user through the routed removal saga', async () => {
+    it('deletes a tenant-D1 user through the routed removal saga', async () => {
       const userId = 'user-routed-delete';
       const core = createMockDB({ firstResult: null, runResult: { success: true } });
       const pii = createMockDB({ firstResult: null, runResult: { success: true } });
@@ -3174,6 +3021,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
           coreDb: core,
         },
       });
@@ -3201,7 +3049,7 @@ describe('Admin API Handlers', () => {
       );
     });
 
-    it('resumes routed deletion after the PII projection has already been erased', async () => {
+    it('resumes tenant-D1 deletion after the PII projection has already been erased', async () => {
       const userId = 'user-routed-delete-retry';
       const core = createMockDB({ firstResult: null, runResult: { success: true } });
       const pii = createMockDB({ firstResult: null, runResult: { success: true } });
@@ -3225,6 +3073,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
           coreDb: core,
         },
       });
@@ -3242,7 +3091,7 @@ describe('Admin API Handlers', () => {
       );
     });
 
-    it('fails closed when an active routed route has no matching projection', async () => {
+    it('fails closed when an active tenant-D1 route has no matching projection', async () => {
       const userId = 'user-routed-delete-missing-projection';
       const core = createMockDB({ firstResult: null, runResult: { success: true } });
       const pii = createMockDB({ firstResult: null, runResult: { success: true } });
@@ -3266,6 +3115,7 @@ describe('Admin API Handlers', () => {
         dbPII: pii,
         tenantMetadataContext: {
           tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
           coreDb: core,
         },
       });
@@ -3279,6 +3129,67 @@ describe('Admin API Handlers', () => {
           error_description: 'Failed to delete user',
         },
         500
+      );
+    });
+
+    it('should delete user successfully', async () => {
+      const userId = 'user-to-delete';
+      const mockDB = createMockDB({
+        firstResult: { id: userId, email: 'delete@example.com' },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+        })
+      );
+    });
+
+    it('should mark the canonical runtime user deleted when runtime cutover is enabled', async () => {
+      const userId = 'user-to-delete';
+      const mockDB = createMockDB({
+        firstResult: {
+          id: 'account:user-to-delete',
+          tenant_id: 'default',
+          legacy_user_id: userId,
+          primary_subject_id: 'subject:user-to-delete',
+          lifecycle_state: 'active',
+          pii_partition: 'default',
+          pii_status: 'active',
+          is_active: 1,
+          email_verified: 1,
+          phone_number_verified: 0,
+          user_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        envOverrides: {
+          ENABLE_CANONICAL_IDENTITY_RUNTIME: 'true',
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+        })
       );
     });
 
@@ -3301,6 +3212,28 @@ describe('Admin API Handlers', () => {
           error_description: 'The requested resource was not found',
         }),
         404
+      );
+    });
+
+    it('should cascade delete related data (passkeys, sessions)', async () => {
+      const userId = 'user-with-related-data';
+      const mockDB = createMockDB({
+        firstResult: { id: userId, email: 'cascade@example.com' },
+        runResult: { success: true },
+      });
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+        })
       );
     });
   });
@@ -3390,8 +3323,14 @@ describe('Admin API Handlers', () => {
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM passkeys WHERE tenant_id = ? AND user_id = ?')
       );
-      expect(coreSqls).not.toContainEqual(expect.stringContaining('DELETE FROM sessions'));
-      expect(coreSqls).not.toContainEqual(expect.stringContaining('DELETE FROM session_clients'));
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?')
+      );
+      expect(coreSqls).toContainEqual(
+        expect.stringContaining(
+          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?'
+        )
+      );
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?')
       );
@@ -3754,7 +3693,7 @@ describe('Admin API Handlers', () => {
 
       const response = await adminClientCreateHandler(c);
 
-      expect(response.status, JSON.stringify(await response.clone().json())).toBe(201);
+      expect(response.status).toBe(201);
       expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
@@ -4398,7 +4337,7 @@ describe('Admin API Handlers', () => {
 
       const response = await adminClientUpdateHandler(c);
 
-      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+      expect(response.status).toBe(200);
       expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({

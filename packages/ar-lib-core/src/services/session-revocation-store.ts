@@ -186,3 +186,14 @@ export async function recordUserSessionRevocation(
   );
   return revokedAfterMs;
 }
+
+// Compatibility signature for SAML integrations; the user-scoped DO remains authoritative.
+export async function recordHybridUserSessionRevocationEpoch(
+  env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
+  _legacyCoreAdapter: unknown,
+  tenantId: string,
+  userId: string,
+  revokedAfterMs = Date.now()
+): Promise<number> {
+  return recordUserSessionRevocation(env, tenantId, userId, revokedAfterMs);
+}

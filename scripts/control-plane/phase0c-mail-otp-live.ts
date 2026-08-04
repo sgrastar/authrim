@@ -17,6 +17,8 @@ import { executeD1Command, queryD1Rows } from '../../packages/setup/src/core/clo
 import { resolvePhase0cTenantApiBaseUrl } from './phase0c-live-url.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const TEST_CONFIG_PATH = resolve(REPO_ROOT, '.authrim/test/config.json');
+const TEST_LOCK_PATH = resolve(REPO_ROOT, '.authrim/test/lock.json');
 const K6_SCRIPT = resolve(
   REPO_ROOT,
   'load-testing/scripts/benchmarks/test-mail-otp-full-login-benchmark.js'
@@ -34,11 +36,10 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const RATE_LIMIT_OVERRIDE_TTL_SECONDS = 20 * 60;
 const RATE_LIMIT_PROPAGATION_TIMEOUT_MS = 6 * 60 * 1000;
 const RUN_ID_PATTERN = /^phase0c-mail-[0-9]{14}-[a-f0-9]{6}$/u;
-const TEST_ENVIRONMENT_PATTERN = /^test(?:[-_][a-z0-9][a-z0-9_-]{0,119})?$/u;
 export const PHASE0C_MACHINE_PRINCIPAL_TYPE = 'automation' as const;
 
 export type Phase0cMailOtpLiveOptions = {
-  environment: string;
+  environment: 'test';
   confirmTestData: true;
 } & (
   | { mode: 'sample'; resultPath: string }
@@ -52,7 +53,7 @@ export type Phase0cMailOtpLiveOptions = {
 interface LiveConfig {
   environment: { prefix: string };
   tenant: { name: string };
-  urls: { api: { custom?: string | null; auto?: string | null } };
+  urls: { api: { custom: string } };
 }
 
 interface LiveLock {
@@ -70,9 +71,9 @@ interface AdminUser {
   email?: unknown;
 }
 
-export interface Phase0cVerifiedRuntimeTopology {
-  placementPolicy: 'tenant_exclusive';
-  placementPolicyGeneration: number;
+export interface Phase0cVerifiedRuntimeProfile {
+  storageProfile: 'builtin:storage:tenant-d1';
+  transientAuthMirrorMode: 'session-do-no-cold-mirror';
 }
 
 interface MailOtpEvidence {
@@ -316,9 +317,7 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
     else if (argument === '--load') load = true;
     else throw new Error(`unknown_argument:${argument}`);
   }
-  if (!environment || !TEST_ENVIRONMENT_PATTERN.test(environment)) {
-    throw new Error('phase0c_mail_test_environment_required');
-  }
+  if (environment !== 'test') throw new Error('phase0c_mail_test_environment_required');
   if (!confirmTestData) throw new Error('phase0c_mail_test_data_confirmation_required');
   if (
     (cleanupInterrupted && (smoke || sample || preGate || contention || load)) ||
@@ -337,7 +336,7 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
   }
   if (cleanupInterrupted) {
     return {
-      environment,
+      environment: 'test',
       confirmTestData: true,
       mode: 'cleanup_interrupted',
       ...(cleanupRunId ? { cleanupRunId } : {}),
@@ -345,7 +344,7 @@ export function parsePhase0cMailOtpLiveArgs(argv: string[]): Phase0cMailOtpLiveO
   }
   if (!resultPath) throw new Error('phase0c_mail_result_path_required');
   return {
-    environment,
+    environment: 'test',
     confirmTestData: true,
     mode: smoke
       ? 'smoke'
@@ -396,7 +395,7 @@ export function buildPhase0cK6Environment(input: {
   userListPath: string;
   resultPath: string;
   runId: string;
-  runtimeTopology: Phase0cVerifiedRuntimeTopology;
+  runtimeProfile: Phase0cVerifiedRuntimeProfile;
   preset?:
     | 'phase0c-sample'
     | 'phase0c-pre-gate'
@@ -421,26 +420,24 @@ export function buildPhase0cK6Environment(input: {
     USER_LIST_PATH: input.userListPath,
     PHASE0C_RESULT: input.resultPath,
     PHASE0C_RUN_ID: input.runId,
-    TENANT_PLACEMENT_POLICY: input.runtimeTopology.placementPolicy,
+    STORAGE_PROFILE: input.runtimeProfile.storageProfile,
+    TRANSIENT_AUTH_MIRROR_MODE: input.runtimeProfile.transientAuthMirrorMode,
   };
 }
 
-export function validatePhase0cRuntimeTopology(payload: unknown): Phase0cVerifiedRuntimeTopology {
-  const runtimeTopology = (payload as { runtime_profile?: unknown } | null)?.runtime_profile as
-    | { placement_policy?: unknown; placement_policy_generation?: unknown }
+export function validatePhase0cRuntimeProfile(payload: unknown): Phase0cVerifiedRuntimeProfile {
+  const runtimeProfile = (payload as { runtime_profile?: unknown } | null)?.runtime_profile as
+    | { storage_profile_id?: unknown; session_cold_persistence?: unknown }
     | undefined;
-  if (runtimeTopology?.placement_policy !== 'tenant_exclusive') {
-    throw new Error('phase0c_mail_placement_policy_mismatch');
+  if (runtimeProfile?.storage_profile_id !== 'builtin:storage:tenant-d1') {
+    throw new Error('phase0c_mail_storage_profile_mismatch');
   }
-  if (
-    !Number.isInteger(runtimeTopology.placement_policy_generation) ||
-    Number(runtimeTopology.placement_policy_generation) < 1
-  ) {
-    throw new Error('phase0c_mail_placement_policy_generation_invalid');
+  if (runtimeProfile.session_cold_persistence !== 'disabled') {
+    throw new Error('phase0c_mail_session_cold_persistence_must_be_disabled');
   }
   return {
-    placementPolicy: 'tenant_exclusive',
-    placementPolicyGeneration: Number(runtimeTopology.placement_policy_generation),
+    storageProfile: 'builtin:storage:tenant-d1',
+    transientAuthMirrorMode: 'session-do-no-cold-mirror',
   };
 }
 
@@ -599,24 +596,17 @@ export async function readPhase0cJson(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, 'utf8')) as unknown;
 }
 
-export function strictPhase0cLiveConfig(
-  value: unknown,
-  expectedEnvironment = 'test'
-): LiveConfig & AuthrimConfig {
+export function strictPhase0cLiveConfig(value: unknown): LiveConfig & AuthrimConfig {
   const config = value as Partial<LiveConfig>;
   const environment = requiredString(
     config.environment?.prefix,
     'phase0c_mail_environment_invalid'
   );
   const tenantId = requiredString(config.tenant?.name, 'phase0c_mail_tenant_invalid');
-  if (
-    environment !== expectedEnvironment ||
-    !TEST_ENVIRONMENT_PATTERN.test(environment) ||
-    !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(tenantId)
-  ) {
+  const baseUrl = requiredString(config.urls?.api?.custom, 'phase0c_mail_base_url_invalid');
+  if (environment !== 'test' || !/^[a-z0-9][a-z0-9_-]{0,127}$/u.test(tenantId)) {
     throw new Error('phase0c_mail_config_invalid');
   }
-  const baseUrl = resolvePhase0cTenantApiBaseUrl(value as Partial<AuthrimConfig>, environment);
   const url = new URL(baseUrl);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
     throw new Error('phase0c_mail_base_url_invalid');
@@ -1114,12 +1104,8 @@ export function hasExactPhase0cScope(actual: string, expected: readonly string[]
 
 async function main(): Promise<void> {
   const options = parsePhase0cMailOtpLiveArgs(process.argv.slice(2));
-  const environmentRoot = resolve(REPO_ROOT, '.authrim', options.environment);
-  const config = strictPhase0cLiveConfig(
-    await readPhase0cJson(resolve(environmentRoot, 'config.json')),
-    options.environment
-  );
-  const lock = await readPhase0cJson(resolve(environmentRoot, 'lock.json'));
+  const config = strictPhase0cLiveConfig(await readPhase0cJson(TEST_CONFIG_PATH));
+  const lock = await readPhase0cJson(TEST_LOCK_PATH);
   const adminDatabaseName = strictPhase0cAdminDatabaseName(lock);
   const usersDatabaseNames = strictTenantUsersDatabaseNames(lock);
   const piiDatabaseNames = strictTenantPiiDatabaseNames(lock);
@@ -1166,7 +1152,7 @@ async function main(): Promise<void> {
   let previousRateLimitOverride: RateLimitProfileName | null | undefined;
   let rateLimitOverrideMutationStarted = false;
   let executionError: unknown = null;
-  let runtimeTopology: Phase0cVerifiedRuntimeTopology | null = null;
+  let runtimeProfile: Phase0cVerifiedRuntimeProfile | null = null;
   const cleanupErrors: string[] = [];
 
   try {
@@ -1218,7 +1204,6 @@ async function main(): Promise<void> {
         method: 'POST',
         token: adminToken,
         tenantId,
-        idempotencyKey: `phase0c-mail-client-${runId}`,
         body: {
           client_name: clientName,
           description: 'Disposable Phase 0c Mail OTP benchmark client.',
@@ -1339,7 +1324,7 @@ async function main(): Promise<void> {
       }
       adminToken = measurementToken.accessToken;
 
-      runtimeTopology = validatePhase0cRuntimeTopology(
+      runtimeProfile = validatePhase0cRuntimeProfile(
         await phase0cAdminJson({
           baseUrl,
           path: '/api/admin/test/email-codes',
@@ -1390,7 +1375,7 @@ async function main(): Promise<void> {
           userListPath,
           resultPath: options.resultPath,
           runId,
-          runtimeTopology,
+          runtimeProfile,
           preset:
             options.mode === 'smoke'
               ? 'phase0c-smoke'

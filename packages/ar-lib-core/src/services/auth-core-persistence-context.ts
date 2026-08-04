@@ -46,3 +46,34 @@ export async function resolveAuthCorePersistenceAdapterFromEnv(
   const source = await resolveAuthCorePersistenceSourceFromEnv(env, options);
   return ensureDatabaseAdapter(source, partition);
 }
+
+export async function resolveTenantUserStoreSourcesFromEnv(
+  env: AuthCorePersistenceEnv,
+  tenantId: string,
+  requestCache?: TenantDatabaseRequestCache
+): Promise<{ coreDb: DatabaseSource; piiDb: DatabaseSource }> {
+  const [core, pii] = await Promise.all([
+    resolveTenantDatabaseSourceFromRegistry(env, {
+      tenantId,
+      role: 'tenant_core',
+      dataRole: 'tenant_core/users',
+      shardGroup: 'default',
+      shardIndex: 0,
+      deploymentTarget: env.AUTHRIM_DEPLOYMENT_TARGET,
+      requestCache,
+    }),
+    resolveTenantDatabaseSourceFromRegistry(env, {
+      tenantId,
+      role: 'tenant_pii',
+      dataRole: 'tenant_pii',
+      shardGroup: 'default',
+      shardIndex: 0,
+      deploymentTarget: env.AUTHRIM_DEPLOYMENT_TARGET,
+      requestCache,
+    }),
+  ]);
+  return { coreDb: core.source, piiDb: pii.source };
+}
+
+// Compatibility name for integrations that now resolve through the Control Plane registry.
+export const resolveUserStoreRuntimeSourcesFromEnv = resolveTenantUserStoreSourcesFromEnv;

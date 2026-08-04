@@ -374,6 +374,7 @@ export {
   getSessionRevocationStore,
   isAccountAuthenticationDeniedError,
   recordUserSessionRevocation,
+  recordHybridUserSessionRevocationEpoch,
   SESSION_REVOCATION_AUTHORITY,
   transitionAccountAuthenticationState,
 } from './services/session-revocation-store';

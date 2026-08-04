@@ -13,20 +13,19 @@ import {
   safeAdminErrorDetails,
   safePhase0cCleanupError,
   safePhase0cExecutionError,
-  strictPhase0cLiveConfig,
   strictTenantPiiDatabaseNames,
   strictTenantUsersDatabaseNames,
   validatePhase0cMailLoadEvidence,
   validatePhase0cMailPreGateEvidence,
   validatePhase0cMailSampleEvidence,
   validatePhase0cMailSmokeEvidence,
-  validatePhase0cRuntimeTopology,
+  validatePhase0cRuntimeProfile,
 } from './phase0c-mail-otp-live.js';
 
 describe('Phase 0c Mail OTP live runner', () => {
-  const runtimeTopology = {
-    placementPolicy: 'tenant_exclusive' as const,
-    placementPolicyGeneration: 3,
+  const runtimeProfile = {
+    storageProfile: 'builtin:storage:tenant-d1' as const,
+    transientAuthMirrorMode: 'session-do-no-cold-mirror' as const,
   };
 
   it('formats bounded seed progress without exposing user identifiers', () => {
@@ -113,31 +112,23 @@ describe('Phase 0c Mail OTP live runner', () => {
     ).toBeNull();
   });
 
-  it('derives benchmark labels from the server-verified runtime topology', () => {
+  it('derives benchmark labels from the server-verified runtime profile', () => {
     expect(
-      validatePhase0cRuntimeTopology({
+      validatePhase0cRuntimeProfile({
         runtime_profile: {
-          placement_policy: 'tenant_exclusive',
-          placement_policy_generation: 3,
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'disabled',
         },
       })
-    ).toEqual(runtimeTopology);
+    ).toEqual(runtimeProfile);
     expect(() =>
-      validatePhase0cRuntimeTopology({
+      validatePhase0cRuntimeProfile({
         runtime_profile: {
-          placement_policy: 'shared_pool',
-          placement_policy_generation: 3,
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'enabled',
         },
       })
-    ).toThrow('phase0c_mail_placement_policy_mismatch');
-    expect(() =>
-      validatePhase0cRuntimeTopology({
-        runtime_profile: {
-          placement_policy: 'tenant_exclusive',
-          placement_policy_generation: 0,
-        },
-      })
-    ).toThrow('phase0c_mail_placement_policy_generation_invalid');
+    ).toThrow('phase0c_mail_session_cold_persistence_must_be_disabled');
   });
   it('uses a principal type accepted by the Admin D1 schema', () => {
     expect(PHASE0C_MACHINE_PRINCIPAL_TYPE).toBe('automation');
@@ -226,38 +217,6 @@ describe('Phase 0c Mail OTP live runner', () => {
     expect(() =>
       parsePhase0cMailOtpLiveArgs(['--env', 'test', '--result', '/private/tmp/result.json'])
     ).toThrow('phase0c_mail_test_data_confirmation_required');
-  });
-
-  it('allows a named disposable test environment while rejecting prefix and config mismatch', () => {
-    expect(
-      parsePhase0cMailOtpLiveArgs([
-        '--env',
-        'test-ucp',
-        '--confirm-test-data',
-        '--smoke',
-        '--result',
-        '/private/tmp/test-ucp-mail-smoke.json',
-      ])
-    ).toMatchObject({ environment: 'test-ucp', mode: 'smoke' });
-    expect(() =>
-      parsePhase0cMailOtpLiveArgs([
-        '--env',
-        'testing',
-        '--confirm-test-data',
-        '--result',
-        '/private/tmp/result.json',
-      ])
-    ).toThrow('phase0c_mail_test_environment_required');
-
-    const config = {
-      environment: { prefix: 'test-ucp' },
-      tenant: { name: 'default' },
-      urls: { api: { custom: null, auto: 'https://test-ucp.example.workers.dev' } },
-    };
-    expect(strictPhase0cLiveConfig(config, 'test-ucp')).toBe(config);
-    expect(() => strictPhase0cLiveConfig(config, 'test-other')).toThrow(
-      'phase0c_mail_config_invalid'
-    );
   });
 
   it('allows only an explicitly confirmed test-only interrupted cleanup mode', () => {
@@ -521,7 +480,7 @@ describe('Phase 0c Mail OTP live runner', () => {
       userListPath: '/private/tmp/users.txt',
       resultPath: '/private/tmp/result.json',
       runId,
-      runtimeTopology,
+      runtimeProfile,
       parentEnv: {
         PATH: '/usr/bin',
         CLOUDFLARE_API_TOKEN: 'must-not-propagate',
@@ -531,7 +490,6 @@ describe('Phase 0c Mail OTP live runner', () => {
     expect(environment.CLOUDFLARE_API_TOKEN).toBeUndefined();
     expect(environment.ADMIN_MACHINE_ACCESS_TOKEN).toBe('access-token');
     expect(environment.CLIENT_SECRET).toBe('client-secret');
-    expect(environment.TENANT_PLACEMENT_POLICY).toBe('tenant_exclusive');
     expect(
       buildPhase0cK6Environment({
         baseUrl: 'https://test.authrim.com',
@@ -542,7 +500,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
-        runtimeTopology,
+        runtimeProfile,
         preset: 'phase0c-smoke',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
@@ -557,7 +515,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
-        runtimeTopology,
+        runtimeProfile,
         preset: 'phase0c-sample',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
@@ -572,7 +530,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
-        runtimeTopology,
+        runtimeProfile,
         preset: 'phase0c-pre-gate',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
@@ -587,7 +545,7 @@ describe('Phase 0c Mail OTP live runner', () => {
         userListPath: '/private/tmp/users.txt',
         resultPath: '/private/tmp/result.json',
         runId,
-        runtimeTopology,
+        runtimeProfile,
         preset: 'phase0c-load',
         parentEnv: { PATH: '/usr/bin' },
       }).PRESET
