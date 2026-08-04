@@ -139,7 +139,9 @@ export interface TenantRuntimeRegistrySnapshotRow {
   snapshot_scope: TenantRuntimeRegistrySnapshotScope;
   deployment_target: string;
   runtime_generation: number;
-  storage_profile_id: string;
+  backend_provider: 'd1';
+  placement_policy: 'shared_pool' | 'tenant_exclusive';
+  placement_policy_generation: number;
   snapshot_version: number;
   status: TenantRuntimeRegistrySnapshotStatus;
   object_ref: string | null;
@@ -155,7 +157,9 @@ export interface TenantRuntimeRegistrySnapshotInput {
   snapshot_scope?: TenantRuntimeRegistrySnapshotScope;
   deployment_target?: string;
   runtime_generation: number;
-  storage_profile_id: string;
+  backend_provider: 'd1';
+  placement_policy: 'shared_pool' | 'tenant_exclusive';
+  placement_policy_generation: number;
   snapshot_version?: number;
   status?: TenantRuntimeRegistrySnapshotStatus;
   object_ref?: string | null;
@@ -656,18 +660,21 @@ export class TenantDatabaseRegistryRepository {
   ): Promise<TenantRuntimeRegistrySnapshotRow> {
     const snapshotScope = input.snapshot_scope ?? 'tenant';
     const deploymentTarget = input.deployment_target ?? 'default';
-    const snapshotVersion = input.snapshot_version ?? 1;
+    const snapshotVersion = input.snapshot_version ?? 3;
     const status = input.status ?? 'active';
 
     await this.adapter.execute(
       `INSERT INTO tenant_runtime_registry_snapshots (
          tenant_id, snapshot_scope, deployment_target, runtime_generation,
-         storage_profile_id, snapshot_version, status, object_ref, published_at,
+         backend_provider, placement_policy, placement_policy_generation,
+         snapshot_version, status, object_ref, published_at,
          expires_at, signature, signature_key_id, metadata_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tenant_id, snapshot_scope, deployment_target, runtime_generation)
        DO UPDATE SET
-         storage_profile_id = excluded.storage_profile_id,
+         backend_provider = excluded.backend_provider,
+         placement_policy = excluded.placement_policy,
+         placement_policy_generation = excluded.placement_policy_generation,
          snapshot_version = excluded.snapshot_version,
          status = excluded.status,
          object_ref = excluded.object_ref,
@@ -681,7 +688,9 @@ export class TenantDatabaseRegistryRepository {
         snapshotScope,
         deploymentTarget,
         input.runtime_generation,
-        input.storage_profile_id,
+        input.backend_provider,
+        input.placement_policy,
+        input.placement_policy_generation,
         snapshotVersion,
         status,
         input.object_ref ?? null,

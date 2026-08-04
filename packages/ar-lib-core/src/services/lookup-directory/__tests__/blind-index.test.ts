@@ -98,5 +98,18 @@ describe('lookup blind indexes', () => {
     await expect(createLookupAliasIndex('tenant_slug', 'not a slug')).rejects.toThrow(
       'lookup_alias_invalid'
     );
+
+    const clientUpper = await createLookupAliasIndex('client_id', 'Client-A');
+    const clientLower = await createLookupAliasIndex('client_id', 'client-a');
+    expect(clientUpper.digest).not.toBe(clientLower.digest);
+    expect((await createLookupAliasIndex('environment_tenant', 'TEST')).digest).toBe(
+      (await createLookupAliasIndex('environment_tenant', 'test')).digest
+    );
+    expect((await createLookupAliasIndex('custom_domain', 'Login.Example.COM')).digest).toBe(
+      (await createLookupAliasIndex('custom_domain', 'login.example.com')).digest
+    );
+    await expect(createLookupAliasIndex('custom_domain', 'not a host')).rejects.toThrow(
+      'lookup_alias_invalid'
+    );
   });
 });

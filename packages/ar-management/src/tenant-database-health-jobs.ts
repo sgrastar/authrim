@@ -1,7 +1,7 @@
 import {
   checkResolvedTenantDatabaseDeepHealth,
   ensureDatabaseAdapter,
-  resolveTenantDatabaseSourceFromRegistry,
+  resolveTenantDatabaseSourceFromControlRegistry,
   TenantDatabaseRegistryRepository,
   type Env,
   type TenantDatabaseRegistryRow,
@@ -135,7 +135,7 @@ export async function refreshTenantDatabaseHealth(
     for (const row of rows) {
       summary.scanned += 1;
       try {
-        const resolved = await resolveTenantDatabaseSourceFromRegistry(
+        const resolved = await resolveTenantDatabaseSourceFromControlRegistry(
           env,
           {
             tenantId: row.tenant_id,

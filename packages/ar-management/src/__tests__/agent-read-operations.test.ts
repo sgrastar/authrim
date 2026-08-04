@@ -196,48 +196,26 @@ describe('Agent-safe Management read operations', () => {
     expect(text).not.toContain('old-secret');
   });
 
-  it('computes session posture in Core DB without loading identifying session fields', async () => {
-    mocks.coreQueryOne.mockResolvedValue({
-      total_sessions: 3,
-      active_sessions: 2,
-      expired_sessions: 1,
-      oldest_created_at: 1_750_000_000,
-      newest_last_accessed_at: 1_750_000_100,
-      next_expiration_at: 1_750_000_200,
-      latest_expiration_at: 1_750_000_300,
-    });
-
+  it('reports global session posture unavailable without an authoritative global index', async () => {
     const response = await app().request(
       '/api/admin/agent-read/session-posture',
       undefined,
       {} as Env
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(501);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(await response.json()).toMatchObject({
-      snapshot: { total_sessions: 3, active_sessions: 2, expired_sessions: 1 },
-    });
-    const [sql, params] = mocks.coreQueryOne.mock.calls[0] as [string, unknown[]];
-    expect(sql).not.toMatch(/(?:user_id|email|ip_address|user_agent|SELECT \*)/u);
-    expect(params.at(-1)).toBe('tenant-1');
+    expect(await response.json()).toEqual({ error: 'AGENT_READ_SESSION_POSTURE_UNAVAILABLE' });
+    expect(mocks.coreQueryOne).not.toHaveBeenCalled();
   });
 
-  it('fails closed when aggregate session counts are inconsistent', async () => {
-    mocks.coreQueryOne.mockResolvedValue({
-      total_sessions: 2,
-      active_sessions: 2,
-      expired_sessions: 1,
-      oldest_created_at: null,
-      newest_last_accessed_at: null,
-      next_expiration_at: null,
-      latest_expiration_at: null,
-    });
+  it('does not consult Core DB for unavailable global session aggregates', async () => {
     const response = await app().request(
       '/api/admin/agent-read/session-posture',
       undefined,
       {} as Env
     );
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(501);
+    expect(mocks.coreQueryOne).not.toHaveBeenCalled();
   });
 
   it('rejects unknown query fields before invoking owner APIs', async () => {

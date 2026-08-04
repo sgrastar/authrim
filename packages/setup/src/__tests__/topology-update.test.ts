@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
-import type { AuthrimLock } from '../core/lock.js';
+import { AuthrimLockSchema, type AuthrimLock } from '../core/lock.js';
 import {
   assertPendingTopologyUpdate,
   completeTopologyUpdate,
@@ -21,6 +21,25 @@ function deployedLock(): AuthrimLock {
 }
 
 describe('topology update journal', () => {
+  it('rejects legacy tenant and external database journal kinds', () => {
+    for (const kind of ['tenant_database', 'external_database']) {
+      expect(
+        AuthrimLockSchema.safeParse({
+          ...deployedLock(),
+          topologyUpdate: {
+            kind,
+            phase: 'pending_deploy',
+            targetProductVersion: '0.4.0',
+            configChecksum: 'a'.repeat(64),
+            authorizationTokenHash: 'b'.repeat(64),
+            startedAt: '2026-07-21T00:00:00.000Z',
+            updatedAt: '2026-07-21T00:00:00.000Z',
+          },
+        }).success
+      ).toBe(false);
+    }
+  });
+
   it('authorizes only the prepared kind, product, config, and token', () => {
     const config = createDefaultConfig('prod');
     const prepared = prepareTopologyUpdate(deployedLock(), {
@@ -39,11 +58,11 @@ describe('topology update journal', () => {
     ).not.toThrow();
     expect(() =>
       assertPendingTopologyUpdate(prepared.lock, {
-        kind: 'external_database',
+        kind: undefined,
         targetProductVersion: '0.4.0',
         config,
       })
-    ).toThrow('topology_update_kind_mismatch');
+    ).not.toThrow();
     expect(() =>
       assertPendingTopologyUpdate(prepared.lock, {
         targetProductVersion: '0.4.0',
@@ -87,9 +106,8 @@ describe('topology update journal', () => {
   it('allows a one-way preparation transition and refuses deployment completion too early', () => {
     const config = createDefaultConfig('prod');
     const preparing = prepareTopologyUpdate(deployedLock(), {
-      kind: 'tenant_database',
+      kind: 'r2',
       phase: 'preparing',
-      subject: 'tenant-a:1',
       targetProductVersion: '0.4.0',
       config,
     });
@@ -102,18 +120,16 @@ describe('topology update journal', () => {
     ).toThrow('topology_update_phase_mismatch:preparing:pending_deploy');
 
     const ready = prepareTopologyUpdate(preparing.lock, {
-      kind: 'tenant_database',
+      kind: 'r2',
       phase: 'pending_deploy',
-      subject: 'tenant-a:1',
       targetProductVersion: '0.4.0',
       config,
     });
     expect(ready.lock.topologyUpdate?.phase).toBe('pending_deploy');
     expect(() =>
       prepareTopologyUpdate(ready.lock, {
-        kind: 'tenant_database',
+        kind: 'r2',
         phase: 'preparing',
-        subject: 'tenant-a:1',
         targetProductVersion: '0.4.0',
         config,
       })
@@ -123,7 +139,7 @@ describe('topology update journal', () => {
   it('clears the journal only after validating the deployed config and product version', () => {
     const config = createDefaultConfig('prod');
     const prepared = prepareTopologyUpdate(deployedLock(), {
-      kind: 'external_database',
+      kind: 'r2',
       targetProductVersion: '0.4.0',
       config,
     });
@@ -135,26 +151,15 @@ describe('topology update journal', () => {
     expect(completed.topologyUpdate).toBeUndefined();
   });
 
-  it('provides argument-free retry instructions where the journal already has the target', () => {
+  it('provides an argument-free R2 retry instruction', () => {
     const config = createDefaultConfig('prod');
-    const external = prepareTopologyUpdate(deployedLock(), {
-      kind: 'external_database',
+    const r2 = prepareTopologyUpdate(deployedLock(), {
+      kind: 'r2',
       targetProductVersion: '0.4.0',
       config,
     });
-    const tenant = prepareTopologyUpdate(deployedLock(), {
-      kind: 'tenant_database',
-      phase: 'preparing',
-      subject: "tenant'a:2",
-      targetProductVersion: '0.4.0',
-      config,
-    });
-
-    expect(topologyUpdateResumeInstruction(external.lock.topologyUpdate!, 'prod')).toBe(
-      "npx @authrim/setup external-db-register --env 'prod'"
-    );
-    expect(topologyUpdateResumeInstruction(tenant.lock.topologyUpdate!, 'prod')).toBe(
-      "npx @authrim/setup tenant-db --env 'prod' --tenant-id 'tenant'\\''a' --generation 2"
+    expect(topologyUpdateResumeInstruction(r2.lock.topologyUpdate!, 'prod')).toBe(
+      "npx @authrim/setup r2-provision --env 'prod'"
     );
   });
 });

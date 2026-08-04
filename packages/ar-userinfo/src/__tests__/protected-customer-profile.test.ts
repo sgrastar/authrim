@@ -251,8 +251,13 @@ function createApp(options?: {
   >;
 }) {
   const app = new Hono<{ Bindings: Env }>();
+  const tenantMetadataDb = createIdempotencyD1();
   app.use('*', async (c, next) => {
     (c as any).set('tenantId', 'tenant-a');
+    (c as any).set('tenantMetadataContext', {
+      tenantId: 'tenant-a',
+      coreDb: tenantMetadataDb,
+    });
     return next();
   });
   const sampleProfile = {

@@ -70,8 +70,8 @@ pnpm exec tsx test/environment-validation/validate-generated-env.ts --env single
 
 Add `--live-cloudflare` when you want read-only checks against the currently authenticated
 Cloudflare account. It verifies that D1 databases and R2 buckets recorded in `lock.json` still
-exist. For `builtin:storage:tenant-d1` environments, generated lock validation also requires the
-initial Lookup/default/users/PII bindings and an accepted Control bootstrap handoff.
+exist. Generated lock validation also requires the initial Lookup/default/users/PII assignments,
+their explicit bindings, and an accepted Control bootstrap handoff.
 
 ## Public API smoke
 
@@ -452,8 +452,8 @@ Scenarios:
 Interpretation:
 
 - This is a SQLite approximation for local data-volume regression checks, not a Cloudflare D1 SLO.
-- `--env` and `--config` read the generated setup metadata, tenant ID, storage profile, and lock
-  D1 bindings, but the synthetic benchmark database remains local and disposable.
+- `--env` and `--config` read the generated setup metadata, tenant ID, placement policy, and lock D1
+  bindings, but the synthetic benchmark database remains local and disposable.
 - `--tenant-count 200` approximates consortium/shared shape; `--tenant-count 1` approximates a very
   large dedicated tenant.
 - The current admin contains-search path uses `LIKE '%term%'`; this benchmark intentionally makes

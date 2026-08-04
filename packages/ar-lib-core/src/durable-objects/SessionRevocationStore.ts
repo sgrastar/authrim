@@ -3,9 +3,16 @@ import type { Env } from '../types/env';
 
 const IDENTITY_KEY = 'identity';
 const STATE_KEY = 'state';
+const SESSION_INDEX_PREFIX = 'session-index:';
+const EXTERNAL_PROVIDER_IDENTITY_KEY = 'external-provider-identity';
+const EXTERNAL_PROVIDER_SESSION_PREFIX = 'external-provider-session:';
 const SAFE_TENANT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_USER_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_CREDENTIAL_ID = /^[a-zA-Z0-9_.:-]{1,256}$/u;
+const SAFE_SESSION_ID = /^[a-zA-Z0-9_.:-]{1,512}$/u;
+const SAFE_DIGEST = /^[a-f0-9]{64}$/u;
+const MAX_SESSION_INDEX_ENTRIES = 1_000;
+const SESSION_INDEX_SCAN_LIMIT = MAX_SESSION_INDEX_ENTRIES + 1;
 
 export type AccountAuthenticationLifecycle =
   | 'active'
@@ -43,6 +50,31 @@ interface SessionRevocationTransactionStorage {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean>;
+}
+
+export interface UserSessionIndexEntry {
+  sessionId: string;
+  tenantId: string;
+  userId: string;
+  accountId: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+  revocationBoundAtMs: number;
+  ipAddress: string | null;
+  userAgent: string | null;
+}
+
+export interface ExternalProviderSessionIndexEntry {
+  sessionId: string;
+  userId: string;
+  expiresAtMs: number;
+}
+
+interface ExternalProviderIndexIdentity {
+  tenantId: string;
+  providerId: string;
+  claimKind: 'sid' | 'sub';
+  claimDigest: string;
 }
 
 export interface SessionRegistrationResult {
@@ -109,6 +141,51 @@ export class SessionRevocationStore extends DurableObject<Env> {
     return value;
   }
 
+  private validateSessionId(value: string): string {
+    if (!SAFE_SESSION_ID.test(value)) {
+      throw new Error('session_registration_id_invalid');
+    }
+    return value;
+  }
+
+  private validateExternalProviderIdentity(
+    tenantId: string,
+    providerId: string,
+    claimKind: 'sid' | 'sub',
+    claimDigest: string
+  ): ExternalProviderIndexIdentity {
+    if (
+      !SAFE_TENANT_ID.test(tenantId) ||
+      !SAFE_TENANT_ID.test(providerId) ||
+      (claimKind !== 'sid' && claimKind !== 'sub') ||
+      !SAFE_DIGEST.test(claimDigest)
+    ) {
+      throw new Error('external_provider_session_identity_invalid');
+    }
+    return { tenantId, providerId, claimKind, claimDigest };
+  }
+
+  private async ensureExternalProviderIdentity(
+    storage: SessionRevocationTransactionStorage,
+    expected: ExternalProviderIndexIdentity
+  ): Promise<void> {
+    const existing = await storage.get<ExternalProviderIndexIdentity>(
+      EXTERNAL_PROVIDER_IDENTITY_KEY
+    );
+    if (!existing) {
+      await storage.put(EXTERNAL_PROVIDER_IDENTITY_KEY, expected);
+      return;
+    }
+    if (
+      existing.tenantId !== expected.tenantId ||
+      existing.providerId !== expected.providerId ||
+      existing.claimKind !== expected.claimKind ||
+      existing.claimDigest !== expected.claimDigest
+    ) {
+      throw new Error('external_provider_session_identity_mismatch');
+    }
+  }
+
   private normalizeState(state: SessionRevocationState | undefined): AccountAuthenticationSnapshot {
     return {
       revokedAfterMs: state?.revokedAfterMs ?? null,
@@ -150,10 +227,16 @@ export class SessionRevocationStore extends DurableObject<Env> {
     tenantId: string,
     userId: string,
     accountId: string,
-    requestedAtMs: number
+    requestedAtMs: number,
+    sessionId: string,
+    expiresAtMs: number,
+    metadata?: { ipAddress?: string; userAgent?: string }
   ): Promise<SessionRegistrationResult> {
     const identity = this.validateIdentity(tenantId, userId, accountId);
     const requested = this.validateTimestamp(requestedAtMs, 'session_registration');
+    const validatedSessionId = this.validateSessionId(sessionId);
+    const expiresAt = this.validateTimestamp(expiresAtMs, 'session_expiration');
+    if (expiresAt <= requested) throw new Error('session_expiration_invalid');
     return this.ctx.storage.transaction(async (storage) => {
       await this.ensureIdentity(storage, identity);
       const state = (await storage.get<SessionRevocationState>(STATE_KEY)) ?? {
@@ -168,7 +251,177 @@ export class SessionRevocationStore extends DurableObject<Env> {
         ...state,
         lastLoginAtMs: Math.max(state.lastLoginAtMs ?? 0, revocationBoundAtMs),
       } satisfies SessionRevocationState);
+      await storage.put(`${SESSION_INDEX_PREFIX}${validatedSessionId}`, {
+        sessionId: validatedSessionId,
+        tenantId,
+        userId,
+        accountId,
+        createdAtMs: requested,
+        expiresAtMs: expiresAt,
+        revocationBoundAtMs,
+        ipAddress: metadata?.ipAddress ?? null,
+        userAgent: metadata?.userAgent ?? null,
+      } satisfies UserSessionIndexEntry);
       return { revokedAfterMs: state.revokedAfterMs, revocationBoundAtMs };
+    });
+  }
+
+  async unregisterSessionRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    sessionId: string
+  ): Promise<boolean> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    const validatedSessionId = this.validateSessionId(sessionId);
+    return this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+      return storage.delete(`${SESSION_INDEX_PREFIX}${validatedSessionId}`);
+    });
+  }
+
+  async updateSessionExpirationRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    sessionId: string,
+    expiresAtMs: number
+  ): Promise<boolean> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    const validatedSessionId = this.validateSessionId(sessionId);
+    const expiresAt = this.validateTimestamp(expiresAtMs, 'session_expiration');
+    return this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+      const key = `${SESSION_INDEX_PREFIX}${validatedSessionId}`;
+      const existing = await storage.get<UserSessionIndexEntry>(key);
+      if (!existing) return false;
+      if (
+        existing.tenantId !== tenantId ||
+        existing.userId !== userId ||
+        existing.accountId !== accountId ||
+        existing.sessionId !== validatedSessionId
+      ) {
+        throw new Error('session_registration_identity_mismatch');
+      }
+      await storage.put(key, { ...existing, expiresAtMs: expiresAt });
+      return true;
+    });
+  }
+
+  async listActiveSessionsRpc(
+    tenantId: string,
+    userId: string,
+    accountId: string,
+    nowMs: number
+  ): Promise<UserSessionIndexEntry[]> {
+    const identity = this.validateIdentity(tenantId, userId, accountId);
+    const now = this.validateTimestamp(nowMs, 'session_list');
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.ensureIdentity(storage, identity);
+    });
+    const [state, entries] = await Promise.all([
+      this.ctx.storage.get<SessionRevocationState>(STATE_KEY),
+      this.ctx.storage.list<UserSessionIndexEntry>({
+        prefix: SESSION_INDEX_PREFIX,
+        limit: SESSION_INDEX_SCAN_LIMIT,
+      }),
+    ]);
+    if (entries.size > MAX_SESSION_INDEX_ENTRIES) {
+      throw new Error('session_index_limit_exceeded');
+    }
+    const revokedAfterMs = state?.revokedAfterMs ?? null;
+    const active: UserSessionIndexEntry[] = [];
+    const expiredKeys: string[] = [];
+    for (const [key, entry] of entries) {
+      if (entry.expiresAtMs <= now) {
+        expiredKeys.push(key);
+      } else if (revokedAfterMs === null || entry.revocationBoundAtMs > revokedAfterMs) {
+        active.push(entry);
+      }
+    }
+    if (expiredKeys.length > 0) await this.ctx.storage.delete(expiredKeys);
+    return active.sort((left, right) => right.createdAtMs - left.createdAtMs);
+  }
+
+  async registerExternalProviderSessionRpc(
+    tenantId: string,
+    providerId: string,
+    claimKind: 'sid' | 'sub',
+    claimDigest: string,
+    sessionId: string,
+    userId: string,
+    expiresAtMs: number
+  ): Promise<void> {
+    const identity = this.validateExternalProviderIdentity(
+      tenantId,
+      providerId,
+      claimKind,
+      claimDigest
+    );
+    const validatedSessionId = this.validateSessionId(sessionId);
+    if (!SAFE_USER_ID.test(userId)) throw new Error('external_provider_session_user_invalid');
+    const expiresAt = this.validateTimestamp(expiresAtMs, 'external_provider_session_expiration');
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.ensureExternalProviderIdentity(storage, identity);
+      await storage.put(`${EXTERNAL_PROVIDER_SESSION_PREFIX}${validatedSessionId}`, {
+        sessionId: validatedSessionId,
+        userId,
+        expiresAtMs: expiresAt,
+      } satisfies ExternalProviderSessionIndexEntry);
+    });
+  }
+
+  async listExternalProviderSessionsRpc(
+    tenantId: string,
+    providerId: string,
+    claimKind: 'sid' | 'sub',
+    claimDigest: string,
+    nowMs: number
+  ): Promise<ExternalProviderSessionIndexEntry[]> {
+    const identity = this.validateExternalProviderIdentity(
+      tenantId,
+      providerId,
+      claimKind,
+      claimDigest
+    );
+    const now = this.validateTimestamp(nowMs, 'external_provider_session_list');
+    await this.ctx.storage.transaction(async (storage) => {
+      await this.ensureExternalProviderIdentity(storage, identity);
+    });
+    const entries = await this.ctx.storage.list<ExternalProviderSessionIndexEntry>({
+      prefix: EXTERNAL_PROVIDER_SESSION_PREFIX,
+      limit: SESSION_INDEX_SCAN_LIMIT,
+    });
+    if (entries.size > MAX_SESSION_INDEX_ENTRIES) {
+      throw new Error('external_provider_session_limit_exceeded');
+    }
+    const active: ExternalProviderSessionIndexEntry[] = [];
+    const expiredKeys: string[] = [];
+    for (const [key, entry] of entries) {
+      if (entry.expiresAtMs <= now) expiredKeys.push(key);
+      else active.push(entry);
+    }
+    if (expiredKeys.length > 0) await this.ctx.storage.delete(expiredKeys);
+    return active;
+  }
+
+  async unregisterExternalProviderSessionRpc(
+    tenantId: string,
+    providerId: string,
+    claimKind: 'sid' | 'sub',
+    claimDigest: string,
+    sessionId: string
+  ): Promise<boolean> {
+    const identity = this.validateExternalProviderIdentity(
+      tenantId,
+      providerId,
+      claimKind,
+      claimDigest
+    );
+    const validatedSessionId = this.validateSessionId(sessionId);
+    return this.ctx.storage.transaction(async (storage) => {
+      await this.ensureExternalProviderIdentity(storage, identity);
+      return storage.delete(`${EXTERNAL_PROVIDER_SESSION_PREFIX}${validatedSessionId}`);
     });
   }
 

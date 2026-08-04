@@ -5,7 +5,7 @@
  * Integrates D1, KV, and Durable Objects with intelligent routing logic.
  *
  * Routing Strategy:
- * - session:* → SessionStore Durable Object (region-sharded hot path + cold persistence adapter)
+ * - session:* → SessionStore Durable Object (authoritative; no D1 mirror or fallback)
  * - client:* → D1 database + KV cache (read-through cache pattern)
  * - user:* → D1 database
  * - authcode:* → AuthorizationCodeStore Durable Object (one-time use guarantee)
@@ -910,7 +910,7 @@ export class ClientStore implements IClientStore {
 }
 
 /**
- * SessionStore implementation (Durable Object + D1)
+ * SessionStore implementation backed only by the authoritative Durable Object
  */
 export class SessionStore implements ISessionStore {
   constructor(

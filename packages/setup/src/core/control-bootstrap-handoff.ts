@@ -19,7 +19,7 @@ import { listPendingControlOperatorOperations } from './control-operator-operati
 import {
   buildInitialControlPlaneResourcePlans,
   type InitialControlPlaneResourcePlan,
-} from './tenant-d1-bootstrap.js';
+} from './control-plane-bootstrap.js';
 import {
   executeD1Command,
   getAccountId,
@@ -282,8 +282,10 @@ function resourceSql(
   plan: InitialControlPlaneResourcePlan,
   environmentId: string,
   tenantId: string,
+  placementPolicy: 'shared_pool' | 'tenant_exclusive',
   now: number
 ) {
+  const tenantExclusive = placementPolicy === 'tenant_exclusive';
   const spec = JSON.stringify({
     bootstrap: true,
     bootstrap_role: plan.role,
@@ -291,8 +293,8 @@ function resourceSql(
     residency_policy_id: 'builtin:residency:default',
     residency_partition: 'default',
     read_replication_mode: 'disabled',
-    allocation_scope: plan.role === 'lookup' ? undefined : 'tenant_exclusive',
-    owner_tenant_id: plan.role === 'lookup' ? undefined : tenantId,
+    allocation_scope: plan.role === 'lookup' ? undefined : placementPolicy,
+    owner_tenant_id: plan.role === 'lookup' || !tenantExclusive ? undefined : tenantId,
     migration_stream_id: plan.migrationStreamId,
     release_id: plan.releaseId,
     manifest_digest: plan.manifestDigest,
@@ -314,8 +316,8 @@ function resourceSql(
        desired_spec_json, created_at, updated_at
      ) VALUES (
        ${sqlString(plan.desiredResourceId)}, ${sqlString(environmentId)}, 'd1',
-       ${sqlString(plan.logicalShardId)}, ${plan.role === 'lookup' ? "'platform'" : "'tenant'"},
-       ${plan.role === 'lookup' ? 'NULL' : sqlString(tenantId)}, ${sqlString(plan.databaseName)},
+       ${sqlString(plan.logicalShardId)}, ${plan.role === 'lookup' || !tenantExclusive ? "'platform'" : "'tenant'"},
+       ${plan.role === 'lookup' || !tenantExclusive ? 'NULL' : sqlString(tenantId)}, ${sqlString(plan.databaseName)},
        ${sqlString(plan.ownershipFingerprint)}, 'present', 'ready',
        ${sqlString(plan.operationId)}, ${sqlString(plan.observedResourceId)},
        ${sqlString(spec)}, ${now}, ${now}
@@ -375,7 +377,7 @@ function resourceSql(
          ${sqlString(plan.shardId!)}, ${sqlString(environmentId)}, ${sqlString(plan.role)},
          'builtin:residency:default', 'default', 1, ${sqlString(plan.logicalShardId)},
          ${sqlString(plan.binding)}, ${sqlString(plan.desiredResourceId)},
-         'disabled', 'disabled', 'ready', 'tenant_exclusive', ${sqlString(tenantId)}, ${now}, ${now}
+         'disabled', 'disabled', 'ready', ${sqlString(placementPolicy)}, ${tenantExclusive ? sqlString(tenantId) : 'NULL'}, ${now}, ${now}
        );`,
       `INSERT OR IGNORE INTO control_tenant_shard_assignments (
          environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
@@ -436,6 +438,7 @@ export async function buildInitialControlTopologyRegistration(input: {
   release: ReleaseMigrationManifest;
   releaseDraft?: boolean;
   automaticProvisioning?: boolean;
+  placementPolicy: 'shared_pool' | 'tenant_exclusive';
   now?: number;
 }): Promise<{
   plans: InitialControlPlaneResourcePlan[];
@@ -472,13 +475,13 @@ export async function buildInitialControlTopologyRegistration(input: {
        environment_id, tenant_id, isolation_policy, policy_generation, policy_state,
        source_operation_id, idempotency_key, activated_at, created_at, updated_at
      ) VALUES (
-       ${sqlString(input.environmentId)}, ${sqlString(tenantId)}, 'tenant_exclusive', 1, 'active',
+       ${sqlString(input.environmentId)}, ${sqlString(tenantId)}, ${sqlString(input.placementPolicy)}, 1, 'active',
        ${sqlString(plans.find((plan) => plan.role === 'tenant_core/default')!.operationId)},
        ${sqlString(`bootstrap:placement:${tenantId}:v1`)}, ${now}, ${now}, ${now}
      );`,
     ...plans.flatMap((plan) => [
       operationSql(plan, input.environmentId, now, input.automaticProvisioning === true),
-      resourceSql(plan, input.environmentId, tenantId, now),
+      resourceSql(plan, input.environmentId, tenantId, input.placementPolicy, now),
     ]),
     initialDefaultRouteSql(plans, input.environmentId, tenantId, now),
     `INSERT INTO control_bootstrap_handoffs (
@@ -503,6 +506,7 @@ export async function registerInitialControlTopology(input: {
   release: ReleaseMigrationManifest;
   releaseDraft?: boolean;
   automaticProvisioning?: boolean;
+  placementPolicy: 'shared_pool' | 'tenant_exclusive';
   now?: number;
   execute?: typeof executeD1Command;
   query?: typeof queryD1Rows;
@@ -512,6 +516,24 @@ export async function registerInitialControlTopology(input: {
   const defaultPlan = plan.plans.find((entry) => entry.role === 'tenant_core/default');
   if (!defaultPlan?.shardId) throw new Error('control_bootstrap_default_shard_missing');
   const defaultRouteIdentity = initialDefaultRouteIdentity(input.environmentId, tenantId);
+  const tenantExclusive = input.placementPolicy === 'tenant_exclusive';
+  const placementSql = sqlString(input.placementPolicy);
+  const shardOwnershipSql = tenantExclusive
+    ? `shard.owner_tenant_id = ${sqlString(tenantId)}
+               AND desired.resource_scope = 'tenant'
+               AND desired.tenant_id = ${sqlString(tenantId)}
+               AND json_extract(desired.desired_spec_json, '$.owner_tenant_id') =
+                   ${sqlString(tenantId)}`
+    : `shard.owner_tenant_id IS NULL
+               AND desired.resource_scope = 'platform'
+               AND desired.tenant_id IS NULL
+               AND json_extract(desired.desired_spec_json, '$.owner_tenant_id') IS NULL`;
+  const assignmentOwnershipSql = tenantExclusive
+    ? 'shard.owner_tenant_id = assignment.tenant_id'
+    : 'shard.owner_tenant_id IS NULL';
+  const defaultRouteOwnershipSql = tenantExclusive
+    ? 'shard.owner_tenant_id = allocation.tenant_id'
+    : 'shard.owner_tenant_id IS NULL';
   await (input.execute ?? executeD1Command)(input.controlDatabaseName, plan.sql);
   const rows = await (input.query ?? queryD1Rows)<{
     state: string;
@@ -520,7 +542,7 @@ export async function registerInitialControlTopology(input: {
     resource_count: number | string;
     migration_count: number | string;
     shard_count: number | string;
-    exclusive_shard_count: number | string;
+    placement_shard_count: number | string;
     placement_policy_count: number | string;
     active_assignment_count: number | string;
     default_route_count: number | string;
@@ -552,19 +574,15 @@ export async function registerInitialControlTopology(input: {
                 ON desired.desired_resource_id = shard.d1_desired_resource_id
                AND desired.environment_id = shard.environment_id
              WHERE shard.environment_id = handoff.environment_id
-               AND shard.allocation_scope = 'tenant_exclusive'
-               AND shard.owner_tenant_id = ${sqlString(input.tenantId.trim())}
-               AND desired.resource_scope = 'tenant'
-               AND desired.tenant_id = ${sqlString(input.tenantId.trim())}
+               AND shard.allocation_scope = ${placementSql}
+               AND ${shardOwnershipSql}
                AND json_extract(desired.desired_spec_json, '$.bootstrap') = 1
                AND json_extract(desired.desired_spec_json, '$.allocation_scope') =
-                   'tenant_exclusive'
-               AND json_extract(desired.desired_spec_json, '$.owner_tenant_id') =
-                   ${sqlString(input.tenantId.trim())}) AS exclusive_shard_count,
+                   ${placementSql}) AS placement_shard_count,
             (SELECT COUNT(*) FROM control_tenant_placement_policies policy
              WHERE policy.environment_id = handoff.environment_id
                AND policy.tenant_id = ${sqlString(input.tenantId.trim())}
-               AND policy.isolation_policy = 'tenant_exclusive'
+               AND policy.isolation_policy = ${placementSql}
                AND policy.policy_state = 'active') AS placement_policy_count,
             (SELECT COUNT(*) FROM control_tenant_shard_assignments assignment
               JOIN control_tenant_shards shard
@@ -573,8 +591,8 @@ export async function registerInitialControlTopology(input: {
              WHERE assignment.environment_id = handoff.environment_id
                AND assignment.tenant_id = ${sqlString(input.tenantId.trim())}
                AND assignment.assignment_state = 'active'
-               AND shard.allocation_scope = 'tenant_exclusive'
-               AND shard.owner_tenant_id = assignment.tenant_id
+               AND shard.allocation_scope = ${placementSql}
+               AND ${assignmentOwnershipSql}
                AND shard.data_role = assignment.data_role
                AND shard.residency_policy_id = assignment.residency_policy_id
                AND shard.residency_partition = assignment.residency_partition)
@@ -605,8 +623,8 @@ export async function registerInitialControlTopology(input: {
                AND shard.data_role = 'tenant_core/default'
                AND shard.residency_policy_id = allocation.residency_policy_id
                AND shard.residency_partition = allocation.residency_partition
-               AND shard.allocation_scope = 'tenant_exclusive'
-               AND shard.owner_tenant_id = allocation.tenant_id
+               AND shard.allocation_scope = ${placementSql}
+               AND ${defaultRouteOwnershipSql}
                AND shard.d1_desired_resource_id = ${sqlString(defaultPlan.desiredResourceId)})
                 AS default_route_count,
             (SELECT COUNT(*) FROM control_lookup_physical_shards lookup
@@ -629,7 +647,7 @@ export async function registerInitialControlTopology(input: {
     count(row.resource_count) !== 4 ||
     count(row.migration_count) !== 4 ||
     count(row.shard_count) !== 3 ||
-    count(row.exclusive_shard_count) !== 3 ||
+    count(row.placement_shard_count) !== 3 ||
     count(row.placement_policy_count) !== 1 ||
     count(row.active_assignment_count) !== 3 ||
     count(row.default_route_count) !== 1 ||

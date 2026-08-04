@@ -33,6 +33,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn(() => true),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    createAccountAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
+      tenantId: 'tenant_test',
+      accountId: `account:${userId}`,
+      legacyUserId: userId,
+    })),
     isNativeSSOEnabled: vi.fn(async () => true),
     revokeDeviceSecretsForLogoutScope,
     listRefreshTokenFamiliesByUser,

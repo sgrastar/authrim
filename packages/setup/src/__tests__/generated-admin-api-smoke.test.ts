@@ -135,5 +135,7 @@ describe('generated admin api smoke', () => {
 
     const firstAdminHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(firstAdminHeaders.authorization).toBe('Bearer machine-admin-token');
+    const createHeaders = fetchMock.mock.calls[3]?.[1]?.headers as Record<string, string>;
+    expect(createHeaders['Idempotency-Key']).toBe('setup-admin-smoke-client-123');
   });
 });

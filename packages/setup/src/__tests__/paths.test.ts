@@ -342,11 +342,10 @@ describe('paths module', () => {
       expect(result.paths.config).toContain('.authrim');
     });
 
-    it('should use legacy structure when forceLegacy is true', () => {
-      const result = resolvePaths({ baseDir: testDir, env: 'test', forceLegacy: true });
-
-      expect(result.type).toBe('legacy');
-      expect(result.paths.config).toContain('authrim-test-config.json');
+    it('should reject a forced legacy structure', () => {
+      expect(() => resolvePaths({ baseDir: testDir, env: 'test', forceLegacy: true })).toThrow(
+        'legacy_environment_structure_not_supported'
+      );
     });
 
     it('should detect existing new structure', () => {
@@ -358,12 +357,13 @@ describe('paths module', () => {
       expect(result.type).toBe('new');
     });
 
-    it('should detect existing legacy structure', () => {
+    it('should not reinterpret an existing legacy structure', () => {
       writeFileSync(join(testDir, LEGACY_CONFIG_FILE), '{}');
 
       const result = resolvePaths({ baseDir: testDir, env: 'any' });
 
-      expect(result.type).toBe('legacy');
+      expect(result.type).toBe('new');
+      expect(result.paths.config).toContain('.authrim');
     });
 
     it('should default to new structure for new environments', () => {

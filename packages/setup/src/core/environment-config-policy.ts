@@ -3,10 +3,9 @@ import type { AuthrimConfig } from './config.js';
 export function databaseTopologySnapshot(config: AuthrimConfig): object {
   return {
     database: config.database,
-    tenantD1: config.tenantD1,
-    storageDefault: config.profiles.defaults.storage,
+    controlPlane: config.controlPlane,
+    initialTenantPlacement: config.tenant.placementPolicy,
     auditDefault: config.profiles.defaults.audit,
-    storageProfiles: config.profiles.seed.storage,
     auditProfiles: config.profiles.seed.audit,
     hyperdriveReferences: config.profiles.references.hyperdrive,
   };

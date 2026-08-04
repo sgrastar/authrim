@@ -12,6 +12,7 @@ import type { LookupAliasIndex, LookupBlindIndex } from './blind-index';
 import { D1SessionReadRepository } from './d1-session-repository';
 
 const MAX_EXACT_MEMBERSHIPS = 100;
+const MAX_ALIAS_RESULTS = 128;
 const SAFE_IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 
 export interface LookupIdentifierRow {
@@ -56,6 +57,31 @@ export interface ResolvedLookupMembership {
 export interface ResolvedLookupAlias {
   tenantId: string;
   routeProjection: TenantAliasRouteProjection;
+}
+
+function decodeActiveLookupAliasRows(
+  rows: readonly LookupAliasRow[],
+  index: LookupAliasIndex,
+  maximumResults: number
+): ResolvedLookupAlias[] {
+  if (rows.length > maximumResults) throw new Error('lookup_alias_result_limit_exceeded');
+  return rows.map((row) => {
+    const routeProjection = decodeTenantAliasProjection(row.route_projection_json);
+    if (
+      !SAFE_IDENTIFIER.test(row.tenant_id) ||
+      strictBucket(row.virtual_bucket) !== index.virtualBucket ||
+      row.alias_kind !== index.aliasKind ||
+      row.alias_sha256_digest !== index.digest ||
+      row.lifecycle_state !== 'active' ||
+      row.tenant_lifecycle_state !== 'active' ||
+      row.runtime_route_status !== 'active' ||
+      routeProjection.schemaVersion !==
+        strictPositiveInteger(row.route_schema_version, 'lookup_route_schema_version_invalid')
+    ) {
+      throw new Error('lookup_alias_row_inconsistent');
+    }
+    return { tenantId: row.tenant_id, routeProjection };
+  });
 }
 
 export function decodeActiveLookupMembershipRows(
@@ -225,23 +251,47 @@ export class LookupDirectoryRepository {
     });
     if (result.rows.length > 1) throw new Error('lookup_alias_not_unique');
     return {
-      aliases: result.rows.map((row) => {
-        const routeProjection = decodeTenantAliasProjection(row.route_projection_json);
-        if (
-          !SAFE_IDENTIFIER.test(row.tenant_id) ||
-          strictBucket(row.virtual_bucket) !== index.virtualBucket ||
-          row.alias_kind !== index.aliasKind ||
-          row.alias_sha256_digest !== index.digest ||
-          row.lifecycle_state !== 'active' ||
-          row.tenant_lifecycle_state !== 'active' ||
-          row.runtime_route_status !== 'active' ||
-          routeProjection.schemaVersion !==
-            strictPositiveInteger(row.route_schema_version, 'lookup_route_schema_version_invalid')
-        ) {
-          throw new Error('lookup_alias_row_inconsistent');
-        }
-        return { tenantId: row.tenant_id, routeProjection };
-      }),
+      aliases: decodeActiveLookupAliasRows(result.rows, index, 1),
+      primaryRechecked: result.primaryRechecked,
+    };
+  }
+
+  async findActiveAliases(
+    index: LookupAliasIndex,
+    maximumResults: number,
+    consistency: D1ConsistencyRequest = createD1ConsistencyRequest('replica_eligible'),
+    afterTenantId?: string
+  ): Promise<{ aliases: ResolvedLookupAlias[]; primaryRechecked: boolean }> {
+    if (
+      !Number.isSafeInteger(maximumResults) ||
+      maximumResults < 1 ||
+      maximumResults > MAX_ALIAS_RESULTS
+    ) {
+      throw new Error('lookup_alias_result_limit_invalid');
+    }
+    if (afterTenantId !== undefined && !SAFE_IDENTIFIER.test(afterTenantId)) {
+      throw new Error('lookup_alias_cursor_invalid');
+    }
+    const cursorClause = afterTenantId === undefined ? '' : 'AND tenant_id > ?';
+    const params = [index.virtualBucket, index.aliasKind, index.digest];
+    if (afterTenantId !== undefined) params.push(afterTenantId);
+    params.push(maximumResults + 1);
+    const result = await this.sessions.query<LookupAliasRow>({
+      sql: `SELECT virtual_bucket, alias_kind, alias_sha256_digest, tenant_id,
+                   route_schema_version, route_projection_json, tenant_lifecycle_state,
+                   runtime_route_status, lifecycle_state
+              FROM lookup_tenant_aliases
+             WHERE virtual_bucket = ? AND alias_kind = ? AND alias_sha256_digest = ?
+               AND lifecycle_state = 'active'
+               ${cursorClause}
+             ORDER BY tenant_id
+             LIMIT ?`,
+      params,
+      consistency,
+      primaryRecheckOnEmpty: true,
+    });
+    return {
+      aliases: decodeActiveLookupAliasRows(result.rows, index, maximumResults),
       primaryRechecked: result.primaryRechecked,
     };
   }

@@ -9,7 +9,9 @@ export type AuthAccountProvisioningFlow =
   | 'totp'
   | 'directory_password'
   | 'external_idp'
+  | 'saml'
   | 'did'
+  | 'test_stub'
   | 'anonymous'
   | 'anonymous_upgrade';
 
@@ -91,6 +93,19 @@ export interface AuthPasskeyRoutePublicationResult {
   operationId: string;
   accountId: string;
 }
+
+export interface AuthDirectoryRoutePublicationInput {
+  schemaVersion: 1;
+  operationId: string;
+  idempotencyKey: string;
+  tenantId: string;
+  accountId: string;
+  userId: string;
+  connectorId: string;
+  directorySubject: string;
+}
+
+export type AuthDirectoryRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
 export interface AuthAnonymousDeviceRouteRemovalInput {
   schemaVersion: 1;
@@ -177,6 +192,21 @@ export function anonymousDeviceLookupSubject(deviceIdHash: string): {
   };
 }
 
+export function directoryIdentityLookupSubject(input: {
+  connectorId: string;
+  directorySubject: string;
+}): { issuer: string; subject: string } {
+  const connectorId = input.connectorId.trim();
+  const directorySubject = input.directorySubject.trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(connectorId)) {
+    throw new Error('directory_route_connector_id_invalid');
+  }
+  if (!directorySubject || directorySubject.length > 2048) {
+    throw new Error('directory_route_subject_invalid');
+  }
+  return { issuer: `urn:authrim:directory:${connectorId}`, subject: directorySubject };
+}
+
 export interface AuthAccountProvisioningServiceBinding {
   provisionAuthAccount(input: AuthAccountProvisioningInput): Promise<AuthAccountProvisioningResult>;
   getAuthAccountProvisioningStatus(
@@ -185,6 +215,9 @@ export interface AuthAccountProvisioningServiceBinding {
   publishAuthPasskeyRoute(
     input: AuthPasskeyRoutePublicationInput
   ): Promise<AuthPasskeyRoutePublicationResult>;
+  publishAuthDirectoryRoute(
+    input: AuthDirectoryRoutePublicationInput
+  ): Promise<AuthDirectoryRoutePublicationResult>;
   removeAuthAnonymousDeviceRoute(
     input: AuthAnonymousDeviceRouteRemovalInput
   ): Promise<AuthAnonymousDeviceRouteRemovalResult>;

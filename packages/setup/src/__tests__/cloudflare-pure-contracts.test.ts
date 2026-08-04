@@ -9,7 +9,6 @@ import {
   getR2BucketName,
   isZoneReadPermissionError,
   parseObjectCatalogR2RowsFromWranglerJson,
-  shouldMirrorPiiMigrationsToCore,
   toResourceIds,
 } from '../core/cloudflare.js';
 
@@ -137,11 +136,11 @@ describe('Cloudflare pure resource contracts', () => {
     expect(
       filterKnownD1NamesForEnvironment('prod', [
         'prod-authrim-core-db',
-        'authrim-prod-tdb-slot-0001-core',
+        'authrim-prod-core-default-default-a1b2c3d4',
         'prod-authrim-core-db',
         'production-authrim-core-db',
       ])
-    ).toEqual(['prod-authrim-core-db', 'authrim-prod-tdb-slot-0001-core']);
+    ).toEqual(['prod-authrim-core-db', 'authrim-prod-core-default-default-a1b2c3d4']);
     expect(
       filterKnownQueueNamesForEnvironment('prod', [
         'prod-audit-queue',
@@ -169,17 +168,5 @@ describe('Cloudflare pure resource contracts', () => {
       )
     ).toEqual([{ bucketBinding: 'AUDIT_ARCHIVE', objectKey: 'audit/1.json' }]);
     expect(parseObjectCatalogR2RowsFromWranglerJson(JSON.stringify([]))).toEqual([]);
-  });
-
-  it('mirrors PII migrations only for the explicit single-database profile', () => {
-    expect(shouldMirrorPiiMigrationsToCore()).toBe(false);
-    expect(shouldMirrorPiiMigrationsToCore({ profiles: { defaults: { storage: 'other' } } })).toBe(
-      false
-    );
-    expect(
-      shouldMirrorPiiMigrationsToCore({
-        profiles: { defaults: { storage: 'builtin:storage:single-db' } },
-      })
-    ).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
--- Server-owned execution authority for tenant D1 provisioning.
+-- Server-owned execution authority for Control Plane resource provisioning.
 -- Token values are Worker secrets and must never be stored in this table.
 
 ALTER TABLE control_environments

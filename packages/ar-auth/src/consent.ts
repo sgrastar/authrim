@@ -37,6 +37,7 @@ import {
   getRolesInOrganization,
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getTenantIdFromContext,
@@ -59,6 +60,7 @@ import {
   getLogger,
   getTenantSystemSettings,
   resolveClientTrustPolicy,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import { redirectWithError } from './authorize';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
@@ -222,10 +224,10 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
 
     // Load client metadata via Repository
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const tenantAuthCtx = createAuthContextFromHono(c, tenantId);
     const [client, trustPolicy] = await Promise.all([
-      authCtx.repositories.client.findByClientId(client_id),
-      resolveClientTrustPolicy(authCtx.coreAdapter, tenantId, 'oidc_client', client_id),
+      tenantAuthCtx.repositories.client.findByClientId(client_id),
+      resolveClientTrustPolicy(tenantAuthCtx.coreAdapter, tenantId, 'oidc_client', client_id),
     ]);
 
     // Map to clientRow format for compatibility
@@ -255,6 +257,11 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
         401
       );
     }
+
+    // Client and trust-policy metadata live in the tenant metadata database, while consent,
+    // RBAC, and user material are account-scoped. Resolve the account route before crossing
+    // that boundary so tenant metadata D1 is never used as an implicit user-store fallback.
+    await resolveAccountDataContextFromHono(c, userId);
 
     // Parse scopes
     const scopeDetails = parseScopesToInfo(scope);
@@ -327,7 +334,7 @@ async function handleJsonConsentGet(
 ): Promise<Response> {
   const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
   // Build client info
   const client: ConsentClientInfo = {
@@ -562,7 +569,7 @@ async function loadConsentScreenItems(
     defaultLanguage?: string;
   }
 ): Promise<ConsentScreenItem[]> {
-  const authCtx = createAuthContextFromHono(c, params.tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, params.tenantId);
   const piiCtx = createPIIContextFromHono(c, params.tenantId);
   return getConsentItemsForScreen(
     authCtx.coreAdapter,
@@ -1034,7 +1041,8 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
     // Get AuthContext for database access
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    await resolveAccountDataContextFromHono(c, userId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
     // Get settings for granular scopes and expiration
     const configManager = createOAuthConfigManager(c.env);

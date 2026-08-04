@@ -63,7 +63,7 @@ export interface LocalUserScaleSetupTarget {
   configPath: string;
   lockPath: string;
   tenantId: string;
-  storageProfile: string;
+  placementPolicy: 'shared_pool' | 'tenant_exclusive';
   d1: Record<string, { name: string; id: string }>;
 }
 
@@ -145,7 +145,7 @@ async function resolveSetupTarget(
     configPath: target.configPath,
     lockPath: loadedLock.path,
     tenantId: config.tenant.name,
-    storageProfile: config.profiles.defaults.storage,
+    placementPolicy: config.tenant.placementPolicy,
     d1: loadedLock.lock?.d1 ?? {},
   };
 }

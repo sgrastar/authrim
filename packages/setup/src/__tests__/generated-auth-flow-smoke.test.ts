@@ -134,6 +134,8 @@ describe('generated auth flow smoke', () => {
     expect(result.ok).toBe(true);
     expect(result.clientId).toBe('client-1');
     expect(result.checks.map((check) => check.id)).toContain('token-introspect-after-revoke');
+    const createHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(createHeaders['Idempotency-Key']).toMatch(/^setup-auth-flow-smoke-client-\d+$/u);
   });
 
   it('downgrades client_credentials unsupported response to warning in auto mode', async () => {

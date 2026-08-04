@@ -1,8 +1,11 @@
 import {
+  ensureDatabaseAdapter,
   type Env,
-  getDefaultTenantId,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listEnvironmentTenantDefaultStores,
 } from '@authrim/ar-lib-core';
+
+const CONSENT_RETENTION_TENANT_PAGE_SIZE = 32;
+const CONSENT_RETENTION_CURSOR_KEY = 'jobs:consent-retention:tenant-cursor';
 
 interface ConsentRetentionLogger {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -14,30 +17,38 @@ export async function processConsentRetentionJobs(
   env: Env,
   log: ConsentRetentionLogger
 ): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-consent-retention'
-  );
-  const tenantRows = await adapter.query<{ tenant_id: string }>(
-    `SELECT DISTINCT tenant_id
-       FROM consent_statements
-      WHERE record_retention_days IS NOT NULL`
-  );
-  const tenantIds =
-    tenantRows.length > 0 ? tenantRows.map((row) => row.tenant_id) : [getDefaultTenantId(env)];
+  if (!env.AUTHRIM_CONFIG) throw new Error('consent_retention_directory_unavailable');
+  const afterTenantId =
+    (await env.AUTHRIM_CONFIG.get(CONSENT_RETENTION_CURSOR_KEY))?.trim() || undefined;
+  const tenants = await listEnvironmentTenantDefaultStores(env, {
+    limit: CONSENT_RETENTION_TENANT_PAGE_SIZE,
+    afterTenantId,
+    concurrency: 4,
+  });
   const now = Date.now();
 
-  for (const tenantId of tenantIds) {
-    const statements = await adapter.query<{
-      id: string;
-      record_retention_days: number | null;
-    }>(
-      `SELECT id, record_retention_days
-         FROM consent_statements
-        WHERE tenant_id = ?
-          AND record_retention_days IS NOT NULL`,
-      [tenantId]
+  for (const tenant of tenants) {
+    const tenantId = tenant.tenantId;
+    const adapter = ensureDatabaseAdapter(
+      tenant.store.source,
+      `management-consent-retention:${tenant.store.bindingRef}`
     );
+    let statements: Array<{ id: string; record_retention_days: number | null }>;
+    try {
+      statements = await adapter.query(
+        `SELECT id, record_retention_days
+           FROM consent_statements
+          WHERE tenant_id = ?
+            AND record_retention_days IS NOT NULL`,
+        [tenantId]
+      );
+    } catch (error) {
+      log.warn('Consent retention tenant scan failed', {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
 
     for (const statement of statements) {
       if (statement.record_retention_days === null || statement.record_retention_days < 0) {
@@ -98,5 +109,11 @@ export async function processConsentRetentionJobs(
     }
   }
 
-  log.info('Consent retention cleanup completed', { tenantCount: tenantIds.length });
+  const nextCursor =
+    tenants.length === CONSENT_RETENTION_TENANT_PAGE_SIZE
+      ? (tenants[tenants.length - 1]?.tenantId ?? '')
+      : '';
+  await env.AUTHRIM_CONFIG.put(CONSENT_RETENTION_CURSOR_KEY, nextCursor);
+
+  log.info('Consent retention cleanup completed', { tenantCount: tenants.length });
 }

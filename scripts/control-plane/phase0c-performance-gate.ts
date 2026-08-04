@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const DEFAULT_OUTPUT_DIR = resolve(
   REPO_ROOT,
-  'private/docs/implementation/tenant-d1-control-plane/performance'
+  'private/docs/implementation/unified-control-plane/performance'
 );
 
 export const PHASE0C_GATE = Object.freeze({
@@ -651,7 +651,7 @@ export async function runPhase0cGate(options: CliOptions): Promise<{
 }
 
 function printUsage(): void {
-  process.stdout.write(`Tenant D1 control-plane Phase 0c performance gate\n\n`);
+  process.stdout.write(`Unified D1 Control Plane Phase 0c performance gate\n\n`);
   process.stdout.write(`Usage:\n`);
   process.stdout.write(
     `  pnpm control-plane:phase0c-gate --env test --input <normalized-result.json>\n`

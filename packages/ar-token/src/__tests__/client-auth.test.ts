@@ -104,7 +104,12 @@ const mocks = vi.hoisted(() => {
     mockD1Adapter: vi.fn().mockReturnValue({
       query: vi.fn().mockResolvedValue([]),
       queryOne: vi.fn().mockResolvedValue(null),
-      execute: vi.fn().mockResolvedValue({ success: true }),
+      execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
+      transaction: vi.fn(async (fn: (adapter: unknown) => unknown) => fn(mocks.mockD1Adapter())),
+      batch: vi.fn().mockResolvedValue([]),
+      isHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 0, type: 'mock' }),
+      getType: vi.fn().mockReturnValue('mock'),
+      close: vi.fn().mockResolvedValue(undefined),
     }),
     mockAdminAdapter: {
       query: vi.fn().mockResolvedValue([]),
@@ -467,9 +472,41 @@ function resetAllMocks() {
     allowCrossClientNativeSSO: false,
   });
   mocks.mockRecordDeviceSecretRouteHint.mockReset().mockResolvedValue(undefined);
-  mocks.mockResolveDeviceSecretRouteHint.mockReset().mockResolvedValue(null);
+  mocks.mockResolveDeviceSecretRouteHint.mockReset().mockResolvedValue({
+    tenantId: 'default',
+    accountId: 'account:user-001',
+    issuedAt: 1_700_000_000_000,
+    expiresAt: 1_702_592_000_000,
+  });
   mocks.mockGetTenantMetadataContextFromHono.mockReset().mockReturnValue(null);
-  mocks.mockResolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
+  mocks.mockResolveAccountDataContextFromHono
+    .mockReset()
+    .mockImplementation(async (c: { set(key: string, value: unknown): void }, subject: string) => {
+      const legacyUserId = subject.startsWith('account:')
+        ? subject.slice('account:'.length)
+        : subject;
+      const accountId = subject.startsWith('account:') ? subject : `account:${subject}`;
+      const coreDb = mocks.mockD1Adapter();
+      const tenantMetadataContext = { tenantId: 'default', coreDb };
+      const accountDataContext = {
+        tenantId: 'default',
+        accountId,
+        legacyUserId,
+        membership: {},
+        coreDb,
+        piiDb: coreDb,
+        coreBindingRef: 'D1_USERS_001',
+        piiBindingRef: 'D1_PII_001',
+        coreResidencyPartition: 'global',
+        piiResidencyPartition: 'global',
+        accountRouteGeneration: 1,
+        userCacheScope: `default:${accountId}:1`,
+        piiCacheMode: 'disabled',
+      };
+      c.set('tenantMetadataContext', tenantMetadataContext);
+      c.set('accountDataContext', accountDataContext);
+      return accountDataContext;
+    });
   mocks.mockIsCustomClaimsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockIsIdLevelPermissionsEnabled.mockReset().mockResolvedValue(false);
   mocks.mockGetCachedUserCore.mockReset().mockResolvedValue(null);
@@ -1894,11 +1931,10 @@ describe('Client Authentication Tests', () => {
       });
     }
 
-    function setupTenantD1NativeSSORoute(accountId = 'account:user-001') {
+    function setupRoutedNativeSSORoute(accountId = 'account:user-001') {
       const coreDb = mocks.mockD1Adapter();
       const tenantMetadataContext = {
         tenantId: 'default',
-        storageProfileId: 'builtin:storage:tenant-d1',
         coreDb,
       };
       mocks.mockGetTenantMetadataContextFromHono.mockReturnValue(tenantMetadataContext);
@@ -1914,7 +1950,6 @@ describe('Client Authentication Tests', () => {
             tenantId: 'default',
             accountId: requestedAccountId,
             legacyUserId: requestedAccountId.slice('account:'.length),
-            storageProfileId: 'builtin:storage:tenant-d1',
             membership: {},
             coreDb,
             piiDb: coreDb,
@@ -2830,9 +2865,9 @@ describe('Client Authentication Tests', () => {
       expect(body.error_details?.code).toBe('device_secret_inactive');
     });
 
-    it('routes tenant-D1 Native SSO through the device-secret hint before validation', async () => {
+    it('routes routed Native SSO through the device-secret hint before validation', async () => {
       const client = setupNativeSSOValidationTest();
-      setupTenantD1NativeSSORoute();
+      setupRoutedNativeSSORoute();
 
       const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
 
@@ -2850,9 +2885,9 @@ describe('Client Authentication Tests', () => {
       );
     });
 
-    it('rejects tenant-D1 Native SSO before users D1 access when the route hint is missing', async () => {
+    it('rejects routed Native SSO before users D1 access when the route hint is missing', async () => {
       const client = setupNativeSSOValidationTest();
-      setupTenantD1NativeSSORoute();
+      setupRoutedNativeSSORoute();
       mocks.mockResolveDeviceSecretRouteHint.mockResolvedValue(null);
 
       const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
@@ -2867,9 +2902,9 @@ describe('Client Authentication Tests', () => {
       expect(mocks.mockDeviceSecretRepository.validateAndUse).not.toHaveBeenCalled();
     });
 
-    it('rejects a tenant-D1 device secret whose authoritative owner differs from the hint', async () => {
+    it('rejects a routed device secret whose authoritative owner differs from the hint', async () => {
       const client = setupNativeSSOValidationTest();
-      setupTenantD1NativeSSORoute('account:other-user');
+      setupRoutedNativeSSORoute('account:other-user');
 
       const response = await tokenHandler(createNativeSSOTokenExchangeContext(client.client_id));
       const body = await parseJsonResponse<{ error: string; error_details?: { code?: string } }>(
@@ -2881,9 +2916,9 @@ describe('Client Authentication Tests', () => {
       expect(body.error_details?.code).toBe('device_secret_binding_failed');
     });
 
-    it('returns retryable 503 when tenant-D1 account routing is unavailable', async () => {
+    it('returns retryable 503 when routed account routing is unavailable', async () => {
       const client = setupNativeSSOValidationTest();
-      setupTenantD1NativeSSORoute();
+      setupRoutedNativeSSORoute();
       mocks.mockResolveAccountDataContextFromHono.mockRejectedValue(
         new Error('account_data_runtime_registry_unavailable')
       );

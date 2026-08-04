@@ -230,9 +230,9 @@ const zhTW: Translations = {
   // Database
   'db.title': '資料庫配置',
   'db.regionWarning': '資料庫地區建立後無法變更。',
-  'db.coreDescription': 'Core DB：儲存 OAuth 用戶端、權杖、工作階段、稽核日誌',
+  'db.coreDescription': '平台資料庫：儲存平台中繼資料與非 PII 稽核日誌',
   'db.coreRegion': 'Core 資料庫地區',
-  'db.piiDescription': 'PII DB：儲存使用者設定檔、憑證、個人資料',
+  'db.piiDescription': '平台 PII 資料庫：儲存 PII 稽核與匿名化資料',
   'db.piiNote': '請考慮您的資料保護要求。',
   'db.piiRegion': 'PII 資料庫地區',
   'db.creating': '正在建立資料庫...',
@@ -761,12 +761,8 @@ const zhTW: Translations = {
   'web.db.name': '名稱',
   'web.db.region': '地區',
   'web.db.regionAuto': '自動（最近）',
-  'web.db.storageProfileTitle': '儲存部署設定檔',
-  'web.db.storageProfileDesc': '選擇此部署中使用者 core/PII 資料的放置方式。',
-  'web.db.sharedD1Title': '共用 D1',
-  'web.db.sharedD1Desc': '整個部署共用一個 core D1 與一個 PII D1。設定成本最低，也是預設路徑。',
-  'web.db.tenantD1Title': '租戶 D1',
-  'web.db.tenantD1Desc': '初始化控制平面和首批租戶分片，後續容量會按需自動建立。',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc': '初始化控制平面和首批租戶分片，後續容量會按需自動建立。',
 
   // Web UI Email
   'web.email.title': '電子郵件提供者',

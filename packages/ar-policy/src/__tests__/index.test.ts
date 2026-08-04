@@ -6,6 +6,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import app from '../index';
+import { createPolicyRuntimeEnv } from './helpers/runtime-env';
 
 function createMockD1(results: unknown[] = []) {
   return {
@@ -20,7 +21,7 @@ function createMockD1(results: unknown[] = []) {
 }
 
 // Mock environment
-const mockEnv = {
+const mockEnv = createPolicyRuntimeEnv(createMockD1(), {
   POLICY_API_SECRET: 'test-secret-key',
   ENABLE_POLICY_SIMULATION_API: 'true',
   VERSION_MANAGER: {
@@ -30,8 +31,7 @@ const mockEnv = {
     })),
   },
   CODE_VERSION_UUID: '',
-  DB: createMockD1(),
-};
+});
 
 // Helper to create request with auth
 function createRequest(
@@ -90,7 +90,7 @@ describe('Policy Service API', () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: createMockD1(),
+        TDB_POLICY_TEST_CORE: createMockD1(),
       };
       const req = createRequest('/api/rebac/health', { withAuth: false });
       const res = await app.fetch(req, mockEnvWithRebac);
@@ -518,7 +518,7 @@ describe('Policy Service API', () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: createMockD1(),
+        TDB_POLICY_TEST_CORE: createMockD1(),
       };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
@@ -535,7 +535,7 @@ describe('Policy Service API', () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: createMockD1(),
+        TDB_POLICY_TEST_CORE: createMockD1(),
       };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',
@@ -556,7 +556,7 @@ describe('Policy Service API', () => {
       const mockEnvWithRebac = {
         ...mockEnv,
         ENABLE_REBAC: 'true',
-        DB: createMockD1(), // No relationships found
+        TDB_POLICY_TEST_CORE: createMockD1(), // No relationships found
       };
       const req = createRequest('/api/rebac/check', {
         method: 'POST',

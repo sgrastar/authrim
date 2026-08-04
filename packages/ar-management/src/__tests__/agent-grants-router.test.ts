@@ -75,6 +75,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     },
     ensureDatabaseAdapter: () => ({ queryOne: mocks.queryOne }),
     createAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.queryOne } }),
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(async () => ({ source: {} })),
     requireDedicatedAdminDatabaseAdapter: () => ({}),
     AdminMachineAccessRepository: class {
       findPrincipalById = mocks.findPrincipalById;

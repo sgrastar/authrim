@@ -43,6 +43,16 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
   };
 });
 
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {},
+  })),
+  prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+}));
+
 import { buildConformanceTestUserId, registerHandler } from '../register';
 
 // Helper to create mock D1Database
@@ -136,6 +146,23 @@ function getOauthClientInsertPlaceholderCount(env: Env): number {
   return (String(call?.[0] ?? '').match(/\?/g) ?? []).length;
 }
 
+function attachTenantContexts(
+  c: { env: Env; set(key: string, value: unknown): void },
+  tenantId: string
+) {
+  c.set('tenantId', tenantId);
+  c.set('tenantMetadataContext', {
+    tenantId,
+    coreDb: c.env.DB,
+  });
+  c.set('accountDataContext', {
+    tenantId,
+    accountId: 'test-account',
+    coreDb: c.env.DB,
+    piiDb: c.env.DB,
+  });
+}
+
 describe('Dynamic Client Registration Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
@@ -150,7 +177,7 @@ describe('Dynamic Client Registration Handler', () => {
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
     app.use('*', async (c, next) => {
-      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      attachTenantContexts(c as never, 'default');
       await next();
     });
     app.post('/register', registerHandler);
@@ -604,7 +631,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'tenant1');
+        attachTenantContexts(c as never, 'tenant1');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -710,7 +737,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should build registration_client_uri with default tenant subdomain when naked domain is disabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'default');
+        attachTenantContexts(c as never, 'default');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -743,7 +770,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should build registration_client_uri with naked domain for the default tenant when enabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'default');
+        attachTenantContexts(c as never, 'default');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -775,7 +802,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should keep tenant subdomains for non-primary tenants when naked domain is enabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'acme');
+        attachTenantContexts(c as never, 'acme');
         await next();
       });
       localApp.post('/register', registerHandler);

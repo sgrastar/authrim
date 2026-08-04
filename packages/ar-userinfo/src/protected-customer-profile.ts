@@ -21,6 +21,7 @@ import {
   projectDownstreamGrantProtectedResource,
   readResponseTextWithLimit,
   requiredIdempotencyMiddleware,
+  resolveAccountDataContextFromHono,
   resolveProductProtectedResourceAudience,
   StepUpFlowError,
   DelegatedWriteEnvelopeError,
@@ -275,6 +276,7 @@ async function loadProtectedCustomerProfileFromEnv(input: {
   tenantId: string;
   userId: string;
 }): Promise<ProtectedCustomerProfileResource | null> {
+  await resolveAccountDataContextFromHono(input.c, input.userId);
   const authCtx = createAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
@@ -551,6 +553,7 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   subjectUserId: string;
   update: CustomerProfileUpdateInput;
 }): Promise<ProtectedCustomerProfileResource | null> {
+  await resolveAccountDataContextFromHono(input.c, input.subjectUserId);
   const authCtx = createAuthContextFromHono(input.c, input.tenantId);
   const piiCtx = createPIIContextFromHono(input.c, input.tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({

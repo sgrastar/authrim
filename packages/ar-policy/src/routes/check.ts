@@ -21,6 +21,7 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   createLogger,
+  resolveOptionalCoreAdapterFromHono,
   type CheckApiRequest,
 } from '@authrim/ar-lib-core';
 import {
@@ -407,7 +408,12 @@ const checkRoutes = new Hono<{ Bindings: Env }>();
  */
 checkRoutes.get('/health', async (c) => {
   const enabled = await isCheckApiEnabled(c.env);
-  const hasDatabase = !!c.env.DB;
+  const hasDatabase = Boolean(
+    resolveOptionalCoreAdapterFromHono(
+      c as unknown as Context<{ Bindings: SharedEnv }>,
+      'policy-health'
+    )
+  );
   const hasCache = !!c.env.CHECK_CACHE_KV;
   const batchSizeLimit = await getBatchSizeLimit(c.env);
 

@@ -207,7 +207,8 @@ async function supersedeIdPInitiatedDestinationConsents(
 ): Promise<void> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'saml-idp-initiated-consent-refresh'
+    'saml-idp-initiated-consent-refresh',
+    { tenantId }
   );
   const now = Math.floor(Date.now() / 1000);
   await adapter.execute(
@@ -334,7 +335,8 @@ async function generateIdPInitiatedResponse(
     const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
       coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'saml-idp-initiated-destination-consent'
+        'saml-idp-initiated-destination-consent',
+        { tenantId }
       ),
       adminAdapter: requireAdminDatabaseAdapter(env, 'saml-idp-initiated-destination-consent'),
       tenantId,
@@ -439,7 +441,8 @@ async function consumeIdPInitiatedDestinationConsent(
 ): Promise<void> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'saml-idp-initiated-consent-consume'
+    'saml-idp-initiated-consent-consume',
+    { tenantId }
   );
   await adapter.execute(
     `UPDATE consent_records

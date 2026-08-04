@@ -141,9 +141,11 @@ function createMockDB(
  * Create a mock environment for testing
  */
 function createMockEnv(overrides: Partial<Env> = {}): Env {
+  const adminDb = overrides.DB_ADMIN ?? overrides.DB ?? createMockDB();
   return {
     ISSUER_URL: 'https://test.example.com',
-    DB: createMockDB(),
+    DB: overrides.DB ?? adminDb,
+    DB_ADMIN: adminDb,
     ...overrides,
   } as Env;
 }

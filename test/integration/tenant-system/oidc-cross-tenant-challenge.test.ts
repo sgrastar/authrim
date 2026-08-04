@@ -60,8 +60,7 @@ describe('multi-tenant OIDC challenge conformance', () => {
       } as never)
     ).rejects.toMatchObject({
       status: 303,
-      location:
-        '/error?error=invalid_request&error_description=Authorization%20challenge%20is%20invalid%20or%20expired',
+      location: '/error?error=invalid_request',
     });
   });
 });

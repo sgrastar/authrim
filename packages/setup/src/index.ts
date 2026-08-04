@@ -24,11 +24,7 @@ import { updateCommand } from './cli/commands/update.js';
 import { configCommand } from './cli/commands/config.js';
 import { deleteCommand } from './cli/commands/delete.js';
 import { infoCommand } from './cli/commands/info.js';
-import { migrateCommand, migrateStatusCommand } from './cli/commands/migrate.js';
-import { tenantDatabaseCommand } from './cli/commands/tenant-db.js';
-import { tenantDatabaseMigrateAllCommand } from './cli/commands/tenant-db-migrate-all.js';
 import { r2ProvisionCommand } from './cli/commands/r2-provision.js';
-import { externalDatabaseRegisterCommand } from './cli/commands/external-db-register.js';
 import {
   rotateRuntimeRegistrySigningKeyCommand,
   rotateSmokeRpcSigningKeyCommand,
@@ -144,51 +140,12 @@ program
   .action(controlProvisionCommand);
 
 program
-  .command('tenant-db')
-  .description('Create tenant-d1 core and PII databases for one tenant')
-  .requiredOption('--tenant-id <id>', 'Tenant ID')
-  .option('--tenant-slug <slug>', 'Tenant slug used for generated names and bindings')
-  .option('--generation <n>', 'Tenant database generation to create for retry/recreation', '1')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option('--activate', 'Also move tenant database active pointers to the created generation')
-  .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(tenantDatabaseCommand);
-
-program
-  .command('tenant-db-migrate-all')
-  .description('Run migrations for generated tenant-d1 databases from the lock file')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option('--role <roles>', 'Comma-separated roles: tenant_core,tenant_pii')
-  .option('--binding <bindings>', 'Comma-separated generated TDB_* bindings to migrate')
-  .option('--concurrency <n>', 'Fixed broad migration concurrency', '2')
-  .option('--canary-binding <bindings>', 'Comma-separated TDB_* bindings to run first')
-  .option('--canary-count <n>', 'Automatically select the first N targets as canaries', '0')
-  .option('--skip-failed', 'Continue remaining tenant migrations after a target fails')
-  .option('--dry-run', 'Show migration targets without running migrations')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(tenantDatabaseMigrateAllCommand);
-
-program
   .command('r2-provision')
   .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
   .option('--env <name>', 'Environment name', 'prod')
   .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(r2ProvisionCommand);
-
-program
-  .command('external-db-register')
-  .description('Register setup-managed external database topology and deploy its bindings')
-  .option('--config <path>', 'Candidate environment config (not needed when resuming)')
-  .option('--env <name>', 'Environment name', 'prod')
-  .option(
-    '--external-schema-ready',
-    'Confirm the installed release schema was applied to every new external database target'
-  )
-  .option('--dry-run', 'Validate and show the registration plan without changing files')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(externalDatabaseRegisterCommand);
 
 program
   .command('rotate-runtime-registry-key')
@@ -538,7 +495,7 @@ program
               components: [componentName as 'ar-admin-ui' | 'ar-login-ui'],
               environmentBootstrap: {
                 defaultResidencyPolicyId: cfg.profiles.defaults.residency,
-                automaticProvisioning: cfg.tenantD1?.automaticProvisioning === true,
+                automaticProvisioning: cfg.controlPlane?.automaticProvisioning === true,
               },
               registeredBy: 'setup:upgrade-ui',
               disableMissing: false,
@@ -885,21 +842,6 @@ program
   .option('--d1', 'Show only D1 database information')
   .option('--workers', 'Show only Worker information')
   .action(infoCommand);
-
-program
-  .command('migrate')
-  .description('Migrate from legacy flat file structure to new .authrim/{env}/ structure')
-  .option('--env <name>', 'Migrate specific environment only')
-  .option('--dry-run', 'Show what would be done without making changes')
-  .option('--no-backup', 'Skip backup creation')
-  .option('--delete-legacy', 'Delete legacy files after successful migration')
-  .option('-y, --yes', 'Skip confirmation prompts')
-  .action(migrateCommand);
-
-program
-  .command('migrate-status')
-  .description('Show current directory structure status and migration recommendation')
-  .action(migrateStatusCommand);
 
 function normalizePnpmScriptArgv(argv: string[]): string[] {
   const [, , commandName, firstCommandArg] = argv;

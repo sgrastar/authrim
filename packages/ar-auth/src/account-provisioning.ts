@@ -29,7 +29,7 @@ type ProvisioningRuntimeUser = Omit<CanonicalRuntimeUserWriteInput, 'userId' | '
   sensitiveValues?: Partial<Record<CanonicalSensitiveUserField, unknown>>;
 };
 
-export interface ProvisionTenantD1EmailAccountInput {
+export interface ProvisionEmailAccountInput {
   tenantId: string;
   candidateUserId: string;
   flow: AuthAccountProvisioningFlow;
@@ -37,11 +37,11 @@ export interface ProvisionTenantD1EmailAccountInput {
   runtimeUser: ProvisioningRuntimeUser;
 }
 
-export type ProvisionTenantD1EmailAccountResult =
+export type ProvisionEmailAccountResult =
   | { status: 'ready'; accountId: string; userId: string }
   | { status: 'pending'; response: Response };
 
-export interface PublishTenantD1PasskeyRouteInput {
+export interface PublishPasskeyRouteInput {
   tenantId: string;
   userId: string;
   passkeyId: string;
@@ -49,13 +49,13 @@ export interface PublishTenantD1PasskeyRouteInput {
   rpId: string;
 }
 
-export interface ProvisionTenantD1AnonymousAccountInput {
+export interface ProvisionAnonymousAccountInput {
   tenantId: string;
   candidateUserId: string;
   device: Omit<AuthAnonymousDeviceProvisioningInput, 'id'>;
 }
 
-export interface RemoveTenantD1AnonymousDeviceRouteInput {
+export interface RemoveAnonymousDeviceRouteInput {
   tenantId: string;
   userId: string;
   deviceId: string;
@@ -145,7 +145,9 @@ function resumeMetadata(value: unknown): ResumeMetadata | null {
       'totp',
       'directory_password',
       'external_idp',
+      'saml',
       'did',
+      'test_stub',
       'anonymous',
       'anonymous_upgrade',
     ].includes(metadata.flow) ||
@@ -157,15 +159,10 @@ function resumeMetadata(value: unknown): ResumeMetadata | null {
   return metadata as unknown as ResumeMetadata;
 }
 
-export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
-  return getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
-}
-
-export async function resolveTenantD1EmailAccountRoute(
+export async function resolveEmailAccountRoute(
   c: Context<{ Bindings: Env }>,
   email: string
-): Promise<'not_required' | 'resolved' | 'not_found'> {
-  if (!usesTenantD1AccountStorage(c)) return 'not_required';
+): Promise<'resolved' | 'not_found'> {
   try {
     await resolveAccountDataContextByIdentifierFromHono(c, {
       indexKind: 'email_exact',
@@ -180,33 +177,30 @@ export async function resolveTenantD1EmailAccountRoute(
   }
 }
 
-export async function resolveTenantD1PasskeyAccountRoute(
+export async function resolvePasskeyAccountRoute(
   c: Context<{ Bindings: Env }>,
   input: { credentialId: string; rpId: string }
 ): Promise<AccountDataContext | null> {
-  if (!usesTenantD1AccountStorage(c)) return null;
   return resolveAccountDataContextByIdentifierFromHono(c, {
     indexKind: 'external_subject',
     identifier: passkeyCredentialLookupSubject(input),
   });
 }
 
-export async function resolveTenantD1AnonymousAccountRoute(
+export async function resolveAnonymousAccountRoute(
   c: Context<{ Bindings: Env }>,
   deviceIdHash: string
 ): Promise<AccountDataContext | null> {
-  if (!usesTenantD1AccountStorage(c)) return null;
   return resolveAccountDataContextByIdentifierFromHono(c, {
     indexKind: 'external_subject',
     identifier: anonymousDeviceLookupSubject(deviceIdHash),
   });
 }
 
-export async function publishTenantD1PasskeyRoute(
+export async function publishPasskeyRoute(
   c: Context<{ Bindings: Env }>,
-  input: PublishTenantD1PasskeyRouteInput
+  input: PublishPasskeyRouteInput
 ): Promise<201 | 202> {
-  if (!usesTenantD1AccountStorage(c)) return 201;
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
   const account = await resolveAccountDataContextFromHono(c, input.userId);
   if (account.legacyUserId !== input.userId) {
@@ -243,11 +237,10 @@ export async function publishTenantD1PasskeyRoute(
   return result.status;
 }
 
-export async function removeTenantD1AnonymousDeviceRoute(
+export async function removeAnonymousDeviceRoute(
   c: Context<{ Bindings: Env }>,
-  input: RemoveTenantD1AnonymousDeviceRouteInput
+  input: RemoveAnonymousDeviceRouteInput
 ): Promise<201 | 202> {
-  if (!usesTenantD1AccountStorage(c)) return 201;
   if (!c.env.ACCOUNT_PROVISIONER?.removeAuthAnonymousDeviceRoute) {
     throw new Error('account_provisioner_unavailable');
   }
@@ -299,10 +292,10 @@ async function provisionAuthAccountWithReconciliation(
   }
 }
 
-export async function provisionTenantD1EmailAccount(
+export async function provisionEmailAccount(
   c: Context<{ Bindings: Env }>,
-  input: ProvisionTenantD1EmailAccountInput
-): Promise<ProvisionTenantD1EmailAccountResult> {
+  input: ProvisionEmailAccountInput
+): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
   const stableRequest = canonicalJson({
     schemaVersion: 1,
@@ -364,10 +357,49 @@ export async function provisionTenantD1EmailAccount(
   };
 }
 
-export async function provisionTenantD1AnonymousAccount(
+// Transitional symbol aliases for authentication handlers; all implementations route through
+// the Control Plane account provisioner above.
+export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
+  const metadata = getTenantMetadataContextFromHono(c);
+  const legacyStorageProfileId = (
+    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
+  )?.storageProfileId;
+  return (
+    metadata?.route?.allocationScope === 'tenant_exclusive' ||
+    legacyStorageProfileId === 'builtin:storage:tenant-d1'
+  );
+}
+
+export async function resolveTenantD1EmailAccountRoute(
   c: Context<{ Bindings: Env }>,
-  input: ProvisionTenantD1AnonymousAccountInput
-): Promise<ProvisionTenantD1EmailAccountResult> {
+  email: string
+): Promise<'not_required' | 'resolved' | 'not_found'> {
+  if (!usesTenantD1AccountStorage(c)) return 'not_required';
+  return resolveEmailAccountRoute(c, email);
+}
+
+export async function resolveTenantD1PasskeyAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  input: { credentialId: string; rpId: string }
+): Promise<AccountDataContext | null> {
+  if (!usesTenantD1AccountStorage(c)) return null;
+  return resolvePasskeyAccountRoute(c, input);
+}
+
+export async function publishTenantD1PasskeyRoute(
+  c: Context<{ Bindings: Env }>,
+  input: PublishPasskeyRouteInput
+): Promise<201 | 202> {
+  if (!usesTenantD1AccountStorage(c)) return 201;
+  return publishPasskeyRoute(c, input);
+}
+
+export const provisionTenantD1EmailAccount = provisionEmailAccount;
+
+export async function provisionAnonymousAccount(
+  c: Context<{ Bindings: Env }>,
+  input: ProvisionAnonymousAccountInput
+): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
   const externalSubject = anonymousDeviceLookupSubject(input.device.deviceIdHash);
   const anonymousDevice: AuthAnonymousDeviceProvisioningInput = {

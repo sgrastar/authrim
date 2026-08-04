@@ -56,7 +56,7 @@ const adminScale = {
 	admin_scale_read_replication_retry: 'Retry read replication rollout',
 	admin_scale_read_replication_load_failed: 'Read replication status is unavailable.',
 	admin_scale_read_replication_update_failed: 'Read replication could not be updated.',
-	admin_scale_d1_capacity: 'Tenant D1 Capacity',
+	admin_scale_d1_capacity: 'D1 Assignment Capacity',
 	admin_scale_d1_capacity_status: 'Provisioning scope and current capacity plan',
 	admin_scale_d1_scope: 'Scope',
 	admin_scale_d1_scope_shared: 'Shared pool',

@@ -171,13 +171,6 @@ describe('PluginRunnerRegistryPublisher', () => {
     ).resolves.toMatchObject({
       generation: 1,
       shards: [
-        expect.objectContaining({
-          shardId: 'platform-shared-core',
-          bindingRef: 'TDB_SHARED_CORE',
-          dataRole: 'tenant_core/default',
-          residencyPartition: 'global',
-          routeGeneration: 1,
-        }),
         expect.objectContaining({ shardId: 'shard-a', dataRole: 'tenant_core/default' }),
         expect.objectContaining({ shardId: 'shard-b', dataRole: 'tenant_core/users' }),
       ],

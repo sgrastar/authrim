@@ -24,7 +24,7 @@ const SAFE_ENVIRONMENT = 'test';
 const RESOURCE_PREFIX = 'authrim-cp-spike-test';
 const DEFAULT_OUTPUT_DIR = resolve(
   REPO_ROOT,
-  'private/docs/implementation/tenant-d1-control-plane/spike'
+  'private/docs/implementation/unified-control-plane/spike'
 );
 const SMOKE_ATTEMPTS = 24;
 const SMOKE_RETRY_MS = 2_500;
@@ -953,7 +953,7 @@ export async function runPhase0Spike(
 }
 
 function printUsage(): void {
-  process.stdout.write(`Tenant D1 control-plane Phase 0 live spike\n\n`);
+  process.stdout.write(`Unified D1 Control Plane Phase 0 live spike\n\n`);
   process.stdout.write(`Usage:\n`);
   process.stdout.write(`  pnpm control-plane:phase0-spike --env test\n`);
   process.stdout.write(`  pnpm control-plane:phase0-spike --env test --execute\n\n`);

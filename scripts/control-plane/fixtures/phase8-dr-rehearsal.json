@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "scenarioId": "tenant-d1-manual-time-travel-recovery",
+  "scenarioId": "control-plane-manual-time-travel-recovery",
   "recoveryMode": "manual_cloudflare_time_travel",
   "automaticRestoreRpc": false,
   "steps": [

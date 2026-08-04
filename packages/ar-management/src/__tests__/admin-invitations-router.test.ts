@@ -42,7 +42,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       const result = await notifier.send(input.payload);
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: result.success ? 'delivered' : 'permanent_failure',
       };
     }),

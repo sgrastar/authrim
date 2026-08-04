@@ -239,9 +239,9 @@ const ru: Translations = {
   // Database
   'db.title': 'Конфигурация базы данных',
   'db.regionWarning': 'Регион базы данных нельзя изменить после создания.',
-  'db.coreDescription': 'Core DB: хранит OAuth-клиентов, токены, сессии, журналы аудита',
+  'db.coreDescription': 'БД платформы: хранит метаданные и журналы аудита без PII',
   'db.coreRegion': 'Регион основной базы данных',
-  'db.piiDescription': 'PII DB: хранит профили пользователей, учётные данные, персональные данные',
+  'db.piiDescription': 'PII БД платформы: хранит PII-аудит и данные анонимизации',
   'db.piiNote': 'Учитывайте требования к защите данных.',
   'db.piiRegion': 'Регион базы данных PII',
   'db.creating': 'Создание базы данных...',
@@ -780,14 +780,8 @@ const ru: Translations = {
   'web.db.name': 'Имя',
   'web.db.region': 'Регион',
   'web.db.regionAuto': 'Автоматически (ближайший)',
-  'web.db.storageProfileTitle': 'Профиль развертывания хранилища',
-  'web.db.storageProfileDesc':
-    'Выберите, как размещать пользовательские core/PII данные для этого развертывания.',
-  'web.db.sharedD1Title': 'Общий D1',
-  'web.db.sharedD1Desc':
-    'Один core D1 и один PII D1 на все развертывание. Минимальная стоимость настройки и путь по умолчанию.',
-  'web.db.tenantD1Title': 'D1 для tenant',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Инициализирует Control Plane и первые shards; дальнейшая емкость создается автоматически.',
 
   // Web UI Email

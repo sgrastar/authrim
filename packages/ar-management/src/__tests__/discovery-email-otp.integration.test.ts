@@ -190,7 +190,7 @@ describe('DiscoveryEmailOtpService', () => {
       });
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: 'delivered',
       };
     });

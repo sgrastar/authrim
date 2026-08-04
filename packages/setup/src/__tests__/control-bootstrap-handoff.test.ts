@@ -240,6 +240,7 @@ describe('initial Control topology handoff registration', () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       now: 100,
@@ -263,6 +264,7 @@ describe('initial Control topology handoff registration', () => {
     const registration = {
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       controlDatabaseName: 'control',
       lock: lock(),
       release: release(),
@@ -388,10 +390,105 @@ describe('initial Control topology handoff registration', () => {
     ]);
   });
 
+  it('registers shared-pool bootstrap shards as platform-owned and tenant-assigned', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'shared_pool',
+      lock: lock(),
+      release: release(),
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    const execute = async (_name: string, sql: string) => {
+      db.exec(sql);
+      return { success: true } as never;
+    };
+    const query = async (_name: string, sql: string) => db.prepare(sql).all() as never;
+
+    await expect(
+      registerInitialControlTopology({
+        environmentId: 'test',
+        tenantId: 'default',
+        placementPolicy: 'shared_pool',
+        controlDatabaseName: 'control',
+        lock: lock(),
+        release: release(),
+        now: 100,
+        execute,
+        query,
+      })
+    ).resolves.toEqual({
+      ownershipFingerprint: plan.ownershipFingerprint,
+      manifestDigest: plan.manifestDigest,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT shard.allocation_scope, shard.owner_tenant_id,
+                  desired.resource_scope, desired.tenant_id, COUNT(*) AS count
+             FROM control_tenant_shards shard
+             JOIN control_desired_resources desired
+               ON desired.desired_resource_id = shard.d1_desired_resource_id
+            GROUP BY shard.allocation_scope, shard.owner_tenant_id,
+                     desired.resource_scope, desired.tenant_id`
+        )
+        .get()
+    ).toEqual({
+      allocation_scope: 'shared_pool',
+      owner_tenant_id: null,
+      resource_scope: 'platform',
+      tenant_id: null,
+      count: 3,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM control_tenant_shard_assignments
+            WHERE tenant_id = 'default' AND assignment_state = 'active'`
+        )
+        .get()
+    ).toEqual({ count: 3 });
+  });
+
+  it('fails closed instead of reusing shared-pool resources as tenant-exclusive resources', async () => {
+    const sharedPlan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'shared_pool',
+      lock: lock(),
+      release: release(),
+      now: 100,
+    });
+    const db = database(sharedPlan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(sharedPlan.sql);
+
+    await expect(
+      registerInitialControlTopology({
+        environmentId: 'test',
+        tenantId: 'default',
+        placementPolicy: 'tenant_exclusive',
+        controlDatabaseName: 'control',
+        lock: lock(),
+        release: release(),
+        now: 101,
+        execute: async (_name, sql) => {
+          db.exec(sql);
+          return { success: true } as never;
+        },
+        query: async (_name, sql) => db.prepare(sql).all() as never,
+      })
+    ).rejects.toThrow('control_tenant_shard_owner_policy_invalid');
+  });
+
   it('queues initial binding reconciliation when Automatic provisioning is enabled', async () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       automaticProvisioning: true,
@@ -430,6 +527,7 @@ describe('initial Control topology handoff registration', () => {
       buildInitialControlTopologyRegistration({
         environmentId: 'test',
         tenantId: 'default',
+        placementPolicy: 'tenant_exclusive',
         lock: incomplete,
         release: release(),
       })
@@ -441,6 +539,7 @@ describe('initial Control topology handoff registration', () => {
       buildInitialControlTopologyRegistration({
         environmentId: 'test',
         tenantId: 'Other Tenant',
+        placementPolicy: 'tenant_exclusive',
         lock: lock(),
         release: release(),
       })
@@ -451,6 +550,7 @@ describe('initial Control topology handoff registration', () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       now: 100,
@@ -466,6 +566,7 @@ describe('initial Control topology handoff registration', () => {
       registerInitialControlTopology({
         environmentId: 'test',
         tenantId: 'default',
+        placementPolicy: 'tenant_exclusive',
         controlDatabaseName: 'control',
         lock: lock(),
         release: release(),
@@ -496,6 +597,7 @@ describe('initial Control topology handoff registration', () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       now: 100,
@@ -555,6 +657,7 @@ describe('initial Control topology handoff registration', () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       now: 100,
@@ -618,6 +721,7 @@ describe('initial Control topology handoff registration', () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
       tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
       lock: lock(),
       release: release(),
       now: 100,

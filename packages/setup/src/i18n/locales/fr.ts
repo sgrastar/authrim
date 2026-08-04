@@ -244,10 +244,9 @@ const fr: Translations = {
   'db.title': 'Configuration de la Base de Données',
   'db.regionWarning':
     'La région de la base de données ne peut pas être modifiée après la création.',
-  'db.coreDescription': "BD Core : Stocke les clients OAuth, tokens, sessions, logs d'audit",
+  'db.coreDescription': "BD plateforme : Stocke les métadonnées et journaux d'audit non PII",
   'db.coreRegion': 'Région de la Base de Données Core',
-  'db.piiDescription':
-    'BD PII : Stocke les profils utilisateur, identifiants, données personnelles',
+  'db.piiDescription': "BD PII plateforme : Stocke l'audit PII et les données anonymisées",
   'db.piiNote': 'Considérez vos exigences de protection des données.',
   'db.piiRegion': 'Région de la Base de Données PII',
   'db.creating': 'Création de la base de données...',
@@ -795,14 +794,8 @@ const fr: Translations = {
   'web.db.name': 'Nom',
   'web.db.region': 'Région',
   'web.db.regionAuto': 'Automatique (la plus proche)',
-  'web.db.storageProfileTitle': 'Profil de déploiement du stockage',
-  'web.db.storageProfileDesc':
-    'Sélectionnez comment les données core/PII des utilisateurs sont placées pour ce déploiement.',
-  'web.db.sharedD1Title': 'D1 partagé',
-  'web.db.sharedD1Desc':
-    'Un D1 core et un D1 PII pour tout le déploiement. Coût de configuration minimal et chemin par défaut.',
-  'web.db.tenantD1Title': 'D1 par tenant',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Initialise le plan de contrôle et les shards initiaux ; la capacité suivante est créée automatiquement.',
 
   // Web UI Email

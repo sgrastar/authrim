@@ -1,7 +1,9 @@
 import {
   createLookupAliasIndex,
+  resolveTenantDatabaseSourceFromRegistry,
   validateTenantAliasRouteProjection,
   type Env,
+  type LookupAliasKind,
   type LookupAliasIndex,
   type TenantAliasRouteProjection,
 } from '@authrim/ar-lib-core';
@@ -29,9 +31,47 @@ export interface TenantAliasDirectoryInput {
   now?: number;
 }
 
+export interface TenantDiscoveryAliasDirectoryInput {
+  tenantId: string;
+  aliasKind: Exclude<LookupAliasKind, 'tenant_code' | 'tenant_slug' | 'environment_tenant'>;
+  aliasValue: string;
+  routeProjection: TenantAliasRouteProjection;
+  now?: number;
+}
+
+export async function resolveTenantDiscoveryAliasDirectoryInput(
+  env: Env,
+  input: Pick<TenantDiscoveryAliasDirectoryInput, 'tenantId' | 'aliasKind' | 'aliasValue' | 'now'>
+): Promise<TenantDiscoveryAliasDirectoryInput> {
+  const store = await resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId: input.tenantId,
+    role: 'tenant_core',
+    dataRole: 'tenant_core/default',
+    shardGroup: 'default',
+    shardIndex: 0,
+  });
+  return {
+    ...input,
+    routeProjection: {
+      schemaVersion: 1,
+      tenantRouteGeneration: store.bindingRouteGeneration,
+      residencyPolicyId: store.residencyPolicyId,
+      target: {
+        dataRole: 'tenant_core/default',
+        residencyPartition: store.residencyPartition,
+        shardId: store.shardId,
+        bindingRef: store.bindingRef,
+        requiredBindingRouteGeneration: store.bindingRouteGeneration,
+      },
+    },
+  };
+}
+
 interface PreparedAlias {
   index: LookupAliasIndex;
   projectionJson: string;
+  uniqueOwner: boolean;
+  reusable: boolean;
 }
 
 interface AliasWriteTarget extends PreparedAlias {
@@ -96,13 +136,15 @@ function assertTransition(
   state: AliasLifecycle,
   projection: TenantAliasRouteProjection,
   projectionJson: string,
-  activeRouteMigration: boolean
+  activeRouteMigration: boolean,
+  reusable: boolean
 ): void {
   if (!existing) {
     if (state !== 'pending') throw new Error('tenant_alias_not_prepared');
     return;
   }
   if (existing.lifecycle_state === 'disabled') {
+    if (reusable && (state === 'pending' || state === 'disabled')) return;
     throw new Error('tenant_alias_lifecycle_terminal');
   }
   const existingGeneration = numeric(
@@ -117,7 +159,9 @@ function assertTransition(
     const initialRetry =
       existing.lifecycle_state === 'pending' &&
       projection.schemaVersion >= existingGeneration &&
-      projection.tenantRouteGeneration >= existingProjection.tenantRouteGeneration;
+      projection.tenantRouteGeneration >= existingProjection.tenantRouteGeneration &&
+      (projection.tenantRouteGeneration > existingProjection.tenantRouteGeneration ||
+        existing.route_projection_json === projectionJson);
     const placementMigration =
       activeRouteMigration &&
       existing.lifecycle_state === 'active' &&
@@ -136,24 +180,49 @@ function assertTransition(
   }
 }
 
-async function preparedAliases(input: TenantAliasDirectoryInput): Promise<PreparedAlias[]> {
+async function preparedAliases(
+  env: Env,
+  input: TenantAliasDirectoryInput
+): Promise<PreparedAlias[]> {
   if (!SAFE_ID.test(input.tenantId)) throw new Error('tenant_alias_tenant_id_invalid');
+  const environmentId = env.AUTHRIM_ENVIRONMENT_NAME?.trim();
+  if (!environmentId) throw new Error('tenant_alias_environment_id_missing');
   const projection = canonicalProjection(input.routeProjection);
   const projectionJson = JSON.stringify(projection);
-  const [tenantCode, tenantSlug] = await Promise.all([
+  const [tenantCode, tenantSlug, environmentTenant] = await Promise.all([
     createLookupAliasIndex('tenant_code', input.tenantCode),
     createLookupAliasIndex('tenant_slug', input.tenantSlug),
+    createLookupAliasIndex('environment_tenant', environmentId),
   ]);
-  return [tenantCode, tenantSlug].map((index) => ({ index, projectionJson }));
+  return [
+    { index: tenantCode, projectionJson, uniqueOwner: true, reusable: false },
+    { index: tenantSlug, projectionJson, uniqueOwner: true, reusable: false },
+    { index: environmentTenant, projectionJson, uniqueOwner: false, reusable: false },
+  ];
 }
 
-async function writeTenantAliases(
+async function preparedDiscoveryAlias(
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<PreparedAlias[]> {
+  if (!SAFE_ID.test(input.tenantId)) throw new Error('tenant_alias_tenant_id_invalid');
+  const projectionJson = JSON.stringify(canonicalProjection(input.routeProjection));
+  return [
+    {
+      index: await createLookupAliasIndex(input.aliasKind, input.aliasValue),
+      projectionJson,
+      uniqueOwner: input.aliasKind === 'invitation_token' || input.aliasKind === 'custom_domain',
+      reusable: true,
+    },
+  ];
+}
+
+async function writePreparedAliases(
   env: Env,
-  input: TenantAliasDirectoryInput,
+  input: { tenantId: string; routeProjection: TenantAliasRouteProjection; now?: number },
+  aliases: PreparedAlias[],
   state: AliasLifecycle,
   activeRouteMigration = false
 ): Promise<void> {
-  const aliases = await preparedAliases(input);
   const resolveBucket = await createLookupBucketWriteResolver(env);
   const databases = new Map<number, Awaited<ReturnType<typeof resolveBucket>>>();
 
@@ -170,24 +239,26 @@ async function writeTenantAliases(
   const columns = lifecycleColumns(state, activeRouteMigration);
   const targets: AliasWriteTarget[] = [];
 
-  for (const { index, projectionJson } of aliases) {
+  for (const { index, projectionJson, uniqueOwner, reusable } of aliases) {
     const database = databases.get(index.virtualBucket);
     if (!database) throw new Error('tenant_alias_bucket_unavailable');
     const session = database.withSession('first-primary');
-    const live = await session
-      .prepare(
-        `SELECT tenant_id, route_schema_version, route_projection_json,
-                tenant_lifecycle_state, runtime_route_status, lifecycle_state
-           FROM lookup_tenant_aliases
-          WHERE virtual_bucket = ? AND alias_kind = ? AND alias_sha256_digest = ?
-            AND lifecycle_state <> 'disabled'
-          LIMIT 2`
-      )
-      .bind(index.virtualBucket, index.aliasKind, index.digest)
-      .all<AliasRow>();
-    if (live.results.length > 1) throw new Error('tenant_alias_live_owner_ambiguous');
-    if (live.results[0] && live.results[0].tenant_id !== input.tenantId) {
-      throw new Error('tenant_alias_already_owned');
+    if (uniqueOwner) {
+      const live = await session
+        .prepare(
+          `SELECT tenant_id, route_schema_version, route_projection_json,
+                  tenant_lifecycle_state, runtime_route_status, lifecycle_state
+             FROM lookup_tenant_aliases
+            WHERE virtual_bucket = ? AND alias_kind = ? AND alias_sha256_digest = ?
+              AND lifecycle_state <> 'disabled'
+            LIMIT 2`
+        )
+        .bind(index.virtualBucket, index.aliasKind, index.digest)
+        .all<AliasRow>();
+      if (live.results.length > 1) throw new Error('tenant_alias_live_owner_ambiguous');
+      if (live.results[0] && live.results[0].tenant_id !== input.tenantId) {
+        throw new Error('tenant_alias_already_owned');
+      }
     }
     const existing = await session
       .prepare(
@@ -205,9 +276,10 @@ async function writeTenantAliases(
       state,
       canonicalProjection(input.routeProjection),
       projectionJson,
-      activeRouteMigration
+      activeRouteMigration,
+      reusable
     );
-    targets.push({ index, projectionJson, session });
+    targets.push({ index, projectionJson, uniqueOwner, reusable, session });
   }
 
   for (const { index, projectionJson, session } of targets) {
@@ -270,6 +342,29 @@ async function writeTenantAliases(
   }
 }
 
+async function writeTenantAliases(
+  env: Env,
+  input: TenantAliasDirectoryInput,
+  state: AliasLifecycle,
+  activeRouteMigration = false
+): Promise<void> {
+  return writePreparedAliases(
+    env,
+    input,
+    await preparedAliases(env, input),
+    state,
+    activeRouteMigration
+  );
+}
+
+async function writeTenantDiscoveryAlias(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput,
+  state: AliasLifecycle
+): Promise<void> {
+  return writePreparedAliases(env, input, await preparedDiscoveryAlias(input), state);
+}
+
 export function prepareTenantAliasDirectory(
   env: Env,
   input: TenantAliasDirectoryInput
@@ -296,4 +391,47 @@ export function disableTenantAliasDirectory(
   input: TenantAliasDirectoryInput
 ): Promise<void> {
   return writeTenantAliases(env, input, 'disabled');
+}
+
+export function prepareTenantDiscoveryAliasDirectory(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<void> {
+  return writeTenantDiscoveryAlias(env, input, 'pending');
+}
+
+export function activateTenantDiscoveryAliasDirectory(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<void> {
+  return writeTenantDiscoveryAlias(env, input, 'active');
+}
+
+/**
+ * Makes discovery alias publication retry-safe after the destination mutation has committed.
+ * A pending row is activated directly; a missing or reusable disabled row is prepared and then
+ * activated. Other failures (ownership, projection, signature, or storage failures) remain fatal.
+ */
+export async function ensureActiveTenantDiscoveryAliasDirectory(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<void> {
+  try {
+    await activateTenantDiscoveryAliasDirectory(env, input);
+    return;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code !== 'tenant_alias_not_prepared' && code !== 'tenant_alias_lifecycle_terminal') {
+      throw error;
+    }
+  }
+  await prepareTenantDiscoveryAliasDirectory(env, input);
+  await activateTenantDiscoveryAliasDirectory(env, input);
+}
+
+export function disableTenantDiscoveryAliasDirectory(
+  env: Env,
+  input: TenantDiscoveryAliasDirectoryInput
+): Promise<void> {
+  return writeTenantDiscoveryAlias(env, input, 'disabled');
 }

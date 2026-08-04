@@ -20,6 +20,18 @@ describe('management Phase 0c request diagnostics', () => {
     ).toBe(true);
     expect(
       isManagementRequestDiagnosticTimingEnabled(
+        { AUTHRIM_ENVIRONMENT_NAME: 'test-ucp' } as Env,
+        runId
+      )
+    ).toBe(true);
+    expect(
+      isManagementRequestDiagnosticTimingEnabled(
+        { AUTHRIM_ENVIRONMENT_NAME: 'testing' } as Env,
+        runId
+      )
+    ).toBe(false);
+    expect(
+      isManagementRequestDiagnosticTimingEnabled(
         { AUTHRIM_ENVIRONMENT_NAME: 'production' } as Env,
         runId
       )

@@ -74,7 +74,7 @@ export async function refreshWorkerDeploymentArtifacts(input: {
     records: inventory,
     environmentBootstrap: {
       defaultResidencyPolicyId: input.config.profiles.defaults.residency,
-      automaticProvisioning: input.config.tenantD1?.automaticProvisioning === true,
+      automaticProvisioning: input.config.controlPlane?.automaticProvisioning === true,
     },
     registeredBy: input.registeredBy,
     disableMissing: false,

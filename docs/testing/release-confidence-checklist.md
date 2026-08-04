@@ -66,7 +66,7 @@ Recommended checks:
 
 ## 5. Runtime Storage and Deployment Topology Changes
 
-Examples: shared D1, tenant-specific D1, external DB, runtime profiles,
+Examples: single/multi-shard assignments, shared/exclusive placement, future external adapters,
 generated environment files, service bindings, migrations.
 
 Recommended checks:
@@ -74,7 +74,8 @@ Recommended checks:
 - package tests for the owning setup/core/management package
 - `pnpm exec vitest run test/integration`
 - generated environment validation for the target environment
-- topology matrix cases for single-tenant, multi-tenant, shared D1, tenant D1,
+- topology matrix cases for single-tenant, multi-tenant, single/multi-shard assignments,
+  `shared_pool`/`tenant_exclusive` coexistence,
   and external DB paths where relevant
 - migration or schema guard tests when persistence contracts change
 

@@ -15,9 +15,11 @@ import type { Context } from 'hono';
 import type { JWTPayload } from 'jose';
 import type { Env } from '../../types';
 import {
+  ensureDatabaseAdapter,
   getLogger,
   getTenantIdFromContext,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveTenantMetadataContext,
+  type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 
@@ -77,9 +79,8 @@ async function getStatusList(
   tenantId: string,
   listId: string
 ): Promise<StatusListData | null> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list', {
-    tenantId,
-  });
+  const tenantMetadata = await resolveTenantMetadataContext(env as unknown as CoreEnv, tenantId);
+  const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-status-list');
   return adapter.queryOne<StatusListData>(
     `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
      FROM status_lists

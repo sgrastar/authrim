@@ -5,8 +5,6 @@
   "lookupBlindIndex": true,
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
     {
       "name": "DB_ADMIN",
       "kind": "d1",

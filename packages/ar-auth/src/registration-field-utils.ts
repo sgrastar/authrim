@@ -363,18 +363,7 @@ export async function persistRegistrationFieldValues(
 }
 
 export async function validateRegistrationFieldSubmissionFromEnv(
-  env: Pick<
-    Env,
-    | 'DB'
-    | 'DB_PII'
-    | 'DB_ADMIN'
-    | 'SETTINGS'
-    | 'AUTHRIM_CONFIG'
-    | 'PROFILE_REGISTRY_BACKEND'
-    | 'DEFAULT_STORAGE_PROFILE_ID'
-    | 'DEFAULT_AUDIT_PROFILE_ID'
-    | 'DEFAULT_RESIDENCY_PROFILE_ID'
-  >,
+  env: Env,
   tenantId: string,
   submitted: Record<string, unknown> | undefined
 ): Promise<ValidationResult> {
@@ -383,22 +372,16 @@ export async function validateRegistrationFieldSubmissionFromEnv(
 }
 
 export async function persistRegistrationFieldValuesFromEnv(
-  env: Pick<
-    Env,
-    | 'DB'
-    | 'DB_PII'
-    | 'DB_ADMIN'
-    | 'SETTINGS'
-    | 'AUTHRIM_CONFIG'
-    | 'PROFILE_REGISTRY_BACKEND'
-    | 'DEFAULT_STORAGE_PROFILE_ID'
-    | 'DEFAULT_AUDIT_PROFILE_ID'
-    | 'DEFAULT_RESIDENCY_PROFILE_ID'
-  >,
+  env: Env,
   tenantId: string,
   userId: string,
   values: Record<string, unknown> | undefined
 ): Promise<void> {
-  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId, {
+    accountId: userId,
+  });
+  if (!sources.nonPiiDb || !sources.piiDb) {
+    throw new Error('registration_field_account_route_incomplete');
+  }
   await persistRegistrationFieldValues(sources.nonPiiDb, sources.piiDb, tenantId, userId, values);
 }

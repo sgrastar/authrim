@@ -209,7 +209,7 @@ function messageJobRow(overrides: Record<string, unknown> = {}) {
     priority: 0,
     tenant_id: null,
     tenant_key: 'tenant-key-1',
-    topology_type: 'shared_d1',
+    topology_type: 'control_plane_d1',
     database_binding_ref: null,
     connection_ref: null,
     topology_snapshot_version: null,

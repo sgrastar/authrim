@@ -342,7 +342,7 @@ function baseInput(now = 1000) {
     topology: {
       tenantId: 'tenant_1',
       tenantKey: 't_1',
-      topologyType: 'shared_d1' as const,
+      topologyType: 'control_plane_d1' as const,
       topologyResolvedAt: now,
     },
     scopeType: 'tenant' as const,
@@ -374,7 +374,7 @@ describe('SqlLoggingMessageJobStore', () => {
     expect(first.id).toBe('lmj_job');
     expect(duplicate.id).toBe('lmj_job');
     expect(executor.jobs).toHaveLength(1);
-    expect(first.topologyType).toBe('shared_d1');
+    expect(first.topologyType).toBe('control_plane_d1');
     expect(first.redactedSummary).toBeNull();
   });
 

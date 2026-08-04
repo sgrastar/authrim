@@ -5,13 +5,6 @@
   "requiredDataRoles": ["tenant_core/default"],
   "bindings": [
     {
-      "name": "DB",
-      "kind": "d1",
-      "required": true,
-      "dataRole": "tenant_core/default",
-      "capability": "tenant_metadata.read"
-    },
-    {
       "name": "SETTINGS",
       "kind": "kv_namespace",
       "required": true,

@@ -48,7 +48,6 @@ import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
 import type { LogPlane, LogType } from '@authrim/ar-lib-logging';
 
 const log = createLogger().module('AUDIT_LOG');
-const unifiedAuditServiceCache = new WeakMap<object, IAuditService>();
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';
 const RUNTIME_LOGGING_POLICY_CACHE_TTL_MS = 60_000;
 const runtimeLoggingPolicySnapshotCache =
@@ -130,12 +129,8 @@ function createNoopAuditBucket(): R2Bucket {
 }
 
 function getUnifiedAuditService(env: Env): IAuditService {
-  const cacheKey = env as unknown as object;
-  const cached = unifiedAuditServiceCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
+  // Keep adapters and delivery state request-local. Cloudflare request promises
+  // must never be retained by an isolate-wide service object.
   const primaryAdapterCache = new Map<string, IAuditStorageAdapter | null>();
   const sources = resolveAuditPersistenceSourcesFromEnv(env);
 
@@ -179,7 +174,6 @@ function getUnifiedAuditService(env: Env): IAuditService {
     },
   });
 
-  unifiedAuditServiceCache.set(cacheKey, service);
   return service;
 }
 

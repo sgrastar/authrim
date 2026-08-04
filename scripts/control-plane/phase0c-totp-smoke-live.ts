@@ -1084,6 +1084,7 @@ async function main(): Promise<void> {
       method: 'POST',
       token: adminToken,
       tenantId,
+      idempotencyKey: `phase0c-totp-smoke-client-${runId}`,
       body: {
         client_name: clientName,
         description: 'Disposable production TOTP Phase 0c smoke client.',

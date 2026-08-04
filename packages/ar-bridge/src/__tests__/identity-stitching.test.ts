@@ -18,12 +18,13 @@ const {
   MockD1Adapter,
   MockCanonicalRuntimeUserStore,
   sqlTracker,
-  mockPersistenceContext,
   mockResolveAccountContext,
   mockResolveTenantMetadataContext,
   mockCreateRuleEvaluator,
   mockFindPendingIdentity,
   mockActivatePendingIdentity,
+  mockProvisionExternalIdpAccount,
+  mockPublishExternalIdpRoute,
 } = vi.hoisted(() => {
   // Storage for tracking SQL calls - differentiate between DB and DB_PII
   const tracker = {
@@ -49,9 +50,6 @@ const {
   });
   const createAuditLogMock = vi.fn().mockResolvedValue(undefined);
   const runtimeSyncUserMock = vi.fn().mockResolvedValue({ accountId: 'account-id' });
-  const persistenceContextMock = vi.fn().mockResolvedValue({
-    storageProfileId: 'builtin:storage:standard',
-  });
   const resolveAccountContextMock = vi.fn();
   const resolveTenantMetadataContextMock = vi.fn();
   const createRuleEvaluatorMock = vi.fn(() => ({
@@ -65,6 +63,8 @@ const {
   }));
   const findPendingIdentityMock = vi.fn();
   const activatePendingIdentityMock = vi.fn();
+  const provisionExternalIdpAccountMock = vi.fn();
+  const publishExternalIdpRouteMock = vi.fn();
 
   // Create a class that wraps the mock functions and tracks calls
   // The class determines binding type from the db option's _isPii marker
@@ -139,12 +139,13 @@ const {
     MockD1Adapter: D1AdapterClass,
     MockCanonicalRuntimeUserStore: CanonicalRuntimeUserStoreClass,
     sqlTracker: tracker,
-    mockPersistenceContext: persistenceContextMock,
     mockResolveAccountContext: resolveAccountContextMock,
     mockResolveTenantMetadataContext: resolveTenantMetadataContextMock,
     mockCreateRuleEvaluator: createRuleEvaluatorMock,
     mockFindPendingIdentity: findPendingIdentityMock,
     mockActivatePendingIdentity: activatePendingIdentityMock,
+    mockProvisionExternalIdpAccount: provisionExternalIdpAccountMock,
+    mockPublishExternalIdpRoute: publishExternalIdpRouteMock,
   };
 });
 
@@ -190,27 +191,14 @@ vi.mock('@authrim/ar-lib-core', () => ({
   syncUserLifecycleState: mockSyncUserLifecycleState,
   createAuditLog: mockCreateAuditLog,
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    storageProfile: {
-      id: 'builtin:storage:standard',
-      kind: 'storage',
-      label: 'Standard D1 Split',
-      slices: {},
-    },
     schemaDb: env.DB,
     nonPiiDb: env.DB,
     piiDb: env.DB_PII ?? null,
   })),
-  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    storageProfile: {
-      id: 'builtin:storage:standard',
-      kind: 'storage',
-      label: 'Standard D1 Split',
-      slices: {},
-    },
+  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
     coreDb: env.DB,
-    piiDb: env.DB_PII ?? env.DB ?? null,
+    piiDb: env.DB_PII ?? env.DB,
   })),
-  getCachedAuthCorePersistenceContextFromEnv: mockPersistenceContext,
   resolveAccountDataContext: mockResolveAccountContext,
   resolveAccountDataContextByIdentifier: mockResolveAccountContext,
   resolveTenantMetadataContext: mockResolveTenantMetadataContext,
@@ -226,7 +214,7 @@ vi.mock('../services/linked-identity-store', () => ({
 }));
 
 import {
-  completeTenantD1ExternalIdpJIT,
+  completeExternalIdpJIT,
   handleIdentity,
   getStitchingConfig,
   hasPasskeyCredential,
@@ -281,6 +269,11 @@ describe('Identity Stitching Service', () => {
     },
     ENABLE_IDENTITY_STITCHING: 'true',
     ENABLE_IDENTITY_STITCHING_REQUIRE_VERIFIED_EMAIL: 'true',
+    RP_TOKEN_ENCRYPTION_KEY: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+    EXTERNAL_IDP_ACCOUNT_PROVISIONER: {
+      provisionExternalIdpAccount: mockProvisionExternalIdpAccount,
+      publishExternalIdpRoute: mockPublishExternalIdpRoute,
+    },
     ...overrides,
   });
 
@@ -291,25 +284,47 @@ describe('Identity Stitching Service', () => {
     mockCoreQueryOne.mockReset().mockResolvedValue(null);
     mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockPiiQueryOne.mockReset().mockResolvedValue(null);
-    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({
+      ok: true,
+      schemas: [],
+      nonPiiValues: {},
+      piiValues: {},
+      nonPiiKeysToDelete: [],
+      piiKeysToDelete: [],
+    });
     mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
     mockRuntimeSyncUser.mockReset().mockResolvedValue({ accountId: 'account-id' });
     mockSyncUserLifecycleState.mockReset().mockResolvedValue({
       lifecycleState: 'active',
       missingRequiredFields: [],
     });
-    mockPersistenceContext.mockReset().mockResolvedValue({
-      storageProfileId: 'builtin:storage:standard',
-    });
-    mockResolveAccountContext.mockReset();
+    mockResolveAccountContext
+      .mockReset()
+      .mockRejectedValue(new Error('account_data_route_not_found'));
     mockResolveTenantMetadataContext.mockReset().mockImplementation(async (env) => ({
       tenantId: 'default',
-      storageProfileId: 'builtin:storage:standard',
       coreDb: env.DB,
+      route: {},
     }));
     mockCreateRuleEvaluator.mockClear();
     mockFindPendingIdentity.mockReset();
     mockActivatePendingIdentity.mockReset().mockResolvedValue(undefined);
+    mockProvisionExternalIdpAccount.mockReset().mockImplementation(async (request) => ({
+      status: 202,
+      operationId: request.operationId,
+      accountId: `account:${request.candidateUserId}`,
+      userId: request.candidateUserId,
+    }));
+    mockPublishExternalIdpRoute.mockReset().mockImplementation(async (request) => ({
+      status: 201,
+      operationId: request.operationId,
+      accountId: request.accountId,
+    }));
+    vi.mocked(linkedIdentityStore.findLinkedIdentity).mockReset().mockResolvedValue(null);
+    vi.mocked(linkedIdentityStore.createLinkedIdentity)
+      .mockReset()
+      .mockResolvedValue('linked-id-123');
+    vi.mocked(linkedIdentityStore.updateLinkedIdentity).mockReset().mockResolvedValue(true);
   });
 
   describe('getStitchingConfig', () => {
@@ -356,6 +371,13 @@ describe('Identity Stitching Service', () => {
     describe('Explicit Linking (linkingUserId provided)', () => {
       it('should link identity to specified user', async () => {
         const env = createMockEnv();
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-456',
+          legacyUserId: 'existing-user-456',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('linked-id-123');
 
         const result = await handleIdentity(env as never, {
@@ -377,12 +399,12 @@ describe('Identity Stitching Service', () => {
             userId: 'existing-user-456',
             providerId: 'provider-123',
             providerUserId: 'google-user-123',
-          })
+          }),
+          env.DB_PII
         );
       });
 
       it('writes to the routed PII shard and publishes the external subject route', async () => {
-        mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
         const accountContext = {
           tenantId: 'default',
           accountId: 'account:existing-user-456',
@@ -431,6 +453,13 @@ describe('Identity Stitching Service', () => {
     describe('Existing Linked Identity', () => {
       it('should return existing user when linked identity found', async () => {
         const env = createMockEnv();
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-789',
+          legacyUserId: 'existing-user-789',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce({
           id: 'existing-linked-id',
           userId: 'existing-user-789',
@@ -458,7 +487,8 @@ describe('Identity Stitching Service', () => {
           env,
           'default',
           'provider-123',
-          'google-user-123'
+          'google-user-123',
+          env.DB_PII
         );
 
         expect(linkedIdentityStore.updateLinkedIdentity).toHaveBeenCalledWith(
@@ -468,12 +498,12 @@ describe('Identity Stitching Service', () => {
           expect.objectContaining({
             tokens: mockTokens,
             lastLoginAt: expect.any(Number),
-          })
+          }),
+          env.DB_PII
         );
       });
 
       it('updates an existing linked identity in its routed PII shard', async () => {
-        mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
         const accountContext = {
           tenantId: 'default',
           accountId: 'account:existing-user-789',
@@ -515,6 +545,15 @@ describe('Identity Stitching Service', () => {
     describe('Identity Stitching by Email', () => {
       it('should auto-link when email matches verified user', async () => {
         const env = createMockEnv();
+        mockResolveAccountContext
+          .mockRejectedValueOnce(new Error('account_data_route_not_found'))
+          .mockResolvedValueOnce({
+            tenantId: 'default',
+            accountId: 'account:existing-user-by-email',
+            legacyUserId: 'existing-user-by-email',
+            coreDb: env.DB,
+            piiDb: env.DB_PII,
+          });
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 
@@ -543,7 +582,6 @@ describe('Identity Stitching Service', () => {
       });
 
       it('auto-links in the email-routed PII shard and publishes the external route', async () => {
-        mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
         const accountContext = {
           tenantId: 'default',
           accountId: 'account:existing-user-by-email',
@@ -657,6 +695,15 @@ describe('Identity Stitching Service', () => {
 
       it('should not stitch if existing user email is not verified', async () => {
         const env = createMockEnv();
+        mockResolveAccountContext
+          .mockRejectedValueOnce(new Error('account_data_route_not_found'))
+          .mockResolvedValueOnce({
+            tenantId: 'default',
+            accountId: 'account:existing-user-unverified',
+            legacyUserId: 'existing-user-unverified',
+            coreDb: env.DB,
+            piiDb: env.DB_PII,
+          });
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
 
         // Mock findUserByEmail - canonical runtime store preserves the PII/Non-PII DB split:
@@ -820,18 +867,22 @@ describe('Identity Stitching Service', () => {
             },
           })
         );
-        expect(mockPersistCustomClaimWrite).toHaveBeenCalled();
-        expect(mockSyncUserLifecycleState).toHaveBeenCalled();
+        expect(mockProvisionExternalIdpAccount).toHaveBeenCalledWith(
+          expect.objectContaining({
+            runtimeUser: expect.objectContaining({
+              sensitiveValues: expect.objectContaining({ email: 'test@example.com' }),
+            }),
+          })
+        );
       });
 
       it('returns a durable pending result without exposing provider tokens to Lookup routing', async () => {
-        mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
         mockResolveAccountContext.mockRejectedValue(new Error('account_data_route_not_found'));
         const tenantMetadataDb = { _isPii: false, role: 'tenant_core/default' };
         mockResolveTenantMetadataContext.mockResolvedValue({
           tenantId: 'default',
-          storageProfileId: 'builtin:storage:tenant-d1',
           coreDb: tenantMetadataDb,
+          route: {},
         });
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue(null);
         const provisionExternalIdpAccount = vi.fn().mockResolvedValue({
@@ -872,7 +923,6 @@ describe('Identity Stitching Service', () => {
       });
 
       it('activates linked identity only after the account route and JIT plan are reflected', async () => {
-        mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
         const accountContext = {
           accountId: 'account:user-a',
           legacyUserId: 'user-a',
@@ -971,7 +1021,7 @@ describe('Identity Stitching Service', () => {
         const env = createMockEnv({ RP_TOKEN_ENCRYPTION_KEY: encryptionKey });
 
         await expect(
-          completeTenantD1ExternalIdpJIT(env as never, {
+          completeExternalIdpJIT(env as never, {
             tenantId: 'default',
             userId: 'user-a',
             providerId: mockProvider.id,
@@ -986,6 +1036,13 @@ describe('Identity Stitching Service', () => {
     describe('Audit Logging', () => {
       it('should log audit event for explicit linking', async () => {
         const env = createMockEnv();
+        mockResolveAccountContext.mockResolvedValue({
+          tenantId: 'default',
+          accountId: 'account:existing-user-456',
+          legacyUserId: 'existing-user-456',
+          coreDb: env.DB,
+          piiDb: env.DB_PII,
+        });
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('linked-id-123');
 
         await handleIdentity(env as never, {
@@ -1014,7 +1071,10 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 1 });
 
-      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123', {
+        coreDb: env.DB,
+        piiDb: env.DB_PII,
+      } as never);
 
       expect(result).toBe(true);
     });
@@ -1023,7 +1083,10 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce({ count: 0 });
 
-      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123', {
+        coreDb: env.DB,
+        piiDb: env.DB_PII,
+      } as never);
 
       expect(result).toBe(false);
     });
@@ -1032,7 +1095,10 @@ describe('Identity Stitching Service', () => {
       const env = createMockEnv();
       mockCoreQueryOne.mockResolvedValueOnce(null);
 
-      const result = await hasPasskeyCredential(env as never, 'default', 'user-123');
+      const result = await hasPasskeyCredential(env as never, 'default', 'user-123', {
+        coreDb: env.DB,
+        piiDb: env.DB_PII,
+      } as never);
 
       expect(result).toBe(false);
     });

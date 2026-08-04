@@ -10,13 +10,11 @@
  * V2 Architecture:
  * - Explicit initialization with Durable Storage bulk load
  * - Granular storage with prefix-based keys
- * - Audit logging with batch flush and synchronous critical events
- * - D1 retry for improved reliability
+ * - Structured operational logging without external persistence coupling
  *
  * Storage Strategy:
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active device codes)
- * - Profile-controlled D1 persistence, recovery, and audit trail
  * - Dual mapping: device_code → metadata, user_code → device_code
  */
 
@@ -24,18 +22,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { DeviceCodeMetadata } from '../types/oidc';
 import { isDeviceCodeExpired } from '../utils/device-flow';
-import { retryD1Operation } from '../utils/d1-retry';
-import { createAuditLog } from '../utils/audit-log';
 import { createLogger, type Logger } from '../utils/logger';
-import {
-  resolveAuthCorePersistenceContextFromEnv,
-  resolveAuthCorePersistenceSourceFromContext,
-  type AuthCorePersistenceContext,
-} from '../services/auth-core-persistence-context';
-import {
-  createDeviceCodePersistenceAdapter,
-  type DeviceCodePersistenceAdapter,
-} from '../services/device-code-persistence';
 
 /**
  * Device Code V2 - Enhanced state for V2 architecture
@@ -87,11 +74,6 @@ export class DeviceCodeStore {
   // V2: Initialization state
   private initialized: boolean = false;
 
-  // V2: Async audit log buffering
-  private pendingAuditLogs: AuditLogEntry[] = [];
-  private flushScheduled: boolean = false;
-  private readonly AUDIT_FLUSH_DELAY = 100; // ms
-  private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -356,18 +338,7 @@ export class DeviceCodeStore {
     await this.saveDeviceCode(metadata.device_code, v2Metadata);
     await this.saveUserMapping(metadata.user_code, metadata.device_code);
 
-    // Persist to cold storage (backup/recovery)
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.storeDeviceCode(v2Metadata),
-        'DeviceCodeStore.storeDeviceCode',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (non-critical, fire-and-forget)
-    void this.logToD1({
+    this.logEvent({
       action: 'device_code_created',
       deviceCode: metadata.device_code,
       userCode: metadata.user_code,
@@ -417,29 +388,6 @@ export class DeviceCodeStore {
       return storedMetadata;
     }
 
-    // Fallback to cold persistence (for recovery after data loss)
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      const persisted = await persistence.getByDeviceCode(deviceCode);
-
-      if (persisted) {
-        const v2Metadata: DeviceCodeV2 = { ...persisted };
-
-        // Check if expired
-        if (isDeviceCodeExpired(v2Metadata)) {
-          await this.deleteDeviceCode(deviceCode);
-          return null;
-        }
-
-        // Warm up cache and Durable Storage
-        this.deviceCodes.set(deviceCode, v2Metadata);
-        this.userCodeToDeviceCode.set(v2Metadata.user_code, deviceCode);
-        await this.saveDeviceCode(deviceCode, v2Metadata);
-        await this.saveUserMapping(v2Metadata.user_code, deviceCode);
-        return v2Metadata;
-      }
-    }
-
     return null;
   }
 
@@ -457,29 +405,6 @@ export class DeviceCodeStore {
 
     if (deviceCode) {
       return this.getByDeviceCode(deviceCode);
-    }
-
-    // Fallback to cold persistence (for recovery)
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      const persisted = await persistence.getByUserCode(userCode);
-
-      if (persisted) {
-        const v2Metadata: DeviceCodeV2 = { ...persisted };
-
-        // Check if expired
-        if (isDeviceCodeExpired(v2Metadata)) {
-          await this.deleteDeviceCode(v2Metadata.device_code);
-          return null;
-        }
-
-        // Warm up cache and Durable Storage
-        this.deviceCodes.set(v2Metadata.device_code, v2Metadata);
-        this.userCodeToDeviceCode.set(userCode, v2Metadata.device_code);
-        await this.saveDeviceCode(v2Metadata.device_code, v2Metadata);
-        await this.saveUserMapping(userCode, v2Metadata.device_code);
-        return v2Metadata;
-      }
     }
 
     return null;
@@ -514,18 +439,7 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(metadata.device_code, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.approveDeviceCode(metadata.device_code, userId, sub),
-        'DeviceCodeStore.approveDeviceCode',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'device_code_approved',
       deviceCode: metadata.device_code,
       userCode: userCode,
@@ -559,18 +473,7 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(metadata.device_code, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.denyDeviceCode(metadata.device_code),
-        'DeviceCodeStore.denyDeviceCode',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'device_code_denied',
       deviceCode: metadata.device_code,
       userCode: userCode,
@@ -598,23 +501,6 @@ export class DeviceCodeStore {
 
     // V2: Update in Durable Storage
     await this.saveDeviceCode(deviceCode, metadata);
-
-    // Update in cold persistence (periodic update to reduce writes)
-    if (metadata.poll_count % 5 === 0) {
-      const persistence = await this.ensureDeviceCodePersistence();
-      if (persistence) {
-        await retryD1Operation(
-          () =>
-            persistence.updatePoll(
-              deviceCode,
-              metadata.last_poll_at ?? Date.now(),
-              metadata.poll_count ?? 0
-            ),
-          'DeviceCodeStore.updatePollTime',
-          { maxRetries: 2 }
-        );
-      }
-    }
   }
 
   /**
@@ -645,18 +531,7 @@ export class DeviceCodeStore {
     // V2: Update in Durable Storage
     await this.saveDeviceCode(deviceCode, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.markTokenIssued(deviceCode, metadata.token_issued_at ?? Date.now()),
-        'DeviceCodeStore.markTokenIssued',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'device_code_consumed',
       deviceCode: deviceCode,
       userCode: metadata.user_code,
@@ -681,103 +556,17 @@ export class DeviceCodeStore {
 
     // V2: Delete from Durable Storage
     await this.deleteDeviceCodeFromStorage(deviceCode, userCode);
-
-    // Delete from cold persistence
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.deleteDeviceCode(deviceCode),
-        'DeviceCodeStore.deleteDeviceCode',
-        { maxRetries: 2 }
-      );
-    }
   }
 
-  /**
-   * Log non-critical events (batched, async) - V2
-   */
-  private async logToD1(entry: AuditLogEntry): Promise<void> {
-    this.pendingAuditLogs.push(entry);
-    this.scheduleAuditFlush();
-  }
-
-  /**
-   * Log critical events synchronously - V2
-   */
-  private async logCritical(entry: AuditLogEntry): Promise<void> {
-    const tenantId = this.getTenantIdForAudit(`device_flow.${entry.action}`);
-    if (!tenantId) {
-      return;
-    }
-    await createAuditLog(this.env, {
-      tenantId,
-      userId: entry.userId ?? 'system',
+  private logEvent(entry: AuditLogEntry): void {
+    this.log.info('Device flow state changed', {
       action: `device_flow.${entry.action}`,
-      resource: 'device_code',
-      resourceId: entry.deviceCode,
-      ipAddress: 'system',
-      userAgent: 'DeviceCodeStore',
-      metadata: JSON.stringify(entry.metadata ?? {}),
-      severity: 'warning',
+      tenantId: this.tenantId ?? 'unknown',
+      deviceCode: entry.deviceCode,
+      clientId: entry.clientId,
+      userId: entry.userId,
+      ...entry.metadata,
     });
-  }
-
-  /**
-   * Schedule batch flush of audit logs - V2
-   */
-  private scheduleAuditFlush(): void {
-    if (this.flushScheduled) {
-      return;
-    }
-
-    this.flushScheduled = true;
-    setTimeout(() => {
-      void this.flushAuditLogs();
-    }, this.AUDIT_FLUSH_DELAY);
-  }
-
-  /**
-   * Flush pending audit logs to D1 - V2
-   */
-  private async flushAuditLogs(): Promise<void> {
-    this.flushScheduled = false;
-
-    if (this.pendingAuditLogs.length === 0) {
-      return;
-    }
-
-    const logsToFlush = [...this.pendingAuditLogs];
-    this.pendingAuditLogs = [];
-
-    try {
-      await Promise.all(
-        logsToFlush.map((entry) => {
-          const action = `device_flow.${entry.action}`;
-          const tenantId = this.getTenantIdForAudit(action);
-          if (!tenantId) {
-            return Promise.resolve();
-          }
-          return createAuditLog(this.env, {
-            tenantId,
-            userId: entry.userId ?? 'system',
-            action,
-            resource: 'device_code',
-            resourceId: entry.deviceCode,
-            ipAddress: 'system',
-            userAgent: 'DeviceCodeStore',
-            metadata: JSON.stringify(entry.metadata ?? {}),
-            severity: 'info',
-          });
-        })
-      );
-    } catch (error) {
-      this.log.error('Failed to flush audit logs', {}, error as Error);
-      // Re-queue (limited to prevent memory leak)
-      if (this.pendingAuditLogs.length < 100) {
-        this.pendingAuditLogs.push(...logsToFlush);
-        this.scheduleAuditFlush();
-      }
-    }
   }
 
   /**
@@ -820,21 +609,11 @@ export class DeviceCodeStore {
       await this.deleteDeviceCode(deviceCode);
 
       // Log expiration
-      void this.logToD1({
+      this.logEvent({
         action: 'device_code_expired',
         deviceCode: deviceCode,
         timestamp: now,
       });
-    }
-
-    // Clean up expired codes in cold persistence (idempotent)
-    const persistence = await this.ensureDeviceCodePersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.deleteExpired(now),
-        'DeviceCodeStore.alarm.cleanup',
-        { maxRetries: 2 }
-      );
     }
 
     // Record last cleanup time
@@ -846,48 +625,11 @@ export class DeviceCodeStore {
     await this.state.storage.setAlarm(now + CLEANUP_INTERVAL_MS);
   }
 
-  private async ensurePersistenceContext(): Promise<AuthCorePersistenceContext> {
-    if (this.persistenceContext) {
-      return this.persistenceContext;
-    }
-
-    // Runtime policy is deployment configuration, not durable device-flow state. Keeping a
-    // snapshot in DO Storage made profile changes ineffective for existing actors.
-    const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
-    this.persistenceContext = resolved;
-    return resolved;
-  }
-
-  private async initializeDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
-    const context = await this.ensurePersistenceContext();
-    if (context.transientAuth?.deviceCibaColdPersistence === 'disabled') {
-      return null;
-    }
-
-    const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    if (!this.tenantId) {
-      throw new Error('Device code persistence requires tenant context');
-    }
-    return createDeviceCodePersistenceAdapter(source, 'device-code-store', this.tenantId);
-  }
-
-  private async ensureDeviceCodePersistence(): Promise<DeviceCodePersistenceAdapter | null> {
-    return this.initializeDeviceCodePersistence();
-  }
-
   private configureTenantFromRequest(request: Request): void {
     const tenantId = request.headers.get('X-Authrim-Tenant-Id')?.trim();
     if (tenantId) {
       this.setTenantId(tenantId);
     }
-  }
-
-  private getTenantIdForAudit(action: string): string | null {
-    if (!this.tenantId) {
-      this.log.error('Cannot create device flow audit log: tenant context is missing', { action });
-      return null;
-    }
-    return this.tenantId;
   }
 
   private setTenantId(tenantId: string): void {

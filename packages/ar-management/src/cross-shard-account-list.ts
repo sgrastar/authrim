@@ -5,13 +5,13 @@ import {
   isValidPersistedUserId,
   loadVerifiedLookupBucketAssignmentProvider,
   LookupRouteResolver,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   validateAccountDirectoryPublication,
   validateCrossShardAccountCursor,
   type AccountDirectoryPublication,
-  type ControlAccountDirectorySourceShard,
-  type ControlAccountRouteSourceShard,
   type CrossShardAccountCursor,
   type Env,
+  type ResolvedTenantDatabaseSource,
 } from '@authrim/ar-lib-core';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
@@ -67,16 +67,15 @@ interface LocalCursor {
   id: string;
 }
 
-function d1Binding(env: Env, bindingRef: string): D1Database {
-  const binding = (env as unknown as Record<string, unknown>)[bindingRef];
-  if (!binding || typeof binding !== 'object') {
+function d1Source(source: ResolvedTenantDatabaseSource['source']): D1Database {
+  if (!source || typeof source !== 'object') {
     throw new Error('cross_shard_account_binding_unavailable');
   }
-  const candidate = binding as Partial<D1Database>;
+  const candidate = source as Partial<D1Database>;
   if (typeof candidate.withSession !== 'function' || typeof candidate.prepare !== 'function') {
     throw new Error('cross_shard_account_binding_unavailable');
   }
-  return binding as D1Database;
+  return source as D1Database;
 }
 
 function cursorKey(secret: string | undefined): Uint8Array {
@@ -131,7 +130,7 @@ async function queryHash(input: { tenantId: string; accountType: string | null }
   );
 }
 
-async function shardSetGeneration(shards: ControlAccountDirectorySourceShard[]): Promise<number> {
+async function shardSetGeneration(shards: ActiveAccountShard[]): Promise<number> {
   const digest = await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(
@@ -203,15 +202,32 @@ async function mapConcurrent<T, R>(
   return results;
 }
 
+interface ActiveAccountShard {
+  dataRole: 'tenant_core/users' | 'tenant_pii';
+  residencyPartition: string;
+  shardId: string;
+  bindingRef: string;
+  routeGeneration: number;
+  source: D1Database;
+}
+
 function validateRouteSources(
-  value: ControlAccountRouteSourceShard[],
-  dataRole: 'tenant_pii'
-): Map<string, ControlAccountRouteSourceShard> {
+  value: ResolvedTenantDatabaseSource[],
+  dataRole: ActiveAccountShard['dataRole']
+): Map<string, ActiveAccountShard> {
   if (value.length > MAX_SHARDS) throw new Error('cross_shard_account_fanout_limit_exceeded');
-  const result = new Map<string, ControlAccountRouteSourceShard>();
-  for (const shard of value) {
+  const result = new Map<string, ActiveAccountShard>();
+  for (const resolved of value) {
+    const shard: ActiveAccountShard = {
+      dataRole,
+      residencyPartition: resolved.residencyPartition,
+      shardId: resolved.shardId,
+      bindingRef: resolved.bindingRef,
+      routeGeneration: resolved.bindingRouteGeneration,
+      source: d1Source(resolved.source),
+    };
     if (
-      shard.dataRole !== dataRole ||
+      resolved.dataRole !== dataRole ||
       !SAFE_ID.test(shard.shardId) ||
       !/^[A-Z][A-Z0-9_]{0,127}$/u.test(shard.bindingRef) ||
       !Number.isSafeInteger(shard.routeGeneration) ||
@@ -225,44 +241,31 @@ function validateRouteSources(
   return result;
 }
 
-function validateCoreRouteSources(
-  value: ControlAccountDirectorySourceShard[]
-): Map<string, ControlAccountDirectorySourceShard> {
-  if (value.length > MAX_SHARDS) throw new Error('cross_shard_account_fanout_limit_exceeded');
-  const result = new Map<string, ControlAccountDirectorySourceShard>();
-  for (const shard of value) {
-    if (
-      !SAFE_ID.test(shard.shardId) ||
-      !/^[A-Z][A-Z0-9_]{0,127}$/u.test(shard.bindingRef) ||
-      !Number.isSafeInteger(shard.routeGeneration) ||
-      shard.routeGeneration < 1 ||
-      result.has(shard.shardId)
-    ) {
-      throw new Error('cross_shard_account_source_invalid');
-    }
-    result.set(shard.shardId, shard);
-  }
-  return result;
-}
-
-async function activeRouteSources(env: Env): Promise<{
-  core: Map<string, ControlAccountDirectorySourceShard>;
-  pii: Map<string, ControlAccountRouteSourceShard>;
+async function activeRouteSources(
+  env: Env,
+  tenantId: string
+): Promise<{
+  core: Map<string, ActiveAccountShard>;
+  pii: Map<string, ActiveAccountShard>;
 }> {
-  if (!env.CONTROL) throw new Error('cross_shard_account_control_unavailable');
   const [core, pii] = await Promise.all([
-    env.CONTROL.listAccountDirectorySourceShards({
-      afterShardId: null,
-      limit: MAX_SHARDS + 1,
+    resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId,
+      role: 'tenant_core',
+      dataRole: 'tenant_core/users',
+      maxStores: MAX_SHARDS,
+      concurrency: FANOUT_CONCURRENCY,
     }),
-    env.CONTROL.listAccountRouteSourceShards({
+    resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId,
+      role: 'tenant_pii',
       dataRole: 'tenant_pii',
-      afterShardId: null,
-      limit: MAX_SHARDS + 1,
+      maxStores: MAX_SHARDS,
+      concurrency: FANOUT_CONCURRENCY,
     }),
   ]);
   return {
-    core: validateCoreRouteSources(core),
+    core: validateRouteSources(core, 'tenant_core/users'),
     pii: validateRouteSources(pii, 'tenant_pii'),
   };
 }
@@ -270,8 +273,8 @@ async function activeRouteSources(env: Env): Promise<{
 async function validatedAccountRoute(input: {
   row: AccountRow;
   tenantId: string;
-  coreShard: ControlAccountDirectorySourceShard;
-  piiShards: ReadonlyMap<string, ControlAccountRouteSourceShard>;
+  coreShard: ActiveAccountShard;
+  piiShards: ReadonlyMap<string, ActiveAccountShard>;
 }): Promise<{ coreBindingRef: string; piiBindingRef: string }> {
   let raw: unknown;
   try {
@@ -336,8 +339,7 @@ export class CrossShardAccountListService {
     if (accountType !== null && !SAFE_ID.test(accountType)) {
       throw new Error('invalid_cross_shard_account_type');
     }
-    if (!this.env.CONTROL) throw new Error('cross_shard_account_control_unavailable');
-    const sources = await activeRouteSources(this.env);
+    const sources = await activeRouteSources(this.env, input.tenantId);
     const piiShards = sources.pii;
     const sortedShards = [...sources.core.values()].sort((left, right) =>
       left.shardId.localeCompare(right.shardId)
@@ -381,7 +383,7 @@ export class CrossShardAccountListService {
     }
     const pages = await mapConcurrent(sortedShards, FANOUT_CONCURRENCY, async (shard) => {
       const position = localCursor(positions.get(shard.shardId) ?? null);
-      const session = d1Binding(this.env, shard.bindingRef).withSession('first-unconstrained');
+      const session = shard.source.withSession('first-unconstrained');
       const clauses = [
         `account.tenant_id = ?`,
         `account.lifecycle_state = 'active'`,
@@ -557,7 +559,7 @@ export class CrossShardAccountExactSearchService {
     if (memberships.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
     const membership = memberships[0];
     const purpose = input.purpose ?? 'active_search';
-    const sources = await activeRouteSources(this.env);
+    const sources = await activeRouteSources(this.env, input.tenantId);
     const observedBindingRouteGenerations = Object.fromEntries(
       [...sources.core.values(), ...sources.pii.values()].map((source) => [
         source.bindingRef,

@@ -4,10 +4,9 @@
   "worker": "ar-async",
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
     { "name": "INITIAL_ACCESS_TOKENS", "kind": "kv_namespace", "required": true },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
+    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
     { "name": "DEVICE_CODE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "CIBA_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
@@ -27,6 +26,11 @@
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "diagnostic_log.encrypt",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
       "required": true
     },
     {

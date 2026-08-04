@@ -70,6 +70,7 @@ import type {
   LogoutSendResult,
   LogoutConfig,
   SessionClientWithWebhook,
+  SessionClientWithDetails,
   LogoutWebhookSendResult,
 } from '@authrim/ar-lib-core';
 import { importJWK, jwtVerify, importPKCS8 } from 'jose';
@@ -260,12 +261,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     type SessionNotificationTarget = {
       sessionId: string;
       userId: string;
-      backchannelClients: Awaited<
-        ReturnType<typeof authCtx.repositories.sessionClient.findBackchannelLogoutClients>
-      >;
-      frontchannelClients: Awaited<
-        ReturnType<typeof authCtx.repositories.sessionClient.findFrontchannelLogoutClients>
-      >;
+      backchannelClients: SessionClientWithDetails[];
+      frontchannelClients: SessionClientWithDetails[];
       webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
@@ -278,16 +275,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
       try {
         // Try to get user_id from D1 session (may not exist since sessions are in Durable Objects)
-        let effectiveUserId = fallbackUserId || '';
-        try {
-          const session = await authCtx.repositories.session.findById(sessId);
-          if (session?.user_id) {
-            effectiveUserId = session.user_id;
-          }
-        } catch {
-          // Session not in D1, use fallback userId from id_token_hint
-          log.debug('Session not in D1, using fallback userId', { sessionId: sessId });
-        }
+        const effectiveUserId = fallbackUserId || '';
 
         const storeTargets = await resolveLogoutTargetsFromSessionClientStore(
           c.env,
@@ -302,44 +290,11 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           });
           return null;
         });
-        let targetClients = storeTargets;
-        if (!targetClients) {
-          const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
-            authCtx.repositories.sessionClient
-              .findBackchannelLogoutClients(sessId)
-              .catch((error) => {
-                log.warn('Failed to load backchannel clients', {
-                  sessionId: sessId,
-                  error: (error as Error).message,
-                  action: 'BackchannelLogout',
-                });
-                return [];
-              }),
-            authCtx.repositories.sessionClient
-              .findFrontchannelLogoutClients(sessId)
-              .catch((error) => {
-                log.warn('Failed to load frontchannel clients', {
-                  sessionId: sessId,
-                  error: (error as Error).message,
-                  action: 'FrontchannelLogout',
-                });
-                return [];
-              }),
-            authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
-              log.warn('Failed to load webhook clients', {
-                sessionId: sessId,
-                error: (error as Error).message,
-                action: 'LogoutWebhook',
-              });
-              return [];
-            }),
-          ]);
-          targetClients = {
-            backchannelClients,
-            frontchannelClients,
-            webhookClients,
-          };
-        }
+        const targetClients = storeTargets ?? {
+          backchannelClients: [],
+          frontchannelClients: [],
+          webhookClients: [],
+        };
         const { backchannelClients, frontchannelClients, webhookClients } = targetClients;
 
         // Only add if we have clients to notify

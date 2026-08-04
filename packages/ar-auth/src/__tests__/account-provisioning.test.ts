@@ -3,10 +3,10 @@ import type { Context } from 'hono';
 import type { Env, StoreChallengeRequest } from '@authrim/ar-lib-core';
 import {
   accountProvisioningStatusHandler,
-  publishTenantD1PasskeyRoute,
-  provisionTenantD1AnonymousAccount,
-  provisionTenantD1EmailAccount,
-  removeTenantD1AnonymousDeviceRoute,
+  publishPasskeyRoute,
+  provisionAnonymousAccount,
+  provisionEmailAccount,
+  removeAnonymousDeviceRoute,
 } from '../account-provisioning';
 
 const TENANT_ID = 'tenant-a';
@@ -21,7 +21,7 @@ function context(options: {
   getChallenge?: ReturnType<typeof vi.fn>;
   body?: unknown;
   tenantId?: string;
-  tenantD1?: boolean;
+  routedAccount?: boolean;
 }) {
   const challenge = {
     storeChallengeRpc: options.store ?? vi.fn().mockResolvedValue({ success: true }),
@@ -70,10 +70,10 @@ function context(options: {
     req: { json: vi.fn().mockResolvedValue(options.body ?? {}) },
     get: vi.fn((key: string) => {
       if (key === 'tenantId') return options.tenantId ?? TENANT_ID;
-      if (key === 'tenantMetadataContext' && options.tenantD1) {
-        return { storageProfileId: 'builtin:storage:tenant-d1' };
+      if (key === 'tenantMetadataContext' && options.routedAccount) {
+        return { tenantId: options.tenantId ?? TENANT_ID };
       }
-      if (key === 'accountDataContext' && options.tenantD1) {
+      if (key === 'accountDataContext' && options.routedAccount) {
         return {
           tenantId: options.tenantId ?? TENANT_ID,
           accountId: 'account:user-a',
@@ -106,7 +106,7 @@ function provisioningInput() {
   };
 }
 
-describe('tenant-D1 account provisioning resume boundary', () => {
+describe('routed account provisioning resume boundary', () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it('returns a ready account without creating a resume challenge for synchronous publication', async () => {
@@ -118,7 +118,7 @@ describe('tenant-D1 account provisioning resume boundary', () => {
     });
     const { c, challenge } = context({ provision });
 
-    await expect(provisionTenantD1EmailAccount(c, provisioningInput())).resolves.toEqual({
+    await expect(provisionEmailAccount(c, provisioningInput())).resolves.toEqual({
       status: 'ready',
       accountId: 'account:user-a',
       userId: 'user-a',
@@ -138,7 +138,7 @@ describe('tenant-D1 account provisioning resume boundary', () => {
       });
     const { c } = context({ provision });
 
-    await expect(provisionTenantD1EmailAccount(c, provisioningInput())).resolves.toMatchObject({
+    await expect(provisionEmailAccount(c, provisioningInput())).resolves.toMatchObject({
       status: 'ready',
       accountId: 'account:user-a',
     });
@@ -152,7 +152,7 @@ describe('tenant-D1 account provisioning resume boundary', () => {
       .mockRejectedValue(new Error('auth_account_provisioning_input_invalid'));
     const { c } = context({ provision });
 
-    await expect(provisionTenantD1EmailAccount(c, provisioningInput())).rejects.toThrow(
+    await expect(provisionEmailAccount(c, provisioningInput())).rejects.toThrow(
       'auth_account_provisioning_input_invalid'
     );
     expect(provision).toHaveBeenCalledOnce();
@@ -162,7 +162,7 @@ describe('tenant-D1 account provisioning resume boundary', () => {
     const store = vi.fn().mockResolvedValue({ success: true });
     const { c } = context({ store });
 
-    const result = await provisionTenantD1EmailAccount(c, provisioningInput());
+    const result = await provisionEmailAccount(c, provisioningInput());
     expect(result.status).toBe('pending');
     if (result.status !== 'pending') throw new Error('expected pending result');
     const body = (await result.response.json()) as Record<string, unknown>;
@@ -204,8 +204,8 @@ describe('tenant-D1 account provisioning resume boundary', () => {
       userId: 'user-a',
     });
     const { c } = context({ provision });
-    await provisionTenantD1EmailAccount(c, provisioningInput());
-    await provisionTenantD1EmailAccount(c, provisioningInput());
+    await provisionEmailAccount(c, provisioningInput());
+    await provisionEmailAccount(c, provisioningInput());
 
     expect(provision.mock.calls[0][0].idempotencyKey).toBe(
       provision.mock.calls[1][0].idempotencyKey
@@ -230,12 +230,12 @@ describe('tenant-D1 account provisioning resume boundary', () => {
       expiresInDays: 30,
     };
 
-    await provisionTenantD1AnonymousAccount(c, {
+    await provisionAnonymousAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-a',
       device,
     });
-    await provisionTenantD1AnonymousAccount(c, {
+    await provisionAnonymousAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-b',
       device,
@@ -266,16 +266,16 @@ describe('tenant-D1 account provisioning resume boundary', () => {
     expect(provision.mock.calls[0][0].idempotencyKey).not.toContain(device.deviceIdHash);
   });
 
-  it('publishes a stable tenant-D1 passkey route without exposing credential data in the key', async () => {
+  it('publishes a stable routed passkey route without exposing credential data in the key', async () => {
     const publishPasskey = vi.fn().mockResolvedValue({
       status: 202,
       operationId: 'passkey-route-passkey-a',
       accountId: 'account:user-a',
     });
-    const { c } = context({ publishPasskey, tenantD1: true });
+    const { c } = context({ publishPasskey, routedAccount: true });
 
     await expect(
-      publishTenantD1PasskeyRoute(c, {
+      publishPasskeyRoute(c, {
         tenantId: TENANT_ID,
         userId: 'user-a',
         passkeyId: 'passkey-a',
@@ -300,10 +300,10 @@ describe('tenant-D1 account provisioning resume boundary', () => {
       operationId: 'anonymous-route-remove-device-a',
       accountId: 'account:user-a',
     });
-    const { c } = context({ removeAnonymous, tenantD1: true });
+    const { c } = context({ removeAnonymous, routedAccount: true });
 
     await expect(
-      removeTenantD1AnonymousDeviceRoute(c, {
+      removeAnonymousDeviceRoute(c, {
         tenantId: TENANT_ID,
         userId: 'user-a',
         deviceId: 'device-a',

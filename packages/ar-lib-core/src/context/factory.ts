@@ -32,7 +32,6 @@ import type { DatabaseAdapter } from '../db/adapter';
 import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
 import {
   ClientRepository,
-  SessionRepository,
   PasskeyRepository,
   TotpCredentialRepository,
   RoleRepository,
@@ -207,7 +206,6 @@ export class ContextFactory implements IContextFactory {
   private createCoreRepositories(): CoreRepositories {
     return {
       client: new ClientRepository(this.coreAdapter, this.tenantId),
-      session: new SessionRepository(this.coreAdapter, this.tenantId),
       passkey: new PasskeyRepository(this.coreAdapter, this.tenantId),
       totp: new TotpCredentialRepository(this.coreAdapter, this.tenantId),
       role: new RoleRepository(this.coreAdapter, this.tenantId),

@@ -126,6 +126,9 @@ describe('ensureDownstreamIntrospectionClient', () => {
     >;
     expect(firstCallHeaders['X-Tenant-Id']).toBe('default');
     expect(secondCallHeaders['X-Tenant-Id']).toBe('default');
+    expect(secondCallHeaders['Idempotency-Key']).toMatch(
+      /^setup-downstream-client-[A-Za-z0-9_-]+$/u
+    );
     expect(createBody.description).toBe(
       'System-managed confidential client used by Authrim for downstream grant introspection.'
     );

@@ -58,7 +58,14 @@ CREATE INDEX IF NOT EXISTS idx_lookup_identifiers_route_generation
 
 CREATE TABLE IF NOT EXISTS lookup_tenant_aliases (
   virtual_bucket INTEGER NOT NULL CHECK (virtual_bucket BETWEEN 0 AND 4095),
-  alias_kind TEXT NOT NULL CHECK (alias_kind IN ('tenant_code', 'tenant_slug')),
+  alias_kind TEXT NOT NULL CHECK (alias_kind IN (
+    'tenant_code',
+    'tenant_slug',
+    'environment_tenant',
+    'client_id',
+    'invitation_token',
+    'custom_domain'
+  )),
   alias_sha256_digest TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
   route_schema_version INTEGER NOT NULL CHECK (route_schema_version >= 1),
@@ -80,7 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_lookup_tenant_aliases_exact_active
   ON lookup_tenant_aliases(virtual_bucket, alias_kind, alias_sha256_digest, lifecycle_state);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_lookup_tenant_aliases_unique_live
   ON lookup_tenant_aliases(virtual_bucket, alias_kind, alias_sha256_digest)
-  WHERE lifecycle_state <> 'disabled';
+  WHERE lifecycle_state <> 'disabled'
+    AND alias_kind IN ('tenant_code', 'tenant_slug', 'invitation_token', 'custom_domain');
 
 CREATE TABLE IF NOT EXISTS lookup_identifier_reservations (
   virtual_bucket INTEGER NOT NULL CHECK (virtual_bucket BETWEEN 0 AND 4095),

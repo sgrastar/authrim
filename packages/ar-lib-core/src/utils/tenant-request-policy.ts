@@ -27,6 +27,7 @@ export function classifyTenantRequestPath(path?: string | null): TenantRequestCl
   const normalizedPath = path || '/';
 
   if (
+    normalizedPath.startsWith('/.well-known/') ||
     normalizedPath === '/api/auth/discovery' ||
     normalizedPath.startsWith('/api/auth/discovery/')
   ) {

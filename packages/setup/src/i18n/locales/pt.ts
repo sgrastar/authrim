@@ -241,9 +241,9 @@ const pt: Translations = {
   // Database
   'db.title': 'Configuração do Banco de Dados',
   'db.regionWarning': 'A região do banco de dados não pode ser alterada após a criação.',
-  'db.coreDescription': 'BD Core: Armazena clientes OAuth, tokens, sessões, logs de auditoria',
+  'db.coreDescription': 'BD da plataforma: Armazena metadados e auditoria sem PII',
   'db.coreRegion': 'Região do Banco de Dados Core',
-  'db.piiDescription': 'BD PII: Armazena perfis de usuário, credenciais, dados pessoais',
+  'db.piiDescription': 'BD PII da plataforma: Armazena auditoria PII e dados anonimizados',
   'db.piiNote': 'Considere seus requisitos de proteção de dados.',
   'db.piiRegion': 'Região do Banco de Dados PII',
   'db.creating': 'Criando banco de dados...',
@@ -785,14 +785,8 @@ const pt: Translations = {
   'web.db.name': 'Nome',
   'web.db.region': 'Região',
   'web.db.regionAuto': 'Automático (mais próximo)',
-  'web.db.storageProfileTitle': 'Perfil de implantação de armazenamento',
-  'web.db.storageProfileDesc':
-    'Selecione como os dados core/PII dos usuários serão posicionados nesta implantação.',
-  'web.db.sharedD1Title': 'D1 compartilhado',
-  'web.db.sharedD1Desc':
-    'Um D1 core e um D1 PII para toda a implantação. Menor custo de configuração e caminho padrão.',
-  'web.db.tenantD1Title': 'D1 por tenant',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Inicializa o plano de controle e os shards iniciais; a capacidade posterior é criada automaticamente.',
 
   // Web UI Email

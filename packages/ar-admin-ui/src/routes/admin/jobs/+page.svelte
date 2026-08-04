@@ -73,16 +73,6 @@
 	let importOnDuplicate = $state<'skip' | 'update' | 'error'>('skip');
 	let importValidateOnly = $state(false);
 
-	// Tenant DB Provisioning Dialog
-	let showTenantDbDialog = $state(false);
-	let creatingTenantDbRequest = $state(false);
-	let tenantDbRequestError = $state('');
-	let tenantDbSlug = $state('');
-	let tenantDbGeneration = $state('1');
-	let tenantDbActivate = $state(false);
-	let tenantDbExecutionMode = $state<'plan_only' | 'operator_cli'>('plan_only');
-	let tenantDbReason = $state('');
-
 	// Job Detail Dialog
 	let showJobDetailDialog = $state(false);
 	let selectedJob = $state<Job | null>(null);
@@ -232,20 +222,6 @@
 		showCreateImportDialog = false;
 	}
 
-	function openTenantDbDialog() {
-		tenantDbSlug = '';
-		tenantDbGeneration = '1';
-		tenantDbActivate = false;
-		tenantDbExecutionMode = 'plan_only';
-		tenantDbReason = '';
-		tenantDbRequestError = '';
-		showTenantDbDialog = true;
-	}
-
-	function closeTenantDbDialog() {
-		showTenantDbDialog = false;
-	}
-
 	function handleImportFileChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		importFile = input.files?.[0] ?? null;
@@ -359,33 +335,6 @@
 			createImportError = e instanceof Error ? e.message : $LL.admin_jobs_create_import_failed();
 		} finally {
 			creatingImport = false;
-		}
-	}
-
-	async function handleCreateTenantDbRequest() {
-		tenantDbRequestError = '';
-		const generation = Number.parseInt(tenantDbGeneration, 10);
-		if (!Number.isInteger(generation) || generation < 1) {
-			tenantDbRequestError = $LL.admin_jobs_generation_positive_integer();
-			return;
-		}
-
-		creatingTenantDbRequest = true;
-		try {
-			const job = await adminJobsAPI.createTenantDatabaseProvision({
-				tenant_slug: tenantDbSlug.trim() || undefined,
-				generation,
-				activate: tenantDbActivate,
-				execution_mode: tenantDbExecutionMode,
-				reason: tenantDbReason.trim() || undefined
-			});
-			jobs = [sanitizeJob(job), ...jobs];
-			closeTenantDbDialog();
-		} catch (e) {
-			tenantDbRequestError =
-				e instanceof Error ? e.message : $LL.admin_jobs_create_tenant_db_failed();
-		} finally {
-			creatingTenantDbRequest = false;
 		}
 	}
 
@@ -514,8 +463,6 @@
 			report_generation: $LL.admin_jobs_type_report_generation(),
 			org_bulk_members: $LL.admin_jobs_type_org_bulk_members(),
 			tenant_delete: $LL.admin_jobs_type_tenant_delete(),
-			tenant_database_provision: $LL.admin_jobs_type_tenant_database_provision(),
-			tenant_database_activate_batch: $LL.admin_jobs_type_tenant_database_activate_batch(),
 			tenant_database_export: $LL.admin_jobs_type_tenant_database_export(),
 			tenant_database_restore_dry_run: $LL.admin_jobs_type_tenant_database_restore_dry_run(),
 			tenant_database_purge_backup: $LL.admin_jobs_type_tenant_database_purge_backup()
@@ -572,15 +519,13 @@
 	});
 
 	// Global Escape key handler for dialogs
-	// Priority: JobDetail > CreateReport (JobDetail appears on top if both were somehow open)
+	// Close the topmost open dialog first.
 	function handleGlobalKeydown(event: KeyboardEvent) {
 		if (event.key === 'Escape') {
 			if (selectedJobType) {
 				closeJobTypeDetail();
 			} else if (showJobDetailDialog) {
 				closeJobDetailDialog();
-			} else if (showTenantDbDialog) {
-				closeTenantDbDialog();
 			} else if (showCreateImportDialog) {
 				closeCreateImportDialog();
 			} else if (showCreateReportDialog) {
@@ -597,10 +542,6 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 {#snippet pageActions()}
-	<button class="btn btn-secondary" onclick={openTenantDbDialog}>
-		<i class="i-ph-database"></i>
-		{$LL.admin_jobs_tenant_db()}
-	</button>
 	<button class="btn btn-secondary" onclick={openCreateImportDialog}>
 		<i class="i-ph-upload-simple"></i>
 		{$LL.admin_jobs_import_users()}
@@ -703,12 +644,6 @@
 					<option value="report_generation">{$LL.admin_jobs_type_report_generation()}</option>
 					<option value="org_bulk_members">{$LL.admin_jobs_type_org_bulk_members()}</option>
 					<option value="tenant_delete">{$LL.admin_jobs_type_tenant_delete()}</option>
-					<option value="tenant_database_provision"
-						>{$LL.admin_jobs_type_tenant_database_provision()}</option
-					>
-					<option value="tenant_database_activate_batch"
-						>{$LL.admin_jobs_type_tenant_database_activate_batch()}</option
-					>
 					<option value="tenant_database_export"
 						>{$LL.admin_jobs_type_tenant_database_export()}</option
 					>
@@ -809,75 +744,6 @@
 		{/if}
 	</AdminSection>
 </AdminPageShell>
-
-<!-- Tenant DB Provisioning Dialog -->
-<Modal
-	open={showTenantDbDialog}
-	onClose={closeTenantDbDialog}
-	title={$LL.admin_jobs_tenant_database_request()}
-	size="md"
->
-	{#if tenantDbRequestError}
-		<div class="alert alert-error">{tenantDbRequestError}</div>
-	{/if}
-
-	<div class="admin-field dialog-field">
-		<label for="tenant-db-slug" class="admin-field__label">{$LL.admin_jobs_tenant_slug()}</label>
-		<input id="tenant-db-slug" type="text" class="admin-input" bind:value={tenantDbSlug} />
-		<p class="form-hint">{$LL.admin_jobs_tenant_slug_hint()}</p>
-	</div>
-
-	<div class="dialog-grid">
-		<div class="admin-field dialog-field">
-			<label for="tenant-db-generation" class="admin-field__label">
-				{$LL.admin_jobs_generation()}
-			</label>
-			<input
-				id="tenant-db-generation"
-				type="number"
-				min="1"
-				class="admin-input"
-				bind:value={tenantDbGeneration}
-			/>
-		</div>
-		<div class="admin-field dialog-field">
-			<label for="tenant-db-execution" class="admin-field__label">
-				{$LL.admin_jobs_execution()}
-			</label>
-			<select id="tenant-db-execution" class="admin-input" bind:value={tenantDbExecutionMode}>
-				<option value="plan_only">{$LL.admin_jobs_execution_plan_only()}</option>
-				<option value="operator_cli">{$LL.admin_jobs_execution_operator_cli()}</option>
-			</select>
-		</div>
-	</div>
-
-	<label class="checkbox-row">
-		<input type="checkbox" bind:checked={tenantDbActivate} />
-		<span>{$LL.admin_jobs_activate_after_deploy()}</span>
-	</label>
-
-	<div class="admin-field dialog-field">
-		<label for="tenant-db-reason" class="admin-field__label">{$LL.admin_jobs_reason()}</label>
-		<textarea id="tenant-db-reason" class="admin-input" rows="3" bind:value={tenantDbReason}
-		></textarea>
-		<p class="form-hint">{$LL.admin_jobs_reason_hint()}</p>
-	</div>
-
-	{#snippet footer()}
-		<button
-			class="btn btn-secondary"
-			onclick={closeTenantDbDialog}
-			disabled={creatingTenantDbRequest}>{$LL.admin_jobs_cancel()}</button
-		>
-		<button
-			class="btn btn-primary"
-			onclick={handleCreateTenantDbRequest}
-			disabled={creatingTenantDbRequest}
-		>
-			{creatingTenantDbRequest ? $LL.admin_jobs_creating() : $LL.admin_jobs_create_request()}
-		</button>
-	{/snippet}
-</Modal>
 
 <!-- Create Import Dialog -->
 <Modal

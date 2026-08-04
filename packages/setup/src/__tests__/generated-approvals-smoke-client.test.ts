@@ -68,6 +68,8 @@ describe('generated approvals smoke client helper', () => {
     expect(result.clientSecret).toBe('temp-secret-1');
     expect(result.temporaryClientId).toBe('temp-client-1');
     expect(result.checks[0]?.status).toBe('pass');
+    const createHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(createHeaders['Idempotency-Key']).toMatch(/^setup-approval-smoke-client-\d+$/u);
 
     const checks = [...result.checks];
     await cleanupGeneratedApprovalSmokeClient({

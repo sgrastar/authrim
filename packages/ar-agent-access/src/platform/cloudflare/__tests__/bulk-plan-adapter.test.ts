@@ -138,9 +138,7 @@ describe('CloudflareAgentBulkPlanAdapter', () => {
   const database = {
     query: vi.fn(),
   } as unknown as DatabaseAdapter;
-  const tenantDirectoryDatabase = {
-    query: vi.fn(),
-  } as unknown as DatabaseAdapter;
+  const resolveActiveTenantIds = vi.fn();
   let protectedCanary = false;
   const settings: AgentSettingsPort = {
     get: vi.fn(async (tenantId) => ({
@@ -161,10 +159,7 @@ describe('CloudflareAgentBulkPlanAdapter', () => {
       { id: 'platform', lifecycle_state: 'active' },
       { id: 'tenant-1', lifecycle_state: 'active' },
     ]);
-    vi.mocked(tenantDirectoryDatabase.query).mockResolvedValue([
-      { id: 'platform', lifecycle_state: 'active' },
-      { id: 'tenant-1', lifecycle_state: 'active' },
-    ]);
+    resolveActiveTenantIds.mockResolvedValue(new Set(['platform', 'tenant-1']));
     mocks.getGrant.mockResolvedValue(request().grant);
     mocks.getActiveDelegatorPermissions.mockResolvedValue([...permissions]);
     mocks.findPrincipalById.mockResolvedValue({ id: 'principal-1', status: 'active' });
@@ -188,12 +183,12 @@ describe('CloudflareAgentBulkPlanAdapter', () => {
       createAdminToolCatalog(),
       settings,
       { validate: () => ({ valid: true }) },
-      () => 1_000,
-      tenantDirectoryDatabase
+      resolveActiveTenantIds,
+      () => 1_000
     );
     const response = await adapter.execute(request());
     expect(response.status).toBe(201);
-    expect(tenantDirectoryDatabase.query).toHaveBeenCalledTimes(1);
+    expect(resolveActiveTenantIds).toHaveBeenCalledWith(['platform', 'tenant-1']);
     expect(database.query).not.toHaveBeenCalled();
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -211,12 +206,50 @@ describe('CloudflareAgentBulkPlanAdapter', () => {
       database,
       createAdminToolCatalog(),
       settings,
-      { validate: () => ({ valid: true }) }
+      { validate: () => ({ valid: true }) },
+      resolveActiveTenantIds,
+      () => 1_000
     );
     const response = await adapter.execute(request());
     expect(response).toMatchObject({
       status: 409,
       body: { error: 'AGENT_BULK_PLAN_CANARY_PROTECTED' },
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a target not confirmed active by its exact Registry destination', async () => {
+    resolveActiveTenantIds.mockResolvedValueOnce(new Set(['platform']));
+    const adapter = new CloudflareAgentBulkPlanAdapter(
+      database,
+      createAdminToolCatalog(),
+      settings,
+      { validate: () => ({ valid: true }) },
+      resolveActiveTenantIds,
+      () => 1_000
+    );
+
+    await expect(adapter.execute(request())).resolves.toMatchObject({
+      status: 409,
+      body: { error: 'AGENT_BULK_PLAN_TARGET_INVALID' },
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the signed target directory is unavailable', async () => {
+    resolveActiveTenantIds.mockRejectedValueOnce(new Error('runtime_registry_unavailable'));
+    const adapter = new CloudflareAgentBulkPlanAdapter(
+      database,
+      createAdminToolCatalog(),
+      settings,
+      { validate: () => ({ valid: true }) },
+      resolveActiveTenantIds,
+      () => 1_000
+    );
+
+    await expect(adapter.execute(request())).resolves.toMatchObject({
+      status: 503,
+      body: { error: 'AGENT_BULK_PLAN_TARGET_DIRECTORY_UNAVAILABLE' },
     });
     expect(mocks.create).not.toHaveBeenCalled();
   });
@@ -234,7 +267,9 @@ describe('CloudflareAgentBulkPlanAdapter', () => {
       database,
       createAdminToolCatalog(),
       settings,
-      { validate: () => ({ valid: true }) }
+      { validate: () => ({ valid: true }) },
+      resolveActiveTenantIds,
+      () => 1_000
     );
 
     await expect(adapter.execute(incoming)).resolves.toMatchObject({

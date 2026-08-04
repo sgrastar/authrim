@@ -56,6 +56,11 @@ import {
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  ensureActiveTenantDiscoveryAliasDirectory,
+  prepareTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 type ClientRegistrationRequestWithPkce = Omit<ClientRegistrationRequest, 'redirect_uris'> & {
   redirect_uris: string[];
@@ -1259,6 +1264,12 @@ async function storeClient(
   if (!metadataTenantId) {
     throw new Error('storeClient requires metadata.tenant_id');
   }
+  const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(env, {
+    tenantId: metadataTenantId,
+    aliasKind: 'client_id',
+    aliasValue: clientId,
+  });
+  await prepareTenantDiscoveryAliasDirectory(env, discoveryAlias);
   await coreAdapter.execute(
     `
     INSERT INTO oauth_clients (
@@ -1395,6 +1406,7 @@ async function storeClient(
       metadata.updated_at || now,
     ]
   );
+  await ensureActiveTenantDiscoveryAliasDirectory(env, discoveryAlias);
 
   // Write-Through: Populate KV cache immediately after D1 write
   // This eliminates the need for D1 fallback on first read

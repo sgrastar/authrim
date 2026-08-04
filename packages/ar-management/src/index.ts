@@ -40,12 +40,12 @@ import {
   csrfProtectionMiddleware,
   getTenantIdFromContext,
   getTenantSettings,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listEnvironmentTenantDefaultStores,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   createCompatibilityErrorResponse,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   type AdminAuthContext,
-  getDefaultTenantId,
 } from '@authrim/ar-lib-core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
@@ -100,6 +100,7 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
 const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
 const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
 const PHASE0C_MAIL_DIAGNOSTIC_SESSION = /^phase0c-mail-[0-9]{14}-[a-f0-9]{6}$/u;
+const TEST_ENVIRONMENT_NAME = /^test(?:[-_][a-z0-9][a-z0-9_-]*)?$/u;
 const MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS = [
   '/api/auth/authentication-methods',
   '/api/admin/test/email-codes',
@@ -135,7 +136,8 @@ export function isManagementRequestDiagnosticTimingEnabled(
   if (!sessionId) return false;
   return (
     diagnosticFlagEnabled(env) ||
-    (env.AUTHRIM_ENVIRONMENT_NAME === 'test' && PHASE0C_MAIL_DIAGNOSTIC_SESSION.test(sessionId))
+    (TEST_ENVIRONMENT_NAME.test(env.AUTHRIM_ENVIRONMENT_NAME ?? '') &&
+      PHASE0C_MAIL_DIAGNOSTIC_SESSION.test(sessionId))
   );
 }
 
@@ -509,8 +511,6 @@ import {
   adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
-  adminJobsTenantDatabaseProvisionHandler,
-  adminJobsTenantDatabaseActivateBatchHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
   adminJobTypesHandler,
@@ -573,7 +573,6 @@ import {
   adminTenantLifecycleJobsHandler,
   adminTenantLifecycleJobRetryHandler,
   processNextTenantProvisioning,
-  TENANT_D1_STORAGE_PROFILE_ID,
 } from './admin-tenants';
 import { processNextTenantPlacementMigration } from './tenant-placement-migration-scheduled';
 import { processDynamicPluginResourceFinalizations } from './plugin-resource-finalization';
@@ -1574,7 +1573,16 @@ app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
 app.use('/api/admin/clients', requireClientManagementPermission());
 app.use('/api/admin/clients/*', requireClientManagementPermission());
 app.get('/api/admin/clients', adminClientsListHandler);
-app.post('/api/admin/clients', adminClientCreateHandler);
+app.post(
+  '/api/admin/clients',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: ['client_secret'],
+  }),
+  adminClientCreateHandler
+);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
 
 // Rate limiting for sensitive client operations (strict profile)
@@ -1843,7 +1851,16 @@ app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
 // - POST   /api/admin/tenants/:id/invitations          - Create invitation
 // - GET    /api/admin/tenants/:id/invitations          - List invitations
 // - DELETE /api/admin/tenants/:id/invitations/:inv_id  - Cancel invitation
-app.post('/api/admin/tenants/:id/invitations', createTenantInvitationHandler);
+app.post(
+  '/api/admin/tenants/:id/invitations',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: ['token'],
+  }),
+  createTenantInvitationHandler
+);
 app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
 app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
 app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHandler);
@@ -2006,16 +2023,43 @@ app.delete(
 // Tenant-scoped endpoints require admin:tenant_domains:* permission. Platform endpoints are
 // system-admin only and operate across tenants.
 app.get('/api/admin/tenant-vanity-domains', listTenantVanityDomainsHandler);
-app.post('/api/admin/tenant-vanity-domains', createTenantVanityDomainHandler);
+app.post(
+  '/api/admin/tenant-vanity-domains',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  createTenantVanityDomainHandler
+);
 app.get('/api/admin/tenant-vanity-domains/:id', getTenantVanityDomainHandler);
-app.patch('/api/admin/tenant-vanity-domains/:id', updateTenantVanityDomainHandler);
+app.patch(
+  '/api/admin/tenant-vanity-domains/:id',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  updateTenantVanityDomainHandler
+);
 app.post('/api/admin/tenant-vanity-domains/:id/primary', setPrimaryTenantVanityDomainHandler);
 app.post('/api/admin/tenant-vanity-domains/:id/sync', syncTenantVanityDomainHandler);
 app.post('/api/admin/tenant-vanity-domains/:id/verify', verifyTenantVanityDomainHandler);
 app.delete('/api/admin/tenant-vanity-domains/:id', deleteTenantVanityDomainHandler);
 
 app.get('/api/admin/platform/tenant-vanity-domains', listPlatformTenantVanityDomainsHandler);
-app.post('/api/admin/platform/tenant-vanity-domains', createPlatformTenantVanityDomainHandler);
+app.post(
+  '/api/admin/platform/tenant-vanity-domains',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  createPlatformTenantVanityDomainHandler
+);
 app.get('/api/admin/platform/tenant-vanity-domains/:id', getPlatformTenantVanityDomainHandler);
 app.post(
   '/api/admin/platform/tenant-vanity-domains/:id/primary',
@@ -3442,11 +3486,6 @@ app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHand
 app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
-app.post('/api/admin/jobs/tenant-databases/provision', adminJobsTenantDatabaseProvisionHandler);
-app.post(
-  '/api/admin/jobs/tenant-databases/activate-batch',
-  adminJobsTenantDatabaseActivateBatchHandler
-);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
@@ -3904,37 +3943,62 @@ app.onError((err, c) => {
 });
 
 async function listMaintenanceTenantIds(
-  adapter: DatabaseAdapter,
   env: Env,
   log: ReturnType<typeof createLogger>
-): Promise<string[]> {
-  try {
-    const rows = await adapter.query<{ id: string }>(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id"
-    );
-    const tenantIds = rows.map((row) => row.id).filter((id) => id.length > 0);
-    if (tenantIds.length > 0) {
-      return tenantIds;
-    }
-  } catch (error) {
-    log.warn('Failed to list active tenants for scheduled cleanup', {
-      error: (error as Error).message,
+): Promise<{
+  targets: Array<{
+    tenantId: string;
+    adapters: Array<{ adapter: DatabaseAdapter; bindingRef: string }>;
+  }>;
+  cursorKey: string;
+  nextCursor: string;
+}> {
+  if (!env.AUTHRIM_CONFIG) throw new Error('maintenance_tenant_directory_unavailable');
+  const cursorKey = 'jobs:scheduled-maintenance:tenant-cursor';
+  const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
+  const tenants = await listEnvironmentTenantDefaultStores(env, {
+    limit: 8,
+    afterTenantId,
+    concurrency: 4,
+  });
+  const targets = [];
+  for (const tenant of tenants) {
+    const stores = await resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId: tenant.tenantId,
+      role: 'tenant_core',
+      maxStores: 32,
+      concurrency: 4,
+    });
+    targets.push({
+      tenantId: tenant.tenantId,
+      adapters: stores.map((store) => ({
+        adapter: ensureDatabaseAdapter(store.source, `maintenance:${store.bindingRef}`),
+        bindingRef: store.bindingRef,
+      })),
     });
   }
-
-  return [getDefaultTenantId(env)];
+  const nextCursor = tenants.length === 8 ? (tenants[tenants.length - 1]?.tenantId ?? '') : '';
+  log.debug('Resolved scheduled maintenance tenant routes', {
+    tenantCount: targets.length,
+    shardRouteCount: targets.reduce((count, target) => count + target.adapters.length, 0),
+  });
+  return { targets, cursorKey, nextCursor };
 }
 
 async function deleteExpiredTenantRows(
-  adapter: DatabaseAdapter,
-  tenantIds: string[],
+  targets: Array<{
+    tenantId: string;
+    adapters: Array<{ adapter: DatabaseAdapter; bindingRef: string }>;
+  }>,
   sql: string,
   getParams: (tenantId: string) => unknown[]
 ): Promise<number> {
   let deleted = 0;
-  for (const tenantId of tenantIds) {
-    const result = await adapter.execute(sql, getParams(tenantId));
-    deleted += result.rowsAffected || 0;
+  for (const target of targets) {
+    for (const { adapter } of target.adapters) {
+      const result = await adapter.execute(sql, getParams(target.tenantId));
+      deleted += result.rowsAffected || 0;
+    }
   }
   return deleted;
 }
@@ -3960,7 +4024,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
   }
-  if (env.DEFAULT_STORAGE_PROFILE_ID === TENANT_D1_STORAGE_PROFILE_ID) {
+  {
     try {
       const recovery = await processTenantDisasterRecoveryLookupReprojection(env);
       if (recovery.processed) {
@@ -4067,28 +4131,15 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 
   try {
-    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      'management-scheduled'
-    );
-    const maintenanceTenantIds = await listMaintenanceTenantIds(coreAdapter, env, log);
+    const maintenancePage = await listMaintenanceTenantIds(env, log);
+    const maintenanceTargets = maintenancePage.targets;
+    const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
 
-    // 1. Cleanup expired sessions (with 1-day grace period)
-    const sessionsDeleted = await deleteExpiredTenantRows(
-      coreAdapter,
-      maintenanceTenantIds,
-      'DELETE FROM sessions WHERE tenant_id = ? AND expires_at < ?',
-      (tenantId) => [tenantId, now - 86400] // 1 day grace period
-    );
-    log.debug('Deleted expired sessions', {
-      count: sessionsDeleted,
-      tenantCount: maintenanceTenantIds.length,
-    });
+    // Session expiration is owned by SessionStore alarms and its authoritative DO state.
 
-    // 2. Cleanup expired/used password reset tokens
+    // 1. Cleanup expired/used password reset tokens
     const passwordTokensDeleted = await deleteExpiredTenantRows(
-      coreAdapter,
-      maintenanceTenantIds,
+      maintenanceTargets,
       'DELETE FROM password_reset_tokens WHERE tenant_id = ? AND (expires_at < ? OR used = 1)',
       (tenantId) => [tenantId, now]
     );
@@ -4097,20 +4148,22 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       tenantCount: maintenanceTenantIds.length,
     });
 
-    // 3. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
+    // 2. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
     // by cleanupResolvedAuditPrimaries(), which resolves the effective audit profile per tenant
     // and applies retention to D1/Postgres primaries or skips archive-only installs.
     const auditLogsDeleted = 0;
 
-    // 4. Cleanup expired Native SSO device_secrets (if enabled)
+    // 3. Cleanup expired Native SSO device_secrets (if enabled)
     // This cleans up device secrets that have passed their expiration date
     let deviceSecretsDeleted = 0;
     try {
       const nativeSSOEnabled = await isNativeSSOEnabled(env);
       if (nativeSSOEnabled) {
-        for (const tenantId of maintenanceTenantIds) {
-          const deviceSecretRepo = new DeviceSecretRepository(coreAdapter, tenantId);
-          deviceSecretsDeleted += await deviceSecretRepo.cleanupExpired();
+        for (const target of maintenanceTargets) {
+          for (const { adapter } of target.adapters) {
+            const deviceSecretRepo = new DeviceSecretRepository(adapter, target.tenantId);
+            deviceSecretsDeleted += await deviceSecretRepo.cleanupExpired();
+          }
         }
         log.debug('Cleaned up expired device secrets', {
           count: deviceSecretsDeleted,
@@ -4127,8 +4180,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let operationalLogsDeleted = 0;
     try {
       operationalLogsDeleted = await deleteExpiredTenantRows(
-        coreAdapter,
-        maintenanceTenantIds,
+        maintenanceTargets,
         'DELETE FROM operational_logs WHERE tenant_id = ? AND expires_at < ?',
         (tenantId) => [tenantId, now]
       );
@@ -4147,8 +4199,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let idempotencyKeysDeleted = 0;
     try {
       idempotencyKeysDeleted = await deleteExpiredTenantRows(
-        coreAdapter,
-        maintenanceTenantIds,
+        maintenanceTargets,
         'DELETE FROM idempotency_keys WHERE tenant_id = ? AND expires_at < ?',
         (tenantId) => [tenantId, now]
       );
@@ -4166,19 +4217,20 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let flowInteractionsExpired = 0;
     let flowInteractionStepsDeleted = 0;
     try {
-      for (const tenantId of maintenanceTenantIds) {
-        const expiredResult = await coreAdapter.execute(
-          `UPDATE flow_interactions
+      for (const target of maintenanceTargets) {
+        for (const { adapter } of target.adapters) {
+          const expiredResult = await adapter.execute(
+            `UPDATE flow_interactions
            SET state = 'expired', updated_at = ?
            WHERE tenant_id = ?
              AND state IN ('created', 'active')
              AND expires_at <= ?`,
-          [now, tenantId, now]
-        );
-        flowInteractionsExpired += expiredResult.rowsAffected || 0;
+            [now, target.tenantId, now]
+          );
+          flowInteractionsExpired += expiredResult.rowsAffected || 0;
 
-        const deletedStepsResult = await coreAdapter.execute(
-          `DELETE FROM flow_interaction_steps
+          const deletedStepsResult = await adapter.execute(
+            `DELETE FROM flow_interaction_steps
            WHERE tenant_id = ?
              AND interaction_id IN (
                SELECT id
@@ -4187,9 +4239,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
                  AND state IN ('completed', 'expired', 'failed')
                  AND updated_at <= ?
              )`,
-          [tenantId, tenantId, now - 86400]
-        );
-        flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+            [target.tenantId, target.tenantId, now - 86400]
+          );
+          flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+        }
       }
       log.debug('Cleaned up Flow runtime interactions', {
         expired: flowInteractionsExpired,
@@ -4216,6 +4269,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
     try {
       unifiedAuditCleanup = await cleanupResolvedAuditPrimaries(env, {
+        tenantIds: maintenanceTenantIds,
         logger: log.module('AUDIT-MAINTENANCE'),
       });
       log.debug('Unified audit retention cleanup completed', unifiedAuditCleanup);
@@ -4224,7 +4278,6 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     }
 
     log.info('Scheduled maintenance cleanup completed', {
-      sessionsDeleted,
       passwordTokensDeleted,
       auditLogsDeleted,
       deviceSecretsDeleted,
@@ -4234,6 +4287,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       flowInteractionStepsDeleted,
       unifiedAuditCleanup,
     });
+    await env.AUTHRIM_CONFIG!.put(maintenancePage.cursorKey, maintenancePage.nextCursor);
   } catch (error) {
     log.error('Scheduled maintenance job failed', {}, error as Error);
     // Don't throw - we don't want to mark the cron job as failed

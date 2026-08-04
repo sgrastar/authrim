@@ -26,7 +26,7 @@
  */
 
 import { Hono, type Context } from 'hono';
-import type { Env, StorageProfile } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import migrateRouter from './migrate';
 import {
   listSettingsHistory,
@@ -61,11 +61,8 @@ import {
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   ensureDatabaseAdapter,
-  createRuntimeProfileRegistryFromEnv,
-  loadEnvironmentProfileDefaultsFromEnv,
   resolveAuthCorePersistenceAdapterFromEnv,
   getTenantIdFromContext,
-  validateTenantStorageProfileOverride,
   parseTrustedRedirectOrigins,
   validateAccountPagePath,
   validatePostLoginRedirectUrl,
@@ -77,7 +74,6 @@ import {
 import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
-import { describeRuntimeProfileActivationStatus } from '../../runtime-profile-reference-status';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
 import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
 
@@ -769,95 +765,6 @@ function errorResponse(
   return c.json({ error, message, ...details }, status);
 }
 
-async function validateTenantRuntimeProfilePatch(
-  env: Env,
-  category: CategoryName,
-  body: SettingsPatchRequest
-): Promise<
-  | {
-      ok: true;
-    }
-  | {
-      ok: false;
-      status: number;
-      error: string;
-      message: string;
-      details?: Record<string, unknown>;
-    }
-> {
-  if (category !== 'tenant') {
-    return { ok: true };
-  }
-
-  const requestedStorageProfileId = body.set?.['tenant.storage_profile_id'];
-  if (typeof requestedStorageProfileId !== 'string') {
-    return { ok: true };
-  }
-
-  const trimmedId = requestedStorageProfileId.trim();
-  if (!trimmedId) {
-    return { ok: true };
-  }
-
-  const registry = createRuntimeProfileRegistryFromEnv(env);
-  const [defaults, candidateProfile] = await Promise.all([
-    loadEnvironmentProfileDefaultsFromEnv(env),
-    registry.get<StorageProfile>('storage', trimmedId),
-  ]);
-
-  if (!candidateProfile) {
-    return {
-      ok: false,
-      status: 404,
-      error: 'not_found',
-      message: `Storage profile "${trimmedId}" not found`,
-    };
-  }
-
-  const defaultProfile = await registry.get<StorageProfile>('storage', defaults.storageProfileId);
-  if (!defaultProfile) {
-    return {
-      ok: false,
-      status: 500,
-      error: 'internal_error',
-      message: `Default storage profile "${defaults.storageProfileId}" not found`,
-    };
-  }
-
-  if (candidateProfile.id === defaultProfile.id) {
-    return { ok: true };
-  }
-
-  const violation = validateTenantStorageProfileOverride(defaultProfile, candidateProfile);
-  if (violation) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'bad_request',
-      message: violation.message,
-      details: {
-        code: violation.code,
-        defaultStorageProfileId: defaultProfile.id,
-        candidateStorageProfileId: candidateProfile.id,
-      },
-    };
-  }
-
-  const activation = describeRuntimeProfileActivationStatus(env, candidateProfile);
-  return activation.activatable
-    ? { ok: true }
-    : {
-        ok: false,
-        status: 400,
-        error: 'bad_request',
-        message: activation.blockingReasons.join(' '),
-        details: {
-          code: 'runtime_profile_not_activatable',
-          candidateStorageProfileId: candidateProfile.id,
-        },
-      };
-}
-
 function settingsKVKey(category: string, scope: SettingScope): string {
   if (scope.type === 'platform') {
     return `settings:platform:${category}`;
@@ -1517,21 +1424,6 @@ settingsV2.patch(
           postLoginValidation.message,
           postLoginValidation.status,
           postLoginValidation.details
-        );
-      }
-
-      const runtimeProfileValidation = await validateTenantRuntimeProfilePatch(
-        c.env,
-        category,
-        body
-      );
-      if (!runtimeProfileValidation.ok) {
-        return errorResponse(
-          c,
-          runtimeProfileValidation.error,
-          runtimeProfileValidation.message,
-          runtimeProfileValidation.status,
-          runtimeProfileValidation.details
         );
       }
 

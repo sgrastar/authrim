@@ -24,6 +24,12 @@ import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { requireTenantResourceAccess } from './admin-tenant-access';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  ensureActiveTenantDiscoveryAliasDirectory,
+  prepareTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 // =============================================================================
 // Constants
@@ -165,7 +171,14 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     const invitationId = crypto.randomUUID();
     const token = generateInvitationToken();
     const adminId = getAdminUserId(c);
+    const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'invitation_token',
+      aliasValue: token,
+      now,
+    });
 
+    await prepareTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
     await adapter.execute(
       `INSERT INTO tenant_invitations
         (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count, expires_at, created_at, updated_at)
@@ -184,6 +197,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         now,
       ]
     );
+    await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
 
     const inviteUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
@@ -333,14 +347,22 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
   try {
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
-    const invitation = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenant_invitations WHERE id = ? AND tenant_id = ?',
+    const invitation = await adapter.queryOne<{ id: string; token: string }>(
+      'SELECT id, token FROM tenant_invitations WHERE id = ? AND tenant_id = ?',
       [invId, tenantId]
     );
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    await disableTenantDiscoveryAliasDirectory(
+      c.env,
+      await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+        tenantId,
+        aliasKind: 'invitation_token',
+        aliasValue: invitation.token,
+      })
+    );
     await adapter.execute('DELETE FROM tenant_invitations WHERE id = ? AND tenant_id = ?', [
       invId,
       tenantId,

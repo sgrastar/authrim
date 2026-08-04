@@ -15,9 +15,9 @@ import {
   ensureDatabaseAdapter,
   generateInvestigationId,
   normalizeStructuredReference,
+  resolveAccountDataContext,
   resolveProductProtectedResourceAudience,
   resolveProductProtectedResourceDetailClasses,
-  resolveUserStoreRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
 import { type ApprovalNotificationPolicySource } from './approval-notification-policy';
 import { describeApprovalCompletionMethod } from './approval-completion-guidance';
@@ -168,13 +168,15 @@ export async function resolveApprovalSteps(
         );
       }
 
-      const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(
-        c.env,
-        request.tenant_id,
-        { requestPath: c.req?.path }
-      );
+      const account = await resolveAccountDataContext(c.env, {
+        tenantId: request.tenant_id,
+        accountId: `account:${request.target_subject_id}`,
+      });
+      if (account.legacyUserId !== request.target_subject_id) {
+        throw new ApprovalStepResolutionError('guardian_delegate target route is inconsistent');
+      }
       const coreAdapter = ensureDatabaseAdapter(
-        userStoreSources.coreDb,
+        account.coreDb,
         'admin-approvals-guardian-resolution'
       );
       const relationships = await coreAdapter.query<{ relationship_type: string; from_id: string }>(

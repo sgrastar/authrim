@@ -7444,7 +7444,6 @@ loggingPoliciesRouter.post('/runtime/tenant-db-probe', async (c) => {
         role,
         shardGroup,
         shardIndex,
-        runtimeSnapshotMode: 'optional',
       }
     );
     const tenantAdapter = ensureDatabaseAdapter(resolved.source, 'tenant-db-probe');

@@ -234,7 +234,60 @@ describe('worker capability manifests', () => {
     }
   });
 
-  it('loads UI Worker manifests without granting tenant D1 roles', async () => {
+  it('declares the signed Runtime Registry contract for every tenant-routed Worker', async () => {
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: CORE_WORKER_COMPONENTS,
+    });
+
+    for (const compiled of manifests.filter((candidate) =>
+      candidate.manifest.requiredDataRoles.some(
+        (role) => role === 'lookup' || role.startsWith('tenant_')
+      )
+    )) {
+      expect(
+        compiled.manifest.bindings,
+        `${compiled.component} must declare the Runtime Registry KV binding`
+      ).toContainEqual(
+        expect.objectContaining({
+          name: 'TENANT_RUNTIME_REGISTRY',
+          kind: 'kv_namespace',
+          required: true,
+        })
+      );
+      expect(
+        compiled.manifest.secrets,
+        `${compiled.component} must declare Runtime Registry signature verification`
+      ).toContainEqual(
+        expect.objectContaining({
+          name: 'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+          required: true,
+        })
+      );
+    }
+  });
+
+  it('does not advertise fixed platform D1 bindings as tenant assignment roles', async () => {
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: CORE_WORKER_COMPONENTS,
+    });
+
+    for (const compiled of manifests) {
+      for (const binding of compiled.manifest.bindings) {
+        if (['DB', 'DB_PII', 'PLATFORM_NOTIFICATION_DB'].includes(binding.name)) {
+          expect(binding.dataRole, `${compiled.component}:${binding.name}`).toBeUndefined();
+        }
+      }
+    }
+
+    for (const component of ['ar-discovery', 'ar-policy'] as const) {
+      const manifest = manifests.find((candidate) => candidate.component === component)?.manifest;
+      expect(manifest?.bindings.filter((binding) => binding.kind === 'd1')).toEqual([]);
+    }
+  });
+
+  it('loads UI Worker manifests without granting assignment roles', async () => {
     const manifests = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,
       components: ['ar-admin-ui', 'ar-login-ui'],

@@ -55,7 +55,6 @@ describe('deploy prompt policy', () => {
     const baseline = {
       dryRun: false,
       controlIncluded: true,
-      tenantD1Storage: true,
       automaticProvisioningEnabled: true,
     };
 
@@ -165,6 +164,13 @@ describe('test endpoint Worker override', () => {
     expect(
       resolveTestEndpointVarOverrides({
         environmentId: 'test',
+        component: 'ar-management',
+        testEndpoints: 'enabled',
+      })
+    ).toEqual({ 'ar-management': { ENABLE_TEST_ENDPOINTS: 'true' } });
+    expect(
+      resolveTestEndpointVarOverrides({
+        environmentId: 'test-ucp',
         component: 'ar-management',
         testEndpoints: 'enabled',
       })

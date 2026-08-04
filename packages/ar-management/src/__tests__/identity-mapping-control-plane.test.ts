@@ -74,6 +74,19 @@ function createAdapter(options: {
   };
 }
 
+function createIdentityMappingApiApp(coreAdapter: DatabaseAdapter) {
+  const app = new Hono<{ Bindings: Env }>();
+  app.use('*', async (c, next) => {
+    c.set('tenantId' as never, 'tenant_a' as never);
+    c.set(
+      'tenantMetadataContext' as never,
+      { tenantId: 'tenant_a', coreDb: coreAdapter, route: {} } as never
+    );
+    await next();
+  });
+  return app;
+}
+
 const catalogEntry = {
   id: 'field.canonical.email',
   namespace: 'authrim.profile',
@@ -3086,7 +3099,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.get(
       '/api/admin/field-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetsListHandler
@@ -3131,7 +3144,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.get(
       '/api/admin/field-mapping/protocol-schemas',
       adminIdentityMappingProtocolSchemasListHandler
@@ -3161,7 +3174,7 @@ describe('identity mapping control plane Admin API handlers', () => {
 
   it('rejects tenant admins creating platform-scoped destination profiles', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
@@ -3206,7 +3219,7 @@ describe('identity mapping control plane Admin API handlers', () => {
 
   it('rejects tenant admins creating platform-scoped attribute registries', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
@@ -3295,7 +3308,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3344,7 +3357,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         { name: 'attribute_release_consents' },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3420,7 +3433,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3459,7 +3472,7 @@ describe('identity mapping control plane Admin API handlers', () => {
 
   it('requires idempotency keys for mutation handlers', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.post(
       '/api/admin/field-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetCreateHandler

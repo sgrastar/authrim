@@ -25,6 +25,7 @@ import {
   safeFetch,
   readResponseTextWithLimit,
   getLogger,
+  getTenantIdFromContext,
   createLogger,
 } from '@authrim/ar-lib-core';
 
@@ -139,7 +140,9 @@ export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Initialize repository
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-did-resolver');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-did-resolver', {
+      tenantId: getTenantIdFromContext(c),
+    });
     const cacheRepo = new DIDDocumentCacheRepository(adapter);
 
     // Check cache first

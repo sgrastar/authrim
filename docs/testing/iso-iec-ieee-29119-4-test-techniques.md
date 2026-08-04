@@ -135,7 +135,7 @@ Recommended matrix areas:
 - discovery input source and fallback behavior
 - entry route, redirect, and grant verification behavior
 - cookie/session behavior across host and domain boundaries
-- runtime storage topology such as shared D1, tenant-specific D1, and external
+- runtime storage topology such as single/multi-shard assignments, mixed tenant placement, and external
   database paths
 - setup-generated environment shape, service bindings, and runtime profile
   selection

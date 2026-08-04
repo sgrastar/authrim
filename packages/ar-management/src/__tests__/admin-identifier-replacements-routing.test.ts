@@ -54,13 +54,12 @@ describe('Admin identifier replacement shard routing', () => {
     mocks.resume.mockResolvedValue('completed');
     mocks.tenantMetadata.mockReturnValue({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
       coreDb: {},
     });
     mocks.createPii.mockReturnValue({ defaultPiiAdapter: mocks.routedPii });
   });
 
-  it('resolves the account route before reading a tenant-D1 PII shard', async () => {
+  it('resolves the account route before reading its PII shard', async () => {
     const response = await adminUserIdentifierReplacementsHandler(context());
 
     expect(response.status).toBe(200);
@@ -81,21 +80,6 @@ describe('Admin identifier replacement shard routing', () => {
     expect(mocks.createPii).not.toHaveBeenCalled();
     expect(mocks.routedPii.query).not.toHaveBeenCalled();
     expect(mocks.defaultPii.query).not.toHaveBeenCalled();
-  });
-
-  it('keeps the legacy default PII path for non-tenant-D1 storage', async () => {
-    mocks.tenantMetadata.mockReturnValue({
-      tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:d1',
-      coreDb: {},
-    });
-    mocks.createPii.mockReturnValue({ defaultPiiAdapter: mocks.defaultPii });
-
-    const response = await adminUserIdentifierReplacementsHandler(context());
-
-    expect(response.status).toBe(200);
-    expect(mocks.resolveAccount).not.toHaveBeenCalled();
-    expect(mocks.defaultPii.query).toHaveBeenCalledOnce();
   });
 
   it('keeps Admin resume reads and writes on the resolved account PII shard', async () => {

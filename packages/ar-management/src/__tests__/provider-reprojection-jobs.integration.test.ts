@@ -11,6 +11,15 @@ import {
   processProviderReprojectionJobs,
 } from '../provider-reprojection-jobs';
 
+const { listEnvironmentTenantDefaultStoresMock } = vi.hoisted(() => ({
+  listEnvironmentTenantDefaultStoresMock: vi.fn(),
+}));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  listEnvironmentTenantDefaultStores: listEnvironmentTenantDefaultStoresMock,
+}));
+
 type SqlValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -100,6 +109,13 @@ describe('provider reprojection jobs', () => {
   let env: Env;
 
   beforeEach(() => {
+    listEnvironmentTenantDefaultStoresMock.mockReset();
+    listEnvironmentTenantDefaultStoresMock.mockImplementation(
+      async (_env: Env, options: { afterTenantId?: string }) =>
+        ['tenant-a', 'tenant-b']
+          .filter((tenantId) => tenantId > (options.afterTenantId ?? ''))
+          .map((tenantId) => ({ tenantId, store: {} }))
+    );
     core = new DatabaseSync(':memory:');
     core.exec(
       `CREATE TABLE tenants (
@@ -183,6 +199,18 @@ describe('provider reprojection jobs', () => {
         failed: 0,
       }),
     ]);
+  });
+
+  it('fails closed without projecting when the signed tenant directory is unavailable', async () => {
+    listEnvironmentTenantDefaultStoresMock.mockRejectedValueOnce(
+      new Error('environment_tenant_directory_unavailable')
+    );
+    await markGlobalProviderDesiredRevision(env, 'human-verification-cloudflare-turnstile', 1_500);
+
+    await expect(processProviderReprojectionJobs(env, logger, { now: 1_501 })).rejects.toThrow(
+      'environment_tenant_directory_unavailable'
+    );
+    expect(configureHumanVerificationInstallation).not.toHaveBeenCalled();
   });
 
   it('skips explicit tenant config overrides without copying global credentials', async () => {

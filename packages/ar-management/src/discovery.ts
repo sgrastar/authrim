@@ -5,19 +5,17 @@ import {
   LOGIN_ENTRY_DEFAULTS,
   LOGIN_UI_DEFAULTS,
   TENANT_DISCOVERY_UI_DEFAULTS,
-  TENANT_D1_STORAGE_PROFILE_ID,
   createLookupAliasIndex,
   ensureDatabaseAdapter,
-  getCachedAuthCorePersistenceContextFromEnv,
   getDefaultTenantId,
   getUIConfig,
   loadVerifiedLookupBucketAssignmentProvider,
   LookupRouteResolver,
-  resolveAuthCorePersistenceAdapterFromEnv,
   resolveTenantDatabaseSourceFromRegistry,
   usesNakedDomainIssuer,
   validateTenantRequestBinding,
   type LookupAliasKind,
+  type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
 import { SignJWT, jwtVerify } from 'jose';
@@ -227,21 +225,8 @@ interface DiscoveryConfigResponse {
   default_candidate?: DiscoveryCandidate;
 }
 
-interface ClientLookupRow {
-  client_id: string;
-  tenant_id: string;
-}
-
-async function getDiscoveryCoreAdapter(env: Env) {
-  return resolveAuthCorePersistenceAdapterFromEnv(env, 'discovery-core');
-}
-
-async function usesTenantD1Storage(env: Env): Promise<boolean> {
-  return (
-    (await getCachedAuthCorePersistenceContextFromEnv(env)).storageProfileId ===
-    TENANT_D1_STORAGE_PROFILE_ID
-  );
-}
+const MAX_DISCOVERY_TENANTS = 64;
+const DISCOVERY_TENANT_READ_CONCURRENCY = 4;
 
 async function resolveTenantDefaultStore(env: Env, tenantId: string) {
   return resolveTenantDatabaseSourceFromRegistry(env, {
@@ -249,7 +234,6 @@ async function resolveTenantDefaultStore(env: Env, tenantId: string) {
     role: 'tenant_core',
     shardGroup: 'default',
     shardIndex: 0,
-    runtimeSnapshotMode: 'required',
   });
 }
 
@@ -291,7 +275,11 @@ async function resolveTenantAliasFromLookup(
   const target = alias.routeProjection.target;
   if (
     target.bindingRef !== store.bindingRef ||
-    alias.routeProjection.tenantRouteGeneration !== store.runtimeGeneration
+    target.shardId !== store.shardId ||
+    target.residencyPartition !== store.residencyPartition ||
+    alias.routeProjection.residencyPolicyId !== store.residencyPolicyId ||
+    target.requiredBindingRouteGeneration !== store.bindingRouteGeneration ||
+    alias.routeProjection.tenantRouteGeneration !== store.bindingRouteGeneration
   ) {
     throw new Error('tenant_alias_route_revalidation_failed');
   }
@@ -306,6 +294,89 @@ async function resolveTenantAliasFromLookup(
     throw new Error('tenant_alias_destination_revalidation_failed');
   }
   return tenant;
+}
+
+async function resolveDiscoveryAliasesFromLookup(
+  env: Env,
+  aliasKind: Extract<LookupAliasKind, 'environment_tenant' | 'client_id'>,
+  value: string
+) {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_alias_lookup_unavailable');
+  }
+  const index = await createLookupAliasIndex(aliasKind, value);
+  const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+    store: env.TENANT_RUNTIME_REGISTRY,
+    environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+  });
+  return new LookupRouteResolver(
+    env as unknown as Record<string, unknown>,
+    assignments
+  ).resolveAliases({ index, maximumResults: MAX_DISCOVERY_TENANTS });
+}
+
+async function resolveUniqueDiscoveryAliasFromLookup(
+  env: Env,
+  aliasKind: Extract<LookupAliasKind, 'invitation_token'>,
+  value: string
+) {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_alias_lookup_unavailable');
+  }
+  const index = await createLookupAliasIndex(aliasKind, value);
+  const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+    store: env.TENANT_RUNTIME_REGISTRY,
+    environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+  });
+  return new LookupRouteResolver(
+    env as unknown as Record<string, unknown>,
+    assignments
+  ).resolveAlias({ index });
+}
+
+async function mapDiscoveryTenantsBounded<T, R>(
+  values: readonly T[],
+  operation: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(DISCOVERY_TENANT_READ_CONCURRENCY, values.length) }, async () => {
+      while (cursor < values.length) {
+        const index = cursor++;
+        results[index] = await operation(values[index]!);
+      }
+    })
+  );
+  return results;
+}
+
+function assertDynamicAliasRouteNotAhead(
+  alias: ResolvedLookupAlias,
+  store: Awaited<ReturnType<typeof resolveTenantDefaultStore>>
+): void {
+  const projection = alias.routeProjection;
+  if (
+    projection.tenantRouteGeneration > store.bindingRouteGeneration ||
+    (projection.tenantRouteGeneration === store.bindingRouteGeneration &&
+      (projection.residencyPolicyId !== store.residencyPolicyId ||
+        projection.target.residencyPartition !== store.residencyPartition ||
+        projection.target.shardId !== store.shardId ||
+        projection.target.bindingRef !== store.bindingRef ||
+        projection.target.requiredBindingRouteGeneration !== store.bindingRouteGeneration))
+  ) {
+    throw new Error('tenant_alias_route_revalidation_failed');
+  }
 }
 
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
@@ -589,34 +660,45 @@ function appendLoginHint(url: string, loginHint?: string): string {
 }
 
 async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, lifecycle_state
-     FROM tenants
-     WHERE lifecycle_state = 'active'
-     ORDER BY id ASC
-     LIMIT 2`,
-    []
-  );
+  const tenants = (
+    await mapDiscoveryTenantsBounded(
+      await resolveDiscoveryAliasesFromLookup(
+        env,
+        'environment_tenant',
+        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
+      ),
+      async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        return queryActiveTenantFromStore(alias.tenantId, store.source);
+      }
+    )
+  ).filter((tenant): tenant is TenantLookupRow => tenant !== null);
 
   if (tenants.length !== 1) {
     return null;
   }
 
-  return await buildCandidate(env, tenants[0], 'tenant_slug');
+  return buildCandidate(env, tenants[0], 'tenant_slug');
 }
 
 async function getActiveTenantWayfCandidates(env: Env): Promise<DiscoveryCandidate[]> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, lifecycle_state
-     FROM tenants
-     WHERE lifecycle_state = 'active'
-     ORDER BY name ASC, id ASC`,
-    []
-  );
+  const tenants = (
+    await mapDiscoveryTenantsBounded(
+      await resolveDiscoveryAliasesFromLookup(
+        env,
+        'environment_tenant',
+        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
+      ),
+      async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        return queryActiveTenantFromStore(alias.tenantId, store.source);
+      }
+    )
+  )
+    .filter((tenant): tenant is TenantLookupRow => tenant !== null)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
-  return Promise.all(tenants.map((tenant) => buildCandidate(env, tenant, 'wayf')));
+  return mapDiscoveryTenantsBounded(tenants, (tenant) => buildCandidate(env, tenant, 'wayf'));
 }
 
 function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
@@ -792,19 +874,12 @@ async function getDiscoveryUiConfig(
 }
 
 async function getTenantRowById(env: Env, tenantId: string): Promise<TenantLookupRow | null> {
-  if (await usesTenantD1Storage(env)) {
-    const store = await resolveTenantDefaultStore(env, tenantId);
-    const tenant = await queryActiveTenantFromStore(tenantId, store.source);
-    if (tenant && tenant.id !== tenantId) {
-      throw new Error('tenant_route_destination_revalidation_failed');
-    }
-    return tenant;
+  const store = await resolveTenantDefaultStore(env, tenantId);
+  const tenant = await queryActiveTenantFromStore(tenantId, store.source);
+  if (tenant && tenant.id !== tenantId) {
+    throw new Error('tenant_route_destination_revalidation_failed');
   }
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.queryOne<TenantLookupRow>(
-    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
-    [tenantId]
-  );
+  return tenant;
 }
 
 async function getTenantRowsByIdWithDiagnosticTiming(
@@ -812,30 +887,20 @@ async function getTenantRowsByIdWithDiagnosticTiming(
   tenantIds: string[],
   timing: DiscoveryDiagnosticTiming
 ): Promise<Array<TenantLookupRow | null>> {
-  const stores = await measureDiscoveryDiagnosticTiming(timing, 'tenant_registry', async () => {
-    if (!(await usesTenantD1Storage(env))) return null;
-    return Promise.all(
-      tenantIds.map(async (tenantId) => ({
-        tenantId,
-        store: await resolveTenantDefaultStore(env, tenantId),
-      }))
-    );
-  });
-  if (stores) {
-    return measureDiscoveryDiagnosticTiming(timing, 'tenant_primary_recheck', () =>
-      Promise.all(
-        stores.map(async ({ tenantId, store }) => {
-          const tenant = await queryActiveTenantFromStore(tenantId, store.source);
-          if (tenant && tenant.id !== tenantId) {
-            throw new Error('tenant_route_destination_revalidation_failed');
-          }
-          return tenant;
-        })
-      )
-    );
-  }
+  const stores = await measureDiscoveryDiagnosticTiming(timing, 'tenant_registry', () =>
+    mapDiscoveryTenantsBounded(tenantIds, async (tenantId) => ({
+      tenantId,
+      store: await resolveTenantDefaultStore(env, tenantId),
+    }))
+  );
   return measureDiscoveryDiagnosticTiming(timing, 'tenant_primary_recheck', () =>
-    Promise.all(tenantIds.map((tenantId) => getTenantRowById(env, tenantId)))
+    mapDiscoveryTenantsBounded(stores, async ({ tenantId, store }) => {
+      const tenant = await queryActiveTenantFromStore(tenantId, store.source);
+      if (tenant && tenant.id !== tenantId) {
+        throw new Error('tenant_route_destination_revalidation_failed');
+      }
+      return tenant;
+    })
   );
 }
 
@@ -843,22 +908,7 @@ async function getTenantRowByTenantCode(
   env: Env,
   tenantCode: string
 ): Promise<TenantLookupRow | null> {
-  if (await usesTenantD1Storage(env)) {
-    return resolveTenantAliasFromLookup(env, 'tenant_code', tenantCode);
-  }
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.queryOne<TenantLookupRow>(
-    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'",
-    [tenantCode]
-  );
-}
-
-async function getClientRowsByClientId(env: Env, clientId: string): Promise<ClientLookupRow[]> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.query<ClientLookupRow>(
-    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ? ORDER BY tenant_id ASC',
-    [clientId]
-  );
+  return resolveTenantAliasFromLookup(env, 'tenant_code', tenantCode);
 }
 
 interface TenantCandidatePresentation {
@@ -929,7 +979,7 @@ function tenantCandidatePresentationCacheKey(env: Env, tenantId: string): string
     env.NAKED_DOMAIN_AS_ISSUER ?? '',
     scopeId(env.SETTINGS),
     scopeId(env.AUTHRIM_CONFIG),
-    scopeId(env.DB),
+    scopeId(env.TENANT_RUNTIME_REGISTRY),
     tenantId,
   ].join('\0');
 }
@@ -1031,7 +1081,11 @@ async function resolveInvitationDiscovery(
   env: Env,
   token: string
 ): Promise<Extract<DiscoveryResponse, { result: 'resolved' }> | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
+  const alias = await resolveUniqueDiscoveryAliasFromLookup(env, 'invitation_token', token);
+  if (!alias) return null;
+  const store = await resolveTenantDefaultStore(env, alias.tenantId);
+  assertDynamicAliasRouteNotAhead(alias, store);
+  const adapter = ensureDatabaseAdapter(store.source, 'tenant-discovery-invitation');
   const now = Math.floor(Date.now() / 1000);
 
   const invitation = await adapter.queryOne<InvitationLookupRow>(
@@ -1043,6 +1097,9 @@ async function resolveInvitationDiscovery(
 
   if (!invitation) {
     return null;
+  }
+  if (invitation.tenant_id !== alias.tenantId || invitation.token !== token) {
+    throw new Error('tenant_alias_destination_revalidation_failed');
   }
 
   if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
@@ -1140,17 +1197,26 @@ async function resolveDiscoveryRequest(
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const clients = await getClientRowsByClientId(env, value);
-      if (clients.length === 0) {
+      const aliases = await resolveDiscoveryAliasesFromLookup(env, 'client_id', value);
+      if (aliases.length === 0) {
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const candidates = await Promise.all(
-        clients.map(async (client) => {
-          const tenant = await getTenantRowById(env, client.tenant_id);
-          return tenant ? buildCandidate(env, tenant, 'app_hint') : null;
-        })
-      );
+      const candidates = await mapDiscoveryTenantsBounded(aliases, async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        assertDynamicAliasRouteNotAhead(alias, store);
+        const adapter = ensureDatabaseAdapter(store.source, 'tenant-discovery-client');
+        const client = await adapter.queryOne<{ client_id: string; tenant_id: string }>(
+          'SELECT client_id, tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+          [alias.tenantId, value]
+        );
+        if (!client) return null;
+        if (client.tenant_id !== alias.tenantId || client.client_id !== value) {
+          throw new Error('tenant_alias_destination_revalidation_failed');
+        }
+        const tenant = await queryActiveTenantFromStore(alias.tenantId, store.source);
+        return tenant ? buildCandidate(env, tenant, 'app_hint') : null;
+      });
       const resolvedCandidates = candidates.filter(
         (candidate): candidate is DiscoveryCandidate => candidate !== null
       );

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => ({
-  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  resolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -10,7 +10,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
-    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesFromEnv,
+    resolveTenantAssignedDatabaseSourcesFromRegistry:
+      mocked.resolveTenantAssignedDatabaseSourcesFromRegistry,
   };
 });
 
@@ -115,16 +116,9 @@ describe('tombstones routes', () => {
       },
     });
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:tenant-override',
-        kind: 'storage',
-        label: 'Tenant Override',
-        slices: {},
-      },
-      coreDb: {},
-      piiDb: piiAdapter,
-    });
+    mocked.resolveTenantAssignedDatabaseSourcesFromRegistry.mockResolvedValue([
+      { source: piiAdapter },
+    ]);
 
     const c = createMockContext();
     const res = await listTombstones(c);
@@ -137,6 +131,9 @@ describe('tombstones routes', () => {
     expect(body.filters.tenant_id).toBe('acme');
     expect(body.items).toHaveLength(1);
     expect(body.items[0]).toMatchObject({ id: 'user-1', tenant_id: 'acme' });
-    expect(mocked.resolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(c.env, 'acme');
+    expect(mocked.resolveTenantAssignedDatabaseSourcesFromRegistry).toHaveBeenCalledWith(
+      c.env,
+      expect.objectContaining({ tenantId: 'acme', role: 'tenant_pii' })
+    );
   });
 });

@@ -14,7 +14,10 @@ import { exportJWK, generateKeyPair, type JWK } from 'jose';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   activateTenantAliasDirectory,
+  activateTenantDiscoveryAliasDirectory,
+  ensureActiveTenantDiscoveryAliasDirectory,
   prepareTenantAliasDirectory,
+  prepareTenantDiscoveryAliasDirectory,
   prepareTenantAliasPlacementMigration,
 } from '../tenant-alias-directory';
 
@@ -115,7 +118,8 @@ function database(): DatabaseSync {
     );
     CREATE UNIQUE INDEX idx_lookup_tenant_aliases_unique_live
       ON lookup_tenant_aliases(virtual_bucket, alias_kind, alias_sha256_digest)
-      WHERE lifecycle_state <> 'disabled';
+      WHERE lifecycle_state <> 'disabled'
+        AND alias_kind IN ('tenant_code', 'tenant_slug', 'invitation_token', 'custom_domain');
   `);
   return result;
 }
@@ -195,7 +199,7 @@ describe('tenant alias directory', () => {
     now: 100,
   };
 
-  it('prepares both aliases before activating the exact reflected projection', async () => {
+  it('prepares tenant aliases and the environment membership before activation', async () => {
     const env = await environment();
     await prepareTenantAliasDirectory(env, input);
     expect(
@@ -206,6 +210,12 @@ describe('tenant alias directory', () => {
         )
         .all()
     ).toEqual([
+      {
+        alias_kind: 'environment_tenant',
+        tenant_lifecycle_state: 'creating',
+        runtime_route_status: 'pending',
+        lifecycle_state: 'pending',
+      },
       {
         alias_kind: 'tenant_code',
         tenant_lifecycle_state: 'creating',
@@ -230,7 +240,7 @@ describe('tenant alias directory', () => {
               AND lifecycle_state = 'active'`
         )
         .get()
-    ).toEqual({ count: 2 });
+    ).toEqual({ count: 3 });
   });
 
   it('does not activate an alias that has not been prepared', async () => {
@@ -272,7 +282,7 @@ describe('tenant alias directory', () => {
           `SELECT COUNT(*) AS count FROM lookup_tenant_aliases WHERE lifecycle_state = 'pending'`
         )
         .get()
-    ).toEqual({ count: 2 });
+    ).toEqual({ count: 3 });
   });
 
   it('allows only the placement migration path to prepare an active alias at a newer generation', async () => {
@@ -293,7 +303,7 @@ describe('tenant alias directory', () => {
               AND lifecycle_state = 'pending'`
         )
         .get()
-    ).toEqual({ count: 2 });
+    ).toEqual({ count: 3 });
 
     await activateTenantAliasDirectory(env, { ...migrationInput, now: 103 });
     expect(
@@ -304,7 +314,93 @@ describe('tenant alias directory', () => {
               AND lifecycle_state = 'active'`
         )
         .get()
+    ).toEqual({ count: 3 });
+  });
+
+  it('allows multiple tenants and client ids in multi-owner discovery indexes', async () => {
+    const env = await environment();
+    await prepareTenantAliasDirectory(env, input);
+    await prepareTenantAliasDirectory(env, {
+      ...input,
+      tenantId: 'tenant-b',
+      tenantCode: 'beta',
+      tenantSlug: 'tenant-b',
+    });
+    for (const tenantId of ['tenant-a', 'tenant-b']) {
+      const alias = {
+        tenantId,
+        aliasKind: 'client_id' as const,
+        aliasValue: 'shared-client-id',
+        routeProjection: projection(),
+        now: 100,
+      };
+      await prepareTenantDiscoveryAliasDirectory(env, alias);
+      await activateTenantDiscoveryAliasDirectory(env, { ...alias, now: 101 });
+    }
+    expect(
+      lookup
+        .prepare(
+          `SELECT COUNT(*) AS count FROM lookup_tenant_aliases
+            WHERE alias_kind = 'environment_tenant' AND lifecycle_state = 'pending'`
+        )
+        .get()
     ).toEqual({ count: 2 });
+    expect(
+      lookup
+        .prepare(
+          `SELECT COUNT(*) AS count FROM lookup_tenant_aliases
+            WHERE alias_kind = 'client_id' AND lifecycle_state = 'active'`
+        )
+        .get()
+    ).toEqual({ count: 2 });
+  });
+
+  it('resumes a pending discovery alias after destination commit or response loss', async () => {
+    const env = await environment();
+    const alias = {
+      tenantId: 'tenant-a',
+      aliasKind: 'invitation_token' as const,
+      aliasValue: 'retry-token',
+      routeProjection: projection(),
+      now: 100,
+    };
+    await prepareTenantDiscoveryAliasDirectory(env, alias);
+
+    await ensureActiveTenantDiscoveryAliasDirectory(env, { ...alias, now: 101 });
+    await ensureActiveTenantDiscoveryAliasDirectory(env, { ...alias, now: 102 });
+
+    expect(
+      lookup
+        .prepare(
+          `SELECT tenant_id, lifecycle_state FROM lookup_tenant_aliases
+            WHERE alias_kind = 'invitation_token'`
+        )
+        .all()
+    ).toEqual([{ tenant_id: 'tenant-a', lifecycle_state: 'active' }]);
+  });
+
+  it('does not rewrite a pending projection without a newer route generation', async () => {
+    const env = await environment();
+    const alias = {
+      tenantId: 'tenant-a',
+      aliasKind: 'custom_domain' as const,
+      aliasValue: 'login.example.test',
+      routeProjection: projection(),
+      now: 100,
+    };
+    await prepareTenantDiscoveryAliasDirectory(env, alias);
+    const changed = {
+      ...alias,
+      routeProjection: {
+        ...projection(),
+        target: { ...projection().target, bindingRef: 'TDB_DEFAULT_B' },
+      },
+      now: 101,
+    };
+
+    await expect(prepareTenantDiscoveryAliasDirectory(env, changed)).rejects.toThrow(
+      'tenant_alias_transition_invalid'
+    );
   });
 
   it('resolves every alias bucket binding before the first write', async () => {

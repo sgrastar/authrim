@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   anonymousDeviceLookupSubject,
+  directoryIdentityLookupSubject,
   createLogger,
   ensureDatabaseAdapter,
   isCanonicalAccountIdForUser,
@@ -18,6 +19,8 @@ import {
   type AuthAccountProvisioningStatusResult,
   type AuthPasskeyRoutePublicationInput,
   type AuthPasskeyRoutePublicationResult,
+  type AuthDirectoryRoutePublicationInput,
+  type AuthDirectoryRoutePublicationResult,
   type ExternalIdpRoutePublicationInput,
   type ExternalIdpRoutePublicationResult,
   type ExternalIdpRouteRemovalInput,
@@ -43,6 +46,7 @@ const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_FIELD = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^auth-account:[a-f0-9]{64}$/u;
 const PASSKEY_ROUTE_IDEMPOTENCY_KEY = /^auth-passkey-route:[a-f0-9]{64}$/u;
+const DIRECTORY_ROUTE_IDEMPOTENCY_KEY = /^auth-directory-route:[a-f0-9]{64}$/u;
 const ANONYMOUS_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-anonymous-route-remove:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_IDEMPOTENCY_KEY = /^auth-external-idp-route:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-external-idp-route-remove:[a-f0-9]{64}$/u;
@@ -53,7 +57,9 @@ const FLOWS = new Set([
   'totp',
   'directory_password',
   'external_idp',
+  'saml',
   'did',
+  'test_stub',
   'anonymous',
   'anonymous_upgrade',
 ]);
@@ -143,6 +149,16 @@ const PASSKEY_ROUTE_INPUT_KEYS = new Set([
   'credentialId',
   'rpId',
 ]);
+const DIRECTORY_ROUTE_INPUT_KEYS = new Set([
+  'schemaVersion',
+  'operationId',
+  'idempotencyKey',
+  'tenantId',
+  'accountId',
+  'userId',
+  'connectorId',
+  'directorySubject',
+]);
 const ANONYMOUS_ROUTE_REMOVAL_INPUT_KEYS = new Set([
   'schemaVersion',
   'operationId',
@@ -210,6 +226,12 @@ export interface ExternalIdpAccountProvisioningRpcProps {
   audience: 'authrim-external-idp-account-provisioning-v1';
 }
 
+export interface SamlAccountProvisioningRpcProps {
+  caller: 'ar-saml';
+  environmentId: string;
+  audience: 'authrim-saml-account-provisioning-v1';
+}
+
 interface ManagementInternalExports {
   AccountDirectoryEntrypoint(options: {
     props: AccountDirectoryRpcProps;
@@ -217,13 +239,18 @@ interface ManagementInternalExports {
 }
 
 function authorized(
-  props: AuthAccountProvisioningRpcProps | ExternalIdpAccountProvisioningRpcProps,
+  props:
+    | AuthAccountProvisioningRpcProps
+    | ExternalIdpAccountProvisioningRpcProps
+    | SamlAccountProvisioningRpcProps,
   env: Env
 ): string {
   const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
   if (
-    props?.caller !== 'ar-auth' ||
-    props.audience !== 'authrim-auth-account-provisioning-v1' ||
+    !(
+      (props?.caller === 'ar-auth' && props.audience === 'authrim-auth-account-provisioning-v1') ||
+      (props?.caller === 'ar-saml' && props.audience === 'authrim-saml-account-provisioning-v1')
+    ) ||
     typeof environmentId !== 'string' ||
     !SAFE_ID.test(environmentId) ||
     props.environmentId !== environmentId
@@ -234,13 +261,19 @@ function authorized(
 }
 
 function authorizedExternalIdp(
-  props: AuthAccountProvisioningRpcProps | ExternalIdpAccountProvisioningRpcProps,
+  props:
+    | AuthAccountProvisioningRpcProps
+    | ExternalIdpAccountProvisioningRpcProps
+    | SamlAccountProvisioningRpcProps,
   env: Env
 ): string {
   const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
   if (
-    props?.caller !== 'ar-bridge' ||
-    props.audience !== 'authrim-external-idp-account-provisioning-v1' ||
+    !(
+      (props?.caller === 'ar-bridge' &&
+        props.audience === 'authrim-external-idp-account-provisioning-v1') ||
+      (props?.caller === 'ar-saml' && props.audience === 'authrim-saml-account-provisioning-v1')
+    ) ||
     typeof environmentId !== 'string' ||
     !SAFE_ID.test(environmentId) ||
     props.environmentId !== environmentId
@@ -578,6 +611,32 @@ function validatePasskeyRouteInput(value: unknown): AuthPasskeyRoutePublicationI
   return value as unknown as AuthPasskeyRoutePublicationInput;
 }
 
+function validateDirectoryRouteInput(value: unknown): AuthDirectoryRoutePublicationInput {
+  boundedJson(value);
+  if (
+    !jsonObject(value) ||
+    Object.keys(value).length !== DIRECTORY_ROUTE_INPUT_KEYS.size ||
+    Object.keys(value).some((key) => !DIRECTORY_ROUTE_INPUT_KEYS.has(key)) ||
+    value.schemaVersion !== 1 ||
+    typeof value.operationId !== 'string' ||
+    !SAFE_ID.test(value.operationId) ||
+    typeof value.idempotencyKey !== 'string' ||
+    !DIRECTORY_ROUTE_IDEMPOTENCY_KEY.test(value.idempotencyKey) ||
+    typeof value.tenantId !== 'string' ||
+    !SAFE_ID.test(value.tenantId) ||
+    !isCanonicalAccountIdForUser(value.accountId, value.userId) ||
+    typeof value.connectorId !== 'string' ||
+    typeof value.directorySubject !== 'string'
+  ) {
+    throw new Error('auth_directory_route_input_invalid');
+  }
+  directoryIdentityLookupSubject({
+    connectorId: value.connectorId,
+    directorySubject: value.directorySubject,
+  });
+  return value as unknown as AuthDirectoryRoutePublicationInput;
+}
+
 function validateAnonymousRouteRemovalInput(value: unknown): AuthAnonymousDeviceRouteRemovalInput {
   boundedJson(value);
   if (
@@ -893,7 +952,9 @@ async function provisionValidatedAccount(
 
 export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
   Env,
-  AuthAccountProvisioningRpcProps | ExternalIdpAccountProvisioningRpcProps
+  | AuthAccountProvisioningRpcProps
+  | ExternalIdpAccountProvisioningRpcProps
+  | SamlAccountProvisioningRpcProps
 > {
   async listExternalIdpPiiSourceShards(input: unknown): Promise<ExternalIdpPiiSourceShard[]> {
     try {
@@ -1353,6 +1414,69 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         throw new Error(error.message);
       }
       throw new Error('auth_passkey_route_internal_error');
+    }
+  }
+
+  async publishAuthDirectoryRoute(input: unknown): Promise<AuthDirectoryRoutePublicationResult> {
+    try {
+      const environmentId = authorized(this.ctx.props, this.env);
+      const validated = validateDirectoryRouteInput(input);
+      const context = await resolveAccountDataContext(this.env, {
+        tenantId: validated.tenantId,
+        accountId: validated.accountId,
+      });
+      if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
+        throw new Error('auth_directory_route_account_mismatch');
+      }
+      const tenantCoreUsers = ensureDatabaseAdapter(
+        context.coreDb,
+        'auth-directory-route-tenant-core-users'
+      );
+      const authority = await tenantCoreUsers.queryOne<{ user_id: string }>(
+        `SELECT user_id FROM directory_identity_links
+          WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
+        [validated.tenantId, validated.connectorId, validated.directorySubject],
+        { consistencyClass: 'primary_required' }
+      );
+      if (authority?.user_id !== validated.userId) {
+        throw new Error('auth_directory_route_authority_not_found');
+      }
+      const result = await publishAccountExternalSubjectAddition(
+        this.env,
+        {
+          operationId: validated.operationId,
+          idempotencyKey: validated.idempotencyKey,
+          tenantId: validated.tenantId,
+          accountId: validated.accountId,
+          externalSubject: directoryIdentityLookupSubject({
+            connectorId: validated.connectorId,
+            directorySubject: validated.directorySubject,
+          }),
+          routeProjection: context.membership.routeProjection,
+        },
+        {
+          tenantCoreUsers,
+          directory: internalDirectoryBinding(
+            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
+            environmentId
+          ),
+        }
+      );
+      return {
+        status: result.status,
+        operationId: result.operationId,
+        accountId: result.accountId,
+      };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /^(auth_account_provisioning_rpc_caller_unauthorized|auth_directory_route_(input_invalid|account_mismatch|authority_not_found)|directory_route_[a-z0-9_]+|account_identifier_addition_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
+          error.message
+        )
+      ) {
+        throw new Error(error.message);
+      }
+      throw new Error('auth_directory_route_internal_error');
     }
   }
 

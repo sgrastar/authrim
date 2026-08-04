@@ -143,6 +143,12 @@ const mocked = vi.hoisted(() => {
         return (state.invitations.find((inv) => inv.token === token && inv.expires_at > now) ??
           null) as T | null;
       }
+      if (query.includes('FROM oauth_clients')) {
+        const [tenantId, clientId] = params;
+        return (state.clients.find(
+          (client) => client.tenant_id === tenantId && client.client_id === clientId
+        ) ?? null) as T | null;
+      }
 
       return null;
     }
@@ -151,8 +157,11 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
-    resolveUserStoreRuntimeSourcesMock: vi.fn(),
     FakeD1Adapter,
+    createLookupAliasIndex: vi.fn(async (aliasKind: string, value: string) => ({
+      aliasKind,
+      value,
+    })),
   };
 });
 
@@ -175,11 +184,79 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
       return new mocked.FakeD1Adapter({ db: source });
     }),
+    createLookupAliasIndex: mocked.createLookupAliasIndex,
+    loadVerifiedLookupBucketAssignmentProvider: vi.fn(async () => ({})),
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(async (_env: Partial<Env>, input: any) => ({
+      tenantId: input.tenantId,
+      dataRole: 'tenant_core/default',
+      shardId: `tenant-${input.tenantId}`,
+      bindingRef: 'DB',
+      residencyPartition: 'default',
+      residencyPolicyId: 'default-policy',
+      bindingRouteGeneration: 1,
+      source: new mocked.FakeD1Adapter({ db: {} }),
+    })),
+    LookupRouteResolver: class {
+      async resolveAlias({ index }: any) {
+        const activeTenant = (tenantId: string) =>
+          mocked.state.tenants.find(
+            (tenant) => tenant.id === tenantId && tenant.lifecycle_state === 'active'
+          );
+        let tenantId: string | undefined;
+        if (index.aliasKind === 'tenant_code') {
+          tenantId = mocked.state.tenants.find(
+            (tenant) => tenant.tenant_code === index.value && tenant.lifecycle_state === 'active'
+          )?.id;
+        } else if (index.aliasKind === 'tenant_slug') {
+          tenantId = activeTenant(index.value)?.id;
+        } else if (index.aliasKind === 'invitation_token') {
+          const invitation = mocked.state.invitations.find((item) => item.token === index.value);
+          tenantId = invitation && activeTenant(invitation.tenant_id)?.id;
+        }
+        return tenantId ? this.alias(tenantId) : null;
+      }
+
+      async resolveAliases({ index }: any) {
+        if (index.aliasKind === 'environment_tenant') {
+          return mocked.state.tenants
+            .filter((tenant) => tenant.lifecycle_state === 'active')
+            .map((tenant) => this.alias(tenant.id));
+        }
+        if (index.aliasKind === 'client_id') {
+          return mocked.state.clients
+            .filter(
+              (client) =>
+                client.client_id === index.value &&
+                mocked.state.tenants.some(
+                  (tenant) => tenant.id === client.tenant_id && tenant.lifecycle_state === 'active'
+                )
+            )
+            .map((client) => this.alias(client.tenant_id));
+        }
+        return [];
+      }
+
+      private alias(tenantId: string) {
+        return {
+          tenantId,
+          routeProjection: {
+            tenantRouteGeneration: 1,
+            residencyPolicyId: 'default-policy',
+            target: {
+              dataRole: 'tenant_core/default',
+              residencyPartition: 'default',
+              shardId: `tenant-${tenantId}`,
+              bindingRef: 'DB',
+              requiredBindingRouteGeneration: 1,
+            },
+          },
+        };
+      }
+    },
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
       async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
     ),
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
-    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
     CanonicalRuntimeUserStore: class {
       private tenantId: string;
 
@@ -292,6 +369,9 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}, tenantId = 'default
     BASE_DOMAIN: 'auth.example.com',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
+    AUTHRIM_ENVIRONMENT_NAME: 'test',
+    TENANT_RUNTIME_REGISTRY: createMockKV(),
+    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
     ...envOverrides,
   } as unknown as Env;
 
@@ -635,35 +715,6 @@ describe('Discovery API: tenant_slug resolution', () => {
 describe('Discovery API: data isolation', () => {
   beforeEach(() => {
     mocked.discoveryCandidatesMock.mockReset();
-    const defaultPiiAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
-          const email = String(params[0] ?? '');
-          const tenantId = String(params[1] ?? '');
-          const user =
-            mocked.state.users.find(
-              (candidate) =>
-                candidate.email === email &&
-                candidate.tenant_id === tenantId &&
-                candidate.is_active === 1
-            ) ?? null;
-          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
-        }
-
-        return null;
-      },
-    });
-
-    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      coreDb: env.DB,
-      piiDb: defaultPiiAdapter,
-    }));
   });
 
   describe('email exact isolation', () => {

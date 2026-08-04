@@ -4,7 +4,7 @@
  * Manages lock files which record created resource IDs.
  * This file allows re-deployment and resource management.
  *
- * Supports both legacy (authrim-lock.json) and new (.authrim/{env}/lock.json) structures.
+ * Uses the fresh-install .authrim/{env}/lock.json structure.
  */
 
 import { open, writeFile, readFile, mkdir, rename, rm, link } from 'node:fs/promises';
@@ -13,13 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import type { ProvisionedResources } from './cloudflare.js';
-import {
-  getEnvironmentPaths,
-  getLegacyPaths,
-  resolvePaths,
-  type EnvironmentPaths,
-  type LegacyPaths,
-} from './paths.js';
+import { getEnvironmentPaths, getLegacyPaths } from './paths.js';
 import { D1_DATABASES, KV_NAMESPACES, getD1DatabaseName, getKVNamespaceName } from './naming.js';
 import { isTenantDatabaseBinding } from './tenant-database.js';
 
@@ -141,7 +135,7 @@ const ControlKeyStateSchema = z.object({
   lookupHmac: ControlLookupHmacKeyStateSchema,
 });
 
-export const TopologyUpdateKindSchema = z.enum(['tenant_database', 'r2', 'external_database']);
+export const TopologyUpdateKindSchema = z.literal('r2');
 
 const TopologyUpdateStateSchema = z.object({
   kind: TopologyUpdateKindSchema,
@@ -180,7 +174,7 @@ export type ControlKeyState = z.infer<typeof ControlKeyStateSchema>;
 export type TopologyUpdateKind = z.infer<typeof TopologyUpdateKindSchema>;
 export type TopologyUpdateState = z.infer<typeof TopologyUpdateStateSchema>;
 
-export interface SharedD1LockReconciliationResult {
+export interface D1LockReconciliationResult {
   lock: AuthrimLock;
   updatedBindings: string[];
   missingBindings: Array<{ binding: string; name: string }>;
@@ -270,11 +264,8 @@ export interface LockFileOptions {
 /**
  * Resolve lock file path based on options
  *
- * Priority:
- * 1. Explicit path
- * 2. Legacy structure if legacy=true
- * 3. Auto-detect existing structure
- * 4. Default to new structure
+ * Explicit paths are supported for internal transactional writes; otherwise an environment is
+ * required and resolves to the fresh-install structure.
  */
 export function resolveLockFilePath(options: LockFileOptions | string = {}): string {
   // Support legacy call with just a path string
@@ -289,24 +280,12 @@ export function resolveLockFilePath(options: LockFileOptions | string = {}): str
     return explicitPath;
   }
 
-  // Environment is required when not using explicit path
+  if (legacy) throw new LockFileError('Legacy lock-file structure is not supported');
+
   if (!env) {
-    // For backward compatibility, default to legacy path
-    return getLegacyPaths(baseDir, 'default').lock;
+    throw new LockFileError('Environment is required when no lock path is provided');
   }
-
-  // Force legacy structure
-  if (legacy) {
-    return getLegacyPaths(baseDir, env).lock;
-  }
-
-  // Auto-detect structure
-  const resolved = resolvePaths({ baseDir, env });
-  if (resolved.type === 'legacy') {
-    return (resolved.paths as LegacyPaths).lock;
-  }
-
-  return (resolved.paths as EnvironmentPaths).lock;
+  return getEnvironmentPaths({ baseDir, env }).lock;
 }
 
 /**
@@ -325,18 +304,10 @@ export function getLegacyLockFilePath(baseDir: string): string {
 
 /**
  * Check if lock file exists for an environment
- * Checks both new and legacy structures
+ * Checks the fresh-install structure.
  */
 export function lockFileExists(baseDir: string, env: string): boolean {
-  // Check new structure
-  const newPath = getEnvironmentPaths({ baseDir, env }).lock;
-  if (existsSync(newPath)) {
-    return true;
-  }
-
-  // Check legacy structure
-  const legacyPath = getLegacyPaths(baseDir, env).lock;
-  return existsSync(legacyPath);
+  return existsSync(getEnvironmentPaths({ baseDir, env }).lock);
 }
 
 // =============================================================================
@@ -569,46 +540,37 @@ export async function loadLockFile(
 }
 
 /**
- * Load lock file with automatic structure detection
- * Tries new structure first, then legacy
+ * Load a lock file from the fresh-install environment structure.
  */
 export async function loadLockFileAuto(
   baseDir: string,
   env: string
 ): Promise<{ lock: AuthrimLock | null; path: string; type: 'new' | 'legacy' }> {
-  // Try new structure first
   const newPath = getEnvironmentPaths({ baseDir, env }).lock;
-  if (existsSync(newPath)) {
-    const lock = await loadLockFile({ path: newPath });
-    return { lock, path: newPath, type: 'new' };
-  }
-
-  // Try legacy structure
-  const legacyPath = getLegacyPaths(baseDir, env).lock;
-  const lock = await loadLockFile({ path: legacyPath });
-  return { lock, path: legacyPath, type: 'legacy' };
+  const lock = await loadLockFile({ path: newPath });
+  return { lock, path: newPath, type: 'new' };
 }
 
 /**
- * Refresh shared and generated tenant D1 lock entries from Cloudflare's current database list.
+ * Refresh all managed D1 lock entries from Cloudflare's current database list.
  *
  * Restored or copied lock files can retain UUIDs for databases that were
  * recreated under the same canonical name. Wrangler requires the live UUID,
- * so deployment reconciles these three shared bindings before generating its
- * worker configurations. Generated tenant bindings are reconciled by their
+ * so deployment reconciles the fixed platform and initial assignment bindings before generating
+ * Worker configurations. Control-managed assignment bindings are reconciled by their
  * recorded canonical database name because they are also emitted into Worker
  * configuration by ID.
  */
-export function reconcileSharedD1ResourcesInLock(
+export function reconcileD1ResourcesInLock(
   lock: AuthrimLock,
   env: string,
   databases: Array<{ name: string; uuid: string }>
-): SharedD1LockReconciliationResult {
+): D1LockReconciliationResult {
   const databasesByName = new Map(databases.map((database) => [database.name, database]));
   const nextD1 = { ...lock.d1 };
   const updatedBindings: string[] = [];
   const missingBindings: Array<{ binding: string; name: string }> = [];
-  const sharedBindings = new Set<string>(D1_DATABASES.map((database) => database.binding));
+  const fixedBindings = new Set<string>(D1_DATABASES.map((database) => database.binding));
 
   for (const database of D1_DATABASES) {
     const expectedName = getD1DatabaseName(env, database.dbType);
@@ -631,7 +593,7 @@ export function reconcileSharedD1ResourcesInLock(
   }
 
   for (const [binding, lockedDatabase] of Object.entries(nextD1)) {
-    if (sharedBindings.has(binding)) continue;
+    if (fixedBindings.has(binding)) continue;
     if (!isTenantDatabaseBinding(binding)) continue;
 
     const liveDatabase = databasesByName.get(lockedDatabase.name);

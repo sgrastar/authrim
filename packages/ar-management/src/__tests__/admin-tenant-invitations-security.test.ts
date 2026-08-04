@@ -38,7 +38,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       const result = await notifier.send(input.payload);
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: result.success ? 'delivered' : 'permanent_failure',
       };
     }),
@@ -55,6 +55,17 @@ vi.mock('../admin-tenant-access', () => ({ requireTenantResourceAccess: mocks.re
 vi.mock('../request-issuer', () => ({
   getCanonicalTenantBaseUrl: (_env: unknown, tenantId: string) =>
     `https://${tenantId}.example.test`,
+}));
+
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {},
+  })),
+  prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  disableTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
 }));
 
 import { AR_ERROR_CODES } from '@authrim/ar-lib-core';

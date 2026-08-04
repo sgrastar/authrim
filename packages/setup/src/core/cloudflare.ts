@@ -168,14 +168,6 @@ export interface ProvisionOptions {
   databaseConfig?: DatabaseProvisionConfig;
 }
 
-export interface MigrationProfileConfig {
-  profiles?: {
-    defaults?: {
-      storage?: string;
-    };
-  };
-}
-
 export const R2_BUCKETS = [
   { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
   { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
@@ -252,10 +244,6 @@ export function buildR2BucketProvisioningStatus(
     missing: buckets.filter((bucket) => !bucket.configured),
     buckets,
   };
-}
-
-export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
-  return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
 }
 
 function sleep(ms: number): Promise<void> {
@@ -3642,7 +3630,7 @@ export async function ensureAdminUiBffMachineAccessInD1(
 }
 
 type SeededRuntimeProfile = {
-  kind: 'storage' | 'audit' | 'residency';
+  kind: 'audit' | 'residency';
   id: string;
   payload: Record<string, unknown>;
 };
@@ -4005,17 +3993,6 @@ const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
 
 function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
   const seeded: SeededRuntimeProfile[] = [];
-  for (const profile of config.profiles?.seed?.storage ?? []) {
-    seeded.push({
-      kind: 'storage',
-      id: profile.id,
-      payload: {
-        ...profile,
-        kind: 'storage',
-        builtin: false,
-      },
-    });
-  }
   for (const profile of config.profiles?.seed?.audit ?? []) {
     seeded.push({
       kind: 'audit',
@@ -4334,7 +4311,6 @@ export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
   onProgress?: (message: string) => void,
-  config?: MigrationProfileConfig,
   release?: EnvironmentReleaseMigrationOptions
 ): Promise<{
   success: boolean;
@@ -4432,29 +4408,6 @@ export async function runMigrationsForEnvironment(
     }
   }
 
-  let coreMirrorResult: {
-    success: boolean;
-    appliedCount: number;
-    skippedCount: number;
-    error?: string;
-  } | null = null;
-
-  if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
-    onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
-    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress, {
-      ...releaseOptionsFor('d1-pii'),
-    });
-    if (!coreMirrorResult.success) {
-      onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
-    } else {
-      coreResult.appliedCount += coreMirrorResult.appliedCount;
-      coreResult.skippedCount += coreMirrorResult.skippedCount;
-      onProgress?.(
-        `  ✅ Mirrored ${coreMirrorResult.appliedCount} PII migrations into core (${coreMirrorResult.skippedCount} skipped)`
-      );
-    }
-  }
-
   // Run Admin database migrations
   const adminMigrationsDir = join(migrationsRoot, 'admin');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
@@ -4477,16 +4430,8 @@ export async function runMigrationsForEnvironment(
   }
 
   return {
-    success:
-      coreResult.success &&
-      (coreMirrorResult?.success ?? true) &&
-      piiResult.success &&
-      adminResult.success,
-    core: {
-      ...coreResult,
-      success: coreResult.success && (coreMirrorResult?.success ?? true),
-      error: coreMirrorResult?.error ?? coreResult.error,
-    },
+    success: coreResult.success && piiResult.success && adminResult.success,
+    core: coreResult,
     pii: piiResult,
     admin: adminResult,
   };
@@ -4566,7 +4511,6 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   role?: D1MigrationDatabaseRole;
   filenames?: string[];
   onProgress?: (message: string) => void;
-  config?: MigrationProfileConfig;
   release?: EnvironmentReleaseMigrationOptions;
 }): Promise<{
   success: boolean;
@@ -4580,13 +4524,7 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
 
   if (!input.role && !onlyFiles) {
-    return runMigrationsForEnvironment(
-      input.env,
-      input.rootDir,
-      input.onProgress,
-      input.config,
-      input.release
-    );
+    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.release);
   }
 
   const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress);
@@ -5511,7 +5449,7 @@ export function toResourceIds(resources: ProvisionedResources): {
 const AUTHRIM_PATTERNS = {
   worker:
     /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|control|plugin-runner|management|agent-access|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
-  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin|control|lookup|plugin-runner)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
+  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin|control|lookup|plugin-runner)-db$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:

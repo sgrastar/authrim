@@ -236,9 +236,9 @@ const ja: Translations = {
   // Database
   'db.title': 'データベース設定',
   'db.regionWarning': 'データベースのリージョンは作成後に変更できません。',
-  'db.coreDescription': 'コアDB: OAuthクライアント、トークン、セッション、監査ログを保存',
+  'db.coreDescription': 'プラットフォームDB: メタデータと非PII監査ログを保存',
   'db.coreRegion': 'コアデータベースのリージョン',
-  'db.piiDescription': 'PII DB: ユーザープロフィール、認証情報、個人データを保存',
+  'db.piiDescription': 'プラットフォームPII DB: PII監査と匿名化データを保存',
   'db.piiNote': 'データ保護要件を考慮してください。',
   'db.piiRegion': 'PIIデータベースのリージョン',
   'db.creating': 'データベースを作成中...',
@@ -774,14 +774,8 @@ const ja: Translations = {
   'web.db.name': '名前',
   'web.db.region': 'リージョン',
   'web.db.regionAuto': '自動（最寄り）',
-  'web.db.storageProfileTitle': 'ストレージ\nプロファイル',
-  'web.db.storageProfileDesc':
-    'このデプロイでユーザー core/PII データをどのように配置するかを選択します。',
-  'web.db.sharedD1Title': '共有 D1（Shared D1）',
-  'web.db.sharedD1Desc':
-    '環境全体で core D1 と PII D1 を1組ずつ共有します。構築コストが最小の標準構成です。',
-  'web.db.tenantD1Title': 'テナント別 D1（Tenant D1）',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Control Planeと初期tenant shardを構築します。以後のtenant容量は必要に応じて自動作成されます。',
 
   // Web UI Email

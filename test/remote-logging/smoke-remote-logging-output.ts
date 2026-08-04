@@ -306,9 +306,10 @@ async function createLoggingExport(input: {
       limit: 20,
     },
   });
-  const result = isRecord(response.payload) && isRecord(response.payload.result)
-    ? response.payload.result
-    : null;
+  const result =
+    isRecord(response.payload) && isRecord(response.payload.result)
+      ? response.payload.result
+      : null;
   const id = result ? stringValue(result.id) : null;
   const status = result ? stringValue(result.status) : null;
   if (!response.ok || !id || !status) {
@@ -338,9 +339,8 @@ async function pollLoggingExport(input: {
       timeoutMs: input.timeoutMs,
       headers: adminHeaders(input.adminSecret, input.tenantId),
     });
-    const item = isRecord(response.payload) && isRecord(response.payload.item)
-      ? response.payload.item
-      : null;
+    const item =
+      isRecord(response.payload) && isRecord(response.payload.item) ? response.payload.item : null;
     if (response.ok && item) {
       const status = stringValue(item.status);
       if (status === 'completed' || status === 'failed' || status === 'expired') {
@@ -422,7 +422,10 @@ async function createSmokeClient(input: {
     url,
     timeoutMs: input.timeoutMs,
     method: 'POST',
-    headers: adminHeaders(input.adminSecret, input.tenantId),
+    headers: {
+      ...adminHeaders(input.adminSecret, input.tenantId),
+      'Idempotency-Key': `remote-logging-smoke-client-${input.runId}`,
+    },
     body: {
       client_name: `Remote Logging Smoke ${input.runId}`,
       description: `Temporary client for remote logging output smoke ${input.runId}`,
@@ -676,7 +679,10 @@ async function runRemoteLoggingSmoke(options: CliOptions): Promise<RemoteLogging
           } else if (status === 'failed') {
             addFail(exportCheck, `ZIP export job failed: ${stringValue(completed?.error_class)}`);
           } else {
-            addWarn(exportCheck, 'ZIP export job is queued; maintenance worker did not complete it within timeout');
+            addWarn(
+              exportCheck,
+              'ZIP export job is queued; maintenance worker did not complete it within timeout'
+            );
           }
         } catch (error) {
           addFail(exportCheck, error instanceof Error ? error.message : String(error));

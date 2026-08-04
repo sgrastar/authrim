@@ -9,7 +9,6 @@ import {
   createPIIContextFromHono,
   ensureAccountAuthenticationState,
   findCanonicalAccountAuthenticationState,
-  getRuntimeUserStoreSourcesFromHonoContext,
   resolveCustomClaimRuntimeSourcesFromHono,
   registerSessionClientInStore,
   createRefreshTokenFamily,
@@ -640,9 +639,6 @@ async function resolveTrustedSubjectAccountRoute(
   c: Context<{ Bindings: Env }>,
   subject: string
 ): Promise<Response | null> {
-  if (getTenantMetadataContextFromHono(c)?.storageProfileId !== 'builtin:storage:tenant-d1') {
-    return null;
-  }
   try {
     await resolveAccountDataContextFromHono(c, subject);
     return null;
@@ -2940,9 +2936,6 @@ async function handleAuthorizationCodeGrant(
         clientId: client_id,
         action: 'Logout',
       });
-      const mirrorMode =
-        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
-          ?.sessionClientMirror ?? 'async';
       const registrationInput = {
         session_id: authCodeData.sid,
         client_id: client_id,
@@ -2970,32 +2963,7 @@ async function handleAuthorizationCodeGrant(
             error as Error
           );
         });
-      const mirrorPromise =
-        mirrorMode === 'disabled'
-          ? Promise.resolve()
-          : authCtx.repositories.sessionClient
-              .createOrUpdate(registrationInput)
-              .then((result) => {
-                log.debug('Successfully mirrored session-client', {
-                  id: result.id,
-                  sidPrefix: authCodeData.sid?.substring(0, 25),
-                  clientIdPrefix: client_id.substring(0, 25),
-                  action: 'Logout',
-                });
-              })
-              .catch((error) => {
-                // Log error but don't fail the token request - logout tracking is non-critical
-                log.error('Failed to mirror session-client', { action: 'Logout' }, error as Error);
-              });
-      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
-        () => undefined
-      );
-
-      if (mirrorMode === 'sync') {
-        await registrationPromise;
-      } else {
-        c.executionCtx?.waitUntil(registrationPromise);
-      }
+      c.executionCtx?.waitUntil(storeRegistrationPromise);
     } catch (error) {
       // Log error but don't fail the token request - logout tracking is non-critical
       log.error('Failed to register session-client', { action: 'Logout' }, error as Error);
@@ -6676,7 +6644,7 @@ async function handleNativeSSOTokenExchange(
   // 4. Validate device_secret (this also marks it as used)
   // Pass maxUseCountPerSecret from config for replay attack prevention
   let deviceSecretRouteHint: Awaited<ReturnType<typeof resolveDeviceSecretRouteHint>> = null;
-  if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
+  {
     try {
       deviceSecretRouteHint = await resolveDeviceSecretRouteHint(c.env, {
         secret: deviceSecret,

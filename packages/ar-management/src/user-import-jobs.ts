@@ -9,6 +9,7 @@ import {
   invalidateUserCache,
   persistCustomClaimWrite,
   resolveAuthCorePersistenceAdapterFromEnv,
+  resolveTenantUserStoreSourcesFromEnv,
   resolveCustomClaimRuntimeSourcesFromEnv,
   syncUserLifecycleState,
   transitionAccountAuthenticationState,
@@ -201,7 +202,11 @@ interface UserImportRuntime {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter;
   runtimeUsers: CanonicalRuntimeUserStore;
-  customClaimSources: Awaited<ReturnType<typeof resolveCustomClaimRuntimeSourcesFromEnv>>;
+  customClaimSources: {
+    schemaDb: DatabaseAdapter;
+    nonPiiDb: DatabaseAdapter;
+    piiDb: DatabaseAdapter;
+  };
 }
 
 interface CsvRecordParseResult {
@@ -547,11 +552,17 @@ async function createUserImportRuntime(env: Env, tenantId: string): Promise<User
       tenantId,
     }
   );
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
-  const piiAdapter = ensureDatabaseAdapter(
-    customClaimSources.piiDb ?? customClaimSources.nonPiiDb,
-    'management-user-import-pii'
+  const tenantUserSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
+  const schemaAdapter = ensureDatabaseAdapter(
+    tenantUserSources.coreDb,
+    'management-user-import-schema'
   );
+  const piiAdapter = ensureDatabaseAdapter(tenantUserSources.piiDb, 'management-user-import-pii');
+  const customClaimSources = {
+    schemaDb: schemaAdapter,
+    nonPiiDb: schemaAdapter,
+    piiDb: piiAdapter,
+  };
 
   return {
     tenantId,

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
+  getTenantMetadataContextFromHono: vi.fn((c) => c.get('tenantMetadataContext')),
   getTenantIdFromContext: vi.fn(() => 'fallback-tenant'),
   getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
 }));
@@ -29,7 +30,12 @@ function context(
   const store = new Map<string, unknown>();
   if (options.tenantId) store.set('tenant_id', options.tenantId);
   if (options.adminId) store.set('admin_user_id', options.adminId);
-  if (options.configured) store.set('runtimeUserStoreSources', { coreDb: {} });
+  if (options.configured !== false) {
+    store.set('tenantMetadataContext', {
+      tenantId: options.tenantId ?? 'fallback-tenant',
+      coreDb: {},
+    });
+  }
   return {
     get: vi.fn((k: string) => store.get(k)),
     req: {
@@ -37,7 +43,7 @@ function context(
       query: vi.fn((n: string) => options.query?.[n]),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: options.configured ? {} : { DB: {} },
+    env: {},
     json: vi.fn((v: unknown, s = 200) => Response.json(v, { status: s })),
   } as never;
 }
@@ -75,10 +81,9 @@ describe('check API key CRUD', () => {
     deleteCheckApiKey,
     rotateCheckApiKey,
   ])('requires configured core DB %#', async (handler) => {
-    expect((await handler(context({ configured: false, tenantId: 'tenant-a' }))).status).not.toBe(
-      503
-    );
+    expect((await handler(context({ configured: false, tenantId: 'tenant-a' }))).status).toBe(503);
     const c: any = context({ configured: true });
+    expect((await handler(c)).status).not.toBe(503);
     c.env = {};
     c.get.mockImplementation(() => undefined);
     expect((await handler(c)).status).toBe(503);

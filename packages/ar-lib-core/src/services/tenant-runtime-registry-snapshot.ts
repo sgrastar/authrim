@@ -7,7 +7,7 @@ import type {
 } from '../repositories/admin/tenant-database-registry';
 import { CompactSign, compactVerify, decodeProtectedHeader, importJWK, type JWK } from 'jose';
 
-export const RUNTIME_REGISTRY_SNAPSHOT_VERSION = 2;
+export const RUNTIME_REGISTRY_SNAPSHOT_VERSION = 4;
 export const DEFAULT_RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
 export const DEFAULT_RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const TENANT_RUNTIME_REGISTRY_EMERGENCY_PURGE_CONFIRMATION =
@@ -31,6 +31,15 @@ export interface RuntimeRegistryPurgeStore {
 export interface TenantRuntimeRegistryStoreSnapshot {
   tenantId: string;
   role: TenantDatabaseRegistryRow['role'];
+  dataRole: 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
+  residencyPolicyId: string;
+  residencyPartition: string;
+  shardId: string;
+  assignmentGeneration: number;
+  bindingRouteGeneration: number;
+  placementPolicyGeneration: number;
+  allocationScope: 'shared_pool' | 'tenant_exclusive';
+  ownerTenantId: string | null;
   generation: number;
   runtimeGeneration: number;
   schemaVersion: number;
@@ -97,7 +106,11 @@ export interface TenantRuntimeRegistrySnapshot {
   runtimeGeneration: number;
   routeStatus: TenantRuntimeRegistryRouteStatus;
   quarantineDenyGeneration: number;
-  storageProfileId: string;
+  backend: {
+    provider: 'd1';
+    resolver: 'control-plane';
+  };
+  placement: TenantRuntimeRegistryPlacementSnapshot;
   publishedAt: string;
   expiresAt: string;
   stores: TenantRuntimeRegistryStoreSnapshot[];
@@ -109,6 +122,23 @@ export interface TenantRuntimeRegistrySnapshot {
     signatureAlgorithm?: typeof RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM | null;
     signedAt?: string | null;
   };
+}
+
+export function hasPhysicalCorePiiDatabaseSeparation(
+  stores: readonly TenantRuntimeRegistryStoreSnapshot[]
+): boolean {
+  const coreDatabaseIds = new Set<string>();
+  for (const store of stores) {
+    if (store.provider !== 'd1' || typeof store.databaseId !== 'string' || !store.databaseId) {
+      return false;
+    }
+    if (store.dataRole === 'tenant_core/default' || store.dataRole === 'tenant_core/users') {
+      coreDatabaseIds.add(store.databaseId);
+    }
+  }
+  return stores.every(
+    (store) => store.dataRole !== 'tenant_pii' || !coreDatabaseIds.has(store.databaseId as string)
+  );
 }
 
 export interface RuntimeRegistrySnapshotSigningKey {
@@ -136,7 +166,7 @@ export interface RuntimeRegistrySnapshotVerificationEnv {
 
 export interface PublishTenantRuntimeRegistrySnapshotOptions {
   tenantId: string;
-  storageProfileId: string;
+  placement: TenantRuntimeRegistryPlacementSnapshot;
   repository: TenantDatabaseRegistryRepository;
   snapshotStore?: RuntimeRegistrySnapshotStore | null;
   deploymentTarget?: string | null;
@@ -146,6 +176,11 @@ export interface PublishTenantRuntimeRegistrySnapshotOptions {
   actorId?: string | null;
   signingKey?: RuntimeRegistrySnapshotSigningKey | null;
   externalSigner?: RuntimeRegistrySnapshotExternalSigner | null;
+}
+
+export interface TenantRuntimeRegistryPlacementSnapshot {
+  isolationPolicy: 'shared_pool' | 'tenant_exclusive';
+  policyGeneration: number;
 }
 
 export interface PublishTenantRuntimeRegistrySnapshotResult {
@@ -780,13 +815,100 @@ function isSnapshotPublishableRegistryStatus(status: TenantDatabaseRegistryRow['
   return ['ready', 'active', 'degraded', 'degraded_pending_snapshot'].includes(status);
 }
 
+interface TenantRuntimeRegistryStoreControlMetadata {
+  dataRole: TenantRuntimeRegistryStoreSnapshot['dataRole'];
+  residencyPolicyId: string;
+  residencyPartition: string;
+  shardId: string;
+  assignmentGeneration: number;
+  allocationScope: TenantRuntimeRegistryStoreSnapshot['allocationScope'];
+  ownerTenantId: string | null;
+  placementPolicyGeneration: number;
+}
+
+function requiredPositiveGeneration(value: unknown, code: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(code);
+  }
+  return value;
+}
+
+function parseStoreControlMetadata(
+  row: TenantDatabaseRegistryRow
+): TenantRuntimeRegistryStoreControlMetadata {
+  const metadata = parseMetadataObject(row.metadata_json);
+  const dataRole = metadata.control_data_role;
+  const expectedRole = dataRole === 'tenant_pii' ? 'tenant_pii' : 'tenant_core';
+  if (
+    (dataRole !== 'tenant_core/default' &&
+      dataRole !== 'tenant_core/users' &&
+      dataRole !== 'tenant_pii') ||
+    row.role !== expectedRole
+  ) {
+    throw new Error('tenant_runtime_registry_store_data_role_invalid');
+  }
+  const residencyPartition = metadata.control_residency_partition;
+  const residencyPolicyId = metadata.control_residency_policy_id;
+  if (
+    typeof residencyPolicyId !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(residencyPolicyId)
+  ) {
+    throw new Error('tenant_runtime_registry_store_residency_policy_invalid');
+  }
+  if (
+    typeof residencyPartition !== 'string' ||
+    !/^[a-z0-9][a-z0-9-]{0,62}$/u.test(residencyPartition)
+  ) {
+    throw new Error('tenant_runtime_registry_store_residency_invalid');
+  }
+  const shardId = metadata.control_shard_id;
+  if (typeof shardId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(shardId)) {
+    throw new Error('tenant_runtime_registry_store_shard_invalid');
+  }
+  const allocationScope = metadata.control_allocation_scope;
+  const ownerTenantId = metadata.control_owner_tenant_id ?? null;
+  if (
+    (allocationScope !== 'shared_pool' && allocationScope !== 'tenant_exclusive') ||
+    (allocationScope === 'shared_pool' && ownerTenantId !== null) ||
+    (allocationScope === 'tenant_exclusive' && ownerTenantId !== row.tenant_id)
+  ) {
+    throw new Error('tenant_runtime_registry_store_owner_invalid');
+  }
+  return {
+    dataRole,
+    residencyPolicyId,
+    residencyPartition,
+    shardId,
+    assignmentGeneration: requiredPositiveGeneration(
+      metadata.control_assignment_generation,
+      'tenant_runtime_registry_store_assignment_generation_invalid'
+    ),
+    allocationScope,
+    ownerTenantId: ownerTenantId as string | null,
+    placementPolicyGeneration: requiredPositiveGeneration(
+      metadata.control_placement_policy_generation,
+      'tenant_runtime_registry_store_placement_generation_invalid'
+    ),
+  };
+}
+
 function toStoreSnapshot(
   row: TenantDatabaseRegistryRow,
   pointer: TenantDatabaseActivePointer
 ): TenantRuntimeRegistryStoreSnapshot {
+  const control = parseStoreControlMetadata(row);
   return {
     tenantId: row.tenant_id,
     role: row.role,
+    dataRole: control.dataRole,
+    residencyPolicyId: control.residencyPolicyId,
+    residencyPartition: control.residencyPartition,
+    shardId: control.shardId,
+    assignmentGeneration: control.assignmentGeneration,
+    bindingRouteGeneration: row.generation,
+    placementPolicyGeneration: control.placementPolicyGeneration,
+    allocationScope: control.allocationScope,
+    ownerTenantId: control.ownerTenantId,
     generation: row.generation,
     runtimeGeneration: pointer.runtime_generation,
     schemaVersion: row.schema_version,
@@ -837,6 +959,17 @@ async function loadActiveRegistryRows(
       if (!row) {
         throw new Error(
           `tenant_runtime_registry_snapshot_missing_registry_row:${tenantId}:${pointer.role}:${pointer.generation}:${pointer.shard_group}:${shardIndex}`
+        );
+      }
+      if (
+        row.tenant_id !== tenantId ||
+        row.role !== pointer.role ||
+        row.generation !== pointer.generation ||
+        row.shard_group !== pointer.shard_group ||
+        row.shard_index !== shardIndex
+      ) {
+        throw new Error(
+          `tenant_runtime_registry_snapshot_registry_identity_mismatch:${tenantId}:${pointer.role}:${pointer.generation}:${pointer.shard_group}:${shardIndex}`
         );
       }
       if (!isSnapshotPublishableRegistryStatus(row.status)) {
@@ -941,6 +1074,30 @@ export async function publishTenantRuntimeRegistrySnapshot(
     1
   );
   const stores = pairs.map(({ pointer, row }) => toStoreSnapshot(row, pointer));
+  if (!hasPhysicalCorePiiDatabaseSeparation(stores)) {
+    throw new Error('tenant_runtime_registry_snapshot_pii_isolation_violation');
+  }
+  if (
+    stores.some((store) => store.runtimeGeneration !== runtimeGeneration) ||
+    !Number.isSafeInteger(options.placement.policyGeneration) ||
+    options.placement.policyGeneration < 1 ||
+    (options.placement.isolationPolicy !== 'shared_pool' &&
+      options.placement.isolationPolicy !== 'tenant_exclusive') ||
+    stores.some(
+      (store) =>
+        store.allocationScope !== options.placement.isolationPolicy ||
+        (store.allocationScope === 'tenant_exclusive' &&
+          store.ownerTenantId !== options.tenantId) ||
+        (store.allocationScope === 'shared_pool' && store.ownerTenantId !== null) ||
+        store.placementPolicyGeneration !== options.placement.policyGeneration
+    )
+  ) {
+    throw new Error(
+      stores.some((store) => store.runtimeGeneration !== runtimeGeneration)
+        ? 'tenant_runtime_registry_snapshot_generation_mismatch'
+        : 'tenant_runtime_registry_snapshot_placement_mismatch'
+    );
+  }
   const snapshot: TenantRuntimeRegistrySnapshot = {
     version: RUNTIME_REGISTRY_SNAPSHOT_VERSION,
     tenantId: options.tenantId,
@@ -949,7 +1106,11 @@ export async function publishTenantRuntimeRegistrySnapshot(
     runtimeGeneration,
     routeStatus: routeState.routeStatus,
     quarantineDenyGeneration: routeState.quarantineDenyGeneration,
-    storageProfileId: options.storageProfileId,
+    backend: {
+      provider: 'd1',
+      resolver: 'control-plane',
+    },
+    placement: options.placement,
     publishedAt,
     expiresAt,
     stores,
@@ -1021,16 +1182,22 @@ export async function publishTenantRuntimeRegistrySnapshot(
     route_status: routeState.routeStatus,
     quarantine_deny_generation: routeState.quarantineDenyGeneration,
   });
-  const committed = await options.repository.commitRuntimeCacheGenerationPublication(
-    {
-      tenant_id: options.tenantId,
-      cache_namespace: 'runtime_registry',
-      generation: runtimeGeneration,
-      updated_by: options.actorId ?? null,
-      metadata_json: cacheGenerationMetadata,
-    },
-    currentCacheGeneration
-  );
+  let committed: boolean;
+  try {
+    committed = await options.repository.commitRuntimeCacheGenerationPublication(
+      {
+        tenant_id: options.tenantId,
+        cache_namespace: 'runtime_registry',
+        generation: runtimeGeneration,
+        updated_by: options.actorId ?? null,
+        metadata_json: cacheGenerationMetadata,
+      },
+      currentCacheGeneration
+    );
+  } catch (error) {
+    await markSnapshotPublishFailure(options.repository, pairs, options.actorId ?? null, error);
+    throw error;
+  }
   if (!committed) {
     const latest = await options.repository.getRuntimeCacheGeneration(
       options.tenantId,
@@ -1053,28 +1220,35 @@ export async function publishTenantRuntimeRegistrySnapshot(
     }
     throw new Error('tenant_runtime_registry_snapshot_stale_publication');
   }
-  await options.repository.upsertRuntimeRegistrySnapshot({
-    tenant_id: options.tenantId,
-    snapshot_scope: 'tenant',
-    deployment_target: deploymentTarget,
-    runtime_generation: runtimeGeneration,
-    storage_profile_id: options.storageProfileId,
-    snapshot_version: RUNTIME_REGISTRY_SNAPSHOT_VERSION,
-    object_ref: snapshotKey,
-    published_at: publishedAt,
-    expires_at: expiresAt,
-    signature: publishSnapshot.metadata.signature,
-    signature_key_id: publishSnapshot.metadata.signatureKeyId,
-    metadata_json: JSON.stringify({
-      generation_key: generationKey,
-      store_count: stores.length,
-      roles: publishSnapshot.metadata.roles,
+  try {
+    await options.repository.upsertRuntimeRegistrySnapshot({
+      tenant_id: options.tenantId,
+      snapshot_scope: 'tenant',
+      deployment_target: deploymentTarget,
+      runtime_generation: runtimeGeneration,
+      backend_provider: 'd1',
+      placement_policy: options.placement.isolationPolicy,
+      placement_policy_generation: options.placement.policyGeneration,
+      snapshot_version: RUNTIME_REGISTRY_SNAPSHOT_VERSION,
+      object_ref: snapshotKey,
+      published_at: publishedAt,
+      expires_at: expiresAt,
+      signature: publishSnapshot.metadata.signature,
       signature_key_id: publishSnapshot.metadata.signatureKeyId,
-      route_status: routeState.routeStatus,
-      quarantine_deny_generation: routeState.quarantineDenyGeneration,
-    }),
-  });
-  await markSnapshotPublishSuccess(options.repository, pairs, options.actorId ?? null);
+      metadata_json: JSON.stringify({
+        generation_key: generationKey,
+        store_count: stores.length,
+        roles: publishSnapshot.metadata.roles,
+        signature_key_id: publishSnapshot.metadata.signatureKeyId,
+        route_status: routeState.routeStatus,
+        quarantine_deny_generation: routeState.quarantineDenyGeneration,
+      }),
+    });
+    await markSnapshotPublishSuccess(options.repository, pairs, options.actorId ?? null);
+  } catch (error) {
+    await markSnapshotPublishFailure(options.repository, pairs, options.actorId ?? null, error);
+    throw error;
+  }
 
   return {
     snapshot: publishSnapshot,

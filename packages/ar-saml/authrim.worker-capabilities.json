@@ -4,8 +4,9 @@
   "worker": "ar-saml",
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
+    { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
+    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
+    { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "saml_metadata" },
     { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
     { "name": "STATE_STORE", "kind": "kv_namespace", "required": true },

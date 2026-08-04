@@ -93,8 +93,10 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
     private readonly catalog: AgentToolCatalog,
     private readonly settings: AgentSettingsPort,
     private readonly schemaValidator: AgentJsonSchemaValidatorPort,
-    private readonly now: () => number = () => Date.now(),
-    private readonly tenantDirectoryDatabase: DatabaseAdapter = database
+    private readonly resolveActiveTenantIds: (
+      tenantIds: readonly string[]
+    ) => Promise<ReadonlySet<string>>,
+    private readonly now: () => number = () => Date.now()
   ) {
     this.bulk = new AgentBulkRepository(database);
     this.grants = new AdminAgentAccessRepository(database);
@@ -266,13 +268,12 @@ export class CloudflareAgentBulkPlanAdapter implements AgentBulkPlanPort {
     ) {
       return result(403, { error: 'AGENT_BULK_PLAN_TENANT_SCOPE_REQUIRED' });
     }
-    const rows = await this.tenantDirectoryDatabase.query<{ id: string; lifecycle_state: string }>(
-      `SELECT id, lifecycle_state FROM tenants WHERE id IN (${targets.map(() => '?').join(', ')})`,
-      [...targets]
-    );
-    const active = new Set(
-      rows.filter((row) => row.lifecycle_state === 'active').map((row) => row.id)
-    );
+    let active: ReadonlySet<string>;
+    try {
+      active = await this.resolveActiveTenantIds(targets);
+    } catch {
+      return result(503, { error: 'AGENT_BULK_PLAN_TARGET_DIRECTORY_UNAVAILABLE' });
+    }
     if (targets.some((tenantId) => !active.has(tenantId))) {
       return result(409, { error: 'AGENT_BULK_PLAN_TARGET_INVALID' });
     }

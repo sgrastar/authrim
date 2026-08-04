@@ -26,7 +26,6 @@ export interface TenantSettings {
   'tenant.allowed_identifiers': string;
 
   // Runtime Profile Overrides
-  'tenant.storage_profile_id': string;
   'tenant.audit_profile_id': string;
   'tenant.residency_profile_id': string;
 
@@ -121,15 +120,6 @@ export const TENANT_SETTINGS_META: Record<keyof TenantSettings, SettingMeta> = {
     label: 'Allowed Identifiers',
     description:
       'Comma-separated list of exact issuer/verifier identifiers allowed for this tenant. Empty disables additional identifier restrictions.',
-    visibility: 'admin',
-  },
-  'tenant.storage_profile_id': {
-    key: 'tenant.storage_profile_id',
-    type: 'string',
-    default: '',
-    label: 'Storage Profile Override',
-    description:
-      'Optional storage profile ID override for this tenant. Empty means inherit the environment default.',
     visibility: 'admin',
   },
   'tenant.audit_profile_id': {
@@ -280,7 +270,6 @@ export const TENANT_DEFAULTS: TenantSettings = {
   'tenant.allowed_origins': '',
   'tenant.allowed_domains': '',
   'tenant.allowed_identifiers': '',
-  'tenant.storage_profile_id': '',
   'tenant.audit_profile_id': '',
   'tenant.residency_profile_id': '',
   'tenant.browser_public_client_mode': 'cookie_fallback',

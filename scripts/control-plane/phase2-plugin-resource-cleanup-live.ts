@@ -50,7 +50,7 @@ async function main(): Promise<void> {
   const config = AuthrimConfigSchema.parse(
     JSON.parse(await readFile(resolve(REPO_ROOT, '.authrim/test/config.json'), 'utf8'))
   );
-  if (config.tenantD1.automaticProvisioning !== true) {
+  if (config.controlPlane.automaticProvisioning !== true) {
     throw new Error('phase2_plugin_cleanup_automatic_provisioning_required');
   }
   const lock = JSON.parse(

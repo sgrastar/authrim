@@ -657,7 +657,8 @@ export async function handleIdPAttributeReleaseConsent(
     if (!oneTimeApproval) {
       const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'saml-attribute-release-consent-post'
+        'saml-attribute-release-consent-post',
+        { tenantId }
       );
       const repository = new AttributeReleaseConsentRepository(adapter);
       await repository.grant({
@@ -844,7 +845,8 @@ async function loadSAMLAttributeReleaseConsentPresentation(
   try {
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       c.env,
-      'saml-attribute-release-consent-template'
+      'saml-attribute-release-consent-template',
+      { tenantId: input.tenantId }
     );
     const version = await adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -1339,7 +1341,8 @@ async function generateSAMLResponse(
     const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
       coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'saml-destination-profile-consent'
+        'saml-destination-profile-consent',
+        { tenantId }
       ),
       adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
       tenantId,

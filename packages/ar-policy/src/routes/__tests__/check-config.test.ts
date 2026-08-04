@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Hono } from 'hono';
 import { checkRoutes, clearBatchSizeLimitCache } from '../check';
 
 function createDb() {
@@ -30,17 +31,34 @@ function env(overrides: Record<string, unknown> = {}) {
   return {
     POLICY_API_SECRET: 'policy-secret',
     ENABLE_CHECK_API: 'true',
-    DB: createDb(),
+    TDB_POLICY_TEST_CORE: createDb(),
     ...overrides,
   };
 }
 
+const app = new Hono();
+app.use('*', async (c, next) => {
+  const coreDb = c.env.TDB_POLICY_TEST_CORE;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const context = c as any;
+  context.set('tenantId', 'default');
+  if (coreDb) {
+    context.set('tenantMetadataContext', {
+      tenantId: 'default',
+      coreDb,
+      route: {},
+    });
+  }
+  await next();
+});
+app.route('/', checkRoutes);
+
 async function health(overrides: Record<string, unknown> = {}) {
-  return checkRoutes.request('/health', {}, env(overrides));
+  return app.request('/health', {}, env(overrides));
 }
 
 async function reachAuditConfiguration(overrides: Record<string, unknown> = {}) {
-  return checkRoutes.request(
+  return app.request(
     '/',
     {
       method: 'POST',
@@ -115,7 +133,7 @@ describe('Check API runtime configuration branches', () => {
     const response = await health({
       ENABLE_CHECK_API: undefined,
       ENABLE_CHECK_API_DEBUG: 'true',
-      DB: undefined,
+      TDB_POLICY_TEST_CORE: undefined,
       CHECK_CACHE_KV: createKv(),
     });
     expect(await response.json()).toMatchObject({

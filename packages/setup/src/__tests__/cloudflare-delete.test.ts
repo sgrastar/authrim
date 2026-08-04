@@ -3,7 +3,6 @@ import {
   filterControlManagedD1ForEnvironment,
   filterControlManagedKVForEnvironment,
   filterControlManagedR2ForEnvironment,
-  filterKnownD1NamesForEnvironment,
   getObjectCatalogR2BucketName,
   parseR2BucketRows,
   parseD1RowsFromWranglerJson,
@@ -62,27 +61,6 @@ describe('Cloudflare environment deletion helpers', () => {
     expect(rows).toEqual([
       { state: 'available', count: 2 },
       { state: 'assigned', count: 1 },
-    ]);
-  });
-
-  it('keeps preallocated and legacy tenant D1 names for environment deletion', () => {
-    expect(
-      filterKnownD1NamesForEnvironment('phase9-tenant-d1', [
-        'phase9-tenant-d1-authrim-core-db',
-        'phase9-tenant-d1-authrim-admin-db',
-        'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-        'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-        'authrim-phase9-tenant-d1-first-core',
-        'authrim-phase9-tenant-d1-first-pii',
-        'authrim-other-tdb-slot-0001-core',
-      ])
-    ).toEqual([
-      'phase9-tenant-d1-authrim-core-db',
-      'phase9-tenant-d1-authrim-admin-db',
-      'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-      'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-      'authrim-phase9-tenant-d1-first-core',
-      'authrim-phase9-tenant-d1-first-pii',
     ]);
   });
 

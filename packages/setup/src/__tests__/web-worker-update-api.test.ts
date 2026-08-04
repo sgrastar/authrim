@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
+import { calculateReleaseManifestChecksum } from '../core/release-migrations.js';
 
 const buildApiPackagesMock = vi.hoisted(() => vi.fn());
 const deployAllMock = vi.hoisted(() => vi.fn());
@@ -21,9 +22,9 @@ const waitForRouterWorkerReadyMock = vi.hoisted(() => vi.fn());
 const waitForWorkerDeploymentsReadyMock = vi.hoisted(() => vi.fn());
 const waitForWorkerHttpReadyMock = vi.hoisted(() => vi.fn());
 const configureDownstreamIntrospectionDeploymentMock = vi.hoisted(() => vi.fn());
-const ensureInitialTenantD1ResourcesMock = vi.hoisted(() => vi.fn());
+const ensureInitialControlPlaneResourcesMock = vi.hoisted(() => vi.fn());
 const ensureInitialTenantRegionShardConfigMock = vi.hoisted(() => vi.fn());
-const publishInitialTenantD1RuntimeSnapshotMock = vi.hoisted(() => vi.fn());
+const publishInitialControlPlaneRuntimeSnapshotMock = vi.hoisted(() => vi.fn());
 const ensureInitialNotificationProviderConfigurationMock = vi.hoisted(() => vi.fn());
 const runMigrationsForEnvironmentMock = vi.hoisted(() => vi.fn());
 const applyReleaseSchemaUpdatePlanMock = vi.hoisted(() => vi.fn());
@@ -117,13 +118,13 @@ vi.mock('../core/downstream-introspection-deploy.js', async (importOriginal) => 
   };
 });
 
-vi.mock('../core/tenant-d1-bootstrap.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../core/tenant-d1-bootstrap.js')>();
+vi.mock('../core/control-plane-bootstrap.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/control-plane-bootstrap.js')>();
   return {
     ...actual,
-    ensureInitialTenantD1Resources: ensureInitialTenantD1ResourcesMock,
+    ensureInitialControlPlaneResources: ensureInitialControlPlaneResourcesMock,
     ensureInitialTenantRegionShardConfig: ensureInitialTenantRegionShardConfigMock,
-    publishInitialTenantD1RuntimeSnapshot: publishInitialTenantD1RuntimeSnapshotMock,
+    publishInitialControlPlaneRuntimeSnapshot: publishInitialControlPlaneRuntimeSnapshotMock,
   };
 });
 
@@ -179,7 +180,19 @@ async function writeEnvironment(env: string) {
   const envDir = join(tempDir!, '.authrim', env);
   await mkdir(envDir, { recursive: true });
   const config = createDefaultConfig(env);
-  config.profiles.defaults.storage = 'builtin:storage:shared-d1';
+  config.controlPlane.automaticProvisioning = false;
+  const releaseManifest = {
+    formatVersion: 1 as const,
+    productVersion: '0.2.0',
+    streams: [
+      { id: 'd1-core', dialect: 'sqlite' as const, logicalRoles: ['core'], files: [] },
+      { id: 'd1-pii', dialect: 'sqlite' as const, logicalRoles: ['pii'], files: [] },
+      { id: 'd1-admin', dialect: 'sqlite' as const, logicalRoles: ['admin'], files: [] },
+      { id: 'd1-control', dialect: 'sqlite' as const, logicalRoles: ['control'], files: [] },
+      { id: 'd1-lookup', dialect: 'sqlite' as const, logicalRoles: ['lookup'], files: [] },
+    ],
+  };
+  const manifestChecksum = calculateReleaseManifestChecksum(releaseManifest);
   await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
   await writeFile(
     join(envDir, 'lock.json'),
@@ -190,8 +203,41 @@ async function writeEnvironment(env: string) {
         env,
         createdAt: '2026-05-18T00:00:00.000Z',
         updatedAt: '2026-05-18T00:00:00.000Z',
-        d1: {},
-        kv: {},
+        d1: {
+          CONTROL_DB: { id: 'control-id', name: `authrim-${env}-control` },
+          LOOKUP_DB: { id: 'lookup-id', name: `authrim-${env}-lookup` },
+          TDB_DEFAULT_BOOTSTRAP_CORE: {
+            id: 'bootstrap-default-id',
+            name: `authrim-${env}-default-bootstrap`,
+          },
+          TDB_USERS_BOOTSTRAP_CORE: {
+            id: 'bootstrap-users-id',
+            name: `authrim-${env}-users-bootstrap`,
+          },
+          TDB_PII_BOOTSTRAP_PII: {
+            id: 'bootstrap-pii-id',
+            name: `authrim-${env}-pii-bootstrap`,
+          },
+        },
+        kv: {
+          TENANT_RUNTIME_REGISTRY: { id: 'runtime-registry-id', name: 'runtime-registry' },
+        },
+        schemaTargets: Object.fromEntries(
+          [
+            ['bootstrap-default-id', 'd1-core'],
+            ['bootstrap-users-id', 'd1-core'],
+            ['bootstrap-pii-id', 'd1-pii'],
+          ].map(([databaseId, streamId]) => [
+            `d1:${databaseId}:${streamId}`,
+            {
+              productVersion: '0.2.0',
+              manifestChecksum,
+              streamId,
+              appliedBy: 'automatic',
+              updatedAt: '2026-05-18T00:00:00.000Z',
+            },
+          ])
+        ),
         workers: {
           'ar-auth': {
             name: `${env}-ar-auth`,
@@ -232,13 +278,7 @@ async function writeEnvironment(env: string) {
       {
         formatVersion: 1,
         productVersion: '0.2.0',
-        streams: [
-          { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
-          { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
-          { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
-          { id: 'd1-control', dialect: 'sqlite', logicalRoles: ['control'], files: [] },
-          { id: 'd1-lookup', dialect: 'sqlite', logicalRoles: ['lookup'], files: [] },
-        ],
+        streams: releaseManifest.streams,
       },
       null,
       2
@@ -309,11 +349,14 @@ async function writeDraftManifest(version: string): Promise<void> {
   );
 }
 
-async function enableTenantD1WithoutBootstrapResources(env: string): Promise<void> {
-  const configPath = join(tempDir!, '.authrim', env, 'config.json');
-  const config = JSON.parse(await readFile(configPath, 'utf-8'));
-  config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+async function configureControlPlaneWithoutBootstrapResources(env: string): Promise<void> {
+  const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+  const currentLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+  delete currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE;
+  delete currentLock.d1.TDB_USERS_BOOTSTRAP_CORE;
+  delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+  currentLock.schemaTargets = {};
+  await writeFile(lockPath, `${JSON.stringify(currentLock, null, 2)}\n`);
 
   const releasesDir = join(tempDir!, 'migrations', 'releases');
   await mkdir(releasesDir, { recursive: true });
@@ -355,9 +398,9 @@ describe('setup web worker update API', () => {
     waitForWorkerDeploymentsReadyMock.mockReset();
     waitForWorkerHttpReadyMock.mockReset();
     configureDownstreamIntrospectionDeploymentMock.mockReset();
-    ensureInitialTenantD1ResourcesMock.mockReset();
+    ensureInitialControlPlaneResourcesMock.mockReset();
     ensureInitialTenantRegionShardConfigMock.mockReset();
-    publishInitialTenantD1RuntimeSnapshotMock.mockReset();
+    publishInitialControlPlaneRuntimeSnapshotMock.mockReset();
     ensureInitialNotificationProviderConfigurationMock.mockReset();
     runMigrationsForEnvironmentMock.mockReset();
     applyReleaseSchemaUpdatePlanMock.mockReset();
@@ -423,9 +466,12 @@ describe('setup web worker update API', () => {
     waitForWorkerDeploymentsReadyMock.mockResolvedValue({ ready: true });
     waitForWorkerHttpReadyMock.mockResolvedValue({ ready: true });
     configureDownstreamIntrospectionDeploymentMock.mockResolvedValue({ success: true });
-    ensureInitialTenantD1ResourcesMock.mockResolvedValue({ success: true, skipped: true });
+    ensureInitialControlPlaneResourcesMock.mockResolvedValue({ success: true, skipped: true });
     ensureInitialTenantRegionShardConfigMock.mockResolvedValue({ created: true, config: {} });
-    publishInitialTenantD1RuntimeSnapshotMock.mockResolvedValue({ success: true, skipped: true });
+    publishInitialControlPlaneRuntimeSnapshotMock.mockResolvedValue({
+      success: true,
+      skipped: true,
+    });
     ensureInitialNotificationProviderConfigurationMock.mockResolvedValue({
       providerId: null,
       namespaces: ['authrim-platform', 'test'],
@@ -594,7 +640,7 @@ describe('setup web worker update API', () => {
   it('does not create missing tenant databases during a Worker-only redeploy', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    await enableTenantD1WithoutBootstrapResources(env);
+    await configureControlPlaneWithoutBootstrapResources(env);
 
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -616,14 +662,14 @@ describe('setup web worker update API', () => {
         { binding: 'TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
       ],
     });
-    expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
+    expect(ensureInitialControlPlaneResourcesMock).not.toHaveBeenCalled();
     expect(deployAllMock).not.toHaveBeenCalled();
   });
 
-  it('does not let a request body spoof a Tenant D1 topology operation', async () => {
+  it('does not let a request body spoof a Control Plane topology operation', async () => {
     const env = 'test';
     await writeEnvironment(env);
-    await enableTenantD1WithoutBootstrapResources(env);
+    await configureControlPlaneWithoutBootstrapResources(env);
 
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -636,7 +682,7 @@ describe('setup web worker update API', () => {
       body: JSON.stringify({ env, onlyChanged: false, operationKind: 'topology_change' }),
     });
     expect(response.status).toBe(409);
-    expect(ensureInitialTenantD1ResourcesMock).not.toHaveBeenCalled();
+    expect(ensureInitialControlPlaneResourcesMock).not.toHaveBeenCalled();
     expect(deployAllMock).not.toHaveBeenCalled();
   });
 
@@ -702,6 +748,7 @@ describe('setup web worker update API', () => {
     await rm(join(tempDir!, 'packages'), { recursive: true, force: true });
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
+    config.controlPlane.automaticProvisioning = false;
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -837,6 +884,7 @@ describe('setup web worker update API', () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const cachedConfig = createDefaultConfig(env);
+    cachedConfig.controlPlane.automaticProvisioning = false;
     cachedConfig.components.saml = false;
     const cached = await app.request('/config', {
       method: 'POST',

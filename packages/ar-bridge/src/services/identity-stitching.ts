@@ -29,9 +29,8 @@ import {
   syncUserLifecycleState,
   type ValidatedCustomClaimWriteResult,
   resolveCustomClaimRuntimeSourcesFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveTenantUserStoreSourcesFromEnv,
   CanonicalRuntimeUserStore,
-  getCachedAuthCorePersistenceContextFromEnv,
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifier,
   resolveTenantMetadataContext,
@@ -114,8 +113,8 @@ export async function handleIdentity(
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
   const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
-  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
-  const tenantD1 = persistence.storageProfileId === 'builtin:storage:tenant-d1';
+  const tenantD1 = true;
+  const defaultUserStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
 
   // 1. Explicit linking to existing account
   if (linkingUserId) {
@@ -157,7 +156,7 @@ export async function handleIdentity(
       existingIdentity?.id ??
       (accountContext
         ? await createLinkedIdentity(env, identityInput, accountContext.piiDb)
-        : await createLinkedIdentity(env, identityInput));
+        : await createLinkedIdentity(env, identityInput, defaultUserStoreSources.piiDb));
     if (accountContext) {
       await publishTenantD1ExternalIdpRoute(env, {
         accountContext,
@@ -203,7 +202,13 @@ export async function handleIdentity(
   }
   const existingLink = externalRoute
     ? await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub, externalRoute.piiDb)
-    : await findLinkedIdentity(env, tenantId, provider.id, userInfo.sub);
+    : await findLinkedIdentity(
+        env,
+        tenantId,
+        provider.id,
+        userInfo.sub,
+        defaultUserStoreSources.piiDb
+      );
   if (existingLink) {
     // Update tokens and last login
     const updates = { tokens, lastLoginAt: Date.now(), rawClaims: userInfo };
@@ -216,7 +221,13 @@ export async function handleIdentity(
         externalRoute.piiDb
       );
     } else {
-      await updateLinkedIdentity(env, existingLink.tenantId, existingLink.id, updates);
+      await updateLinkedIdentity(
+        env,
+        existingLink.tenantId,
+        existingLink.id,
+        updates,
+        defaultUserStoreSources.piiDb
+      );
     }
 
     return {
@@ -319,7 +330,7 @@ export async function handleIdentity(
         existingIdentity?.id ??
         (emailRoute
           ? await createLinkedIdentity(env, identityInput, emailRoute.piiDb)
-          : await createLinkedIdentity(env, identityInput));
+          : await createLinkedIdentity(env, identityInput, defaultUserStoreSources.piiDb));
       if (emailRoute) {
         await publishTenantD1ExternalIdpRoute(env, {
           accountContext: emailRoute,
@@ -457,16 +468,20 @@ export async function handleIdentity(
 
     const linkedIdentityId =
       jitResult.linkedIdentityId ??
-      (await createLinkedIdentity(env, {
-        userId: jitResult.userId,
-        providerId: provider.id,
-        providerUserId: userInfo.sub,
-        providerEmail: userInfo.email,
-        emailVerified: userInfo.email_verified,
-        tokens,
-        rawClaims: userInfo,
-        tenantId,
-      }));
+      (await createLinkedIdentity(
+        env,
+        {
+          userId: jitResult.userId,
+          providerId: provider.id,
+          providerUserId: userInfo.sub,
+          providerEmail: userInfo.email,
+          emailVerified: userInfo.email_verified,
+          tokens,
+          rawClaims: userInfo,
+          tenantId,
+        },
+        defaultUserStoreSources.piiDb
+      ));
 
     // Log audit event for JIT provisioning
     await logAuditEvent(env, {
@@ -529,7 +544,7 @@ async function resolveUserStoreAdapters(
       piiAdapter: ensureDatabaseAdapter(accountContext.piiDb, 'identity-stitching-pii'),
     };
   }
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  const sources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
   return {
     coreSource: sources.coreDb,
     coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'identity-stitching-core'),
@@ -658,6 +673,9 @@ async function validateProvisionedCustomClaims(
 ): Promise<ValidatedCustomClaimWriteResult> {
   const resolvedCustomClaimSources =
     customClaimSources ?? (await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId));
+  if (!resolvedCustomClaimSources.nonPiiDb || !resolvedCustomClaimSources.piiDb) {
+    throw new Error('identity_stitching_account_runtime_sources_required');
+  }
   const validation = await validateCustomClaimWrite({
     db: resolvedCustomClaimSources.nonPiiDb,
     dbPii: resolvedCustomClaimSources.piiDb,
@@ -1142,6 +1160,8 @@ export async function completeTenantD1ExternalIdpJIT(
   return applyTenantD1JITPlan(env, { ...input, plan });
 }
 
+export const completeExternalIdpJIT = completeTenantD1ExternalIdpJIT;
+
 async function createTenantD1UserWithJITProvisioning(
   env: Env,
   params: TenantD1JITProvisioningParams
@@ -1149,7 +1169,12 @@ async function createTenantD1UserWithJITProvisioning(
   if (!env.EXTERNAL_IDP_ACCOUNT_PROVISIONER) {
     throw new Error('external_idp_account_provisioner_unavailable');
   }
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, params.tenantId);
+  const userStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, params.tenantId);
+  const customClaimSources = {
+    schemaDb: (await resolveTenantMetadataContext(env, params.tenantId)).coreDb,
+    nonPiiDb: userStoreSources.coreDb,
+    piiDb: userStoreSources.piiDb,
+  };
   const tenantMetadata = await resolveTenantMetadataContext(env, params.tenantId);
   const customClaimValidation = await validateProvisionedCustomClaims(
     env,
@@ -1243,7 +1268,7 @@ async function createTenantD1UserWithJITProvisioning(
     roleAssignments,
     defaultRoleId: params.jitConfig.default_role_id ?? null,
     matchedRules: ruleResult.matched_rules,
-    attributesSet: ruleResult.attributes_to_set,
+    attributesSet: ruleResult.attributes_to_set ?? [],
   };
   const planJson = canonicalJson(plan);
   if (new TextEncoder().encode(planJson).byteLength > 20 * 1024) {
@@ -1357,7 +1382,12 @@ async function createUserWithJITProvisioning(
   env: Env,
   params: JITProvisioningParams
 ): Promise<JITProvisioningResult> {
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, params.tenantId);
+  const userStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, params.tenantId);
+  const customClaimSources = {
+    schemaDb: (await resolveTenantMetadataContext(env, params.tenantId)).coreDb,
+    nonPiiDb: userStoreSources.coreDb,
+    piiDb: userStoreSources.piiDb,
+  };
   const { coreSource, coreAdapter, piiAdapter } = await resolveUserStoreAdapters(
     env,
     params.tenantId

@@ -1,8 +1,5 @@
 import type { ControlTenantDeletionInventory, DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import {
-  ensureDatabaseAdapter,
-  resolveAuthCorePersistenceAdapterFromEnv,
-} from '@authrim/ar-lib-core';
+import { ensureDatabaseAdapter, listEnvironmentTenantDefaultStores } from '@authrim/ar-lib-core';
 import { purgeTenantAuthoritativeShards } from './tenant-deletion-authoritative-purge';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
@@ -62,8 +59,6 @@ const NON_RETRYABLE_DELETION_ERRORS = new Set([
 const TENANT_ADMIN_TABLES_TO_DELETE = [
   'internal_notification_events',
   'tenant_database_migration_state',
-  'tenant_database_migration_job_targets',
-  'tenant_database_migration_jobs',
   'tenant_database_stats',
   'tenant_discovery_indexes',
 ] as const;
@@ -407,14 +402,11 @@ async function suspendTenantAfterDeletionFailure(
   );
 }
 
-export async function processPendingTenantDeletionJobs(
+async function processPendingTenantDeletionJobsInStore(
   env: Env,
-  log: TenantDeletionJobLogger
-): Promise<void> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-scheduled-jobs'
-  );
+  log: TenantDeletionJobLogger,
+  coreAdapter: DatabaseAdapter
+): Promise<number> {
   const adminAdapter = env.DB_ADMIN
     ? ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-deletion-admin')
     : null;
@@ -632,4 +624,39 @@ export async function processPendingTenantDeletionJobs(
       claimed_count: claimedCount,
     });
   }
+  return pendingJobs.length;
+}
+
+export async function processPendingTenantDeletionJobs(
+  env: Env,
+  log: TenantDeletionJobLogger
+): Promise<void> {
+  if (!env.AUTHRIM_CONFIG) throw new Error('tenant_deletion_tenant_directory_unavailable');
+
+  const cursorKey = 'jobs:tenant-deletion:tenant-cursor';
+  const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
+  const tenants = await listEnvironmentTenantDefaultStores(env, {
+    limit: 8,
+    afterTenantId,
+    concurrency: 4,
+  });
+
+  let selectedCount = 0;
+  let lastScannedTenantId = '';
+  let stoppedEarly = false;
+  for (const tenant of tenants) {
+    lastScannedTenantId = tenant.tenantId;
+    const adapter = ensureDatabaseAdapter(
+      tenant.store.source,
+      `tenant-deletion-jobs:${tenant.store.bindingRef}`
+    );
+    selectedCount += await processPendingTenantDeletionJobsInStore(env, log, adapter);
+    if (selectedCount >= 5) {
+      stoppedEarly = true;
+      break;
+    }
+  }
+
+  const nextCursor = stoppedEarly || tenants.length === 8 ? lastScannedTenantId : '';
+  await env.AUTHRIM_CONFIG.put(cursorKey, nextCursor);
 }

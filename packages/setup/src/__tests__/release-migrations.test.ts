@@ -500,93 +500,75 @@ describe('release migration topology', () => {
     );
   });
 
-  it('plans both core and PII streams against the same physical DB for single-db profiles', () => {
+  it('keeps Core and PII as separate streams even if lock data points at one physical DB', () => {
     const config = createDefaultConfig('test');
-    config.profiles.defaults.storage = 'builtin:storage:single-db';
     const targets = resolveReleaseMigrationTargets({
       config,
-      lock: lock({ DB: { id: 'single', name: 'single' } }),
+      lock: lock({
+        DB: { id: 'single', name: 'single' },
+        DB_PII: { id: 'single', name: 'single' },
+      }),
     });
     expect(
-      targets.filter((target) => target.databaseId === 'single').map((target) => target.streamId)
-    ).toEqual(['d1-core', 'd1-pii']);
+      targets
+        .filter((target) => ['DB', 'DB_PII'].includes(target.binding ?? ''))
+        .map((target) => target.streamId)
+    ).toEqual(expect.arrayContaining(['d1-core', 'd1-pii']));
   });
 
-  it('discovers external PostgreSQL targets and keeps execution fail-closed', () => {
+  it('does not activate user-store migration targets from Hyperdrive references alone', () => {
     const config = createDefaultConfig('test');
-    config.profiles.defaults.storage = 'builtin:storage:external-postgres';
     config.profiles.references.hyperdrive = {
       'core-primary': { binding: 'HD_CORE', id: 'hd-core', driver: 'postgres' },
       'pii-primary': { binding: 'HD_PII', id: 'hd-pii', driver: 'postgres' },
     };
     const targets = resolveReleaseMigrationTargets({ config, lock: lock({}) });
-    expect(targets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'external:postgres:core-primary:external-postgres-core',
-          streamId: 'external-postgres-core',
-          automatic: false,
-        }),
-        expect.objectContaining({
-          id: 'external:postgres:pii-primary:external-postgres-pii',
-          streamId: 'external-postgres-pii',
-          logicalRoles: ['pii'],
-        }),
-      ])
-    );
+    expect(targets.filter((target) => target.scope === 'external')).toEqual([]);
   });
 
-  it('keeps core and PII streams separate when they share one external connection', () => {
+  it('retains external database references only as fail-closed audit extension points', () => {
     const config = createDefaultConfig('test');
-    config.profiles.defaults.storage = 'custom:storage:shared-postgres';
     config.profiles.references.hyperdrive = {
       shared: { binding: 'HD_SHARED', id: 'hd-shared', driver: 'postgres' },
     };
-    config.profiles.seed.storage = [
+    config.profiles.seed.audit = [
       {
-        id: 'custom:storage:shared-postgres',
-        label: 'Shared PostgreSQL',
-        slices: {
-          identity_core: { driver: 'postgres', connectionRef: 'shared', role: 'core' },
-          identity_pii: { driver: 'postgres', connectionRef: 'shared', role: 'pii' },
-        },
+        id: 'custom:audit:shared-postgres',
+        label: 'Shared PostgreSQL audit',
+        primary: { type: 'postgres', connectionRef: 'shared' },
+        archive: null,
       },
     ];
     const targets = resolveReleaseMigrationTargets({ config, lock: lock({}) });
-    expect(targets.map((target) => target.id)).toEqual([
-      'external:postgres:shared:external-postgres-core',
-      'external:postgres:shared:external-postgres-pii',
+    expect(targets.filter((target) => target.scope === 'external')).toEqual([
+      expect.objectContaining({
+        id: 'external:postgres:shared:audit',
+        streamId: null,
+        logicalRoles: ['audit'],
+        automatic: false,
+        blockedReason: 'release_migration_stream_not_available:postgres',
+      }),
     ]);
   });
 
-  it('includes tenant-selectable seeded external profiles even when they are not the default', () => {
+  it('does not treat audit extension points as tenant user-store placement choices', () => {
     const config = createDefaultConfig('test');
     config.profiles.references.hyperdrive = {
-      'tenant-a-core': { binding: 'HD_TENANT_A', id: 'hd-tenant-a', driver: 'postgres' },
+      'audit-a': { binding: 'HD_AUDIT_A', id: 'hd-audit-a', driver: 'postgres' },
     };
-    config.profiles.seed.storage = [
+    config.profiles.seed.audit = [
       {
-        id: 'tenant:storage:a',
-        label: 'Tenant A PostgreSQL',
-        slices: {
-          identity_core: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-core',
-            role: 'core',
-          },
-        },
+        id: 'tenant:audit:a',
+        label: 'Tenant A audit export',
+        primary: { type: 'postgres', connectionRef: 'audit-a' },
+        archive: null,
       },
     ];
 
-    expect(resolveReleaseMigrationTargets({ config, lock: lock({}) })).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'external:postgres:tenant-a-core:external-postgres-core',
-          streamId: 'external-postgres-core',
-          automatic: false,
-        }),
-      ])
-    );
+    const targets = resolveReleaseMigrationTargets({ config, lock: lock({}) });
+    expect(targets.some((target) => target.logicalRoles.includes('core'))).toBe(false);
+    expect(targets.some((target) => target.logicalRoles.includes('pii'))).toBe(false);
+    expect(targets.some((target) => target.logicalRoles.includes('audit'))).toBe(true);
   });
 });
 
@@ -795,7 +777,7 @@ describe('release update lock state', () => {
     expect(resolveRegisteredSchemaReferences({ lock: installed, config })).toEqual([]);
   });
 
-  it('does not serialize tenant D1 slots into the Worker schema-reference variable', () => {
+  it('does not serialize assignment slots into the Worker schema-reference variable', () => {
     const config = createDefaultConfig('prod');
     const installed = lock({
       DB: { id: 'core-id', name: 'prod-core' },

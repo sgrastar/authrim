@@ -107,7 +107,7 @@ import {
   environmentOperationBlockMessage,
   evaluateEnvironmentOperation,
 } from '../../core/environment-operation-policy.js';
-import { publishInitialTenantD1RuntimeSnapshot } from '../../core/tenant-d1-bootstrap.js';
+import { publishInitialControlPlaneRuntimeSnapshot } from '../../core/control-plane-bootstrap.js';
 
 export { withReleaseUpdateState, withSchemaTargetStates } from '../../core/release-state.js';
 
@@ -240,7 +240,7 @@ function displaySchemaUpdatePlan(plan: ReleaseSchemaUpdatePlan): void {
   if (tenantTargets.length > 0) {
     const shardTargets = tenantTargets.filter((item) => item.target.shard !== undefined);
     console.log(
-      `  Tenant D1 targets: ${chalk.cyan(String(tenantTargets.length))}` +
+      `  Control-managed D1 targets: ${chalk.cyan(String(tenantTargets.length))}` +
         (shardTargets.length > 0 ? ` (${shardTargets.length} shard target(s))` : '')
     );
   }
@@ -407,7 +407,7 @@ async function deployReleaseUiWorkers(input: {
       `Initial tenant prerequisite failed: ${initialTenant.error ?? 'unknown error'}`
     );
   }
-  const snapshot = await publishInitialTenantD1RuntimeSnapshot({
+  const snapshot = await publishInitialControlPlaneRuntimeSnapshot({
     env: input.env,
     config: input.config,
     lock: input.lock,
@@ -546,7 +546,7 @@ async function deployReleaseUiWorkers(input: {
     components: input.components,
     environmentBootstrap: {
       defaultResidencyPolicyId: input.config.profiles.defaults.residency,
-      automaticProvisioning: input.config.tenantD1?.automaticProvisioning === true,
+      automaticProvisioning: input.config.controlPlane?.automaticProvisioning === true,
     },
     registeredBy: 'setup:update-ui',
     disableMissing: false,
@@ -1130,7 +1130,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         records: inventory,
         environmentBootstrap: {
           defaultResidencyPolicyId: config.profiles.defaults.residency,
-          automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+          automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
         },
         registeredBy: 'setup:update',
         onProgress: (message) => {

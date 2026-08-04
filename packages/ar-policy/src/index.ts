@@ -48,6 +48,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getDefaultTenantId,
+  resolveOptionalCoreAdapterFromHono,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   type DatabaseAdapter,
@@ -587,7 +588,12 @@ function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionC
 rebacRoutes.get('/health', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  const hasDatabase = !!c.env.DB;
+  const hasDatabase = Boolean(
+    resolveOptionalCoreAdapterFromHono(
+      c as unknown as Context<{ Bindings: SharedEnv }>,
+      'policy-health'
+    )
+  );
   const hasCache = !!c.env.REBAC_CACHE_KV;
 
   return c.json({

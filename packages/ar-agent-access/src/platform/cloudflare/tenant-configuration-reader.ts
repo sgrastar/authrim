@@ -6,7 +6,7 @@ import {
 import type { JsonObject } from '../../core';
 import type { AgentConfigurationStateReaderPort } from '../ports';
 
-/** Cloudflare tenant-D1 adapter for trusted, read-only Baseline evaluation. */
+/** Cloudflare routed adapter for trusted, read-only Baseline evaluation. */
 export class CloudflareTenantConfigurationReader implements AgentConfigurationStateReaderPort {
   constructor(private readonly env: Env) {}
 

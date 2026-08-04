@@ -351,6 +351,8 @@ describe('ensureLoginUiClient', () => {
       string,
       unknown
     >;
+    const createHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(createHeaders['Idempotency-Key']).toMatch(/^setup-login-ui-[a-f0-9]{32}$/u);
     expect(createBody).toMatchObject({
       description: 'System-managed public OAuth client used by the built-in Authrim Login UI.',
       token_endpoint_auth_method: 'none',
@@ -369,6 +371,36 @@ describe('ensureLoginUiClient', () => {
       },
     });
     expect(createBody).not.toHaveProperty('dpop_bound_access_tokens');
+  });
+
+  it('reuses the create idempotency key across transient retries', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(textResponse('Service unavailable', 503))
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-after-retry',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://single-ar-router.example.workers.dev',
+      loginUiUrl: 'https://login.example.test',
+      keysDir: tempDir,
+      adminBearerToken,
+      tenantId: 'default',
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result.success).toBe(true);
+    const firstHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    const secondHeaders = fetchMock.mock.calls[3]?.[1]?.headers as Record<string, string>;
+    expect(firstHeaders['Idempotency-Key']).toBe(secondHeaders['Idempotency-Key']);
   });
 
   it('updates Login UI callbacks and origins when the canonical issuer changes', async () => {

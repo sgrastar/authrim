@@ -13,6 +13,7 @@ import { consentGetHandler, consentPostHandler } from '../consent';
 
 const mockRedirectWithError = vi.hoisted(() => vi.fn());
 const mockResolveClientTrustPolicy = vi.hoisted(() => vi.fn());
+const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
 
 vi.mock('../authorize', () => ({
   redirectWithError: mockRedirectWithError,
@@ -34,6 +35,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getConsentItemsForScreen: vi.fn(async () => []),
     processConsentItemDecisions: vi.fn(async () => undefined),
     resolveClientTrustPolicy: mockResolveClientTrustPolicy,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
   };
 });
 
@@ -142,7 +144,40 @@ function createMockContext(options: {
   const challengeStore = options.challengeStore ?? createMockChallengeStore();
 
   // Store context values (simulating Hono's context store)
-  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+  const contextStore = new Map<string, unknown>([
+    ['tenantId', 'default'],
+    [
+      'tenantMetadataContext',
+      {
+        tenantId: 'default',
+        coreDb: mockDB,
+        route: {
+          tenantId: 'default',
+          dataRole: 'core',
+          bindingRef: 'DB',
+          residencyPartition: 'default',
+          generation: 1,
+        },
+      },
+    ],
+    [
+      'accountDataContext',
+      {
+        tenantId: 'default',
+        accountId: 'user-123',
+        legacyUserId: 'user-123',
+        coreDb: mockDB,
+        piiDb: mockDB,
+        coreBindingRef: 'DB',
+        piiBindingRef: 'DB',
+        coreResidencyPartition: 'default',
+        piiResidencyPartition: 'default',
+        accountRouteGeneration: 1,
+        userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+        piiCacheMode: 'disabled',
+      },
+    ],
+  ]);
 
   const c = {
     req: {
@@ -199,6 +234,10 @@ describe('Consent Handlers', () => {
     vi.mocked(getConsentItemsForScreen).mockResolvedValue([]);
     vi.mocked(processConsentItemDecisions).mockResolvedValue(undefined);
     mockResolveClientTrustPolicy.mockResolvedValue(null);
+    mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId: string) => {
+      const context = c.get('accountDataContext');
+      return { ...context, accountId: userId, legacyUserId: userId };
+    });
     mockRedirectWithError.mockResolvedValue(
       new Response(null, {
         status: 302,

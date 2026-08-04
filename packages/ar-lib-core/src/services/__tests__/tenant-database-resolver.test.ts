@@ -6,8 +6,7 @@ import type {
 } from '../../repositories/admin/tenant-database-registry';
 import {
   clearTenantDatabaseResolverMemoryCache,
-  mapStorageTargetToTenantDatabaseRole,
-  resolveTenantDatabaseSourceForTarget,
+  resolveTenantDatabaseSourceFromControlRegistry,
   resolveTenantDatabaseSourceFromRegistry,
   TenantDatabaseResolverError,
 } from '../tenant-database-resolver';
@@ -89,6 +88,20 @@ function createPointer(
   };
 }
 
+function createRouteMetadata(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    control_data_role: 'tenant_core/default',
+    control_residency_policy_id: 'builtin:residency:default',
+    control_residency_partition: 'default',
+    control_shard_id: 'shard-core-default',
+    control_assignment_generation: 1,
+    control_allocation_scope: 'tenant_exclusive',
+    control_owner_tenant_id: 'tenant-a',
+    control_placement_policy_generation: 1,
+    ...overrides,
+  });
+}
+
 function createRow(overrides: Partial<TenantDatabaseRegistryRow> = {}): TenantDatabaseRegistryRow {
   return {
     tenant_id: 'tenant-a',
@@ -111,7 +124,7 @@ function createRow(overrides: Partial<TenantDatabaseRegistryRow> = {}): TenantDa
     jurisdiction: null,
     signature: null,
     signature_key_id: null,
-    metadata_json: null,
+    metadata_json: createRouteMetadata(),
     created_at: '2026-05-16T00:00:00.000Z',
     updated_at: '2026-05-16T00:00:00.000Z',
     created_by: null,
@@ -154,20 +167,30 @@ function createRuntimeRegistrySnapshot(
   overrides: Partial<TenantRuntimeRegistrySnapshot> = {}
 ): TenantRuntimeRegistrySnapshot {
   return {
-    version: 2,
+    version: 4,
     tenantId: 'tenant-a',
     snapshotScope: 'tenant',
     deploymentTarget: 'edge-a',
     runtimeGeneration: 8,
     routeStatus: 'active',
     quarantineDenyGeneration: 0,
-    storageProfileId: 'builtin:storage:tenant-d1',
+    backend: { provider: 'd1', resolver: 'control-plane' },
+    placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
     publishedAt: '2026-05-16T00:00:00.000Z',
     expiresAt: '2099-05-16T00:30:00.000Z',
     stores: [
       {
         tenantId: 'tenant-a',
         role: 'tenant_core',
+        dataRole: 'tenant_core/default',
+        residencyPolicyId: 'builtin:residency:default',
+        residencyPartition: 'default',
+        shardId: 'shard-core-default',
+        assignmentGeneration: 1,
+        bindingRouteGeneration: 3,
+        placementPolicyGeneration: 1,
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-a',
         generation: 3,
         runtimeGeneration: 8,
         schemaVersion: 2,
@@ -200,24 +223,31 @@ function createRuntimeRegistrySnapshot(
   };
 }
 
+function createRuntimeGenerationDocument(
+  runtimeGeneration = 8,
+  overrides: Record<string, unknown> = {}
+): string {
+  return JSON.stringify({
+    runtimeGeneration,
+    routeStatus: 'active',
+    quarantineDenyGeneration: 0,
+    publishedAt: '2026-05-16T00:00:00.000Z',
+    expiresAt: '2099-05-23T00:00:00.000Z',
+    ...overrides,
+  });
+}
+
 describe('tenant-database-resolver', () => {
   beforeEach(() => {
     clearTenantDatabaseResolverMemoryCache();
   });
 
-  it('maps storage target tenant roles', () => {
-    expect(mapStorageTargetToTenantDatabaseRole({ driver: 'd1', role: 'tenant_core' })).toBe(
-      'tenant_core'
-    );
-    expect(mapStorageTargetToTenantDatabaseRole({ driver: 'd1', role: 'core' })).toBeNull();
-  });
-
-  it('resolves an active tenant D1 binding through the registry', async () => {
+  it('resolves an active routed D1 binding through the registry', async () => {
     const binding = createD1Binding();
     const row = createRow();
     const repo = createRepository({ pointer: createPointer(), row });
 
-    const resolved = await resolveTenantDatabaseSourceFromRegistry(
+    const resolved = await resolveTenantDatabaseSourceFromControlRegistry(
       {
         TDB_TENANT_A_123456_CORE: binding,
         AUTHRIM_DEPLOYMENT_TARGET: 'primary',
@@ -250,16 +280,16 @@ describe('tenant-database-resolver', () => {
     expect(repo.getActivePointer).toHaveBeenCalledWith('tenant-a', 'tenant_core', 'default');
   });
 
-  it('resolves a slot-based tenant D1 binding through the registry', async () => {
+  it('resolves a slot-based routed D1 binding through the registry', async () => {
     const binding = createD1Binding();
     const row = createRow({
       database_name: 'authrim-dev-tdb-slot-0001-core',
       binding_ref: 'TDB_SLOT_0001_CORE',
-      metadata_json: JSON.stringify({ slot_id: 'tdb-slot-0001', slot_number: 1 }),
+      metadata_json: createRouteMetadata({ slot_id: 'tdb-slot-0001', slot_number: 1 }),
     });
     const repo = createRepository({ pointer: createPointer(), row });
 
-    const resolved = await resolveTenantDatabaseSourceFromRegistry(
+    const resolved = await resolveTenantDatabaseSourceFromControlRegistry(
       {
         TDB_SLOT_0001_CORE: binding,
         AUTHRIM_DEPLOYMENT_TARGET: 'primary',
@@ -282,12 +312,12 @@ describe('tenant-database-resolver', () => {
     const repo = createRepository({ pointer: createPointer(), row: createRow() });
     const requestCache = new Map();
 
-    const first = await resolveTenantDatabaseSourceFromRegistry(
+    const first = await resolveTenantDatabaseSourceFromControlRegistry(
       { TDB_TENANT_A_123456_CORE: binding },
       { tenantId: 'tenant-a', role: 'tenant_core', requestCache },
       repo
     );
-    const second = await resolveTenantDatabaseSourceFromRegistry(
+    const second = await resolveTenantDatabaseSourceFromControlRegistry(
       { TDB_TENANT_A_123456_CORE: binding },
       { tenantId: 'tenant-a', role: 'tenant_core', requestCache },
       repo
@@ -298,24 +328,49 @@ describe('tenant-database-resolver', () => {
     expect(repo.getRegistryRow).toHaveBeenCalledTimes(1);
   });
 
-  it('uses worker memory cache for repeated registry resolutions across request caches', async () => {
+  it('uses worker metadata cache across requests without sharing the resolved source', async () => {
     const binding = createD1Binding();
     const repo = createRepository({ pointer: createPointer(), row: createRow() });
+    const env = { TDB_TENANT_A_123456_CORE: binding };
 
-    const first = await resolveTenantDatabaseSourceFromRegistry(
-      { TDB_TENANT_A_123456_CORE: binding },
+    const first = await resolveTenantDatabaseSourceFromControlRegistry(
+      env,
       { tenantId: 'tenant-a', role: 'tenant_core' },
       repo
     );
-    const second = await resolveTenantDatabaseSourceFromRegistry(
-      { TDB_TENANT_A_123456_CORE: binding },
+    const second = await resolveTenantDatabaseSourceFromControlRegistry(
+      env,
       { tenantId: 'tenant-a', role: 'tenant_core' },
       repo
     );
 
-    expect(second).toBe(first);
+    expect(second).not.toBe(first);
+    expect(second.source).toBe(binding);
     expect(repo.getActivePointer).toHaveBeenCalledTimes(1);
     expect(repo.getRegistryRow).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not share route metadata or database sources across env objects', async () => {
+    const firstBinding = createD1Binding();
+    const secondBinding = createD1Binding();
+    const firstRepo = createRepository({ pointer: createPointer(), row: createRow() });
+    const secondRepo = createRepository({ pointer: createPointer(), row: createRow() });
+
+    const first = await resolveTenantDatabaseSourceFromControlRegistry(
+      { TDB_TENANT_A_123456_CORE: firstBinding },
+      { tenantId: 'tenant-a', role: 'tenant_core' },
+      firstRepo
+    );
+    const second = await resolveTenantDatabaseSourceFromControlRegistry(
+      { TDB_TENANT_A_123456_CORE: secondBinding },
+      { tenantId: 'tenant-a', role: 'tenant_core' },
+      secondRepo
+    );
+
+    expect(first.source).toBe(firstBinding);
+    expect(second.source).toBe(secondBinding);
+    expect(secondRepo.getActivePointer).toHaveBeenCalledOnce();
+    expect(secondRepo.getRegistryRow).toHaveBeenCalledOnce();
   });
 
   it('resolves from a valid signed runtime registry snapshot without reading the control DB', async () => {
@@ -329,7 +384,7 @@ describe('tenant-database-resolver', () => {
     const runtimeRegistry = {
       get: vi.fn(async (key: string) =>
         key.includes(':runtime-registry:generation:')
-          ? JSON.stringify({ runtimeGeneration: 8 })
+          ? createRuntimeGenerationDocument()
           : JSON.stringify(signedSnapshot)
       ),
     };
@@ -366,6 +421,51 @@ describe('tenant-database-resolver', () => {
     );
   });
 
+  it('does not reuse request or worker caches when generation state disappears', async () => {
+    const binding = createD1Binding();
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    let generationAvailable = true;
+    const runtimeRegistry = {
+      get: vi.fn(async (key: string) =>
+        key.includes(':runtime-registry:generation:')
+          ? generationAvailable
+            ? createRuntimeGenerationDocument()
+            : null
+          : JSON.stringify(signedSnapshot)
+      ),
+    };
+    const env = {
+      TDB_TENANT_A_SNAPSHOT_CORE: binding,
+      TENANT_RUNTIME_REGISTRY: runtimeRegistry,
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+    };
+    const requestCache = new Map();
+
+    await resolveTenantDatabaseSourceFromRegistry(env, {
+      tenantId: 'tenant-a',
+      role: 'tenant_core',
+      requestCache,
+      generationCacheTtlMs: 0,
+    });
+    generationAvailable = false;
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        requestCache,
+        generationCacheTtlMs: 0,
+      }),
+      'missing_generation'
+    );
+  });
+
   it('resolves exact default, users, and PII bindings from multi-shard signed routing', async () => {
     const { privateJwk, publicJwk } = await generateEd25519Jwks();
     const baseStore = createRuntimeRegistrySnapshot().stores[0];
@@ -381,6 +481,13 @@ describe('tenant-database-resolver', () => {
       return {
         ...baseStore,
         ...identity,
+        dataRole:
+          identity.role === 'tenant_pii'
+            ? ('tenant_pii' as const)
+            : identity.shardGroup === 'default'
+              ? ('tenant_core/default' as const)
+              : ('tenant_core/users' as const),
+        shardId: `shard-${suffix.toLowerCase()}`,
         shardCount: 2,
         shardKeyStrategy: 'least_loaded_fixed',
         bindingRef: `TDB_${suffix}`,
@@ -409,7 +516,7 @@ describe('tenant-database-resolver', () => {
     const runtimeRegistry = {
       get: vi.fn(async (key: string) =>
         key.includes(':runtime-registry:generation:')
-          ? JSON.stringify({ runtimeGeneration: 8 })
+          ? createRuntimeGenerationDocument()
           : JSON.stringify(signedSnapshot)
       ),
     };
@@ -438,7 +545,6 @@ describe('tenant-database-resolver', () => {
           role: expected.role,
           shardGroup: expected.shardGroup,
           shardIndex: expected.shardIndex,
-          runtimeSnapshotMode: 'required',
         },
         repository
       );
@@ -456,6 +562,205 @@ describe('tenant-database-resolver', () => {
     expect(repository.getRegistryRow).not.toHaveBeenCalled();
   });
 
+  it('fails closed with distinct role, ownership, and generation route errors', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const env = {
+      TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+      TENANT_RUNTIME_REGISTRY: {
+        get: vi.fn(async (key: string) =>
+          key.includes(':runtime-registry:generation:')
+            ? createRuntimeGenerationDocument()
+            : JSON.stringify(signedSnapshot)
+        ),
+      },
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+    };
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        dataRole: 'tenant_core/users',
+      }),
+      'route_role_residency_mismatch'
+    );
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'other-shard',
+      }),
+      'route_owner_mismatch'
+    );
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'shard-core-default',
+        bindingRef: 'TDB_TENANT_A_SNAPSHOT_CORE',
+        requiredBindingRouteGeneration: 4,
+      }),
+      'route_generation_mismatch'
+    );
+  });
+
+  it('rejects a signed snapshot whose store contract crosses runtime generations', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const base = createRuntimeRegistrySnapshot();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      {
+        ...base,
+        stores: base.stores.map((store) => ({ ...store, runtimeGeneration: 7 })),
+      },
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(
+        {
+          TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+          TENANT_RUNTIME_REGISTRY: {
+            get: vi.fn(async (key: string) =>
+              key.includes(':runtime-registry:generation:')
+                ? createRuntimeGenerationDocument()
+                : JSON.stringify(signedSnapshot)
+            ),
+          },
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        },
+        { tenantId: 'tenant-a', role: 'tenant_core' }
+      ),
+      'invalid_route_contract'
+    );
+  });
+
+  it('rejects a signed snapshot whose Core and PII routes share a physical D1 database', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const base = createRuntimeRegistrySnapshot();
+    const coreStore = base.stores[0];
+    const piiStore = {
+      ...coreStore,
+      role: 'tenant_pii' as const,
+      dataRole: 'tenant_pii' as const,
+      shardId: 'shard-pii-default',
+      shardGroup: 'pii',
+      bindingRef: 'TDB_TENANT_A_SNAPSHOT_PII',
+      databaseName: 'authrim-dev-tenant-a-pii',
+    };
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      {
+        ...base,
+        stores: [coreStore, piiStore],
+        metadata: {
+          ...base.metadata,
+          storeCount: 2,
+          roles: ['tenant_core', 'tenant_pii'],
+        },
+      },
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(
+        {
+          TDB_TENANT_A_SNAPSHOT_CORE: createD1Binding(),
+          TDB_TENANT_A_SNAPSHOT_PII: createD1Binding(),
+          TENANT_RUNTIME_REGISTRY: {
+            get: vi.fn(async (key: string) =>
+              key.includes(':runtime-registry:generation:')
+                ? createRuntimeGenerationDocument()
+                : JSON.stringify(signedSnapshot)
+            ),
+          },
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        },
+        { tenantId: 'tenant-a', role: 'tenant_core' }
+      ),
+      'invalid_route_contract'
+    );
+  });
+
+  it('resolves shared-pool and tenant-exclusive placements in the same runtime', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const exclusiveSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const sharedBase = createRuntimeRegistrySnapshot();
+    const sharedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      {
+        ...sharedBase,
+        tenantId: 'tenant-b',
+        placement: { isolationPolicy: 'shared_pool', policyGeneration: 2 },
+        stores: sharedBase.stores.map((store) => ({
+          ...store,
+          tenantId: 'tenant-b',
+          placementPolicyGeneration: 2,
+          allocationScope: 'shared_pool',
+          ownerTenantId: null,
+          bindingRef: 'TDB_SHARED_POOL_CORE',
+        })),
+      },
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const exclusiveBinding = createD1Binding();
+    const sharedBinding = createD1Binding();
+    const env = {
+      TDB_TENANT_A_SNAPSHOT_CORE: exclusiveBinding,
+      TDB_SHARED_POOL_CORE: sharedBinding,
+      TENANT_RUNTIME_REGISTRY: {
+        get: vi.fn(async (key: string) => {
+          if (key.includes(':runtime-registry:generation:')) {
+            return createRuntimeGenerationDocument();
+          }
+          return JSON.stringify(
+            key.includes('tenant:tenant-b:') ? sharedSnapshot : exclusiveSnapshot
+          );
+        }),
+      },
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+    };
+
+    const [exclusive, shared] = await Promise.all([
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+      }),
+      resolveTenantDatabaseSourceFromRegistry(env, {
+        tenantId: 'tenant-b',
+        role: 'tenant_core',
+      }),
+    ]);
+
+    expect(exclusive.source).toBe(exclusiveBinding);
+    expect(exclusive.placementPolicy).toEqual({
+      isolationPolicy: 'tenant_exclusive',
+      policyGeneration: 1,
+    });
+    expect(shared.source).toBe(sharedBinding);
+    expect(shared.placementPolicy).toEqual({
+      isolationPolicy: 'shared_pool',
+      policyGeneration: 2,
+    });
+  });
+
   it('fails closed for runtime registry snapshots when verification keys are not configured', async () => {
     await expectResolverCode(
       resolveTenantDatabaseSourceFromRegistry(
@@ -463,7 +768,7 @@ describe('tenant-database-resolver', () => {
           TENANT_RUNTIME_REGISTRY: {
             get: vi.fn(async (key: string) =>
               key.includes(':runtime-registry:generation:')
-                ? JSON.stringify({ runtimeGeneration: 8 })
+                ? createRuntimeGenerationDocument()
                 : JSON.stringify(createRuntimeRegistrySnapshot())
             ),
           },
@@ -472,7 +777,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         createRepository({ pointer: createPointer(), row: createRow() })
       ),
@@ -483,7 +787,13 @@ describe('tenant-database-resolver', () => {
   it('fails closed when a signed runtime registry snapshot deployment target mismatches the requested target', async () => {
     const { privateJwk, publicJwk } = await generateEd25519Jwks();
     const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
-      createRuntimeRegistrySnapshot({ deploymentTarget: 'edge-b' }),
+      createRuntimeRegistrySnapshot({
+        deploymentTarget: 'edge-b',
+        stores: createRuntimeRegistrySnapshot().stores.map((store) => ({
+          ...store,
+          deploymentTarget: 'edge-b',
+        })),
+      }),
       { privateJwk, keyId: 'runtime-registry-key-1' },
       '2026-05-16T00:00:00.000Z'
     );
@@ -494,7 +804,7 @@ describe('tenant-database-resolver', () => {
           TENANT_RUNTIME_REGISTRY: {
             get: vi.fn(async (key: string) =>
               key.includes(':runtime-registry:generation:')
-                ? JSON.stringify({ runtimeGeneration: 8 })
+                ? createRuntimeGenerationDocument()
                 : JSON.stringify(signedSnapshot)
             ),
           },
@@ -504,7 +814,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         createRepository({ pointer: createPointer(), row: createRow() })
       ),
@@ -540,7 +849,6 @@ describe('tenant-database-resolver', () => {
       {
         tenantId: 'tenant-a',
         role: 'tenant_core',
-        runtimeSnapshotMode: 'required',
       },
       repo
     );
@@ -563,7 +871,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         createRepository({ pointer: createPointer(), row: createRow() })
       ),
@@ -588,7 +895,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         createRepository({ pointer: createPointer(), row: createRow() })
       ),
@@ -625,6 +931,14 @@ describe('tenant-database-resolver', () => {
         runtimeGeneration: 1,
         expiresAt: '2000-01-01T00:00:00.000Z',
         stores: [],
+        metadata: {
+          storeCount: 0,
+          roles: [],
+          signature: null,
+          signatureKeyId: null,
+          signatureAlgorithm: null,
+          signedAt: null,
+        },
       }),
       { privateJwk, keyId: 'runtime-registry-key-1' },
       '2026-05-16T00:00:00.000Z'
@@ -634,13 +948,16 @@ describe('tenant-database-resolver', () => {
       resolveTenantDatabaseSourceFromRegistry(
         {
           TENANT_RUNTIME_REGISTRY: {
-            get: vi.fn(async () => null),
+            get: vi.fn(async (key: string) =>
+              key.includes(':runtime-registry:generation:')
+                ? createRuntimeGenerationDocument()
+                : null
+            ),
           },
         },
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         repo
       ),
@@ -652,7 +969,7 @@ describe('tenant-database-resolver', () => {
           TENANT_RUNTIME_REGISTRY: {
             get: vi.fn(async (key: string) =>
               key.includes(':runtime-registry:generation:')
-                ? JSON.stringify({ runtimeGeneration: 1 })
+                ? createRuntimeGenerationDocument(1)
                 : JSON.stringify(expiredSnapshot)
             ),
           },
@@ -661,7 +978,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         repo
       ),
@@ -677,7 +993,7 @@ describe('tenant-database-resolver', () => {
         if (key.includes(':runtime-registry:snapshot:')) {
           return JSON.stringify(createRuntimeRegistrySnapshot());
         }
-        return JSON.stringify({ runtimeGeneration: 7 });
+        return createRuntimeGenerationDocument(7);
       }),
     };
 
@@ -690,7 +1006,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         repo
       ),
@@ -723,33 +1038,26 @@ describe('tenant-database-resolver', () => {
       getRegistryRow: vi.fn().mockResolvedValueOnce(firstRow).mockResolvedValueOnce(secondRow),
     };
     const runtimeRegistry = {
-      get: vi.fn(async () => JSON.stringify({ runtimeGeneration: 5 })),
+      get: vi.fn(async () => createRuntimeGenerationDocument(5)),
+    };
+    const env = {
+      TDB_TENANT_A_FIRST_CORE: firstBinding,
+      TDB_TENANT_A_SECOND_CORE: secondBinding,
+      TENANT_RUNTIME_REGISTRY: runtimeRegistry,
     };
 
-    const first = await resolveTenantDatabaseSourceFromRegistry(
-      {
-        TDB_TENANT_A_FIRST_CORE: firstBinding,
-        TDB_TENANT_A_SECOND_CORE: secondBinding,
-        TENANT_RUNTIME_REGISTRY: runtimeRegistry,
-      },
+    const first = await resolveTenantDatabaseSourceFromControlRegistry(
+      env,
       { tenantId: 'tenant-a', role: 'tenant_core' },
       repo
     );
-    const second = await resolveTenantDatabaseSourceFromRegistry(
-      {
-        TDB_TENANT_A_FIRST_CORE: firstBinding,
-        TDB_TENANT_A_SECOND_CORE: secondBinding,
-        TENANT_RUNTIME_REGISTRY: runtimeRegistry,
-      },
+    const second = await resolveTenantDatabaseSourceFromControlRegistry(
+      env,
       { tenantId: 'tenant-a', role: 'tenant_core' },
       repo
     );
-    const third = await resolveTenantDatabaseSourceFromRegistry(
-      {
-        TDB_TENANT_A_FIRST_CORE: firstBinding,
-        TDB_TENANT_A_SECOND_CORE: secondBinding,
-        TENANT_RUNTIME_REGISTRY: runtimeRegistry,
-      },
+    const third = await resolveTenantDatabaseSourceFromControlRegistry(
+      env,
       { tenantId: 'tenant-a', role: 'tenant_core' },
       repo
     );
@@ -783,6 +1091,8 @@ describe('tenant-database-resolver', () => {
               runtimeGeneration: 8,
               routeStatus,
               quarantineDenyGeneration: routeStatus === 'active' ? 0 : 1,
+              publishedAt: '2026-05-16T00:00:00.000Z',
+              expiresAt: '2099-05-23T00:00:00.000Z',
             })
           : JSON.stringify(signedSnapshot)
       ),
@@ -850,6 +1160,8 @@ describe('tenant-database-resolver', () => {
                     runtimeGeneration: 8,
                     routeStatus: 'active',
                     quarantineDenyGeneration: 0,
+                    publishedAt: '2026-05-16T00:00:00.000Z',
+                    expiresAt: '2099-05-23T00:00:00.000Z',
                   })
                 : JSON.stringify(signedSnapshot)
             ),
@@ -860,7 +1172,6 @@ describe('tenant-database-resolver', () => {
         {
           tenantId: 'tenant-a',
           role: 'tenant_core',
-          runtimeSnapshotMode: 'required',
         },
         repo
       ),
@@ -873,12 +1184,12 @@ describe('tenant-database-resolver', () => {
     const binding = createD1Binding();
     const repo = createRepository({ pointer: createPointer(), row: createRow() });
 
-    await resolveTenantDatabaseSourceFromRegistry(
+    await resolveTenantDatabaseSourceFromControlRegistry(
       { TDB_TENANT_A_123456_CORE: binding },
       { tenantId: 'tenant-a', role: 'tenant_core', memoryCacheTtlMs: 0 },
       repo
     );
-    await resolveTenantDatabaseSourceFromRegistry(
+    await resolveTenantDatabaseSourceFromControlRegistry(
       { TDB_TENANT_A_123456_CORE: binding },
       { tenantId: 'tenant-a', role: 'tenant_core', memoryCacheTtlMs: 0 },
       repo
@@ -890,7 +1201,7 @@ describe('tenant-database-resolver', () => {
 
   it('fails closed when active pointer or binding is missing', async () => {
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {},
         { tenantId: 'tenant-a', role: 'tenant_core' },
         createRepository({ pointer: null, row: null })
@@ -899,7 +1210,7 @@ describe('tenant-database-resolver', () => {
     );
 
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {},
         { tenantId: 'tenant-a', role: 'tenant_core' },
         createRepository({ pointer: createPointer(), row: createRow() })
@@ -911,7 +1222,7 @@ describe('tenant-database-resolver', () => {
   it('records storage registry health alerts for missing bindings and schema gates', async () => {
     const missingBindingAdmin = createAdminAdapter();
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         { DB_ADMIN: missingBindingAdmin },
         { tenantId: 'tenant-a', role: 'tenant_core' },
         createRepository({ pointer: createPointer(), row: createRow() })
@@ -934,7 +1245,7 @@ describe('tenant-database-resolver', () => {
 
     const schemaGateAdmin = createAdminAdapter();
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {
           DB_ADMIN: schemaGateAdmin,
           TDB_TENANT_A_123456_CORE: createD1Binding(),
@@ -961,7 +1272,7 @@ describe('tenant-database-resolver', () => {
 
   it('fails closed when the active pointer references a missing or inactive registry row', async () => {
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {},
         { tenantId: 'tenant-a', role: 'tenant_core' },
         createRepository({ pointer: createPointer(), row: null })
@@ -970,7 +1281,7 @@ describe('tenant-database-resolver', () => {
     );
 
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {},
         { tenantId: 'tenant-a', role: 'tenant_core' },
         createRepository({
@@ -989,7 +1300,7 @@ describe('tenant-database-resolver', () => {
     });
 
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {
           TDB_TENANT_A_123456_CORE: createD1Binding(),
           TENANT_DATABASE_REGISTRY_SIGNATURE_SECRET: 'registry-secret',
@@ -1011,7 +1322,7 @@ describe('tenant-database-resolver', () => {
 
   it('fails closed for old schema versions and wrong deployment target', async () => {
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {
           TDB_TENANT_A_123456_CORE: createD1Binding(),
         },
@@ -1026,7 +1337,7 @@ describe('tenant-database-resolver', () => {
     );
 
     await expectResolverCode(
-      resolveTenantDatabaseSourceFromRegistry(
+      resolveTenantDatabaseSourceFromControlRegistry(
         {
           TDB_TENANT_A_123456_CORE: createD1Binding(),
           AUTHRIM_DEPLOYMENT_TARGET: 'secondary',
@@ -1039,33 +1350,5 @@ describe('tenant-database-resolver', () => {
       ),
       'tenant_assigned_to_other_deployment_target'
     );
-  });
-
-  it('resolves from a storage target with tenant database registry resolverRef', async () => {
-    const binding = createD1Binding();
-    const repo = createRepository({ pointer: createPointer(), row: createRow() });
-    const resolved = await resolveTenantDatabaseSourceForTarget(
-      { TDB_TENANT_A_123456_CORE: binding },
-      'tenant-a',
-      {
-        driver: 'd1',
-        resolverRef: 'tenant-database-registry',
-        role: 'tenant_core',
-      },
-      {},
-      repo
-    );
-
-    expect(resolved.source).toBe(binding);
-  });
-
-  it('uses typed resolver errors for unsupported target resolvers', async () => {
-    await expect(
-      resolveTenantDatabaseSourceForTarget({}, 'tenant-a', {
-        driver: 'd1',
-        resolverRef: 'other',
-        role: 'tenant_core',
-      })
-    ).rejects.toBeInstanceOf(TenantDatabaseResolverError);
   });
 });

@@ -294,7 +294,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'valid-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'valid-state');
 
       expect(result).not.toBeNull();
       expect(result?.state).toBe('valid-state');
@@ -308,6 +308,7 @@ describe('Auth State Management', () => {
         c.sql.includes('UPDATE external_idp_auth_states')
       );
       expect(updateCall).toBeDefined();
+      expect(updateCall!.sql).toContain('tenant_id = ?');
       expect(updateCall!.sql).toContain('consumed_at IS NULL');
     });
 
@@ -317,7 +318,7 @@ describe('Auth State Management', () => {
       // Simulate state already consumed (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'already-consumed-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'already-consumed-state');
 
       expect(result).toBeNull();
       // Should not attempt SELECT if UPDATE failed
@@ -331,7 +332,7 @@ describe('Auth State Management', () => {
       // Simulate expired state (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'expired-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'expired-state');
 
       expect(result).toBeNull();
     });
@@ -342,7 +343,7 @@ describe('Auth State Management', () => {
       // Simulate non-existent state (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'nonexistent-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'nonexistent-state');
 
       expect(result).toBeNull();
     });
@@ -370,7 +371,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-maxage');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-maxage');
 
       expect(result).not.toBeNull();
       expect(result?.maxAge).toBe(300);
@@ -402,7 +403,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-prompt');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-prompt');
 
       expect(result).not.toBeNull();
       expect(result?.prompt).toBe('none');
@@ -433,7 +434,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-enable-sso');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-enable-sso');
 
       expect(result).not.toBeNull();
       expect(result?.enableSso).toBe(false);
@@ -475,8 +476,8 @@ describe('Auth State Management', () => {
 
       // Simulate concurrent requests
       const [result1, result2] = await Promise.all([
-        consumeAuthState(mockEnv, 'race-condition-state'),
-        consumeAuthState(mockEnv, 'race-condition-state'),
+        consumeAuthState(mockEnv, 'default', 'race-condition-state'),
+        consumeAuthState(mockEnv, 'default', 'race-condition-state'),
       ]);
 
       // Only one should succeed
@@ -590,7 +591,7 @@ describe('Security considerations', () => {
     // The SQL must include consumed_at IS NULL to prevent replay attacks
     const mockEnv = { DB: {} } as unknown as Env;
 
-    await consumeAuthState(mockEnv, 'test-state');
+    await consumeAuthState(mockEnv, 'default', 'test-state');
 
     const updateCall = sqlTracker.calls.find(
       (c) => c.method === 'execute' && c.sql.includes('UPDATE')

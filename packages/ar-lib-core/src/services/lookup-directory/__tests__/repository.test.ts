@@ -178,6 +178,41 @@ describe('LookupDirectoryRepository', () => {
     ).rejects.toThrow('lookup_alias_not_unique');
   });
 
+  it('uses a validated tenant cursor for bounded alias pagination', async () => {
+    const bound = vi.fn().mockReturnThis();
+    const trackedSession = {
+      prepare: vi.fn(() => ({
+        bind: bound,
+        all: vi.fn(async () => ({
+          success: true,
+          results: [aliasRow({ tenant_id: 'tenant-b' })],
+          meta: {},
+        })),
+      })),
+      batch: vi.fn(),
+      getBookmark: vi.fn(() => 'bookmark'),
+    } as unknown as D1DatabaseSession;
+    const repository = new LookupDirectoryRepository(db(trackedSession));
+
+    await expect(
+      repository.findActiveAliases(ALIAS_INDEX, 4, undefined, 'tenant-a')
+    ).resolves.toMatchObject({ aliases: [{ tenantId: 'tenant-b' }] });
+    expect(bound).toHaveBeenCalledWith(
+      ALIAS_INDEX.virtualBucket,
+      ALIAS_INDEX.aliasKind,
+      ALIAS_INDEX.digest,
+      'tenant-a',
+      5
+    );
+    expect(
+      String((trackedSession.prepare as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])
+    ).toContain('tenant_id > ?');
+
+    await expect(
+      repository.findActiveAliases(ALIAS_INDEX, 4, undefined, 'tenant a')
+    ).rejects.toThrow('lookup_alias_cursor_invalid');
+  });
+
   it('merges current and previous key results by membership and rejects route conflicts', () => {
     expect(
       mergeRotatingLookupMemberships([

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockEnsureDatabaseAdapter,
   mockPublishTenantRuntimeRegistrySnapshot,
+  mockResolveTenantRuntimePlacementSnapshot,
   mockRepository,
   MockTenantDatabaseRegistryRepository,
 } = vi.hoisted(() => {
@@ -16,6 +17,7 @@ const {
   return {
     mockEnsureDatabaseAdapter: vi.fn((source: unknown) => source),
     mockPublishTenantRuntimeRegistrySnapshot: vi.fn(),
+    mockResolveTenantRuntimePlacementSnapshot: vi.fn(),
     mockRepository: repository,
     MockTenantDatabaseRegistryRepository: vi.fn(MockRepositoryConstructor),
   };
@@ -30,6 +32,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     TenantDatabaseRegistryRepository: MockTenantDatabaseRegistryRepository,
   };
 });
+
+vi.mock('../tenant-runtime-placement', () => ({
+  resolveTenantRuntimePlacementSnapshot: mockResolveTenantRuntimePlacementSnapshot,
+}));
 
 import {
   isTenantRuntimeRegistryRefreshCron,
@@ -63,6 +69,10 @@ describe('tenant runtime registry snapshot jobs', () => {
     mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([]);
     mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue(null);
     mockPublishTenantRuntimeRegistrySnapshot.mockResolvedValue({});
+    mockResolveTenantRuntimePlacementSnapshot.mockResolvedValue({
+      isolationPolicy: 'tenant_exclusive',
+      policyGeneration: 4,
+    });
   });
 
   it('uses the existing two-minute scheduled lane only', () => {
@@ -104,7 +114,6 @@ describe('tenant runtime registry snapshot jobs', () => {
         DB_ADMIN: 'control',
         TENANT_RUNTIME_REGISTRY: snapshotStore,
         CONTROL: controlSigner,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
         AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
       } as never,
       logger,
@@ -117,7 +126,7 @@ describe('tenant runtime registry snapshot jobs', () => {
       1,
       expect.objectContaining({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 4 },
         snapshotStore,
         deploymentTarget: 'edge-a',
         actorId: 'tenant-runtime-registry-snapshot',

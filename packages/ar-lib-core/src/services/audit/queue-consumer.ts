@@ -2254,7 +2254,10 @@ function sensitiveDetailIndexAdapter(
     return env.DB_ADMIN;
   }
   if (binding === 'LOGGING_INDEX_DB') {
-    return env.LOGGING_INDEX_DB ?? env.DB;
+    if (!env.LOGGING_INDEX_DB) {
+      throw new Error('sensitive_detail_logging_index_db_unavailable');
+    }
+    return env.LOGGING_INDEX_DB;
   }
   return env.DB;
 }

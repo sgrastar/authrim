@@ -4,6 +4,9 @@ const {
   mockCoreQuery,
   mockCoreExecute,
   mockSessionFetch,
+  mockSessionGet,
+  mockSessionInvalidate,
+  mockListExternalProviderSessions,
   mockFindByProviderSub,
   mockUpdateLinkedIdentity,
   mockGetProvider,
@@ -14,7 +17,6 @@ const {
   mockDiagnosticAuthDecision,
   mockDiagnosticCleanup,
   mockCreateDiagnosticLogger,
-  mockPersistenceContext,
   mockResolveAccountContext,
   MockD1Adapter,
   sqlTracker,
@@ -29,6 +31,9 @@ const {
   const coreQuery = vi.fn().mockResolvedValue([]);
   const coreExecute = vi.fn().mockResolvedValue({ rowsAffected: 1 });
   const sessionFetch = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+  const sessionGet = vi.fn();
+  const sessionInvalidate = vi.fn();
+  const listExternalProviderSessions = vi.fn();
   const findByProviderSub = vi.fn().mockResolvedValue([]);
   const updateLinkedIdentity = vi.fn().mockResolvedValue(true);
   const getProvider = vi.fn().mockResolvedValue({
@@ -48,9 +53,6 @@ const {
     logTokenValidation: diagnosticTokenValidation,
     logAuthDecision: diagnosticAuthDecision,
     cleanup: diagnosticCleanup,
-  });
-  const persistenceContext = vi.fn().mockResolvedValue({
-    storageProfileId: 'builtin:storage:standard',
   });
   const resolveAccountContext = vi.fn();
 
@@ -72,6 +74,9 @@ const {
     mockCoreQuery: coreQuery,
     mockCoreExecute: coreExecute,
     mockSessionFetch: sessionFetch,
+    mockSessionGet: sessionGet,
+    mockSessionInvalidate: sessionInvalidate,
+    mockListExternalProviderSessions: listExternalProviderSessions,
     mockFindByProviderSub: findByProviderSub,
     mockUpdateLinkedIdentity: updateLinkedIdentity,
     mockGetProvider: getProvider,
@@ -82,7 +87,6 @@ const {
     mockDiagnosticAuthDecision: diagnosticAuthDecision,
     mockDiagnosticCleanup: diagnosticCleanup,
     mockCreateDiagnosticLogger: createDiagnosticLogger,
-    mockPersistenceContext: persistenceContext,
     mockResolveAccountContext: resolveAccountContext,
     MockD1Adapter: D1AdapterClass,
     sqlTracker: tracker,
@@ -97,8 +101,11 @@ vi.mock('@authrim/ar-lib-core', () => ({
   getSessionStoreBySessionId: vi.fn(() => ({
     stub: {
       fetch: mockSessionFetch,
+      getSessionRpc: mockSessionGet,
+      invalidateSessionRpc: mockSessionInvalidate,
     },
   })),
+  listExternalProviderSessions: mockListExternalProviderSessions,
   isShardedSessionId: vi.fn(() => true),
   createErrorResponse: vi.fn(
     (_c, code, _opts) => new Response(null, { status: code === 'internal' ? 500 : 400 })
@@ -122,7 +129,6 @@ vi.mock('@authrim/ar-lib-core', () => ({
   createDiagnosticLoggerFromContext: mockCreateDiagnosticLogger,
   getDiagnosticSessionId: vi.fn().mockReturnValue(undefined),
   DIAGNOSTIC_FLOW_ID_HEADER: 'X-Authrim-Diagnostic-Flow-Id',
-  getCachedAuthCorePersistenceContextFromEnv: mockPersistenceContext,
   resolveAccountDataContextByIdentifier: mockResolveAccountContext,
 }));
 
@@ -152,6 +158,22 @@ describe('backchannel logout', () => {
     mockCoreQuery.mockReset().mockResolvedValue([{ id: 'sess-1' }]);
     mockCoreExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockSessionFetch.mockReset().mockResolvedValue(new Response(null, { status: 200 }));
+    mockListExternalProviderSessions
+      .mockReset()
+      .mockResolvedValue([
+        { sessionId: 'sess-1', userId: 'user-a', expiresAtMs: Date.now() + 60_000 },
+      ]);
+    mockSessionGet.mockReset().mockResolvedValue({
+      id: 'sess-1',
+      tenantId: 'tenant-a',
+      userId: 'user-a',
+      data: {
+        external_provider_id: 'provider-google',
+        external_provider_sub: 'provider-sub-123',
+        external_provider_sid: 'provider-session-123',
+      },
+    });
+    mockSessionInvalidate.mockReset().mockResolvedValue(true);
     mockSafeFetchJson.mockReset().mockResolvedValue({ keys: [] });
     mockFindByProviderSub.mockReset().mockResolvedValue([
       {
@@ -187,10 +209,11 @@ describe('backchannel logout', () => {
       logAuthDecision: mockDiagnosticAuthDecision,
       cleanup: mockDiagnosticCleanup,
     });
-    mockPersistenceContext.mockReset().mockResolvedValue({
-      storageProfileId: 'builtin:storage:standard',
+    mockResolveAccountContext.mockReset().mockResolvedValue({
+      accountId: 'account:user-a',
+      legacyUserId: 'user-a',
+      piiDb: { binding: 'pii-a' },
     });
-    mockResolveAccountContext.mockReset();
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ keys: [] }), {
         status: 200,
@@ -231,15 +254,16 @@ describe('backchannel logout', () => {
       env,
       'tenant-a',
       'provider-google',
-      'provider-sub-123'
-    );
-    expect(sqlTracker.calls[0]?.params).toEqual([
-      'provider-google',
       'provider-sub-123',
-      'tenant-a',
-      expect.any(Number),
-    ]);
-    expect(sqlTracker.calls[1]?.params).toEqual(['sess-1', 'tenant-a']);
+      { binding: 'pii-a' }
+    );
+    expect(mockListExternalProviderSessions).toHaveBeenCalledWith(env, {
+      tenantId: 'tenant-a',
+      providerId: 'provider-google',
+      claimKind: 'sub',
+      claim: 'provider-sub-123',
+    });
+    expect(mockSessionInvalidate).toHaveBeenCalledWith('sess-1');
     expect(mockDiagnosticTokenValidation).toHaveBeenCalledWith(
       expect.objectContaining({
         step: 'logout-token-validation',
@@ -262,8 +286,7 @@ describe('backchannel logout', () => {
     );
   });
 
-  it('uses the external-subject routed PII shard for tenant-D1 logout', async () => {
-    mockPersistenceContext.mockResolvedValue({ storageProfileId: 'builtin:storage:tenant-d1' });
+  it('uses the external-subject routed PII shard for logout', async () => {
     const accountContext = {
       accountId: 'account:user-a',
       legacyUserId: 'user-a',
@@ -380,15 +403,14 @@ describe('backchannel logout', () => {
     const response = await handleBackchannelLogout(c as never);
 
     expect(response.status).toBe(200);
-    expect(sqlTracker.calls[0]?.sql).toContain('external_provider_sid = ?');
-    expect(sqlTracker.calls[0]?.params).toEqual([
-      'provider-google',
-      'provider-session-123',
-      'tenant-a',
-      expect.any(Number),
-    ]);
+    expect(mockListExternalProviderSessions).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      providerId: 'provider-google',
+      claimKind: 'sid',
+      claim: 'provider-session-123',
+    });
     expect(mockFindByProviderSub).not.toHaveBeenCalled();
-    expect(mockSessionFetch).toHaveBeenCalledOnce();
+    expect(mockSessionInvalidate).toHaveBeenCalledOnce();
   });
 
   it('records a sanitized rejection reason for an invalid logout token', async () => {
@@ -468,7 +490,7 @@ describe('backchannel logout', () => {
   });
 
   it('does not misclassify a post-validation storage failure as a token failure', async () => {
-    mockCoreExecute.mockRejectedValueOnce(new Error('database unavailable'));
+    mockSessionInvalidate.mockRejectedValueOnce(new Error('session store unavailable'));
     const contextStore = new Map<string, unknown>([['tenantId', 'tenant-a']]);
     const c = {
       req: {

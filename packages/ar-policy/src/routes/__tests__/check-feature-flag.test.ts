@@ -14,6 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import app from '../../index';
 import { clearBatchSizeLimitCache } from '../check';
+import { createPolicyRuntimeEnv } from '../../__tests__/helpers/runtime-env';
 
 /**
  * Create mock KV namespace
@@ -66,6 +67,10 @@ const baseMockEnv = {
   CODE_VERSION_UUID: '',
 };
 
+function createEnv(coreDb: D1Database, values: Record<string, unknown> = {}) {
+  return createPolicyRuntimeEnv(coreDb, { ...baseMockEnv, ...values });
+}
+
 // Helper to create request
 function createRequest(
   path: string,
@@ -106,7 +111,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         ENABLE_CHECK_API: 'false', // Env is false, but KV should override
       };
@@ -126,7 +131,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         ENABLE_CHECK_API: 'true', // Env is true, but KV should override
       };
@@ -145,7 +150,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         ENABLE_CHECK_API: 'true', // Should use env var
       };
@@ -175,7 +180,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         ENABLE_CHECK_API: 'true',
       };
@@ -206,7 +211,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         // No ENABLE_CHECK_API - should default to disabled
       };
@@ -228,7 +233,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'true',
         // No POLICY_FLAGS_KV
       };
@@ -246,7 +251,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'false',
       };
 
@@ -265,7 +270,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         // No POLICY_FLAGS_KV, no ENABLE_CHECK_API
       };
 
@@ -284,7 +289,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'false',
       };
 
@@ -311,7 +316,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 
@@ -335,7 +340,7 @@ describe('Check API Feature Flag - Dynamic Override', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'false',
       };
 
@@ -385,7 +390,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'true',
       };
 
@@ -406,7 +411,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 
@@ -429,7 +434,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '200', // Env should be overridden by KV
       };
@@ -452,7 +457,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 
@@ -485,7 +490,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '75',
       };
@@ -503,7 +508,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         ENABLE_CHECK_API: 'true',
       };
 
@@ -526,7 +531,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
         CHECK_API_BATCH_SIZE_LIMIT: '50',
       };
@@ -549,7 +554,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 
@@ -571,7 +576,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 
@@ -605,7 +610,7 @@ describe('Batch Size Limit Configuration', () => {
 
       const env = {
         ...baseMockEnv,
-        DB: mockD1,
+        ...createEnv(mockD1),
         POLICY_FLAGS_KV: mockKV,
       };
 

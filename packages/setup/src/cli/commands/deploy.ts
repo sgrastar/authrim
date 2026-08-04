@@ -15,7 +15,7 @@ import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 import {
   saveLockFile,
   loadLockFileAuto,
-  reconcileSharedD1ResourcesInLock,
+  reconcileD1ResourcesInLock,
   reconcileSharedKVResourcesInLock,
   acquireEnvironmentOperationLock,
   type AuthrimLock,
@@ -138,11 +138,11 @@ import {
   waitForWorkerHttpReady,
 } from '../../core/worker-readiness.js';
 import {
-  ensureInitialTenantD1Resources,
+  ensureInitialControlPlaneResources,
   ensureInitialTenantRegionShardConfig,
-  inspectTenantD1Topology,
-  publishInitialTenantD1RuntimeSnapshot,
-} from '../../core/tenant-d1-bootstrap.js';
+  inspectInitialControlPlaneTopology,
+  publishInitialControlPlaneRuntimeSnapshot,
+} from '../../core/control-plane-bootstrap.js';
 import {
   isInitialBootstrapHandoffAccepted,
   reconcileInitialBootstrapHandoffAsOperator,
@@ -310,16 +310,18 @@ export function requiresInitialControlTokenBootstrap(input: {
   isInitialDeployment: boolean;
   dryRun: boolean;
   controlIncluded: boolean;
-  tenantD1Storage: boolean;
   automaticProvisioningEnabled: boolean;
 }): boolean {
   return (
     input.isInitialDeployment &&
     !input.dryRun &&
     input.controlIncluded &&
-    input.tenantD1Storage &&
     input.automaticProvisioningEnabled
   );
+}
+
+function isDisposableTestEnvironment(environmentId: string): boolean {
+  return /^test(?:[-_][a-z0-9][a-z0-9_-]{0,119})?$/u.test(environmentId);
 }
 
 export function resolveTestPlacementOverrides(input: {
@@ -329,7 +331,7 @@ export function resolveTestPlacementOverrides(input: {
   placement?: string;
 }): Partial<Record<WorkerComponent, 'off' | 'smart'>> {
   if (input.placement === undefined) return {};
-  if (input.environmentId !== 'test') {
+  if (!isDisposableTestEnvironment(input.environmentId)) {
     throw new Error('worker_placement_override_test_environment_required');
   }
   if (input.components !== undefined || !input.component) {
@@ -353,7 +355,7 @@ export function resolveTestEndpointVarOverrides(input: {
   testEndpoints?: string;
 }): Partial<Record<WorkerComponent, Readonly<Record<string, string>>>> {
   if (input.testEndpoints === undefined) return {};
-  if (input.environmentId !== 'test') {
+  if (!isDisposableTestEnvironment(input.environmentId)) {
     throw new Error('worker_test_endpoint_override_test_environment_required');
   }
   if (input.components !== undefined || input.component !== 'ar-management') {
@@ -817,8 +819,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       isInitialDeployment: initialDeploymentFromLock,
       dryRun: options.dryRun === true,
       controlIncluded,
-      tenantD1Storage: config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1',
-      automaticProvisioningEnabled: config.tenantD1?.automaticProvisioning === true,
+      automaticProvisioningEnabled: config.controlPlane?.automaticProvisioning === true,
     })
   ) {
     const controlDatabaseName = loadedLock.lock.d1.CONTROL_DB?.name;
@@ -874,7 +875,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         config = AuthrimConfigSchema.parse({
           ...config,
           updatedAt: new Date().toISOString(),
-          tenantD1: { automaticProvisioning: false },
+          controlPlane: { automaticProvisioning: false },
         });
         await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
         console.log(
@@ -1338,7 +1339,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       );
       deploymentSecrets = { ...deploymentSecrets, ...promptedDirectControlSecrets };
     }
-    const automaticProvisioning = config.tenantD1?.automaticProvisioning === true;
+    const automaticProvisioning = config.controlPlane?.automaticProvisioning === true;
     if (
       isInitialDeployment &&
       !options.dryRun &&
@@ -1385,7 +1386,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const resourceReconciliationSpinner = ora('Refreshing Cloudflare resource IDs...').start();
       try {
         const [databases, namespaces] = await Promise.all([listD1Databases(), listKVNamespaces()]);
-        const d1Reconciliation = reconcileSharedD1ResourcesInLock(currentLock, env, databases);
+        const d1Reconciliation = reconcileD1ResourcesInLock(currentLock, env, databases);
         const kvReconciliation = reconcileSharedKVResourcesInLock(
           d1Reconciliation.lock,
           env,
@@ -1425,7 +1426,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
 
     // A new environment is schema-first: no Worker (including a temporary UI binding target)
-    // may be published until every automatically managed shared D1 database is on the exact
+    // may be published until every automatically managed D1 database is on the exact
     // release manifest selected by the product version.
     if (
       isInitialDeployment &&
@@ -1542,42 +1543,50 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (structureType === 'new' && lock && !resumeInitialHandoff) {
       const mayMutateTenantTopology = deploymentOperationKind !== 'worker_redeploy';
       if (mayMutateTenantTopology) {
-        const tenantD1BootstrapSpinner = ora('Checking tenant D1 bindings...').start();
-        const tenantD1BootstrapResult = await ensureInitialTenantD1Resources({
-          env,
-          config,
-          lock: currentLock,
-          rootDir,
-          release: deploymentRelease,
-          onProgress: (msg) => {
-            tenantD1BootstrapSpinner.text = msg;
-          },
-        });
-        if (tenantD1BootstrapResult.success) {
-          if (tenantD1BootstrapResult.skipped) {
-            tenantD1BootstrapSpinner.succeed('Tenant D1 bootstrap not required');
-          } else {
-            const tenantTargets = resolveReleaseMigrationTargets({
-              lock: currentLock,
-              config,
-            }).filter((target) => target.scope === 'tenant' && target.automatic);
-            currentLock = withRecordedReleaseSchemaTargets(currentLock, {
-              productVersion: targetProductVersion,
-              manifest: deploymentRelease.manifest,
-              targets: tenantTargets,
-            });
-            await saveLockFile(currentLock, lockPath);
-            tenantD1BootstrapSpinner.succeed(
-              `Tenant D1 bindings ready (${tenantD1BootstrapResult.createdCount ?? 0} created)`
-            );
-          }
+        const controlPlaneBootstrapSpinner = ora('Checking Control Plane D1 bindings...').start();
+        if (options.dryRun) {
+          // A fresh Control DB has no bootstrap tables until the schema-first deploy runs.
+          // Keep dry-run mutation-free and avoid querying or creating tenant resources here.
+          controlPlaneBootstrapSpinner.succeed(
+            'Control Plane bootstrap planned after schema apply'
+          );
         } else {
-          tenantD1BootstrapSpinner.fail('Tenant D1 bootstrap failed');
-          console.log(chalk.red(`  ${tenantD1BootstrapResult.error || 'unknown error'}`));
-          process.exit(1);
+          const controlPlaneBootstrapResult = await ensureInitialControlPlaneResources({
+            env,
+            config,
+            lock: currentLock,
+            rootDir,
+            release: deploymentRelease,
+            onProgress: (msg) => {
+              controlPlaneBootstrapSpinner.text = msg;
+            },
+          });
+          if (controlPlaneBootstrapResult.success) {
+            if (controlPlaneBootstrapResult.skipped) {
+              controlPlaneBootstrapSpinner.succeed('Control Plane bootstrap not required');
+            } else {
+              const tenantTargets = resolveReleaseMigrationTargets({
+                lock: currentLock,
+                config,
+              }).filter((target) => target.scope === 'tenant' && target.automatic);
+              currentLock = withRecordedReleaseSchemaTargets(currentLock, {
+                productVersion: targetProductVersion,
+                manifest: deploymentRelease.manifest,
+                targets: tenantTargets,
+              });
+              await saveLockFile(currentLock, lockPath);
+              controlPlaneBootstrapSpinner.succeed(
+                `Control Plane bindings ready (${controlPlaneBootstrapResult.createdCount ?? 0} created)`
+              );
+            }
+          } else {
+            controlPlaneBootstrapSpinner.fail('Control Plane bootstrap failed');
+            console.log(chalk.red(`  ${controlPlaneBootstrapResult.error || 'unknown error'}`));
+            process.exit(1);
+          }
         }
       } else {
-        const topologyIssues = inspectTenantD1Topology({
+        const topologyIssues = inspectInitialControlPlaneTopology({
           env,
           config,
           lock: currentLock,
@@ -1587,7 +1596,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         if (topologyIssues.length > 0) {
           console.error(
             chalk.red(
-              '\nTenant D1 topology is incomplete. A Worker-only redeploy cannot create databases or apply schema.'
+              '\nControl Plane topology is incomplete. A Worker-only redeploy cannot create databases or apply schema.'
             )
           );
           for (const issue of topologyIssues) {
@@ -1695,7 +1704,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             records: inventory,
             environmentBootstrap: {
               defaultResidencyPolicyId: config.profiles.defaults.residency,
-              automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+              automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
             },
             registeredBy: 'setup:deploy',
             onProgress: (message) => {
@@ -1710,7 +1719,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               lock: currentLock,
               release: deploymentRelease.manifest,
               releaseDraft: deploymentRelease.draft,
-              automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+              automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
+              placementPolicy: config.tenant.placementPolicy,
             });
             const configNamespaceId = currentLock.kv.AUTHRIM_CONFIG?.id;
             if (!configNamespaceId) {
@@ -2412,7 +2422,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               controlDatabaseName,
               deployments: summary.results,
               allowSecretTriggeredVersionAdvanceFor:
-                config.tenantD1?.automaticProvisioning === true ? [`${env}-ar-control`] : undefined,
+                config.controlPlane?.automaticProvisioning === true
+                  ? [`${env}-ar-control`]
+                  : undefined,
             });
             handoffSpinner.text = `Waiting for Control verification of ${evidence.workerCount} Worker(s)...`;
             await waitForInitialBootstrapHandoff({
@@ -2428,7 +2440,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   controlDatabaseId,
                   controlDatabaseName,
                   environmentId: env,
-                  executeWorkerBindings: config.tenantD1?.automaticProvisioning !== true,
+                  executeWorkerBindings: config.controlPlane?.automaticProvisioning !== true,
                 }),
             });
             handoffSpinner.succeed('Initial D1 topology accepted by Control');
@@ -2501,7 +2513,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               (msg) => {
                 if (migrationsSpinner) migrationsSpinner.text = msg;
               },
-              config,
               {
                 productVersion: targetProductVersion,
                 allowDraft: deploymentRelease.draft,
@@ -2645,10 +2656,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             runtimeProfileSeedSuccess = false;
           }
 
-          const tenantD1SnapshotSpinner = ora(
-            'Publishing initial tenant D1 runtime snapshot...'
+          const controlPlaneSnapshotSpinner = ora(
+            'Publishing initial Control Plane runtime snapshot...'
           ).start();
-          const tenantD1SnapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+          const controlPlaneSnapshotResult = await publishInitialControlPlaneRuntimeSnapshot({
             env,
             config,
             lock: currentLock,
@@ -2656,19 +2667,52 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             keysDir: getResolvedKeysDir(),
             release: deploymentRelease.manifest,
             onProgress: (msg) => {
-              tenantD1SnapshotSpinner.text = msg;
+              controlPlaneSnapshotSpinner.text = msg;
             },
           });
-          if (tenantD1SnapshotResult.success) {
-            if (tenantD1SnapshotResult.skipped) {
-              tenantD1SnapshotSpinner.succeed('Initial tenant D1 runtime snapshot not required');
+          if (controlPlaneSnapshotResult.success) {
+            if (controlPlaneSnapshotResult.skipped) {
+              controlPlaneSnapshotSpinner.succeed(
+                'Initial Control Plane runtime snapshot not required'
+              );
             } else {
-              tenantD1SnapshotSpinner.succeed('Initial tenant D1 runtime snapshot ready');
+              controlPlaneSnapshotSpinner.succeed('Initial Control Plane runtime snapshot ready');
+            }
+            if (isInitialDeployment) {
+              const workersSubdomain = await getWorkersSubdomain();
+              const postBootstrapTargets = buildWorkerHttpReadinessTargets(
+                summary.results.filter((result) => result.success),
+                workersSubdomain,
+                { workersDevEnabled: !config.urls?.api?.custom }
+              );
+              if (postBootstrapTargets.length > 0) {
+                const postBootstrapHealthSpinner = ora(
+                  'Verifying tenant-aware Worker health after runtime snapshot...'
+                ).start();
+                const postBootstrapHealth = await waitForWorkerHttpReady({
+                  targets: postBootstrapTargets,
+                  onProgress: (msg) => {
+                    postBootstrapHealthSpinner.text = msg;
+                  },
+                });
+                if (!postBootstrapHealth.ready) {
+                  postBootstrapHealthSpinner.fail(
+                    'Tenant-aware Worker health checks failed after runtime snapshot'
+                  );
+                  console.error(
+                    chalk.red(`  ${postBootstrapHealth.error || 'unknown health check error'}`)
+                  );
+                  process.exit(1);
+                }
+                postBootstrapHealthSpinner.succeed(
+                  'Tenant-aware Worker health checks passed after runtime snapshot'
+                );
+              }
             }
           } else {
-            tenantD1SnapshotSpinner.fail('Initial tenant D1 runtime snapshot failed');
-            if (tenantD1SnapshotResult.error) {
-              console.log(chalk.red(`  ${tenantD1SnapshotResult.error}`));
+            controlPlaneSnapshotSpinner.fail('Initial Control Plane runtime snapshot failed');
+            if (controlPlaneSnapshotResult.error) {
+              console.log(chalk.red(`  ${controlPlaneSnapshotResult.error}`));
             }
             process.exit(1);
           }
@@ -2945,7 +2989,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           components: uiWorkersResult.results.map((result) => result.component),
           environmentBootstrap: {
             defaultResidencyPolicyId: config.profiles.defaults.residency,
-            automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+            automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
           },
           registeredBy: 'setup:deploy-ui',
           onProgress: (message) => console.log(chalk.gray(`  ${message}`)),

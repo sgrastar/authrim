@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findById: vi.fn(),
   syncUser: vi.fn(),
   introspectTokenFromContext: vi.fn(),
+  resolveAccountDataContextFromHono: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -19,6 +20,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getPublicKeyByKid: mocks.getPublicKeyByKid,
     verifyToken: mocks.verifyToken,
     introspectTokenFromContext: mocks.introspectTokenFromContext,
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createAuthContextFromHono: () => ({ coreAdapter: {} }),
     createPIIContextFromHono: () => ({ defaultPiiAdapter: {} }),
     CanonicalRuntimeUserStore: class {
@@ -163,6 +165,10 @@ describe('protected customer profile default adapters', () => {
     mocks.introspectTokenFromContext.mockResolvedValue({
       valid: true,
       claims: { sub: 'actor-1' },
+    });
+    mocks.resolveAccountDataContextFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'user-1',
     });
   });
 

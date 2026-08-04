@@ -159,17 +159,25 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-control') return ['CONTROL_DB'];
   if (component === 'ar-plugin-runner') return ['PLUGIN_RUNNER_DB'];
   if (component === 'ar-router') return [];
-  if (component === 'ar-discovery') return ['DB'];
+  // Discovery resolves tenant metadata exclusively from signed Runtime Registry
+  // assignments. Giving it the deployment Core binding would reintroduce an
+  // implicit route around the Control Plane contract.
+  if (component === 'ar-discovery') return [];
   if (component === 'ar-lib-core') return ['DB', 'DB_PII', 'LOOKUP_DB'];
   if (component === 'ar-management') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-auth') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-token') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
-  if (component === 'ar-userinfo' || component === 'ar-bridge') {
-    return ['DB', 'DB_PII', 'LOOKUP_DB'];
-  }
-  if (component === 'ar-agent-access') return ['DB', 'DB_ADMIN'];
-  if (component === 'ar-policy') return ['DB'];
-  return ['DB', 'DB_PII'];
+  if (component === 'ar-token') return ['DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-userinfo') return ['LOOKUP_DB'];
+  if (component === 'ar-bridge') return ['DB', 'DB_PII', 'LOOKUP_DB'];
+  if (component === 'ar-agent-access') return ['DB_ADMIN'];
+  // Policy resolves tenant/account adapters from the request-scoped Runtime
+  // Registry context. It must not receive the deployment Core binding as a
+  // fallback route.
+  if (component === 'ar-policy') return [];
+  if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN'];
+  if (component === 'ar-vc') return ['DB_ADMIN'];
+  if (component === 'ar-async') return [];
+  return [];
 }
 
 // =============================================================================

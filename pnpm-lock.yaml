@@ -14,7 +14,7 @@ overrides:
   yaml@>=2.0.0 <2.8.3: 2.8.3
   vite@7.3.5>yaml: 2.8.3
   postcss: '>=8.5.18'
-  ip-address: '>=10.2.0'
+  ip-address: '>=10.2.2'
   ws: '>=8.21.0'
   uuid: '>=11.1.1'
   lodash: '>=4.18.0'
@@ -24,14 +24,14 @@ overrides:
   basic-ftp: '>=5.3.1'
   path-to-regexp@<0.1.13: 0.1.13
   picomatch: '>=4.0.4'
-  undici: '>=8.5.0'
+  undici: '>=8.9.0'
   defu: '>=6.1.5'
   vite: '>=7.3.2'
   '@sveltejs/kit': '>=2.69.1'
   rollup: '>=4.59.0'
-  hono: 4.12.29
+  hono: 4.12.34
   '@hono/node-server': 2.0.10
-  fast-uri: 3.1.4
+  fast-uri: 3.1.5
   sharp: 0.35.0
   tar: ^7.5.21
   devalue: ^5.8.1
@@ -47,8 +47,8 @@ importers:
   .:
     dependencies:
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -273,8 +273,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -313,8 +313,8 @@ importers:
         specifier: ^13.2.2
         version: 13.2.2
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -347,8 +347,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -406,8 +406,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -431,8 +431,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-logging
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -504,8 +504,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       zod:
         specifier: ^3.24.4
         version: 3.25.76
@@ -554,8 +554,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -706,8 +706,8 @@ importers:
         specifier: ^13.2.2
         version: 13.2.2
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -768,8 +768,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-policy
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -793,8 +793,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20251121.0
@@ -824,8 +824,8 @@ importers:
         specifier: ^0.8.13
         version: 0.8.13
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -870,8 +870,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -892,8 +892,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-core
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -923,8 +923,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-field-mapping
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       jose:
         specifier: ^6.1.2
         version: 6.1.3
@@ -973,7 +973,7 @@ importers:
         version: link:../ar-lib-core
       '@hono/node-server':
         specifier: 2.0.10
-        version: 2.0.10(hono@4.12.29)
+        version: 2.0.10(hono@4.12.34)
       '@inquirer/prompts':
         specifier: ^7.2.1
         version: 7.10.1(@types/node@22.19.7)
@@ -990,8 +990,8 @@ importers:
         specifier: ^9.5.2
         version: 9.6.1
       hono:
-        specifier: 4.12.29
-        version: 4.12.29
+        specifier: 4.12.34
+        version: 4.12.34
       ora:
         specifier: ^8.1.1
         version: 8.2.0
@@ -1598,7 +1598,7 @@ packages:
     resolution: {integrity: sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: 4.12.29
+      hono: 4.12.34
 
   '@humanfs/core@0.19.1':
     resolution: {integrity: sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==}
@@ -4284,8 +4284,8 @@ packages:
   fast-sha256@1.3.0:
     resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
 
-  fast-uri@3.1.4:
-    resolution: {integrity: sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==}
+  fast-uri@3.1.5:
+    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
 
   fd-slicer@1.1.0:
     resolution: {integrity: sha512-cE1qsB/VwyQozZ+q1dGxR8LBYNZeofhEdUNGSMbQD3Gw2lAzX9Zb3uIU6Ebc/Fmyjo9AWWfnn0AUCHqtevs/8g==}
@@ -4473,8 +4473,8 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.29:
-    resolution: {integrity: sha512-1hNiRjawYrLq/4m3DQQjPGFg0VZkk4RjQJDff/excI6Dm9BiL75qxGrd7/c6YOxPdq6AscP3LiXhQ6fKFC1Waw==}
+  hono@4.12.34:
+    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
@@ -4571,8 +4571,8 @@ packages:
   intl-messageformat@10.7.18:
     resolution: {integrity: sha512-m3Ofv/X/tV8Y3tHXLohcuVuhWKo7BBq62cqY15etqmLxg2DZ34AGGgQDeR+SCta2+zICb1NX83af0GJmbQ1++g==}
 
-  ip-address@10.2.0:
-    resolution: {integrity: sha512-/+S6j4E9AHvW9SWMSEY9Xfy66O5PWvVEJ08O0y5JGyEKQpojb0K0GKpz/v5HJ/G0vi3D2sjGK78119oXZeE0qA==}
+  ip-address@10.4.0:
+    resolution: {integrity: sha512-oSK96Grm3aP6OrS263xVxbNDGVL7rzBtYdpGqlDG8iQdoenDoTs/nkki+DflYbAEE8Xl6o5YxhxlrKvI3nqKXQ==}
     engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
@@ -6050,8 +6050,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici@8.8.0:
-    resolution: {integrity: sha512-ubshXMXwF3MQIMF1y/WxZdNBnjEKeSg2wF5mcGUtU55YTw34tnVVpKRlLf7ruDXZ5344KokPVX4RBx1wJm64Bw==}
+  undici@8.10.0:
+    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
     engines: {node: '>=22.19.0'}
 
   unenv@2.0.0-rc.24:
@@ -6948,9 +6948,9 @@ snapshots:
 
   '@hexagon/base64@1.1.28': {}
 
-  '@hono/node-server@2.0.10(hono@4.12.29)':
+  '@hono/node-server@2.0.10(hono@4.12.34)':
     dependencies:
-      hono: 4.12.29
+      hono: 4.12.34
 
   '@humanfs/core@0.19.1': {}
 
@@ -7322,7 +7322,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       jose: 6.1.3
-      undici: 8.8.0
+      undici: 8.10.0
       yaml: 2.8.3
       zod: 4.4.3
     transitivePeerDependencies:
@@ -7428,7 +7428,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 2.0.10(hono@4.12.29)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7438,7 +7438,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.29
+      hono: 4.12.34
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -7452,7 +7452,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 2.0.10(hono@4.12.29)
+      '@hono/node-server': 2.0.10(hono@4.12.34)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7462,7 +7462,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.29
+      hono: 4.12.34
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -8888,7 +8888,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.4
+      fast-uri: 3.1.5
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -9772,7 +9772,7 @@ snapshots:
   express-rate-limit@8.5.2(express@5.2.1):
     dependencies:
       express: 5.2.1
-      ip-address: 10.2.0
+      ip-address: 10.4.0
 
   express@4.21.2:
     dependencies:
@@ -9873,7 +9873,7 @@ snapshots:
 
   fast-sha256@1.3.0: {}
 
-  fast-uri@3.1.4: {}
+  fast-uri@3.1.5: {}
 
   fd-slicer@1.1.0:
     dependencies:
@@ -10060,7 +10060,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.29: {}
+  hono@4.12.34: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:
@@ -10169,7 +10169,7 @@ snapshots:
       '@formatjs/icu-messageformat-parser': 2.11.4
       tslib: 2.8.1
 
-  ip-address@10.2.0: {}
+  ip-address@10.4.0: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -10513,7 +10513,7 @@ snapshots:
     dependencies:
       '@cspotcode/source-map-support': 0.8.1
       sharp: 0.35.0
-      undici: 8.8.0
+      undici: 8.10.0
       workerd: 1.20260708.1
       ws: 8.21.0
       youch: 4.1.0-beta.10
@@ -11358,7 +11358,7 @@ snapshots:
 
   socks@2.8.7:
     dependencies:
-      ip-address: 10.2.0
+      ip-address: 10.4.0
       smart-buffer: 4.2.0
 
   source-map-js@1.2.1: {}
@@ -11723,7 +11723,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici@8.8.0: {}
+  undici@8.10.0: {}
 
   unenv@2.0.0-rc.24:
     dependencies:

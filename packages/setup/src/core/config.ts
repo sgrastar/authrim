@@ -106,6 +106,8 @@ export const TenantConfigSchema = z.object({
   name: TenantIdSchema.default('default'),
   /** Human-readable tenant/organization name */
   displayName: z.string().default('Initial Tenant'),
+  /** Physical placement policy for the initial tenant. */
+  placementPolicy: z.enum(['shared_pool', 'tenant_exclusive']).default('tenant_exclusive'),
   /**
    * @deprecated Multi-tenant mode is always enabled.
    * Kept for backward compatibility during migration.
@@ -375,16 +377,16 @@ export const DatabaseLocationSchema = z.object({
 });
 
 export const DatabaseConfigSchema = z.object({
-  /** Core database location (OAuth clients, tokens, sessions, audit logs) */
+  /** Fixed platform metadata and non-PII audit database location */
   core: DatabaseLocationSchema.default({}),
-  /** PII database location (user profiles, emails, credentials) */
+  /** Fixed platform PII audit and anonymization database location */
   pii: DatabaseLocationSchema.default({}),
 });
 
-export const TenantD1ConfigSchema = z
+export const ControlPlaneConfigSchema = z
   .object({
     /** Allow Control Worker to execute provisioning with scoped Cloudflare API tokens. */
-    automaticProvisioning: z.boolean().default(false),
+    automaticProvisioning: z.boolean().default(true),
   })
   .strict();
 
@@ -404,25 +406,14 @@ export const AuditProfileIdSchema = ProfileIdSchema.refine(
 
 export const ProfileRegistryBackendSchema = z.enum(['kv', 'database']);
 
-export const ProfileDefaultsConfigSchema = z.object({
-  /**
-   * Environment default storage profile ID.
-   *
-   * Common built-ins:
-   * - builtin:storage:shared-d1
-   * - builtin:storage:tenant-d1
-   * - builtin:storage:external-durable
-   * - builtin:storage:standard (legacy alias)
-   * - builtin:storage:single-db
-   * - builtin:storage:eu-pii-split
-   * - builtin:storage:external-postgres
-   */
-  storage: ProfileIdSchema.default('builtin:storage:tenant-d1'),
-  /** Environment default audit profile ID */
-  audit: AuditProfileIdSchema.default('builtin:audit:standard'),
-  /** Environment default residency profile ID */
-  residency: ProfileIdSchema.default('builtin:residency:default'),
-});
+export const ProfileDefaultsConfigSchema = z
+  .object({
+    /** Environment default audit profile ID */
+    audit: AuditProfileIdSchema.default('builtin:audit:standard'),
+    /** Environment default residency profile ID */
+    residency: ProfileIdSchema.default('builtin:residency:default'),
+  })
+  .strict();
 
 export const ProfileRegistryConfigSchema = z.object({
   /**
@@ -445,56 +436,6 @@ export const ProfileReferencesConfigSchema = z.object({
 
 const RuntimeProfileMetadataSchema = z.record(z.string(), z.unknown()).optional();
 const RuntimeProfileVersionSchema = z.number().int().positive().optional();
-
-const StorageTargetSeedSchema = z
-  .object({
-    driver: z.enum(['d1', 'postgres', 'mysql']),
-    bindingRef: z.string().min(1).optional(),
-    connectionRef: z.string().min(1).optional(),
-    role: z.enum(['core', 'pii', 'admin', 'custom']).optional(),
-  })
-  .refine((value) => Boolean(value.bindingRef || value.connectionRef), {
-    message: 'Storage targets require bindingRef or connectionRef',
-  });
-
-const StorageProfileSeedSchema = z.object({
-  id: ProfileIdSchema,
-  label: z.string().min(1),
-  description: z.string().min(1).optional(),
-  version: RuntimeProfileVersionSchema,
-  metadata: RuntimeProfileMetadataSchema,
-  transientAuth: z
-    .object({
-      sessionColdPersistence: z.enum(['enabled', 'disabled']),
-      sessionClientMirror: z.enum(['sync', 'async', 'disabled']),
-      deviceCibaColdPersistence: z.enum(['enabled', 'disabled']),
-      externalDurableMirror: z.enum(['disabled', 'future']),
-    })
-    .optional(),
-  residencyProfileId: ProfileIdSchema.optional(),
-  slices: z
-    .object({
-      identity_core: StorageTargetSeedSchema.optional(),
-      identity_pii: StorageTargetSeedSchema.optional(),
-      custom_claims: StorageTargetSeedSchema.optional(),
-      registration_fields: StorageTargetSeedSchema.optional(),
-      custom_pii: StorageTargetSeedSchema.optional(),
-    })
-    .superRefine((value, ctx) => {
-      if (
-        !value.identity_core &&
-        !value.identity_pii &&
-        !value.custom_claims &&
-        !value.registration_fields &&
-        !value.custom_pii
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'At least one storage slice must be configured',
-        });
-      }
-    }),
-});
 
 const DatabaseAuditTargetSeedSchema = z
   .object({
@@ -614,18 +555,21 @@ const ResidencyProfileSeedSchema = z.object({
   allowedRegions: z.array(z.string().min(1)).optional(),
 });
 
-export const ProfileSeedConfigSchema = z.object({
-  storage: z.array(StorageProfileSeedSchema).default([]),
-  audit: z.array(AuditProfileSeedSchema).default([]),
-  residency: z.array(ResidencyProfileSeedSchema).default([]),
-});
+export const ProfileSeedConfigSchema = z
+  .object({
+    audit: z.array(AuditProfileSeedSchema).default([]),
+    residency: z.array(ResidencyProfileSeedSchema).default([]),
+  })
+  .strict();
 
-export const ProfilesConfigSchema = z.object({
-  defaults: ProfileDefaultsConfigSchema.default({}),
-  registry: ProfileRegistryConfigSchema.default({}),
-  references: ProfileReferencesConfigSchema.default({}),
-  seed: ProfileSeedConfigSchema.default({}),
-});
+export const ProfilesConfigSchema = z
+  .object({
+    defaults: ProfileDefaultsConfigSchema.default({}),
+    registry: ProfileRegistryConfigSchema.default({}),
+    references: ProfileReferencesConfigSchema.default({}),
+    seed: ProfileSeedConfigSchema.default({}),
+  })
+  .strict();
 
 // =============================================================================
 // Security Configuration
@@ -686,62 +630,64 @@ export const ProfileSchema = z.enum([
 // Main Configuration Schema
 // =============================================================================
 
-export const AuthrimConfigSchema = z.object({
-  /** Configuration schema version */
-  version: z.string().default('1.0.0'),
-  /** Creation timestamp */
-  createdAt: z.string().datetime().optional(),
-  /** Last update timestamp */
-  updatedAt: z.string().datetime().optional(),
+export const AuthrimConfigSchema = z
+  .object({
+    /** Configuration schema version */
+    version: z.string().default('1.0.0'),
+    /** Creation timestamp */
+    createdAt: z.string().datetime().optional(),
+    /** Last update timestamp */
+    updatedAt: z.string().datetime().optional(),
 
-  /** Source information */
-  source: SourceInfoSchema.optional(),
+    /** Source information */
+    source: SourceInfoSchema.optional(),
 
-  /** Environment configuration */
-  environment: EnvironmentConfigSchema,
+    /** Environment configuration */
+    environment: EnvironmentConfigSchema,
 
-  /** URL configuration */
-  urls: UrlsConfigSchema.optional(),
+    /** URL configuration */
+    urls: UrlsConfigSchema.optional(),
 
-  /** Tenant configuration */
-  tenant: TenantConfigSchema.default({}),
+    /** Tenant configuration */
+    tenant: TenantConfigSchema.default({}),
 
-  /** Enabled components */
-  components: ComponentsConfigSchema.default({}),
+    /** Enabled components */
+    components: ComponentsConfigSchema.default({}),
 
-  /** OIDC profile */
-  profile: ProfileSchema.default('basic-op'),
+    /** OIDC profile */
+    profile: ProfileSchema.default('basic-op'),
 
-  /** OIDC settings */
-  oidc: OidcConfigSchema.default({}),
+    /** OIDC settings */
+    oidc: OidcConfigSchema.default({}),
 
-  /** Sharding configuration */
-  sharding: ShardingConfigSchema.default({}),
+    /** Sharding configuration */
+    sharding: ShardingConfigSchema.default({}),
 
-  /** Feature flags */
-  features: FeaturesConfigSchema.default({}),
+    /** Feature flags */
+    features: FeaturesConfigSchema.default({}),
 
-  /** Key configuration */
-  keys: KeysConfigSchema.default({}),
+    /** Key configuration */
+    keys: KeysConfigSchema.default({}),
 
-  /** Cloudflare configuration */
-  cloudflare: CloudflareConfigSchema.default({}),
+    /** Cloudflare configuration */
+    cloudflare: CloudflareConfigSchema.default({}),
 
-  /** Database configuration (D1 location/jurisdiction) */
-  database: DatabaseConfigSchema.default({}),
+    /** Database configuration (D1 location/jurisdiction) */
+    database: DatabaseConfigSchema.default({}),
 
-  /** Tenant D1 Control-plane bootstrap configuration */
-  tenantD1: TenantD1ConfigSchema.default({}),
+    /** Unified D1 Control Plane bootstrap configuration. */
+    controlPlane: ControlPlaneConfigSchema.default({}),
 
-  /** Runtime profile defaults and registry backend selection */
-  profiles: ProfilesConfigSchema.default({}),
+    /** Runtime profile defaults and registry backend selection */
+    profiles: ProfilesConfigSchema.default({}),
 
-  /** Security configuration (PII encryption, domain hashing) */
-  security: SecurityConfigSchema.default({}),
+    /** Security configuration (PII encryption, domain hashing) */
+    security: SecurityConfigSchema.default({}),
 
-  /** User-owned service site fallback configuration */
-  serviceSite: ServiceSiteConfigSchema.optional(),
-});
+    /** User-owned service site fallback configuration */
+    serviceSite: ServiceSiteConfigSchema.optional(),
+  })
+  .strict();
 
 export type AuthrimConfig = z.infer<typeof AuthrimConfigSchema>;
 export type UrlConfig = z.infer<typeof UrlConfigSchema>;

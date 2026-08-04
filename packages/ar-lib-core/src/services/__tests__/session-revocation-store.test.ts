@@ -1,24 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DatabaseAdapter } from '../../db/adapter';
 import {
   advancePasskeyAuthenticationState,
   consumeTotpAuthenticationState,
   ensureAccountAuthenticationState,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocation,
 } from '../session-revocation-store';
 
 const mocks = vi.hoisted(() => ({
-  recordD1: vi.fn(),
   revokeDo: vi.fn(),
   getAccountState: vi.fn(),
   initializeAccountState: vi.fn(),
   advancePasskeyCounter: vi.fn(),
   consumeTotpTimeStep: vi.fn(),
-}));
-
-vi.mock('../session-persistence', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  recordUserSessionRevocationEpoch: mocks.recordD1,
 }));
 
 function env() {
@@ -36,41 +29,30 @@ function env() {
   } as never;
 }
 
-describe('recordHybridUserSessionRevocationEpoch', () => {
+describe('recordUserSessionRevocation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.recordD1.mockResolvedValue(2_000);
     mocks.revokeDo.mockResolvedValue(2_000);
   });
 
-  it('advances legacy D1 and the user-scoped DO with the same epoch', async () => {
+  it('advances only the user-scoped DO authority', async () => {
     const bindings = env();
-    const adapter = {} as DatabaseAdapter;
 
-    await expect(
-      recordHybridUserSessionRevocationEpoch(bindings, adapter, 'tenant-a', 'user-a', 2_000)
-    ).resolves.toBe(2_000);
-    expect(mocks.recordD1).toHaveBeenCalledWith(adapter, 'tenant-a', 'user-a', 2_000);
+    await expect(recordUserSessionRevocation(bindings, 'tenant-a', 'user-a', 2_000)).resolves.toBe(
+      2_000
+    );
     expect(bindings.SESSION_REVOCATION_STORE.idFromName).toHaveBeenCalledWith(
       'tenant:tenant-a:user-session:user-a'
     );
     expect(mocks.revokeDo).toHaveBeenCalledWith('tenant-a', 'user-a', 'account:user-a', 2_000);
   });
 
-  it.each(['D1', 'DO'])('fails closed when the %s authority cannot advance', async (authority) => {
-    if (authority === 'D1') mocks.recordD1.mockRejectedValueOnce(new Error('D1 unavailable'));
-    if (authority === 'DO') mocks.revokeDo.mockRejectedValueOnce(new Error('DO unavailable'));
+  it('fails closed when the DO authority cannot advance', async () => {
+    mocks.revokeDo.mockRejectedValueOnce(new Error('DO unavailable'));
 
-    await expect(
-      recordHybridUserSessionRevocationEpoch(
-        env(),
-        {} as DatabaseAdapter,
-        'tenant-a',
-        'user-a',
-        2_000
-      )
-    ).rejects.toThrow('session_revocation_authorities_unavailable');
-    expect(mocks.recordD1).toHaveBeenCalledOnce();
+    await expect(recordUserSessionRevocation(env(), 'tenant-a', 'user-a', 2_000)).rejects.toThrow(
+      'DO unavailable'
+    );
     expect(mocks.revokeDo).toHaveBeenCalledOnce();
   });
 });

@@ -86,6 +86,11 @@ const mocked = vi.hoisted(() => {
           (invitation) => invitation.token === token && invitation.expires_at > now
         ) ?? null) as T | null;
       }
+      if (query.includes('FROM oauth_clients WHERE tenant_id = ? AND client_id = ?')) {
+        return (state.clients.find(
+          (client) => client.tenant_id === params[0] && client.client_id === params[1]
+        ) ?? null) as T | null;
+      }
       return null;
     }
   }
@@ -93,14 +98,28 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
-    resolveUserStoreRuntimeSourcesMock: vi.fn(),
-    persistenceContextMock: vi.fn(),
     tenantAliasResolveMock: vi.fn(),
+    tenantAliasesResolveManyMock: vi.fn(),
     tenantStoreResolveMock: vi.fn(),
     lookupAssignmentsMock: vi.fn(),
     FakeD1Adapter,
   };
 });
+
+function discoveryRouteProjection(tenantId: string) {
+  return {
+    schemaVersion: 1,
+    tenantRouteGeneration: 8,
+    residencyPolicyId: 'default-policy',
+    target: {
+      dataRole: 'tenant_core/default' as const,
+      residencyPartition: 'default',
+      shardId: `default-${tenantId}`,
+      bindingRef: `TDB_${tenantId.toUpperCase()}_DEFAULT`,
+      requiredBindingRouteGeneration: 8,
+    },
+  };
+}
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
@@ -124,16 +143,18 @@ vi.mock('@authrim/ar-lib-core', async () => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
       async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
     ),
-    getCachedAuthCorePersistenceContextFromEnv: mocked.persistenceContextMock,
     loadVerifiedLookupBucketAssignmentProvider: mocked.lookupAssignmentsMock,
     LookupRouteResolver: class {
       async resolveAlias(input: unknown) {
         return mocked.tenantAliasResolveMock(input);
       }
+
+      async resolveAliases(input: unknown) {
+        return mocked.tenantAliasesResolveManyMock(input);
+      }
     },
     resolveTenantDatabaseSourceFromRegistry: mocked.tenantStoreResolveMock,
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
-    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
     CanonicalRuntimeUserStore: class {
       private tenantId: string;
 
@@ -265,6 +286,9 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
       }),
     }),
     BASE_DOMAIN: 'auth.example.com',
+    AUTHRIM_ENVIRONMENT_NAME: 'test',
+    TENANT_RUNTIME_REGISTRY: createMockKV(),
+    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
     OTP_HMAC_SECRET: 'test-discovery-grant-secret',
@@ -387,42 +411,49 @@ describe('discovery API', () => {
   beforeEach(() => {
     clearTenantCandidatePresentationCacheForTest();
     mocked.discoveryCandidatesMock.mockReset();
-    mocked.persistenceContextMock.mockReset();
-    mocked.persistenceContextMock.mockResolvedValue({
-      storageProfileId: 'builtin:storage:standard',
-    });
     mocked.tenantAliasResolveMock.mockReset();
+    mocked.tenantAliasesResolveManyMock.mockReset();
     mocked.tenantStoreResolveMock.mockReset();
     mocked.lookupAssignmentsMock.mockReset();
     mocked.lookupAssignmentsMock.mockResolvedValue({});
-    const defaultPiiAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
-          const email = String(params[0] ?? '');
-          const tenantId = String(params[1] ?? '');
-          const user =
-            mocked.state.users.find(
-              (candidate) =>
-                candidate.email === email &&
-                candidate.tenant_id === tenantId &&
-                candidate.is_active === 1
-            ) ?? null;
-          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
+    mocked.tenantAliasResolveMock.mockImplementation(
+      async (input: { index?: { aliasKind?: string } }) => {
+        if (
+          input.index?.aliasKind !== 'tenant_code' &&
+          input.index?.aliasKind !== 'invitation_token'
+        ) {
+          return null;
         }
-        return null;
-      },
-    });
-
-    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      coreDb: env.DB,
-      piiDb: defaultPiiAdapter,
-    }));
+        return { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') };
+      }
+    );
+    mocked.tenantAliasesResolveManyMock.mockImplementation(
+      async (input: { index?: { aliasKind?: string } }) => {
+        if (input.index?.aliasKind === 'environment_tenant') {
+          return mocked.state.tenants
+            .filter((tenant) => tenant.lifecycle_state === 'active')
+            .map((tenant) => ({
+              tenantId: tenant.id,
+              routeProjection: discoveryRouteProjection(tenant.id),
+            }));
+        }
+        if (input.index?.aliasKind === 'client_id') {
+          return [{ tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') }];
+        }
+        return [];
+      }
+    );
+    mocked.tenantStoreResolveMock.mockImplementation(
+      async (_env: Env, input: { tenantId: string }) => ({
+        source: new mocked.FakeD1Adapter({ db: {} }),
+        bindingRef: `TDB_${input.tenantId.toUpperCase()}_DEFAULT`,
+        bindingRouteGeneration: 8,
+        runtimeGeneration: 8,
+        residencyPolicyId: 'default-policy',
+        residencyPartition: 'default',
+        shardId: `default-${input.tenantId}`,
+      })
+    );
   });
 
   it('returns public config for the current host', async () => {
@@ -462,15 +493,12 @@ describe('discovery API', () => {
     expect(body.ui.title_text).toBe('Find your workspace');
   });
 
-  it('resolves tenant-D1 tenant codes through Lookup and revalidates the runtime route', async () => {
+  it('resolves tenant codes through Lookup and revalidates the runtime route', async () => {
     const tenantAdapter = createMockAdapter({
       queryOne: (sql, params) =>
         sql.includes('FROM tenants WHERE id = ?') && params[0] === 'acme'
           ? mocked.state.tenants.find((tenant) => tenant.id === 'acme')
           : null,
-    });
-    mocked.persistenceContextMock.mockResolvedValue({
-      storageProfileId: 'builtin:storage:tenant-d1',
     });
     mocked.tenantAliasResolveMock.mockResolvedValue({
       tenantId: 'acme',
@@ -490,10 +518,13 @@ describe('discovery API', () => {
     mocked.tenantStoreResolveMock.mockResolvedValue({
       source: tenantAdapter,
       bindingRef: 'TDB_ACME_DEFAULT',
+      bindingRouteGeneration: 8,
       runtimeGeneration: 8,
+      residencyPolicyId: 'default-policy',
+      residencyPartition: 'default',
+      shardId: 'default-1',
     });
     const { app, env } = createDiscoveryApp({
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       AUTHRIM_ENVIRONMENT_NAME: 'test',
       TENANT_RUNTIME_REGISTRY: createMockKV(),
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
@@ -520,15 +551,11 @@ describe('discovery API', () => {
         tenantId: 'acme',
         role: 'tenant_core',
         shardGroup: 'default',
-        runtimeSnapshotMode: 'required',
       })
     );
   });
 
   it('fails closed when a tenant alias generation disagrees with the runtime registry', async () => {
-    mocked.persistenceContextMock.mockResolvedValue({
-      storageProfileId: 'builtin:storage:tenant-d1',
-    });
     mocked.tenantAliasResolveMock.mockResolvedValue({
       tenantId: 'acme',
       routeProjection: {
@@ -547,10 +574,13 @@ describe('discovery API', () => {
     mocked.tenantStoreResolveMock.mockResolvedValue({
       source: createMockAdapter(),
       bindingRef: 'TDB_ACME_DEFAULT',
+      bindingRouteGeneration: 8,
       runtimeGeneration: 8,
+      residencyPolicyId: 'default-policy',
+      residencyPartition: 'default',
+      shardId: 'default-1',
     });
     const { app, env } = createDiscoveryApp({
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       AUTHRIM_ENVIRONMENT_NAME: 'test',
       TENANT_RUNTIME_REGISTRY: createMockKV(),
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
@@ -826,28 +856,6 @@ describe('discovery API', () => {
   it('does not fan out to tenant PII stores from raw email', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([]);
     const { app, env } = createDiscoveryApp({ DB_PII: undefined as any });
-    const acmePiiAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
-          return params[1] === 'acme' ? { id: 'user-1', tenant_id: 'acme' } : null;
-        }
-        return null;
-      },
-    });
-
-    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(
-      async (_env: Partial<Env>, tenantId: string) => ({
-        storageProfile: {
-          id: 'builtin:storage:tenant-override',
-          kind: 'storage',
-          label: 'Tenant Override',
-          slices: {},
-        },
-        coreDb: env.DB,
-        piiDb: tenantId === 'acme' ? acmePiiAdapter : null,
-      })
-    );
-
     const response = await app.request(
       'https://login.example.com/api/auth/discovery',
       {
@@ -861,7 +869,6 @@ describe('discovery API', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { result: string };
     expect(body.result).toBe('manual_required');
-    expect(mocked.resolveUserStoreRuntimeSourcesMock).not.toHaveBeenCalled();
   });
 
   it('resolves invitation tokens and returns invited_email', async () => {
@@ -1032,6 +1039,10 @@ describe('discovery API', () => {
   it('returns multiple app_hint candidates when client_id exists in multiple tenants', async () => {
     mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'acme' });
     mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'beta' });
+    mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+      { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+      { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+    ]);
     try {
       const { app, env } = createDiscoveryApp();
 
@@ -1064,6 +1075,9 @@ describe('discovery API', () => {
   });
 
   it('returns not_found when app_hint resolves to an inactive tenant', async () => {
+    mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+      { tenantId: 'inactive', routeProjection: discoveryRouteProjection('inactive') },
+    ]);
     const { app, env } = createDiscoveryApp();
 
     const response = await app.request(

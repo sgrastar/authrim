@@ -61,7 +61,7 @@ Every mutating entry point must declare exactly one operation kind and use the s
 | `structure_migration` | Existing state with no incomplete release/topology operation | None                                          | Move legacy local environment files to the current layout without changing their semantic contents.                                                     |
 | `delete`              | Any existing state                                           | None                                          | Exclusively delete the environment. This is also allowed for recovery from an incomplete update.                                                        |
 
-Direct API/UI Worker scripts are `worker_redeploy` operations. Initial tenant D1 bootstrap, Control
+Direct API/UI Worker scripts are `worker_redeploy` operations. Initial assignment bootstrap, Control
 Worker shard provisioning, external database registration, and R2 binding changes are
 `topology_change` operations. Reapplying a pinned release to an existing target is a
 `manual_migration` recovery operation and does not change Worker topology. A route name or UI
@@ -102,11 +102,9 @@ also two target IDs.
 
 The target inventory includes:
 
-- shared core, PII, and Admin D1 databases;
-- the PII stream in the shared database for single-DB deployments;
-- every setup-bootstrap or Control-managed tenant D1 binding projected into the lock;
-- every external database referenced by any deployable seeded storage or audit profile, not only the
-  environment default profile;
+- fixed platform databases and initial Core/PII assignment databases;
+- every setup-bootstrap or Control-managed assignment binding projected into the lock;
+- every future external adapter target explicitly registered with setup and its schema evidence;
 - explicit future targets added to the setup-managed inventory.
 
 Runtime-created profiles that are not represented in setup configuration or lock inventory are outside
@@ -197,8 +195,8 @@ The implementation must include behavior tests, not source-text presence checks.
 
 ### Topology and schema-state tests
 
-- Shared D1, single D1, tenant D1, shard D1, external default profile, and tenant-selectable seeded
-  external profile targets are enumerated.
+- Single- and multi-shard assignments, `shared_pool` and `tenant_exclusive` placement, and explicitly
+  registered future external adapter targets are enumerated through the same target model.
 - Newly provisioned, expanded, reset, and reconciled D1 targets record the installed manifest.
 - A new target gets the cumulative stream; an existing target gets only its delta.
 - Partial migrations do not mark a full stream current.

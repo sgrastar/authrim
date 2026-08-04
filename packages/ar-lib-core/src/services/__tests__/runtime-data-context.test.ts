@@ -1,25 +1,23 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
 import { clearLookupRouteMemoryCache, createLookupBlindIndexes } from '../lookup-directory';
+import { clearTenantDatabaseResolverMemoryCache } from '../tenant-database-resolver';
+import { signTenantRuntimeRegistrySnapshot } from '../tenant-runtime-registry-snapshot';
 import {
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
+  resolveAccountCoreDataContext,
   resolveOtpAccountCoreDataContextByIdentifier,
-  resolveSessionAccountCoreDataContext,
 } from '../runtime-data-context';
 
 const mocks = vi.hoisted(() => ({
   tenantId: 'tenant-a',
 }));
 
-vi.mock('../auth-core-persistence-context', () => ({
-  getCachedAuthCorePersistenceContextFromEnv: vi.fn(async () => ({
-    storageProfileId: 'builtin:storage:tenant-d1',
-  })),
-  resolveAuthCorePersistenceSourceFromEnv: vi.fn(async (env: Env) => env.DB),
-}));
+let signedRuntimeRegistrySnapshot = '';
+let runtimeRegistryPublicJwks = '';
 
 vi.mock('../lookup-directory', async (importOriginal) => {
   const original = await importOriginal<typeof import('../lookup-directory')>();
@@ -93,7 +91,6 @@ function d1(input: {
   lookupRows?: unknown[];
   role?: 'tenant_core/users' | 'tenant_pii';
   accountRouteGeneration?: number;
-  revokedAfterMs?: number;
   legacyUserId?: string;
   accountId?: string;
   subjectLifecycleState?: string;
@@ -126,11 +123,6 @@ function d1(input: {
               created_at: 1_700_000_000_000,
             };
           }
-          if (sql.includes('FROM session_revocation_epochs')) {
-            return input.revokedAfterMs === undefined
-              ? null
-              : { revoked_after_ms: input.revokedAfterMs };
-          }
           return null;
         }),
       };
@@ -160,8 +152,20 @@ function d1(input: {
 function env(accountRouteGeneration = 3, userId = 'user-a'): Env {
   return {
     AUTHRIM_ENVIRONMENT_NAME: 'test',
-    TENANT_RUNTIME_REGISTRY: { get: vi.fn() },
-    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{}',
+    TENANT_RUNTIME_REGISTRY: {
+      get: vi.fn(async (key: string) =>
+        key.includes(':runtime-registry:generation:')
+          ? JSON.stringify({
+              runtimeGeneration: 7,
+              routeStatus: 'active',
+              quarantineDenyGeneration: 0,
+              publishedAt: '2026-05-16T00:00:00.000Z',
+              expiresAt: '2099-05-23T00:00:00.000Z',
+            })
+          : signedRuntimeRegistrySnapshot
+      ),
+    },
+    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: runtimeRegistryPublicJwks,
     LOOKUP_HMAC_KEY_SLOT_A: 'secret-a',
     LOOKUP_A: d1({ lookupRows: [lookupRow(userId)] }),
     TDB_USERS_A: d1({
@@ -176,8 +180,112 @@ function env(accountRouteGeneration = 3, userId = 'user-a'): Env {
 }
 
 describe('runtime account data context', () => {
+  beforeAll(async () => {
+    const keyPair = await crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']);
+    const privateJwk = (await crypto.subtle.exportKey('jwk', keyPair.privateKey)) as JsonWebKey;
+    const publicJwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey;
+    privateJwk.kid = 'runtime-registry-key-1';
+    privateJwk.alg = 'EdDSA';
+    privateJwk.use = 'sig';
+    publicJwk.kid = 'runtime-registry-key-1';
+    publicJwk.alg = 'EdDSA';
+    publicJwk.use = 'sig';
+    const snapshot = await signTenantRuntimeRegistrySnapshot(
+      {
+        version: 4,
+        tenantId: 'tenant-a',
+        snapshotScope: 'tenant',
+        deploymentTarget: 'default',
+        runtimeGeneration: 7,
+        routeStatus: 'active',
+        quarantineDenyGeneration: 0,
+        backend: { provider: 'd1', resolver: 'control-plane' },
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
+        publishedAt: '2026-05-16T00:00:00.000Z',
+        expiresAt: '2099-05-16T00:30:00.000Z',
+        stores: [
+          {
+            tenantId: 'tenant-a',
+            role: 'tenant_core',
+            dataRole: 'tenant_core/users',
+            residencyPolicyId: 'default-policy',
+            residencyPartition: 'default',
+            shardId: 'users-a',
+            assignmentGeneration: 1,
+            bindingRouteGeneration: 8,
+            placementPolicyGeneration: 1,
+            allocationScope: 'tenant_exclusive',
+            ownerTenantId: 'tenant-a',
+            generation: 8,
+            runtimeGeneration: 7,
+            schemaVersion: 1,
+            shardGroup: 'default',
+            shardIndex: 0,
+            shardCount: 1,
+            shardKeyStrategy: 'none',
+            provider: 'd1',
+            driver: 'd1',
+            bindingRef: 'TDB_USERS_A',
+            connectionRef: null,
+            deploymentTarget: null,
+            status: 'active',
+            healthStatus: 'active',
+            databaseId: 'users-a-db',
+            databaseName: 'users-a',
+            regionHint: null,
+            jurisdiction: null,
+          },
+          {
+            tenantId: 'tenant-a',
+            role: 'tenant_pii',
+            dataRole: 'tenant_pii',
+            residencyPolicyId: 'default-policy',
+            residencyPartition: 'default',
+            shardId: 'pii-a',
+            assignmentGeneration: 1,
+            bindingRouteGeneration: 9,
+            placementPolicyGeneration: 1,
+            allocationScope: 'tenant_exclusive',
+            ownerTenantId: 'tenant-a',
+            generation: 9,
+            runtimeGeneration: 7,
+            schemaVersion: 1,
+            shardGroup: 'default',
+            shardIndex: 0,
+            shardCount: 1,
+            shardKeyStrategy: 'none',
+            provider: 'd1',
+            driver: 'd1',
+            bindingRef: 'TDB_PII_A',
+            connectionRef: null,
+            deploymentTarget: null,
+            status: 'active',
+            healthStatus: 'active',
+            databaseId: 'pii-a-db',
+            databaseName: 'pii-a',
+            regionHint: null,
+            jurisdiction: null,
+          },
+        ],
+        metadata: {
+          storeCount: 2,
+          roles: ['tenant_core', 'tenant_pii'],
+          signature: null,
+          signatureKeyId: null,
+          signatureAlgorithm: null,
+          signedAt: null,
+        },
+      },
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    signedRuntimeRegistrySnapshot = JSON.stringify(snapshot);
+    runtimeRegistryPublicJwks = JSON.stringify({ keys: [publicJwk] });
+  });
+
   beforeEach(() => {
     clearLookupRouteMemoryCache();
+    clearTenantDatabaseResolverMemoryCache();
     mocks.tenantId = 'tenant-a';
   });
 
@@ -192,7 +300,11 @@ describe('runtime account data context', () => {
     expect(context.legacyUserId).toBe('user-a');
     expect(context.coreDb).toBe((bindings as unknown as Record<string, unknown>).TDB_USERS_A);
     expect(context.piiDb).toBe((bindings as unknown as Record<string, unknown>).TDB_PII_A);
-    expect(context.userCacheScope.sourceGeneration).toBe('account:3:core:8:pii:9');
+    expect(context.userCacheScope).toEqual({
+      routeGeneration: 'account:3',
+      bindingGeneration: 'core:8:pii:9',
+      schemaGeneration: 'route:1',
+    });
   });
 
   it.each(['_'.repeat(21), `-${'a'.repeat(20)}`])(
@@ -208,26 +320,23 @@ describe('runtime account data context', () => {
     }
   );
 
-  it('resolves session revocation state with one primary Core batch and no PII round trip', async () => {
+  it('resolves the account Core route with one primary batch and no PII round trip', async () => {
     const bindings = env();
     const usersD1 = d1({
       role: 'tenant_core/users',
       accountRouteGeneration: 3,
-      revokedAfterMs: 1234,
     }) as D1Database & { _session: { batch: ReturnType<typeof vi.fn> } };
     (bindings as unknown as Record<string, unknown>).TDB_USERS_A = usersD1;
     const piiD1 = (bindings as unknown as Record<string, D1Database>).TDB_PII_A;
 
-    const context = await resolveSessionAccountCoreDataContext(bindings, {
+    const context = await resolveAccountCoreDataContext(bindings, {
       tenantId: 'tenant-a',
       accountId: 'account:user-a',
-      userId: 'user-a',
     });
 
     expect(context.coreDb).toBe(usersD1);
-    expect(context.revokedAfterMs).toBe(1234);
     expect(usersD1._session.batch).toHaveBeenCalledTimes(1);
-    expect(usersD1._session.batch.mock.calls[0]?.[0]).toHaveLength(3);
+    expect(usersD1._session.batch.mock.calls[0]?.[0]).toHaveLength(2);
     expect(piiD1.withSession).not.toHaveBeenCalled();
   });
 
@@ -302,25 +411,16 @@ describe('runtime account data context', () => {
     ).rejects.toThrow('account_data_otp_route_mismatch');
   });
 
-  it('rejects a session route whose account or authoritative legacy user differs', async () => {
-    await expect(
-      resolveSessionAccountCoreDataContext(env(), {
-        tenantId: 'tenant-a',
-        accountId: 'account:user-a',
-        userId: 'user-b',
-      })
-    ).rejects.toThrow('account_data_session_route_mismatch');
-
+  it('rejects a Core route whose authoritative account differs', async () => {
     const bindings = env();
     (bindings as unknown as Record<string, unknown>).TDB_USERS_A = d1({
       role: 'tenant_core/users',
-      legacyUserId: 'user-b',
+      accountId: 'account:user-b',
     });
     await expect(
-      resolveSessionAccountCoreDataContext(bindings, {
+      resolveAccountCoreDataContext(bindings, {
         tenantId: 'tenant-a',
         accountId: 'account:user-a',
-        userId: 'user-a',
       })
     ).rejects.toThrow('lookup_destination_revalidation_failed');
   });
@@ -340,7 +440,7 @@ describe('runtime account data context', () => {
         tenantId: 'tenant-a',
         accountId: 'user-a',
       })
-    ).rejects.toThrow('lookup_route_binding_unavailable');
+    ).rejects.toThrow('missing_binding');
   });
 
   it('rejects a destination account with a stale route generation', async () => {

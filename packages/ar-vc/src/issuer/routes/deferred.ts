@@ -12,9 +12,11 @@ import {
   IssuedCredentialRepository,
   createErrorResponse,
   AR_ERROR_CODES,
+  ensureDatabaseAdapter,
   getLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
   getTenantIdFromContext,
+  resolveTenantMetadataContext,
+  type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { validateVCIAccessToken } from '../services/token-validation';
 import type { JWTPayload } from 'jose';
@@ -66,9 +68,11 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
     }
 
     // Look up deferred credential using repository
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
-      tenantId: tokenResult.tenantId,
-    });
+    const tenantMetadata = await resolveTenantMetadataContext(
+      c.env as unknown as CoreEnv,
+      tokenResult.tenantId
+    );
+    const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-issuer-core');
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);
 
     const result = await issuedCredentialRepo.findDeferredByIdAndUser(

@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   createRuntimeUser: vi.fn(),
   adminExecute: vi.fn(),
   adminDeletePasskeys: vi.fn(),
+  requireAdmin: vi.fn(),
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -56,7 +57,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     AdminPasskeyRepository: class {
       deleteAllByUser = mocks.adminDeletePasskeys;
     },
-    requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({ execute: mocks.adminExecute })),
+    requireDedicatedAdminDatabaseAdapter: mocks.requireAdmin,
     createLogger: vi.fn(() => ({
       module: () => ({
         info: mocks.loggerInfo,
@@ -151,6 +152,10 @@ describe('initial setup runtime routes', () => {
     mocks.createRuntimeUser.mockResolvedValue(undefined);
     mocks.adminExecute.mockResolvedValue({ success: true });
     mocks.adminDeletePasskeys.mockResolvedValue(undefined);
+    mocks.requireAdmin.mockImplementation((env: { DB_ADMIN?: unknown }) => {
+      if (!env.DB_ADMIN) throw new Error('admin_database_binding_missing');
+      return { execute: mocks.adminExecute };
+    });
   });
 
   afterEach(() => vi.useRealTimers());
@@ -357,7 +362,7 @@ describe('initial setup runtime routes', () => {
       expect(kv.delete).toHaveBeenCalledWith('setup:lock');
     });
 
-    it('uses canonical runtime storage when dedicated admin storage is absent', async () => {
+    it('fails closed when dedicated Admin storage is absent', async () => {
       const response = await postJson(
         '/api/admin-init-setup/initialize',
         initializeBody({ name: undefined }),
@@ -365,16 +370,9 @@ describe('initial setup runtime routes', () => {
         { Origin: 'https://auth.example.com' }
       );
 
-      expect(response.status).toBe(200);
-      expect(mocks.createRuntimeUser).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: 'admin-user-1',
-          tenantId: 'tenant-1',
-          userType: 'admin',
-          emailVerified: true,
-          sensitiveValues: expect.objectContaining({ email: 'admin@example.com' }),
-        })
-      );
+      expect(response.status).toBe(500);
+      expect(mocks.createRuntimeUser).not.toHaveBeenCalled();
+      expect(mocks.createAdminUser).not.toHaveBeenCalled();
       expect(mocks.adminExecute).not.toHaveBeenCalled();
     });
 

@@ -85,7 +85,7 @@ Current baseline inputs include:
 
 Older comparative analysis remains useful as rationale, but current decisions
 should account for the runtime-storage work added since those notes were
-written, including shared D1, tenant-specific D1, external database paths,
+written, including single/multi-shard assignments, mixed tenant placement, future external adapter paths,
 logging package expansion, generated environment validation, and additional
 package-level tests.
 
@@ -277,7 +277,7 @@ Recommended validation layers:
 | ------------------------- | --------------------------------------------------------------- | --------------------------------- |
 | Package tests             | Fast local ownership of package behavior                        | every relevant change             |
 | Local integration tests   | Cross-package protocol, topology, and storage-boundary behavior | before merging related changes    |
-| Runtime topology matrices | single/multi-tenant, shared D1, tenant D1, external DB paths    | topology or storage changes       |
+| Runtime topology matrices | single/multi-tenant, single/multi-shard, mixed placement, external adapter paths | topology or storage changes |
 | Generated env validation  | Setup output and deploy configuration consistency               | test environment deploy           |
 | Live smoke tests          | Real Cloudflare routing and resource bindings                   | `develop` merge, nightly, manual  |
 | Conformance environment   | Protocol certification-oriented checks                          | `main` merge, scheduled, manual   |

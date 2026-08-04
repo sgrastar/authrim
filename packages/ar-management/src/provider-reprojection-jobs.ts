@@ -1,8 +1,8 @@
 import {
   ensureDatabaseAdapter,
   getTenantEmailSettings,
+  listEnvironmentTenantDefaultStores,
   putTenantEmailSettings,
-  resolveAuthCorePersistenceAdapterFromEnv,
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -133,17 +133,13 @@ async function ensureJob(
   desired: DesiredRevision,
   now: number
 ): Promise<void> {
-  const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'provider-reprojection-enqueue');
-  const total = await core.queryOne<{ count: number | string }>(
-    "SELECT COUNT(*) AS count FROM tenants WHERE lifecycle_state = 'active'"
-  );
   const jobId = `provider-reprojection-${await sha256(`${pluginId}\0${desired.revision}`)}`;
   await adapter.execute(
     `INSERT OR IGNORE INTO provider_reprojection_jobs (
        job_id, plugin_id, desired_revision, status, total_tenants,
        max_attempts, next_run_at, created_at, updated_at
      ) VALUES (?, ?, ?, 'pending', ?, 100, ?, ?, ?)`,
-    [jobId, pluginId, desired.revision, safeCount(total?.count ?? 0), now, now, now]
+    [jobId, pluginId, desired.revision, 0, now, now, now]
   );
   await adapter.execute(
     `UPDATE provider_reprojection_jobs
@@ -356,7 +352,6 @@ export async function processProviderReprojectionJobs(
       ORDER BY created_at ASC LIMIT ?`,
     [now, now, options.limit ?? 3]
   );
-  const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'provider-reprojection-runner');
   for (const candidate of due) {
     const owner = `provider-reprojection-${crypto.randomUUID()}`;
     const job = await claimJob(adapter, candidate, owner, now);
@@ -376,11 +371,11 @@ export async function processProviderReprojectionJobs(
       continue;
     }
     const config = await readGlobalConfig(env, job.plugin_id);
-    const tenants = await core.query<{ id: string }>(
-      `SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ?
-        ORDER BY id ASC LIMIT ?`,
-      [job.cursor_tenant_id ?? '', JOB_BATCH_SIZE + 1]
-    );
+    const tenants = await listEnvironmentTenantDefaultStores(env, {
+      afterTenantId: job.cursor_tenant_id ?? undefined,
+      limit: JOB_BATCH_SIZE + 1,
+      concurrency: 4,
+    });
     const batch = tenants.slice(0, JOB_BATCH_SIZE);
     let cursor = job.cursor_tenant_id;
     let succeeded = 0;
@@ -391,27 +386,27 @@ export async function processProviderReprojectionJobs(
         const outcome = await projectTenant(
           env,
           job.plugin_id,
-          tenant.id,
+          tenant.tenantId,
           config,
           job.desired_revision
         );
         await recordTenantState(adapter, {
           pluginId: job.plugin_id,
-          tenantId: tenant.id,
+          tenantId: tenant.tenantId,
           revision: job.desired_revision,
           source: outcome.source,
           status: outcome.status,
           error: null,
           now,
         });
-        cursor = tenant.id;
+        cursor = tenant.tenantId;
         if (outcome.status === 'applied') succeeded += 1;
         else skipped += 1;
       } catch (error) {
-        failure = { tenantId: tenant.id, code: errorCode(error) };
+        failure = { tenantId: tenant.tenantId, code: errorCode(error) };
         await recordTenantState(adapter, {
           pluginId: job.plugin_id,
-          tenantId: tenant.id,
+          tenantId: tenant.tenantId,
           revision: job.desired_revision,
           source: 'inherited',
           status: 'failed',
@@ -427,6 +422,7 @@ export async function processProviderReprojectionJobs(
       await adapter.execute(
         `UPDATE provider_reprojection_jobs
             SET status = ?, cursor_tenant_id = ?,
+                total_tenants = MAX(total_tenants, processed_tenants + ?),
                 processed_tenants = processed_tenants + ?,
                 succeeded_tenants = succeeded_tenants + ?,
                 skipped_tenants = skipped_tenants + ?, failed_tenants = 1,
@@ -437,6 +433,7 @@ export async function processProviderReprojectionJobs(
         [
           terminal ? 'failed' : 'pending',
           cursor,
+          succeeded + skipped,
           succeeded + skipped,
           succeeded,
           skipped,
@@ -462,6 +459,7 @@ export async function processProviderReprojectionJobs(
     await adapter.execute(
       `UPDATE provider_reprojection_jobs
           SET status = ?, cursor_tenant_id = ?,
+              total_tenants = MAX(total_tenants, processed_tenants + ?),
               processed_tenants = processed_tenants + ?,
               succeeded_tenants = succeeded_tenants + ?,
               skipped_tenants = skipped_tenants + ?, failed_tenants = 0,
@@ -472,6 +470,7 @@ export async function processProviderReprojectionJobs(
       [
         complete ? 'completed' : 'pending',
         cursor,
+        succeeded + skipped,
         succeeded + skipped,
         succeeded,
         skipped,

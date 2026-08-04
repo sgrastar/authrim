@@ -12,13 +12,11 @@
  * V2 Architecture:
  * - Explicit initialization with Durable Storage bulk load
  * - Granular storage with prefix-based keys
- * - Audit logging with batch flush and synchronous critical events
- * - D1 retry for improved reliability
+ * - Structured operational logging without external persistence coupling
  *
  * Storage Strategy:
  * - Durable Storage as primary (for atomic operations)
  * - In-memory cache for hot data (active CIBA requests)
- * - Profile-controlled D1 persistence, recovery, and audit trail
  * - Dual mapping: auth_req_id → metadata, user_code → auth_req_id
  */
 
@@ -26,18 +24,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types/env';
 import type { CIBARequestMetadata } from '../types/oidc';
 import { isCIBARequestExpired } from '../utils/ciba';
-import { retryD1Operation } from '../utils/d1-retry';
-import { createAuditLog } from '../utils/audit-log';
 import { createLogger, type Logger } from '../utils/logger';
-import {
-  resolveAuthCorePersistenceContextFromEnv,
-  resolveAuthCorePersistenceSourceFromContext,
-  type AuthCorePersistenceContext,
-} from '../services/auth-core-persistence-context';
-import {
-  createCIBARequestPersistenceAdapter,
-  type CIBARequestPersistenceAdapter,
-} from '../services/ciba-request-persistence';
 
 /**
  * CIBA Request V2 - Enhanced state for V2 architecture
@@ -88,11 +75,6 @@ export class CIBARequestStore {
   // V2: Initialization state
   private initialized: boolean = false;
 
-  // V2: Async audit log buffering
-  private pendingAuditLogs: AuditLogEntry[] = [];
-  private flushScheduled: boolean = false;
-  private readonly AUDIT_FLUSH_DELAY = 100; // ms
-  private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
   constructor(state: DurableObjectState, env: Env) {
@@ -381,18 +363,7 @@ export class CIBARequestStore {
       await this.saveUserMapping(metadata.user_code, metadata.auth_req_id);
     }
 
-    // Persist to cold storage (backup/recovery)
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.storeRequest(v2Metadata),
-        'CIBARequestStore.storeCIBARequest',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (non-critical, fire-and-forget)
-    void this.logToD1({
+    this.logEvent({
       action: 'ciba_request_created',
       authReqId: metadata.auth_req_id,
       userCode: metadata.user_code,
@@ -448,31 +419,6 @@ export class CIBARequestStore {
       return storedMetadata;
     }
 
-    // Fallback to cold persistence (for recovery after data loss)
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      const persisted = await persistence.getByAuthReqId(authReqId);
-
-      if (persisted) {
-        const v2Metadata: CIBARequestV2 = { ...persisted };
-
-        // Check if expired
-        if (isCIBARequestExpired(v2Metadata)) {
-          await this.deleteCIBARequest(authReqId);
-          return null;
-        }
-
-        // Warm up cache and Durable Storage
-        this.cibaRequests.set(authReqId, v2Metadata);
-        if (v2Metadata.user_code) {
-          this.userCodeToAuthReqId.set(v2Metadata.user_code, authReqId);
-          await this.saveUserMapping(v2Metadata.user_code, authReqId);
-        }
-        await this.saveRequest(authReqId, v2Metadata);
-        return v2Metadata;
-      }
-    }
-
     return null;
   }
 
@@ -492,29 +438,6 @@ export class CIBARequestStore {
       return this.getByAuthReqId(authReqId);
     }
 
-    // Fallback to cold persistence (for recovery)
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      const persisted = await persistence.getByUserCode(userCode);
-
-      if (persisted) {
-        const v2Metadata: CIBARequestV2 = { ...persisted };
-
-        // Check if expired
-        if (isCIBARequestExpired(v2Metadata)) {
-          await this.deleteCIBARequest(v2Metadata.auth_req_id);
-          return null;
-        }
-
-        // Warm up cache and Durable Storage
-        this.cibaRequests.set(v2Metadata.auth_req_id, v2Metadata);
-        this.userCodeToAuthReqId.set(userCode, v2Metadata.auth_req_id);
-        await this.saveRequest(v2Metadata.auth_req_id, v2Metadata);
-        await this.saveUserMapping(userCode, v2Metadata.auth_req_id);
-        return v2Metadata;
-      }
-    }
-
     return null;
   }
 
@@ -531,31 +454,6 @@ export class CIBARequestStore {
         !isCIBARequestExpired(metadata)
       ) {
         return metadata;
-      }
-    }
-
-    // Fallback to cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      const persisted = await persistence.getByLoginHint(loginHint, clientId);
-
-      if (persisted) {
-        const v2Metadata: CIBARequestV2 = { ...persisted };
-
-        // Check if expired
-        if (isCIBARequestExpired(v2Metadata)) {
-          await this.deleteCIBARequest(v2Metadata.auth_req_id);
-          return null;
-        }
-
-        // Warm up cache and Durable Storage
-        this.cibaRequests.set(v2Metadata.auth_req_id, v2Metadata);
-        if (v2Metadata.user_code) {
-          this.userCodeToAuthReqId.set(v2Metadata.user_code, v2Metadata.auth_req_id);
-          await this.saveUserMapping(v2Metadata.user_code, v2Metadata.auth_req_id);
-        }
-        await this.saveRequest(v2Metadata.auth_req_id, v2Metadata);
-        return v2Metadata;
       }
     }
 
@@ -603,18 +501,7 @@ export class CIBARequestStore {
     // V2: Update in Durable Storage
     await this.saveRequest(authReqId, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.approveRequest(authReqId, userId, sub, nonce),
-        'CIBARequestStore.approveCIBARequest',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'ciba_request_approved',
       authReqId: authReqId,
       userCode: metadata.user_code,
@@ -648,18 +535,7 @@ export class CIBARequestStore {
     // V2: Update in Durable Storage
     await this.saveRequest(authReqId, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.denyRequest(authReqId),
-        'CIBARequestStore.denyCIBARequest',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'ciba_request_denied',
       authReqId: authReqId,
       userCode: metadata.user_code,
@@ -687,23 +563,6 @@ export class CIBARequestStore {
 
     // V2: Update in Durable Storage
     await this.saveRequest(authReqId, metadata);
-
-    // Update in cold persistence (periodic update to reduce writes)
-    if (metadata.poll_count % 5 === 0) {
-      const persistence = await this.ensureRequestPersistence();
-      if (persistence) {
-        await retryD1Operation(
-          () =>
-            persistence.updatePoll(
-              authReqId,
-              metadata.last_poll_at ?? Date.now(),
-              metadata.poll_count ?? 0
-            ),
-          'CIBARequestStore.updatePollTime',
-          { maxRetries: 2 }
-        );
-      }
-    }
   }
 
   /**
@@ -734,18 +593,7 @@ export class CIBARequestStore {
     // V2: Update in Durable Storage
     await this.saveRequest(authReqId, metadata);
 
-    // Update in cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.markTokenIssued(authReqId, metadata.token_issued_at ?? Date.now()),
-        'CIBARequestStore.markTokenIssued',
-        { maxRetries: 3 }
-      );
-    }
-
-    // V2: Audit log (critical - synchronous)
-    await this.logCritical({
+    this.logEvent({
       action: 'ciba_token_issued',
       authReqId: authReqId,
       userCode: metadata.user_code,
@@ -771,103 +619,17 @@ export class CIBARequestStore {
 
     // V2: Delete from Durable Storage
     await this.deleteRequestFromStorage(authReqId, userCode);
-
-    // Delete from cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.deleteRequest(authReqId),
-        'CIBARequestStore.deleteCIBARequest',
-        { maxRetries: 2 }
-      );
-    }
   }
 
-  /**
-   * Log non-critical events (batched, async) - V2
-   */
-  private async logToD1(entry: AuditLogEntry): Promise<void> {
-    this.pendingAuditLogs.push(entry);
-    this.scheduleAuditFlush();
-  }
-
-  /**
-   * Log critical events synchronously - V2
-   */
-  private async logCritical(entry: AuditLogEntry): Promise<void> {
-    const tenantId = this.getTenantIdForAudit(`ciba.${entry.action}`);
-    if (!tenantId) {
-      return;
-    }
-    await createAuditLog(this.env, {
-      tenantId,
-      userId: entry.userId ?? 'system',
+  private logEvent(entry: AuditLogEntry): void {
+    this.log.info('CIBA state changed', {
       action: `ciba.${entry.action}`,
-      resource: 'ciba_request',
-      resourceId: entry.authReqId,
-      ipAddress: 'system',
-      userAgent: 'CIBARequestStore',
-      metadata: JSON.stringify(entry.metadata ?? {}),
-      severity: 'warning',
+      tenantId: this.tenantId ?? 'unknown',
+      authReqId: entry.authReqId,
+      clientId: entry.clientId,
+      userId: entry.userId,
+      ...entry.metadata,
     });
-  }
-
-  /**
-   * Schedule batch flush of audit logs - V2
-   */
-  private scheduleAuditFlush(): void {
-    if (this.flushScheduled) {
-      return;
-    }
-
-    this.flushScheduled = true;
-    setTimeout(() => {
-      void this.flushAuditLogs();
-    }, this.AUDIT_FLUSH_DELAY);
-  }
-
-  /**
-   * Flush pending audit logs to D1 - V2
-   */
-  private async flushAuditLogs(): Promise<void> {
-    this.flushScheduled = false;
-
-    if (this.pendingAuditLogs.length === 0) {
-      return;
-    }
-
-    const logsToFlush = [...this.pendingAuditLogs];
-    this.pendingAuditLogs = [];
-
-    try {
-      await Promise.all(
-        logsToFlush.map((entry) => {
-          const action = `ciba.${entry.action}`;
-          const tenantId = this.getTenantIdForAudit(action);
-          if (!tenantId) {
-            return Promise.resolve();
-          }
-          return createAuditLog(this.env, {
-            tenantId,
-            userId: entry.userId ?? 'system',
-            action,
-            resource: 'ciba_request',
-            resourceId: entry.authReqId,
-            ipAddress: 'system',
-            userAgent: 'CIBARequestStore',
-            metadata: JSON.stringify(entry.metadata ?? {}),
-            severity: 'info',
-          });
-        })
-      );
-    } catch (error) {
-      this.log.error('Failed to flush audit logs', {}, error as Error);
-      // Re-queue (limited to prevent memory leak)
-      if (this.pendingAuditLogs.length < 100) {
-        this.pendingAuditLogs.push(...logsToFlush);
-        this.scheduleAuditFlush();
-      }
-    }
   }
 
   /**
@@ -916,21 +678,11 @@ export class CIBARequestStore {
       await this.deleteCIBARequest(authReqId);
 
       // Log expiration
-      void this.logToD1({
+      this.logEvent({
         action: 'ciba_request_expired',
         authReqId: authReqId,
         timestamp: now,
       });
-    }
-
-    // Clean up expired requests in cold persistence
-    const persistence = await this.ensureRequestPersistence();
-    if (persistence) {
-      await retryD1Operation(
-        () => persistence.deleteExpired(now),
-        'CIBARequestStore.alarm.cleanup',
-        { maxRetries: 2 }
-      );
     }
 
     this.log.info('Cleaned up expired CIBA requests', { count: expiredRequests.length });
@@ -942,48 +694,11 @@ export class CIBARequestStore {
     await this.state.storage.setAlarm(Date.now() + CLEANUP_INTERVAL_MS);
   }
 
-  private async ensurePersistenceContext(): Promise<AuthCorePersistenceContext> {
-    if (this.persistenceContext) {
-      return this.persistenceContext;
-    }
-
-    // Runtime policy is deployment configuration, not durable CIBA request state. Keeping a
-    // snapshot in DO Storage made profile changes ineffective for existing actors.
-    const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
-    this.persistenceContext = resolved;
-    return resolved;
-  }
-
-  private async initializeRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
-    const context = await this.ensurePersistenceContext();
-    if (context.transientAuth?.deviceCibaColdPersistence === 'disabled') {
-      return null;
-    }
-
-    const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    if (!this.tenantId) {
-      throw new Error('CIBA request persistence requires tenant context');
-    }
-    return createCIBARequestPersistenceAdapter(source, 'ciba-request-store', this.tenantId);
-  }
-
-  private async ensureRequestPersistence(): Promise<CIBARequestPersistenceAdapter | null> {
-    return this.initializeRequestPersistence();
-  }
-
   private configureTenantFromRequest(request: Request): void {
     const tenantId = request.headers.get('X-Authrim-Tenant-Id')?.trim();
     if (tenantId) {
       this.setTenantId(tenantId);
     }
-  }
-
-  private getTenantIdForAudit(action: string): string | null {
-    if (!this.tenantId) {
-      this.log.error('Cannot create CIBA audit log: tenant context is missing', { action });
-      return null;
-    }
-    return this.tenantId;
   }
 
   private setTenantId(tenantId: string): void {

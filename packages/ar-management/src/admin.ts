@@ -44,11 +44,8 @@ import {
   buildTenantSystemSettingsKey,
   getTenantMetadataContextFromHono,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
-  BUILTIN_RUNTIME_PROFILES,
-  resolveTransientAuthStoragePolicy,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
-  type StorageProfile,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
@@ -1348,12 +1345,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessions = await authCtx.repositories.session.findByUserId(userId);
-    await Promise.all(
-      sessions.map((session) => authCtx.repositories.sessionClient.deleteBySessionId(session.id))
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
+    await Promise.all(
+      sessions.map((session) =>
+        authCtx.coreAdapter.execute(
+          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
+          [tenantId, session.id]
+        )
+      )
+    );
+
     await Promise.all([
-      authCtx.repositories.session.deleteByUserId(userId),
+      authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+        tenantId,
+        userId,
+      ]),
       authCtx.repositories.passkey.deleteByUserId(userId),
       authCtx.repositories.role.removeAllRolesFromUser(userId),
       authCtx.coreAdapter.execute(
@@ -2757,18 +2766,17 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const createUser = body.create_user !== false;
+    const tenantMetadata = getTenantMetadataContextFromHono(c);
+    const legacyStorageProfileId = (
+      tenantMetadata as (typeof tenantMetadata & { storageProfileId?: string }) | undefined
+    )?.storageProfileId;
     const tenantD1 =
-      getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
-    const effectiveStorageProfileId =
-      getTenantMetadataContextFromHono(c)?.storageProfileId ?? 'unknown';
-    const effectiveStorageProfile = BUILTIN_RUNTIME_PROFILES.find(
-      (profile): profile is StorageProfile =>
-        profile.kind === 'storage' && profile.id === effectiveStorageProfileId
-    );
-    if (!effectiveStorageProfile) {
-      throw new Error('test_email_code_effective_storage_profile_unavailable');
-    }
-    const transientAuth = resolveTransientAuthStoragePolicy(effectiveStorageProfile);
+      tenantMetadata?.route?.allocationScope === 'tenant_exclusive' ||
+      legacyStorageProfileId === 'builtin:storage:tenant-d1';
+    const effectiveStorageProfile = {
+      id: tenantD1 ? 'builtin:storage:tenant-d1' : 'builtin:storage:standard',
+      sessionColdPersistence: tenantD1 ? 'disabled' : 'enabled',
+    } as const;
     let resolvedOtpUser: CanonicalOtpLoginUser | null = null;
 
     if (tenantD1) {
@@ -2931,7 +2939,7 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         userId: userId,
         runtime_profile: {
           storage_profile_id: effectiveStorageProfile.id,
-          session_cold_persistence: transientAuth.sessionColdPersistence,
+          session_cold_persistence: effectiveStorageProfile.sessionColdPersistence,
         },
       },
       201

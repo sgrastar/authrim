@@ -16,6 +16,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-lib-core';
 
+type SamlTestEnv = Partial<Env> & {
+  TDB_TEST_CORE?: D1Database;
+  TDB_TEST_PII?: D1Database;
+};
+
 const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
   residency: {
     version: 1,
@@ -115,6 +120,50 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       module: () => mockLogger,
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
+    resolveAccountDataContextByIdentifier: vi.fn(async () => {
+      const adapter = (linkedIdentity: boolean) => ({
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn(async (sql: string) =>
+          linkedIdentity && sql.includes('FROM linked_identities')
+            ? {
+                id: 'linked-identity-1',
+                user_id: 'user-001',
+                provider_user_id: 'saml-user@example.com',
+              }
+            : null
+        ),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        transaction: vi.fn(),
+        batch: vi.fn().mockResolvedValue([]),
+        isHealthy: vi.fn().mockResolvedValue(true),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn().mockResolvedValue(undefined),
+      });
+      return { coreDb: adapter(false), piiDb: adapter(true) };
+    }),
+    CanonicalRuntimeUserStore: class {
+      async findById() {
+        return {
+          id: 'user-001',
+          email: 'user@example.com',
+          email_verified: 1,
+          active: true,
+          lifecycle_state: 'active',
+        };
+      }
+
+      async findByEmail() {
+        return null;
+      }
+    },
     resolveRuntimeIdentityMappingBinding: vi
       .fn()
       .mockResolvedValue(createTestSAMLInboundMappingBinding()),
@@ -216,7 +265,7 @@ function createSAMLResponseWithConditions(options: {
 }
 
 describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
-  let mockEnv: Partial<Env>;
+  let mockEnv: SamlTestEnv;
   // Track used assertions for OneTimeUse testing
   let usedAssertions: Map<string, string>;
 
@@ -246,7 +295,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
       AUTHRIM_CONFIG: createTestConfigKv(),
-      DB: {
+      TDB_TEST_CORE: {
         prepare: vi.fn().mockImplementation(function () {
           return {
             bind: vi.fn().mockReturnThis(),
@@ -260,12 +309,20 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
           .mockImplementation(async (statements: unknown[]) =>
             statements.map(() => ({ success: true, meta: { changes: 1 } }))
           ),
-      } as unknown as Env['DB'],
-      DB_PII: {
-        prepare: vi.fn().mockImplementation(function () {
+      } as unknown as D1Database,
+      TDB_TEST_PII: {
+        prepare: vi.fn().mockImplementation(function (sql: string) {
           return {
             bind: vi.fn().mockReturnThis(),
-            first: vi.fn().mockResolvedValue(null),
+            first: vi.fn().mockResolvedValue(
+              sql.includes('FROM linked_identities')
+                ? {
+                    id: 'linked-identity-1',
+                    user_id: 'user-001',
+                    provider_user_id: 'saml-user@example.com',
+                  }
+                : null
+            ),
             all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
@@ -275,7 +332,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
           .mockImplementation(async (statements: unknown[]) =>
             statements.map(() => ({ success: true, meta: { changes: 1 } }))
           ),
-      } as unknown as Env['DB_PII'],
+      } as unknown as D1Database,
       SAML_REQUEST_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-store-id'),
         get: vi.fn().mockReturnValue({
@@ -299,6 +356,7 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
         }),
       } as unknown as Env['NONCE_STORE'],
     };
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
   });
 
   /**

@@ -4276,42 +4276,6 @@ const signInConfirmationPolicies = new Map<string, DevSignInConfirmationPolicy>(
 
 const runtimeProfiles = new Map<string, Record<string, unknown>>([
 	[
-		'storage:builtin:shared-d1',
-		{
-			id: 'builtin:shared-d1',
-			kind: 'storage',
-			label: 'Shared D1',
-			description: 'Default shared D1 storage profile for compact deployments.',
-			builtin: true,
-			version: 1,
-			slices: {
-				identity_core: { type: 'd1', bindingRef: 'DB' },
-				identity_pii: { type: 'd1', bindingRef: 'DB' },
-				custom_claims: { type: 'd1', bindingRef: 'DB' },
-				consent: { type: 'd1', bindingRef: 'DB' },
-				authorization: { type: 'd1', bindingRef: 'DB' }
-			}
-		}
-	],
-	[
-		'storage:builtin:tenant-d1',
-		{
-			id: 'builtin:tenant-d1',
-			kind: 'storage',
-			label: 'Tenant D1',
-			description: 'Tenant-isolated D1 storage for larger or regulated deployments.',
-			builtin: true,
-			version: 1,
-			slices: {
-				identity_core: { type: 'd1', bindingRef: 'TENANT_CORE_DB' },
-				identity_pii: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				custom_claims: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				consent: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				authorization: { type: 'd1', bindingRef: 'TENANT_AUTHZ_DB' }
-			}
-		}
-	],
-	[
 		'audit:builtin:audit-archive',
 		{
 			id: 'builtin:audit-archive',
@@ -4375,7 +4339,6 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 ]);
 
 let runtimeProfileDefaults = {
-	storageProfileId: 'builtin:shared-d1',
 	auditProfileId: 'builtin:audit-archive',
 	residencyProfileId: 'builtin:jp-primary'
 };
@@ -5083,17 +5046,7 @@ function runtimeReferenceCatalog() {
 
 function runtimeActivationStatus(profile: Record<string, unknown>) {
 	const id = String(profile.id || '');
-	const blocked = id.includes('tenant-d1');
 	const warning = id.includes('http-export');
-	if (blocked) {
-		return {
-			state: 'blocked',
-			activatable: false,
-			severity: 'error',
-			blockingReasons: ['Tenant D1 bindings are not configured in the dev mock runtime.'],
-			warnings: []
-		};
-	}
 	if (warning) {
 		return {
 			state: 'warning',
@@ -5130,131 +5083,6 @@ function runtimeReferenceStatus(profile: Record<string, unknown>) {
 	return [];
 }
 
-function runtimeStoragePolicy() {
-	const slicePolicies = {
-		identity_core: {
-			slice: 'identity_core',
-			boundaryClass: 'auth_core',
-			tenantOverrideAllowed: false,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		identity_pii: {
-			slice: 'identity_pii',
-			boundaryClass: 'pii',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		custom_claims: {
-			slice: 'custom_claims',
-			boundaryClass: 'custom_extension',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		consent: {
-			slice: 'consent',
-			boundaryClass: 'pii',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		authorization: {
-			slice: 'authorization',
-			boundaryClass: 'authorization',
-			tenantOverrideAllowed: false,
-			d1Default: true,
-			nonD1OptionRequired: false
-		}
-	};
-	return {
-		authCoreSlice: 'identity_core',
-		authCoreSlices: ['identity_core'],
-		slicePolicies,
-		environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-		tenantDatabaseStatsStatus: {
-			available: true,
-			staleAfterHours: 24,
-			cutoffIso: new Date(NOW - 86400000).toISOString(),
-			summary: {
-				active_tenant_core_databases: 4,
-				stats_rows: 12,
-				missing_stats_count: 1,
-				stale_stats_count: 2,
-				warning_count: 2,
-				strong_warning_count: 1,
-				stale_file_size_count: 1,
-				unavailable_file_size_count: 0
-			},
-			attentionRequired: true
-		},
-		runtimeRegistrySecurityNotifications: {
-			available: true,
-			attentionRequired: false,
-			summary: {
-				pending_count: 1,
-				failed_count: 0,
-				dead_letter_count: 0,
-				critical_count: 0,
-				high_count: 1,
-				latest_created_at: new Date(NOW - 3600000).toISOString()
-			}
-		},
-		capabilityStatus: {
-			'builtin:shared-d1': {
-				profileId: 'builtin:shared-d1',
-				deploymentProfile: 'shared-d1',
-				mvpReady: true,
-				unsupportedCount: 0,
-				partialCount: 0,
-				capabilities: []
-			},
-			'builtin:tenant-d1': {
-				profileId: 'builtin:tenant-d1',
-				deploymentProfile: 'tenant-d1',
-				mvpReady: false,
-				unsupportedCount: 1,
-				partialCount: 1,
-				capabilities: [
-					{
-						id: 'tenant-core-binding',
-						label: 'Tenant core D1 binding',
-						state: 'unsupported',
-						criticality: 'security_critical',
-						detail: 'TENANT_CORE_DB is not configured in dev mock.'
-					},
-					{
-						id: 'tenant-stats',
-						label: 'Tenant statistics',
-						state: 'partial',
-						criticality: 'admin_critical',
-						detail: 'Stats are sample data only.'
-					}
-				]
-			}
-		},
-		tenantOverrideEligibility: {
-			'builtin:shared-d1': {
-				authCoreSlice: 'identity_core',
-				authCoreSlices: ['identity_core'],
-				slicePolicies,
-				environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-				tenantOverrideAllowed: true
-			},
-			'builtin:tenant-d1': {
-				authCoreSlice: 'identity_core',
-				authCoreSlices: ['identity_core'],
-				slicePolicies,
-				environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-				tenantOverrideAllowed: false,
-				violationCode: 'auth_core_differs',
-				reason: 'Auth core plane differs from the environment default.'
-			}
-		}
-	};
-}
-
 function runtimeProfilesByKind(kind: string): Record<string, unknown>[] {
 	return [...runtimeProfiles.values()].filter((profile) => profile.kind === kind);
 }
@@ -5268,19 +5096,17 @@ function runtimeProfileListPayload(kind: string) {
 		profiles.map((profile) => [String(profile.id), runtimeReferenceStatus(profile)])
 	);
 	return {
+		registry_backend: 'kv',
+		include_builtins: true,
 		profiles: { [kind]: profiles },
 		reference_status: { [kind]: referenceStatusById },
 		activation_status: { [kind]: activationById },
 		reference_management: runtimeReferenceManagement(),
-		reference_catalog: runtimeReferenceCatalog(),
-		...(kind === 'storage' ? { storage_policy: runtimeStoragePolicy() } : {})
+		reference_catalog: runtimeReferenceCatalog()
 	};
 }
 
 function runtimeDefaultsPayload() {
-	const storage = runtimeProfiles.get(
-		runtimeProfileKey('storage', runtimeProfileDefaults.storageProfileId)
-	);
 	const audit = runtimeProfiles.get(
 		runtimeProfileKey('audit', runtimeProfileDefaults.auditProfileId)
 	);
@@ -5288,14 +5114,17 @@ function runtimeDefaultsPayload() {
 		runtimeProfileKey('residency', runtimeProfileDefaults.residencyProfileId)
 	);
 	return {
+		registry_backend: 'kv',
 		defaults: runtimeProfileDefaults,
 		effective: {
-			storage: storage ?? null,
 			audit: audit ?? null,
 			residency: residency ?? null
 		},
+		reference_status: {
+			audit: audit ? runtimeReferenceStatus(audit) : [],
+			residency: residency ? runtimeReferenceStatus(residency) : []
+		},
 		activation_status: {
-			storage: storage ? runtimeActivationStatus(storage) : runtimeActivationStatus({}),
 			audit: audit ? runtimeActivationStatus(audit) : runtimeActivationStatus({}),
 			residency: residency ? runtimeActivationStatus(residency) : runtimeActivationStatus({})
 		},
@@ -12148,7 +11977,7 @@ async function handleLoggingPolicies(
 						log_type: 'security',
 						plane: 'primary',
 						destination_id: 'DB',
-						destination_name: 'Shared D1',
+						destination_name: 'Shared-pool assignment',
 						destination_provider: 'd1',
 						enabled: 1,
 						managed_by: 'setup',
@@ -12641,11 +12470,18 @@ async function handleRuntimeProfiles(
 	if (segments[1] === 'defaults') {
 		if (method === 'PUT') {
 			const input = await readJson(event.request);
+			const allowedKeys = new Set(['auditProfileId', 'residencyProfileId']);
+			if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+				return json({ error: 'invalid_request', error_description: 'Invalid defaults body' }, 400);
+			}
+			const updated: string[] = [];
+			if (typeof input.auditProfileId === 'string') {
+				updated.push('infra.default_audit_profile_id');
+			}
+			if (typeof input.residencyProfileId === 'string') {
+				updated.push('infra.default_residency_profile_id');
+			}
 			runtimeProfileDefaults = {
-				storageProfileId:
-					typeof input.storageProfileId === 'string'
-						? input.storageProfileId
-						: runtimeProfileDefaults.storageProfileId,
 				auditProfileId:
 					typeof input.auditProfileId === 'string'
 						? input.auditProfileId
@@ -12655,19 +12491,36 @@ async function handleRuntimeProfiles(
 						? input.residencyProfileId
 						: runtimeProfileDefaults.residencyProfileId
 			};
-			return json(runtimeDefaultsPayload());
+			return json({ ...runtimeDefaultsPayload(), updated });
 		}
 		return json(runtimeDefaultsPayload());
 	}
 
 	if (segments.length === 1 && method === 'GET') {
-		const kind = event.url.searchParams.get('kind') || 'audit';
-		return json(runtimeProfileListPayload(kind));
+		const kind = event.url.searchParams.get('kind');
+		if (kind && kind !== 'audit' && kind !== 'residency') {
+			return json({ error: 'invalid_request', error_description: 'Invalid profile kind' }, 400);
+		}
+		if (kind) return json(runtimeProfileListPayload(kind));
+		const audit = runtimeProfileListPayload('audit');
+		const residency = runtimeProfileListPayload('residency');
+		return json({
+			registry_backend: 'kv',
+			include_builtins: true,
+			profiles: { ...audit.profiles, ...residency.profiles },
+			reference_status: { ...audit.reference_status, ...residency.reference_status },
+			activation_status: { ...audit.activation_status, ...residency.activation_status },
+			reference_management: runtimeReferenceManagement(),
+			reference_catalog: runtimeReferenceCatalog()
+		});
 	}
 
 	const kind = segments[1];
 	const id = decodeURIComponent(segments[2] || '');
 	if (!kind || !id) return null;
+	if (kind !== 'audit' && kind !== 'residency') {
+		return json({ error: 'invalid_request', error_description: 'Invalid profile kind' }, 400);
+	}
 
 	const key = runtimeProfileKey(kind, id);
 	if (method === 'GET') {
@@ -12678,8 +12531,7 @@ async function handleRuntimeProfiles(
 			reference_status: runtimeReferenceStatus(profile),
 			activation_status: runtimeActivationStatus(profile),
 			reference_management: runtimeReferenceManagement(),
-			reference_catalog: runtimeReferenceCatalog(),
-			...(kind === 'storage' ? { storage_policy: runtimeStoragePolicy() } : {})
+			reference_catalog: runtimeReferenceCatalog()
 		});
 	}
 

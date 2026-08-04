@@ -44,6 +44,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {},
+  })),
+  prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+}));
+
 vi.mock('../admin-tenant-access', () => ({
   requirePlatformTenantManagementAuthority: mocks.authority,
 }));
@@ -64,7 +74,7 @@ vi.mock('../admin-tenants', () => ({
 }));
 
 import {
-  adminTenantCloneHandler,
+  adminTenantCloneHandler as publicAdminTenantCloneHandler,
   classifySettingsKey,
   CLIENT_CREDENTIAL_COLUMNS,
   CLIENT_NON_CREDENTIAL_COLUMNS,
@@ -72,6 +82,7 @@ import {
   OAUTH_CLIENT_CLONE_COLUMNS,
   OAUTH_CLIENT_NON_CLONE_COLUMNS,
   prepareTenantCloneForProvisioning,
+  executePreparedTenantClone,
   sanitizeClientJwks,
   sanitizeCopiedSettingsValue,
 } from '../admin-tenant-clone';
@@ -115,9 +126,45 @@ function context(body: unknown, env: Record<string, unknown>) {
   } as never;
 }
 
+async function adminTenantCloneHandler(c: Parameters<typeof publicAdminTenantCloneHandler>[0]) {
+  let requestBody: Record<string, unknown>;
+  try {
+    requestBody = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return publicAdminTenantCloneHandler(c);
+  }
+  const env = c.env as unknown as Record<string, unknown>;
+  env.KEY_MANAGER ??= {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn(() => ({ rotateKeysRpc: vi.fn(async () => undefined) })),
+  };
+  return executePreparedTenantClone(c, {
+    sourceTenantId: 'source',
+    requestBody: requestBody as never,
+    sourceAdapter: mocks.source as never,
+    targetAdapter: mocks.target as never,
+    adminAdapter: mocks.admin as never,
+    actorId: 'admin-actor',
+  });
+}
+
 describe('admin tenant clone', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    for (const mock of [
+      mocks.source.query,
+      mocks.source.queryOne,
+      mocks.source.execute,
+      mocks.target.query,
+      mocks.target.queryOne,
+      mocks.target.execute,
+      mocks.admin.query,
+      mocks.admin.queryOne,
+      mocks.admin.execute,
+      mocks.audit,
+    ]) {
+      mock.mockReset();
+    }
     mocks.authority.mockResolvedValue(null);
     mocks.tenantGuard.mockResolvedValue(null);
     mocks.singleTenant.mockReturnValue(false);
@@ -277,7 +324,6 @@ describe('admin tenant clone', () => {
             'tenant.name': 'Source',
             'tenant.allowed_origins': 'https://source.example',
             'tenant.allowed_domains': 'source.example',
-            'tenant.storage_profile_id': 'source-storage',
             'tenant.audit_profile_id': 'source-audit',
             'tenant.residency_profile_id': 'source-residency',
             'tenant.logo_uri': 'https://cdn.example/logo.svg',
@@ -467,19 +513,20 @@ describe('admin tenant clone', () => {
     expect(body.cloned_items).toMatchObject({ settings: 4, secret_settings_skipped: 1 });
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
-      'tenant.cloned',
-      'tenant',
-      'destination',
-      expect.objectContaining({ signing_keys: 'generated' })
+      expect.objectContaining({
+        action: 'tenant.clone.prepared',
+        tenantId: 'destination',
+        resource: 'tenant',
+        resourceId: 'destination',
+      })
     );
   });
 
   it('starts the Control-plane saga instead of reserving a preallocated clone slot', async () => {
-    const response = await adminTenantCloneHandler(
+    const response = await publicAdminTenantCloneHandler(
       context(
         { id: 'destination', name: 'Destination', copy: { settings: false, roles: false } },
         {
-          DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
           SETTINGS: kvNamespace(),
           AUTHRIM_CONFIG: kvNamespace(),
           ENVIRONMENT: 'test',
@@ -634,7 +681,6 @@ describe('admin tenant clone', () => {
       'settings:tenant:source:tenant': JSON.stringify({
         'tenant.allowed_origins': 'https://source.example',
         'tenant.allowed_domains': 'source.example',
-        'tenant.storage_profile_id': 'source-storage',
         'tenant.audit_profile_id': 'source-audit',
         'tenant.residency_profile_id': 'source-residency',
       }),
@@ -642,7 +688,6 @@ describe('admin tenant clone', () => {
         'tenant.allowed_origins': 'https://destination.example',
         'tenant.allowed_domains': 'destination.example',
         'tenant.allowed_identifiers': 'destination',
-        'tenant.storage_profile_id': 'destination-storage',
         'tenant.audit_profile_id': 'destination-audit',
         'tenant.residency_profile_id': 'destination-residency',
       }),
@@ -660,7 +705,6 @@ describe('admin tenant clone', () => {
       'tenant.allowed_origins': 'https://destination.example',
       'tenant.allowed_domains': 'destination.example',
       'tenant.allowed_identifiers': 'destination',
-      'tenant.storage_profile_id': 'destination-storage',
       'tenant.audit_profile_id': 'destination-audit',
       'tenant.residency_profile_id': 'destination-residency',
     });
@@ -674,7 +718,6 @@ describe('admin tenant clone', () => {
         'tenant.allowed_domains': 'source.example',
         'tenant.allowed_identifiers': 'https://source.example',
         'tenant.base_domain': 'source.example',
-        'tenant.storage_profile_id': 'source-storage',
         'tenant.audit_profile_id': 'source-audit',
         'tenant.residency_profile_id': 'source-residency',
         'tenant.default_id': 'source',
@@ -724,7 +767,7 @@ describe('admin tenant clone', () => {
     expect(body.cloned_items.unclassified_settings_skipped).toBe(1);
   });
 
-  it('records preparation before activation and success only after activation', async () => {
+  it('records preparation without activating outside the Control Plane saga', async () => {
     const response = await adminTenantCloneHandler(
       context(
         { id: 'destination', name: 'Destination' },
@@ -733,34 +776,12 @@ describe('admin tenant clone', () => {
     );
 
     expect(response.status).toBe(201);
-    expect(mocks.provision).toHaveBeenCalledWith(
+    expect(mocks.provision).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ id: 'destination', deferActivation: true })
-    );
-    expect(mocks.rotateSigningKey.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.audit.mock.invocationCallOrder[0]!
-    );
-    expect(mocks.audit.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.activate.mock.invocationCallOrder[0]!
-    );
-    expect(mocks.activate.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.audit.mock.invocationCallOrder[1]!
-    );
-    expect(mocks.audit).toHaveBeenNthCalledWith(
-      1,
-      expect.anything(),
-      'tenant.clone.prepared',
-      'tenant',
-      'destination',
-      expect.anything()
-    );
-    expect(mocks.audit).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      'tenant.cloned',
-      'tenant',
-      'destination',
-      expect.anything()
+      expect.objectContaining({ action: 'tenant.clone.prepared', tenantId: 'destination' })
     );
   });
 
@@ -776,10 +797,13 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(500);
     expect(mocks.activate).not.toHaveBeenCalled();
-    expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
+    expect(mocks.rollback).not.toHaveBeenCalled();
+    expect(
+      mocks.target.execute.mock.calls.some(([sql]) => String(sql).startsWith('DELETE FROM '))
+    ).toBe(true);
   });
 
-  it('compensates activation when the final success audit cannot be persisted', async () => {
+  it('leaves final activation and its success audit to the Control Plane saga', async () => {
     mocks.audit
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('audit unavailable'));
@@ -791,10 +815,10 @@ describe('admin tenant clone', () => {
       )
     );
 
-    expect(response.status).toBe(500);
-    expect(mocks.activate).toHaveBeenCalledWith(expect.anything(), 'destination');
-    expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
-    expect(mocks.audit).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(201);
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect(mocks.rollback).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledTimes(1);
   });
 
   it('omits client and webhook credentials unless explicitly selected', async () => {
@@ -1446,7 +1470,7 @@ describe('admin tenant clone', () => {
     expect(mocks.provision).not.toHaveBeenCalled();
   });
 
-  it('rechecks KV value size while copying and rolls back a raced oversized value', async () => {
+  it('rechecks KV value size while copying and leaves the routed destination inactive', async () => {
     const settings = kvNamespace({
       'settings:tenant:source:login-ui': JSON.stringify({ content: 'small' }),
     });
@@ -1469,7 +1493,7 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(500);
     expect(settings.put).not.toHaveBeenCalled();
-    expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
+    expect(mocks.rollback).not.toHaveBeenCalled();
     expect(mocks.activate).not.toHaveBeenCalled();
   });
 
@@ -1497,7 +1521,7 @@ describe('admin tenant clone', () => {
     expect((clientInsert?.[1] as unknown[]).slice(-2)).toEqual([now, now]);
   });
 
-  it('rolls back when the source lifecycle changes during cloning', async () => {
+  it('cleans the inactive destination when the source lifecycle changes during cloning', async () => {
     mocks.source.queryOne
       .mockResolvedValueOnce({ id: 'source', name: 'Source tenant', lifecycle_state: 'active' })
       .mockResolvedValueOnce({})
@@ -1513,10 +1537,13 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(500);
     expect(mocks.activate).not.toHaveBeenCalled();
-    expect(mocks.rollback).toHaveBeenCalled();
+    expect(mocks.rollback).not.toHaveBeenCalled();
+    expect(
+      mocks.target.execute.mock.calls.some(([sql]) => String(sql).startsWith('DELETE FROM '))
+    ).toBe(true);
   });
 
-  it('rolls back when source KV settings change during cloning', async () => {
+  it('cleans the inactive destination when source KV settings change during cloning', async () => {
     const settings = kvNamespace({ 'settings:tenant:source:login-ui': '{"brand":"before"}' });
     let queryOneCalls = 0;
     mocks.source.queryOne.mockImplementation(async () => {
@@ -1544,7 +1571,10 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(500);
     expect(mocks.activate).not.toHaveBeenCalled();
-    expect(mocks.rollback).toHaveBeenCalled();
+    expect(mocks.rollback).not.toHaveBeenCalled();
+    expect(
+      mocks.target.execute.mock.calls.some(([sql]) => String(sql).startsWith('DELETE FROM '))
+    ).toBe(true);
   });
 
   it('copies stored directory connector secrets only when explicitly selected', async () => {
@@ -1669,7 +1699,7 @@ describe('admin tenant clone', () => {
     });
   });
 
-  it('rolls back the provisioned tenant when copying fails', async () => {
+  it('does not mutate the destination when source preflight fails', async () => {
     mocks.source.query.mockRejectedValueOnce(new Error('source D1 unavailable'));
     const response = await adminTenantCloneHandler(
       context(
@@ -1678,7 +1708,7 @@ describe('admin tenant clone', () => {
       )
     );
     expect(response.status).toBe(500);
-    expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
+    expect(mocks.rollback).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
     expect(mocks.admin.execute).not.toHaveBeenCalled();
   });
@@ -1714,7 +1744,7 @@ describe('admin tenant clone', () => {
     ).toBe(true);
   });
 
-  it('logs every incomplete rollback artifact', async () => {
+  it('fails closed before destination mutation when source storage is unavailable', async () => {
     mocks.source.query.mockRejectedValueOnce(new Error('source D1 unavailable'));
     mocks.rollback.mockResolvedValue({
       ok: false,
@@ -1728,12 +1758,8 @@ describe('admin tenant clone', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Tenant clone rollback incomplete',
-      expect.objectContaining({
-        cleanupFailures: expect.arrayContaining(['webhook_configs', 'tenant_contract']),
-      })
-    );
+    expect(mocks.rollback).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
   });
 
   it('removes KV values written before a later clone step fails', async () => {
@@ -1748,7 +1774,7 @@ describe('admin tenant clone', () => {
 
     expect(response.status).toBe(500);
     expect(settings.values.has('settings:tenant:destination:login-ui')).toBe(false);
-    expect(mocks.rollback).toHaveBeenCalledWith(expect.anything(), 'destination');
+    expect(mocks.rollback).not.toHaveBeenCalled();
   });
 
   it('restores destination seed settings when a later clone step fails', async () => {
@@ -1771,7 +1797,7 @@ describe('admin tenant clone', () => {
     );
   });
 
-  it('reports KV artifacts that could not be removed during rollback', async () => {
+  it('fails closed when a prepared KV artifact cannot be removed', async () => {
     const settings = kvNamespace({ 'settings:tenant:source:login-ui': '{"brand":"Source"}' });
     settings.delete.mockRejectedValueOnce(new Error('KV unavailable'));
     mocks.source.query.mockRejectedValueOnce(new Error('role copy failed'));
@@ -1784,9 +1810,7 @@ describe('admin tenant clone', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Tenant clone rollback incomplete',
-      expect.objectContaining({ cleanupFailures: expect.arrayContaining(['kv']) })
-    );
+    expect(settings.delete).toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@
  *
  * Included repositories:
  * - ClientRepository: OAuth 2.0 / OIDC clients
- * - SessionRepository: User sessions with expiration handling
+ * - SessionStore Durable Object: User sessions with expiration handling
  * - PasskeyRepository: WebAuthn credentials
  * - RoleRepository: RBAC roles and user-role assignments
  *
@@ -22,14 +22,6 @@ export {
   type UpdateClientInput,
   type ClientFilterOptions,
 } from './client';
-
-export {
-  SessionRepository,
-  type Session,
-  type CreateSessionInput,
-  type UpdateSessionInput,
-  type SessionFilterOptions,
-} from './session';
 
 export {
   PasskeyRepository,
@@ -62,7 +54,6 @@ export {
   type SessionClient,
   type SessionClientWithDetails,
   type CreateSessionClientInput,
-  type UpdateSessionClientInput,
 } from './session-client';
 
 export {

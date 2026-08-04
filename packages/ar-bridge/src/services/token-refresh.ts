@@ -16,8 +16,7 @@ import {
   ensureAdminDatabaseAdapter,
   ensureDatabaseAdapter,
   getDefaultTenantId,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  listEnvironmentTenantDefaultStores,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity } from '../types';
 import { getProvider } from './provider-store';
@@ -66,7 +65,7 @@ interface ExpiringIdentityCandidate {
   piiSource: DatabaseSource;
 }
 
-interface TenantD1PiiSourcePage {
+interface PiiSourcePage {
   cursorKey: string;
   entries: Array<{ shardId: string; source: DatabaseSource }>;
   wrapped: boolean;
@@ -385,32 +384,17 @@ export async function refreshExpiringTokensForScheduledTenants(
 }
 
 async function listNextTokenRefreshTenantIds(env: Env, batchSize: number): Promise<string[]> {
-  if (!env.SETTINGS) {
-    log.warn('Token refresh tenant cursor unavailable; falling back to default tenant');
-    return [getDefaultTenantId(env)];
-  }
-
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'bridge-token-refresh-tenants'
-  );
-  const cursor = await env.SETTINGS.get(TOKEN_REFRESH_TENANT_CURSOR_KEY);
-
-  if (cursor) {
-    const rows = await adapter.query<{ id: string }>(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
-      [cursor, batchSize]
-    );
-    if (rows.length > 0) {
-      return rows.map((row) => row.id);
-    }
-  }
-
-  const rows = await adapter.query<{ id: string }>(
-    "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
-    [batchSize]
-  );
-  return rows.map((row) => row.id);
+  const cursor = (await env.SETTINGS?.get(TOKEN_REFRESH_TENANT_CURSOR_KEY)) ?? null;
+  const page = await listEnvironmentTenantDefaultStores(env, {
+    limit: batchSize,
+    afterTenantId: cursor ?? undefined,
+  });
+  if (page.length > 0 || !cursor) return page.map((entry) => entry.tenantId);
+  return (
+    await listEnvironmentTenantDefaultStores(env, {
+      limit: batchSize,
+    })
+  ).map((entry) => entry.tenantId);
 }
 
 /**
@@ -423,14 +407,8 @@ async function findExpiringTokens(
   limit: number,
   piiShardPageSize: number
 ): Promise<ExpiringIdentityCandidate[]> {
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
-  const tenantD1Page =
-    sources.storageProfile?.id === 'builtin:storage:tenant-d1'
-      ? await listTenantD1PiiSources(env, tenantId, piiShardPageSize)
-      : null;
-  const piiSources = tenantD1Page?.entries ?? [
-    { shardId: 'shared', source: sources.piiDb ?? sources.coreDb },
-  ];
+  const piiSourcePage = await listPiiSources(env, tenantId, piiShardPageSize);
+  const piiSources = piiSourcePage.entries;
   const candidates: ExpiringIdentityCandidate[] = [];
   let lastProcessedShardId: string | null = null;
 
@@ -456,12 +434,12 @@ async function findExpiringTokens(
     lastProcessedShardId = pii.shardId;
   }
 
-  if (tenantD1Page && lastProcessedShardId) {
-    const scannedWholePage = lastProcessedShardId === tenantD1Page.entries.at(-1)?.shardId;
-    if (scannedWholePage && tenantD1Page.wrapped) {
-      await env.SETTINGS?.delete(tenantD1Page.cursorKey);
+  if (lastProcessedShardId) {
+    const scannedWholePage = lastProcessedShardId === piiSourcePage.entries.at(-1)?.shardId;
+    if (scannedWholePage && piiSourcePage.wrapped) {
+      await env.SETTINGS?.delete(piiSourcePage.cursorKey);
     } else {
-      await env.SETTINGS?.put(tenantD1Page.cursorKey, lastProcessedShardId);
+      await env.SETTINGS?.put(piiSourcePage.cursorKey, lastProcessedShardId);
     }
   }
 
@@ -474,11 +452,11 @@ async function findExpiringTokens(
   return candidates.slice(0, limit);
 }
 
-async function listTenantD1PiiSources(
+async function listPiiSources(
   env: Env,
   tenantId: string,
   pageSize: number
-): Promise<TenantD1PiiSourcePage> {
+): Promise<PiiSourcePage> {
   if (!env.SETTINGS || !env.EXTERNAL_IDP_ACCOUNT_PROVISIONER) {
     throw new Error('external_idp_token_refresh_shard_inventory_unavailable');
   }

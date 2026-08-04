@@ -56,8 +56,8 @@ const mockCreateCustomClaimSchemaResolverFromSources = vi.hoisted(() =>
 );
 const mockApplyOIDCIdentityMapping = vi.hoisted(() => vi.fn());
 const mockEnforceOIDCAttributeReleaseConsent = vi.hoisted(() => vi.fn());
-const mockGetTenantMetadataContextFromHono = vi.hoisted(() => vi.fn());
 const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
+const mockCreatePIIContextFromHono = vi.hoisted(() => vi.fn());
 
 // Mock the shared module
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -82,8 +82,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createCustomClaimSchemaResolverFromSources: mockCreateCustomClaimSchemaResolverFromSources,
     applyOIDCIdentityMapping: mockApplyOIDCIdentityMapping,
     enforceOIDCAttributeReleaseConsent: mockEnforceOIDCAttributeReleaseConsent,
-    getTenantMetadataContextFromHono: mockGetTenantMetadataContextFromHono,
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    createPIIContextFromHono: mockCreatePIIContextFromHono,
   };
 });
 
@@ -165,6 +165,10 @@ function createMockContext(options: {
     body: vi.fn((body, status = 200) => new Response(body, { status })),
     get: vi.fn((key: string) => {
       if (key === 'logger') return mockLogger;
+      if (key === 'tenantId') return 'default';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'default', coreDb: mockEnv.DB };
+      }
       return undefined;
     }),
   } as any;
@@ -271,8 +275,11 @@ describe('UserInfo Endpoint', () => {
       claims: input.claims,
     }));
     mockEnforceOIDCAttributeReleaseConsent.mockResolvedValue(undefined);
-    mockGetTenantMetadataContextFromHono.mockReturnValue(undefined);
     mockResolveAccountDataContextFromHono.mockResolvedValue(undefined);
+    mockCreatePIIContextFromHono.mockReturnValue({
+      coreAdapter: {},
+      defaultPiiAdapter: {},
+    });
   });
 
   describe('Token Validation', () => {
@@ -464,31 +471,22 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
-    it('resolves a tenant-D1 account route from the trusted token subject', async () => {
+    it('resolves the account route from the trusted token subject', async () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: { sub: 'user-123', scope: 'openid' },
       });
-      mockGetTenantMetadataContextFromHono.mockReturnValue({
-        tenantId: 'default',
-        storageProfileId: 'builtin:storage:tenant-d1',
-      });
-
       await userinfoHandler(c);
 
       expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-123');
     });
 
-    it('normalizes a missing tenant-D1 account route to invalid_token', async () => {
+    it('normalizes a missing account route to invalid_token', async () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: { sub: 'user-123', scope: 'openid' },
-      });
-      mockGetTenantMetadataContextFromHono.mockReturnValue({
-        tenantId: 'default',
-        storageProfileId: 'builtin:storage:tenant-d1',
       });
       mockResolveAccountDataContextFromHono.mockRejectedValue(
         new Error('account_data_route_not_found')
@@ -502,15 +500,11 @@ describe('UserInfo Endpoint', () => {
       );
     });
 
-    it('hides tenant-D1 route validation failures behind a temporary error', async () => {
+    it('hides route validation failures behind a temporary error', async () => {
       const c = createMockContext({ headers: { Authorization: 'Bearer valid-token' } });
       vi.mocked(introspectTokenFromContext).mockResolvedValue({
         valid: true,
         claims: { sub: 'user-123', scope: 'openid' },
-      });
-      mockGetTenantMetadataContextFromHono.mockReturnValue({
-        tenantId: 'default',
-        storageProfileId: 'builtin:storage:tenant-d1',
       });
       mockResolveAccountDataContextFromHono.mockRejectedValue(
         new Error('lookup_route_binding_generation_stale')
@@ -577,28 +571,12 @@ describe('UserInfo Endpoint', () => {
             module: () => ({ info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() }),
           };
         }
-        if (key === 'tenantId') {
-          return 'tenant-a';
-        }
-        if (key === 'runtimeUserStoreSources') {
-          return {
-            storageProfile: {
-              id: 'builtin:storage:tenant-d1',
-              kind: 'storage',
-              label: 'Tenant D1',
-              slices: {},
-            },
-            coreDb: runtimeCoreAdapter,
-            piiDb: runtimePiiAdapter,
-            userCacheScope: {
-              storageProfileId: 'builtin:storage:tenant-d1',
-              sourceGeneration: 'core:2:pii:2',
-              schemaVersion: 'core:87:pii:12',
-            },
-            piiCacheMode: 'no_cross_request_pii',
-          };
-        }
+        if (key === 'tenantId') return 'tenant-a';
         return undefined;
+      });
+      mockCreatePIIContextFromHono.mockReturnValue({
+        coreAdapter: runtimeCoreAdapter,
+        defaultPiiAdapter: runtimePiiAdapter,
       });
 
       vi.mocked(introspectTokenFromContext).mockResolvedValue({

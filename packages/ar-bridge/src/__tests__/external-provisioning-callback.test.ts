@@ -13,15 +13,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getChallengeStoreByChallengeId: mocks.getChallengeStore,
-    getCachedAuthCorePersistenceContextFromEnv: vi.fn().mockResolvedValue({
-      storageProfileId: 'builtin:storage:standard',
+    resolveAccountDataContextByIdentifier: vi.fn().mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+      legacyUserId: 'user-a',
+      coreDb: {},
+      piiDb: {},
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
   };
 });
 
 vi.mock('../services/identity-stitching', () => ({
-  completeTenantD1ExternalIdpJIT: mocks.completeJit,
+  completeExternalIdpJIT: mocks.completeJit,
   handleIdentity: vi.fn(),
 }));
 

@@ -7,6 +7,7 @@ const {
   mockCreateAuthContextFromHono,
   mockCreateAuditLogFromContext,
   mockGetTenantIdFromContext,
+  mockResolveAccountDataContextFromHono,
 } = vi.hoisted(() => {
   const projectionRepository = {
     findByLegacyUserId: vi.fn(),
@@ -25,6 +26,7 @@ const {
     }),
     mockCreateAuditLogFromContext: vi.fn(),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('tenant_123'),
+    mockResolveAccountDataContextFromHono: vi.fn(),
   };
 });
 
@@ -34,6 +36,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createPIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
     hasPIIDatabase: vi.fn().mockReturnValue(true),
     CanonicalSensitiveValueResolver: vi.fn(function CanonicalSensitiveValueResolverMock() {
@@ -85,6 +89,11 @@ describe('admin user TOTP reset handler', () => {
       repositories: {
         totp: mockTotpRepository,
       },
+    });
+    mockResolveAccountDataContextFromHono.mockResolvedValue({
+      tenantId: 'tenant_123',
+      accountId: 'account:user_123',
+      legacyUserId: 'user_123',
     });
   });
 

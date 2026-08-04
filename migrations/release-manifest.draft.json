@@ -169,6 +169,18 @@
         {
           "path": "042_rename_authentication_only_login.sql",
           "checksum": "f1a540ccb022c6a8c0d8c98abccd4a7043e29f4b436edaa843d5409cacbcd9f4"
+        },
+        {
+          "path": "043_account_routing_outbox_lookup_index.sql",
+          "checksum": "931ab4f5a9a87c711a239a43b38ffab573fce2b6b5225a35019b6614da27cc96"
+        },
+        {
+          "path": "044_drop_legacy_session_revocation_epochs.sql",
+          "checksum": "52c8f2593405f9af3be3ed9d440bc35f7e0027a4f0a008b82958623b7fc72e05"
+        },
+        {
+          "path": "045_drop_legacy_session_clients.sql",
+          "checksum": "adf8fa09e3196e1d991003617a1bcd2556adff1d525d4490bc713562a87d40b2"
         }
       ]
     },
@@ -352,6 +364,14 @@
         {
           "path": "035_tenant_placement_migration_jobs.sql",
           "checksum": "657431cce8dd69ece62af6f9499c2af21441709d05b667343c4611d50c3e067a"
+        },
+        {
+          "path": "036_unified_runtime_registry_snapshot.sql",
+          "checksum": "9a11db1e5d77d2cf991faf4a2dd994d97503f53091c84c6edcc709141a54f186"
+        },
+        {
+          "path": "037_unified_logging_job_topology.sql",
+          "checksum": "504f413777da6c21941ff897dc5b1423523b5e2ffb102747f93c48b7757db236"
         }
       ]
     },
@@ -364,7 +384,7 @@
       "files": [
         {
           "path": "001_control_plane.sql",
-          "checksum": "db536e7cea93bf7670a6cbf26cb274c286d2470e67b174b80a786df086d33980"
+          "checksum": "1ddb4ebc7f92713983f048e01bbef0542ffa3aeffe8122ae2b3979f80f119e2f"
         },
         {
           "path": "002_plugin_runner_registry.sql",
@@ -416,7 +436,7 @@
         },
         {
           "path": "014_automatic_provisioning_authority.sql",
-          "checksum": "85d240ebdc9d9eb2c3326f901ed1c7be6b7662c5a1be237da532a37bc1eea1b2"
+          "checksum": "9f7e566ce57769fab409585dd27b6adf05e876f74f6415a571fc8848543ebd0d"
         },
         {
           "path": "015_bootstrap_worker_evidence_refresh.sql",
@@ -461,7 +481,7 @@
       "files": [
         {
           "path": "001_lookup_directory.sql",
-          "checksum": "57d8e296614dc8c90c157e267a88fe19309aec4fc7acf717275f517c63369a60"
+          "checksum": "4a26aed640d5682d28e9a2d67b3d7cbbedacbed936d0b353c29b6aa396bc5a07"
         },
         {
           "path": "002_identifier_replacement_verification_gate.sql",

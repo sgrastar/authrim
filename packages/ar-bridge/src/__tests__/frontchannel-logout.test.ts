@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   query: vi.fn(),
   execute: vi.fn(),
   sessionFetch: vi.fn(),
+  sessionGet: vi.fn(),
+  sessionInvalidate: vi.fn(),
+  listExternalProviderSessions: vi.fn(),
   provider: vi.fn(),
   logAuthDecision: vi.fn(),
   cleanup: vi.fn(),
@@ -18,14 +21,17 @@ vi.mock('@authrim/ar-lib-core', () => ({
   })),
   getDiagnosticSessionId: () => undefined,
   getLogger: () => ({ module: () => ({ warn: vi.fn() }) }),
-  getSessionStoreBySessionId: () => ({ stub: { fetch: mocks.sessionFetch } }),
+  getSessionStoreBySessionId: () => ({
+    stub: {
+      fetch: mocks.sessionFetch,
+      getSessionRpc: mocks.sessionGet,
+      invalidateSessionRpc: mocks.sessionInvalidate,
+    },
+  }),
   getTenantIdFromContext: () => 'tenant-1',
   isShardedSessionId: () => true,
   DIAGNOSTIC_FLOW_ID_HEADER: 'X-Authrim-Diagnostic-Flow-Id',
-  resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({
-    query: mocks.query,
-    execute: mocks.execute,
-  })),
+  listExternalProviderSessions: mocks.listExternalProviderSessions,
 }));
 
 vi.mock('../services/provider-store', () => ({ getProviderByIdOrSlug: mocks.provider }));
@@ -49,6 +55,19 @@ describe('front-channel logout', () => {
     mocks.query.mockResolvedValue([{ id: '0_session-1' }]);
     mocks.execute.mockResolvedValue(undefined);
     mocks.sessionFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    mocks.listExternalProviderSessions.mockResolvedValue([
+      { sessionId: '0_session-1', userId: 'user-1', expiresAtMs: Date.now() + 60_000 },
+    ]);
+    mocks.sessionGet.mockResolvedValue({
+      id: '0_session-1',
+      tenantId: 'tenant-1',
+      userId: 'user-1',
+      data: {
+        external_provider_id: 'provider-1',
+        external_provider_sid: 'op-session-1',
+      },
+    });
+    mocks.sessionInvalidate.mockResolvedValue(true);
     mocks.logAuthDecision.mockResolvedValue(undefined);
     mocks.cleanup.mockResolvedValue(undefined);
   });
@@ -63,13 +82,13 @@ describe('front-channel logout', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('content-security-policy')).toContain('frame-ancestors *');
-    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('external_provider_sid = ?'), [
-      'tenant-1',
-      'provider-1',
-      'op-session-1',
-    ]);
-    expect(mocks.sessionFetch).toHaveBeenCalledTimes(1);
-    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.listExternalProviderSessions).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-1',
+      providerId: 'provider-1',
+      claimKind: 'sid',
+      claim: 'op-session-1',
+    });
+    expect(mocks.sessionInvalidate).toHaveBeenCalledTimes(1);
     expect(mocks.logAuthDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         decision: 'allow',
@@ -88,7 +107,7 @@ describe('front-channel logout', () => {
     );
 
     expect(response.status).toBe(400);
-    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mocks.listExternalProviderSessions).not.toHaveBeenCalled();
     expect(mocks.sessionFetch).not.toHaveBeenCalled();
     expect(mocks.logAuthDecision).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -114,7 +133,9 @@ describe('front-channel logout', () => {
   });
 
   it('records and flushes a sanitized operational failure', async () => {
-    mocks.query.mockRejectedValueOnce(new Error('database details must not be exported'));
+    mocks.listExternalProviderSessions.mockRejectedValueOnce(
+      new Error('storage details must not be exported')
+    );
 
     const response = await app().request(
       'https://tenant.example/auth/external/suite/frontchannel-logout?iss=https%3A%2F%2Fop.example&sid=op-session-1',

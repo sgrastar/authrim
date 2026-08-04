@@ -212,7 +212,6 @@ describe('setup web basic API contracts', () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const config = createDefaultConfig('prod');
-    config.profiles.defaults.storage = 'builtin:storage:shared-d1';
     expect(
       (await app.request('/config/validate', post('/config/validate', config, token))).status
     ).toBe(200);
@@ -282,7 +281,6 @@ describe('setup web basic API contracts', () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const config = createDefaultConfig('prod');
-    config.profiles.defaults.storage = 'builtin:storage:shared-d1';
     expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
     await writeDeployedLock('prod');
 
@@ -291,7 +289,7 @@ describe('setup web basic API contracts', () => {
     expect((await app.request('/config', post('/config', ordinaryChange, token))).status).toBe(200);
 
     const topologyChange = structuredClone(ordinaryChange);
-    topologyChange.profiles.defaults.storage = 'builtin:storage:tenant-d1';
+    topologyChange.tenant.placementPolicy = 'shared_pool';
     const rejected = await app.request('/config', post('/config', topologyChange, token));
     expect(rejected.status).toBe(409);
     await expect(rejected.json()).resolves.toMatchObject({
@@ -301,7 +299,7 @@ describe('setup web basic API contracts', () => {
     const persisted = JSON.parse(
       await readFile(join(root, '.authrim', 'prod', 'config.json'), 'utf-8')
     );
-    expect(persisted.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
+    expect(persisted.tenant.placementPolicy).toBe('tenant_exclusive');
   });
 
   it('rejects config mutation while a release update is incomplete', async () => {

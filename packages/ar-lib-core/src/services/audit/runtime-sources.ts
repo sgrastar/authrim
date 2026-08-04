@@ -2,7 +2,7 @@ import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from
 
 export interface AuditPersistenceSourceEnv {
   DB: DatabaseSource;
-  DB_PII?: DatabaseSource | null;
+  DB_PII: DatabaseSource;
 }
 
 export interface AuditPersistenceSources {
@@ -13,9 +13,12 @@ export interface AuditPersistenceSources {
 export function resolveAuditPersistenceSourcesFromEnv(
   env: AuditPersistenceSourceEnv
 ): AuditPersistenceSources {
+  if (!env.DB_PII) {
+    throw new Error('audit_pii_database_binding_missing');
+  }
   return {
     coreSource: env.DB,
-    piiSource: env.DB_PII ?? env.DB,
+    piiSource: env.DB_PII,
   };
 }
 

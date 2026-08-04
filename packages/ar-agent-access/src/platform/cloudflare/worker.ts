@@ -23,6 +23,7 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   requireDedicatedAdminDatabaseAdapter,
+  resolveTenantDatabaseSourceFromRegistry,
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { CloudflareAdminAgentAuditAdapter } from './admin-agent-audit';
@@ -93,6 +94,38 @@ const BASE_RISK_POLICY: Omit<AgentRiskPolicy, 'highRiskPermissionsAdditional'> =
   highRiskRequiresElevation: true,
   dpopRequiredForModeB: true,
 };
+
+async function resolveActiveBulkTenantIds(
+  env: CloudflareAgentAccessWorkerEnv,
+  tenantIds: readonly string[]
+): Promise<ReadonlySet<string>> {
+  const active = new Set<string>();
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, tenantIds.length) }, async () => {
+      while (cursor < tenantIds.length) {
+        const tenantId = tenantIds[cursor++]!;
+        const store = await resolveTenantDatabaseSourceFromRegistry(env, {
+          tenantId,
+          role: 'tenant_core',
+          dataRole: 'tenant_core/default',
+          shardGroup: 'default',
+          shardIndex: 0,
+        });
+        const row = await ensureDatabaseAdapter(
+          store.source,
+          'agent-bulk-tenant-directory'
+        ).queryOne<{
+          id: string;
+        }>("SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active' LIMIT 1", [
+          tenantId,
+        ]);
+        if (row?.id === tenantId) active.add(tenantId);
+      }
+    })
+  );
+  return active;
+}
 
 const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAgentAccessWorkerEnv>(
   {
@@ -219,8 +252,8 @@ const AgentAccessMcpAgentBase = createCloudflareAgentAccessMcpAgent<CloudflareAg
           ADMIN_TOOL_CATALOG,
           settings,
           schemaValidator,
-          () => Date.now(),
-          ensureDatabaseAdapter(env.DB, 'agent-bulk-tenant-directory')
+          (tenantIds) => resolveActiveBulkTenantIds(env, tenantIds),
+          () => Date.now()
         ),
         runtimeDiagnostics: new CloudflareAgentRuntimeDiagnostics(
           env.OP_DISCOVERY,

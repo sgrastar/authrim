@@ -237,9 +237,9 @@ const ko: Translations = {
   // Database
   'db.title': '데이터베이스 구성',
   'db.regionWarning': '데이터베이스 지역은 생성 후 변경할 수 없습니다.',
-  'db.coreDescription': 'Core DB: OAuth 클라이언트, 토큰, 세션, 감사 로그 저장',
+  'db.coreDescription': '플랫폼 DB: 메타데이터와 비PII 감사 로그 저장',
   'db.coreRegion': 'Core 데이터베이스 지역',
-  'db.piiDescription': 'PII DB: 사용자 프로필, 자격 증명, 개인 데이터 저장',
+  'db.piiDescription': '플랫폼 PII DB: PII 감사와 익명화 데이터 저장',
   'db.piiNote': '데이터 보호 요구사항을 고려하세요.',
   'db.piiRegion': 'PII 데이터베이스 지역',
   'db.creating': '데이터베이스 생성 중...',
@@ -773,13 +773,8 @@ const ko: Translations = {
   'web.db.name': '이름',
   'web.db.region': '지역',
   'web.db.regionAuto': '자동 (가장 가까운 지역)',
-  'web.db.storageProfileTitle': '스토리지 배포 프로필',
-  'web.db.storageProfileDesc': '이 배포에서 사용자 core/PII 데이터를 어떻게 배치할지 선택합니다.',
-  'web.db.sharedD1Title': '공유 D1',
-  'web.db.sharedD1Desc':
-    '배포 전체에서 하나의 core D1과 PII D1을 사용합니다. 설정 비용이 가장 낮은 기본 경로입니다.',
-  'web.db.tenantD1Title': '테넌트 D1',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Control Plane과 초기 tenant shard를 구성하며 이후 용량은 필요할 때 자동으로 생성됩니다.',
 
   // Web UI Email

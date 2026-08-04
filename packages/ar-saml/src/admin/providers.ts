@@ -3770,8 +3770,8 @@ function assertMetadataIsCurrent(entityDescriptor: Element, now = Date.now()): v
 // Public Helper Functions (used by other modules)
 // ============================================================================
 
-async function resolveSAMLProvidersCoreAdapter(env: Env) {
-  return resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-providers');
+async function resolveSAMLProvidersCoreAdapter(env: Env, tenantId: string) {
+  return resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-providers', { tenantId });
 }
 
 /**
@@ -3782,7 +3782,7 @@ export async function getSPConfig(
   tenantId: string,
   entityId: string
 ): Promise<SAMLSPConfig | null> {
-  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE tenant_id = ? AND provider_type = 'saml_sp' AND enabled = 1`,
@@ -3807,7 +3807,7 @@ export async function getIdPConfig(
   tenantId: string,
   providerId: string
 ): Promise<SAMLIdPConfig | null> {
-  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.queryOne<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE id = ? AND tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
@@ -3829,7 +3829,7 @@ export async function getIdPConfigByEntityId(
   tenantId: string,
   entityId: string
 ): Promise<SAMLIdPConfig | null> {
-  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{ config_json: string }>(
     `SELECT config_json FROM identity_providers
      WHERE tenant_id = ? AND provider_type = 'saml_idp' AND enabled = 1`,
@@ -3853,7 +3853,7 @@ export async function listSPConfigs(
   env: Env,
   tenantId: string
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{
     id: string;
     name: string;
@@ -3878,7 +3878,7 @@ export async function listIdPConfigs(
   env: Env,
   tenantId: string
 ): Promise<Array<{ id: string; name: string; entityId: string }>> {
-  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env);
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const result = await coreAdapter.query<{
     id: string;
     name: string;

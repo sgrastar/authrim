@@ -16,15 +16,19 @@ const {
   mockIntrospectTokenFromContext,
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
-  mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
   mockCreatePIIContextFromHono,
   mockCreateOAuthConfigManager,
-  mockResolveAuthCorePersistenceAdapterFromEnv,
+  mockResolveAccountDataContextFromHono,
+  mockResolveAccountDataContext,
   mockEnsureDatabaseAdapter,
+  mockIsD1DatabaseLike,
   mockListObjectCatalogObjects,
   mockCoreAdapter,
   mockPiiAdapter,
   mockConfigManager,
+  mockCoreSource,
+  mockPiiSource,
 } = vi.hoisted(() => {
   const coreAdapter = {
     query: vi.fn(),
@@ -46,23 +50,33 @@ const {
     getConsentDataExportEnabled: vi.fn().mockResolvedValue(true),
     getConsentDataExportSyncThresholdKB: vi.fn().mockResolvedValue(1024), // 1MB
   };
+  const coreSource = { kind: 'core-source' };
+  const piiSource = { kind: 'pii-source' };
   return {
     mockIntrospectTokenFromContext: vi.fn(),
     mockGetSessionStoreBySessionId: vi.fn(),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
-    mockCreateAuthContextFromHono: vi.fn().mockReturnValue({
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({
       coreAdapter,
     }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({
       defaultPiiAdapter: piiAdapter,
     }),
     mockCreateOAuthConfigManager: vi.fn().mockReturnValue(configMgr),
-    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(coreAdapter),
-    mockEnsureDatabaseAdapter: vi.fn().mockReturnValue(piiAdapter),
+    mockResolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
+    mockResolveAccountDataContext: vi.fn().mockResolvedValue({
+      coreDb: coreSource,
+      piiDb: piiSource,
+      coreBindingRef: 'TDB_USERS_1',
+    }),
+    mockEnsureDatabaseAdapter: vi.fn((source) => (source === piiSource ? piiAdapter : coreAdapter)),
+    mockIsD1DatabaseLike: vi.fn(() => true),
     mockListObjectCatalogObjects: vi.fn(),
     mockCoreAdapter: coreAdapter,
     mockPiiAdapter: piiAdapter,
     mockConfigManager: configMgr,
+    mockCoreSource: coreSource,
+    mockPiiSource: piiSource,
   };
 });
 
@@ -74,11 +88,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
-    createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     createOAuthConfigManager: mockCreateOAuthConfigManager,
-    resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    resolveAccountDataContext: mockResolveAccountDataContext,
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
+    isD1DatabaseLike: mockIsD1DatabaseLike,
     createObjectCatalogEntry: actual.createObjectCatalogEntry,
     getObjectCatalogObjectRecord: actual.getObjectCatalogObjectRecord,
     listObjectCatalogObjects: mockListObjectCatalogObjects,
@@ -232,8 +248,16 @@ describe('Data Export API', () => {
     mockConfigManager.getConsentDataExportSyncThresholdKB.mockResolvedValue(1024);
     // Reset auth mocks
     mockIntrospectTokenFromContext.mockReset();
-    mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockCoreAdapter);
-    mockEnsureDatabaseAdapter.mockReturnValue(mockPiiAdapter);
+    mockResolveAccountDataContextFromHono.mockResolvedValue(undefined);
+    mockResolveAccountDataContext.mockResolvedValue({
+      coreDb: mockCoreSource,
+      piiDb: mockPiiSource,
+      coreBindingRef: 'TDB_USERS_1',
+    });
+    mockEnsureDatabaseAdapter.mockImplementation((source) =>
+      source === mockPiiSource ? mockPiiAdapter : mockCoreAdapter
+    );
+    mockIsD1DatabaseLike.mockReturnValue(true);
     mockListObjectCatalogObjects.mockReset();
   });
 
@@ -994,7 +1018,21 @@ describe('Data Export API', () => {
 
       await processPendingDataExportRequests(
         {
-          DB_PII: {} as D1Database,
+          AUTHRIM_CONFIG: {
+            get: vi.fn(async () => null),
+            put: vi.fn(async () => undefined),
+          } as unknown as KVNamespace,
+          CONTROL: {
+            listAccountDirectorySourceShards: vi.fn(async () => [
+              {
+                shardId: 'users-1',
+                bindingRef: 'TDB_USERS_1',
+                residencyPartition: 'default',
+                routeGeneration: 1,
+              },
+            ]),
+          } as never,
+          TDB_USERS_1: mockCoreSource as unknown as D1Database,
           EXPORT_ARTIFACTS: bucket,
           OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
           OBJECT_ENCRYPTION_KEY_VERSION: '2',
@@ -1016,6 +1054,59 @@ describe('Data Export API', () => {
         expect.arrayContaining(['exports/default/data-export/export-123/artifact.json'])
       );
       expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('fails the request without reading PII when Lookup disagrees with the source shard', async () => {
+      const { bucket, store } = createMockR2ObjectStore();
+      mockCoreAdapter.query.mockResolvedValueOnce([
+        {
+          id: 'export-conflict',
+          tenant_id: 'default',
+          user_id: 'user-123',
+          status: 'pending',
+          format: 'json',
+          include_sections: JSON.stringify(['profile']),
+          requested_at: 1700000000000,
+        },
+      ]);
+      mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
+      mockResolveAccountDataContext.mockResolvedValueOnce({
+        coreDb: mockCoreSource,
+        piiDb: mockPiiSource,
+        coreBindingRef: 'TDB_USERS_2',
+      });
+      const logger = { info: vi.fn(), error: vi.fn() };
+
+      await processPendingDataExportRequests(
+        {
+          AUTHRIM_CONFIG: {
+            get: vi.fn(async () => null),
+            put: vi.fn(async () => undefined),
+          } as unknown as KVNamespace,
+          CONTROL: {
+            listAccountDirectorySourceShards: vi.fn(async () => [
+              {
+                shardId: 'users-1',
+                bindingRef: 'TDB_USERS_1',
+                residencyPartition: 'default',
+                routeGeneration: 1,
+              },
+            ]),
+          } as never,
+          TDB_USERS_1: mockCoreSource as unknown as D1Database,
+          EXPORT_ARTIFACTS: bucket,
+          OBJECT_ENCRYPTION_ROOT_KEY: OBJECT_ROOT_KEY,
+        } as unknown as Env,
+        logger
+      );
+
+      expect(store.size).toBe(0);
+      expect(mockPiiAdapter.query).not.toHaveBeenCalled();
+      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining("SET status = 'failed'"),
+        [expect.any(Number), 'data_export_account_route_conflict', 'export-conflict', 'default']
+      );
+      expect(logger.error).toHaveBeenCalledOnce();
     });
   });
 });

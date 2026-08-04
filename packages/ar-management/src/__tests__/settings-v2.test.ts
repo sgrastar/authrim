@@ -16,8 +16,18 @@ import type {
   Env,
   SettingsGetResult,
   SettingsPatchResult,
-  StorageProfile,
 } from '@authrim/ar-lib-core';
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env: Env, partition: string) =>
+      actual.ensureDatabaseAdapter(env.DB, partition)
+    ),
+  };
+});
+
 import settingsV2 from '../routes/settings-v2';
 
 // Response types
@@ -50,15 +60,6 @@ function createMockKV(data: Record<string, string> = {}): KVNamespace {
     list: vi.fn(),
     getWithMetadata: vi.fn(),
   } as unknown as KVNamespace;
-}
-
-function makeStorageProfile(id: string, slices: StorageProfile['slices']): StorageProfile {
-  return {
-    id,
-    kind: 'storage',
-    label: id,
-    slices,
-  };
 }
 
 function createMockDB(): D1Database {
@@ -848,119 +849,6 @@ describe('Settings API v2', () => {
         expect(res.status).toBe(400);
         const body = (await res.json()) as ApiResponse;
         expect(body.resolutionLink).toBe('/admin/login-ui#post-login');
-      });
-
-      it('rejects tenant storage profile overrides that change the auth core plane', async () => {
-        const disallowedProfile = makeStorageProfile('tenant-external-storage', {
-          identity_core: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-core',
-            role: 'core',
-          },
-          identity_pii: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-pii',
-            role: 'pii',
-          },
-        });
-        const mockKV = createMockKV({
-          'profile-registry:storage:tenant-external-storage': JSON.stringify(disallowedProfile),
-        });
-        const { app, mockEnv } = createTestApp({
-          kv: mockKV,
-          env: {
-            DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
-          },
-        });
-
-        const getRes = await app.request(
-          '/api/admin/tenants/tenant_123/settings/tenant',
-          { method: 'GET' },
-          mockEnv
-        );
-        const current = (await getRes.json()) as SettingsGetResult;
-
-        const patchRes = await app.request(
-          '/api/admin/tenants/tenant_123/settings/tenant',
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ifMatch: current.version,
-              set: {
-                'tenant.storage_profile_id': 'tenant-external-storage',
-              },
-            }),
-          },
-          mockEnv
-        );
-
-        expect(patchRes.status).toBe(400);
-        const body = (await patchRes.json()) as ApiResponse;
-        expect(body.error).toBe('bad_request');
-        expect(body.message as string).toContain('auth core plane');
-        expect(body.code).toBe('tenant_auth_core_override_not_allowed');
-      });
-
-      it('allows tenant storage profile overrides when the auth core plane is compatible', async () => {
-        const allowedProfile = makeStorageProfile('tenant-pii-storage', {
-          identity_pii: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-pii',
-            role: 'pii',
-          },
-          custom_pii: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-pii',
-            role: 'pii',
-          },
-        });
-        const mockKV = createMockKV({
-          'profile-registry:storage:tenant-pii-storage': JSON.stringify(allowedProfile),
-        });
-        const { app, mockEnv } = createTestApp({
-          kv: mockKV,
-          env: {
-            DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
-            AUTHRIM_REGISTERED_SCHEMA_REFS: JSON.stringify([
-              'connection:tenant-a-pii:external-postgres-pii',
-            ]),
-          },
-        });
-        (mockEnv as unknown as Record<string, unknown>).HYPERDRIVE_TENANT_A_PII = {
-          connectionString: 'postgres://tenant-a-pii',
-        };
-
-        const getRes = await app.request(
-          '/api/admin/tenants/tenant_123/settings/tenant',
-          { method: 'GET' },
-          mockEnv
-        );
-        const current = (await getRes.json()) as SettingsGetResult;
-
-        const patchRes = await app.request(
-          '/api/admin/tenants/tenant_123/settings/tenant',
-          {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              ifMatch: current.version,
-              set: {
-                'tenant.storage_profile_id': 'tenant-pii-storage',
-              },
-            }),
-          },
-          mockEnv
-        );
-
-        expect(patchRes.status).toBe(200);
-        const verifyRes = await app.request(
-          '/api/admin/tenants/tenant_123/settings/tenant',
-          { method: 'GET' },
-          mockEnv
-        );
-        const body = (await verifyRes.json()) as SettingsGetResult;
-        expect(body.values['tenant.storage_profile_id']).toBe('tenant-pii-storage');
       });
 
       it('should return 409 on version conflict', async () => {

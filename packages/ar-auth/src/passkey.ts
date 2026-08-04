@@ -14,7 +14,6 @@ import {
   getChallengeStoreByUserId,
   getTenantIdFromContext,
   getTenantSettings,
-  generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,

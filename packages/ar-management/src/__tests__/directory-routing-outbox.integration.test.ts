@@ -160,6 +160,7 @@ describe('directory routing outbox processor', () => {
   let privateJwk: JWK;
   let publicJwk: JWK;
   let registry: Map<string, string>;
+  let setAccountLifecycleRpc: ReturnType<typeof vi.fn>;
 
   beforeAll(async () => {
     const pair = await generateKeyPair('EdDSA', { extractable: true });
@@ -172,22 +173,46 @@ describe('directory routing outbox processor', () => {
     lookupDatabase = new DatabaseSync(':memory:');
     tenantDatabase.exec(
       `PRAGMA foreign_keys = ON;
+       CREATE TABLE identity_subjects (
+         id TEXT PRIMARY KEY,
+         tenant_id TEXT NOT NULL,
+         lifecycle_state TEXT NOT NULL,
+         updated_at INTEGER NOT NULL
+       );
        CREATE TABLE identity_accounts (
          id TEXT PRIMARY KEY,
          tenant_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL
+         legacy_user_id TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         lifecycle_state TEXT NOT NULL,
+         primary_subject_id TEXT NOT NULL,
+         created_at INTEGER NOT NULL,
+         updated_at INTEGER NOT NULL
        );
        CREATE TABLE webhook_configs (
          tenant_id TEXT NOT NULL,
          active INTEGER NOT NULL,
          scope TEXT NOT NULL
        );
-       INSERT INTO identity_accounts (id, tenant_id, created_at)
-       VALUES ('account:user-a', 'tenant-a', ${NOW});`
+       INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
+       VALUES ('subject:user-a', 'tenant-a', 'active', ${NOW});
+       INSERT INTO identity_accounts (
+         id, tenant_id, legacy_user_id, account_type, lifecycle_state,
+         primary_subject_id, created_at, updated_at
+       ) VALUES (
+         'account:user-a', 'tenant-a', 'user-a', 'end_user', 'active',
+         'subject:user-a', ${NOW}, ${NOW}
+       );`
     );
     tenantDatabase.exec(
       readFileSync(
         resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
+        'utf8'
+      )
+    );
+    tenantDatabase.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/043_account_routing_outbox_lookup_index.sql'),
         'utf8'
       )
     );
@@ -222,6 +247,7 @@ describe('directory routing outbox processor', () => {
       [buildLookupShardRegistrySnapshotKey('test'), token],
       [buildLookupShardRegistryGenerationKey('test'), '1'],
     ]);
+    setAccountLifecycleRpc = vi.fn(async () => ({ lifecycle: 'active' }));
   });
 
   afterEach(() => {
@@ -310,6 +336,10 @@ describe('directory routing outbox processor', () => {
       },
       TENANT_RUNTIME_REGISTRY: { get: async (key: string) => registry.get(key) ?? null },
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({ setAccountLifecycleRpc })),
+      },
       TDB_USERS_1: tenant.binding,
       ...(options.includeLookup === false ? {} : { LOOKUP_DB_1: lookup.binding }),
     } as unknown as Env;
@@ -335,6 +365,27 @@ describe('directory routing outbox processor', () => {
       nowMs: () => NOW * 1000,
     });
   }
+
+  it('uses the account-scoped outbox index for active route revalidation', () => {
+    const plan = tenantDatabase
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT account.id, outbox.payload_json
+           FROM identity_accounts account
+           JOIN account_routing_outbox outbox
+             ON outbox.tenant_id = account.tenant_id
+            AND outbox.account_id = account.id
+            AND outbox.event_kind = 'account_created'
+            AND outbox.route_generation = 1
+          WHERE account.tenant_id = ? AND account.id = ?
+            AND outbox.status = 'succeeded'`
+      )
+      .all('tenant-a', 'account:user-a') as Array<{ detail: string }>;
+
+    expect(plan.map((row) => row.detail).join('\n')).toContain(
+      'idx_account_routing_outbox_account_event_route'
+    );
+  });
 
   it('updates the operation fixture through the D1 adapter boundary', async () => {
     insertOutbox();
@@ -434,8 +485,19 @@ describe('directory routing outbox processor', () => {
     const userId = `-${'a'.repeat(20)}`;
     value = await publication(userId);
     tenantDatabase
-      .prepare(`INSERT INTO identity_accounts (id, tenant_id, created_at) VALUES (?, ?, ?)`)
-      .run(value.accountId, value.tenantId, NOW);
+      .prepare(
+        `INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
+         VALUES (?, ?, 'active', ?)`
+      )
+      .run(`subject:${userId}`, value.tenantId, NOW);
+    tenantDatabase
+      .prepare(
+        `INSERT INTO identity_accounts (
+           id, tenant_id, legacy_user_id, account_type, lifecycle_state,
+           primary_subject_id, created_at, updated_at
+         ) VALUES (?, ?, ?, 'end_user', 'active', ?, ?, ?)`
+      )
+      .run(value.accountId, value.tenantId, userId, `subject:${userId}`, NOW, NOW);
     insertOutbox();
     tenantDatabase
       .prepare(
@@ -503,6 +565,15 @@ describe('directory routing outbox processor', () => {
         .prepare(`SELECT status, attempt_count, lease_owner FROM account_routing_outbox`)
         .get()
     ).toEqual({ status: 'succeeded', attempt_count: 1, lease_owner: null });
+    expect(setAccountLifecycleRpc).toHaveBeenCalledWith(
+      'tenant-a',
+      'user-a',
+      'account:user-a',
+      'active',
+      NOW * 1000 + 1,
+      'directory.operation-account-a',
+      false
+    );
   });
 
   it('claims identifier_added without requiring a second account-creation operation', async () => {

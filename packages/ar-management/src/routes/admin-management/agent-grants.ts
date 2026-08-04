@@ -26,10 +26,10 @@ import {
   ADMIN_PERMISSIONS,
   AdminMachineAccessRepository,
   adminAuthMiddleware,
-  createAuthContextFromHono,
   ensureDatabaseAdapter,
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
+  resolveTenantDatabaseSourceFromRegistry,
   type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -42,6 +42,17 @@ type AgentGrantContext = Context<{
 
 const MAX_PURPOSE_LENGTH = 500;
 const taskSetCatalog = createAdminToolCatalog();
+
+async function tenantCoreAdapter(c: AgentGrantContext, tenantId: string) {
+  const store = await resolveTenantDatabaseSourceFromRegistry(c.env, {
+    tenantId,
+    role: 'tenant_core',
+    dataRole: 'tenant_core/default',
+    shardGroup: 'default',
+    shardIndex: 0,
+  });
+  return ensureDatabaseAdapter(store.source, 'agent-grant-client-validation');
+}
 
 interface CreateAgentGrantBody {
   client_id?: unknown;
@@ -320,8 +331,9 @@ agentGrantsRouter.post('/:id/preauthorize', async (c) => {
   ) {
     return error(c, 409, 'AGENT_GRANT_NOT_PREAUTHORIZABLE');
   }
-  if (!c.env.DB) return error(c, 503, 'AGENT_GRANT_CLIENT_STORE_UNAVAILABLE');
-  const client = await ensureDatabaseAdapter(c.env.DB, 'agent-grant-preauthorization').queryOne<{
+  const client = await (
+    await tenantCoreAdapter(c, tenant)
+  ).queryOne<{
     tenant_id: string;
     requestable_scopes: string | null;
   }>(
@@ -448,10 +460,9 @@ agentGrantsRouter.put('/:id/self-service-scopes', async (c) => {
   if (grant.delegatorId !== current.userId || grant.grantorId !== current.userId) {
     return error(c, 403, 'AGENT_GRANT_SELF_SERVICE_OWNER_REQUIRED');
   }
-  const client = await createAuthContextFromHono(
-    c as unknown as Context<{ Bindings: Env }>,
-    tenant
-  ).coreAdapter.queryOne<{
+  const client = await (
+    await tenantCoreAdapter(c, tenant)
+  ).queryOne<{
     tenant_id: string;
     requestable_scopes: string | null;
   }>(
@@ -696,8 +707,9 @@ agentGrantsRouter.patch('/:id', async (c) => {
   ) {
     return error(c, 400, 'AGENT_GRANT_PERMISSION_EXCEEDS_UPDATER');
   }
-  if (!c.env.DB) return error(c, 503, 'AGENT_GRANT_CLIENT_STORE_UNAVAILABLE');
-  const client = await ensureDatabaseAdapter(c.env.DB, 'agent-grant-client-validation').queryOne<{
+  const client = await (
+    await tenantCoreAdapter(c, tenant)
+  ).queryOne<{
     tenant_id: string;
     requestable_scopes: string | null;
   }>(
@@ -961,8 +973,7 @@ agentGrantsRouter.post('/', async (c) => {
     );
   }
 
-  if (!c.env.DB) return error(c, 503, 'AGENT_GRANT_CLIENT_STORE_UNAVAILABLE');
-  const core = ensureDatabaseAdapter(c.env.DB, 'agent-grant-client-validation');
+  const core = await tenantCoreAdapter(c, tenant);
   const client = await core.queryOne<{
     client_id: string;
     tenant_id: string;
@@ -1262,8 +1273,9 @@ agentGrantsRouter.post('/:id/resume', async (c) => {
   ) {
     return error(c, 400, 'AGENT_GRANT_PERMISSION_EXCEEDS_UPDATER');
   }
-  if (!c.env.DB) return error(c, 503, 'AGENT_GRANT_CLIENT_STORE_UNAVAILABLE');
-  const client = await ensureDatabaseAdapter(c.env.DB, 'agent-grant-client-validation').queryOne<{
+  const client = await (
+    await tenantCoreAdapter(c, tenant)
+  ).queryOne<{
     tenant_id: string;
     requestable_scopes: string | null;
   }>(

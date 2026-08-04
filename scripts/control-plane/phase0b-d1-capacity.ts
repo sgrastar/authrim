@@ -27,7 +27,7 @@ const MIGRATIONS_ROOT = resolve(REPO_ROOT, 'migrations');
 const DEFAULT_MANIFEST_PATH = resolve(MIGRATIONS_ROOT, 'release-manifest.draft.json');
 const DEFAULT_OUTPUT_DIR = resolve(
   REPO_ROOT,
-  'private/docs/implementation/tenant-d1-control-plane/performance'
+  'private/docs/implementation/unified-control-plane/performance'
 );
 const RESOURCE_PREFIX = 'authrim-phase0b-capacity-test';
 const REQUIRED_STREAMS = ['d1-core', 'd1-pii', 'd1-lookup'] as const;
@@ -778,7 +778,7 @@ export async function runPhase0bCapacity(
 }
 
 function printUsage(): void {
-  process.stdout.write(`Tenant D1 control-plane Phase 0b capacity calibration\n\n`);
+  process.stdout.write(`Unified D1 Control Plane Phase 0b capacity calibration\n\n`);
   process.stdout.write(`Usage:\n`);
   process.stdout.write(`  pnpm control-plane:phase0b-capacity --env test\n`);
   process.stdout.write(

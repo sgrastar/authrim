@@ -172,7 +172,7 @@ export async function getWebOriginRegistry(
   env: Env,
   tenantId: string,
   clientId: string,
-  source?: DatabaseSource | DatabaseAdapter
+  source: DatabaseSource | DatabaseAdapter
 ): Promise<WebOriginRegistryDocument> {
   const key = cacheKey(tenantId, clientId);
 
@@ -187,8 +187,7 @@ export async function getWebOriginRegistry(
     }
   }
 
-  const adapter =
-    source && 'query' in source ? source : ensureDatabaseAdapter(source ?? env.DB, 'core');
+  const adapter = 'query' in source ? source : ensureDatabaseAdapter(source, 'web-origin-registry');
   const rows = await adapter.query<WebOriginRegistryRow>(
     `SELECT origin, client_id, cors_allowed, csp_frame_ancestors, handoff_allowed, iframe_allowed, environment
        FROM web_origin_registry

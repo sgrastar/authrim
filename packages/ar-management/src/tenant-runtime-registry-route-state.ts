@@ -15,8 +15,7 @@ import {
   type TenantRuntimeRegistrySnapshot,
 } from '@authrim/ar-lib-core';
 import { createControlRuntimeRegistrySigner } from './control-runtime-registry-signer';
-
-const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
+import { resolveTenantRuntimePlacementSnapshot } from './tenant-runtime-placement';
 
 export interface PublishTenantRuntimeRegistryRouteStateOptions {
   tenantId: string;
@@ -118,7 +117,7 @@ export async function publishTenantRuntimeRegistryRouteState(
     'default';
   const publication = await publishTenantRuntimeRegistrySnapshot({
     tenantId: options.tenantId,
-    storageProfileId: env.DEFAULT_STORAGE_PROFILE_ID ?? TENANT_D1_STORAGE_PROFILE_ID,
+    placement: await resolveTenantRuntimePlacementSnapshot(env, options.tenantId),
     repository,
     snapshotStore: env.TENANT_RUNTIME_REGISTRY,
     deploymentTarget,
@@ -183,7 +182,7 @@ export async function publishTenantRuntimeRegistryReactivation(
     'default';
   const publication = await publishTenantRuntimeRegistrySnapshot({
     tenantId: options.tenantId,
-    storageProfileId: env.DEFAULT_STORAGE_PROFILE_ID ?? TENANT_D1_STORAGE_PROFILE_ID,
+    placement: await resolveTenantRuntimePlacementSnapshot(env, options.tenantId),
     repository,
     snapshotStore: env.TENANT_RUNTIME_REGISTRY,
     deploymentTarget,

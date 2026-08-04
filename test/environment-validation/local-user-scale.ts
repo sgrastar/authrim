@@ -154,7 +154,7 @@ function printResult(result: LocalUserScaleBenchmarkResult): void {
     process.stdout.write(`env: ${result.setupTarget.env}\n`);
     process.stdout.write(`config: ${result.setupTarget.configPath}\n`);
     process.stdout.write(`lock: ${result.setupTarget.lockPath}\n`);
-    process.stdout.write(`storageProfile: ${result.setupTarget.storageProfile}\n`);
+    process.stdout.write(`placementPolicy: ${result.setupTarget.placementPolicy}\n`);
     process.stdout.write(
       `d1Bindings: ${Object.keys(result.setupTarget.d1).sort().join(', ') || '(none)'}\n`
     );

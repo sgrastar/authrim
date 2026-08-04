@@ -504,6 +504,53 @@ describe('logging delivery queue consumer', () => {
     expect(message.ack).toHaveBeenCalledOnce();
   });
 
+  it('does not fall back to DB when a requested LOGGING_INDEX_DB binding is missing', async () => {
+    const bucket = {
+      put: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+    const coreDb = createAdminDbAdapter();
+    const adminDb = createAdminDbAdapter();
+    const createdAt = 1779148800000;
+    const record = await createSensitiveDetailChunkWriteRecord({
+      catalogId: 'catalog-sensitive-index-db-missing',
+      index: 0,
+      eventAt: createdAt,
+      indexDbBinding: 'LOGGING_INDEX_DB',
+    });
+    const message = createMessage({
+      payload_type: 'chunk_write',
+      schema_version: 1,
+      payload_id: 'qpl_sensitive_index_db_missing',
+      tenant_key: 't_sensitive',
+      lane: 'critical',
+      created_at: createdAt,
+      log_type: 'webhook',
+      plane: 'sensitive_detail',
+      surface: 'webhook',
+      records: [record],
+    });
+
+    await expect(
+      processLoggingDeliveryQueue(
+        {
+          messages: [message],
+          queue: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+        } as unknown as MessageBatch<unknown>,
+        {
+          DB: coreDb as never,
+          DB_PII: {} as D1Database,
+          DB_ADMIN: adminDb,
+          SENSITIVE_DETAILS: bucket,
+          OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        }
+      )
+    ).rejects.toThrow('sensitive_detail_logging_index_db_unavailable');
+
+    expect(coreDb.batch).not.toHaveBeenCalled();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
   it('splits sensitive detail chunks by critical flush interval', async () => {
     const bucket = {
       put: vi.fn().mockResolvedValue(undefined),

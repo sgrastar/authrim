@@ -171,7 +171,7 @@ describe('shared Control provisioning failure policy', () => {
     });
   });
 
-  it('defers a shared D1 create budget exhaustion until the next UTC budget day', () => {
+  it('defers a D1 create budget exhaustion until the next UTC budget day', () => {
     expect(
       decideControlProvisioningFailure({
         effect: 'create_d1',
@@ -187,7 +187,7 @@ describe('shared Control provisioning failure policy', () => {
     });
   });
 
-  it('blocks transient errors after the shared retry budget expires', () => {
+  it('blocks transient errors after the operation retry budget expires', () => {
     expect(
       decideControlProvisioningFailure({
         effect: 'apply_migrations',

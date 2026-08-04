@@ -166,7 +166,7 @@ describe('diagnostic logging ingest', () => {
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({
       error: 'invalid_client',
-      error_description: 'invalid_client_secret',
+      error_description: 'validation_error',
     });
     expect(bucket.store.size).toBe(0);
   });

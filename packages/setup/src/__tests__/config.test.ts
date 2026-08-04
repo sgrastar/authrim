@@ -199,7 +199,12 @@ describe('createDefaultConfig', () => {
     expect(config.components.saml).toBe(true);
     expect(config.components.async).toBe(true);
     expect(config.components.vc).toBe(true);
-    expect(config.profiles.defaults.storage).toBe('builtin:storage:tenant-d1');
+    expect(config.tenant.placementPolicy).toBe('tenant_exclusive');
+    expect(config.controlPlane).toEqual({ automaticProvisioning: true });
+    expect(config.profiles.defaults).toEqual({
+      audit: 'builtin:audit:standard',
+      residency: 'builtin:residency:default',
+    });
     expect(config.profiles.registry.backend).toBe('kv');
   });
 
@@ -223,7 +228,6 @@ describe('parseConfig', () => {
       sharding: { authCodeShards: 32 },
       profiles: {
         defaults: {
-          storage: 'builtin:storage:external-postgres',
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:eu',
         },
@@ -244,48 +248,8 @@ describe('parseConfig', () => {
     expect(config.components.async).toBe(true);
     expect(config.components.vc).toBe(true);
     expect(config.oidc.accessTokenTtl).toBe(7200);
-    expect(config.profiles.defaults.storage).toBe('builtin:storage:external-postgres');
+    expect(config.tenant.placementPolicy).toBe('tenant_exclusive');
     expect(config.profiles.registry.backend).toBe('database');
-  });
-
-  it('should accept built-in shared, tenant, single-db, and eu-pii storage profile IDs', () => {
-    const rawConfig = {
-      version: '1.0.0',
-      createdAt: new Date().toISOString(),
-      environment: { prefix: 'dev' },
-      tenant: { name: 'test-tenant' },
-      components: { api: true, loginUi: true },
-      profile: 'basic-op',
-      oidc: {},
-      sharding: {},
-      profiles: {
-        defaults: {
-          storage: 'builtin:storage:single-db',
-          audit: 'builtin:audit:standard',
-          residency: 'builtin:residency:eu',
-        },
-        registry: {
-          backend: 'kv',
-        },
-      },
-      features: {},
-      keys: {},
-    };
-
-    const config = parseConfig(rawConfig);
-    expect(config.profiles.defaults.storage).toBe('builtin:storage:single-db');
-
-    rawConfig.profiles.defaults.storage = 'builtin:storage:shared-d1';
-    const sharedConfig = parseConfig(rawConfig);
-    expect(sharedConfig.profiles.defaults.storage).toBe('builtin:storage:shared-d1');
-
-    rawConfig.profiles.defaults.storage = 'builtin:storage:tenant-d1';
-    const tenantConfig = parseConfig(rawConfig);
-    expect(tenantConfig.profiles.defaults.storage).toBe('builtin:storage:tenant-d1');
-
-    rawConfig.profiles.defaults.storage = 'builtin:storage:eu-pii-split';
-    const euConfig = parseConfig(rawConfig);
-    expect(euConfig.profiles.defaults.storage).toBe('builtin:storage:eu-pii-split');
   });
 
   it('should reject the removed built-in minimal audit profile', () => {
@@ -300,7 +264,6 @@ describe('parseConfig', () => {
       sharding: {},
       profiles: {
         defaults: {
-          storage: 'builtin:storage:shared-d1',
           audit: 'builtin:audit:minimal',
           residency: 'builtin:residency:default',
         },
@@ -313,7 +276,7 @@ describe('parseConfig', () => {
     expect(result.success).toBe(false);
   });
 
-  it('should default Automatic provisioning to off', () => {
+  it('should default Automatic provisioning to on and initial placement to tenant-exclusive', () => {
     const config = parseConfig({
       version: '1.0.0',
       createdAt: new Date().toISOString(),
@@ -327,32 +290,11 @@ describe('parseConfig', () => {
       keys: {},
     });
 
-    expect(config.tenantD1).toEqual({ automaticProvisioning: false });
+    expect(config.controlPlane).toEqual({ automaticProvisioning: true });
+    expect(config.tenant.placementPolicy).toBe('tenant_exclusive');
   });
 
-  it('should reject removed preallocated-slot configuration', () => {
-    const baseConfig = {
-      version: '1.0.0',
-      createdAt: new Date().toISOString(),
-      environment: { prefix: 'dev' },
-      tenant: { name: 'test-tenant' },
-      components: { api: true },
-      profile: 'basic-op',
-      oidc: {},
-      sharding: {},
-      features: {},
-      keys: {},
-    };
-
-    expect(
-      AuthrimConfigSchema.safeParse({
-        ...baseConfig,
-        tenantD1: { preallocatedSlots: 3 },
-      }).success
-    ).toBe(false);
-  });
-
-  it('should accept Hyperdrive reference catalog entries for external storage defaults', () => {
+  it('should retain Hyperdrive references as audit and residency extension points', () => {
     const rawConfig = {
       version: '1.0.0',
       createdAt: new Date().toISOString(),
@@ -364,7 +306,6 @@ describe('parseConfig', () => {
       sharding: {},
       profiles: {
         defaults: {
-          storage: 'builtin:storage:external-postgres',
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:default',
         },
@@ -405,7 +346,6 @@ describe('parseConfig', () => {
       environment: { prefix: 'dev' },
       profiles: {
         defaults: {
-          storage: 'builtin:storage:standard',
           audit: 'custom:audit:http-export',
           residency: 'builtin:residency:default',
         },

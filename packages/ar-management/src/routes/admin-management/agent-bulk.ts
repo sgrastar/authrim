@@ -27,6 +27,7 @@ import {
   ensureDatabaseAdapter,
   hasAdminPermission,
   requireDedicatedAdminDatabaseAdapter,
+  resolveTenantDatabaseSourceFromRegistry,
   type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -138,16 +139,31 @@ function version(c: BulkContext): number | null {
 }
 
 async function activeTargetTenants(c: BulkContext, tenantIds: readonly string[]): Promise<boolean> {
-  const adapter = ensureDatabaseAdapter(c.env.DB, 'agent-bulk-target-validation');
-  const placeholders = tenantIds.map(() => '?').join(', ');
-  const rows = await adapter.query<{ id: string; lifecycle_state: string }>(
-    `SELECT id, lifecycle_state FROM tenants WHERE id IN (${placeholders})`,
-    [...tenantIds]
+  let cursor = 0;
+  let allActive = true;
+  await Promise.all(
+    Array.from({ length: Math.min(4, tenantIds.length) }, async () => {
+      while (allActive && cursor < tenantIds.length) {
+        const tenantId = tenantIds[cursor++]!;
+        const store = await resolveTenantDatabaseSourceFromRegistry(c.env, {
+          tenantId,
+          role: 'tenant_core',
+          dataRole: 'tenant_core/default',
+          shardGroup: 'default',
+          shardIndex: 0,
+        });
+        const row = await ensureDatabaseAdapter(
+          store.source,
+          'agent-bulk-target-validation'
+        ).queryOne<{ id: string }>(
+          "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active' LIMIT 1",
+          [tenantId]
+        );
+        if (row?.id !== tenantId) allActive = false;
+      }
+    })
   );
-  const active = new Set(
-    rows.filter((row) => row.lifecycle_state === 'active').map((row) => row.id)
-  );
-  return tenantIds.every((tenantId) => active.has(tenantId));
+  return allActive;
 }
 
 async function targetPolicyError(

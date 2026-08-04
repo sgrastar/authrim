@@ -12,6 +12,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { AccountDirectoryCoordinator } from './account-directory-coordinator';
+import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
 import { AccountDirectoryRemovalCoordinator } from './account-directory-removal';
 import { AccountCreationOperationRepository } from './account-creation-operation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -96,6 +97,12 @@ export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDir
         lookupForBucket,
         now: () => Math.floor(Date.now() / 1000),
         onAccountActivated: async (activatedPublication, now) => {
+          await activatePublishedAccountAuthenticationState(
+            this.env,
+            tenantCore,
+            activatedPublication,
+            now
+          );
           const operationRepository = new AccountCreationOperationRepository(
             await resolveAuthCorePersistenceAdapterFromEnv(
               this.env,

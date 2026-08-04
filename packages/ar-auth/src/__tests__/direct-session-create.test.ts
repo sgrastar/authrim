@@ -45,6 +45,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         },
       },
     })),
+    createAccountAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: {},
+      repositories: {
+        userCore: {
+          findById: vi.fn(async () => ({ id: 'user_123', is_active: true })),
+        },
+      },
+    })),
+    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
+      tenantId: 'tenant_test',
+      accountId: `account:${userId}`,
+      legacyUserId: userId,
+    })),
     createPIIContextFromHono: vi.fn(() => ({
       piiRepositories: {
         userPII: {

@@ -171,58 +171,6 @@ export interface User {
 }
 
 /**
- * Session repository interface
- * Manages user sessions and SSO state
- */
-export interface ISessionRepository {
-  /**
-   * Get session by ID
-   * @param sessionId - Session identifier
-   * @returns Session object or null if not found
-   */
-  getById(sessionId: string): Promise<Session | null>;
-
-  /**
-   * Create a new session
-   * @param session - Session data
-   * @returns Created session with ID
-   */
-  create(session: Omit<Session, 'id'>): Promise<Session>;
-
-  /**
-   * Update an existing session
-   * @param sessionId - Session identifier
-   * @param updates - Partial session data to update
-   * @returns Updated session
-   */
-  update(sessionId: string, updates: Partial<Session>): Promise<Session>;
-
-  /**
-   * Delete a session
-   * @param sessionId - Session identifier
-   */
-  delete(sessionId: string): Promise<void>;
-
-  /**
-   * Delete all sessions for a user
-   * @param userId - User identifier
-   */
-  deleteAllForUser(userId: string): Promise<void>;
-
-  /**
-   * List active sessions for a user
-   * @param userId - User identifier
-   * @returns Array of active sessions
-   *
-   * Note:
-   * Cloudflare's region-sharded SessionStore cannot implement this correctly
-   * without a separate user-session index. Callers should prefer higher-level
-   * admin/session APIs until that index exists.
-   */
-  listByUser(userId: string): Promise<Session[]>;
-}
-
-/**
  * Session model
  */
 export interface Session {
@@ -326,13 +274,6 @@ export interface IStorageAdapterFactory {
   createUserRepository(config: StorageConfig): IUserRepository;
 
   /**
-   * Create a session repository instance
-   * @param config - Storage configuration
-   * @returns Session repository instance
-   */
-  createSessionRepository(config: StorageConfig): ISessionRepository;
-
-  /**
    * Create a client repository instance
    * @param config - Storage configuration
    * @returns Client repository instance
@@ -359,7 +300,7 @@ export interface StorageConfig {
  * (D1, KV, Durable Objects) with intelligent routing logic.
  *
  * Routing Strategy:
- * - Sessions: SessionStore Durable Object (hot data) + D1 fallback (cold data)
+ * - Sessions: SessionStore Durable Object (authoritative; no D1 mirror or fallback)
  * - Clients: D1 database + KV cache (read-through cache pattern)
  * - Users: D1 database
  * - Authorization codes: AuthorizationCodeStore Durable Object (one-time use guarantee)

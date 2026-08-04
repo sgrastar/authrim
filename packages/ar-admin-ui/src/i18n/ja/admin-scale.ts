@@ -56,7 +56,7 @@ const adminScale = {
 	admin_scale_read_replication_retry: 'Read Replicationの反映を再試行',
 	admin_scale_read_replication_load_failed: 'Read Replicationの状態を取得できません。',
 	admin_scale_read_replication_update_failed: 'Read Replicationを更新できませんでした。',
-	admin_scale_d1_capacity: 'テナントD1容量',
+	admin_scale_d1_capacity: 'D1割り当て容量',
 	admin_scale_d1_capacity_status: 'プロビジョニング対象と現在の容量計画',
 	admin_scale_d1_scope: '対象',
 	admin_scale_d1_scope_shared: '共有プール',

@@ -36,7 +36,6 @@ interface CachedDiagnosticSettings {
 }
 
 const diagnosticSettingsCache = new WeakMap<object, Map<string, CachedDiagnosticSettings>>();
-const diagnosticSettingsRefreshPromises = new WeakMap<object, Map<string, Promise<void>>>();
 
 /**
  * Diagnostic logging middleware configuration
@@ -208,16 +207,6 @@ function getDiagnosticSettingsCache(env: Env): Map<string, CachedDiagnosticSetti
   return cache;
 }
 
-function getDiagnosticSettingsRefreshes(env: Env): Map<string, Promise<void>> {
-  const key = env as object;
-  let refreshes = diagnosticSettingsRefreshPromises.get(key);
-  if (!refreshes) {
-    refreshes = new Map();
-    diagnosticSettingsRefreshPromises.set(key, refreshes);
-  }
-  return refreshes;
-}
-
 function getDiagnosticSettingsForMiddleware(
   env: Env,
   tenantId: string,
@@ -248,12 +237,6 @@ function scheduleDiagnosticSettingsRefresh(
   if (!env.SETTINGS) {
     return;
   }
-  const refreshes = getDiagnosticSettingsRefreshes(env);
-  const existing = refreshes.get(tenantId);
-  if (existing) {
-    if (ctx) ctx.waitUntil(existing);
-    return;
-  }
   const refresh = loadDiagnosticSettings(env, tenantId)
     .then((settings) => {
       getDiagnosticSettingsCache(env).set(tenantId, {
@@ -268,11 +251,7 @@ function scheduleDiagnosticSettingsRefresh(
         cachedAt: Date.now(),
         source: 'default',
       });
-    })
-    .finally(() => {
-      refreshes.delete(tenantId);
     });
-  refreshes.set(tenantId, refresh);
   if (ctx) {
     ctx.waitUntil(refresh);
     return;

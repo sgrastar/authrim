@@ -50,11 +50,19 @@ const mocks = vi.hoisted(() => ({
   confirmationStore: {
     storeChallengeRpc: vi.fn(),
   },
+  resolveAccountDataContextByIdentifierFromHono: vi.fn(),
+  publishPasskeyRoute: vi.fn(),
+  publishAuthDirectoryRoute: vi.fn(),
 }));
 
 vi.mock('@simplewebauthn/server', () => ({
   generateRegistrationOptions: mocks.generateRegistrationOptions,
   verifyRegistrationResponse: mocks.verifyRegistrationResponse,
+}));
+
+vi.mock('../account-provisioning', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../account-provisioning')>()),
+  publishPasskeyRoute: mocks.publishPasskeyRoute,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -72,6 +80,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         passkey: mocks.passkeyRepo,
       },
     })),
+    createAccountAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: mocks.coreAdapter,
+      repositories: {
+        passkey: mocks.passkeyRepo,
+      },
+    })),
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
+    resolveAccountDataContextByIdentifierFromHono:
+      mocks.resolveAccountDataContextByIdentifierFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
@@ -147,7 +164,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       const result = await mocks.emailNotifier.send(input.payload);
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: result.success ? 'delivered' : 'permanent_failure',
       };
     }),
@@ -225,6 +242,9 @@ function createContext(
     RATE_LIMITER: {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => mocks.rateLimiter),
+    },
+    ACCOUNT_PROVISIONER: {
+      publishAuthDirectoryRoute: mocks.publishAuthDirectoryRoute,
     },
     ...envOverrides,
   };
@@ -306,6 +326,19 @@ describe('directory password login handler', () => {
     mocks.rateLimiter.resetRpc.mockReset().mockResolvedValue(true);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_generated',
+      legacyUserId: 'user_generated',
+    });
+    mocks.publishPasskeyRoute.mockResolvedValue(undefined);
+    mocks.publishAuthDirectoryRoute.mockImplementation(
+      async (input: { operationId: string; accountId: string }) => ({
+        status: 201,
+        operationId: input.operationId,
+        accountId: input.accountId,
+      })
+    );
   });
 
   it('verifies Wordwarden credentials and creates an Authrim session', async () => {
@@ -1930,6 +1963,11 @@ describe('directory password login handler', () => {
       email: 'alice@example.com',
       name: 'Alice Existing',
     });
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_existing',
+      legacyUserId: 'user_existing',
+    });
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
@@ -2158,6 +2196,11 @@ describe('directory password login handler', () => {
   it('fails closed when an existing directory subject link points to a missing user', async () => {
     mocks.coreAdapter.queryOne.mockResolvedValue({ user_id: 'user_deleted' });
     mocks.findById.mockResolvedValue(null);
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_deleted',
+      legacyUserId: 'user_deleted',
+    });
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
@@ -2220,6 +2263,11 @@ describe('directory password login handler', () => {
       id: 'user_existing',
       email: 'alice@example.com',
       name: 'Alice Example',
+    });
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_existing',
+      legacyUserId: 'user_existing',
     });
     mocks.coreAdapter.queryOne.mockResolvedValue(null);
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({

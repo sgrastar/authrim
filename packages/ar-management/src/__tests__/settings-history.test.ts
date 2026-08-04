@@ -85,8 +85,21 @@ function createMockContext(options: {
   envOverrides?: Partial<Env>;
 }) {
   const kv = createMockKV();
+  const env = {
+    DB: {} as D1Database,
+    KV: kv,
+    ...options.envOverrides,
+  } as unknown as Env;
   const store = new Map<string, unknown>([
     ['tenantId', options.tenantId ?? 'tenant_123'],
+    [
+      'tenantMetadataContext',
+      {
+        tenantId: options.tenantId ?? 'tenant_123',
+        coreDb: env.DB,
+        route: {},
+      },
+    ],
     [
       'adminAuth',
       options.adminAuth ?? {
@@ -105,11 +118,7 @@ function createMockContext(options: {
         ? vi.fn().mockRejectedValue(options.jsonError)
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: {
-      DB: {} as D1Database,
-      KV: kv,
-      ...options.envOverrides,
-    } as unknown as Env,
+    env,
     json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
     get: (key: string) => store.get(key),
     _kv: kv,

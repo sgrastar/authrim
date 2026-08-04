@@ -6,12 +6,14 @@ const {
   mockPublishTenantRuntimeRegistrySnapshot,
   mockVerifyTenantRuntimeRegistrySnapshotSignature,
   mockCreateControlRuntimeRegistrySigner,
+  mockResolveTenantRuntimePlacementSnapshot,
 } = vi.hoisted(() => ({
   mockRepository: {},
   mockTransitionTenantRuntimeRegistryRouteState: vi.fn(),
   mockPublishTenantRuntimeRegistrySnapshot: vi.fn(),
   mockVerifyTenantRuntimeRegistrySnapshotSignature: vi.fn(),
   mockCreateControlRuntimeRegistrySigner: vi.fn(),
+  mockResolveTenantRuntimePlacementSnapshot: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -35,19 +37,24 @@ vi.mock('../control-runtime-registry-signer', () => ({
   createControlRuntimeRegistrySigner: mockCreateControlRuntimeRegistrySigner,
 }));
 
+vi.mock('../tenant-runtime-placement', () => ({
+  resolveTenantRuntimePlacementSnapshot: mockResolveTenantRuntimePlacementSnapshot,
+}));
+
 import { publishTenantRuntimeRegistryRouteState } from '../tenant-runtime-registry-route-state';
 
 describe('tenant runtime registry route state', () => {
   const now = new Date('2026-05-16T00:00:00.000Z');
   const snapshot = {
-    version: 2,
+    version: 4,
     tenantId: 'tenant-a',
     snapshotScope: 'tenant',
     deploymentTarget: 'edge-a',
     runtimeGeneration: 8,
     routeStatus: 'quarantining',
     quarantineDenyGeneration: 1,
-    storageProfileId: 'builtin:storage:tenant-d1',
+    backend: { provider: 'd1', resolver: 'control-plane' },
+    placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 4 },
     publishedAt: now.toISOString(),
     expiresAt: '2026-05-16T00:30:00.000Z',
     stores: [],
@@ -74,6 +81,10 @@ describe('tenant runtime registry route state', () => {
     });
     mockVerifyTenantRuntimeRegistrySnapshotSignature.mockResolvedValue('valid');
     mockCreateControlRuntimeRegistrySigner.mockResolvedValue({ sign: vi.fn() });
+    mockResolveTenantRuntimePlacementSnapshot.mockResolvedValue({
+      isolationPolicy: 'tenant_exclusive',
+      policyGeneration: 4,
+    });
   });
 
   it('requires matching generation and signed snapshot read-back', async () => {

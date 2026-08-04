@@ -488,11 +488,11 @@ export interface ReleaseMigrationPhysicalTarget {
   blockedReason?: string;
 }
 
-function tenantShardFromBinding(binding: string): string | undefined {
+function assignmentShardFromBinding(binding: string): string | undefined {
   return binding.match(/_S([0-9]+)$/u)?.[1];
 }
 
-export function buildTenantD1ReleaseMigrationTarget(input: {
+export function buildAssignmentReleaseMigrationTarget(input: {
   binding: string;
   databaseId: string;
   databaseName: string;
@@ -508,7 +508,7 @@ export function buildTenantD1ReleaseMigrationTarget(input: {
     binding: input.binding,
     databaseId: input.databaseId,
     databaseName: input.databaseName,
-    shard: tenantShardFromBinding(input.binding),
+    shard: assignmentShardFromBinding(input.binding),
     automatic: true,
   };
 }
@@ -613,23 +613,6 @@ export function resolveReleaseMigrationTargets(input: {
     });
   }
 
-  if (input.config.profiles.defaults.storage === 'builtin:storage:single-db') {
-    const core = input.lock.d1.DB;
-    if (core) {
-      pushUniqueTarget(targets, {
-        id: `d1:${core.id}:d1-pii`,
-        streamId: 'd1-pii',
-        driver: 'd1',
-        scope: 'deployment',
-        logicalRoles: ['pii'],
-        binding: 'DB',
-        databaseId: core.id,
-        databaseName: core.name,
-        automatic: true,
-      });
-    }
-  }
-
   for (const [binding, resource] of Object.entries(input.lock.d1)) {
     if (!isTenantDatabaseBinding(binding)) continue;
     const role = getTenantDatabaseRoleFromBinding(binding);
@@ -644,7 +627,7 @@ export function resolveReleaseMigrationTargets(input: {
         binding,
         databaseId: resource.id,
         databaseName: resource.name,
-        shard: tenantShardFromBinding(binding),
+        shard: assignmentShardFromBinding(binding),
         automatic: false,
         blockedReason: `release_migration_stream_not_available:tenant_${unsupportedRole ?? 'unknown'}`,
       });
@@ -652,39 +635,13 @@ export function resolveReleaseMigrationTargets(input: {
     }
     pushUniqueTarget(
       targets,
-      buildTenantD1ReleaseMigrationTarget({
+      buildAssignmentReleaseMigrationTarget({
         binding,
         databaseId: resource.id,
         databaseName: resource.name,
         role,
       })
     );
-  }
-
-  if (input.config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    addExternalTarget(targets, input.config, {
-      driver: 'postgres',
-      ref: 'core-primary',
-      logicalRole: 'core',
-    });
-    addExternalTarget(targets, input.config, {
-      driver: 'postgres',
-      ref: 'pii-primary',
-      logicalRole: 'pii',
-    });
-  }
-
-  // Tenant overrides can select any setup-seeded runtime profile. Enumerating only the
-  // environment default would let a tenant-specific external database escape the release plan.
-  for (const profile of input.config.profiles.seed.storage) {
-    for (const target of Object.values(profile.slices ?? {})) {
-      if (!target || target.driver === 'd1') continue;
-      addExternalTarget(targets, input.config, {
-        driver: target.driver,
-        ref: target.connectionRef ?? target.bindingRef,
-        logicalRole: target.role ?? 'custom',
-      });
-    }
   }
 
   for (const profile of input.config.profiles.seed.audit) {
@@ -714,7 +671,7 @@ export function resolveRegisteredSchemaReferences(input: {
 
   const references = new Set<string>();
   for (const target of resolveReleaseMigrationTargets(input)) {
-    // Tenant D1 bindings are selected through the signed tenant database runtime registry,
+    // Control-managed D1 bindings are selected through the signed runtime registry,
     // not through admin-created runtime profiles. Emitting every Control-managed shard here would
     // make this Worker text variable grow linearly with the tenant pool and exceed Cloudflare's
     // per-variable size limit. Shared and setup-seeded external profile references remain listed.

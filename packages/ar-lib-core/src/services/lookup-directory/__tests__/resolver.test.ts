@@ -195,6 +195,44 @@ describe('LookupRouteResolver', () => {
     ]);
   });
 
+  it('returns a bounded multi-tenant alias set without cross-request caching', async () => {
+    const lookup = database(
+      session([aliasRow(), aliasRow({ tenant_id: 'tenant-b' })]),
+      session([aliasRow(), aliasRow({ tenant_id: 'tenant-b' })])
+    );
+    const resolver = new LookupRouteResolver(
+      { LOOKUP_SHARD_0001: lookup.binding },
+      provider(assignment())
+    );
+
+    await expect(
+      resolver.resolveAliases({ index: ALIAS_INDEX, maximumResults: 2 })
+    ).resolves.toEqual([
+      { tenantId: 'tenant-a', routeProjection: ALIAS_PROJECTION },
+      { tenantId: 'tenant-b', routeProjection: ALIAS_PROJECTION },
+    ]);
+    await expect(
+      resolver.resolveAliases({ index: ALIAS_INDEX, maximumResults: 1 })
+    ).rejects.toThrow('lookup_alias_result_limit_exceeded');
+  });
+
+  it('passes an environment tenant pagination cursor to the repository', async () => {
+    const lookup = database(session([aliasRow({ tenant_id: 'tenant-b' })]));
+    const resolver = new LookupRouteResolver(
+      { LOOKUP_SHARD_0001: lookup.binding },
+      provider(assignment())
+    );
+
+    await expect(
+      resolver.resolveAliases({
+        index: ALIAS_INDEX,
+        maximumResults: 2,
+        afterTenantId: 'tenant-a',
+      })
+    ).resolves.toEqual([{ tenantId: 'tenant-b', routeProjection: ALIAS_PROJECTION }]);
+    expect(lookup.withSession).toHaveBeenCalledWith('first-unconstrained');
+  });
+
   it('reads both current and previous key buckets during rotation and deduplicates', async () => {
     const previous: LookupBlindIndex = {
       ...INDEX,

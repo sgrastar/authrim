@@ -7,6 +7,7 @@ import {
   SECRET_UPLOAD_PLAN,
 } from '../core/deploy.js';
 import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
+import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('DEFAULT_SECRET_TARGET_WORKERS', () => {
   it('includes ar-saml so SAML signing secrets are uploaded by default', () => {
@@ -348,6 +349,19 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-auth')).toContain(
       'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS'
     );
+  });
+
+  it('gives every tenant-routed Worker runtime registry verification material', () => {
+    for (const component of WORKER_COMPONENTS.filter((candidate) =>
+      getRequiredDataRolesForComponent(candidate).some(
+        (role) => role === 'lookup' || role.startsWith('tenant_')
+      )
+    )) {
+      expect(
+        getSecretNamesForWorker(component),
+        `${component} must verify signed tenant runtime registry snapshots`
+      ).toContain('TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS');
+    }
   });
 
   it('keeps smoke signing material exclusive to Control and distributes only public JWKS', () => {

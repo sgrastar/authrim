@@ -27,15 +27,15 @@ import {
   invalidateUserCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
-  createPIIContextFromHono,
-  hasPIIDatabase,
   getLogger,
   DEFAULT_TENANT_ID,
+  isDatabaseSource,
+  resolveAccountDataContext,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
   type CanonicalRuntimeUserWriteInput,
-  type IdentityAccountRow,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
@@ -67,6 +67,10 @@ import {
   markAccountDirectoryRemovalsReady,
   prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
+import {
+  CrossShardAccountListService,
+  type CrossShardAccountListItem,
+} from './cross-shard-account-list';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -75,38 +79,95 @@ interface ScimUserReadOptions {
 
 type CanonicalUserFilterValue = string | number | boolean | null | undefined;
 
-/**
- * Create database adapters from Hono context.
- * Keeping this at the route edge lets the shared custom-claims logic stay
- * backend-agnostic while Workers still supply raw D1 bindings today.
- */
-function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
+interface ScimAccountAdapters {
   coreAdapter: DatabaseAdapter;
-  piiAdapter: DatabaseAdapter | null;
-} {
+  piiAdapter: DatabaseAdapter;
+}
+
+function createTenantMetadataAdapterFromContext(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const coreAdapter = authCtx.coreAdapter;
-  const piiAdapter = hasPIIDatabase(c)
-    ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
-    : null;
-  return { coreAdapter, piiAdapter };
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 function createCanonicalProjectionRepository(
-  _c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
+  piiAdapter: DatabaseAdapter,
   tenantId: string
-): CanonicalRuntimeUserProjectionRepository | null {
-  if (!piiAdapter) {
-    return null;
-  }
+): CanonicalRuntimeUserProjectionRepository {
   return new CanonicalRuntimeUserProjectionRepository(
     coreAdapter,
     tenantId,
     new CanonicalSensitiveValueResolver(piiAdapter)
   );
+}
+
+function adaptersFromAccountRoute(
+  route: Awaited<ReturnType<typeof resolveAccountDataContext>>
+): ScimAccountAdapters {
+  return {
+    coreAdapter: ensureDatabaseAdapter(route.coreDb, 'scim-account-core'),
+    piiAdapter: ensureDatabaseAdapter(route.piiDb, 'scim-account-pii'),
+  };
+}
+
+async function resolveScimAccountAdaptersFromContext(
+  c: Context<{ Bindings: Env }>,
+  userId: string
+): Promise<ScimAccountAdapters | null> {
+  try {
+    return adaptersFromAccountRoute(await resolveAccountDataContextFromHono(c, userId));
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+    throw error;
+  }
+}
+
+async function resolveScimAccountAdapters(
+  env: Env,
+  tenantId: string,
+  userId: string
+): Promise<ScimAccountAdapters | null> {
+  try {
+    return adaptersFromAccountRoute(
+      await resolveAccountDataContext(env, { tenantId, accountId: userId })
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+    throw error;
+  }
+}
+
+function adaptersFromCrossShardItem(
+  env: Env,
+  item: CrossShardAccountListItem
+): ScimAccountAdapters {
+  const core = (env as unknown as Record<string, unknown>)[item.coreBindingRef];
+  const pii = (env as unknown as Record<string, unknown>)[item.piiBindingRef];
+  if (!isDatabaseSource(core) || !isDatabaseSource(pii)) {
+    throw new Error('scim_account_route_binding_unavailable');
+  }
+  return {
+    coreAdapter: ensureDatabaseAdapter(core, 'scim-list-account-core'),
+    piiAdapter: ensureDatabaseAdapter(pii, 'scim-list-account-pii'),
+  };
+}
+
+async function mapScimConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await mapper(values[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function canonicalScimRuntimeUser(
@@ -322,10 +383,17 @@ async function validateScimCustomClaimWrite(
     deleteMissingFields?: boolean;
   }
 ) {
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(
+    c.env,
+    tenantId,
+    options?.userId ? { accountId: options.userId } : {}
+  );
+  const creating = !options?.userId;
+  const nonPiiDb = customClaimSources.nonPiiDb ?? customClaimSources.schemaDb;
   return validateCustomClaimWrite({
-    db: customClaimSources.nonPiiDb,
+    db: nonPiiDb,
     dbPii: customClaimSources.piiDb,
+    piiStorageAvailable: creating,
     schemaDb: customClaimSources.schemaDb,
     tenantId,
     userId: options?.userId,
@@ -346,7 +414,10 @@ async function persistScimCustomClaimWrite(
     return;
   }
 
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+    accountId: userId,
+  });
+  if (!customClaimSources.nonPiiDb) throw new Error('scim_account_route_incomplete');
   await persistCustomClaimWrite({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
@@ -361,7 +432,7 @@ async function persistScimCustomClaimWrite(
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
     schemaDb: customClaimSources.schemaDb,
-    stateDb: createAuthContextFromHono(c, tenantId).coreAdapter,
+    stateDb: ensureDatabaseAdapter(customClaimSources.nonPiiDb, 'scim-account-state'),
     tenantId,
     userId,
   });
@@ -485,35 +556,40 @@ function scimAccountCreationPending(baseUrl: string, operationId: string): Recor
   };
 }
 
-async function fetchCanonicalUsers(
-  coreAdapter: DatabaseAdapter,
-  projectionRepository: CanonicalRuntimeUserProjectionRepository,
-  tenantId: string,
-  options: { includeInactive?: boolean } = {}
-): Promise<InternalUser[]> {
-  const lifecycleClause = options.includeInactive ? '' : " AND lifecycle_state = 'active'";
-  const accounts = await coreAdapter.query<IdentityAccountRow>(
-    `SELECT *
-       FROM identity_accounts
-      WHERE tenant_id = ?
-        AND legacy_user_id IS NOT NULL${lifecycleClause}
-      ORDER BY created_at DESC`,
-    [tenantId]
-  );
+const SCIM_MAX_USER_RESULTS = 1000;
+const SCIM_ACCOUNT_PAGE_SIZE = 100;
 
+async function fetchCrossShardCanonicalUsers(env: Env, tenantId: string): Promise<InternalUser[]> {
+  const service = new CrossShardAccountListService(env, () => Math.floor(Date.now() / 1000));
   const users: InternalUser[] = [];
-  for (const account of accounts) {
-    if (!account.legacy_user_id) {
-      continue;
-    }
-    const projection = await projectionRepository.findByLegacyUserId(account.legacy_user_id, {
-      includeInactive: options.includeInactive,
+  let cursor: string | undefined;
+
+  while (users.length < SCIM_MAX_USER_RESULTS) {
+    const page = await service.list({
+      tenantId,
+      accountType: 'user',
+      limit: SCIM_ACCOUNT_PAGE_SIZE,
+      cursor,
     });
-    if (projection) {
-      users.push(canonicalProjectionToScimInternalUser(projection));
-    }
+    const projected = await mapScimConcurrent(page.items, 4, async (item) => {
+      const { coreAdapter, piiAdapter } = adaptersFromCrossShardItem(env, item);
+      const projection = await createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      ).findByAccountId(item.id);
+      if (!projection || projection.id !== item.legacyUserId || projection.tenant_id !== tenantId) {
+        throw new Error('scim_account_route_projection_invalid');
+      }
+      return canonicalProjectionToScimInternalUser(projection);
+    });
+    users.push(...projected);
+    if (!page.nextCursor) break;
+    if (page.nextCursor === cursor) throw new Error('scim_account_cursor_stalled');
+    cursor = page.nextCursor;
   }
-  return users;
+
+  return users.slice(0, SCIM_MAX_USER_RESULTS);
 }
 
 function getScimUserFilterValue(user: InternalUser, attribute: string): CanonicalUserFilterValue {
@@ -576,8 +652,8 @@ function userMatchesScimFilter(user: InternalUser, filter: string): boolean {
  * PII/Non-PII DB separation: Cannot JOIN, so query user_roles and PII DB separately
  */
 async function fetchGroupMembersWithPII(
+  env: Env,
   coreAdapter: DatabaseAdapter,
-  projectionRepository: CanonicalRuntimeUserProjectionRepository | null,
   roleId: string,
   tenantId: string
 ): Promise<{ user_id: string; email: string }[]> {
@@ -591,25 +667,22 @@ async function fetchGroupMembersWithPII(
     return [];
   }
 
-  const emailMap = new Map<string, string>();
-  if (projectionRepository) {
-    for (const member of roleMembers) {
-      const projection = await projectionRepository.findByLegacyUserId(member.user_id);
-      if (projection?.email) {
-        emailMap.set(member.user_id, projection.email);
-      }
+  return mapScimConcurrent(roleMembers, 4, async (member) => {
+    const adapters = await resolveScimAccountAdapters(env, tenantId, member.user_id);
+    if (!adapters) {
+      return { user_id: member.user_id, email: '' };
     }
-  }
-
-  // Merge results
-  return roleMembers.map((r) => ({
-    user_id: r.user_id,
-    email: emailMap.get(r.user_id) || '',
-  }));
+    const projection = await createCanonicalProjectionRepository(
+      adapters.coreAdapter,
+      adapters.piiAdapter,
+      tenantId
+    ).findByLegacyUserId(member.user_id);
+    return { user_id: member.user_id, email: projection?.email ?? '' };
+  });
 }
 
 async function findMissingTenantUserIds(
-  coreAdapter: DatabaseAdapter,
+  env: Env,
   tenantId: string,
   userIds: string[]
 ): Promise<string[]> {
@@ -618,17 +691,10 @@ async function findMissingTenantUserIds(
     return [];
   }
 
-  const placeholders = uniqueUserIds.map(() => '?').join(',');
-  const rows = await coreAdapter.query<{ id: string }>(
-    `SELECT legacy_user_id as id
-       FROM identity_accounts
-      WHERE tenant_id = ?
-        AND legacy_user_id IN (${placeholders})
-        AND lifecycle_state = 'active'`,
-    [tenantId, ...uniqueUserIds]
+  const resolved = await mapScimConcurrent(uniqueUserIds, 4, async (userId) =>
+    resolveScimAccountAdapters(env, tenantId, userId)
   );
-  const found = new Set(rows.map((row) => row.id));
-  return uniqueUserIds.filter((userId) => !found.has(userId));
+  return uniqueUserIds.filter((_userId, index) => resolved[index] === null);
 }
 
 function resolveScimGroupMemberIds(
@@ -1461,27 +1527,15 @@ app.get('/Users', async (c) => {
     const tenantId = getTenantIdFromContext(c);
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
-    );
-    if (!canonicalProjectionRepository) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Pagination defaults
     const startIndex = params.startIndex || 1; // SCIM uses 1-based indexing
     const count = Math.min(params.count || 100, 1000); // Max 1000 per page
     const offset = startIndex - 1;
 
-    let users = await fetchCanonicalUsers(coreAdapter, canonicalProjectionRepository, tenantId);
     if (params.filter) {
       try {
         parseScimFilter(params.filter);
-        users = users.filter((user) => userMatchesScimFilter(user, params.filter!));
       } catch (error) {
         // Log full error for debugging but don't expose to client
         const log = getLogger(c).module('SCIM');
@@ -1491,18 +1545,25 @@ app.get('/Users', async (c) => {
       }
     }
 
+    const sortColumn = params.sortBy
+      ? validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS)
+      : null;
+    if (params.sortBy && !sortColumn) {
+      return scimError(
+        c,
+        400,
+        `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_USER_SORT_COLUMNS).join(', ')}`,
+        'invalidValue'
+      );
+    }
+
+    let users = await fetchCrossShardCanonicalUsers(c.env, tenantId);
+    if (params.filter) {
+      users = users.filter((user) => userMatchesScimFilter(user, params.filter!));
+    }
     const totalResults = users.length;
 
-    if (params.sortBy) {
-      const sortColumn = validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS);
-      if (!sortColumn) {
-        return scimError(
-          c,
-          400,
-          `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_USER_SORT_COLUMNS).join(', ')}`,
-          'invalidValue'
-        );
-      }
+    if (sortColumn) {
       const sortDirection = params.sortOrder === 'descending' ? -1 : 1;
       users.sort((a, b) => {
         const aValue = getScimUserFilterValue(a, sortColumn);
@@ -1541,16 +1602,16 @@ app.get('/Users/:id', async (c) => {
     const userId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId);
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
     const user = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
     });
@@ -1627,9 +1688,6 @@ app.post('/Users', async (c) => {
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    if (!hasPIIDatabase(c)) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -1743,16 +1801,16 @@ app.put('/Users/:id', async (c) => {
     const scimUser = await c.req.json<Partial<ScimUser>>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId);
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
@@ -1842,16 +1900,16 @@ app.patch('/Users/:id', async (c) => {
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId);
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Check if user exists - fetch from both DBs
     const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
@@ -1944,16 +2002,16 @@ app.delete('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId);
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Check if user exists - fetch from both DBs
     const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
@@ -2042,7 +2100,7 @@ app.get('/Groups', async (c) => {
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     const startIndex = params.startIndex || 1;
     const count = Math.min(params.count || 100, 1000);
@@ -2108,8 +2166,8 @@ app.get('/Groups', async (c) => {
     for (const group of groups) {
       // Fetch members if needed (PII/Non-PII DB separation)
       const members = await fetchGroupMembersWithPII(
+        c.env,
         coreAdapter,
-        createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
         group.id as string,
         tenantId
       );
@@ -2141,7 +2199,7 @@ app.get('/Groups/:id', async (c) => {
     const groupId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     const group = await coreAdapter.queryOne<InternalGroup>(
       'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
@@ -2162,12 +2220,7 @@ app.get('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
@@ -2190,7 +2243,7 @@ app.post('/Groups', async (c) => {
     const scimGroup = await c.req.json<Partial<ScimGroup>>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
@@ -2218,7 +2271,7 @@ app.post('/Groups', async (c) => {
     const now = new Date().toISOString();
 
     const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
+    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
     if (missingMemberIds.length > 0) {
       return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
@@ -2251,12 +2304,7 @@ app.post('/Groups', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2287,7 +2335,7 @@ app.put('/Groups/:id', async (c) => {
     const scimGroup = await c.req.json<Partial<ScimGroup>>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
@@ -2318,23 +2366,23 @@ app.put('/Groups/:id', async (c) => {
     // Convert SCIM group to internal format
     const internalGroup = scimToGroup(scimGroup);
 
+    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
+    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+    if (missingMemberIds.length > 0) {
+      return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
+    }
+
     // Update group
     await coreAdapter.execute(
       `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
       [internalGroup.name, internalGroup.description, internalGroup.external_id, groupId, tenantId]
     );
 
-    // Update members (replace all)
+    // Update members only after every routed account has been validated.
     await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
       tenantId,
       groupId,
     ]);
-
-    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-    if (missingMemberIds.length > 0) {
-      return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
-    }
 
     if (memberIds.length > 0) {
       const now = new Date().toISOString();
@@ -2352,12 +2400,7 @@ app.put('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2388,7 +2431,7 @@ app.patch('/Groups/:id', async (c) => {
     const patchOp = await c.req.json<ScimPatchOp>();
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
     const existingGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -2411,12 +2454,7 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Fetch current members (PII/Non-PII DB separation)
-    const currentMembers = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const currentMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     // Convert to SCIM format
     let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
@@ -2433,6 +2471,15 @@ app.patch('/Groups/:id', async (c) => {
     // Convert back to internal format
     const internalGroup = scimToGroup(scimGroup);
 
+    const memberIds =
+      scimGroup.members === undefined ? null : resolveScimGroupMemberIds(scimGroup.members);
+    if (memberIds) {
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+      if (missingMemberIds.length > 0) {
+        return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
+      }
+    }
+
     // Update group
     await coreAdapter.execute(
       `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
@@ -2440,13 +2487,7 @@ app.patch('/Groups/:id', async (c) => {
     );
 
     // Update members if changed
-    if (scimGroup.members !== undefined) {
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
-        return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
-      }
-
+    if (memberIds) {
       await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
         groupId,
@@ -2469,12 +2510,7 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Fetch updated members (PII/Non-PII DB separation)
-    const updatedMembers = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const updatedMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(
       updatedGroup,
@@ -2505,7 +2541,7 @@ app.delete('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
     const existingGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -2651,7 +2687,7 @@ app.post('/Bulk', async (c) => {
   try {
     const tenantId = getTenantIdFromContext(c);
     const baseUrl = getBaseUrl(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const metadataAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Get bulk config from KV
     const bulkConfig = await getBulkConfig(c.env);
@@ -2720,8 +2756,7 @@ app.post('/Bulk', async (c) => {
         bulkIdMap,
         tenantId,
         baseUrl,
-        coreAdapter,
-        piiAdapter,
+        metadataAdapter,
         c
       );
 
@@ -2763,8 +2798,7 @@ async function processOperation(
   bulkIdMap: Map<string, string>,
   tenantId: string,
   baseUrl: string,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
+  metadataAdapter: DatabaseAdapter,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
   const { method, path, bulkId, version, data } = operation;
@@ -2861,8 +2895,6 @@ async function processOperation(
         version,
         tenantId,
         baseUrl,
-        coreAdapter,
-        piiAdapter,
         bulkIdMap,
         c
       );
@@ -2875,8 +2907,7 @@ async function processOperation(
         version,
         tenantId,
         baseUrl,
-        coreAdapter,
-        piiAdapter,
+        metadataAdapter,
         bulkIdMap,
         c
       );
@@ -2912,30 +2943,9 @@ async function processUserOperation(
   version: string | undefined,
   tenantId: string,
   baseUrl: string,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
   bulkIdMap: Map<string, string>,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
-  const canonicalProjectionRepository = createCanonicalProjectionRepository(
-    c,
-    coreAdapter,
-    piiAdapter,
-    tenantId
-  );
-  if (!canonicalProjectionRepository || !piiAdapter) {
-    return {
-      method: method as ScimBulkMethod,
-      bulkId,
-      status: '500',
-      response: {
-        schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Configured PII store is not available',
-      },
-    };
-  }
-
   switch (method) {
     case 'POST': {
       // Create user
@@ -3074,6 +3084,24 @@ async function processUserOperation(
     }
 
     case 'PUT': {
+      const adapters = await resolveScimAccountAdapters(c.env, tenantId, resourceId!);
+      if (!adapters) {
+        return {
+          method: 'PUT',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Replace user
       const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
@@ -3174,6 +3202,24 @@ async function processUserOperation(
     }
 
     case 'PATCH': {
+      const adapters = await resolveScimAccountAdapters(c.env, tenantId, resourceId!);
+      if (!adapters) {
+        return {
+          method: 'PATCH',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Partial update user
       const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
@@ -3276,6 +3322,24 @@ async function processUserOperation(
     }
 
     case 'DELETE': {
+      const adapters = await resolveScimAccountAdapters(c.env, tenantId, resourceId!);
+      if (!adapters) {
+        return {
+          method: 'DELETE',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Delete user
       const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
       if (!existingUser) {
@@ -3340,29 +3404,9 @@ async function processGroupOperation(
   tenantId: string,
   baseUrl: string,
   coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
   bulkIdMap: Map<string, string>,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
-  const canonicalProjectionRepository = createCanonicalProjectionRepository(
-    c,
-    coreAdapter,
-    piiAdapter,
-    tenantId
-  );
-  if (!canonicalProjectionRepository) {
-    return {
-      method: method as ScimBulkMethod,
-      bulkId,
-      status: '500',
-      response: {
-        schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Configured PII store is not available',
-      },
-    };
-  }
-
   switch (method) {
     case 'POST': {
       // Create group
@@ -3406,7 +3450,7 @@ async function processGroupOperation(
       const now = new Date().toISOString();
 
       const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
       if (missingMemberIds.length > 0) {
         return invalidGroupMemberBulkResponse('POST', bulkId);
       }
@@ -3436,12 +3480,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [groupId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        groupId,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
       const responseGroup = createdGroup
         ? groupToScim(createdGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -3507,6 +3546,12 @@ async function processGroupOperation(
 
       const internalGroup = scimToGroup(scimGroup);
 
+      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+      if (missingMemberIds.length > 0) {
+        return invalidGroupMemberBulkResponse('PUT');
+      }
+
       await coreAdapter.execute(
         `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
         [
@@ -3518,16 +3563,11 @@ async function processGroupOperation(
         ]
       );
 
-      // Update members
+      // Update members only after every routed account has been validated.
       await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
         resourceId,
       ]);
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
-        return invalidGroupMemberBulkResponse('PUT');
-      }
 
       if (memberIds.length > 0) {
         const now = new Date().toISOString();
@@ -3538,12 +3578,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [resourceId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        resourceId!,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -3592,8 +3627,8 @@ async function processGroupOperation(
       }
 
       const currentMembers = await fetchGroupMembersWithPII(
+        c.env,
         coreAdapter,
-        canonicalProjectionRepository,
         resourceId!,
         tenantId
       );
@@ -3618,6 +3653,17 @@ async function processGroupOperation(
 
       const internalGroup = scimToGroup(scimGroup);
 
+      const memberIds =
+        scimGroup.members === undefined
+          ? null
+          : resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
+      if (memberIds) {
+        const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+        if (missingMemberIds.length > 0) {
+          return invalidGroupMemberBulkResponse('PATCH');
+        }
+      }
+
       await coreAdapter.execute(
         `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
         [
@@ -3630,13 +3676,7 @@ async function processGroupOperation(
       );
 
       // Update members if changed
-      if (scimGroup.members !== undefined) {
-        const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-        const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-        if (missingMemberIds.length > 0) {
-          return invalidGroupMemberBulkResponse('PATCH');
-        }
-
+      if (memberIds) {
         await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
           tenantId,
           resourceId,
@@ -3651,12 +3691,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [resourceId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        resourceId!,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;

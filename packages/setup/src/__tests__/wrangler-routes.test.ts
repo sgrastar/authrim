@@ -9,6 +9,7 @@ import {
 import { createDefaultConfig } from '../core/config.js';
 import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
+import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('Worker placement generation', () => {
   it('defaults to off and permits an explicit Smart Placement experiment', () => {
@@ -135,6 +136,7 @@ describe('generateRoutes', () => {
       tenant: {
         name: 'default',
         displayName: 'Default Tenant',
+        placementPolicy: 'tenant_exclusive',
         multiTenant: false,
         userIdFormat: 'nanoid',
       },
@@ -182,6 +184,7 @@ describe('generateRoutes', () => {
         core: { location: 'auto', jurisdiction: 'none' },
         pii: { location: 'auto', jurisdiction: 'none' },
       },
+      controlPlane: { automaticProvisioning: true },
       security: {
         piiEncryptionEnabled: true,
         domainHashEnabled: true,
@@ -202,7 +205,12 @@ describe('generateRoutes', () => {
     const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
     const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
     const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
+    const samlConfig = generateWranglerConfig('ar-saml', config, resourceIds);
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    for (const challengeStoreConsumer of [authConfig, managementConfig, samlConfig, bridgeConfig]) {
+      expect(challengeStoreConsumer.vars.AUTHRIM_CHALLENGE_SHARDS).toBe('4');
+    }
 
     expect(authConfig.durable_objects?.bindings).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
@@ -784,7 +792,7 @@ describe('generateRoutes', () => {
     });
   });
 
-  it('includes generated tenant D1 bindings for tenant durable runtime workers', () => {
+  it('includes generated assignment bindings for tenant durable runtime workers', () => {
     const config = {
       version: '1.0.0',
       environment: { prefix: 'tenantd1' },
@@ -864,6 +872,7 @@ describe('generateRoutes', () => {
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
     const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
+    const policyConfig = generateWranglerConfig('ar-policy', config, resourceIds);
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
     expect(authConfig.d1_databases).toEqual(
@@ -874,10 +883,10 @@ describe('generateRoutes', () => {
       ])
     );
     expect(discoveryConfig.d1_databases).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ binding: 'DB' }),
-        expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' })])
+    );
+    expect(discoveryConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
     );
     expect(discoveryConfig.d1_databases).not.toEqual(
       expect.arrayContaining([
@@ -990,10 +999,10 @@ describe('generateRoutes', () => {
       expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
     );
     expect(agentAccessConfig.d1_databases).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ binding: 'DB' }),
-        expect.objectContaining({ binding: 'DB_ADMIN' }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB_ADMIN' })])
+    );
+    expect(agentAccessConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
     );
     expect(agentAccessConfig.d1_databases).toEqual(
       expect.arrayContaining([
@@ -1006,16 +1015,38 @@ describe('generateRoutes', () => {
     );
     expect(asyncConfig.d1_databases).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'DB' }),
-        expect.objectContaining({ binding: 'DB_PII' }),
         expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' }),
         expect.objectContaining({ binding: 'TDB_USERS_EXAMPLE_CORE' }),
         expect.objectContaining({ binding: 'TDB_PII_EXAMPLE_PII' }),
       ])
     );
-    expect(asyncConfig.kv_namespaces).toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'INITIAL_ACCESS_TOKENS' })])
+    expect(asyncConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'DB' }),
+        expect.objectContaining({ binding: 'DB_PII' }),
+      ])
     );
+    expect(asyncConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'INITIAL_ACCESS_TOKENS' }),
+        expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' }),
+      ])
+    );
+    expect(policyConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+    );
+    for (const component of WORKER_COMPONENTS.filter((candidate) =>
+      getRequiredDataRolesForComponent(candidate).some(
+        (role) => role === 'lookup' || role.startsWith('tenant_')
+      )
+    )) {
+      expect(
+        generateWranglerConfig(component, config, resourceIds).kv_namespaces,
+        `${component} must receive the signed tenant runtime registry`
+      ).toEqual(
+        expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+      );
+    }
     expect(routerConfig.d1_databases).toBeUndefined();
   });
 
@@ -1090,7 +1121,6 @@ describe('generateRoutes', () => {
       profile: 'basic-op',
       profiles: {
         defaults: {
-          storage: 'builtin:storage:external-postgres',
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:default',
         },
@@ -1105,7 +1135,6 @@ describe('generateRoutes', () => {
           },
         },
         seed: {
-          storage: [],
           audit: [],
           residency: [],
         },
