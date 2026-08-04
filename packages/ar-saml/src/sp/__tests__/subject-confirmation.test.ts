@@ -121,6 +121,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       module: () => mockLogger,
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
     resolveAccountDataContextByIdentifier: vi.fn(async () => {
       const adapter = (linkedIdentity: boolean) => ({
         query: vi.fn().mockResolvedValue([]),

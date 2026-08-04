@@ -265,6 +265,10 @@ vi.mock('@authrim/ar-lib-core', () => ({
     nonPiiDb: env.DB,
     piiDb: env.DB_PII ?? null,
   })),
+  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    coreDb: env.DB,
+    piiDb: env.DB_PII ?? env.DB,
+  })),
   DEFAULT_JIT_CONFIG: {
     enabled: true,
     auto_create_org_on_domain_match: false,

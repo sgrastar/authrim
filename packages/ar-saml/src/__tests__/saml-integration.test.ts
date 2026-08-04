@@ -179,6 +179,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       nonPiiDb: env.TDB_TEST_CORE,
       piiDb: env.TDB_TEST_PII ?? null,
     })),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: SamlTestEnv) => ({
+      coreDb: env.TDB_TEST_CORE,
+      piiDb: env.TDB_TEST_PII ?? env.TDB_TEST_CORE,
+    })),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: SamlTestEnv) => ({
+      coreDb: env.TDB_TEST_CORE,
+      piiDb: env.TDB_TEST_PII ?? env.TDB_TEST_CORE,
+    })),
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
       stub: {

@@ -1268,7 +1268,7 @@ async function createTenantD1UserWithJITProvisioning(
     roleAssignments,
     defaultRoleId: params.jitConfig.default_role_id ?? null,
     matchedRules: ruleResult.matched_rules,
-    attributesSet: ruleResult.attributes_to_set,
+    attributesSet: ruleResult.attributes_to_set ?? [],
   };
   const planJson = canonicalJson(plan);
   if (new TextEncoder().encode(planJson).byteLength > 20 * 1024) {

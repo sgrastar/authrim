@@ -195,6 +195,10 @@ vi.mock('@authrim/ar-lib-core', () => ({
     nonPiiDb: env.DB,
     piiDb: env.DB_PII ?? null,
   })),
+  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+    coreDb: env.DB,
+    piiDb: env.DB_PII ?? env.DB,
+  })),
   resolveAccountDataContext: mockResolveAccountContext,
   resolveAccountDataContextByIdentifier: mockResolveAccountContext,
   resolveTenantMetadataContext: mockResolveTenantMetadataContext,
