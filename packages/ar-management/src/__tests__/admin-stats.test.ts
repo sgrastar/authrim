@@ -143,8 +143,7 @@ describe('admin statistics contracts', () => {
       }
     );
 
-    it('combines core active counts and audit issuance counts with null fallbacks', async () => {
-      mocks.core.queryOne.mockResolvedValueOnce({ count: 7 }).mockResolvedValueOnce(null);
+    it('returns audit issuance counts without querying session persistence tables', async () => {
       mocks.audit.queryOne
         .mockResolvedValueOnce({ count: 3 })
         .mockResolvedValueOnce({ count: 1 })
@@ -152,7 +151,7 @@ describe('admin statistics contracts', () => {
         .mockResolvedValueOnce({ count: 2 });
       const response = await adminStatsTokensHandler(context());
       await expect(response.json()).resolves.toEqual({
-        access_tokens: { active: 7, issued_today: 3, revoked_today: 1 },
+        access_tokens: { active: 0, issued_today: 3, revoked_today: 1 },
         refresh_tokens: { active: 0, issued_today: 0, revoked_today: 2 },
         period: { from, to },
       });
@@ -283,14 +282,13 @@ describe('admin statistics contracts', () => {
           unique_users: 7,
           last_activity: unit === 'milliseconds' ? 1_700_000_000_000 : 1_700_000_000,
         });
-      mocks.core.queryOne.mockResolvedValueOnce({ active_access: 4, active_refresh: 3 });
       const response = await adminStatsClientHandler(context());
       await expect(response.json()).resolves.toMatchObject({
         client_id: clientId,
         client_name: 'Dashboard',
         tokens: {
-          active_access_tokens: 4,
-          active_refresh_tokens: 3,
+          active_access_tokens: 0,
+          active_refresh_tokens: 0,
           issued_today: 5,
           revoked_today: 1,
         },

@@ -9,6 +9,7 @@ const {
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
   mockCreatePIIContextFromHono,
+  mockResolveAccountDataContextFromHono,
   mockEmailNotifier,
   mockCoreAdapter,
   mockPiiAdapter,
@@ -20,6 +21,9 @@ const {
   mockVerifyAuthenticationResponse,
   mockVerifyRegistrationResponse,
   mockAdvancePasskeyAuthenticationState,
+  mockPublishAccountExternalSubjectAddition,
+  mockPrepareAccountExternalSubjectRemoval,
+  mockAttemptImmediateAccountDirectoryRemovals,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -31,6 +35,7 @@ const {
   };
   const coreAdapter = {
     execute: vi.fn(),
+    batch: vi.fn(),
   };
   const piiAdapter = {};
   const emailNotifier = {
@@ -56,6 +61,7 @@ const {
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: piiAdapter }),
+    mockResolveAccountDataContextFromHono: vi.fn(),
     mockEmailNotifier: emailNotifier,
     mockCoreAdapter: coreAdapter,
     mockPiiAdapter: piiAdapter,
@@ -72,8 +78,20 @@ const {
       counter: 13,
       advanced: true,
     })),
+    mockPublishAccountExternalSubjectAddition: vi.fn(),
+    mockPrepareAccountExternalSubjectRemoval: vi.fn(),
+    mockAttemptImmediateAccountDirectoryRemovals: vi.fn(),
   };
 });
+
+vi.mock('../account-identifier-addition', () => ({
+  publishAccountExternalSubjectAddition: mockPublishAccountExternalSubjectAddition,
+  prepareAccountExternalSubjectRemoval: mockPrepareAccountExternalSubjectRemoval,
+}));
+
+vi.mock('../account-directory-removal-producer', () => ({
+  attemptImmediateAccountDirectoryRemovals: mockAttemptImmediateAccountDirectoryRemovals,
+}));
 
 vi.mock('@simplewebauthn/server', () => ({
   generateAuthenticationOptions: mockGenerateAuthenticationOptions,
@@ -105,6 +123,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: mockGetTenantIdFromContext,
     getTenantMetadataContextFromHono: vi.fn(() => undefined),
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createAuditLog: vi.fn().mockResolvedValue(undefined),
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
@@ -141,7 +161,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       const result = await mockEmailNotifier.send(input.payload);
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: result.success ? 'delivered' : 'permanent_failure',
       };
     }),
@@ -170,6 +190,7 @@ const basePasskey = {
   tenant_id: 'default',
   user_id: 'user-001',
   credential_id: 'credential-secret',
+  rp_id: 'op.example.com',
   public_key: 'public-key-secret',
   counter: 12,
   transports: ['internal'],
@@ -240,6 +261,7 @@ function createMockContext(
         idFromName: vi.fn((name: string) => name),
         get: vi.fn(() => mockRateLimiter),
       },
+      ACCOUNT_DIRECTORY: {},
     } as unknown as Env,
     req: {
       method: 'GET',
@@ -292,9 +314,26 @@ describe('Account Page passkey management API', () => {
       counter: 13,
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
+    mockCoreAdapter.batch.mockResolvedValue([
+      { rowsAffected: 1, success: true },
+      { rowsAffected: 1, success: true },
+    ]);
+    mockPublishAccountExternalSubjectAddition.mockResolvedValue({ status: 201 });
+    mockPrepareAccountExternalSubjectRemoval.mockResolvedValue({
+      operationId: 'account-passkey-remove-pk_001',
+      tenantId: 'default',
+      accountId: 'account:user-001',
+    });
+    mockAttemptImmediateAccountDirectoryRemovals.mockResolvedValue(undefined);
     mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
     mockEmailNotifier.send.mockResolvedValue({ success: true, messageId: 'email-001' });
     mockRuntimeUserStore.findById.mockResolvedValue(null);
+    mockResolveAccountDataContextFromHono.mockResolvedValue({
+      tenantId: 'default',
+      accountId: 'account:user-001',
+      legacyUserId: 'user-001',
+      membership: { routeProjection: { targets: [] } },
+    });
     mockGenerateAuthenticationOptions.mockResolvedValue({
       challenge: 'reauth-challenge-value',
       rpId: 'op.example.com',
@@ -1149,9 +1188,13 @@ describe('Account Page passkey management API', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('SELECT COUNT(*) FROM passkeys'),
-      ['pk_001', 'default', 'user-001', 'default', 'user-001']
+    expect(mockCoreAdapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('SELECT COUNT(*) FROM passkeys'),
+          params: ['pk_001', 'default', 'user-001', 'default', 'user-001'],
+        }),
+      ])
     );
     expect(body.passkey).toEqual({
       id: 'pk_001',
@@ -1202,9 +1245,13 @@ describe('Account Page passkey management API', () => {
     };
 
     expect(response.status).toBe(200);
-    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-      'DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?',
-      ['pk_001', 'default', 'user-001']
+    expect(mockCoreAdapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: 'DELETE FROM passkeys WHERE id = ? AND tenant_id = ? AND user_id = ?',
+          params: ['pk_001', 'default', 'user-001'],
+        }),
+      ])
     );
     expect(body.passkey).toEqual({
       id: 'pk_001',

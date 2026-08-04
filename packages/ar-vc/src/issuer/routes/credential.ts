@@ -20,9 +20,10 @@ import {
   SchemaLoader,
   ClaimNameResolver,
   ensureDatabaseAdapter,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveTenantMetadataContext,
   getTenantIdFromContext,
+  type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { sha256Base64url } from '../../utils/crypto';
 import { createVCConfigManager } from '../../utils/vc-config';
@@ -207,22 +208,14 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     try {
       const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
       if (ccFeatureConfig.enabled && tokenResult.userId) {
-        const authAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-          c.env,
-          'vc-issuer-core',
-          { tenantId: tokenResult.tenantId }
-        );
-        const runtimeSources = await resolveUserStoreRuntimeSourcesFromEnv(
-          c.env,
-          tokenResult.tenantId
-        );
-        const piiAdapter = ensureDatabaseAdapter(
-          runtimeSources.piiDb ?? runtimeSources.coreDb,
-          'vc-issuer-pii'
+        const runtimeSources = await resolveCustomClaimRuntimeSourcesFromEnv(
+          c.env as unknown as CoreEnv,
+          tokenResult.tenantId,
+          { accountId: `account:${tokenResult.userId}` }
         );
         const ccResolver = createCustomClaimSchemaResolver(
-          authAdapter,
-          piiAdapter,
+          runtimeSources.schemaDb,
+          runtimeSources.piiDb,
           c.env.AUTHRIM_CONFIG || null,
           ccFeatureConfig
         );
@@ -236,7 +229,10 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
 
         // Collect PII claim names for SD-JWT selective disclosure
         if (vcResult.pii_accessed) {
-          const schemaLoader = new SchemaLoader(authAdapter, c.env.AUTHRIM_CONFIG || null);
+          const schemaLoader = new SchemaLoader(
+            runtimeSources.schemaDb,
+            c.env.AUTHRIM_CONFIG || null
+          );
           const allSchemas = await schemaLoader.loadActiveSchemas(tokenResult.tenantId);
           const nameResolver = new ClaimNameResolver();
           vcPiiClaimNames = allSchemas
@@ -253,9 +249,11 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const vct = resolveVct(body.credential_configuration_id);
 
     // Initialize repositories
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-issuer-core', {
-      tenantId: tokenResult.tenantId,
-    });
+    const tenantMetadata = await resolveTenantMetadataContext(
+      c.env as unknown as CoreEnv,
+      tokenResult.tenantId
+    );
+    const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-issuer-core');
     const statusListRepo = new D1StatusListRepository(adapter);
     const statusListManager = new StatusListManager(statusListRepo);
     const issuedCredentialRepo = new IssuedCredentialRepository(adapter);

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   resolveRotator: vi.fn(),
   resolveSession: vi.fn(),
   isShardedSessionId: vi.fn(),
+  listSessions: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -17,6 +18,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getRefreshTokenRotatorStubByJti: mocks.resolveRotator,
     getSessionStoreBySessionId: mocks.resolveSession,
     isShardedSessionId: mocks.isShardedSessionId,
+    getSessionRevocationStore: vi.fn(() => ({
+      listActiveSessionsRpc: mocks.listSessions,
+    })),
   };
 });
 
@@ -50,7 +54,11 @@ describe('identifier replacement credential revocation', () => {
       resolution: { instanceName: clientId },
       stub: { revokeFamilyRpc },
     }));
-    core.query.mockResolvedValue([{ id: 'g1:other-session' }, { id: 'legacy-session' }]);
+    mocks.listSessions.mockResolvedValue([
+      { sessionId: 'g1:current-session' },
+      { sessionId: 'g1:other-session' },
+      { sessionId: 'legacy-session' },
+    ]);
 
     await revokeIdentifierReplacementCredentials({
       env: {} as never,
@@ -65,24 +73,15 @@ describe('identifier replacement credential revocation', () => {
       tenantId: 'tenant-a',
       userId: 'account-a',
     });
-    expect(core.query).toHaveBeenCalledWith(
-      expect.stringContaining('id <> ?'),
-      ['tenant-a', 'account-a', 'g1:current-session', 1001],
-      { consistencyClass: 'primary_required' }
-    );
+    expect(core.query).not.toHaveBeenCalled();
     expect(invalidateSessionRpc).toHaveBeenCalledWith('g1:other-session');
-    expect(core.execute).toHaveBeenCalledWith(expect.stringContaining('DELETE FROM sessions'), [
-      'tenant-a',
-      'account-a',
-      'g1:other-session',
-      'legacy-session',
-    ]);
+    expect(core.execute).not.toHaveBeenCalled();
   });
 
   it('fails closed before invalidating sessions when the bounded index query overflows', async () => {
     mocks.listFamilies.mockResolvedValue([]);
-    core.query.mockResolvedValue(
-      Array.from({ length: 1001 }, (_, index) => ({ id: `g1:session-${index}` }))
+    mocks.listSessions.mockResolvedValue(
+      Array.from({ length: 1001 }, (_, index) => ({ sessionId: `g1:session-${index}` }))
     );
 
     await expect(

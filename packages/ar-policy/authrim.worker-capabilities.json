@@ -5,13 +5,6 @@
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
   "bindings": [
     {
-      "name": "DB",
-      "kind": "d1",
-      "required": true,
-      "dataRole": "tenant_core/default",
-      "capability": "policy_data.read"
-    },
-    {
       "name": "REBAC_CACHE",
       "kind": "kv_namespace",
       "required": true,
@@ -22,6 +15,12 @@
       "kind": "kv_namespace",
       "required": true,
       "capability": "policy_config.read"
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "runtime_registry.read"
     },
     {
       "name": "PERMISSION_CHANGE_HUB",
@@ -44,6 +43,11 @@
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
     {
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
       "capability": "control_smoke.verify",

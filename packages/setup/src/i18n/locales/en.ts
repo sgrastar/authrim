@@ -238,9 +238,9 @@ const en: Translations = {
   // Database
   'db.title': 'Database Configuration',
   'db.regionWarning': 'Database region cannot be changed after creation.',
-  'db.coreDescription': 'Core DB: Stores OAuth clients, tokens, sessions, audit logs',
+  'db.coreDescription': 'Platform DB: Stores platform metadata and non-PII audit logs',
   'db.coreRegion': 'Core Database region',
-  'db.piiDescription': 'PII DB: Stores user profiles, credentials, personal data',
+  'db.piiDescription': 'Platform PII DB: Stores PII audit and anonymization data',
   'db.piiNote': 'Consider your data protection requirements.',
   'db.piiRegion': 'PII Database region',
   'db.creating': 'Creating database...',
@@ -778,13 +778,8 @@ const en: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatic (nearest)',
-  'web.db.storageProfileTitle': 'Storage\nProfile',
-  'web.db.storageProfileDesc': 'Select how user core/PII data is placed for this deployment.',
-  'web.db.sharedD1Title': 'Shared D1',
-  'web.db.sharedD1Desc':
-    'Share one core D1 and one PII D1 across the whole environment. This is the standard configuration with the lowest setup cost.',
-  'web.db.tenantD1Title': 'Tenant D1',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Bootstrap the Control Plane and initial tenant shards. Later tenant capacity is provisioned automatically.',
 
   // Web UI Email

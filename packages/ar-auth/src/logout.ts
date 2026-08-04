@@ -19,7 +19,7 @@
 
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   timingSafeEqual,
   verifyClientSecretHash,
@@ -27,7 +27,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocation,
   isShardedSessionId,
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -69,6 +69,7 @@ import type {
   BackchannelLogoutConfig,
   LogoutSendResult,
   LogoutConfig,
+  SessionClientWithDetails,
   SessionClientWithWebhook,
   LogoutWebhookSendResult,
 } from '@authrim/ar-lib-core';
@@ -254,18 +255,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     let deviceSecretLogoutResult: RevokeDeviceSecretsForLogoutScopeResult | undefined;
 
-    // Collect all data needed for logout **before** deleting the session.
-    // Session deletion cascades to session_clients via FK, so we need the client
-    // lists upfront to send backchannel/frontchannel/webhook notifications.
+    // Collect all data needed for logout before deleting the authoritative DO session.
     type SessionNotificationTarget = {
       sessionId: string;
       userId: string;
-      backchannelClients: Awaited<
-        ReturnType<typeof authCtx.repositories.sessionClient.findBackchannelLogoutClients>
-      >;
-      frontchannelClients: Awaited<
-        ReturnType<typeof authCtx.repositories.sessionClient.findFrontchannelLogoutClients>
-      >;
+      backchannelClients: SessionClientWithDetails[];
+      frontchannelClients: SessionClientWithDetails[];
       webhookClients: SessionClientWithWebhook[];
     };
     const sessionsToNotify: SessionNotificationTarget[] = [];
@@ -277,16 +272,17 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
 
       try {
-        // Try to get user_id from D1 session (may not exist since sessions are in Durable Objects)
+        // SessionStore is authoritative. Do not consult a secondary persistence path.
         let effectiveUserId = fallbackUserId || '';
         try {
-          const session = await authCtx.repositories.session.findById(sessId);
-          if (session?.user_id) {
-            effectiveUserId = session.user_id;
+          const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessId, tenantId);
+          const session = (await sessionStore.getSessionRpc(sessId)) as Session | null;
+          if (session?.userId) {
+            effectiveUserId = session.userId;
           }
         } catch {
-          // Session not in D1, use fallback userId from id_token_hint
-          log.debug('Session not in D1, using fallback userId', { sessionId: sessId });
+          // Logout must still invalidate the routed session when metadata lookup fails.
+          log.debug('SessionStore metadata unavailable, using verified fallback userId');
         }
 
         const storeTargets = await resolveLogoutTargetsFromSessionClientStore(
@@ -296,50 +292,16 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           authCtx.repositories.sessionClient
         ).catch((error) => {
           log.warn('Failed to load logout clients from SessionClientStore', {
-            sessionId: sessId,
             error: (error as Error).message,
             action: 'Logout',
           });
           return null;
         });
-        let targetClients = storeTargets;
-        if (!targetClients) {
-          const [backchannelClients, frontchannelClients, webhookClients] = await Promise.all([
-            authCtx.repositories.sessionClient
-              .findBackchannelLogoutClients(sessId)
-              .catch((error) => {
-                log.warn('Failed to load backchannel clients', {
-                  sessionId: sessId,
-                  error: (error as Error).message,
-                  action: 'BackchannelLogout',
-                });
-                return [];
-              }),
-            authCtx.repositories.sessionClient
-              .findFrontchannelLogoutClients(sessId)
-              .catch((error) => {
-                log.warn('Failed to load frontchannel clients', {
-                  sessionId: sessId,
-                  error: (error as Error).message,
-                  action: 'FrontchannelLogout',
-                });
-                return [];
-              }),
-            authCtx.repositories.sessionClient.findWebhookClients(sessId).catch((error) => {
-              log.warn('Failed to load webhook clients', {
-                sessionId: sessId,
-                error: (error as Error).message,
-                action: 'LogoutWebhook',
-              });
-              return [];
-            }),
-          ]);
-          targetClients = {
-            backchannelClients,
-            frontchannelClients,
-            webhookClients,
-          };
-        }
+        const targetClients = storeTargets ?? {
+          backchannelClients: [],
+          frontchannelClients: [],
+          webhookClients: [],
+        };
         const { backchannelClients, frontchannelClients, webhookClients } = targetClients;
 
         // Only add if we have clients to notify
@@ -352,7 +314,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             backchannelCount: backchannelClients.length,
             frontchannelCount: frontchannelClients.length,
             webhookCount: webhookClients.length,
-            sessionId: sessId,
           });
           sessionsToNotify.push({
             sessionId: sessId,
@@ -362,11 +323,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             webhookClients,
           });
         } else {
-          log.debug('No logout clients found for session', { sessionId: sessId });
+          log.debug('No logout clients found for session');
         }
       } catch (error) {
         log.warn('Failed to load session data', {
-          sessionId: sessId,
           error: (error as Error).message,
         });
       }
@@ -374,8 +334,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Delete session from cookie if present (only sharded format)
     log.info('Processing logout', {
-      cookieSession: sessionId?.substring(0, 30) || 'none',
-      sid: sid?.substring(0, 30) || 'none',
+      cookieSessionPresent: Boolean(sessionId),
+      idTokenSessionPresent: Boolean(sid),
       idTokenValid,
     });
 
@@ -389,13 +349,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         if (deleted) {
           deletedSessions.push(sessionId);
-          log.info('Cookie session deleted', { sessionId: sessionId.substring(0, 30) });
+          log.info('Cookie session deleted');
         } else {
-          log.warn('Failed to delete cookie session', { sessionId });
+          log.warn('Failed to delete cookie session');
         }
       } catch (error) {
         log.warn('Failed to route to session store', {
-          sessionId,
           error: (error as Error).message,
         });
       }
@@ -414,7 +373,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       try {
         // Collect session info before deletion (pass userId from id_token_hint as fallback)
         if (!sessionsToNotify.some((s) => s.sessionId === sid)) {
-          log.info('Collecting session data for sid', { sid: sid.substring(0, 30) });
+          log.info('Collecting session data for id_token_hint session');
           await collectSessionData(sid, userId);
         }
 
@@ -423,14 +382,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         if (deleted) {
           deletedSessions.push(sid);
-          log.info('Session from sid deleted', { sid: sid.substring(0, 30) });
+          log.info('Session from id_token_hint deleted');
         } else {
           // Session might not exist or already deleted - this is OK
-          log.debug('Session from id_token_hint not found or already deleted', { sid });
+          log.debug('Session from id_token_hint not found or already deleted');
         }
       } catch (error) {
         log.warn('Failed to route to session store for sid', {
-          sid,
           error: (error as Error).message,
         });
       }
@@ -614,14 +572,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
             } of sessionsToNotify) {
               if (backchannelClients.length === 0) {
                 log.debug('No clients to notify for session', {
-                  sessionId: sessId,
                   action: 'BackchannelLogout',
                 });
                 continue;
               }
 
               log.info('Sending logout notifications', {
-                sessionId: sessId,
                 clientCount: backchannelClients.length,
                 action: 'BackchannelLogout',
               });
@@ -723,7 +679,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
               }
 
               log.info('Sending webhook notifications', {
-                sessionId: sessId,
                 clientCount: webhookClients.length,
                 action: 'LogoutWebhook',
               });
@@ -844,10 +799,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Log the logout event
     log.info('User logged out', {
-      userId: userId || 'unknown',
-      clientId: clientId || 'unknown',
-      cookieSessionId: sessionId || 'none',
-      sidFromToken: sid || 'none',
+      userPresent: Boolean(userId),
+      clientPresent: Boolean(clientId),
+      cookieSessionPresent: Boolean(sessionId),
+      idTokenSessionPresent: Boolean(sid),
       deletedSessionsCount: deletedSessions.length,
       idTokenValid,
       validationError: validationError || 'none',
@@ -1238,25 +1193,22 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         if (deleted) {
           sessionDeleted = true;
         } else {
-          log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
+          log.warn('Failed to delete session', { action: 'BackchannelLogout' });
         }
       } catch (error) {
         log.warn('Failed to route to session store for back-channel logout', {
-          sessionId,
           error: (error as Error).message,
           action: 'BackchannelLogout',
         });
       }
     } else if (sessionId) {
-      // Legacy non-sharded session ID - cannot route
-      log.warn('Cannot delete legacy session format', { sessionId, action: 'BackchannelLogout' });
+      log.warn('Cannot route an invalid session identifier', { action: 'BackchannelLogout' });
     } else {
       // A subject-only logout cannot locate every shard, so advance the user's
       // revocation epoch. SessionStore checks this epoch on active-session reads.
-      await recordHybridUserSessionRevocationEpoch(c.env, authCtx.coreAdapter, tenantId, userId);
+      await recordUserSessionRevocation(c.env, tenantId, userId);
       sessionDeleted = true;
       log.info('Invalidated all user sessions by revocation epoch', {
-        userId,
         action: 'BackchannelLogout',
       });
     }
@@ -1385,9 +1337,8 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Log the logout event
     log.info('Back-channel logout completed', {
-      userId,
-      sessionId: sessionId || 'all',
-      clientId: clientId || 'unknown',
+      sessionScoped: Boolean(sessionId),
+      clientScoped: Boolean(clientId),
       action: 'BackchannelLogout',
     });
 

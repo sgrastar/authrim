@@ -572,7 +572,7 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
-  it.each(['single tenant', 'multi tenant', 'shared D1', 'tenant D1', 'external DB'])(
+  it.each(['single shard', 'multiple shards', 'shared_pool', 'tenant_exclusive', 'adapter source'])(
     'creates selected aggregate entities through the batch API using the runtime storage resolver: %s',
     async () => {
       const coreAdapter = createMockAdapter();

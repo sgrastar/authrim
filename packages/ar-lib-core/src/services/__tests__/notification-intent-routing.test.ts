@@ -1,4 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ resolveTenant: vi.fn() }));
+
+vi.mock('../tenant-database-resolver', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../tenant-database-resolver')>()),
+  resolveTenantDatabaseSourceFromRegistry: mocks.resolveTenant,
+}));
+
 import {
   PLATFORM_NOTIFICATION_NAMESPACE,
   resolveNotificationIntentTarget,
@@ -12,52 +20,80 @@ function database(): D1Database {
 }
 
 describe('notification intent routing', () => {
-  it('routes the reserved platform owner to the stable shared-core alias', async () => {
-    const shared = database();
+  beforeEach(() => {
+    mocks.resolveTenant.mockReset();
+  });
+
+  it('routes the reserved platform owner to the platform notification database', async () => {
+    const platform = database();
     await expect(
-      resolveNotificationIntentTarget({ DB: database(), TDB_SHARED_CORE: shared } as never, {
+      resolveNotificationIntentTarget({ PLATFORM_NOTIFICATION_DB: platform } as never, {
         owner: 'platform',
       })
     ).resolves.toEqual({
       tenantId: PLATFORM_NOTIFICATION_NAMESPACE,
-      db: shared,
-      bindingRef: 'TDB_SHARED_CORE',
+      db: platform,
+      bindingRef: 'PLATFORM_NOTIFICATION_DB',
     });
+    expect(mocks.resolveTenant).not.toHaveBeenCalled();
   });
 
-  it('routes a tenant in the shared profile through the same stable alias', async () => {
-    const shared = database();
+  it('fails closed when the platform notification binding is absent', async () => {
     await expect(
-      resolveNotificationIntentTarget(
-        {
-          DB: database(),
-          TDB_SHARED_CORE: shared,
-          DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
-        } as never,
-        { owner: 'tenant', tenantId: 'tenant-a' }
-      )
+      resolveNotificationIntentTarget({} as never, { owner: 'platform' })
+    ).rejects.toThrow('notification_intent_platform_database_unavailable');
+    expect(mocks.resolveTenant).not.toHaveBeenCalled();
+  });
+
+  it('routes a tenant through its signed default assignment', async () => {
+    const tenantDb = database();
+    mocks.resolveTenant.mockResolvedValue({
+      source: tenantDb,
+      bindingRef: 'TDB_TENANT_A_DEFAULT',
+    });
+
+    await expect(
+      resolveNotificationIntentTarget({ AUTHRIM_DEPLOYMENT_TARGET: 'edge-a' } as never, {
+        owner: 'tenant',
+        tenantId: 'tenant-a',
+      })
     ).resolves.toEqual({
       tenantId: 'tenant-a',
-      db: shared,
-      bindingRef: 'TDB_SHARED_CORE',
+      db: tenantDb,
+      bindingRef: 'TDB_TENANT_A_DEFAULT',
     });
+    expect(mocks.resolveTenant).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        role: 'tenant_core',
+        dataRole: 'tenant_core/default',
+        deploymentTarget: 'edge-a',
+      })
+    );
   });
 
-  it('rejects the platform namespace and a missing shared binding for tenant input', async () => {
+  it('rejects reserved or malformed tenant IDs before route resolution', async () => {
+    for (const tenantId of [PLATFORM_NOTIFICATION_NAMESPACE, '../tenant']) {
+      await expect(
+        resolveNotificationIntentTarget({} as never, { owner: 'tenant', tenantId })
+      ).rejects.toThrow('notification_intent_tenant_invalid');
+    }
+    expect(mocks.resolveTenant).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an unsafe binding or non-D1 source', async () => {
+    mocks.resolveTenant.mockResolvedValueOnce({ source: database(), bindingRef: 'DB' });
     await expect(
-      resolveNotificationIntentTarget({ DB: database() } as never, {
-        owner: 'tenant',
-        tenantId: PLATFORM_NOTIFICATION_NAMESPACE,
-      })
-    ).rejects.toThrow('notification_intent_tenant_invalid');
+      resolveNotificationIntentTarget({} as never, { owner: 'tenant', tenantId: 'tenant-a' })
+    ).rejects.toThrow('notification_intent_binding_invalid');
+
+    mocks.resolveTenant.mockResolvedValueOnce({
+      source: { query: vi.fn() },
+      bindingRef: 'TDB_TENANT_A_DEFAULT',
+    });
     await expect(
-      resolveNotificationIntentTarget(
-        {
-          DB: database(),
-          DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
-        } as never,
-        { owner: 'tenant', tenantId: 'tenant-a' }
-      )
-    ).rejects.toThrow('notification_intent_shared_d1_unavailable');
+      resolveNotificationIntentTarget({} as never, { owner: 'tenant', tenantId: 'tenant-a' })
+    ).rejects.toThrow('notification_intent_tenant_database_unavailable');
   });
 });

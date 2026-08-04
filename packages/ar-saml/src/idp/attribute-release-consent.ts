@@ -109,7 +109,8 @@ export async function enforceSAMLAttributeReleaseConsent(input: {
 
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     input.env,
-    'saml-attribute-release-consent'
+    'saml-attribute-release-consent',
+    { tenantId: input.tenantId }
   );
   const trustPolicy = await resolveClientTrustPolicy(
     adapter,

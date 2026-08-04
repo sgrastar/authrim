@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -261,14 +262,18 @@ async function regenerateClientSecret(
 async function createClient(
   apiBaseUrl: string,
   adminBearerToken: string,
-  tenantId?: string
+  tenantId: string | undefined,
+  idempotencyKey: string
 ): Promise<{
   clientId: string;
   clientSecret: string;
 }> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
     method: 'POST',
-    headers: buildAdminHeaders(adminBearerToken, tenantId),
+    headers: {
+      ...buildAdminHeaders(adminBearerToken, tenantId),
+      'Idempotency-Key': idempotencyKey,
+    },
     body: JSON.stringify({
       client_name: DOWNSTREAM_INTROSPECTION_CLIENT_NAME,
       description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
@@ -356,6 +361,7 @@ export async function ensureDownstreamIntrospectionClient(
 
   try {
     let adminBearerToken: string | null = providedAdminBearerToken?.trim() || null;
+    const createIdempotencyKey = `setup-downstream-client-${randomBytes(18).toString('base64url')}`;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -426,7 +432,12 @@ export async function ensureDownstreamIntrospectionClient(
         }
 
         onProgress?.('Creating downstream introspection client');
-        const created = await createClient(apiBaseUrl, adminBearerToken, tenantId);
+        const created = await createClient(
+          apiBaseUrl,
+          adminBearerToken,
+          tenantId,
+          createIdempotencyKey
+        );
         await writeClientCredentials(keysDir, created.clientId, created.clientSecret);
 
         return {

@@ -15,14 +15,15 @@ import {
   canonicalizeApprovalScope,
   compileSupportOpsSelector,
   createAuthContextFromHono,
+  ensureDatabaseAdapter,
   generateInvestigationId,
   getSupportOpsResource,
   getTenantIdFromContext,
   getTenantSettings,
   hasAdminPermission,
+  listEnvironmentTenantDefaultStores,
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
-  resolveAuthCorePersistenceAdapterFromEnv,
   transitionAccountAuthenticationState,
   validateSupportOpsAction,
 } from '@authrim/ar-lib-core';
@@ -873,22 +874,38 @@ export async function processPendingSupportOpsSnapshotJobs(
   env: Env,
   logger?: SupportOpsLogger
 ): Promise<void> {
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'support-ops-snapshot-jobs'
-  );
-  const jobs = await coreAdapter.query<SupportOpsSnapshotJobRow>(
-    `SELECT id, tenant_id, status, progress, config
-       FROM admin_jobs
-      WHERE job_type = 'support-ops/cohort-snapshot'
-        AND (status = 'pending' OR (status = 'processing' AND updated_at < ?))
-      ORDER BY created_at ASC
-      LIMIT 3`,
-    [Math.floor(Date.now() / 1000) - 15 * 60]
-  );
-  for (const job of jobs) {
-    await processSupportOpsSnapshotJob(coreAdapter, job, logger);
+  if (!env.AUTHRIM_CONFIG) throw new Error('support_ops_tenant_directory_unavailable');
+  const cursorKey = 'jobs:support-ops-snapshot:tenant-cursor';
+  const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
+  const tenants = await listEnvironmentTenantDefaultStores(env, {
+    limit: 16,
+    afterTenantId,
+    concurrency: 4,
+  });
+  let remainingJobs = 3;
+  for (const tenant of tenants) {
+    if (remainingJobs <= 0) break;
+    const coreAdapter = ensureDatabaseAdapter(
+      tenant.store.source,
+      `support-ops-snapshot-jobs:${tenant.store.bindingRef}`
+    );
+    const jobs = await coreAdapter.query<SupportOpsSnapshotJobRow>(
+      `SELECT id, tenant_id, status, progress, config
+         FROM admin_jobs
+        WHERE tenant_id = ?
+          AND job_type = 'support-ops/cohort-snapshot'
+          AND (status = 'pending' OR (status = 'processing' AND updated_at < ?))
+        ORDER BY created_at ASC
+        LIMIT ?`,
+      [tenant.tenantId, Math.floor(Date.now() / 1000) - 15 * 60, remainingJobs]
+    );
+    for (const job of jobs) {
+      await processSupportOpsSnapshotJob(coreAdapter, job, logger);
+      remainingJobs -= 1;
+    }
   }
+  const nextCursor = tenants.length === 16 ? (tenants[tenants.length - 1]?.tenantId ?? '') : '';
+  await env.AUTHRIM_CONFIG.put(cursorKey, nextCursor);
 }
 
 supportOpsRouter.get('/registry', (c) => {

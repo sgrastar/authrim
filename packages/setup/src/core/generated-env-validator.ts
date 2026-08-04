@@ -73,16 +73,14 @@ const PROFILE_AWARE_COMPONENTS: WorkerComponent[] = [
   'ar-bridge',
 ];
 
-const TENANT_RUNTIME_REGISTRY_COMPONENTS: WorkerComponent[] = [
-  'ar-auth',
-  'ar-management',
-  'ar-agent-access',
-  'ar-token',
-  'ar-userinfo',
-  'ar-saml',
-  'ar-bridge',
-  'ar-vc',
-];
+function requiresTenantRuntimeRegistry(component: WorkerComponent): boolean {
+  return (
+    component === 'ar-control' ||
+    getRequiredDataRolesForComponent(component).some(
+      (role) => role === 'lookup' || role.startsWith('tenant_')
+    )
+  );
+}
 
 const BUILTIN_D1_BINDINGS: ReadonlySet<string> = new Set(
   D1_DATABASES.map((database) => database.binding)
@@ -126,28 +124,28 @@ const LOGGING_DELIVERY_PRODUCER_COMPONENTS: WorkerComponent[] = [
 ];
 
 const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
-  binding: 'DB' | 'DB_PII' | 'DB_ADMIN' | 'CONTROL_DB' | 'LOOKUP_DB' | 'PLUGIN_RUNNER_DB';
+  binding:
+    | 'DB'
+    | 'DB_PII'
+    | 'DB_ADMIN'
+    | 'CONTROL_DB'
+    | 'LOOKUP_DB'
+    | 'PLUGIN_RUNNER_DB'
+    | 'TDB_DEFAULT_BOOTSTRAP_CORE'
+    | 'TDB_USERS_BOOTSTRAP_CORE'
+    | 'TDB_PII_BOOTSTRAP_PII';
   label: string;
   tables: string[];
 }> = [
   {
     binding: 'DB',
-    label: 'core runtime schema',
-    tables: [
-      'users_core',
-      'identity_subjects',
-      'identity_accounts',
-      'profiles',
-      'contact_points',
-      'custom_claim_schemas',
-      'user_custom_fields',
-      'event_log',
-    ],
+    label: 'fixed platform metadata and audit schema',
+    tables: ['tenants', 'profile_registry', 'audit_log', 'event_log'],
   },
   {
     binding: 'DB_PII',
-    label: 'PII runtime schema',
-    tables: ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'],
+    label: 'fixed platform PII audit schema',
+    tables: ['audit_log_pii', 'user_anonymization_map', 'pii_log'],
   },
   {
     binding: 'DB_ADMIN',
@@ -236,6 +234,28 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
       'plugin_runner_circuit_breakers',
       'plugin_runner_migration_state',
     ],
+  },
+  {
+    binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+    label: 'tenant default assignment schema',
+    tables: ['tenants', 'tenant_domain_mappings', 'oauth_clients', 'flows', 'profile_registry'],
+  },
+  {
+    binding: 'TDB_USERS_BOOTSTRAP_CORE',
+    label: 'tenant account assignment schema',
+    tables: [
+      'identity_subjects',
+      'identity_accounts',
+      'profiles',
+      'contact_points',
+      'custom_claim_schemas',
+      'user_custom_fields',
+    ],
+  },
+  {
+    binding: 'TDB_PII_BOOTSTRAP_PII',
+    label: 'tenant PII assignment schema',
+    tables: ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'],
   },
 ];
 
@@ -349,7 +369,7 @@ function finishCheck(check: ValidationCheck, fallbackDetail: string): Validation
   return check;
 }
 
-const INITIAL_TENANT_D1_BINDINGS = [
+const INITIAL_ASSIGNMENT_BINDINGS = [
   'TDB_DEFAULT_BOOTSTRAP_CORE',
   'TDB_USERS_BOOTSTRAP_CORE',
   'TDB_PII_BOOTSTRAP_PII',
@@ -444,64 +464,12 @@ function parseWranglerVars(content: string, env: string): Record<string, string>
   return vars;
 }
 
-function isSeededProfile(
-  config: AuthrimConfig,
-  kind: 'storage' | 'audit' | 'residency',
-  id: string
-): boolean {
+function isSeededProfile(config: AuthrimConfig, kind: 'audit' | 'residency', id: string): boolean {
   return (config.profiles.seed[kind] ?? []).some((profile) => profile.id === id);
-}
-
-function resolveSeededStorageProfile(config: AuthrimConfig, id: string) {
-  return (config.profiles.seed.storage ?? []).find((profile) => profile.id === id) ?? null;
 }
 
 function resolveSeededAuditProfile(config: AuthrimConfig, id: string) {
   return (config.profiles.seed.audit ?? []).find((profile) => profile.id === id) ?? null;
-}
-
-function inspectStorageProfileTarget(
-  config: AuthrimConfig,
-  check: ValidationCheck,
-  scope: string,
-  target: { driver: string; bindingRef?: string; connectionRef?: string }
-): void {
-  if (target.driver === 'postgres' || target.driver === 'mysql') {
-    const reference = resolveConfiguredHyperdriveReference(
-      config,
-      target.connectionRef ?? target.bindingRef,
-      target.driver
-    );
-    if (reference) {
-      pushDetail(
-        check,
-        'pass',
-        `${scope}: ${target.driver} -> ${reference.binding} (${reference.id})`
-      );
-      return;
-    }
-    pushDetail(
-      check,
-      'fail',
-      `${scope}: ${target.driver} target requires a configured Hyperdrive reference for ${target.connectionRef ?? target.bindingRef ?? '(missing)'}`
-    );
-    return;
-  }
-  if (target.driver !== 'd1') {
-    pushDetail(
-      check,
-      'fail',
-      `${scope}: driver=${target.driver} cannot be used as an active default with only setup-generated primary bindings`
-    );
-    return;
-  }
-  if (!target.bindingRef || !BUILTIN_D1_BINDINGS.has(target.bindingRef)) {
-    pushDetail(
-      check,
-      'fail',
-      `${scope}: bindingRef=${target.bindingRef ?? '(missing)'} is not a built-in D1 binding`
-    );
-  }
 }
 
 function inspectAuditDatabaseTarget(
@@ -556,56 +524,7 @@ function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
     'seeded-profile-portability',
     'Non-default seed profiles are storable, but setup-only references are reported as warnings'
   );
-  const activeStorageId = config.profiles.defaults.storage;
   const activeAuditId = config.profiles.defaults.audit;
-
-  for (const profile of config.profiles.seed.storage ?? []) {
-    if (profile.id === activeStorageId) {
-      continue;
-    }
-    for (const [slice, target] of Object.entries(profile.slices)) {
-      if (!target) {
-        continue;
-      }
-      if (target.connectionRef) {
-        const reference = resolveConfiguredHyperdriveReference(
-          config,
-          target.connectionRef,
-          target.driver === 'mysql' ? 'mysql' : 'postgres'
-        );
-        pushDetail(
-          check,
-          reference ? 'pass' : 'warn',
-          reference
-            ? `storage profile ${profile.id} / ${slice}: ${target.connectionRef} -> ${reference.binding}`
-            : `storage profile ${profile.id} / ${slice}: connectionRef=${target.connectionRef}`
-        );
-        continue;
-      }
-      if (target.driver !== 'd1') {
-        const reference = resolveConfiguredHyperdriveReference(
-          config,
-          target.bindingRef,
-          target.driver === 'mysql' ? 'mysql' : 'postgres'
-        );
-        pushDetail(
-          check,
-          reference ? 'pass' : 'warn',
-          reference
-            ? `storage profile ${profile.id} / ${slice}: ${target.bindingRef} -> ${reference.id}`
-            : `storage profile ${profile.id} / ${slice}: driver=${target.driver}`
-        );
-        continue;
-      }
-      if (!target.bindingRef || !BUILTIN_D1_BINDINGS.has(target.bindingRef)) {
-        pushDetail(
-          check,
-          'warn',
-          `storage profile ${profile.id} / ${slice}: bindingRef=${target.bindingRef ?? '(missing)'}`
-        );
-      }
-    }
-  }
 
   for (const profile of config.profiles.seed.audit ?? []) {
     if (profile.id === activeAuditId) {
@@ -666,7 +585,6 @@ function inspectNonDefaultProfiles(config: AuthrimConfig): ValidationCheck {
 function expectedProfileVars(config: AuthrimConfig): Record<string, string> {
   return {
     PROFILE_REGISTRY_BACKEND: config.profiles.registry.backend,
-    DEFAULT_STORAGE_PROFILE_ID: config.profiles.defaults.storage,
     DEFAULT_AUDIT_PROFILE_ID: config.profiles.defaults.audit,
     DEFAULT_RESIDENCY_PROFILE_ID: config.profiles.defaults.residency,
   };
@@ -680,7 +598,6 @@ async function readConfig(configPath: string): Promise<AuthrimConfig> {
 function validateDefaultProfileReferences(config: AuthrimConfig): ValidationCheck {
   const check = makeCheck('default-profiles', 'default profile references are defined');
   const defaults = [
-    ['storage', config.profiles.defaults.storage],
     ['audit', config.profiles.defaults.audit],
     ['residency', config.profiles.defaults.residency],
   ] as const;
@@ -701,42 +618,6 @@ function validateActiveProfileCompatibility(config: AuthrimConfig): ValidationCh
     'active-profile-compatibility',
     'Active default profiles can be activated using only setup output'
   );
-
-  if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    inspectStorageProfileTarget(
-      config,
-      check,
-      'storage profile builtin:storage:external-postgres / identity core',
-      {
-        driver: 'postgres',
-        connectionRef: 'core-primary',
-      }
-    );
-    inspectStorageProfileTarget(
-      config,
-      check,
-      'storage profile builtin:storage:external-postgres / identity PII',
-      {
-        driver: 'postgres',
-        connectionRef: 'pii-primary',
-      }
-    );
-  }
-
-  const seededStorage = resolveSeededStorageProfile(config, config.profiles.defaults.storage);
-  if (seededStorage) {
-    for (const [slice, target] of Object.entries(seededStorage.slices)) {
-      if (!target) {
-        continue;
-      }
-      inspectStorageProfileTarget(
-        config,
-        check,
-        `storage profile ${seededStorage.id} / ${slice}`,
-        target
-      );
-    }
-  }
 
   const seededAudit = resolveSeededAuditProfile(config, config.profiles.defaults.audit);
   if (seededAudit) {
@@ -767,6 +648,33 @@ function validateRequiredD1Bindings(lock: AuthrimLock): ValidationCheck {
     }
   }
   return finishCheck(check, 'All required D1 bindings are present in lock.json');
+}
+
+function validatePiiPhysicalIsolation(lock: AuthrimLock): ValidationCheck {
+  const check = makeCheck(
+    'pii-physical-isolation',
+    'Core and PII bindings resolve to physically distinct D1 databases'
+  );
+  const coreBindings = ['DB', 'TDB_DEFAULT_BOOTSTRAP_CORE', 'TDB_USERS_BOOTSTRAP_CORE'] as const;
+  const piiBindings = ['DB_PII', 'TDB_PII_BOOTSTRAP_PII'] as const;
+
+  for (const coreBinding of coreBindings) {
+    const coreDatabase = lock.d1[coreBinding];
+    if (!coreDatabase?.id) continue;
+    for (const piiBinding of piiBindings) {
+      const piiDatabase = lock.d1[piiBinding];
+      if (!piiDatabase?.id) continue;
+      if (coreDatabase.id === piiDatabase.id) {
+        pushDetail(
+          check,
+          'fail',
+          `${coreBinding} and ${piiBinding} resolve to the same D1 database id`
+        );
+      }
+    }
+  }
+
+  return finishCheck(check, 'Core and PII D1 database ids are physically distinct');
 }
 
 function validateLoggingR2Bindings(config: AuthrimConfig, lock: AuthrimLock): ValidationCheck {
@@ -1200,15 +1108,11 @@ async function validateDeployWranglers(
       }
     }
 
-    if (
-      config.profiles.defaults.storage === 'builtin:storage:tenant-d1' &&
-      TENANT_RUNTIME_REGISTRY_COMPONENTS.includes(component) &&
-      !parsed.kv.TENANT_RUNTIME_REGISTRY
-    ) {
+    if (requiresTenantRuntimeRegistry(component) && !parsed.kv.TENANT_RUNTIME_REGISTRY) {
       pushDetail(
         check,
         'fail',
-        `${component}: TENANT_RUNTIME_REGISTRY binding is required for tenant-d1 runtime registry snapshots`
+        `${component}: TENANT_RUNTIME_REGISTRY binding is required for Control Plane routing`
       );
     }
 
@@ -1376,21 +1280,16 @@ async function validateLiveCloudflareR2(lock: AuthrimLock): Promise<ValidationCh
   return finishCheck(check, 'All lock.json R2 buckets exist in Cloudflare');
 }
 
-async function validateLiveTenantD1Bootstrap(
+async function validateLiveControlPlaneBootstrap(
   config: AuthrimConfig,
   lock: AuthrimLock
 ): Promise<ValidationCheck> {
   const check = makeCheck(
-    'live-tenant-d1-bootstrap',
-    'Initial Tenant D1 resources are accepted by the Control Plane'
+    'live-control-plane-bootstrap',
+    'Initial Control Plane resources are accepted by the Control Worker'
   );
 
-  if (config.profiles.defaults.storage !== 'builtin:storage:tenant-d1') {
-    pushDetail(check, 'pass', 'Tenant D1 storage profile is not active');
-    return finishCheck(check, 'Tenant D1 storage profile is not active');
-  }
-
-  for (const binding of INITIAL_TENANT_D1_BINDINGS) {
+  for (const binding of INITIAL_ASSIGNMENT_BINDINGS) {
     const database = lock.d1[binding];
     if (!database?.id || !database.name) {
       pushDetail(check, 'fail', `${binding}: missing from lock.json`);
@@ -1423,7 +1322,7 @@ async function validateLiveTenantD1Bootstrap(
     );
   }
 
-  return finishCheck(check, 'Initial Tenant D1 resources and Control Plane handoff are consistent');
+  return finishCheck(check, 'Initial resources and Control Plane handoff are consistent');
 }
 
 async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<ValidationCheck> {
@@ -1472,7 +1371,7 @@ async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<Validatio
     }
   }
 
-  const coreDatabase = lock.d1.DB;
+  const coreDatabase = lock.d1.TDB_USERS_BOOTSTRAP_CORE;
   if (coreDatabase?.name) {
     try {
       const foreignKeys = await queryD1Rows<{ table?: string; from?: string; to?: string }>(
@@ -1486,20 +1385,20 @@ async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<Validatio
         pushDetail(
           check,
           'fail',
-          `DB (${coreDatabase.name}) user_custom_fields still references legacy users_core(id)`
+          `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields still references legacy users_core(id)`
         );
       } else {
         pushDetail(
           check,
           'pass',
-          `DB (${coreDatabase.name}) user_custom_fields has no legacy users_core FK`
+          `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields has no legacy users_core FK`
         );
       }
     } catch (error) {
       pushDetail(
         check,
         'fail',
-        `DB (${coreDatabase.name}) user_custom_fields FK query failed: ${error instanceof Error ? error.message : String(error)}`
+        `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields FK query failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -1575,6 +1474,7 @@ export async function validateGeneratedEnvironment(
     finishCheck(configCheck, 'config.json is readable'),
     finishCheck(lockCheck, 'lock.json is readable'),
     validateRequiredD1Bindings(lock),
+    validatePiiPhysicalIsolation(lock),
     validateMigrationReleaseR2Binding(lock),
     validateLoggingR2Bindings(config, lock),
     validateLoggingQueueBindings(config, lock),
@@ -1616,7 +1516,7 @@ export async function validateGeneratedEnvironment(
       await validateLiveCloudflareKV(lock),
       await validateLiveCloudflareR2(lock),
       await validateLiveRuntimeD1Schema(lock),
-      await validateLiveTenantD1Bootstrap(config, lock)
+      await validateLiveControlPlaneBootstrap(config, lock)
     );
   }
 

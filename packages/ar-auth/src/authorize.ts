@@ -3,7 +3,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
-  CanonicalRuntimeUserStore,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -30,7 +29,6 @@ import {
   createPIIContextFromHono,
   getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
-  getRuntimeUserStoreSourcesFromHonoContext,
   registerSessionClientInStore,
   getTenantIdFromContext,
   getDefaultTenantId,
@@ -88,6 +86,7 @@ import {
   type AuthorizationRequestContinuation,
   type AuthorizationRequestSource,
 } from './authorization-continuation';
+import { provisionEmailAccount } from './account-provisioning';
 import {
   generateSecureRandomString,
   parseToken,
@@ -3244,19 +3243,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const sub = sessionUserId;
-  if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
-    try {
-      await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_account_route', () =>
-        resolveAccountDataContextFromHono(c, sub)
-      );
-    } catch (error) {
-      log.error(
-        'Unable to resolve account data for authorization',
-        { action: 'account_route_resolve' },
-        error as Error
-      );
-      return sendError('temporarily_unavailable', 'Account data is temporarily unavailable');
-    }
+  try {
+    await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_account_route', () =>
+      resolveAccountDataContextFromHono(c, sub)
+    );
+  } catch (error) {
+    log.error(
+      'Unable to resolve account data for authorization',
+      { action: 'account_route_resolve' },
+      error as Error
+    );
+    return sendError('temporarily_unavailable', 'Account data is temporarily unavailable');
   }
   if (_consent_confirmed === 'true' && confirmedConsentUserId && confirmedConsentUserId !== sub) {
     return sendError('invalid_request', 'Consent confirmation does not match the active session');
@@ -4177,15 +4174,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if ((includesIdToken || includesToken) && sessionId) {
     try {
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
       log.debug('Registering session-client for implicit/hybrid logout', {
         action: 'session_client_register',
         clientId: validClientId,
       });
-      const mirrorMode =
-        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
-          ?.sessionClientMirror ?? 'async';
-
       const registrationInput = {
         session_id: sessionId,
         client_id: validClientId,
@@ -4201,7 +4193,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
           log.debug('Successfully registered session-client in DO', {
             action: 'session_client_registered',
-            resultId: result.id,
           });
         })
         .catch((error) => {
@@ -4211,34 +4202,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             error as Error
           );
         });
-      const mirrorPromise =
-        mirrorMode === 'disabled'
-          ? Promise.resolve()
-          : authCtx.repositories.sessionClient
-              .createOrUpdate(registrationInput)
-              .then((result) => {
-                log.debug('Successfully mirrored session-client', {
-                  action: 'session_client_registered',
-                  resultId: result.id,
-                });
-              })
-              .catch((error) => {
-                // Log error but don't fail the authorization - logout tracking is non-critical
-                log.error(
-                  'Failed to mirror session-client for implicit/hybrid logout',
-                  { action: 'session_client_register' },
-                  error as Error
-                );
-              });
-      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
-        () => undefined
-      );
-
-      if (mirrorMode === 'sync') {
-        await registrationPromise;
-      } else {
-        c.executionCtx?.waitUntil(registrationPromise);
-      }
+      c.executionCtx?.waitUntil(storeRegistrationPromise);
     } catch (error) {
       // Log error but don't fail the authorization - logout tracking is non-critical
       log.error(
@@ -5122,81 +5086,61 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   const isCertificationTest =
     (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(metadata.redirect_uri);
 
-  // Create a new user and session (stub - in production, verify credentials first)
-  let userId: string;
+  // Create a new user and session (stub - in production, verify credentials first).
+  // Even test-only users must enter through the Control Plane provisioning boundary so a
+  // fresh installation never falls back to writing account rows into tenant metadata D1.
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const piiCtx = createPIIContextFromHono(c, tenantId);
-  const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
-    piiAdapter: piiCtx.defaultPiiAdapter,
-    tenantId,
-  });
-
+  let candidateUserId: string;
+  let userEmail: string;
+  let runtimeUser: Parameters<typeof provisionEmailAccount>[1]['runtimeUser'];
   if (isCertificationTest) {
-    // Use fixed test user for OIDC Conformance Tests
-    userId = 'user-oidc-conformance-test';
+    candidateUserId = 'user-oidc-conformance-test';
+    userEmail = 'test@example.com';
     log.info('Using OIDC Conformance Test user', { action: 'login_test_user' });
-
-    // Verify test user exists in canonical runtime tables (should be created during DCR).
-    const existingUser = await runtimeUsers.findById(userId, { includeInactive: true });
-
-    if (!existingUser) {
-      log.warn('Test user not found, creating it now', { action: 'login_test_user_create' });
-
-      await runtimeUsers
-        .syncUser({
-          userId,
-          email: 'test@example.com',
-          name: 'John Doe',
-          active: true,
-          emailVerified: true,
-          userType: 'end_user',
-          sourceRef: 'oidc_conformance',
-          piiFields: {
-            given_name: true,
-            family_name: true,
-            nickname: true,
-            preferred_username: true,
-            picture: true,
-            website: true,
-            gender: true,
-            birthdate: true,
-            zoneinfo: true,
-            locale: true,
-            phone_number: true,
-          },
-          sensitiveValues: {
-            given_name: 'John',
-            family_name: 'Doe',
-            nickname: 'Johnny',
-            preferred_username: 'test',
-            picture: 'https://example.com/avatar.jpg',
-            website: 'https://example.com',
-            gender: 'male',
-            birthdate: '1990-01-01',
-            zoneinfo: 'America/New_York',
-            locale: 'en-US',
-            phone_number: '+1-555-0100',
-          },
-          phoneNumberVerified: true,
-          addressJson: JSON.stringify({
-            formatted: '1234 Main St, Anytown, ST 12345, USA',
-            street_address: '1234 Main St',
-            locality: 'Anytown',
-            region: 'ST',
-            postal_code: '12345',
-            country: 'USA',
-          }),
-        })
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to create test user in canonical runtime store', {
-            action: 'login_test_user_canonical',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-    }
+    runtimeUser = {
+      active: true,
+      emailVerified: true,
+      userType: 'end_user',
+      displayName: 'John Doe',
+      sourceRef: 'auth:test_stub',
+      piiFields: {
+        email: true,
+        given_name: true,
+        family_name: true,
+        nickname: true,
+        preferred_username: true,
+        picture: true,
+        website: true,
+        gender: true,
+        birthdate: true,
+        zoneinfo: true,
+        locale: true,
+        phone_number: true,
+      },
+      sensitiveValues: {
+        email: userEmail,
+        given_name: 'John',
+        family_name: 'Doe',
+        nickname: 'Johnny',
+        preferred_username: 'test',
+        picture: 'https://example.com/avatar.jpg',
+        website: 'https://example.com',
+        gender: 'male',
+        birthdate: '1990-01-01',
+        zoneinfo: 'America/New_York',
+        locale: 'en-US',
+        phone_number: '+1-555-0100',
+      },
+      phoneNumberVerified: true,
+      addressJson: JSON.stringify({
+        formatted: '1234 Main St, Anytown, ST 12345, USA',
+        street_address: '1234 Main St',
+        locality: 'Anytown',
+        region: 'ST',
+        postal_code: '12345',
+        country: 'USA',
+      }),
+    };
   } else {
     // Normal client: create new random user
     // ⚠️ PII/Non-PII SEPARATION NOTE:
@@ -5224,28 +5168,28 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     log.info('Creating stub user (ENABLE_TEST_ENDPOINTS=true)', {
       action: 'login_stub_user_create',
     });
-    userId = 'user-' + crypto.randomUUID();
-
-    // Use the email from login form, or fall back to a dummy email
-    const userEmail = loginUsername || `${userId}@example.com`;
-
-    await runtimeUsers
-      .syncUser({
-        userId,
-        email: userEmail,
-        active: true,
-        emailVerified: false,
-        userType: 'end_user',
-        sourceRef: 'oidc_stub_login',
-      })
-      .catch((error: unknown) => {
-        // PII Protection: Don't log full error
-        log.error('Failed to create stub user in canonical runtime store', {
-          action: 'login_user_canonical_create',
-          errorName: error instanceof Error ? error.name : 'Unknown error',
-        });
-      });
+    candidateUserId = 'user-' + crypto.randomUUID();
+    userEmail = loginUsername || `${candidateUserId}@example.com`;
+    runtimeUser = {
+      active: true,
+      emailVerified: false,
+      userType: 'end_user',
+      sourceRef: 'auth:test_stub',
+      piiFields: { email: true },
+      sensitiveValues: { email: userEmail },
+    };
   }
+
+  const provisioned = await provisionEmailAccount(c, {
+    tenantId,
+    candidateUserId,
+    flow: 'test_stub',
+    email: userEmail,
+    runtimeUser,
+  });
+  if (provisioned.status === 'pending') return provisioned.response;
+  const userId = provisioned.userId;
+  await resolveAccountDataContextFromHono(c, provisioned.accountId);
 
   // Calculate auth_time BEFORE creating session to ensure consistency
   // This value will be used for both the session and the redirect parameter

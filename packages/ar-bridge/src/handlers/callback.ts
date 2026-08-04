@@ -11,7 +11,6 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import * as jose from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  type DatabaseAdapter,
   getSessionStoreForNewSession,
   getUIConfig,
   buildIssuerUrl,
@@ -24,7 +23,6 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
-  getCachedAuthCorePersistenceContextFromEnv,
   resolveAccountDataContextByIdentifier,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
@@ -37,7 +35,7 @@ import {
   // Logger
   getLogger,
   createLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  registerExternalProviderSession,
   // Audit Log
   createAuditLog,
   // Errors
@@ -49,7 +47,7 @@ import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
 import { Fapi2Client } from '../clients/fapi2-client';
-import { completeTenantD1ExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
+import { completeExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
 import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
@@ -209,16 +207,13 @@ async function completeExternalAuthentication(
   }
 ): Promise<Response> {
   const { authState, provider, userInfo, result } = input;
-  const persistence = await getCachedAuthCorePersistenceContextFromEnv(c.env);
-  if (persistence.storageProfileId === 'builtin:storage:tenant-d1') {
-    const account = await resolveAccountDataContextByIdentifier(c.env, {
-      tenantId: authState.tenantId,
-      indexKind: 'external_subject',
-      identifier: { issuer: provider.id, subject: userInfo.sub },
-      expectedAccountId: `account:${result.userId}`,
-    });
-    (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
-  }
+  const account = await resolveAccountDataContextByIdentifier(c.env, {
+    tenantId: authState.tenantId,
+    indexKind: 'external_subject',
+    identifier: { issuer: provider.id, subject: userInfo.sub },
+    expectedAccountId: `account:${result.userId}`,
+  });
+  (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
   publishEvent(c, {
     type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
     tenantId: authState.tenantId,
@@ -285,7 +280,7 @@ async function completeExternalAuthentication(
       },
       tenantId
     );
-    await recordExternalProviderSession(c.env, {
+    const externalSessionIndex = recordExternalProviderSession(c.env, {
       tenantId,
       sessionId,
       userId: result.userId,
@@ -294,6 +289,11 @@ async function completeExternalAuthentication(
       providerSid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
       expiresAt: Date.now() + sessionTTL * 1000,
     });
+    try {
+      c.executionCtx.waitUntil(externalSessionIndex);
+    } catch {
+      void externalSessionIndex;
+    }
 
     const issuerUrl = buildIssuerUrl(c.env, tenantId);
     setCookie(c, 'authrim_session', sessionId, {
@@ -619,7 +619,7 @@ export async function handleExternalProvisioningResume(
     ) {
       throw new Error('external_idp_provisioning_not_ready');
     }
-    const completed = await completeTenantD1ExternalIdpJIT(c.env, {
+    const completed = await completeExternalIdpJIT(c.env, {
       tenantId,
       userId: expected.userId,
       providerId: expected.providerId,
@@ -745,7 +745,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     deleteCookie(c, stateCookieName, { path: '/auth/external/' });
 
     // 2. Validate state and get stored data
-    const authState = await consumeAuthState(c.env, state);
+    const authState = await consumeAuthState(c.env, tenantId, state);
     if (!authState) {
       await logCallbackRejection(log, diagnosticLogger, {
         diagnosticSessionId,
@@ -1561,45 +1561,24 @@ interface ExternalProviderSessionRecord {
 }
 
 /**
- * Record the same external-provider binding in D1 that is stored in the
- * sharded SessionStore. Back-channel logout uses this index to find sessions
- * without scanning Durable Object shards.
+ * Record the external-provider reverse lookup in a claim-digest-scoped DO.
  */
 async function recordExternalProviderSession(
   env: Env,
   options: ExternalProviderSessionRecord
 ): Promise<void> {
   try {
-    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      'bridge-callback-session-record',
-      { tenantId: options.tenantId }
-    );
-    await coreAdapter.execute(
-      `INSERT INTO sessions (
-         id, user_id, expires_at, created_at, external_provider_id, external_provider_sub,
-         external_provider_sid, tenant_id
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         external_provider_id = excluded.external_provider_id,
-         external_provider_sub = excluded.external_provider_sub,
-         external_provider_sid = excluded.external_provider_sid,
-         expires_at = excluded.expires_at`,
-      [
-        options.sessionId,
-        options.userId,
-        options.expiresAt,
-        Date.now(),
-        options.providerId,
-        options.providerSub,
-        options.providerSid ?? null,
-        options.tenantId,
-      ]
-    );
+    await registerExternalProviderSession(env, {
+      tenantId: options.tenantId,
+      providerId: options.providerId,
+      providerSub: options.providerSub,
+      providerSid: options.providerSid,
+      sessionId: options.sessionId,
+      userId: options.userId,
+      expiresAtMs: options.expiresAt,
+    });
   } catch {
-    // Authentication still succeeds if the secondary logout index is
-    // temporarily unavailable; the Durable Object remains authoritative.
-    createLogger().module('CALLBACK').warn('Failed to record session in D1 for backchannel logout');
+    createLogger().module('CALLBACK').warn('Failed to record external-provider session index');
   }
 }
 

@@ -49,7 +49,8 @@ export async function storeAuthState(
 
   const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:store'
+    'bridge-auth-state:store',
+    { tenantId: state.tenantId }
   );
   await coreAdapter.execute(
     `INSERT INTO external_idp_auth_states (
@@ -93,7 +94,8 @@ export async function setAuthStateRequestObject(
 ): Promise<void> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:set-request-object'
+    'bridge-auth-state:set-request-object',
+    { tenantId }
   );
   const result = await adapter.execute(
     `UPDATE external_idp_auth_states
@@ -116,7 +118,8 @@ export async function getAuthStateRequestObject(
 ): Promise<string | null> {
   const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:get-request-object'
+    'bridge-auth-state:get-request-object',
+    { tenantId }
   );
   const row = await adapter.queryOne<{ original_auth_request: string | null }>(
     `SELECT original_auth_request FROM external_idp_auth_states
@@ -166,13 +169,15 @@ interface DbAuthState {
  */
 export async function consumeAuthState(
   env: Env,
+  tenantId: string,
   state: string
 ): Promise<ExternalIdpAuthState | null> {
   const now = Date.now();
 
   const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:consume'
+    'bridge-auth-state:consume',
+    { tenantId }
   );
 
   // Phase 1: Atomically mark as consumed using UPDATE with conditions
@@ -180,10 +185,11 @@ export async function consumeAuthState(
   const updateResult = await coreAdapter.execute(
     `UPDATE external_idp_auth_states
      SET consumed_at = ?
-     WHERE state = ?
+     WHERE tenant_id = ?
+       AND state = ?
        AND expires_at > ?
        AND consumed_at IS NULL`,
-    [now, state, now]
+    [now, tenantId, state, now]
   );
 
   // If no rows were updated, state is invalid, expired, or already consumed
@@ -194,8 +200,8 @@ export async function consumeAuthState(
   // Phase 2: Retrieve the state we just consumed
   // This is safe because we only reach here if we successfully marked it as consumed
   const result = await coreAdapter.queryOne<DbAuthState>(
-    'SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?',
-    [state, now]
+    'SELECT * FROM external_idp_auth_states WHERE tenant_id = ? AND state = ? AND consumed_at = ?',
+    [tenantId, state, now]
   );
 
   if (!result) {

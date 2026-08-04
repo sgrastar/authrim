@@ -5,13 +5,6 @@
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
   "bindings": [
     {
-      "name": "DB",
-      "kind": "d1",
-      "required": true,
-      "dataRole": "tenant_core/default",
-      "capability": "agent_directory.read"
-    },
-    {
       "name": "DB_ADMIN",
       "kind": "d1",
       "required": true,
@@ -33,6 +26,11 @@
     {
       "name": "AGENT_ELEVATION_ENCRYPTION_KEY",
       "capability": "agent_elevation.decrypt",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
       "required": true
     },
     {

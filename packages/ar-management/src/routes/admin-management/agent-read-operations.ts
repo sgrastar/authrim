@@ -269,64 +269,9 @@ agentReadOperationsRouter.get('/session-posture', async (c) => {
   if (denied) return denied;
   if (!allowedQuery(c, [])) return c.json({ error: 'AGENT_READ_INVALID_QUERY' }, 400);
 
-  const tenantId = currentTenant(c);
-  const now = Math.floor(Date.now() / 1000);
-  try {
-    const row = await createAuthContextFromHono(ownerContext(c), tenantId).coreAdapter.queryOne<{
-      total_sessions: number;
-      active_sessions: number | null;
-      expired_sessions: number | null;
-      oldest_created_at: number | null;
-      newest_last_accessed_at: number | null;
-      next_expiration_at: number | null;
-      latest_expiration_at: number | null;
-    }>(
-      `SELECT
-         COUNT(*) AS total_sessions,
-         SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) AS active_sessions,
-         SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) AS expired_sessions,
-         MIN(created_at) AS oldest_created_at,
-         MAX(COALESCE(last_accessed_at, created_at)) AS newest_last_accessed_at,
-         MIN(CASE WHEN expires_at > ? THEN expires_at END) AS next_expiration_at,
-         MAX(expires_at) AS latest_expiration_at
-       FROM sessions
-       WHERE tenant_id = ?`,
-      [now, now, now, tenantId]
-    );
-    if (!row || !Number.isSafeInteger(row.total_sessions) || row.total_sessions < 0) {
-      return c.json({ error: 'AGENT_READ_INVALID_OWNER_RESPONSE' }, 502);
-    }
-    const activeSessions = row.active_sessions ?? 0;
-    const expiredSessions = row.expired_sessions ?? 0;
-    if (
-      !Number.isSafeInteger(activeSessions) ||
-      activeSessions < 0 ||
-      !Number.isSafeInteger(expiredSessions) ||
-      expiredSessions < 0 ||
-      activeSessions + expiredSessions !== row.total_sessions
-    ) {
-      return c.json({ error: 'AGENT_READ_INVALID_OWNER_RESPONSE' }, 502);
-    }
-    return c.json(
-      {
-        snapshot: {
-          total_sessions: row.total_sessions,
-          active_sessions: activeSessions,
-          expired_sessions: expiredSessions,
-          window: {
-            oldest_created_at: epochSecondsToIso(row.oldest_created_at),
-            newest_last_accessed_at: epochSecondsToIso(row.newest_last_accessed_at),
-            next_expiration_at: epochSecondsToIso(row.next_expiration_at),
-            latest_expiration_at: epochSecondsToIso(row.latest_expiration_at),
-          },
-        },
-      },
-      200,
-      { 'cache-control': 'no-store' }
-    );
-  } catch {
-    return c.json({ error: 'AGENT_READ_OWNER_UNAVAILABLE' }, 503);
-  }
+  return c.json({ error: 'AGENT_READ_SESSION_POSTURE_UNAVAILABLE' }, 501, {
+    'cache-control': 'no-store',
+  });
 });
 
 agentReadOperationsRouter.get('/admin-audit-log', async (c) => {

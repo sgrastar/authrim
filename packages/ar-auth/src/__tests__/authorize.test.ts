@@ -20,6 +20,26 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 
 // Mock getClient and getClientCached at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
+const mockResolveAccountDataContextFromHono = vi.hoisted(() =>
+  vi.fn(async (c: { env: Env; set: (key: string, value: unknown) => void }, userId: string) => {
+    const context = {
+      tenantId: 'default',
+      accountId: userId,
+      legacyUserId: userId,
+      coreDb: c.env.DB,
+      piiDb: c.env.DB,
+      coreBindingRef: 'DB',
+      piiBindingRef: 'DB',
+      coreResidencyPartition: 'default',
+      piiResidencyPartition: 'default',
+      accountRouteGeneration: 1,
+      userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+      piiCacheMode: 'disabled',
+    };
+    c.set('accountDataContext', context);
+    return context;
+  })
+);
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
@@ -29,6 +49,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getClientCached: vi
       .fn()
       .mockImplementation((_c, env, clientId) => mockGetClient(env, clientId)),
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
   };
 });
 
@@ -344,6 +365,14 @@ function createMockEnv(): Env {
     TOKEN_REVOCATION_STORE: createMockDO() as unknown as DurableObjectNamespace,
     DEVICE_CODE_STORE: createMockDO() as unknown as DurableObjectNamespace,
     CIBA_REQUEST_STORE: createMockDO() as unknown as DurableObjectNamespace,
+    ACCOUNT_PROVISIONER: {
+      provisionAuthAccount: vi.fn(async (request) => ({
+        status: 201 as const,
+        operationId: request.operationId,
+        accountId: `account:${request.candidateUserId}`,
+        userId: request.candidateUserId,
+      })),
+    },
   } as unknown as Env;
 }
 
@@ -368,6 +397,20 @@ describe('Authorization Handler', () => {
     app = new Hono<{ Bindings: Env }>();
     app.use('*', async (c, next) => {
       (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      c.set(
+        'tenantMetadataContext' as never,
+        {
+          tenantId: 'default',
+          coreDb: c.env.DB,
+          route: {
+            tenantId: 'default',
+            dataRole: 'core',
+            bindingRef: 'DB',
+            residencyPartition: 'default',
+            generation: 1,
+          },
+        } as never
+      );
       await next();
     });
     app.get('/authorize', authorizeHandler);

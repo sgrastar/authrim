@@ -1,15 +1,12 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import {
-  getCachedAuthCorePersistenceContextFromEnv,
-  type AuthCorePersistenceEnv,
-} from './auth-core-persistence-context';
-import { resolveTenantDatabaseSourceForTarget } from './tenant-database-resolver';
+import type { AuthCorePersistenceEnv } from './auth-core-persistence-context';
+import { resolveTenantDatabaseSourceFromRegistry } from './tenant-database-resolver';
 
 export const PLATFORM_NOTIFICATION_NAMESPACE = 'authrim-platform';
-export const SHARED_NOTIFICATION_BINDING_REF = 'TDB_SHARED_CORE';
+export const PLATFORM_NOTIFICATION_BINDING_REF = 'PLATFORM_NOTIFICATION_DB';
 
 export interface NotificationIntentRoutingEnv extends AuthCorePersistenceEnv {
-  TDB_SHARED_CORE?: D1Database;
+  PLATFORM_NOTIFICATION_DB?: D1Database;
 }
 
 export type NotificationIntentOwner = { owner: 'platform' } | { owner: 'tenant'; tenantId: string };
@@ -35,11 +32,11 @@ function d1(value: unknown, errorCode: string): D1Database {
   return candidate as D1Database;
 }
 
-function sharedTarget(env: NotificationIntentRoutingEnv, tenantId: string) {
+function platformTarget(env: NotificationIntentRoutingEnv, tenantId: string) {
   return {
     tenantId,
-    db: d1(env.TDB_SHARED_CORE, 'notification_intent_shared_d1_unavailable'),
-    bindingRef: SHARED_NOTIFICATION_BINDING_REF,
+    db: d1(env.PLATFORM_NOTIFICATION_DB, 'notification_intent_platform_database_unavailable'),
+    bindingRef: PLATFORM_NOTIFICATION_BINDING_REF,
   };
 }
 
@@ -48,34 +45,26 @@ export async function resolveNotificationIntentTarget(
   input: NotificationIntentOwner
 ): Promise<ResolvedNotificationIntentTarget> {
   if (input.owner === 'platform') {
-    return sharedTarget(env, PLATFORM_NOTIFICATION_NAMESPACE);
+    return platformTarget(env, PLATFORM_NOTIFICATION_NAMESPACE);
   }
   if (!SAFE_ID.test(input.tenantId) || input.tenantId === PLATFORM_NOTIFICATION_NAMESPACE) {
     throw new Error('notification_intent_tenant_invalid');
   }
 
-  const context = await getCachedAuthCorePersistenceContextFromEnv(env);
-  if (!context.coreTarget.resolverRef) {
-    return sharedTarget(env, input.tenantId);
-  }
-  const resolved = await resolveTenantDatabaseSourceForTarget(
-    env,
-    input.tenantId,
-    context.coreTarget,
-    {
-      deploymentTarget: env.AUTHRIM_DEPLOYMENT_TARGET,
-      runtimeSnapshotMode:
-        context.storageProfile.id === 'builtin:storage:tenant-d1' && env.TENANT_RUNTIME_REGISTRY
-          ? 'required'
-          : 'optional',
-    }
-  );
+  const resolved = await resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId: input.tenantId,
+    role: 'tenant_core',
+    dataRole: 'tenant_core/default',
+    shardGroup: 'default',
+    shardIndex: 0,
+    deploymentTarget: env.AUTHRIM_DEPLOYMENT_TARGET,
+  });
   if (!SAFE_BINDING.test(resolved.bindingRef)) {
     throw new Error('notification_intent_binding_invalid');
   }
   return {
     tenantId: input.tenantId,
-    db: d1(resolved.source, 'notification_intent_tenant_d1_unavailable'),
+    db: d1(resolved.source, 'notification_intent_tenant_database_unavailable'),
     bindingRef: resolved.bindingRef,
   };
 }

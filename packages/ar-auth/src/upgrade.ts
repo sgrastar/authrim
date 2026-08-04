@@ -41,10 +41,7 @@ import {
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
-import {
-  removeTenantD1AnonymousDeviceRoute,
-  usesTenantD1AccountStorage,
-} from './account-provisioning';
+import { removeAnonymousDeviceRoute } from './account-provisioning';
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
@@ -361,15 +358,16 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const now = Date.now();
-    const routedAnonymousDevices = usesTenantD1AccountStorage(c)
-      ? await authCtx.coreAdapter.query<{ id: string; device_id_hash: string }>(
-          `SELECT id, device_id_hash FROM anonymous_devices
+    const routedAnonymousDevices = await authCtx.coreAdapter.query<{
+      id: string;
+      device_id_hash: string;
+    }>(
+      `SELECT id, device_id_hash FROM anonymous_devices
             WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
             ORDER BY id LIMIT 65`,
-          [tenantId, anonymousUserId],
-          { consistencyClass: 'primary_required' }
-        )
-      : [];
+      [tenantId, anonymousUserId],
+      { consistencyClass: 'primary_required' }
+    );
     if (routedAnonymousDevices.length > 64) {
       throw new Error('anonymous_upgrade_device_limit_exceeded');
     }
@@ -446,7 +444,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       [tenantId, anonymousUserId]
     );
     for (const device of routedAnonymousDevices) {
-      await removeTenantD1AnonymousDeviceRoute(c, {
+      await removeAnonymousDeviceRoute(c, {
         tenantId,
         userId: anonymousUserId,
         deviceId: device.id,
@@ -454,7 +452,10 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: finalUserId,
+    });
+    if (!customClaimSources.nonPiiDb) throw new Error('account_data_route_incomplete');
     const lifecycleSync = await syncUserLifecycleState({
       db: customClaimSources.nonPiiDb,
       dbPii: customClaimSources.piiDb,
@@ -596,7 +597,10 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     let accountLifecycleState: UserLifecycleState = 'active';
 
     if (!isAnonymous) {
-      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+        accountId: session.userId,
+      });
+      if (!customClaimSources.nonPiiDb) throw new Error('account_data_route_incomplete');
       const lifecycleSync = await syncUserLifecycleState({
         db: customClaimSources.nonPiiDb,
         dbPii: customClaimSources.piiDb,

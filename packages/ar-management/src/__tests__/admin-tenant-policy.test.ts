@@ -374,7 +374,7 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 404 when X-Tenant-Id points to an unknown tenant', async () => {
+  it('fails closed when X-Tenant-Id has no signed runtime snapshot', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
       DEFAULT_TENANT_ID: 'default',
@@ -388,7 +388,11 @@ describe('adminTenantPolicyMiddleware', () => {
       env
     );
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'missing_generation',
+      tenant_id: 'ghost',
+    });
   });
 
   it('returns 400 when X-Tenant-Id does not match explicit tenant path', async () => {

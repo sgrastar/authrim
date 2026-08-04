@@ -12,7 +12,7 @@ export type AuditEventFailureCategory =
   | 'security_setting'
   | 'tenant'
   | 'database'
-  | 'storage_profile'
+  | 'data_governance'
   | 'provisioning'
   | 'other';
 
@@ -43,7 +43,7 @@ export const AUDIT_FAIL_CLOSED_CATEGORIES: readonly AuditEventFailureCategory[] 
   'security_setting',
   'tenant',
   'database',
-  'storage_profile',
+  'data_governance',
   'provisioning',
   'other',
 ] as const;
@@ -102,10 +102,10 @@ const FAIL_CLOSED_RULES: readonly AuditEventClassificationRule[] = [
     prefixes: ['database.', 'database_connection.', 'tenant_database.'],
   },
   {
-    category: 'storage_profile',
+    category: 'data_governance',
     behavior: 'fail_closed_or_strong_retry',
-    reason: 'Storage profile and destination changes affect data residency and isolation.',
-    prefixes: ['storage_profile.', 'storage_destination.', 'runtime_profile.storage.'],
+    reason: 'Audit destination and residency changes affect data residency and isolation.',
+    prefixes: ['storage_destination.', 'runtime_profile.audit.', 'runtime_profile.residency.'],
   },
   {
     category: 'provisioning',

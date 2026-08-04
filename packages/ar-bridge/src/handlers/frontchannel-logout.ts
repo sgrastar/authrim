@@ -1,7 +1,7 @@
 /** OpenID Connect Front-Channel Logout 1.0 endpoint for upstream OPs. */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   createDiagnosticLoggerFromContext,
   DIAGNOSTIC_FLOW_ID_HEADER,
@@ -10,7 +10,7 @@ import {
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   isShardedSessionId,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listExternalProviderSessions,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 
@@ -61,36 +61,31 @@ export async function handleFrontchannelLogout(c: Context<{ Bindings: Env }>): P
       });
     }
 
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      c.env,
-      `bridge-frontchannel-logout:${tenantId}`,
-      { tenantId }
-    );
-    const sessions = await adapter.query<{ id: string }>(
-      `SELECT id FROM sessions
-       WHERE tenant_id = ? AND external_provider_id = ? AND external_provider_sid = ?`,
-      [tenantId, provider.id, sid]
-    );
+    const sessions = await listExternalProviderSessions(c.env, {
+      tenantId,
+      providerId: provider.id,
+      claimKind: 'sid',
+      claim: sid,
+    });
     let terminated = 0;
     let terminationFailures = 0;
     for (const session of sessions) {
       try {
-        if (isShardedSessionId(session.id)) {
-          const { stub } = getSessionStoreBySessionId(c.env, session.id, tenantId);
-          const response = await stub.fetch(
-            new Request(`https://session-store/session/${encodeURIComponent(session.id)}`, {
-              method: 'DELETE',
-            })
-          );
-          if (!response.ok) {
-            terminationFailures++;
-            continue;
-          }
+        if (!isShardedSessionId(session.sessionId)) continue;
+        const { stub } = getSessionStoreBySessionId(c.env, session.sessionId, tenantId);
+        const current = (await stub.getSessionRpc(session.sessionId)) as Session | null;
+        if (
+          !current ||
+          current.tenantId !== tenantId ||
+          current.data?.external_provider_id !== provider.id ||
+          current.data?.external_provider_sid !== sid
+        ) {
+          continue;
         }
-        await adapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-          session.id,
-          tenantId,
-        ]);
+        if (!(await stub.invalidateSessionRpc(session.sessionId))) {
+          terminationFailures++;
+          continue;
+        }
         terminated++;
       } catch {
         terminationFailures++;
@@ -133,7 +128,7 @@ export async function handleFrontchannelLogout(c: Context<{ Bindings: Env }>): P
       })
       .catch(() => undefined);
     log.warn('Front-channel logout session invalidation failed', {
-      error: error instanceof Error ? error.message : String(error),
+      errorType: error instanceof Error ? error.name : 'UnknownError',
     });
     return new Response('Front-channel logout failed', {
       status: 500,

@@ -16,7 +16,6 @@ import {
 import type { TenantPlacementMigrationSagaDependencies } from './tenant-placement-migration-orchestrator';
 import type { TenantPlacementMigrationJobView } from './tenant-placement-migration-job';
 
-const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
 const SAFE_BINDING_REF = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
 interface RegistryTarget {
@@ -26,6 +25,7 @@ interface RegistryTarget {
   shardId: string;
   bindingRef: string;
   routeGeneration: number;
+  assignmentGeneration: number;
   databaseId: string;
   databaseName: string;
 }
@@ -63,6 +63,7 @@ function targets(migration: ControlTenantPlacementMigrationView): RegistryTarget
       shardId: shard.target.shardId,
       bindingRef: shard.target.bindingRef,
       routeGeneration: shard.target.routeGeneration,
+      assignmentGeneration: shard.target.assignmentGeneration,
       databaseId: shard.target.databaseId,
       databaseName: shard.target.databaseName,
     };
@@ -183,9 +184,13 @@ async function publishRegistry(
         metadata_json: JSON.stringify({
           control_operation_id: job.controlOperationId,
           control_shard_id: target.shardId,
-          placement_policy_generation: migration.targetPolicyGeneration,
-          residency_policy_id: target.residencyPolicyId,
-          residency_partition: target.residencyPartition,
+          control_assignment_generation: target.assignmentGeneration,
+          control_data_role: target.dataRole,
+          control_residency_policy_id: target.residencyPolicyId,
+          control_residency_partition: target.residencyPartition,
+          control_allocation_scope: 'tenant_exclusive',
+          control_owner_tenant_id: job.tenantId,
+          control_placement_policy_generation: migration.targetPolicyGeneration,
         }),
       });
     }
@@ -206,7 +211,10 @@ async function publishRegistry(
 
   const published = await publishTenantRuntimeRegistrySnapshot({
     tenantId: job.tenantId,
-    storageProfileId: env.DEFAULT_STORAGE_PROFILE_ID ?? TENANT_D1_STORAGE_PROFILE_ID,
+    placement: {
+      isolationPolicy: 'tenant_exclusive',
+      policyGeneration: migration.targetPolicyGeneration,
+    },
     repository,
     snapshotStore: env.TENANT_RUNTIME_REGISTRY,
     deploymentTarget: (env as Env & { AUTHRIM_DEPLOYMENT_TARGET?: string })

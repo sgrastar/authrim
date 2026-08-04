@@ -93,7 +93,7 @@ describe('Control automatic provisioning vars', () => {
 
   it('enables the Control executor only when setup selected it', () => {
     const config = buildAuthrimConfig(SCENARIOS[0]!) as AuthrimConfig;
-    config.tenantD1 = { automaticProvisioning: true };
+    config.controlPlane = { automaticProvisioning: true };
     expect(generateEnvVars('ar-control', config, WORKERS_SUBDOMAIN)).toMatchObject({
       AUTHRIM_AUTOMATIC_PROVISIONING: 'true',
     });
@@ -243,7 +243,6 @@ describe('generateEnvVars - ar-saml', () => {
     const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
     config.profiles = {
       defaults: {
-        storage: 'builtin:storage:external-postgres',
         audit: 'builtin:audit:standard',
         residency: 'builtin:residency:eu',
       },
@@ -256,21 +255,18 @@ describe('generateEnvVars - ar-saml', () => {
     const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
 
     expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
-    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
     expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
     expect(authVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
 
     expect(samlVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
-    expect(samlVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
     expect(samlVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
     expect(samlVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
   });
 
-  it('passes through built-in single-db profile defaults for profile-aware workers', () => {
+  it('passes through audit defaults', () => {
     const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
     config.profiles = {
       defaults: {
-        storage: 'builtin:storage:single-db',
         audit: 'custom:audit:external-primary',
         residency: 'builtin:residency:default',
       },
@@ -283,9 +279,8 @@ describe('generateEnvVars - ar-saml', () => {
     const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
 
     expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('kv');
-    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
     expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('custom:audit:external-primary');
-    expect(managementVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+    expect(managementVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('custom:audit:external-primary');
   });
 });
 

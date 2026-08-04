@@ -4,8 +4,7 @@
   "worker": "ar-vc",
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
+    { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "vc_metadata" },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
     { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
     { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },

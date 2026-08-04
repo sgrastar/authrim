@@ -217,20 +217,30 @@ async function registryDocuments(input: {
   const publishedAt = new Date(input.publishedAt * 1000).toISOString();
   const expiresAt = new Date((input.publishedAt + 1800) * 1000).toISOString();
   const snapshot: TenantRuntimeRegistrySnapshot = {
-    version: 2,
+    version: 4,
     tenantId: 'tenant-a',
     snapshotScope: 'tenant',
     deploymentTarget: 'default',
     runtimeGeneration,
     routeStatus: 'active',
     quarantineDenyGeneration: 0,
-    storageProfileId: 'builtin:storage:tenant-d1',
+    backend: { provider: 'd1', resolver: 'control-plane' },
+    placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
     publishedAt,
     expiresAt,
     stores: [
       {
         tenantId: 'tenant-a',
         role: 'tenant_core',
+        dataRole: 'tenant_core/default',
+        residencyPolicyId: 'default-policy',
+        residencyPartition: 'default',
+        shardId: input.includeRetiredShard ? 'retired-default' : 'replacement-default',
+        assignmentGeneration: 1,
+        bindingRouteGeneration: 4,
+        placementPolicyGeneration: 1,
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-a',
         generation: 4,
         runtimeGeneration,
         schemaVersion: 1,

@@ -26,12 +26,14 @@ vi.mock('hono/cookie', () => ({
 
 // Mock session store for sharded session support (RPC pattern)
 const mockShardedSessionStore = {
+  getSessionRpc: vi.fn().mockResolvedValue(null),
   invalidateSessionRpc: vi.fn().mockResolvedValue(true),
 };
 
 // Mock shared module
 vi.mock('@authrim/ar-lib-core', async () => {
-  const actual = await vi.importActual('@authrim/ar-lib-core');
+  const actual =
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
     timingSafeEqual: vi.fn((a: string, b: string) => a === b),
@@ -58,7 +60,20 @@ vi.mock('@authrim/ar-lib-core', async () => {
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     // Return { stub: ... } to match the destructuring pattern in logout.ts
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mockShardedSessionStore })),
-    recordHybridUserSessionRevocationEpoch: vi.fn().mockResolvedValue(1_750_000_000_000),
+    recordUserSessionRevocation: vi.fn().mockResolvedValue(1_750_000_000_000),
+    createAuthContextFromHono: vi.fn((c: { env: Env }) => {
+      const coreAdapter = actual.ensureDatabaseAdapter(c.env.DB);
+      return {
+        coreAdapter,
+        repositories: {
+          client: {
+            findByClientId: (clientId: string) =>
+              coreAdapter.queryOne('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]),
+          },
+          sessionClient: {},
+        },
+      };
+    }),
   };
 });
 
@@ -72,7 +87,7 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   resolveLogoutTargetsFromSessionClientStore,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocation,
 } from '@authrim/ar-lib-core';
 
 // Helper to create mock context
@@ -1047,8 +1062,7 @@ describe('Back-channel Logout', () => {
 
       // Should NOT call the sharded session store (no sid means cannot locate shard)
       expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
-      expect(recordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
-        expect.anything(),
+      expect(recordUserSessionRevocation).toHaveBeenCalledWith(
         expect.anything(),
         'default',
         'user-123'

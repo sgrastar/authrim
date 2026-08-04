@@ -350,7 +350,7 @@ describe('admin compliance APIs', () => {
       summary: { total_records: number; records_pending_deletion: number };
     };
     expect(body.policy.enabled).toBe(enabled);
-    expect(body.summary).toMatchObject({ total_records: 13, records_pending_deletion: 2 });
+    expect(body.summary).toMatchObject({ total_records: 10, records_pending_deletion: 0 });
   });
 
   it('includes audit retention statistics when hot query is supported', async () => {

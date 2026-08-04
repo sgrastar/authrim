@@ -4,7 +4,8 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   resolveCustomClaimRuntimeSourcesFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveAccountDataContext,
+  resolveAccountDataContextByIdentifier,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { SAMLAttributeSubject } from '../idp/attributes';
@@ -13,12 +14,13 @@ export type SAMLUserInfo = SAMLAttributeSubject;
 
 async function resolveUserStoreAdapters(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  accountId: string
 ): Promise<{ coreAdapter: DatabaseAdapter; piiAdapter: DatabaseAdapter | null }> {
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
+  const account = await resolveAccountDataContext(env, { tenantId, accountId });
   return {
-    coreAdapter: ensureDatabaseAdapter(sources.coreDb, 'saml-user-core'),
-    piiAdapter: sources.piiDb ? ensureDatabaseAdapter(sources.piiDb, 'saml-user-pii') : null,
+    coreAdapter: ensureDatabaseAdapter(account.coreDb, 'saml-user-core'),
+    piiAdapter: ensureDatabaseAdapter(account.piiDb, 'saml-user-pii'),
   };
 }
 
@@ -43,7 +45,19 @@ export async function findActiveSamlUserByEmail(
   tenantId: string,
   email: string
 ): Promise<{ id: string } | null> {
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  let account;
+  try {
+    account = await resolveAccountDataContextByIdentifier(env, {
+      tenantId,
+      indexKind: 'email_exact',
+      identifier: email,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') return null;
+    throw error;
+  }
+  const coreAdapter = ensureDatabaseAdapter(account.coreDb, 'saml-user-core');
+  const piiAdapter = ensureDatabaseAdapter(account.piiDb, 'saml-user-pii');
   const projectionRepository = createCanonicalProjectionRepository(
     env,
     tenantId,
@@ -78,7 +92,7 @@ export async function getSamlUserNameIdById(
   tenantId: string,
   userId: string
 ): Promise<string | null> {
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId, userId);
   const canonicalProjection = await createCanonicalProjectionRepository(
     env,
     tenantId,
@@ -96,7 +110,7 @@ export async function getSamlUserInfoById(
   tenantId: string,
   userId: string
 ): Promise<SAMLUserInfo | null> {
-  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId);
+  const { coreAdapter, piiAdapter } = await resolveUserStoreAdapters(env, tenantId, userId);
   const canonicalProjection = await createCanonicalProjectionRepository(
     env,
     tenantId,
@@ -121,7 +135,10 @@ async function getNonPiiCustomClaims(
   userId: string
 ): Promise<Record<string, unknown>> {
   try {
-    const { nonPiiDb } = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+    const { nonPiiDb } = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId, {
+      accountId: userId,
+    });
+    if (!nonPiiDb) throw new Error('saml_account_route_incomplete');
     const adapter = ensureDatabaseAdapter(nonPiiDb, 'saml-custom-claims');
     const rows = await adapter.query<{ field_name: string; field_value: string | null }>(
       'SELECT field_name, field_value FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',

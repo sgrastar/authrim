@@ -54,13 +54,13 @@ export interface UserCacheSources {
 export type UserPiiCacheMode = 'merged' | 'encrypted_short_ttl' | 'no_cross_request_pii';
 
 export interface UserCacheScope {
-  storageProfileId: string;
-  sourceGeneration?: string | number;
-  schemaVersion?: string | number;
+  routeGeneration: string | number;
+  bindingGeneration: string | number;
+  schemaGeneration: string | number;
 }
 
 interface EncryptedCachedUserEnvelope {
-  version: 1;
+  version: 2;
   algorithm: typeof PII_CACHE_ALGORITHM;
   purpose: typeof PII_CACHE_PURPOSE;
   tenantId: string;
@@ -69,9 +69,9 @@ interface EncryptedCachedUserEnvelope {
   iv: string;
   ciphertext: string;
   metadata: {
-    storageProfileId?: string;
-    sourceGeneration?: string | number;
-    schemaVersion?: string | number;
+    routeGeneration?: string | number;
+    bindingGeneration?: string | number;
+    schemaGeneration?: string | number;
   };
 }
 
@@ -116,10 +116,10 @@ export function buildUserCacheKey(
     return buildKVKey('user', userId, tenantId);
   }
 
-  const profile = encodeURIComponent(scope.storageProfileId);
-  const generation = encodeURIComponent(String(scope.sourceGeneration ?? 'default'));
-  const schema = encodeURIComponent(String(scope.schemaVersion ?? '1'));
-  return buildKVKey(`user:v2:sp:${profile}:gen:${generation}:schema:${schema}`, userId, tenantId);
+  const route = encodeURIComponent(String(scope.routeGeneration));
+  const binding = encodeURIComponent(String(scope.bindingGeneration));
+  const schema = encodeURIComponent(String(scope.schemaGeneration));
+  return buildKVKey(`user:v3:route:${route}:binding:${binding}:schema:${schema}`, userId, tenantId);
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -196,9 +196,9 @@ function buildPiiCacheAdditionalData(
       cache_key: cacheKey,
       purpose: PII_CACHE_PURPOSE,
       key_version: keyVersion,
-      storage_profile_id: scope?.storageProfileId ?? null,
-      source_generation: scope?.sourceGeneration ?? null,
-      schema_version: scope?.schemaVersion ?? null,
+      route_generation: scope?.routeGeneration ?? null,
+      binding_generation: scope?.bindingGeneration ?? null,
+      schema_generation: scope?.schemaGeneration ?? null,
     })
   );
 }
@@ -249,7 +249,7 @@ async function encryptCachedUser(
     textEncoder.encode(JSON.stringify(user))
   );
   return {
-    version: 1,
+    version: 2,
     algorithm: PII_CACHE_ALGORITHM,
     purpose: PII_CACHE_PURPOSE,
     tenantId,
@@ -258,9 +258,9 @@ async function encryptCachedUser(
     iv: toBase64Url(iv),
     ciphertext: toBase64Url(new Uint8Array(ciphertext)),
     metadata: {
-      storageProfileId: scope?.storageProfileId,
-      sourceGeneration: scope?.sourceGeneration,
-      schemaVersion: scope?.schemaVersion,
+      routeGeneration: scope?.routeGeneration,
+      bindingGeneration: scope?.bindingGeneration,
+      schemaGeneration: scope?.schemaGeneration,
     },
   };
 }
@@ -275,7 +275,7 @@ async function decryptCachedUser(
 ): Promise<CachedUser> {
   const envelope = JSON.parse(cached) as EncryptedCachedUserEnvelope;
   if (
-    envelope.version !== 1 ||
+    envelope.version !== 2 ||
     envelope.algorithm !== PII_CACHE_ALGORITHM ||
     envelope.purpose !== PII_CACHE_PURPOSE ||
     envelope.tenantId !== tenantId

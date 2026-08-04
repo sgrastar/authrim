@@ -3,7 +3,7 @@ import type { Context as HonoContext } from 'hono';
 import type { DatabaseSource } from '../db';
 import type { CanonicalOtpLoginUser } from '../repositories/identity/canonical-runtime-user-store';
 import type { Env } from '../types/env';
-import { isCanonicalAccountIdForUser, isValidPersistedUserId } from '../utils/id';
+import { isValidPersistedUserId } from '../utils/id';
 import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
 import {
   createLookupBlindIndexes,
@@ -17,9 +17,9 @@ import {
   type LookupIdentifierKind,
 } from './lookup-directory';
 import {
-  getCachedAuthCorePersistenceContextFromEnv,
-  resolveAuthCorePersistenceSourceFromEnv,
-} from './auth-core-persistence-context';
+  resolveTenantDatabaseSourceFromRegistry,
+  type ResolvedTenantDatabaseSource,
+} from './tenant-database-resolver';
 
 const RUNTIME_STATE_CACHE_TTL_MS = 30_000;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
@@ -51,21 +51,16 @@ interface ShardMetadataRow {
   residency_partition: string;
 }
 
-interface SessionRevocationEpochRow {
-  revoked_after_ms: number | string;
-}
-
 export interface TenantMetadataContext {
   tenantId: string;
-  storageProfileId: string;
   coreDb: DatabaseSource;
+  route: ResolvedTenantDatabaseSource;
 }
 
 export interface AccountDataContext {
   tenantId: string;
   accountId: string;
   legacyUserId: string;
-  storageProfileId: string;
   membership: ResolvedLookupMembership;
   coreDb: DatabaseSource;
   piiDb: DatabaseSource;
@@ -82,16 +77,11 @@ export interface AccountCoreDataContext {
   tenantId: string;
   accountId: string;
   legacyUserId: string;
-  storageProfileId: string;
   membership: ResolvedLookupMembership;
   coreDb: DatabaseSource;
   coreBindingRef: string;
   coreResidencyPartition: string;
   accountRouteGeneration: number;
-}
-
-export interface SessionAccountCoreDataContext extends AccountCoreDataContext {
-  revokedAfterMs: number | null;
 }
 
 export interface OtpAccountCoreDataContext extends AccountCoreDataContext {
@@ -102,10 +92,11 @@ interface AccountRouteResolutionBase {
   resolver: LookupRouteResolver;
   membership: ResolvedLookupMembership;
   accountId: string;
-  storageProfileId: string;
   observedBindingRouteGenerations: Readonly<Record<string, number>>;
   coreResidency: string;
   piiResidency: string;
+  coreRoute: ResolvedTenantDatabaseSource;
+  piiRoute: ResolvedTenantDatabaseSource;
 }
 
 const hmacKeyCache = new WeakMap<object, CachedRuntimeState<ResolvedLookupHmacKeys>>();
@@ -214,7 +205,7 @@ async function resolveAccountRouteBaseByIdentifier(
   if (!SAFE_ID.test(input.tenantId)) throw new Error('account_data_tenant_id_invalid');
   const now = input.nowMs ?? Date.now();
   const runtime = requiredEnvironment(env);
-  const [keys, assignments, persistence] = await Promise.all([
+  const [keys, assignments] = await Promise.all([
     loadHmacKeys(env, now),
     loadVerifiedLookupBucketAssignmentProvider({
       store: runtime.store,
@@ -222,7 +213,6 @@ async function resolveAccountRouteBaseByIdentifier(
       publicJwks: runtime.publicJwks,
       now: Math.floor(now / 1000),
     }),
-    getCachedAuthCorePersistenceContextFromEnv(env),
   ]);
   const indexes = await createLookupBlindIndexes(input.indexKind, input.identifier, keys.readKeys);
   const resolver = new LookupRouteResolver(env as unknown as Record<string, unknown>, assignments);
@@ -252,31 +242,58 @@ async function resolveAccountRouteBaseByIdentifier(
     (target) => target.dataRole === 'tenant_pii'
   )?.residencyPartition;
   if (!coreResidency || !piiResidency) throw new Error('account_data_route_incomplete');
+  const coreTarget = membership.routeProjection.targets.find(
+    (target) =>
+      target.dataRole === 'tenant_core/users' && target.residencyPartition === coreResidency
+  );
+  const piiTarget = membership.routeProjection.targets.find(
+    (target) => target.dataRole === 'tenant_pii' && target.residencyPartition === piiResidency
+  );
+  if (!coreTarget || !piiTarget) throw new Error('account_data_route_incomplete');
+  const [coreRoute, piiRoute] = await Promise.all([
+    resolveTenantDatabaseSourceFromRegistry(env, {
+      tenantId: input.tenantId,
+      role: 'tenant_core',
+      dataRole: 'tenant_core/users',
+      residencyPartition: coreTarget.residencyPartition,
+      shardId: coreTarget.shardId,
+      bindingRef: coreTarget.bindingRef,
+      requiredBindingRouteGeneration: coreTarget.requiredBindingRouteGeneration,
+    }),
+    resolveTenantDatabaseSourceFromRegistry(env, {
+      tenantId: input.tenantId,
+      role: 'tenant_pii',
+      dataRole: 'tenant_pii',
+      residencyPartition: piiTarget.residencyPartition,
+      shardId: piiTarget.shardId,
+      bindingRef: piiTarget.bindingRef,
+      requiredBindingRouteGeneration: piiTarget.requiredBindingRouteGeneration,
+    }),
+  ]);
 
   return {
     resolver,
     membership,
     accountId,
-    storageProfileId: persistence.storageProfileId,
     observedBindingRouteGenerations,
     coreResidency,
     piiResidency,
+    coreRoute,
+    piiRoute,
   };
 }
 
 async function resolveCoreAccountDestination(
   base: AccountRouteResolutionBase,
   tenantId: string,
-  options: { revocationUserId?: string; otpTrustedEmail?: string } = {}
+  options: { otpTrustedEmail?: string } = {}
 ): Promise<{
   target: ResolvedLookupTarget;
   account: AccountDestinationRow;
-  revokedAfterMs: number | null;
   otpUser: CanonicalOtpLoginUser | null;
 }> {
   const account: { value: AccountDestinationRow | null } = { value: null };
   const otpUser: { value: CanonicalOtpLoginUser | null } = { value: null };
-  let revokedAfterMs: number | null = null;
   const otpTrustedEmail = options.otpTrustedEmail?.trim().toLowerCase() || null;
   if (options.otpTrustedEmail !== undefined && !otpTrustedEmail) {
     throw new Error('account_data_otp_email_invalid');
@@ -287,6 +304,14 @@ async function resolveCoreAccountDestination(
     residencyPartition: base.coreResidency,
     observedBindingRouteGenerations: base.observedBindingRouteGenerations,
     verifyAtDestination: async (candidate) => {
+      if (
+        candidate.source !== base.coreRoute.source ||
+        candidate.bindingRef !== base.coreRoute.bindingRef ||
+        candidate.shardId !== base.coreRoute.shardId ||
+        candidate.requiredBindingRouteGeneration !== base.coreRoute.bindingRouteGeneration
+      ) {
+        return false;
+      }
       const session = candidate.source.withSession('first-primary');
       const statements = [
         session.prepare(
@@ -342,17 +367,6 @@ async function resolveCoreAccountDestination(
               )
               .bind(tenantId, base.accountId),
       ];
-      if (options.revocationUserId) {
-        statements.push(
-          session
-            .prepare(
-              `SELECT revoked_after_ms
-                 FROM session_revocation_epochs
-                WHERE tenant_id = ? AND user_id = ? LIMIT 1`
-            )
-            .bind(tenantId, options.revocationUserId)
-        );
-      }
       const results = await session.batch(statements);
       if (
         results.length !== statements.length ||
@@ -362,9 +376,6 @@ async function resolveCoreAccountDestination(
       }
       const metadata = results[0]?.results[0] as ShardMetadataRow | undefined;
       account.value = (results[1]?.results[0] as AccountDestinationRow | undefined) ?? null;
-      const epoch = options.revocationUserId
-        ? ((results[2]?.results[0] as SessionRevocationEpochRow | undefined) ?? null)
-        : null;
       if (
         metadata?.binding_ref !== candidate.bindingRef ||
         metadata.data_role !== 'tenant_core/users' ||
@@ -372,9 +383,7 @@ async function resolveCoreAccountDestination(
         account.value?.id !== base.accountId ||
         account.value.lifecycle_state !== 'active' ||
         account.value.directory_publication_state !== 'active' ||
-        Number(account.value.account_route_generation) !== base.membership.accountRouteGeneration ||
-        (options.revocationUserId !== undefined &&
-          account.value.legacy_user_id !== options.revocationUserId)
+        Number(account.value.account_route_generation) !== base.membership.accountRouteGeneration
       ) {
         return false;
       }
@@ -392,18 +401,13 @@ async function resolveCoreAccountDestination(
           created_at: createdAt,
         };
       }
-      if (epoch) {
-        const normalizedEpoch = Number(epoch.revoked_after_ms);
-        if (!Number.isSafeInteger(normalizedEpoch) || normalizedEpoch < 0) return false;
-        revokedAfterMs = normalizedEpoch;
-      }
       return true;
     },
   });
   if (!account.value || !isValidPersistedUserId(account.value.legacy_user_id)) {
     throw new Error('account_data_destination_account_invalid');
   }
-  return { target, account: account.value, revokedAfterMs, otpUser: otpUser.value };
+  return { target, account: account.value, otpUser: otpUser.value };
 }
 
 function piiCacheMode(env: Env): UserPiiCacheMode {
@@ -419,15 +423,17 @@ export async function resolveTenantMetadataContext(
   tenantId: string
 ): Promise<TenantMetadataContext> {
   if (!SAFE_ID.test(tenantId)) throw new Error('tenant_metadata_tenant_id_invalid');
-  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
+  const route = await resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId,
+    role: 'tenant_core',
+    dataRole: 'tenant_core/default',
+    shardGroup: 'default',
+    shardIndex: 0,
+  });
   return {
     tenantId,
-    storageProfileId: persistence.storageProfileId,
-    coreDb: await resolveAuthCorePersistenceSourceFromEnv(env, {
-      tenantId,
-      runtimeSnapshotMode:
-        persistence.storageProfileId === 'builtin:storage:tenant-d1' ? 'required' : 'optional',
-    }),
+    coreDb: route.source,
+    route,
   };
 }
 
@@ -449,21 +455,30 @@ export async function resolveAccountDataContextByIdentifier(
       dataRole: 'tenant_pii',
       residencyPartition: base.piiResidency,
       observedBindingRouteGenerations: base.observedBindingRouteGenerations,
-      verifyAtDestination: (target) => verifyShardMetadata(target, 'tenant_pii'),
+      verifyAtDestination: (target) => {
+        if (
+          target.source !== base.piiRoute.source ||
+          target.bindingRef !== base.piiRoute.bindingRef ||
+          target.shardId !== base.piiRoute.shardId ||
+          target.requiredBindingRouteGeneration !== base.piiRoute.bindingRouteGeneration
+        ) {
+          return Promise.resolve(false);
+        }
+        return verifyShardMetadata(target, 'tenant_pii');
+      },
     }),
   ]);
   const { target: core, account: accountRow } = coreResolution;
   const { membership, accountId } = base;
   const userCacheScope: UserCacheScope = {
-    storageProfileId: base.storageProfileId,
-    sourceGeneration: `account:${membership.accountRouteGeneration}:core:${core.requiredBindingRouteGeneration}:pii:${pii.requiredBindingRouteGeneration}`,
-    schemaVersion: `route:${membership.routeProjection.schemaVersion}`,
+    routeGeneration: `account:${membership.accountRouteGeneration}`,
+    bindingGeneration: `core:${core.requiredBindingRouteGeneration}:pii:${pii.requiredBindingRouteGeneration}`,
+    schemaGeneration: `route:${membership.routeProjection.schemaVersion}`,
   };
   return {
     tenantId: input.tenantId,
     accountId,
     legacyUserId: accountRow.legacy_user_id,
-    storageProfileId: base.storageProfileId,
     membership,
     coreDb: core.source,
     piiDb: pii.source,
@@ -494,7 +509,6 @@ export async function resolveAccountCoreDataContext(
     tenantId: input.tenantId,
     accountId,
     legacyUserId: account.legacy_user_id,
-    storageProfileId: base.storageProfileId,
     membership: base.membership,
     coreDb: target.source,
     coreBindingRef: target.bindingRef,
@@ -553,50 +567,12 @@ export async function resolveOtpAccountCoreDataContextByIdentifier(
     tenantId: input.tenantId,
     accountId: base.accountId,
     legacyUserId: account.legacy_user_id,
-    storageProfileId: base.storageProfileId,
     membership: base.membership,
     coreDb: target.source,
     coreBindingRef: target.bindingRef,
     coreResidencyPartition: target.residencyPartition,
     accountRouteGeneration: base.membership.accountRouteGeneration,
     user: otpUser,
-  };
-}
-
-export async function resolveSessionAccountCoreDataContext(
-  env: Env,
-  input: { tenantId: string; accountId: string; userId: string; nowMs?: number }
-): Promise<SessionAccountCoreDataContext> {
-  const accountId = normalizeAccountId(input.accountId);
-  const userId = input.userId.trim();
-  if (!isCanonicalAccountIdForUser(accountId, userId)) {
-    throw new Error('account_data_session_route_mismatch');
-  }
-  const base = await resolveAccountRouteBaseByIdentifier(env, {
-    tenantId: input.tenantId,
-    indexKind: 'account_id',
-    identifier: accountId,
-    expectedAccountId: accountId,
-    nowMs: input.nowMs,
-  });
-  const { target, account, revokedAfterMs } = await resolveCoreAccountDestination(
-    base,
-    input.tenantId,
-    {
-      revocationUserId: userId,
-    }
-  );
-  return {
-    tenantId: input.tenantId,
-    accountId,
-    legacyUserId: account.legacy_user_id,
-    storageProfileId: base.storageProfileId,
-    membership: base.membership,
-    coreDb: target.source,
-    coreBindingRef: target.bindingRef,
-    coreResidencyPartition: target.residencyPartition,
-    accountRouteGeneration: base.membership.accountRouteGeneration,
-    revokedAfterMs,
   };
 }
 

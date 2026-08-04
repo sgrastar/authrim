@@ -341,6 +341,21 @@ export async function listPendingControlOperatorOperations(input: {
           OR (
             operation.status = 'running'
             AND operation.last_error_code IS NULL
+            AND EXISTS (
+              SELECT 1 FROM control_operation_steps binding_step
+               WHERE binding_step.operation_id = operation.operation_id
+                 AND binding_step.step_key = 'reconcile_worker_bindings'
+                 AND binding_step.status = 'running'
+            )
+            AND EXISTS (
+              SELECT 1 FROM control_worker_binding_reconciliations binding
+               WHERE binding.operation_id = operation.operation_id
+                 AND binding.state = 'pending'
+            )
+          )
+          OR (
+            operation.status = 'running'
+            AND operation.last_error_code IS NULL
             AND operation.lock_expires_at IS NOT NULL
             AND operation.lock_expires_at <= unixepoch()
             AND migration.state = 'ready'

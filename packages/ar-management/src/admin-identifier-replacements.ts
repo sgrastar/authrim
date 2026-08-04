@@ -2,8 +2,6 @@ import type { Context } from 'hono';
 import {
   createAuditLogFromContext,
   createPIIContextFromHono,
-  getRuntimeUserStoreSourcesFromHonoContext,
-  getTenantMetadataContextFromHono,
   getTenantIdFromContext,
   resolveAccountDataContextFromHono,
   type DatabaseAdapter,
@@ -24,22 +22,12 @@ const OPERATION_STATES = new Set([
   'canceled',
 ]);
 
-function usesTenantD1Storage(c: Context<{ Bindings: Env }>): boolean {
-  return (
-    getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.id ===
-      'builtin:storage:tenant-d1' ||
-    getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1'
-  );
-}
-
 async function resolveIdentifierReplacementPii(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   accountId: string
 ): Promise<DatabaseAdapter> {
-  if (usesTenantD1Storage(c)) {
-    await resolveAccountDataContextFromHono(c, accountId);
-  }
+  await resolveAccountDataContextFromHono(c, accountId);
   return createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
 }
 

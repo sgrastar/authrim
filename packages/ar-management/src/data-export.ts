@@ -22,18 +22,23 @@ import type {
   DataExportSection,
   DataExportFormat,
   ExportedUserData,
+  Session,
 } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   ensureDatabaseAdapter,
+  isD1DatabaseLike,
   listObjectCatalogObjects,
   getTenantIdFromContext,
   introspectTokenFromContext,
   getSessionStoreBySessionId,
+  getSessionRevocationStore,
+  isShardedSessionId,
   createOAuthConfigManager,
   getLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveAccountDataContext,
+  resolveAccountDataContextFromHono,
   CanonicalRuntimeUserStore,
   type ObjectCatalogListResult,
   type ObjectCatalogPhysicalRecord,
@@ -57,6 +62,8 @@ const ALL_SECTIONS: DataExportSection[] = [
 
 const DATA_EXPORT_DOWNLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const DATA_EXPORT_PROCESS_BATCH_LIMIT = 3;
+const DATA_EXPORT_SHARD_PAGE_LIMIT = 25;
+const DATA_EXPORT_SHARD_CURSOR_KEY = 'jobs:data-export:account-source-cursor';
 type ExportArtifactFormat = DataExportFormat;
 
 interface ExportArtifactManifestObject {
@@ -90,6 +97,15 @@ interface PendingDataExportRow {
   format: DataExportFormat;
   include_sections: string;
   requested_at: number;
+}
+
+async function resolveExportAccountCore(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+) {
+  await resolveAccountDataContextFromHono(c, userId);
+  return createAccountAuthContextFromHono(c, tenantId);
 }
 
 function buildDataExportObjectKey(
@@ -410,7 +426,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
 
     // Check if data export is enabled
     const configManager = createOAuthConfigManager(c.env);
@@ -439,6 +455,7 @@ export async function dataExportRequestHandler(c: Context<{ Bindings: Env }>) {
       // Synchronous export for small data
       const piiCtx = createPIIContextFromHono(c, tenantId);
       const exportedData = await collectExportData(
+        c.env,
         authCtx.coreAdapter,
         piiCtx?.defaultPiiAdapter ?? null,
         userId,
@@ -517,7 +534,7 @@ export async function dataExportStatusHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
 
     const result = await authCtx.coreAdapter.query<{
       id: string;
@@ -715,7 +732,7 @@ export async function dataExportDownloadHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
     const request = await getDataExportRequestById(
       authCtx.coreAdapter,
       requestId,
@@ -857,7 +874,7 @@ export async function dataExportArtifactManifestHandler(c: Context<{ Bindings: E
 
     const artifactId = c.req.param('artifactId')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
     const request = await getDataExportRequestByArtifactId(
       authCtx.coreAdapter,
       artifactId,
@@ -928,7 +945,7 @@ export async function dataExportArtifactDownloadHandler(c: Context<{ Bindings: E
 
     const artifactId = c.req.param('artifactId')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
     const request = await getDataExportRequestByArtifactId(
       authCtx.coreAdapter,
       artifactId,
@@ -1026,7 +1043,7 @@ export async function dataExportArtifactChunkHandler(c: Context<{ Bindings: Env 
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveExportAccountCore(c, tenantId, userId);
     const request = await getDataExportRequestByArtifactId(
       authCtx.coreAdapter,
       artifactId,
@@ -1191,20 +1208,66 @@ export async function processPendingDataExportRequests(
 
   const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
   const rootKeyHex = env.OBJECT_ENCRYPTION_ROOT_KEY;
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-data-export-jobs'
-  );
-  const piiAdapter = ensureDatabaseAdapter(env.DB_PII, 'management-data-export-pii');
-  const pendingRequests = await coreAdapter.query<PendingDataExportRow>(
-    `SELECT id, tenant_id, user_id, status, format, include_sections, requested_at
-       FROM data_export_requests
-      WHERE status IN ('pending', 'processing')
-      ORDER BY requested_at ASC
-      LIMIT ${DATA_EXPORT_PROCESS_BATCH_LIMIT}`
-  );
+  if (!env.CONTROL || !env.AUTHRIM_CONFIG) {
+    throw new Error('data_export_account_directory_unavailable');
+  }
+  const rawCursor = (await env.AUTHRIM_CONFIG.get(DATA_EXPORT_SHARD_CURSOR_KEY))?.trim() || null;
+  if (rawCursor && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(rawCursor)) {
+    throw new Error('data_export_shard_cursor_invalid');
+  }
+  let shards = await env.CONTROL.listAccountDirectorySourceShards({
+    afterShardId: rawCursor,
+    limit: DATA_EXPORT_SHARD_PAGE_LIMIT,
+  });
+  if (shards.length === 0 && rawCursor) {
+    shards = await env.CONTROL.listAccountDirectorySourceShards({
+      afterShardId: null,
+      limit: DATA_EXPORT_SHARD_PAGE_LIMIT,
+    });
+  }
+  if (shards.length > DATA_EXPORT_SHARD_PAGE_LIMIT) {
+    throw new Error('data_export_shard_page_invalid');
+  }
 
-  for (const request of pendingRequests) {
+  const pendingRequests: Array<{
+    request: PendingDataExportRow;
+    sourceCore: DatabaseAdapter;
+    bindingRef: string;
+  }> = [];
+  let lastVisitedShardId: string | null = null;
+  for (const shard of shards) {
+    if (
+      typeof shard.shardId !== 'string' ||
+      typeof shard.bindingRef !== 'string' ||
+      !Number.isSafeInteger(shard.routeGeneration) ||
+      shard.routeGeneration < 1
+    ) {
+      throw new Error('data_export_shard_page_invalid');
+    }
+    const binding = (env as unknown as Record<string, unknown>)[shard.bindingRef];
+    if (!isD1DatabaseLike(binding)) throw new Error('data_export_source_binding_unavailable');
+    const sourceCore = ensureDatabaseAdapter(binding, 'management-data-export-source');
+    const remaining = DATA_EXPORT_PROCESS_BATCH_LIMIT - pendingRequests.length;
+    if (remaining > 0) {
+      const rows = await sourceCore.query<PendingDataExportRow>(
+        `SELECT id, tenant_id, user_id, status, format, include_sections, requested_at
+           FROM data_export_requests
+          WHERE status IN ('pending', 'processing')
+          ORDER BY requested_at ASC
+          LIMIT ${remaining}`
+      );
+      pendingRequests.push(
+        ...rows.map((request) => ({ request, sourceCore, bindingRef: shard.bindingRef }))
+      );
+    }
+    lastVisitedShardId = shard.shardId;
+    if (pendingRequests.length >= DATA_EXPORT_PROCESS_BATCH_LIMIT) break;
+  }
+  await env.AUTHRIM_CONFIG.put(DATA_EXPORT_SHARD_CURSOR_KEY, lastVisitedShardId ?? '');
+
+  for (const work of pendingRequests) {
+    const { request } = work;
+    let coreAdapter = work.sourceCore;
     if (request.status === 'pending') {
       const claimed = await coreAdapter.execute(
         "UPDATE data_export_requests SET status = 'processing', started_at = ? WHERE id = ? AND tenant_id = ? AND status = 'pending'",
@@ -1216,8 +1279,18 @@ export async function processPendingDataExportRequests(
     }
 
     try {
+      const accountData = await resolveAccountDataContext(env, {
+        tenantId: request.tenant_id,
+        accountId: request.user_id,
+      });
+      if (accountData.coreBindingRef !== work.bindingRef) {
+        throw new Error('data_export_account_route_conflict');
+      }
+      coreAdapter = ensureDatabaseAdapter(accountData.coreDb, 'management-data-export-account');
+      const piiAdapter = ensureDatabaseAdapter(accountData.piiDb, 'management-data-export-pii');
       const sections = JSON.parse(request.include_sections) as DataExportSection[];
       const exportedData = await collectExportData(
+        env,
         coreAdapter,
         piiAdapter,
         request.user_id,
@@ -1278,18 +1351,19 @@ export async function processPendingDataExportRequests(
         file_path: filePath,
       });
     } catch (error) {
+      const errorCode =
+        error instanceof Error &&
+        /^data_export_[a-z0-9_]+$/u.test(error.message) &&
+        error.message.length <= 128
+          ? error.message
+          : 'data_export_processing_failed';
       await coreAdapter.execute(
         `UPDATE data_export_requests
             SET status = 'failed',
                 completed_at = ?,
                 error_message = ?
           WHERE id = ? AND tenant_id = ?`,
-        [
-          Date.now(),
-          error instanceof Error ? error.message : String(error),
-          request.id,
-          request.tenant_id,
-        ]
+        [Date.now(), errorCode, request.id, request.tenant_id]
       );
       logger.error(
         'Data export request processing failed',
@@ -1320,14 +1394,7 @@ async function estimateExportSize(
     totalSize += (consents[0]?.count || 0) * 500;
   }
 
-  // Estimate ~200 bytes per session
-  if (sections.includes('sessions')) {
-    const sessions = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM sessions WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
-    );
-    totalSize += (sessions[0]?.count || 0) * 200;
-  }
+  // Session data is read from Durable Objects during export and is not estimated from D1.
 
   // Estimate ~300 bytes per audit log entry
   if (sections.includes('audit_log')) {
@@ -1366,6 +1433,7 @@ function toISOString(timestamp: number): string {
  * Collect user data for export
  */
 async function collectExportData(
+  env: Env,
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null,
   userId: string,
@@ -1453,23 +1521,23 @@ async function collectExportData(
 
   // Collect active sessions (without sensitive data)
   if (sections.includes('sessions')) {
-    const sessions = await coreAdapter.query<{
-      id: string;
-      created_at: number;
-      expires_at: number;
-      last_activity_at: number | null;
-    }>(
-      `SELECT id, created_at, expires_at, last_activity_at
-       FROM sessions
-       WHERE tenant_id = ? AND user_id = ? AND expires_at > ?`,
-      [tenantId, userId, now]
+    const indexed = await getSessionRevocationStore(env, tenantId, userId).listActiveSessionsRpc(
+      tenantId,
+      userId,
+      `account:${userId}`,
+      now
     );
-
-    exportedData.sessions = sessions.map((s) => ({
-      id: s.id,
-      createdAt: toISOString(s.created_at),
-      expiresAt: toISOString(s.expires_at),
-      lastActiveAt: s.last_activity_at ? toISOString(s.last_activity_at) : undefined,
+    const sessions: Session[] = [];
+    for (const entry of indexed.slice(0, 100)) {
+      if (!isShardedSessionId(entry.sessionId)) continue;
+      const { stub } = getSessionStoreBySessionId(env, entry.sessionId, tenantId);
+      const session = (await stub.getSessionRpc(entry.sessionId)) as Session | null;
+      if (session?.tenantId === tenantId && session.userId === userId) sessions.push(session);
+    }
+    exportedData.sessions = sessions.map((session) => ({
+      id: session.id,
+      createdAt: toISOString(session.createdAt),
+      expiresAt: toISOString(session.expiresAt),
     }));
   }
 

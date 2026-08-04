@@ -16,7 +16,6 @@ const tenantResponse = {
     },
   ],
   total: 1,
-  tenant_d1_pool: { enabled: false },
 };
 
 const sessionResponse = {

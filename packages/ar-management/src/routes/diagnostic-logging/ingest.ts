@@ -11,7 +11,6 @@ import { Hono, type Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   createLogger,
-  ensureDatabaseAdapter,
   ClientRepository,
   DiagnosticLogR2Adapter,
   createSettingsManager,
@@ -22,6 +21,7 @@ import {
   emitRuntimeLogRecords,
   readRequestTextWithLimit,
   verifyClientSecretHash,
+  resolveAuthCorePersistenceAdapterFromEnv,
   type DiagnosticLogEntry,
   type DiagnosticLogPrivacyMode,
   type DiagnosticLoggingSettings,
@@ -66,7 +66,11 @@ async function validateClient(
   clientSecret?: string
 ): Promise<{ valid: boolean; client?: OAuthClient; error?: string }> {
   try {
-    const adapter = ensureDatabaseAdapter(env.DB, 'diagnostic-logging-client-validation');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'diagnostic-logging-client-validation',
+      { tenantId }
+    );
     const clientRepo = new ClientRepository(adapter, tenantId);
     const client = await clientRepo.findByClientId(clientId);
 

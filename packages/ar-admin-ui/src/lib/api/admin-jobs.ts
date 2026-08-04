@@ -14,17 +14,6 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 async function handleAPIError(response: Response, fallbackMessage: string): Promise<Error> {
 	try {
 		const errorBody = await response.json();
-		if (errorBody?.error === 'unsupported_storage_profile') {
-			const storageProfile =
-				typeof errorBody.storage_profile === 'string'
-					? errorBody.storage_profile
-					: 'current profile';
-			const route = typeof errorBody.route === 'string' ? errorBody.route : 'this route';
-			const message =
-				`This operation is not available for ${storageProfile}. ` +
-				`Route ${route} is blocked by the storage profile boundary.`;
-			return new Error(message);
-		}
 		// In development, show detailed error; in production, use fallback
 		if (import.meta.env.DEV) {
 			return new Error(errorBody.error_description || errorBody.error || fallbackMessage);
@@ -44,8 +33,6 @@ export type JobType =
 	| 'report_generation'
 	| 'org_bulk_members'
 	| 'tenant_delete'
-	| 'tenant_database_provision'
-	| 'tenant_database_activate_batch'
 	| 'tenant_database_export'
 	| 'tenant_database_restore_dry_run'
 	| 'tenant_database_purge_backup';
@@ -194,32 +181,6 @@ export interface BulkUpdateOperation {
 	};
 }
 
-export interface TenantDatabaseProvisionRequest {
-	tenant_slug?: string;
-	generation?: number;
-	activate?: boolean;
-	execution_mode?: 'plan_only' | 'operator_cli';
-	reason?: string;
-}
-
-export interface TenantDatabaseActivateBatchRequest {
-	activation_batch_id?: string;
-	targets: Array<{
-		tenant_id: string;
-		generation: number;
-		roles?: Array<'tenant_core' | 'tenant_pii'>;
-	}>;
-	scheduled_window?: {
-		not_before?: string;
-		not_after?: string;
-		timezone?: string;
-	};
-	require_health_check?: boolean;
-	require_binding_reconciliation?: boolean;
-	execution_mode?: 'plan_only' | 'operator_cli';
-	reason?: string;
-}
-
 /**
  * Presigned upload URL response
  */
@@ -237,8 +198,6 @@ type ApiJobType =
 	| 'reports/generate'
 	| 'organizations/bulk-members'
 	| 'tenants/delete'
-	| 'tenant-database/provision'
-	| 'tenant-database/activate-batch'
 	| 'tenant-database/export'
 	| 'tenant-database/restore-dry-run'
 	| 'tenant-database/purge-backup';
@@ -249,8 +208,6 @@ const JOB_TYPE_TO_API: Record<JobType, ApiJobType> = {
 	report_generation: 'reports/generate',
 	org_bulk_members: 'organizations/bulk-members',
 	tenant_delete: 'tenants/delete',
-	tenant_database_provision: 'tenant-database/provision',
-	tenant_database_activate_batch: 'tenant-database/activate-batch',
 	tenant_database_export: 'tenant-database/export',
 	tenant_database_restore_dry_run: 'tenant-database/restore-dry-run',
 	tenant_database_purge_backup: 'tenant-database/purge-backup'
@@ -262,8 +219,6 @@ const JOB_TYPE_FROM_API: Record<ApiJobType, JobType> = {
 	'reports/generate': 'report_generation',
 	'organizations/bulk-members': 'org_bulk_members',
 	'tenants/delete': 'tenant_delete',
-	'tenant-database/provision': 'tenant_database_provision',
-	'tenant-database/activate-batch': 'tenant_database_activate_batch',
 	'tenant-database/export': 'tenant_database_export',
 	'tenant-database/restore-dry-run': 'tenant_database_restore_dry_run',
 	'tenant-database/purge-backup': 'tenant_database_purge_backup'
@@ -668,45 +623,6 @@ export const adminJobsAPI = {
 		return normalizeJob((await response.json()) as Record<string, unknown>);
 	},
 
-	async createTenantDatabaseProvision(params: TenantDatabaseProvisionRequest): Promise<Job> {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/tenant-databases/provision`, {
-			method: 'POST',
-			credentials: 'include',
-			headers: {
-				'Content-Type': 'application/json'
-			},
-			body: JSON.stringify(params)
-		});
-
-		if (!response.ok) {
-			throw await handleAPIError(response, 'Failed to create tenant database provisioning request');
-		}
-
-		return normalizeJob((await response.json()) as Record<string, unknown>);
-	},
-
-	async createTenantDatabaseActivateBatch(
-		params: TenantDatabaseActivateBatchRequest
-	): Promise<Job> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/jobs/tenant-databases/activate-batch`,
-			{
-				method: 'POST',
-				credentials: 'include',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(params)
-			}
-		);
-
-		if (!response.ok) {
-			throw await handleAPIError(response, 'Failed to create tenant database activation request');
-		}
-
-		return normalizeJob((await response.json()) as Record<string, unknown>);
-	},
-
 	/**
 	 * Create report generation job
 	 */
@@ -818,8 +734,6 @@ export function getJobTypeDisplayName(type: JobType): string {
 		report_generation: 'Report Generation',
 		org_bulk_members: 'Organization Bulk Members',
 		tenant_delete: 'Tenant Deletion',
-		tenant_database_provision: 'Tenant DB Provisioning',
-		tenant_database_activate_batch: 'Tenant DB Activation',
 		tenant_database_export: 'Tenant DB Export',
 		tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',
 		tenant_database_purge_backup: 'Tenant DB Backup Purge'

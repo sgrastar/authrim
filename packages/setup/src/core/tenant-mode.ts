@@ -16,6 +16,7 @@ export function normalizeTenantConfigForApiDomain(
   return {
     name: initialTenantName,
     displayName: tenant?.displayName || 'Initial Tenant',
+    placementPolicy: tenant?.placementPolicy ?? 'tenant_exclusive',
     multiTenant: multiTenantEnabled,
     baseDomain: multiTenantEnabled ? baseDomain : undefined,
     userIdFormat: tenant?.userIdFormat || 'nanoid',

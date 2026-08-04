@@ -15,7 +15,18 @@ import {
   SignJWT,
 } from 'jose';
 import type { JWK } from 'jose';
-import { requestContextMiddleware } from '@authrim/ar-lib-core';
+
+const runtimeMocks = vi.hoisted(() => ({
+  resolveTenantMetadataContext: vi.fn(),
+}));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveTenantMetadataContext: runtimeMocks.resolveTenantMetadataContext,
+  };
+});
 
 // Mock database result
 const mockListData = {
@@ -113,8 +124,19 @@ describe('Status List Routes', () => {
 
   beforeEach(() => {
     mockEnv = createMockEnv();
+    runtimeMocks.resolveTenantMetadataContext.mockImplementation(
+      async (env: Env, tenantId: string) => ({
+        tenantId,
+        coreDb: env.DB,
+      })
+    );
     app = new Hono<{ Bindings: Env }>();
-    app.use('*', requestContextMiddleware());
+    app.use('*', async (c, next) => {
+      const tenantId = c.req.header('Host')?.split('.')[0] ?? 'tenant1';
+      c.set('tenantId' as never, tenantId as never);
+      c.set('tenantMetadataContext' as never, { tenantId, coreDb: c.env.DB } as never);
+      await next();
+    });
     app.get('/vci/status-lists/:listId', statusListRoute);
     app.get('/vci/status-lists/:listId/json', statusListJsonRoute);
     vi.clearAllMocks();

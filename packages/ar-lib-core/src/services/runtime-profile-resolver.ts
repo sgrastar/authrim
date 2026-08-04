@@ -24,7 +24,6 @@ export interface RuntimeProfileResolverEnv {
   SETTINGS?: KVNamespace;
   AUTHRIM_CONFIG?: KVNamespace;
   PROFILE_REGISTRY_BACKEND?: string;
-  DEFAULT_STORAGE_PROFILE_ID?: string;
   DEFAULT_AUDIT_PROFILE_ID?: string;
   DEFAULT_RESIDENCY_PROFILE_ID?: string;
 }
@@ -52,7 +51,6 @@ function createReadOnlyBuiltinRegistryBackend(): ProfileRegistryBackend {
 
 function pickInfrastructureEnv(env: RuntimeProfileResolverEnv): Record<string, string | undefined> {
   return {
-    DEFAULT_STORAGE_PROFILE_ID: env.DEFAULT_STORAGE_PROFILE_ID,
     DEFAULT_AUDIT_PROFILE_ID: env.DEFAULT_AUDIT_PROFILE_ID,
     DEFAULT_RESIDENCY_PROFILE_ID: env.DEFAULT_RESIDENCY_PROFILE_ID,
   };

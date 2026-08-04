@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockCoreAdapter,
   mockSessionStore,
+  mockSessionRevocationStore,
   mockGetSessionStoreBySessionId,
   mockCreateAuditLogFromContext,
   mockGetLogger,
@@ -28,6 +29,9 @@ const {
     mockSessionStore: {
       invalidateSessionRpc: vi.fn(),
       getSessionRpc: vi.fn(),
+    },
+    mockSessionRevocationStore: {
+      listActiveSessionsRpc: vi.fn(),
     },
     mockGetSessionStoreBySessionId: vi.fn(),
     mockCreateAuditLogFromContext: vi.fn(),
@@ -60,11 +64,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return mockRuntimeUsers;
     }),
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
+    getSessionRevocationStore: vi.fn(() => mockSessionRevocationStore),
     createAuditLogFromContext: mockCreateAuditLogFromContext,
     getLogger: mockGetLogger,
     invalidateUserCache: mockInvalidateUserCache,
     isShardedSessionId: mockIsShardedSessionId,
-    recordHybridUserSessionRevocationEpoch: mockRecordHybridUserSessionRevocationEpoch,
+    recordUserSessionRevocation: mockRecordHybridUserSessionRevocationEpoch,
     createErrorResponse: vi.fn((c, code) =>
       c.json({ error: code }, code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND ? 404 : 500)
     ),
@@ -154,36 +159,32 @@ describe('admin user session revocation', () => {
     mockInvalidateUserCache.mockResolvedValue(undefined);
     mockIsShardedSessionId.mockImplementation((id: string) => id.startsWith('g1:'));
     mockSessionStore.getSessionRpc.mockResolvedValue(null);
+    mockSessionRevocationStore.listActiveSessionsRpc.mockResolvedValue([]);
     mockRecordHybridUserSessionRevocationEpoch.mockResolvedValue(1_750_000_000_000);
     mockDetectImageType.mockReturnValue({ extension: 'png', mimeType: 'image/png' });
   });
 
-  it('invalidates located sharded SessionStore sessions before deleting persistence rows', async () => {
+  it('revokes all sessions through the user-scoped DO without querying session D1 rows', async () => {
+    mockSessionRevocationStore.listActiveSessionsRpc.mockResolvedValueOnce([
+      { sessionId: 'g1:apac:3:session_one' },
+      { sessionId: 'g1:apac:3:session_two' },
+    ]);
     const response = await adminUserRevokeAllSessionsHandler(createContext());
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       revokedCount: 2,
-      storeRevokedCount: 1,
+      storeRevokedCount: 2,
     });
-    expect(mockGetSessionStoreBySessionId).toHaveBeenCalledWith(
-      expect.any(Object),
-      'g1:apac:3:session_one',
-      'tenant-1'
-    );
-    expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:session_one');
     expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledWith(
       expect.anything(),
-      mockCoreAdapter,
       'tenant-1',
       'user-1',
       expect.any(Number)
     );
-    expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-      'DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?',
-      ['tenant-1', 'user-1']
-    );
+    expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+    expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
   });
 
   describe('avatar serving and mutation', () => {
@@ -382,84 +383,71 @@ describe('admin user session revocation', () => {
   });
 
   describe('session listing and lookup', () => {
-    it('lists active sessions with aliases, pagination, deduplicated PII lookup, and fallbacks', async () => {
-      const now = Math.floor(Date.now() / 1000);
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ count: 3 });
-      mockCoreAdapter.query.mockResolvedValueOnce([
-        {
-          id: 's1',
-          user_id: 'user-1',
-          created_at: now - 100,
-          last_accessed_at: null,
-          expires_at: now + 100,
-          ip_address: '',
-          user_agent: null,
-        },
-        {
-          id: 's2',
-          user_id: 'user-1',
-          created_at: now - 200,
-          last_accessed_at: now - 50,
-          expires_at: now - 1,
-          ip_address: '203.0.113.1',
-          user_agent: 'Browser',
-        },
-      ]);
-      const response = await adminSessionsListHandler(
-        createContext({ query: { page: '2', limit: '2', userId: 'user-1', active: 'true' } })
-      );
-      const body = (await response.json()) as { sessions: unknown[]; pagination: unknown };
-      expect(body.sessions).toHaveLength(2);
-      expect(body.pagination).toEqual({
-        page: 2,
-        limit: 2,
-        total: 3,
-        totalPages: 2,
-        hasNext: false,
-        hasPrev: true,
-      });
-      expect(mockRuntimeUsers.findById).toHaveBeenCalledTimes(1);
-      expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-        expect.stringContaining('expires_at > ?'),
-        expect.arrayContaining(['tenant-1', 'user-1', 2, 2])
-      );
-    });
-
-    it.each([
-      [{ status: 'expired' }, 'expires_at <= ?'],
-      [{ active: 'false' }, 'expires_at <= ?'],
-      [{ status: 'active' }, 'expires_at > ?'],
-    ])('applies session status filter %#', async (query, sql) => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ count: 0 });
-      mockCoreAdapter.query.mockResolvedValueOnce([]);
-      await adminSessionsListHandler(createContext({ query }));
-      expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-        expect.stringContaining(sql),
-        expect.any(Array)
-      );
-    });
-
-    it('uses list defaults and handles missing count', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce(null);
-      mockCoreAdapter.query.mockResolvedValueOnce([]);
+    it('requires a user_id because there is no tenant-wide D1 session index', async () => {
       const response = await adminSessionsListHandler(createContext());
+      expect(response.status).toBe(400);
+      expect(mockCoreAdapter.query).not.toHaveBeenCalled();
+    });
+
+    it('lists only verified active sessions from the user and session DOs', async () => {
+      const now = Date.now();
+      mockSessionRevocationStore.listActiveSessionsRpc.mockResolvedValueOnce([
+        { sessionId: 'g1:apac:3:s1' },
+        { sessionId: 'g1:apac:3:stale' },
+      ]);
+      mockSessionStore.getSessionRpc
+        .mockResolvedValueOnce({
+          id: 'g1:apac:3:s1',
+          tenantId: 'tenant-1',
+          userId: 'user-1',
+          accountId: 'account:user-1',
+          createdAt: now - 1_000,
+          expiresAt: now + 60_000,
+          data: { ipAddress: '203.0.113.1', userAgent: 'Browser' },
+        })
+        .mockResolvedValueOnce(null);
+
+      const response = await adminSessionsListHandler(
+        createContext({ query: { user_id: 'user-1' } })
+      );
       await expect(response.json()).resolves.toMatchObject({
-        pagination: { page: 1, limit: 20, total: 0, totalPages: 0, hasNext: false, hasPrev: false },
+        sessions: [
+          {
+            id: 'g1:apac:3:s1',
+            user_id: 'user-1',
+            user_email: 'person@example.com',
+            is_active: true,
+          },
+        ],
+        pagination: { total: 1 },
       });
+      expect(mockCoreAdapter.query).not.toHaveBeenCalled();
     });
 
-    it('returns server_error for session list failure', async () => {
-      mockCoreAdapter.queryOne.mockRejectedValueOnce(new Error('D1 unavailable'));
-      expect((await adminSessionsListHandler(createContext())).status).toBe(500);
+    it('rejects expired-session listing instead of reading D1 history', async () => {
+      const response = await adminSessionsListHandler(
+        createContext({ query: { user_id: 'user-1', status: 'expired' } })
+      );
+      expect(response.status).toBe(400);
     });
 
-    it('returns not_found when neither SessionStore nor D1 has a session', async () => {
+    it('returns server_error when the user session DO is unavailable', async () => {
+      mockSessionRevocationStore.listActiveSessionsRpc.mockRejectedValueOnce(
+        new Error('DO unavailable')
+      );
+      expect(
+        (await adminSessionsListHandler(createContext({ query: { user_id: 'user-1' } }))).status
+      ).toBe(500);
+    });
+
+    it('returns not_found when SessionStore has no session', async () => {
       expect((await adminSessionGetHandler(createContext({ id: 'legacy' }))).status).toBe(404);
     });
 
-    it('returns active sharded SessionStore data with PII identity', async () => {
+    it('returns active SessionStore data with PII identity', async () => {
       mockSessionStore.getSessionRpc.mockResolvedValueOnce({
         id: 'g1:apac:3:s1',
+        tenantId: 'tenant-1',
         userId: 'user-1',
         createdAt: Date.now() - 1000,
         expiresAt: Date.now() + 60_000,
@@ -472,81 +460,49 @@ describe('admin user session revocation', () => {
           userEmail: 'person@example.com',
           userName: 'Person',
           isActive: true,
-          source: 'memory',
+          source: 'durable_object',
         },
       });
     });
 
-    it('falls back to tenant-scoped D1 when SessionStore routing fails', async () => {
+    it('does not fall back to D1 when SessionStore routing fails', async () => {
       mockGetSessionStoreBySessionId.mockImplementationOnce(() => {
         throw new Error('route failure');
       });
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({
-        id: 'g1:apac:3:s1',
-        user_id: 'user-1',
-        created_at: 100,
-        expires_at: Math.floor(Date.now() / 1000) - 1,
-      });
       const response = await adminSessionGetHandler(createContext({ id: 'g1:apac:3:s1' }));
-      await expect(response.json()).resolves.toMatchObject({
-        session: { source: 'database', isActive: false },
-      });
-    });
-
-    it('returns session without identity when neither source has user ID', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({
-        id: 'legacy',
-        user_id: '',
-        created_at: 100,
-        expires_at: 200,
-      });
-      const response = await adminSessionGetHandler(createContext({ id: 'legacy' }));
-      await expect(response.json()).resolves.toMatchObject({
-        session: { userEmail: null, userName: null },
-      });
-      expect(mockRuntimeUsers.findById).not.toHaveBeenCalled();
-    });
-
-    it('returns server_error for session lookup failure', async () => {
-      mockCoreAdapter.queryOne.mockRejectedValueOnce(new Error('D1 unavailable'));
-      expect((await adminSessionGetHandler(createContext({ id: 'legacy' }))).status).toBe(500);
+      expect(response.status).toBe(404);
+      expect(mockCoreAdapter.queryOne).not.toHaveBeenCalled();
     });
   });
 
   describe('individual and bulk revocation', () => {
-    it('does not revoke a session outside the tenant', async () => {
+    it('rejects a non-sharded session ID without consulting D1', async () => {
       expect((await adminSessionRevokeHandler(createContext({ id: 'legacy' }))).status).toBe(404);
+      expect(mockCoreAdapter.queryOne).not.toHaveBeenCalled();
     });
 
-    it.each([
-      ['g1:apac:3:s1', true],
-      ['g1:apac:3:s1', false],
-      ['legacy', true],
-    ])('revokes %s with SessionStore result=%s and always deletes D1', async (id, deleted) => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ id, user_id: 'user-1' });
-      mockSessionStore.invalidateSessionRpc.mockResolvedValueOnce(deleted);
-      const response = await adminSessionRevokeHandler(createContext({ id }));
-      expect(response.status).toBe(200);
-      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
-        'DELETE FROM sessions WHERE id = ? AND tenant_id = ?',
-        [id, 'tenant-1']
-      );
-    });
-
-    it('continues D1 revocation when SessionStore routing throws', async () => {
-      mockCoreAdapter.queryOne.mockResolvedValueOnce({ id: 'g1:apac:3:s1', user_id: 'user-1' });
-      mockGetSessionStoreBySessionId.mockImplementationOnce(() => {
-        throw new Error('route failure');
+    it('revokes an existing session directly in SessionStore', async () => {
+      mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+        id: 'g1:apac:3:s1',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
       });
-      expect((await adminSessionRevokeHandler(createContext({ id: 'g1:apac:3:s1' }))).status).toBe(
-        200
-      );
-      expect(mockCoreAdapter.execute).toHaveBeenCalled();
+      const response = await adminSessionRevokeHandler(createContext({ id: 'g1:apac:3:s1' }));
+      expect(response.status).toBe(200);
+      expect(mockSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('g1:apac:3:s1');
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
     });
 
-    it('returns server_error for D1 revoke failure', async () => {
-      mockCoreAdapter.queryOne.mockRejectedValueOnce(new Error('D1 unavailable'));
-      expect((await adminSessionRevokeHandler(createContext())).status).toBe(500);
+    it('fails closed when SessionStore invalidation is not confirmed', async () => {
+      mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+        id: 'g1:apac:3:s1',
+        tenantId: 'tenant-1',
+        userId: 'user-1',
+      });
+      mockSessionStore.invalidateSessionRpc.mockResolvedValueOnce(false);
+      expect((await adminSessionRevokeHandler(createContext({ id: 'g1:apac:3:s1' }))).status).toBe(
+        500
+      );
     });
 
     it('returns not_found when bulk revocation user is outside the tenant', async () => {
@@ -554,31 +510,23 @@ describe('admin user session revocation', () => {
       expect((await adminUserRevokeAllSessionsHandler(createContext())).status).toBe(404);
     });
 
-    it('advances both revocation authorities and counts only confirmed DO invalidations', async () => {
-      mockCoreAdapter.query.mockResolvedValueOnce([
-        { id: 'g1:apac:3:one' },
-        { id: 'g1:apac:3:two' },
-        { id: 'legacy' },
+    it('advances the sole user DO authority and reports indexed active sessions', async () => {
+      mockSessionRevocationStore.listActiveSessionsRpc.mockResolvedValueOnce([
+        { sessionId: 'g1:apac:3:one' },
+        { sessionId: 'g1:apac:3:two' },
       ]);
-      mockSessionStore.invalidateSessionRpc
-        .mockResolvedValueOnce(true)
-        .mockResolvedValueOnce(false);
-      const response = await adminUserRevokeAllSessionsHandler(createContext());
-      await expect(response.json()).resolves.toMatchObject({ storeRevokedCount: 1 });
-      expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledOnce();
-    });
-
-    it('continues bulk revocation when one DO route fails and defaults missing row count to zero', async () => {
-      mockCoreAdapter.query.mockResolvedValueOnce([{ id: 'g1:apac:3:one' }]);
-      mockGetSessionStoreBySessionId.mockImplementationOnce(() => {
-        throw new Error('route failure');
-      });
-      mockCoreAdapter.execute.mockResolvedValueOnce({ rowsAffected: undefined });
       const response = await adminUserRevokeAllSessionsHandler(createContext());
       await expect(response.json()).resolves.toMatchObject({
-        revokedCount: 0,
-        storeRevokedCount: 0,
+        revokedCount: 2,
+        storeRevokedCount: 2,
       });
+      expect(mockRecordHybridUserSessionRevocationEpoch).toHaveBeenCalledOnce();
+      expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('returns server_error when the revocation DO is unavailable', async () => {
+      mockRecordHybridUserSessionRevocationEpoch.mockRejectedValueOnce(new Error('DO unavailable'));
+      expect((await adminUserRevokeAllSessionsHandler(createContext())).status).toBe(500);
     });
 
     it('returns server_error for bulk revocation failure', async () => {

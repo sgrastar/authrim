@@ -1,6 +1,7 @@
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   getRefreshTokenRotatorStubByJti,
+  getSessionRevocationStore,
   getSessionStoreBySessionId,
   isShardedSessionId,
   listRefreshTokenFamiliesByUser,
@@ -8,10 +9,6 @@ import {
 } from '@authrim/ar-lib-core';
 
 const MAX_SESSION_ROWS = 1_000;
-
-interface SessionRow {
-  id: string;
-}
 
 export async function revokeIdentifierReplacementCredentials(input: {
   env: Env;
@@ -43,29 +40,25 @@ export async function revokeIdentifierReplacementCredentials(input: {
     userId: input.accountId,
   });
 
-  const sessions = await input.core.query<SessionRow>(
-    `SELECT id FROM sessions
-      WHERE tenant_id = ? AND user_id = ? AND id <> ?
-      ORDER BY id
-      LIMIT ?`,
-    [input.tenantId, input.accountId, input.initiatingSessionRef ?? '', MAX_SESSION_ROWS + 1],
-    { consistencyClass: 'primary_required' }
-  );
+  const sessions = (
+    await getSessionRevocationStore(
+      input.env,
+      input.tenantId,
+      input.accountId
+    ).listActiveSessionsRpc(
+      input.tenantId,
+      input.accountId,
+      `account:${input.accountId}`,
+      Date.now()
+    )
+  ).filter((session) => session.sessionId !== input.initiatingSessionRef);
   if (sessions.length > MAX_SESSION_ROWS) {
     throw new Error('identifier_replacement_session_limit_exceeded');
   }
   for (const session of sessions) {
-    if (isShardedSessionId(session.id)) {
-      const { stub } = getSessionStoreBySessionId(input.env, session.id, input.tenantId);
-      await stub.invalidateSessionRpc(session.id);
+    if (isShardedSessionId(session.sessionId)) {
+      const { stub } = getSessionStoreBySessionId(input.env, session.sessionId, input.tenantId);
+      await stub.invalidateSessionRpc(session.sessionId);
     }
-  }
-  if (sessions.length > 0) {
-    const placeholders = sessions.map(() => '?').join(', ');
-    await input.core.execute(
-      `DELETE FROM sessions
-        WHERE tenant_id = ? AND user_id = ? AND id IN (${placeholders})`,
-      [input.tenantId, input.accountId, ...sessions.map((session) => session.id)]
-    );
   }
 }

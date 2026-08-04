@@ -6,7 +6,7 @@ import {
   InternalNotificationEventRepository,
   readResponseTextWithLimit,
   resolveTenantDatabaseStatsPolicy,
-  resolveTenantDatabaseSourceFromRegistry,
+  resolveTenantDatabaseSourceFromControlRegistry,
   safeFetch,
   TenantDatabaseRegistryRepository,
   type Env,
@@ -257,7 +257,7 @@ export async function refreshTenantDatabaseStats(
         continue;
       }
 
-      const resolved = await resolveTenantDatabaseSourceFromRegistry(
+      const resolved = await resolveTenantDatabaseSourceFromControlRegistry(
         env,
         {
           tenantId: row.tenant_id,

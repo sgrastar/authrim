@@ -6,7 +6,7 @@ const {
   mockEvaluateTenantDatabaseStatsWarning,
   mockNotificationRepository,
   mockRepository,
-  mockResolveTenantDatabaseSourceFromRegistry,
+  mockResolveTenantDatabaseSourceFromControlRegistry,
   MockInternalNotificationEventRepository,
   MockTenantDatabaseRegistryRepository,
 } = vi.hoisted(() => {
@@ -30,7 +30,7 @@ const {
     mockEvaluateTenantDatabaseStatsWarning: vi.fn(),
     mockNotificationRepository: notificationRepository,
     mockRepository: repository,
-    mockResolveTenantDatabaseSourceFromRegistry: vi.fn(),
+    mockResolveTenantDatabaseSourceFromControlRegistry: vi.fn(),
     MockInternalNotificationEventRepository: vi.fn(MockNotificationRepositoryConstructor),
     MockTenantDatabaseRegistryRepository: vi.fn(MockRepositoryConstructor),
   };
@@ -44,7 +44,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
     evaluateTenantDatabaseStatsWarning: mockEvaluateTenantDatabaseStatsWarning,
     InternalNotificationEventRepository: MockInternalNotificationEventRepository,
-    resolveTenantDatabaseSourceFromRegistry: mockResolveTenantDatabaseSourceFromRegistry,
+    resolveTenantDatabaseSourceFromControlRegistry:
+      mockResolveTenantDatabaseSourceFromControlRegistry,
     TenantDatabaseRegistryRepository: MockTenantDatabaseRegistryRepository,
   };
 });
@@ -69,7 +70,9 @@ describe('tenant database stats jobs', () => {
     mockRepository.getStats.mockResolvedValue(null);
     mockRepository.upsertStats.mockResolvedValue({});
     mockNotificationRepository.enqueue.mockResolvedValue({});
-    mockResolveTenantDatabaseSourceFromRegistry.mockResolvedValue({ source: 'tenant-source' });
+    mockResolveTenantDatabaseSourceFromControlRegistry.mockResolvedValue({
+      source: 'tenant-source',
+    });
     mockCollectTenantCoreDatabaseStats.mockResolvedValue({
       tenantId: 'tenant-a',
       accountCount: 700000,
@@ -250,7 +253,9 @@ describe('tenant database stats jobs', () => {
         database_id: 'd1-db-id',
       },
     ]);
-    mockResolveTenantDatabaseSourceFromRegistry.mockRejectedValue(new Error('missing_binding'));
+    mockResolveTenantDatabaseSourceFromControlRegistry.mockRejectedValue(
+      new Error('missing_binding')
+    );
 
     const summary = await refreshTenantDatabaseStats(
       {

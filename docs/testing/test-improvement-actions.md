@@ -31,7 +31,7 @@ changes.
 | Client authentication       | missing secret, invalid assertion, unsupported auth method, tenant/client mismatch                       | `ar-token`, `ar-management`                                 |
 | Session lifecycle           | stale challenge, principal change, replayed refresh family, revoked session, backchannel logout          | `ar-auth`, `test/integration`                               |
 | Async lifecycle             | device/CIBA pending, approved, denied, expired, replayed, polled too fast                                | `ar-async`, `ar-token`                                      |
-| Runtime storage topology    | shared D1, tenant D1, external DB, missing binding, wrong slot, fallback confusion                       | `setup`, `ar-lib-core`, `ar-management`, `test/integration` |
+| Runtime storage topology    | single/multi-shard, mixed placement, external adapter, missing binding, wrong owner, fallback confusion | `setup`, `ar-lib-core`, `ar-management`, `test/integration` |
 | Logging and audit           | redaction, audit event presence, settings history, queue payload, DLQ metadata                           | `ar-lib-core`, `ar-lib-logging`, `ar-management`            |
 | Webhooks and delivery       | payload shape, signature, retry, failed delivery, fake endpoint assertions                               | `ar-management`, `ar-lib-core`                              |
 | External IdP and federation | upstream timeout, callback mismatch, JIT/linking failure, backchannel logout                             | `ar-bridge`, `test/integration`                             |

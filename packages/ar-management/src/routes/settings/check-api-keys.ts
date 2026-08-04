@@ -16,6 +16,7 @@
 import type { Context } from 'hono';
 import {
   createAuthContextFromHono,
+  getTenantMetadataContextFromHono,
   getLogger,
   getTenantIdFromContext,
   type CheckApiKey,
@@ -110,11 +111,7 @@ function getAdminUserId(c: Context): string | undefined {
 }
 
 function hasCoreDatabaseSource(c: Context): boolean {
-  const runtimeSources = c.get('runtimeUserStoreSources') as
-    | { coreDb?: unknown | null }
-    | undefined;
-  const env = (c as Context<{ Bindings: Env }>).env;
-  return Boolean(runtimeSources?.coreDb ?? env?.DB);
+  return Boolean(getTenantMetadataContextFromHono(c as Context<{ Bindings: Env }>)?.coreDb ?? null);
 }
 
 function getCheckApiAdapter(c: Context, tenantId: string): DatabaseAdapter {

@@ -342,9 +342,9 @@ export interface PluginRunnerServiceBinding {
  */
 export interface Env {
   // D1 Databases
-  DB: D1Database; // Core DB (non-PII data: canonical identity graph, sessions, passkeys, clients, roles)
-  TDB_SHARED_CORE?: D1Database; // Stable Runner alias for the shared notification/core D1
-  DB_PII: D1Database; // PII DB (personal information: canonical sensitive values, linked identities, subject identifiers)
+  DB: D1Database; // Fixed platform metadata, profile registry, and non-PII audit store; never a tenant identity route
+  PLATFORM_NOTIFICATION_DB?: D1Database; // Platform-owned notification intent store; never a tenant route
+  DB_PII: D1Database; // Fixed PII audit and anonymization store; never a tenant identity route
   DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
   LOOKUP_DB?: D1Database; // Account and tenant discovery directory owned by ar-management
   LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
@@ -404,6 +404,8 @@ export interface Env {
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
   ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
+  SAML_ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding &
+    Pick<ExternalIdpAccountProvisioningServiceBinding, 'publishExternalIdpRoute'>;
   EXTERNAL_IDP_ACCOUNT_PROVISIONER?: ExternalIdpAccountProvisioningServiceBinding;
   PLUGIN_RUNNER?: PluginRunnerServiceBinding; // Narrow Plugin Runner RPC facade
   VC_ISSUER?: VCIssuerServiceBinding; // Least-privilege credential-offer creation facade
@@ -544,7 +546,6 @@ export interface Env {
 
   // Runtime Profile Registry / Defaults
   PROFILE_REGISTRY_BACKEND?: string; // "kv" | "database"
-  DEFAULT_STORAGE_PROFILE_ID?: string; // Environment default storage profile pointer
   DEFAULT_AUDIT_PROFILE_ID?: string; // Environment default audit profile pointer
   DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
   AUTHRIM_REGISTERED_SCHEMA_REFS?: string; // JSON list of setup-managed binding/connection release-stream registrations
@@ -644,7 +645,6 @@ export interface Env {
   CLOUDFLARE_WORKERS_API_TOKEN?: string; // Optional Workers Scripts read/edit token for generated binding deployment
   CLOUDFLARE_ACCOUNT_ID?: string; // Cloudflare account ID for account-scoped APIs
   CF_ACCOUNT_ID?: string; // Legacy/setup-compatible Cloudflare account ID alias
-  TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS?: string; // Comma-separated Worker script names eligible for generated tenant D1 binding deployment
 
   // ============================================================
   // Email Configuration

@@ -66,6 +66,11 @@ const accountOperationState = vi.hoisted(() => ({
   error: null as Error | null,
 }));
 
+const accountRoutingState = vi.hoisted(() => ({
+  error: null as Error | null,
+  calls: [] as string[],
+}));
+
 const accountRemovalState = vi.hoisted(() => ({
   prepare: vi.fn(async (_env, input) => [
     {
@@ -77,6 +82,37 @@ const accountRemovalState = vi.hoisted(() => ({
   ready: vi.fn(),
   attempt: vi.fn(),
   erase: vi.fn(),
+}));
+
+vi.mock('../cross-shard-account-list', () => ({
+  CrossShardAccountListService: class {
+    private readonly env: Partial<Env>;
+
+    constructor(env: Partial<Env>) {
+      this.env = env;
+    }
+
+    async list(input: { tenantId: string; limit?: number }) {
+      const limit = input.limit ?? 100;
+      const items = [...canonicalRuntimeState.users.values()]
+        .filter((user) => user.active !== 0)
+        .sort((left, right) => Number(right.created_at) - Number(left.created_at))
+        .slice(0, limit)
+        .map((user) => ({
+          id: `account:${user.id}`,
+          legacyUserId: user.id,
+          tenantId: input.tenantId,
+          accountType: 'user',
+          lifecycleState: 'active',
+          displayLabel: user.name ?? null,
+          createdAt: Number(user.created_at),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        }));
+      if (!this.env.DB || !this.env.DB_PII) throw new Error('test_scim_route_binding_missing');
+      return { items, nextCursor: null };
+    }
+  },
 }));
 
 vi.mock('../account-directory-removal-producer', () => ({
@@ -290,18 +326,49 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     invalidateUserCache: vi.fn().mockResolvedValue(undefined),
     getTenantIdFromContext: vi.fn().mockReturnValue('default'),
+    createAuthContextFromHono: vi.fn((c: any, tenantId = 'default') => ({
+      tenantId,
+      coreAdapter: actual.ensureDatabaseAdapter(c.env.DB, 'test-scim-metadata'),
+      repositories: {},
+      cache: new Map(),
+      honoContext: c,
+    })),
+    resolveAccountDataContext: vi.fn(async (env: Partial<Env>, input: { accountId: string }) => {
+      const userId = input.accountId.replace(/^account:/, '');
+      accountRoutingState.calls.push(userId);
+      if (accountRoutingState.error) throw accountRoutingState.error;
+      if (!canonicalRuntimeState.users.has(userId)) {
+        throw new Error('account_data_route_not_found');
+      }
+      return {
+        tenantId: 'default',
+        accountId: `account:${userId}`,
+        legacyUserId: userId,
+        coreDb: env.DB,
+        piiDb: env.DB_PII,
+      };
+    }),
+    resolveAccountDataContextFromHono: vi.fn(async (c: any, accountId: string) => {
+      const userId = accountId.replace(/^account:/, '');
+      accountRoutingState.calls.push(userId);
+      if (accountRoutingState.error) throw accountRoutingState.error;
+      if (!canonicalRuntimeState.users.has(userId)) {
+        throw new Error('account_data_route_not_found');
+      }
+      return {
+        tenantId: 'default',
+        accountId: `account:${userId}`,
+        legacyUserId: userId,
+        coreDb: c.env.DB,
+        piiDb: c.env.DB_PII,
+      };
+    }),
     generateUserIdFromSettings: vi
       .fn()
       .mockImplementation(
         async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
       ),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
       schemaDb: env.DB,
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
@@ -313,6 +380,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           return null;
         }
         return toProjection(user);
+      }
+
+      async findByAccountId(accountId: string, options?: { includeInactive?: boolean }) {
+        return this.findByLegacyUserId(accountId.replace(/^account:/, ''), options);
       }
     },
     CanonicalRuntimeUserWriter: class {
@@ -392,6 +463,8 @@ describe('SCIM 2.0 Endpoints', () => {
     accountCreationState.calls = [];
     accountOperationState.operation = null;
     accountOperationState.error = null;
+    accountRoutingState.error = null;
+    accountRoutingState.calls = [];
     mockUsers = new Map();
     canonicalRuntimeState.users = mockUsers;
     mockGroups = new Map();
@@ -687,6 +760,7 @@ describe('SCIM 2.0 Endpoints', () => {
             })),
           };
         }),
+        batch: vi.fn(),
       } as any,
       // DB_PII mock for PII/Non-PII DB separation
       DB_PII: {
@@ -871,6 +945,7 @@ describe('SCIM 2.0 Endpoints', () => {
             })),
           };
         }),
+        batch: vi.fn(),
       } as any,
       INITIAL_ACCESS_TOKENS: {
         get: vi.fn().mockResolvedValue(JSON.stringify({ enabled: true })),
@@ -1066,6 +1141,17 @@ describe('SCIM 2.0 Endpoints', () => {
       const body = (await res.json()) as any;
       expect(body.scimType).toBe('invalidFilter');
     });
+
+    it('fails closed when a routed account PII binding is unavailable', async () => {
+      delete (mockEnv as Partial<Record<keyof Env, unknown>>).DB_PII;
+
+      const res = await app.fetch(createRequest('/scim/v2/Users'), mockEnv as Env);
+
+      expect(res.status).toBe(500);
+      await expect(res.json()).resolves.toMatchObject({
+        detail: 'Internal server error',
+      });
+    });
   });
 
   describe('GET /scim/v2/Users/:id - Get User', () => {
@@ -1104,6 +1190,16 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(res.status).toBe(404);
       const body = (await res.json()) as any;
       expect(body.detail).toContain('not found');
+    });
+
+    it('fails closed on stale account routing without using tenant metadata fallback', async () => {
+      accountRoutingState.error = new Error('account_data_binding_generation_stale');
+
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+
+      expect(res.status).toBe(500);
+      expect(accountRoutingState.calls).toEqual(['user-001']);
+      await expect(res.json()).resolves.toMatchObject({ detail: 'Internal server error' });
     });
 
     it('should return 304 Not Modified when ETag matches', async () => {

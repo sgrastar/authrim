@@ -41,6 +41,7 @@ const mockCanonicalRuntimeUserProjectionRepository = vi.hoisted(() =>
   })
 );
 const mockCanonicalSensitiveValueResolver = vi.hoisted(() => vi.fn());
+const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
 const { privateKey: testSigningPrivateKey } = generateKeyPairSync('rsa', {
   modulusLength: 2048,
   privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
@@ -67,12 +68,20 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getCachedUser: mockGetCachedUser,
     CanonicalRuntimeUserProjectionRepository: mockCanonicalRuntimeUserProjectionRepository,
     CanonicalSensitiveValueResolver: mockCanonicalSensitiveValueResolver,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     rateLimitMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
     RateLimitProfiles: { moderate: {} },
     requestContextMiddleware:
       () =>
-      async (c: { set?: (key: string, value: unknown) => void }, next: () => Promise<void>) => {
+      async (
+        c: { env?: Env; set?: (key: string, value: unknown) => void },
+        next: () => Promise<void>
+      ) => {
         c.set?.('tenantId', 'tenant-a');
+        c.set?.('tenantMetadataContext', {
+          tenantId: 'tenant-a',
+          coreDb: c.env?.DB,
+        });
         await next();
       },
     pluginContextMiddleware: () => async (_c: unknown, next: () => Promise<void>) => next(),
@@ -200,6 +209,27 @@ describe('UserInfo Integration Tests', () => {
     // Default mock for getCachedUser (PII/Non-PII DB separation)
     vi.mocked(getCachedUser).mockResolvedValue(sampleUser);
     mockCanonicalFindByLegacyUserId.mockResolvedValue(sampleCanonicalProjection());
+    mockResolveAccountDataContextFromHono.mockImplementation(
+      async (c: { env: Env; set: (key: string, value: unknown) => void }, accountId: string) => {
+        const accountContext = {
+          tenantId: 'tenant-a',
+          accountId,
+          legacyUserId: accountId,
+          coreDb: c.env.DB,
+          piiDb: c.env.DB,
+          userCacheScope: {
+            routeGeneration: 1,
+            coreBindingGeneration: 1,
+            piiBindingGeneration: 1,
+            coreSchemaGeneration: 1,
+            piiSchemaGeneration: 1,
+          },
+          piiCacheMode: 'no_cross_request_pii',
+        };
+        c.set('accountDataContext', accountContext);
+        return accountContext;
+      }
+    );
   });
 
   describe('HTTP Method Support', () => {

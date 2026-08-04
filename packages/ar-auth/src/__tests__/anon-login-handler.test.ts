@@ -21,7 +21,6 @@ const mocks = vi.hoisted(() => ({
   publishEvent: vi.fn(),
   createAuditLog: vi.fn(),
   error: vi.fn(),
-  usesTenantD1AccountStorage: vi.fn(),
   resolveAnonymousRoute: vi.fn(),
   provisionAnonymous: vi.fn(),
   removeAnonymousRoute: vi.fn(),
@@ -74,10 +73,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 vi.mock('../account-provisioning', () => ({
-  usesTenantD1AccountStorage: mocks.usesTenantD1AccountStorage,
-  resolveTenantD1AnonymousAccountRoute: mocks.resolveAnonymousRoute,
-  provisionTenantD1AnonymousAccount: mocks.provisionAnonymous,
-  removeTenantD1AnonymousDeviceRoute: mocks.removeAnonymousRoute,
+  resolveAnonymousAccountRoute: mocks.resolveAnonymousRoute,
+  provisionAnonymousAccount: mocks.provisionAnonymous,
+  removeAnonymousDeviceRoute: mocks.removeAnonymousRoute,
 }));
 
 import { anonLoginChallengeHandler, anonLoginVerifyHandler } from '../anon-login';
@@ -195,7 +193,6 @@ describe('anonymous login challenge handler', () => {
     mocks.createSessionRpc.mockResolvedValue(undefined);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
-    mocks.usesTenantD1AccountStorage.mockReturnValue(false);
     mocks.resolveAccountDataContextFromHono.mockResolvedValue({
       accountId: 'account:new-user-1',
       legacyUserId: 'new-user-1',
@@ -378,7 +375,10 @@ describe('anonymous login verify handler', () => {
     mocks.loadClientContractCached.mockResolvedValue({
       anonymousAuth: { enabled: true, deviceStability: 'installation', expiresInDays: 30 },
     });
-    mocks.usesTenantD1AccountStorage.mockReturnValue(false);
+    mocks.resolveAnonymousRoute.mockReset().mockResolvedValue({
+      accountId: 'account:existing-user-1',
+      legacyUserId: 'existing-user-1',
+    });
     mocks.resolveAccountDataContextFromHono.mockResolvedValue({
       accountId: 'account:new-user-1',
       legacyUserId: 'new-user-1',
@@ -520,8 +520,7 @@ describe('anonymous login verify handler', () => {
     );
   });
 
-  it('resolves an existing tenant-D1 anonymous device before primary authority access', async () => {
-    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+  it('resolves an existing routed anonymous device before primary authority access', async () => {
     mocks.resolveAnonymousRoute.mockResolvedValue({
       accountId: 'account:existing-user-1',
       legacyUserId: 'existing-user-1',
@@ -540,8 +539,7 @@ describe('anonymous login verify handler', () => {
     expect(mocks.syncUser).not.toHaveBeenCalled();
   });
 
-  it('durably releases an expired tenant-D1 device route before requiring a restart', async () => {
-    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+  it('durably releases an expired routed device route before requiring a restart', async () => {
     mocks.resolveAnonymousRoute.mockResolvedValue({
       accountId: 'account:existing-user-1',
       legacyUserId: 'existing-user-1',
@@ -574,8 +572,7 @@ describe('anonymous login verify handler', () => {
     expect(mocks.createSessionRpc).not.toHaveBeenCalled();
   });
 
-  it('uses durable normal-pool provisioning for a new tenant-D1 anonymous device', async () => {
-    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
+  it('uses durable normal-pool provisioning for a new routed anonymous device', async () => {
     mocks.resolveAnonymousRoute.mockRejectedValue(new Error('account_data_route_not_found'));
     mocks.queryOne.mockResolvedValueOnce({ user_id: 'new-user-1' });
 
@@ -602,7 +599,6 @@ describe('anonymous login verify handler', () => {
   });
 
   it('returns the provisioning continuation before creating a session when routing is pending', async () => {
-    mocks.usesTenantD1AccountStorage.mockReturnValue(true);
     mocks.resolveAnonymousRoute.mockRejectedValue(new Error('account_data_route_not_found'));
     mocks.provisionAnonymous.mockResolvedValueOnce({
       status: 'pending',
@@ -640,45 +636,6 @@ describe('anonymous login verify handler', () => {
     expect(mocks.publishEvent).not.toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ data: expect.objectContaining({ sessionId: 'session-1' }) })
-    );
-  });
-
-  it('creates a canonical anonymous user when no active device exists', async () => {
-    mocks.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ user_id: 'new-user-1' });
-
-    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ user_id: 'new-user-1', is_new_user: true });
-    expect(mocks.syncUser).toHaveBeenCalledWith({
-      userId: 'new-user-1',
-      active: true,
-      emailVerified: false,
-      userType: 'anonymous',
-      sourceRef: 'anonymous_login',
-    });
-    expect(mocks.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO anonymous_devices'),
-      expect.arrayContaining(['tenant-1', 'new-user-1', 'device-hash'])
-    );
-  });
-
-  it('adopts the winning user and cleans up its orphan during a concurrent registration', async () => {
-    mocks.queryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ user_id: 'concurrent-user-1' });
-
-    const response = await requestVerify(validVerifyBody, { DEVICE_HMAC_SECRET: 'secret' });
-
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      user_id: 'concurrent-user-1',
-      is_new_user: false,
-    });
-    expect(mocks.deleteUser).toHaveBeenCalledWith('new-user-1');
-    expect(mocks.execute).toHaveBeenCalledWith(
-      'DELETE FROM anonymous_devices WHERE id = ? AND tenant_id = ?',
-      ['anonymous-device-1', 'tenant-1']
     );
   });
 });

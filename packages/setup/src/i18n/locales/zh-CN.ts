@@ -231,9 +231,9 @@ const zhCN: Translations = {
   // Database
   'db.title': '数据库配置',
   'db.regionWarning': '数据库区域创建后无法更改。',
-  'db.coreDescription': '核心数据库：存储 OAuth 客户端、令牌、会话、审计日志',
+  'db.coreDescription': '平台数据库：存储平台元数据和非 PII 审计日志',
   'db.coreRegion': '核心数据库区域',
-  'db.piiDescription': 'PII 数据库：存储用户配置文件、凭据、个人数据',
+  'db.piiDescription': '平台 PII 数据库：存储 PII 审计和匿名化数据',
   'db.piiNote': '请考虑您的数据保护要求。',
   'db.piiRegion': 'PII 数据库区域',
   'db.creating': '创建数据库...',
@@ -762,12 +762,8 @@ const zhCN: Translations = {
   'web.db.name': '名称',
   'web.db.region': '区域',
   'web.db.regionAuto': '自动（最近）',
-  'web.db.storageProfileTitle': '存储部署配置',
-  'web.db.storageProfileDesc': '选择本次部署中用户 core/PII 数据的放置方式。',
-  'web.db.sharedD1Title': '共享 D1',
-  'web.db.sharedD1Desc': '整个部署共享一个 core D1 和一个 PII D1。设置成本最低，也是默认路径。',
-  'web.db.tenantD1Title': '租户 D1',
-  'web.db.tenantD1Desc': '初始化控制平面和首批租户分片，后续容量将按需自动创建。',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc': '初始化控制平面和首批租户分片，后续容量将按需自动创建。',
 
   // Web UI Email
   'web.email.title': '邮件提供商',

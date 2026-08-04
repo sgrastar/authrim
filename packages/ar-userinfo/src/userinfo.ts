@@ -31,7 +31,6 @@ import {
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
   setBoundedMapEntry,
-  getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
@@ -184,26 +183,24 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  if (getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1') {
-    try {
-      await resolveAccountDataContextFromHono(c, sub);
-    } catch (error) {
-      const code = error instanceof Error ? error.message : 'account_data_route_unavailable';
-      log.warn('UserInfo account route resolution failed', { error: code });
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      if (code === 'account_data_route_not_found') {
-        c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
-        return c.json(
-          { error: 'invalid_token', error_description: 'The access token is invalid' },
-          401
-        );
-      }
+  try {
+    await resolveAccountDataContextFromHono(c, sub);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'account_data_route_unavailable';
+    log.warn('UserInfo account route resolution failed', { error: code });
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    if (code === 'account_data_route_not_found') {
+      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
       return c.json(
-        { error: 'temporarily_unavailable', error_description: 'User data is unavailable' },
-        503
+        { error: 'invalid_token', error_description: 'The access token is invalid' },
+        401
       );
     }
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'User data is unavailable' },
+      503
+    );
   }
 
   const parsedClaims = parseClaimsRequest(claimsParam);

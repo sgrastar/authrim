@@ -193,16 +193,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return selectMockAdapter(opts.db);
     }),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
       schemaDb: env.DB,
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
     })),
+    resolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(
+      async (env: Partial<Env>, options: { role: string }) => [
+        { source: options.role === 'tenant_pii' ? env.DB_PII : env.DB },
+      ]
+    ),
     CustomClaimSchemaHistoryManager: vi
       .fn()
       .mockImplementation(function MockCustomClaimSchemaHistoryManager() {
@@ -318,6 +317,12 @@ function createMockContext(options: {
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as any;
+
+  contextStore.set('tenantMetadataContext', {
+    tenantId: 'test-tenant',
+    coreDb: c.env.DB,
+    route: {},
+  });
 
   return c;
 }
@@ -954,27 +959,30 @@ describe('Custom Claims Admin API', () => {
   describe('POST /api/admin/custom-claims/required-violations/detect', () => {
     it('should rescan active users and return violating previews', async () => {
       mockDbQuery.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
-      mockGetRequiredCustomClaimViolationStatuses.mockResolvedValue({
-        requiredSchemaCount: 1,
-        users: [
-          {
-            userId: 'user-1',
-            lifecycleState: 'incomplete',
-            missingRequiredFields: [
-              {
-                fieldKey: 'department',
-                label: 'Department',
-                fieldType: 'string',
-              },
-            ],
-          },
-          {
-            userId: 'user-2',
-            lifecycleState: 'active',
-            missingRequiredFields: [],
-          },
-        ],
-      });
+      const statuses = [
+        {
+          userId: 'user-1',
+          lifecycleState: 'incomplete',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        },
+        {
+          userId: 'user-2',
+          lifecycleState: 'active',
+          missingRequiredFields: [],
+        },
+      ];
+      mockGetRequiredCustomClaimViolationStatuses.mockImplementation(
+        async ({ userIds }: { userIds: string[] }) => ({
+          requiredSchemaCount: 1,
+          users: statuses.filter((status) => userIds.includes(status.userId)),
+        })
+      );
       mockPiiQuery.mockResolvedValueOnce([
         { id: 'user-1', email: 'missing@example.com', name: 'Missing User' },
       ]);
@@ -1005,13 +1013,12 @@ describe('Custom Claims Admin API', () => {
           ],
         },
       ]);
-      expect(mockGetRequiredCustomClaimViolationStatuses).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenantId: 'test-tenant',
-          userIds: ['user-1', 'user-2'],
-          syncLifecycleState: true,
-        })
-      );
+      expect(mockGetRequiredCustomClaimViolationStatuses).toHaveBeenCalledTimes(2);
+      expect(
+        mockGetRequiredCustomClaimViolationStatuses.mock.calls.map(
+          ([input]) => (input as { userIds: string[] }).userIds[0]
+        )
+      ).toEqual(['user-1', 'user-2']);
     });
 
     it('should return empty results when there are no active users to scan', async () => {

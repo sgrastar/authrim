@@ -6,6 +6,7 @@ import {
   type TenantDatabaseRegistryRow,
 } from '@authrim/ar-lib-core';
 import { createControlRuntimeRegistrySigner } from './control-runtime-registry-signer';
+import { resolveTenantRuntimePlacementSnapshot } from './tenant-runtime-placement';
 
 interface TenantRuntimeRegistrySnapshotJobLogger {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -22,12 +23,10 @@ export interface TenantRuntimeRegistrySnapshotRefreshSummary {
 export interface TenantRuntimeRegistrySnapshotRefreshOptions {
   limit?: number;
   now?: Date;
-  storageProfileId?: string;
   actorId?: string;
 }
 
 const DEFAULT_TENANT_RUNTIME_REGISTRY_SNAPSHOT_LIMIT = 25;
-const DEFAULT_TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
 const DEFAULT_SNAPSHOT_REFRESH_WINDOW_MS = 10 * 60 * 1000;
 export const TENANT_RUNTIME_REGISTRY_REFRESH_CRON = '*/2 * * * *';
 
@@ -46,17 +45,6 @@ function createEmptySummary(): TenantRuntimeRegistrySnapshotRefreshSummary {
     skipped: 0,
     failed: 0,
   };
-}
-
-function getTenantStorageProfileId(
-  env: Env,
-  options: TenantRuntimeRegistrySnapshotRefreshOptions
-): string {
-  return (
-    options.storageProfileId ??
-    env.DEFAULT_STORAGE_PROFILE_ID ??
-    DEFAULT_TENANT_D1_STORAGE_PROFILE_ID
-  );
 }
 
 async function listAllActiveCoreRows(
@@ -149,7 +137,7 @@ export async function refreshTenantRuntimeRegistrySnapshots(
 
       await publishTenantRuntimeRegistrySnapshot({
         tenantId,
-        storageProfileId: getTenantStorageProfileId(env, options),
+        placement: await resolveTenantRuntimePlacementSnapshot(env, tenantId),
         repository,
         snapshotStore: env.TENANT_RUNTIME_REGISTRY,
         deploymentTarget,

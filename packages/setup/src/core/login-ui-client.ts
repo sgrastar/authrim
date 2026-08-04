@@ -13,6 +13,8 @@
  * 5. Return client_id for inclusion in ui.env
  */
 
+import { createHash } from 'node:crypto';
+
 import {
   fetchWithTimeout,
   readResponseJsonWithLimit,
@@ -162,6 +164,20 @@ function buildApiBaseUrlCandidates(primary: string, candidates?: string[]): stri
 const LOGIN_UI_CLIENT_NAME = 'Login UI';
 const LOGIN_UI_CLIENT_DESCRIPTION =
   'System-managed public OAuth client used by the built-in Authrim Login UI.';
+
+function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string): string {
+  const digest = createHash('sha256')
+    .update(
+      JSON.stringify({
+        operation: 'ensure-login-ui-client-v1',
+        tenantId: tenantId?.trim() || 'default',
+        loginUiOrigin: normalizeApiBaseUrl(loginUiUrl),
+      })
+    )
+    .digest('hex')
+    .slice(0, 32);
+  return `setup-login-ui-${digest}`;
+}
 
 // =============================================================================
 // Implementation
@@ -314,6 +330,7 @@ async function createClient(
       Authorization: `Bearer ${adminSecret}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      'Idempotency-Key': buildCreateIdempotencyKey(loginUiUrl, tenantId),
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
     body: JSON.stringify(

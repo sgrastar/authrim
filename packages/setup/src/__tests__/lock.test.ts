@@ -6,7 +6,7 @@ import {
   acquireEnvironmentOperationLock,
   createLockFile,
   getNewLockFilePath,
-  reconcileSharedD1ResourcesInLock,
+  reconcileD1ResourcesInLock,
   reconcileSharedKVResourcesInLock,
   withEnvironmentOperationForEnvironment,
   type AuthrimLock,
@@ -120,13 +120,13 @@ describe('environment operation lock', () => {
   });
 });
 
-describe('reconcileSharedD1ResourcesInLock', () => {
-  it('refreshes stale and missing shared bindings and stale tenant D1 entries', () => {
+describe('reconcileD1ResourcesInLock', () => {
+  it('refreshes stale and missing fixed bindings and stale assignment entries', () => {
     const lock = createTestLock();
     lock.d1.DB.id = 'live-core-id';
     delete lock.d1.DB_ADMIN;
 
-    const result = reconcileSharedD1ResourcesInLock(lock, 'test', [
+    const result = reconcileD1ResourcesInLock(lock, 'test', [
       { name: 'test-authrim-core-db', uuid: 'live-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'live-pii-id' },
       { name: 'test-authrim-admin-db', uuid: 'live-admin-id' },
@@ -153,7 +153,7 @@ describe('reconcileSharedD1ResourcesInLock', () => {
   it('reports a required shared database that does not exist by canonical name', () => {
     const lock = createTestLock();
 
-    const result = reconcileSharedD1ResourcesInLock(lock, 'test', [
+    const result = reconcileD1ResourcesInLock(lock, 'test', [
       { name: 'test-authrim-core-db', uuid: 'live-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'live-pii-id' },
       { name: 'test-authrim-control-db', uuid: 'control-id' },
@@ -180,7 +180,7 @@ describe('reconcileSharedD1ResourcesInLock', () => {
       { name: 'authrim-test-tdb-slot-0001-core', uuid: 'stale-tenant-core-id' },
     ];
 
-    const result = reconcileSharedD1ResourcesInLock(lock, 'test', databases);
+    const result = reconcileD1ResourcesInLock(lock, 'test', databases);
 
     expect(result.updatedBindings).toEqual([]);
     expect(result.missingBindings).toEqual([]);
@@ -190,7 +190,7 @@ describe('reconcileSharedD1ResourcesInLock', () => {
   it('reports a generated tenant database that no longer exists', () => {
     const lock = createTestLock();
 
-    const result = reconcileSharedD1ResourcesInLock(lock, 'test', [
+    const result = reconcileD1ResourcesInLock(lock, 'test', [
       { name: 'test-authrim-core-db', uuid: 'stale-core-id' },
       { name: 'test-authrim-pii-db', uuid: 'stale-pii-id' },
       { name: 'test-authrim-admin-db', uuid: 'stale-admin-id' },

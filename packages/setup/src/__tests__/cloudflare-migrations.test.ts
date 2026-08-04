@@ -11,7 +11,6 @@ import {
   calculateD1MigrationChecksum,
   buildRuntimeProfileSeedSql,
   listD1MigrationSqlFiles,
-  shouldMirrorPiiMigrationsToCore,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
@@ -224,24 +223,6 @@ INSERT INTO approval_requests (
 );
 `;
 }
-
-describe('shouldMirrorPiiMigrationsToCore', () => {
-  it('returns false for the standard storage profile', () => {
-    const config = createDefaultConfig('dev');
-    expect(shouldMirrorPiiMigrationsToCore(config)).toBe(false);
-  });
-
-  it('returns true for the single-db storage profile', () => {
-    const config = createDefaultConfig('dev');
-    config.profiles.defaults.storage = 'builtin:storage:single-db';
-    expect(shouldMirrorPiiMigrationsToCore(config)).toBe(true);
-  });
-
-  it('returns false when profile defaults are absent', () => {
-    expect(shouldMirrorPiiMigrationsToCore(undefined)).toBe(false);
-    expect(shouldMirrorPiiMigrationsToCore({})).toBe(false);
-  });
-});
 
 describe('buildRuntimeProfileSeedSql', () => {
   it('builds idempotent SQL for seeded runtime profiles', () => {
@@ -1311,9 +1292,7 @@ INSERT INTO admin_agent_token_families (
     expect(sql).toContain(
       'CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id)'
     );
-    expect(sql).toContain(
-      'CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id)'
-    );
+    expect(sql).toContain('DROP TABLE IF EXISTS session_clients');
   });
 
   it(
@@ -1465,53 +1444,13 @@ ${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Duplicate Tenant A Mobile')
           )
         ).toThrow();
 
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `
-PRAGMA foreign_keys = ON;
-INSERT INTO session_clients (
-  id,
-  tenant_id,
-  session_id,
-  client_id,
-  first_token_at,
-  last_token_at
-) VALUES (
-  'sc-tenant-a',
-  'tenant-a',
-  'session-a',
-  'shared-mobile',
-  1,
-  1
-);
-`
-        );
-
-        expect(() =>
-          runSqlite(
+        expect(
+          readSqlite(
             sqlite3Path,
             dbPath,
-            `
-PRAGMA foreign_keys = ON;
-INSERT INTO session_clients (
-  id,
-  tenant_id,
-  session_id,
-  client_id,
-  first_token_at,
-  last_token_at
-) VALUES (
-  'sc-tenant-c',
-  'tenant-c',
-  'session-c',
-  'shared-mobile',
-  1,
-  1
-);
-`
+            `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_clients';`
           )
-        ).toThrow();
+        ).toBe('0');
 
         runSqlite(
           sqlite3Path,

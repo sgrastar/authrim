@@ -6,8 +6,21 @@ import { describe, expect, it } from 'vitest';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 const generatedEnvDir = resolve(repoRoot, '.authrim/test');
 const generatedKeysDir = resolve(repoRoot, '.authrim-keys/test');
+const generatedConfigPath = resolve(generatedEnvDir, 'config.json');
+const generatedConfigUsesCurrentContract = (() => {
+  if (!existsSync(generatedConfigPath)) return false;
+  try {
+    const config = JSON.parse(readFileSync(generatedConfigPath, 'utf-8')) as {
+      controlPlane?: unknown;
+      profiles?: { defaults?: Record<string, unknown> };
+    };
+    return !!config.controlPlane && !('storage' in (config.profiles?.defaults ?? {}));
+  } catch {
+    return false;
+  }
+})();
 const generatedEnvAvailable =
-  existsSync(resolve(generatedEnvDir, 'config.json')) &&
+  generatedConfigUsesCurrentContract &&
   existsSync(resolve(generatedEnvDir, 'lock.json')) &&
   existsSync(resolve(generatedEnvDir, 'wrangler/ar-management.toml')) &&
   existsSync(resolve(generatedEnvDir, 'wrangler/ar-plugin-runner.toml')) &&
@@ -21,7 +34,6 @@ interface GeneratedConfig {
   };
   profiles?: {
     defaults?: {
-      storage?: string;
       audit?: string;
       residency?: string;
     };
@@ -72,13 +84,12 @@ function expectKeyFile(name: string) {
 
 const describeGenerated = generatedEnvAvailable ? describe : describe.skip;
 
-describeGenerated('generated test environment logging/storage contract', () => {
+describeGenerated('generated test environment logging and Control Plane contract', () => {
   it('uses the standard audit profile and provisions the log storage bindings', () => {
     const config = readJson<GeneratedConfig>(resolve(generatedEnvDir, 'config.json'));
     const lock = readJson<GeneratedLock>(resolve(generatedEnvDir, 'lock.json'));
 
     expect(config.profiles?.defaults).toMatchObject({
-      storage: 'builtin:storage:tenant-d1',
       audit: 'builtin:audit:standard',
       residency: 'builtin:residency:default',
     });
@@ -86,7 +97,13 @@ describeGenerated('generated test environment logging/storage contract', () => {
     expect(config.features?.r2?.enabled).toBe(true);
 
     expect(Object.keys(lock.d1 ?? {}).sort()).toEqual(
-      expect.arrayContaining(['DB', 'DB_ADMIN', 'DB_PII'])
+      expect.arrayContaining([
+        'CONTROL_DB',
+        'LOOKUP_DB',
+        'TDB_DEFAULT_BOOTSTRAP_CORE',
+        'TDB_USERS_BOOTSTRAP_CORE',
+        'TDB_PII_BOOTSTRAP_PII',
+      ])
     );
     expect(Object.keys(lock.r2 ?? {}).sort()).toEqual(
       expect.arrayContaining([
@@ -121,7 +138,6 @@ describeGenerated('generated test environment logging/storage contract', () => {
     expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
     expect(vars(management)).toMatchObject({
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       PROFILE_REGISTRY_BACKEND: 'kv',
     });
 
@@ -142,7 +158,6 @@ describeGenerated('generated test environment logging/storage contract', () => {
     ]) {
       expect(vars(readWrangler(component))).toMatchObject({
         DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       });
     }
   });

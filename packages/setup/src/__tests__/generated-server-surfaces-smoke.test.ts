@@ -105,6 +105,8 @@ describe('generated server-surface smoke', () => {
 
       if (url.endsWith('/api/admin/users') && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        const headers = new Headers(init?.headers);
+        expect(headers.get('Idempotency-Key')).toMatch(/^server-surfaces-user-(missing|create)-/u);
         const requiredFieldKey = String(schemas[0]?.field_key ?? 'department');
         if (
           !(requiredFieldKey in body) ||
@@ -211,7 +213,6 @@ describe('generated server-surface smoke', () => {
         return new Response(
           JSON.stringify({
             defaults: {
-              storageProfileId: 'builtin:storage:standard',
               auditProfileId: 'builtin:audit:standard',
               residencyProfileId: 'builtin:residency:default',
             },
@@ -270,7 +271,6 @@ describe('generated server-surface smoke', () => {
         return new Response(
           JSON.stringify({
             effective: {
-              storage: { id: 'builtin:storage:standard' },
               audit: { id: 'builtin:audit:standard' },
               residency: { id: 'builtin:residency:default' },
             },

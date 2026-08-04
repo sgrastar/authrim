@@ -196,7 +196,7 @@ describe('Plugin Runner wrangler topology', () => {
     expect(token.services).toBeUndefined();
   });
 
-  it('limits the shared notification D1 alias to producers and Plugin Runner', () => {
+  it('limits the platform notification D1 binding to producers and Plugin Runner', () => {
     const resources = {
       d1: {
         DB: { id: 'shared-core-id', name: 'plugin-test-authrim-db' },
@@ -206,7 +206,7 @@ describe('Plugin Runner wrangler topology', () => {
     for (const component of ['ar-auth', 'ar-management', 'ar-plugin-runner'] as const) {
       const generated = generateWranglerConfig(component, pluginRunnerConfig(), resources);
       expect(generated.d1_databases).toContainEqual({
-        binding: 'TDB_SHARED_CORE',
+        binding: 'PLATFORM_NOTIFICATION_DB',
         database_name: 'plugin-test-authrim-db',
         database_id: 'shared-core-id',
       });
@@ -215,7 +215,7 @@ describe('Plugin Runner wrangler topology', () => {
     for (const component of ['ar-policy', 'ar-token', 'ar-userinfo'] as const) {
       const generated = generateWranglerConfig(component, pluginRunnerConfig(), resources);
       expect(generated.d1_databases ?? []).not.toContainEqual(
-        expect.objectContaining({ binding: 'TDB_SHARED_CORE' })
+        expect.objectContaining({ binding: 'PLATFORM_NOTIFICATION_DB' })
       );
     }
   });

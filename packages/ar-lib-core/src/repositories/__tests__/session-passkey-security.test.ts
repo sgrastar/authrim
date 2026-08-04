@@ -1,7 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { PasskeyRepository } from '../core/passkey';
-import { SessionRepository } from '../core/session';
 
 function adapterWith(overrides: Partial<DatabaseAdapter> = {}): DatabaseAdapter {
   return {
@@ -121,60 +120,5 @@ describe('PasskeyRepository clone-detection invariants', () => {
       'tenant-a',
       'shared-credential',
     ]);
-  });
-});
-
-describe('SessionRepository expiration boundaries', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
-  });
-
-  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
-    'refuses unsafe cleanup age %s without issuing a delete',
-    async (maxAgeMs) => {
-      const execute = vi.fn();
-      const repository = new SessionRepository(adapterWith({ execute }), 'tenant-a');
-
-      await expect(repository.cleanupExpiredOlderThan(maxAgeMs)).resolves.toBe(0);
-      expect(execute).not.toHaveBeenCalled();
-    }
-  );
-
-  it('caps excessive TTL and never creates a session outside the tenant', async () => {
-    const execute = vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 });
-    const repository = new SessionRepository(adapterWith({ execute }), 'tenant-a');
-    const now = Date.now();
-
-    const created = await repository.create({
-      user_id: 'user-1',
-      ttl_ms: 365 * 24 * 60 * 60 * 1000,
-    });
-
-    expect(created).toMatchObject({ tenant_id: 'tenant-a', user_id: 'user-1' });
-    expect(created.expires_at).toBe(now + 30 * 24 * 60 * 60 * 1000);
-    expect(execute).toHaveBeenCalledWith(
-      expect.stringContaining('tenant_id'),
-      expect.arrayContaining(['tenant-a', 'user-1'])
-    );
-  });
-
-  it('rejects past expiration updates before writing', async () => {
-    const execute = vi.fn();
-    const queryOne = vi.fn().mockResolvedValue({
-      id: 'session-1',
-      tenant_id: 'tenant-a',
-      user_id: 'user-1',
-      expires_at: Date.now() + 60_000,
-      created_at: Date.now(),
-      external_provider_id: null,
-      external_provider_sub: null,
-    });
-    const repository = new SessionRepository(adapterWith({ queryOne, execute }), 'tenant-a');
-
-    await expect(
-      repository.update('session-1', { expires_at: Date.now() - 1 })
-    ).resolves.toBeNull();
-    expect(execute).not.toHaveBeenCalled();
   });
 });

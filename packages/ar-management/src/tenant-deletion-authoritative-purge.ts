@@ -12,7 +12,6 @@ import {
 const SAFE_BINDING = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_TABLE = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/u;
-const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
 const CLOUDFLARE_INTERNAL_TABLE_PREFIX = '_cf_';
 const SCHEMA_INTROSPECTION_BATCH_SIZE = 50;
 const PROTECTED_TABLES = new Set([
@@ -292,7 +291,6 @@ export async function purgeTenantAuthoritativeShards(
     !environmentId ||
     !SAFE_ID.test(environmentId) ||
     !SAFE_ID.test(tenantId) ||
-    env.DEFAULT_STORAGE_PROFILE_ID !== TENANT_D1_STORAGE_PROFILE_ID ||
     preserveJobIds.some((id) => !SAFE_ID.test(id))
   ) {
     throw new Error('tenant_deletion_authoritative_purge_unavailable');

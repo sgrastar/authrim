@@ -42,7 +42,7 @@ describe('refresh-token-sharding config', () => {
     await expect(load).resolves.toMatchObject({ currentGeneration: 2, currentShardCount: 8 });
   });
 
-  it('coalesces concurrent cold loads for the same tenant and client', async () => {
+  it('keeps concurrent cold loads request-local instead of sharing their promises', async () => {
     let release: ((value: RefreshTokenShardConfig | null) => void) | undefined;
     const pending = new Promise<RefreshTokenShardConfig | null>((resolve) => {
       release = resolve;
@@ -53,7 +53,7 @@ describe('refresh-token-sharding config', () => {
     const first = getRefreshTokenShardConfig(env, 'client-a', 'tenant-a');
     const second = getRefreshTokenShardConfig(env, 'client-a', 'tenant-a');
     await Promise.resolve();
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(4);
     release?.(null);
 
     await expect(Promise.all([first, second])).resolves.toEqual([

@@ -53,7 +53,6 @@ import {
   createDefaultConfig,
   D1LocationSchema,
   D1JurisdictionSchema,
-  ProfileIdSchema,
   type AuthrimConfig,
 } from '../core/config.js';
 import {
@@ -98,10 +97,10 @@ import {
 } from '../core/url-config.js';
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
 import {
-  ensureInitialTenantD1Resources,
-  inspectTenantD1Topology,
-  publishInitialTenantD1RuntimeSnapshot,
-} from '../core/tenant-d1-bootstrap.js';
+  ensureInitialControlPlaneResources,
+  inspectInitialControlPlaneTopology,
+  publishInitialControlPlaneRuntimeSnapshot,
+} from '../core/control-plane-bootstrap.js';
 import {
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
@@ -750,7 +749,6 @@ export function createApiRoutes(): Hono {
   api.use('/cloudflare/*', validateSession);
   api.use('/control', validateSession);
   api.use('/control/*', validateSession);
-  api.use('/tenant-d1/*', validateSession);
   api.use('/r2/*', validateSession);
 
   // ==========================================================================
@@ -816,9 +814,7 @@ export function createApiRoutes(): Hono {
             parsed.data.env
           )
         : getStateConfigForEnv(parsed.data.env);
-      if (!config || config.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
-        return c.json({ success: false, error: 'Tenant D1 is not enabled' }, 409);
-      }
+      if (!config) return c.json({ success: false, error: 'Environment is not configured' }, 409);
       const wranglerAccountId = await getAccountId();
       if (!wranglerAccountId) {
         return c.json({ success: false, error: 'Wrangler account is unavailable' }, 409);
@@ -881,8 +877,8 @@ export function createApiRoutes(): Hono {
           : authority;
       return c.json({
         success: true,
-        tenantD1: config.profiles.defaults.storage === 'builtin:storage:tenant-d1',
-        enabled: config.tenantD1?.automaticProvisioning === true,
+        controlPlane: true,
+        enabled: config.controlPlane?.automaticProvisioning === true,
         authority: effectiveAuthority,
         missingResourceClasses,
       });
@@ -912,9 +908,6 @@ export function createApiRoutes(): Hono {
       try {
         const baseDir = findAuthrimBaseDir(process.cwd());
         const { envPaths, config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
-        if (config.profiles.defaults.storage !== 'builtin:storage:tenant-d1') {
-          return c.json({ success: false, error: 'Tenant D1 is not enabled' }, 409);
-        }
         operationLock = await acquireEnvironmentOperationForEnvironment({
           baseDir,
           env: parsed.data.env,
@@ -927,7 +920,7 @@ export function createApiRoutes(): Hono {
         }
         const updatedConfig = AuthrimConfigSchema.parse({
           ...config,
-          tenantD1: { automaticProvisioning: true },
+          controlPlane: { automaticProvisioning: true },
           updatedAt: new Date().toISOString(),
         });
         await saveEnvironmentConfig(envPaths, updatedConfig);
@@ -993,7 +986,7 @@ export function createApiRoutes(): Hono {
         }
         const disabledConfig = AuthrimConfigSchema.parse({
           ...config,
-          tenantD1: { automaticProvisioning: false },
+          controlPlane: { automaticProvisioning: false },
           updatedAt: new Date().toISOString(),
         });
         await saveEnvironmentConfig(envPaths, disabledConfig);
@@ -1049,10 +1042,7 @@ export function createApiRoutes(): Hono {
           requireExisting: true,
         });
         const { config } = await loadEnvironmentConfigForUpdate(baseDir, parsed.data.env);
-        if (
-          config.profiles.defaults.storage !== 'builtin:storage:tenant-d1' ||
-          config.tenantD1?.automaticProvisioning !== true
-        ) {
+        if (config.controlPlane?.automaticProvisioning !== true) {
           return c.json(
             { success: false, error: 'Automatic provisioning is not pending for this environment' },
             409
@@ -2375,29 +2365,30 @@ export function createApiRoutes(): Hono {
   });
 
   // Provision request schema (with database config validation)
-  const ProvisionRequestSchema = z.object({
-    env: EnvNameSchema,
-    databaseConfig: z
-      .object({
-        core: z
-          .object({
-            location: D1LocationSchema.optional(),
-            jurisdiction: D1JurisdictionSchema.optional(),
-          })
-          .optional(),
-        pii: z
-          .object({
-            location: D1LocationSchema.optional(),
-            jurisdiction: D1JurisdictionSchema.optional(),
-          })
-          .optional(),
-      })
-      .optional(),
-    createQueues: z.boolean().optional(),
-    createR2: z.boolean().optional(),
-    storageProfileId: ProfileIdSchema.optional(),
-    automaticProvisioning: z.boolean().optional(),
-  });
+  const ProvisionRequestSchema = z
+    .object({
+      env: EnvNameSchema,
+      databaseConfig: z
+        .object({
+          core: z
+            .object({
+              location: D1LocationSchema.optional(),
+              jurisdiction: D1JurisdictionSchema.optional(),
+            })
+            .optional(),
+          pii: z
+            .object({
+              location: D1LocationSchema.optional(),
+              jurisdiction: D1JurisdictionSchema.optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      createQueues: z.boolean().optional(),
+      createR2: z.boolean().optional(),
+      automaticProvisioning: z.boolean().optional(),
+    })
+    .strict();
 
   // Provision Cloudflare resources (with lock)
   api.post('/provision', async (c) => {
@@ -2421,14 +2412,8 @@ export function createApiRoutes(): Hono {
           );
         }
 
-        const {
-          env,
-          databaseConfig,
-          createQueues,
-          createR2,
-          storageProfileId,
-          automaticProvisioning,
-        } = parseResult.data;
+        const { env, databaseConfig, createQueues, createR2, automaticProvisioning } =
+          parseResult.data;
         const rootDir = findAuthrimBaseDir(process.cwd());
         const envPaths = getEnvironmentPaths({ baseDir: rootDir, env });
         operationLock = await acquireEnvironmentOperationForEnvironment({
@@ -2458,7 +2443,6 @@ export function createApiRoutes(): Hono {
         addProgress(`Provisioning Cloudflare resources for ${env}...`);
 
         if (
-          storageProfileId ||
           databaseConfig ||
           createQueues !== undefined ||
           createR2 !== undefined ||
@@ -2485,17 +2469,10 @@ export function createApiRoutes(): Hono {
                     : createR2 === true,
               },
             },
-            profiles: {
-              ...baseConfig.profiles,
-              defaults: {
-                ...baseConfig.profiles?.defaults,
-                storage: storageProfileId ?? baseConfig.profiles?.defaults?.storage,
-              },
-            },
-            tenantD1: {
+            controlPlane: {
               automaticProvisioning:
                 automaticProvisioning === undefined
-                  ? baseConfig.tenantD1?.automaticProvisioning === true
+                  ? baseConfig.controlPlane?.automaticProvisioning === true
                   : automaticProvisioning,
             },
           });
@@ -2934,7 +2911,7 @@ export function createApiRoutes(): Hono {
           JSON.parse(await readFile(configPath, 'utf-8')),
           env
         );
-        const automaticProvisioning = releaseConfig.tenantD1?.automaticProvisioning === true;
+        const automaticProvisioning = releaseConfig.controlPlane?.automaticProvisioning === true;
         if (automaticProvisioning !== Boolean(bootstrapToken && bootstrapOwnership)) {
           return c.json(
             {
@@ -3194,7 +3171,7 @@ export function createApiRoutes(): Hono {
               `✓ Migration release ${publication.artifact.releaseId} published and activated`
             );
 
-            const tenantD1BootstrapResult = await ensureInitialTenantD1Resources({
+            const controlPlaneBootstrapResult = await ensureInitialControlPlaneResources({
               env,
               config,
               lock,
@@ -3202,12 +3179,12 @@ export function createApiRoutes(): Hono {
               release: initialRelease,
               onProgress: addProgress,
             });
-            if (!tenantD1BootstrapResult.success) {
+            if (!controlPlaneBootstrapResult.success) {
               throw new Error(
-                `Initial tenant D1 bootstrap failed: ${tenantD1BootstrapResult.error || 'unknown error'}`
+                `Initial Control Plane bootstrap failed: ${controlPlaneBootstrapResult.error || 'unknown error'}`
               );
             }
-            if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1' && lockPath) {
+            if (lockPath) {
               const tenantTargets = resolveReleaseMigrationTargets({ lock, config }).filter(
                 (target) => target.scope === 'tenant' && target.automatic
               );
@@ -3219,7 +3196,7 @@ export function createApiRoutes(): Hono {
               Object.assign(lock, lockWithTenantSchemas);
               await saveLockFile(lockWithTenantSchemas, lockPath);
               addProgress(
-                `✓ Initial tenant D1 bindings and schema state ready (${tenantD1BootstrapResult.createdCount ?? 0} created)`
+                `✓ Initial Control Plane bindings and schema state ready (${controlPlaneBootstrapResult.createdCount ?? 0} created)`
               );
             }
 
@@ -3292,7 +3269,7 @@ export function createApiRoutes(): Hono {
               records: inventory,
               environmentBootstrap: {
                 defaultResidencyPolicyId: config.profiles.defaults.residency,
-                automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+                automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
               },
               registeredBy: 'setup:web-deploy',
               onProgress: addProgress,
@@ -3304,7 +3281,8 @@ export function createApiRoutes(): Hono {
               lock,
               release: initialRelease.manifest,
               releaseDraft: initialRelease.draft,
-              automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+              automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
+              placementPolicy: config.tenant.placementPolicy,
             });
             const externalSources = await discoverExternalCapabilities({
               baseDir: resolvedRootDir,
@@ -3718,7 +3696,7 @@ export function createApiRoutes(): Hono {
             const { lock: latestLock } = await import('../core/lock.js').then((module) =>
               module.loadLockFileAuto(rootDir, env)
             );
-            const tenantD1SnapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+            const controlPlaneSnapshotResult = await publishInitialControlPlaneRuntimeSnapshot({
               env,
               config: bootstrapConfig,
               lock: latestLock ?? createLockFile(env, { d1: [], kv: [], queues: [], r2: [] }),
@@ -3727,14 +3705,14 @@ export function createApiRoutes(): Hono {
               release: initialRelease.manifest,
               onProgress: addProgress,
             });
-            if (tenantD1SnapshotResult.success) {
-              if (!tenantD1SnapshotResult.skipped) {
-                addProgress('✅ Initial tenant D1 runtime snapshot ready');
+            if (controlPlaneSnapshotResult.success) {
+              if (!controlPlaneSnapshotResult.skipped) {
+                addProgress('✅ Initial Control Plane runtime snapshot ready');
               }
             } else {
               throw new Error(
-                `Initial tenant D1 runtime snapshot failed: ${
-                  tenantD1SnapshotResult.error || 'unknown error'
+                `Initial Control Plane runtime snapshot failed: ${
+                  controlPlaneSnapshotResult.error || 'unknown error'
                 }`
               );
             }
@@ -3968,7 +3946,7 @@ export function createApiRoutes(): Hono {
               environmentBootstrap: {
                 defaultResidencyPolicyId: (cfg as AuthrimConfig).profiles.defaults.residency,
                 automaticProvisioning:
-                  (cfg as AuthrimConfig).tenantD1?.automaticProvisioning === true,
+                  (cfg as AuthrimConfig).controlPlane?.automaticProvisioning === true,
               },
               registeredBy: 'setup:web-deploy-ui',
               onProgress: addProgress,
@@ -5187,7 +5165,7 @@ export function createApiRoutes(): Hono {
             return c.json({ success: false, error: state.error }, 403);
           }
         }
-        if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
+        {
           const migrationsRoot = await findMigrationsRoot(rootDir, addProgress);
           if (!migrationsRoot.path) {
             throw new Error('Release migrations directory not found.');
@@ -5197,7 +5175,7 @@ export function createApiRoutes(): Hono {
             productVersion: targetProductVersion,
             lock,
           });
-          const topologyIssues = inspectTenantD1Topology({
+          const topologyIssues = inspectInitialControlPlaneTopology({
             env,
             config,
             lock,
@@ -5207,7 +5185,7 @@ export function createApiRoutes(): Hono {
           if (topologyIssues.length > 0) {
             state.status = 'error';
             state.error =
-              'Tenant D1 bootstrap topology is incomplete. Re-run setup init before handoff acceptance or repair it from Admin UI after handoff.';
+              'Control Plane bootstrap topology is incomplete. Re-run setup init before handoff acceptance or repair it from Admin UI after handoff.';
             await flushProgressLog();
             return c.json(
               {
@@ -5695,7 +5673,7 @@ export function createApiRoutes(): Hono {
                   productVersion: targetProductVersion,
                   lock: componentDeploymentLock,
                 });
-                const snapshotResult = await publishInitialTenantD1RuntimeSnapshot({
+                const snapshotResult = await publishInitialControlPlaneRuntimeSnapshot({
                   env,
                   config: cfg as AuthrimConfig,
                   lock: componentDeploymentLock,
@@ -5877,7 +5855,7 @@ export function createApiRoutes(): Hono {
                 environmentBootstrap: {
                   defaultResidencyPolicyId: (cfg as AuthrimConfig).profiles.defaults.residency,
                   automaticProvisioning:
-                    (cfg as AuthrimConfig).tenantD1?.automaticProvisioning === true,
+                    (cfg as AuthrimConfig).controlPlane?.automaticProvisioning === true,
                 },
                 registeredBy: 'setup:web-upgrade-ui',
                 disableMissing: false,
@@ -6304,7 +6282,6 @@ export function createApiRoutes(): Hono {
           role,
           filenames: safeFilenames,
           onProgress: addProgress,
-          config: state.config ?? undefined,
           release: {
             productVersion: targetProductVersion,
             allowDraft: installedRelease.draft,
@@ -6377,16 +6354,10 @@ export function createApiRoutes(): Hono {
           productVersion: targetProductVersion,
           lock,
         });
-        const result = await runMigrationsForEnvironment(
-          env,
-          resolvedRootDir,
-          addProgress,
-          state.config ?? undefined,
-          {
-            productVersion: targetProductVersion,
-            allowDraft: installedRelease.draft,
-          }
-        );
+        const result = await runMigrationsForEnvironment(env, resolvedRootDir, addProgress, {
+          productVersion: targetProductVersion,
+          allowDraft: installedRelease.draft,
+        });
 
         if (result.success) {
           addProgress('✅ All migrations completed successfully');

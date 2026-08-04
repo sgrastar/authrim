@@ -52,9 +52,9 @@ const mocks = vi.hoisted(() => ({
   waitForWorkerDeploymentsReady: vi.fn(),
   waitForWorkerHttpReady: vi.fn(),
   buildWorkerHttpReadinessTargets: vi.fn(),
-  ensureInitialTenantD1Resources: vi.fn(),
+  ensureInitialControlPlaneResources: vi.fn(),
   ensureInitialTenantRegionShardConfig: vi.fn(),
-  publishInitialTenantD1RuntimeSnapshot: vi.fn(),
+  publishInitialControlPlaneRuntimeSnapshot: vi.fn(),
   ensureInitialNotificationProviderConfiguration: vi.fn(),
   completeInitialSetup: vi.fn(),
   prepareAdminUiBffDeployment: vi.fn(),
@@ -198,13 +198,13 @@ vi.mock('../core/worker-readiness.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../core/tenant-d1-bootstrap.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../core/tenant-d1-bootstrap.js')>();
+vi.mock('../core/control-plane-bootstrap.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/control-plane-bootstrap.js')>();
   return {
     ...actual,
-    ensureInitialTenantD1Resources: mocks.ensureInitialTenantD1Resources,
+    ensureInitialControlPlaneResources: mocks.ensureInitialControlPlaneResources,
     ensureInitialTenantRegionShardConfig: mocks.ensureInitialTenantRegionShardConfig,
-    publishInitialTenantD1RuntimeSnapshot: mocks.publishInitialTenantD1RuntimeSnapshot,
+    publishInitialControlPlaneRuntimeSnapshot: mocks.publishInitialControlPlaneRuntimeSnapshot,
   };
 });
 
@@ -235,7 +235,7 @@ async function writeHeadlessEnvironment(env: string, automaticProvisioning = fal
   const config = createDefaultConfig(env);
   config.components.loginUi = false;
   config.components.adminUi = false;
-  config.tenantD1 = { automaticProvisioning };
+  config.controlPlane = { automaticProvisioning };
 
   await mkdir(join(root, '.authrim', env), { recursive: true });
   await mkdir(join(root, 'packages', 'ar-auth'), { recursive: true });
@@ -500,7 +500,7 @@ describe('CLI initial deployment', () => {
       ready: true,
       checkedUrl: 'https://test.example.com/api/health',
     });
-    mocks.ensureInitialTenantD1Resources.mockResolvedValue({ success: true, skipped: true });
+    mocks.ensureInitialControlPlaneResources.mockResolvedValue({ success: true, skipped: true });
     mocks.ensureInitialTenantInD1.mockResolvedValue({ success: true });
     mocks.ensureInitialAdminRolesInD1.mockResolvedValue({ success: true });
     mocks.ensureSetupMachineAccessInD1.mockResolvedValue({ success: true });
@@ -511,7 +511,7 @@ describe('CLI initial deployment', () => {
       seededCount: 0,
       backend: 'D1',
     });
-    mocks.publishInitialTenantD1RuntimeSnapshot.mockResolvedValue({
+    mocks.publishInitialControlPlaneRuntimeSnapshot.mockResolvedValue({
       success: true,
       skipped: true,
     });
@@ -638,6 +638,27 @@ describe('CLI initial deployment', () => {
     expect(mocks.publishAndActivateMigrationRelease).toHaveBeenCalledOnce();
     expect(mocks.deployUiWorkerBindingTargets).not.toHaveBeenCalled();
     expect(mocks.deployAll).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a fresh-install dry run mutation-free before the Control schema exists', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+
+    await deployCommand({
+      env,
+      source: root,
+      skipBuild: true,
+      yes: true,
+      dryRun: true,
+    });
+
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.ensureInitialControlPlaneResources).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
+    expect(mocks.deployAll).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true }),
+      CORE_WORKER_COMPONENTS
+    );
   });
 
   it('resumes a failed initial handoff without uploading or promoting Worker code again', async () => {

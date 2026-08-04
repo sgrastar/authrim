@@ -208,7 +208,6 @@ interface CachedCloudProviderSetting {
   source: 'default' | 'kv';
 }
 let cloudProviderCache: CachedCloudProviderSetting | null = null;
-let cloudProviderRefreshPromise: Promise<void> | null = null;
 
 /**
  * Default cache TTL in milliseconds (5 minutes)
@@ -306,29 +305,24 @@ function scheduleCloudProviderRefresh(env: Env, ctx?: HonoExecutionContext): voi
   const cacheTTL = getCacheTTLMs(env);
   if (
     !env.AUTHRIM_CONFIG ||
-    cloudProviderRefreshPromise ||
     (cloudProviderCache &&
       cloudProviderCache.source === 'kv' &&
       now - cloudProviderCache.cachedAt < cacheTTL)
   ) {
     return;
   }
-  cloudProviderRefreshPromise = refreshCloudProviderFromKV(env)
-    .catch(() => {
-      cloudProviderCache = {
-        provider: DEFAULT_CLOUD_PROVIDER,
-        cachedAt: Date.now(),
-        source: 'default',
-      };
-    })
-    .finally(() => {
-      cloudProviderRefreshPromise = null;
-    });
+  const refresh = refreshCloudProviderFromKV(env).catch(() => {
+    cloudProviderCache = {
+      provider: DEFAULT_CLOUD_PROVIDER,
+      cachedAt: Date.now(),
+      source: 'default',
+    };
+  });
   if (ctx) {
-    ctx.waitUntil(cloudProviderRefreshPromise);
+    ctx.waitUntil(refresh);
     return;
   }
-  void cloudProviderRefreshPromise;
+  void refresh;
 }
 
 /**
@@ -337,7 +331,6 @@ function scheduleCloudProviderRefresh(env: Env, ctx?: HonoExecutionContext): voi
  */
 export function clearCloudProviderCache(): void {
   cloudProviderCache = null;
-  cloudProviderRefreshPromise = null;
 }
 
 // Legacy export for backward compatibility
@@ -977,9 +970,7 @@ let rateLimitProfileOverrideCache: {
   profile: keyof typeof RateLimitProfiles | null;
   cachedAt: number;
 } | null = null;
-const rateLimitRefreshPromises = new Map<string, Promise<void>>();
 let deniedOverrideRefreshCache: { config: RateLimitConfig | null; checkedAt: number } | null = null;
-let deniedOverrideRefreshPromise: Promise<RateLimitConfig | null> | null = null;
 const DENIED_OVERRIDE_REFRESH_TTL_MS = 1_000;
 const RATE_LIMIT_PROFILE_KV_NAMES: Record<keyof typeof RateLimitProfiles, string> = {
   strict: 'strict',
@@ -1065,27 +1056,19 @@ async function refreshRelaxedRateLimitOverrideAfterDenial(
   ) {
     return deniedOverrideRefreshCache.config;
   }
-  if (deniedOverrideRefreshPromise) return deniedOverrideRefreshPromise;
-
-  deniedOverrideRefreshPromise = (async () => {
-    try {
-      const value = await env.AUTHRIM_CONFIG!.get(PROFILE_OVERRIDE_KV_KEY);
-      if (!value || !(value in RateLimitProfiles)) return null;
-      const profile = value as keyof typeof RateLimitProfiles;
-      const refreshed = await readRateLimitConfigFromKV(env, profile);
-      rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
-      rateLimitConfigCache.set(profile, { config: refreshed, cachedAt: Date.now() });
-      return refreshed.maxRequests > current.maxRequests ? refreshed : null;
-    } catch {
-      return null;
-    }
-  })();
   try {
-    const config = await deniedOverrideRefreshPromise;
+    const value = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
+    if (!value || !(value in RateLimitProfiles)) return null;
+    const profile = value as keyof typeof RateLimitProfiles;
+    const refreshed = await readRateLimitConfigFromKV(env, profile);
+    rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
+    rateLimitConfigCache.set(profile, { config: refreshed, cachedAt: Date.now() });
+    const config = refreshed.maxRequests > current.maxRequests ? refreshed : null;
     deniedOverrideRefreshCache = { config, checkedAt: Date.now() };
     return config;
-  } finally {
-    deniedOverrideRefreshPromise = null;
+  } catch {
+    deniedOverrideRefreshCache = { config: null, checkedAt: Date.now() };
+    return null;
   }
 }
 
@@ -1214,20 +1197,9 @@ function scheduleRateLimitProfileRefresh(
   if (!env.AUTHRIM_CONFIG) {
     return;
   }
-  const refreshKey = profileName;
-  const existing = rateLimitRefreshPromises.get(refreshKey);
-  if (existing) {
-    if (ctx) ctx.waitUntil(existing);
-    return;
-  }
-  const refresh = refreshRateLimitProfileFromKV(env, profileName)
-    .catch((error) => {
-      log.error('Failed to refresh rate limit profile from KV', {}, error as Error);
-    })
-    .finally(() => {
-      rateLimitRefreshPromises.delete(refreshKey);
-    });
-  rateLimitRefreshPromises.set(refreshKey, refresh);
+  const refresh = refreshRateLimitProfileFromKV(env, profileName).catch((error) => {
+    log.error('Failed to refresh rate limit profile from KV', {}, error as Error);
+  });
   if (ctx) {
     ctx.waitUntil(refresh);
     return;
@@ -1250,7 +1222,5 @@ export function getProfileOverrideKVKey(): string {
 export function clearRateLimitConfigCache(): void {
   rateLimitConfigCache.clear();
   rateLimitProfileOverrideCache = null;
-  rateLimitRefreshPromises.clear();
   deniedOverrideRefreshCache = null;
-  deniedOverrideRefreshPromise = null;
 }

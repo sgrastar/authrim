@@ -63,6 +63,7 @@ import {
   type TenantProvisioningSagaDependencies,
 } from './tenant-provisioning-orchestrator';
 import { createControlRuntimeRegistrySigner } from './control-runtime-registry-signer';
+import { resolveTenantRuntimePlacementSnapshot } from './tenant-runtime-placement';
 import { ensureTenantProvisioningRegionShardConfig } from './tenant-region-shard-policy';
 import {
   cleanupTenantCloneKvArtifacts,
@@ -267,7 +268,7 @@ function isOperatorMutableLifecycleState(state: TenantLifecycleState): boolean {
   );
 }
 
-export interface TenantD1ProvisioningInput {
+export interface TenantControlPlaneProvisioningInput {
   id: string;
   tenantCode: string;
   name: string;
@@ -278,28 +279,9 @@ export interface TenantD1ProvisioningInput {
   preparationPayload?: Record<string, unknown> | null;
 }
 
-export interface TenantProvisionInput {
-  id: string;
-  tenantCode: string;
-  name: string;
-  description: string | null;
-  isolationPolicy?: 'shared_pool' | 'tenant_exclusive';
-  /** Keep the tenant hidden from runtime resolution until activateProvisionedTenant() succeeds. */
-  deferActivation?: boolean;
-}
-
-export type TenantProvisionResult =
-  | {
-      ok: true;
-      tenant: ReturnType<typeof formatTenant>;
-    }
-  | { ok: false; response: Response };
-
 // =============================================================================
 // Helpers
 // =============================================================================
-
-export const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
 
 function getDefaultTenantGuard(isDefault: boolean): string | null {
   return isDefault ? 'default' : null;
@@ -307,10 +289,6 @@ function getDefaultTenantGuard(isDefault: boolean): string | null {
 
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   return createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter;
-}
-
-function isTenantD1PoolMode(env: Env): boolean {
-  return env.DEFAULT_STORAGE_PROFILE_ID === TENANT_D1_STORAGE_PROFILE_ID;
 }
 
 function formatTenant(row: TenantRow) {
@@ -558,7 +536,7 @@ async function initTenantKeyManager(
   // If activeKeyId exists (idempotent: same tenant ID re-provisioned), reuse existing keys
 }
 
-async function cleanupTenantD1ProvisioningArtifacts(
+async function cleanupTenantProvisioningArtifacts(
   c: Context<{ Bindings: Env }>,
   adapter: DatabaseAdapter,
   tenantId: string,
@@ -630,7 +608,6 @@ export async function resolveActiveTenantRuntimeRouteObservation(
       role: 'tenant_core',
       shardGroup: 'default',
       shardIndex: 0,
-      runtimeSnapshotMode: 'required',
       requestCache,
     }),
     resolveTenantDatabaseSourceFromRegistry(env, {
@@ -638,7 +615,6 @@ export async function resolveActiveTenantRuntimeRouteObservation(
       role: 'tenant_core',
       shardGroup: 'users',
       shardIndex: 0,
-      runtimeSnapshotMode: 'required',
       requestCache,
     }),
     resolveTenantDatabaseSourceFromRegistry(env, {
@@ -646,7 +622,6 @@ export async function resolveActiveTenantRuntimeRouteObservation(
       role: 'tenant_pii',
       shardGroup: 'default',
       shardIndex: 0,
-      runtimeSnapshotMode: 'required',
       requestCache,
     }),
   ]);
@@ -771,6 +746,10 @@ async function publishProvisionedTenantRegistry(
   }
 
   const repository = new TenantDatabaseRegistryRepository(adminAdapter);
+  const placement = await resolveTenantRuntimePlacementSnapshot(env, operation.tenantId);
+  if (placement.isolationPolicy !== operation.isolationPolicy) {
+    throw new Error('tenant_provisioning_runtime_placement_mismatch');
+  }
   for (const target of targets) {
     const role = target.dataRole === 'tenant_pii' ? 'tenant_pii' : 'tenant_core';
     const shardGroup = target.dataRole === 'tenant_core/users' ? 'users' : 'default';
@@ -798,6 +777,11 @@ async function publishProvisionedTenantRegistry(
         control_shard_id: target.shardId,
         control_assignment_generation: target.assignmentGeneration,
         control_data_role: target.dataRole,
+        control_residency_policy_id: operation.residencyPolicyId,
+        control_residency_partition: target.residencyPartition,
+        control_allocation_scope: target.allocationScope,
+        control_owner_tenant_id: target.ownerTenantId,
+        control_placement_policy_generation: placement.policyGeneration,
       }),
     });
     await repository.setActivePointer({
@@ -817,7 +801,7 @@ async function publishProvisionedTenantRegistry(
   });
   const published = await publishTenantRuntimeRegistrySnapshot({
     tenantId: operation.tenantId,
-    storageProfileId: env.DEFAULT_STORAGE_PROFILE_ID ?? TENANT_D1_STORAGE_PROFILE_ID,
+    placement,
     repository,
     snapshotStore: env.TENANT_RUNTIME_REGISTRY,
     deploymentTarget: (env as Env & { AUTHRIM_DEPLOYMENT_TARGET?: string })
@@ -943,7 +927,6 @@ function tenantProvisioningDependencies(
         role: 'tenant_core',
         shardGroup: 'default',
         shardIndex: 0,
-        runtimeSnapshotMode: 'required',
       });
       const expected = aliasInput(operation, route).routeProjection;
       if (
@@ -1113,7 +1096,7 @@ async function formatTenantProvisioningStatus(
 
 export async function beginTenantProvisioning(
   c: Context<{ Bindings: Env }>,
-  input: TenantD1ProvisioningInput
+  input: TenantControlPlaneProvisioningInput
 ): Promise<{ tenant: TenantRow; operation: TenantProvisioningOperationView } | Response> {
   const environmentId = c.env.AUTHRIM_ENVIRONMENT_NAME;
   if (!environmentId) throw new Error('tenant_provisioning_environment_missing');
@@ -1294,141 +1277,6 @@ async function upsertTenantRow(
   );
 }
 
-/**
- * Provision a tenant through the same storage, contract, settings, and signing-key path used by
- * the public create endpoint. The caller owns authorization, request validation, and audit events.
- */
-export async function provisionTenant(
-  c: Context<{ Bindings: Env }>,
-  input: TenantProvisionInput
-): Promise<TenantProvisionResult> {
-  const adapter = createAdapter(c);
-  const existing = await adapter.queryOne<{ id: string }>('SELECT id FROM tenants WHERE id = ?', [
-    input.id,
-  ]);
-  if (existing) {
-    return {
-      ok: false,
-      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'id', reason: 'Tenant ID already exists' },
-      }),
-    };
-  }
-
-  const existingTenantCode = await adapter.queryOne<{ id: string }>(
-    'SELECT id FROM tenants WHERE tenant_code = ?',
-    [input.tenantCode]
-  );
-  if (existingTenantCode) {
-    return {
-      ok: false,
-      response: await createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: { field: 'tenant_code', reason: 'Tenant code already exists' },
-      }),
-    };
-  }
-
-  const nowTs = Math.floor(Date.now() / 1000);
-  const tenantKey = createOpaqueTenantKey();
-  await adapter.execute(
-    `INSERT INTO tenants (
-       id, tenant_code, tenant_key, name, description, isolation_policy, lifecycle_state, is_default,
-       default_tenant_guard, created_at, updated_at
-     )
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
-    [
-      input.id,
-      input.tenantCode,
-      tenantKey,
-      input.name,
-      input.description,
-      input.isolationPolicy ?? 'tenant_exclusive',
-      input.deferActivation ? 'provisioning' : 'active',
-      getDefaultTenantGuard(false),
-      nowTs,
-      nowTs,
-    ]
-  );
-
-  const contractKey = buildContractKey(c.env, 'tenant', input.id);
-  const configStore = c.env.AUTHRIM_CONFIG;
-  try {
-    if (!configStore) throw new Error('tenant_provisioning_config_store_unavailable');
-    await configStore.put(contractKey, JSON.stringify(buildDefaultTenantContract(input.id)));
-    await seedTenantDefaultSettings(c.env, input.id);
-    await initTenantKeyManager(c.env.KEY_MANAGER, input.id);
-    await syncTenantExistsCache(
-      c.env.AUTHRIM_CONFIG,
-      input.id,
-      input.deferActivation ? 'provisioning' : 'active'
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-TENANTS');
-    log.error('Tenant provisioning failed - rolling back', { tenantId: input.id }, error as Error);
-    await Promise.allSettled([
-      adapter.execute('DELETE FROM tenants WHERE id = ?', [input.id]),
-      adapter.execute('DELETE FROM custom_claim_schemas WHERE tenant_id = ?', [input.id]),
-      c.env.AUTHRIM_CONFIG?.delete(contractKey),
-      c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${input.id}:tenant`),
-      c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${input.id}:email-settings`),
-      deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, input.id),
-      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:login-ui`),
-      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:tenant-discovery-ui`),
-      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:authentication-methods`),
-      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:directory-connectors`),
-      c.env.SETTINGS?.delete(`settings:tenant:${input.id}:login-entry`),
-    ]);
-    return { ok: false, response: await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR) };
-  }
-
-  const created = await adapter.queryOne<TenantRow>(
-    'SELECT id, tenant_code, name, description, isolation_policy, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
-    [input.id]
-  );
-  if (!created) {
-    return { ok: false, response: await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR) };
-  }
-  return { ok: true, tenant: formatTenant(created) };
-}
-
-/** Publish a fully prepared tenant only after every clone side effect and audit write succeeded. */
-export async function activateProvisionedTenant(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string
-): Promise<ReturnType<typeof formatTenant>> {
-  const nowTs = Math.floor(Date.now() / 1000);
-  const platformAdapter = createAdapter(c);
-  const tenantAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-
-  await tenantAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [nowTs, tenantId]
-  );
-  await platformAdapter.execute(
-    "UPDATE tenants SET lifecycle_state = 'active', updated_at = ? WHERE id = ? AND lifecycle_state = 'provisioning'",
-    [nowTs, tenantId]
-  );
-  await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId, 'active');
-
-  const activated = await platformAdapter.queryOne<TenantRow>(
-    'SELECT id, tenant_code, name, description, isolation_policy, lifecycle_state, is_default, created_at, updated_at FROM tenants WHERE id = ?',
-    [tenantId]
-  );
-  if (!activated || activated.lifecycle_state !== 'active') {
-    throw new Error('tenant_clone_activation_failed');
-  }
-  return formatTenant(activated);
-}
-
-/** Ensure a retried clone never resumes issuance with a signing key from an earlier failed attempt. */
-export async function rotateProvisionedTenantSigningKey(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string
-): Promise<void> {
-  const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${tenantId}-v3`));
-  await keyManager.rotateKeysRpc();
-}
-
 async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
   if (!kv) return;
   let cursor: string | undefined;
@@ -1441,128 +1289,6 @@ async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Prom
   for (let offset = 0; offset < keys.length; offset += 25) {
     await Promise.all(keys.slice(offset, offset + 25).map((key) => kv.delete(key)));
   }
-}
-
-export interface TenantRollbackResult {
-  ok: boolean;
-  failures: string[];
-}
-
-/** Compensate a failed clone and report every artifact that could not be removed. */
-export async function rollbackProvisionedTenant(
-  c: Context<{ Bindings: Env }>,
-  tenantId: string
-): Promise<TenantRollbackResult> {
-  const platformAdapter = createAdapter(c);
-  const tenantAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-  const failures: string[] = [];
-  const safeExecute = async (
-    label: string,
-    adapter: DatabaseAdapter,
-    sql: string,
-    params: unknown[]
-  ): Promise<void> => {
-    try {
-      await adapter.execute(sql, params);
-    } catch {
-      failures.push(label);
-    }
-  };
-
-  // Preserve child-before-parent order for adapters that enforce foreign keys.
-  await safeExecute(
-    'role_assignment_rules',
-    tenantAdapter,
-    'DELETE FROM role_assignment_rules WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'role_assignments',
-    tenantAdapter,
-    'DELETE FROM role_assignments WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute('user_roles', tenantAdapter, 'DELETE FROM user_roles WHERE tenant_id = ?', [
-    tenantId,
-  ]);
-  await safeExecute('roles', tenantAdapter, 'DELETE FROM roles WHERE tenant_id = ?', [tenantId]);
-  await safeExecute(
-    'webhook_configs',
-    tenantAdapter,
-    'DELETE FROM webhook_configs WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'client_consent_overrides',
-    tenantAdapter,
-    'DELETE FROM client_consent_overrides WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'client_trust_policies',
-    tenantAdapter,
-    'DELETE FROM client_trust_policies WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'web_origin_registry',
-    tenantAdapter,
-    'DELETE FROM web_origin_registry WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'oauth_clients',
-    tenantAdapter,
-    'DELETE FROM oauth_clients WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute(
-    'custom_claim_schemas',
-    tenantAdapter,
-    'DELETE FROM custom_claim_schemas WHERE tenant_id = ?',
-    [tenantId]
-  );
-  await safeExecute('tenant_database_row', tenantAdapter, 'DELETE FROM tenants WHERE id = ?', [
-    tenantId,
-  ]);
-  await safeExecute('platform_tenant_row', platformAdapter, 'DELETE FROM tenants WHERE id = ?', [
-    tenantId,
-  ]);
-
-  const cleanupTasks: Array<readonly [string, Promise<unknown>]> = [
-    ['tenant_settings', deleteKvPrefix(c.env.SETTINGS, `settings:tenant:${tenantId}:`)],
-    ['client_settings', deleteKvPrefix(c.env.SETTINGS, `settings:client:${tenantId}:`)],
-    [
-      'client_contracts',
-      deleteKvPrefix(
-        c.env.AUTHRIM_CONFIG,
-        `${c.env.ENVIRONMENT || 'dev'}:contract:client:${tenantId}:`
-      ),
-    ],
-    [
-      'tenant_contract',
-      Promise.resolve(c.env.AUTHRIM_CONFIG?.delete(buildContractKey(c.env, 'tenant', tenantId))),
-    ],
-    [
-      'tenant_identity_settings',
-      Promise.resolve(c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:tenant`)),
-    ],
-    [
-      'tenant_email_settings',
-      Promise.resolve(c.env.AUTHRIM_CONFIG?.delete(`settings:tenant:${tenantId}:email-settings`)),
-    ],
-    [
-      'tenant_exists_cache',
-      Promise.resolve(deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, tenantId)),
-    ],
-  ];
-  const cleanupResults = await Promise.allSettled(cleanupTasks.map(([, task]) => task));
-  cleanupResults.forEach((result, index) => {
-    const task = cleanupTasks[index];
-    if (result.status === 'rejected' && task) failures.push(task[0]);
-  });
-
-  return { ok: failures.length === 0, failures };
 }
 
 // =============================================================================
@@ -1652,46 +1378,29 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const { id, name, description, isolation_policy } = parseResult.data;
     const tenantCode = parseResult.data.tenant_code || id;
-    if (isTenantD1PoolMode(c.env)) {
-      const started = await beginTenantProvisioning(c, {
-        id,
-        tenantCode,
-        name,
-        description: description ?? null,
-        isolationPolicy: isolation_policy,
-      });
-      if (started instanceof Response) return started;
-      await createAuditLogFromContext(c, 'tenant.provisioning_requested', 'tenant', id, {
-        operation_id: started.operation.operationId,
-        tenant_code: tenantCode,
-        isolation_policy,
-      });
-      return c.json(
-        {
-          ...formatTenant(started.tenant),
-          provisioning: {
-            mode: 'control-plane',
-            ...formatTenantProvisioningOperation(started.operation),
-          },
-        },
-        202
-      );
-    }
-    const provisioned = await provisionTenant(c, {
+    const started = await beginTenantProvisioning(c, {
       id,
       tenantCode,
       name,
       description: description ?? null,
+      isolationPolicy: isolation_policy,
     });
-    if (!provisioned.ok) return provisioned.response;
-
-    await createAuditLogFromContext(c, 'tenant.created', 'tenant', id, {
-      name,
+    if (started instanceof Response) return started;
+    await createAuditLogFromContext(c, 'tenant.provisioning_requested', 'tenant', id, {
+      operation_id: started.operation.operationId,
       tenant_code: tenantCode,
-      description: description ?? null,
+      isolation_policy,
     });
-
-    return c.json(provisioned.tenant, 201);
+    return c.json(
+      {
+        ...formatTenant(started.tenant),
+        provisioning: {
+          mode: 'control-plane',
+          ...formatTenantProvisioningOperation(started.operation),
+        },
+      },
+      202
+    );
   } catch (error) {
     const log = getLogger(c).module('ADMIN-TENANTS');
     log.error('Failed to create tenant', {}, error as Error);
@@ -2188,7 +1897,7 @@ export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings:
 
 /**
  * POST /api/admin/tenants/:id/provisioning/retry
- * Retry a failed tenant D1 provisioning draft after the slot has been reset.
+ * Retry a blocked Control Plane tenant provisioning operation.
  */
 export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings: Env }>) {
   const platformError = await requirePlatformTenantManagementAuthority(c);
@@ -2200,15 +1909,6 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
   const blocked = await ensureSupportedTenantId(c, id);
   if (blocked) {
     return blocked;
-  }
-
-  if (!isTenantD1PoolMode(c.env)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-      variables: {
-        field: 'tenant',
-        reason: 'Tenant D1 provisioning retry is only available in tenant-d1 pool mode',
-      },
-    });
   }
 
   try {
@@ -2271,15 +1971,6 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
     return blocked;
   }
 
-  if (!isTenantD1PoolMode(c.env)) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-      variables: {
-        field: 'tenant',
-        reason: 'Tenant D1 provisioning cleanup is only available in tenant-d1 pool mode',
-      },
-    });
-  }
-
   try {
     const environmentId = c.env.AUTHRIM_ENVIRONMENT_NAME;
     if (!environmentId) throw new Error('tenant_provisioning_environment_missing');
@@ -2337,7 +2028,7 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
           }
         }
       }
-      await cleanupTenantD1ProvisioningArtifacts(c, adminAdapter, id, true);
+      await cleanupTenantProvisioningArtifacts(c, adminAdapter, id, true);
       if (controlOperation.operationKind === 'clone') {
         await cleanupTenantCloneKvArtifacts(c.env, id);
       }

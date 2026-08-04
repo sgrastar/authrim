@@ -82,7 +82,7 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
 
 function getRuntimeProfileListItems(
   payload: unknown,
-  kind: 'storage' | 'audit' | 'residency'
+  kind: 'audit' | 'residency'
 ): Record<string, unknown>[] {
   if (!isRecord(payload)) {
     return [];
@@ -392,7 +392,7 @@ async function deleteRuntimeProfile(input: {
   timeoutMs: number;
   adminSecret: string;
   tenantId: string;
-  kind: 'storage' | 'audit' | 'residency';
+  kind: 'audit' | 'residency';
   profileId?: string;
 }): Promise<void> {
   if (!input.profileId) {
@@ -701,7 +701,10 @@ export async function runGeneratedServerSurfacesSmoke(
       path: '/api/admin/users',
       method: 'POST',
       timeoutMs,
-      headers: getAdminHeaders(adminSecret, tenantId),
+      headers: {
+        ...getAdminHeaders(adminSecret, tenantId),
+        'Idempotency-Key': `server-surfaces-user-missing-${smokeRunId}`,
+      },
       expectedStatus: 400,
       body: adminMissingPayload,
       validate: (payload, check) => {
@@ -726,7 +729,10 @@ export async function runGeneratedServerSurfacesSmoke(
       path: '/api/admin/users',
       method: 'POST',
       timeoutMs,
-      headers: getAdminHeaders(adminSecret, tenantId),
+      headers: {
+        ...getAdminHeaders(adminSecret, tenantId),
+        'Idempotency-Key': `server-surfaces-user-create-${smokeRunId}`,
+      },
       expectedStatus: 201,
       body: {
         email: `phase15-valid-${smokeRunId}@example.test`,
@@ -1055,7 +1061,16 @@ export async function runGeneratedServerSurfacesSmoke(
           addFail(check, 'runtime profile defaults response is invalid');
           return;
         }
-        addPass(check, 'defaults object verified');
+        const defaultKeys = Object.keys(payload.defaults).sort();
+        if (
+          !asString(payload.defaults.auditProfileId) ||
+          !asString(payload.defaults.residencyProfileId) ||
+          defaultKeys.length !== 2
+        ) {
+          addFail(check, 'runtime profile defaults must contain only audit and residency pointers');
+          return;
+        }
+        addPass(check, 'audit and residency defaults verified');
       },
     });
     checks.push(finalizeCheck(runtimeDefaultsCheck, 'runtime profile defaults verified'));
@@ -1178,6 +1193,14 @@ export async function runGeneratedServerSurfacesSmoke(
       validate: (payload, check) => {
         if (!isRecord(payload) || !isRecord(payload.effective)) {
           addFail(check, 'tenant runtime profiles response is invalid');
+          return;
+        }
+        if (
+          !isRecord(payload.effective.audit) ||
+          !isRecord(payload.effective.residency) ||
+          'storage' in payload.effective
+        ) {
+          addFail(check, 'tenant runtime profiles must contain only audit and residency');
           return;
         }
         addPass(check, `tenant_id=${tenantId}`);

@@ -176,7 +176,7 @@ const PLUGIN_RUNNER_RPC_COMPONENTS = [
   'ar-saml',
 ] as const satisfies readonly WorkerComponent[];
 
-const SHARED_NOTIFICATION_CORE_COMPONENTS = [
+const PLATFORM_NOTIFICATION_COMPONENTS = [
   'ar-auth',
   'ar-management',
   'ar-plugin-runner',
@@ -243,15 +243,15 @@ function collectD1DatabaseBindings(
     .filter((db) => db.database_id);
 
   const requiredRoles = new Set(getRequiredDataRolesForComponent(component));
-  const sharedCore =
-    SHARED_NOTIFICATION_CORE_COMPONENTS.includes(
-      component as (typeof SHARED_NOTIFICATION_CORE_COMPONENTS)[number]
+  const platformNotification =
+    PLATFORM_NOTIFICATION_COMPONENTS.includes(
+      component as (typeof PLATFORM_NOTIFICATION_COMPONENTS)[number]
     ) &&
     (requiredRoles.has('tenant_core/default') || requiredRoles.has('tenant_core/users')) &&
     resourceIds.d1.DB
       ? [
           {
-            binding: 'TDB_SHARED_CORE',
+            binding: 'PLATFORM_NOTIFICATION_DB',
             database_name: resourceIds.d1.DB.name,
             database_id: resourceIds.d1.DB.id,
           },
@@ -281,7 +281,7 @@ function collectD1DatabaseBindings(
           }))
       : [];
 
-  return [...builtins, ...sharedCore, ...tenantDatabases, ...pluginResources];
+  return [...builtins, ...platformNotification, ...tenantDatabases, ...pluginResources];
 }
 
 // =============================================================================
@@ -320,8 +320,8 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   ],
   'ar-agent-access': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
-  'ar-async': ['INITIAL_ACCESS_TOKENS', 'AUTHRIM_CONFIG'],
-  'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG'],
+  'ar-async': ['INITIAL_ACCESS_TOKENS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-policy': ['REBAC_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-vc': ['AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
@@ -734,7 +734,7 @@ export function generateWranglerConfig(
     ];
   }
 
-  // D1 Databases (most components need shared D1; tenant-d1 adds generated TDB_* bindings)
+  // D1 databases, including Control-managed TDB_* routes where a Worker needs data-plane access.
   const d1Databases = collectD1DatabaseBindings(component, resourceIds);
   if (d1Databases.length > 0) {
     wranglerConfig.d1_databases = d1Databases;
@@ -1154,7 +1154,7 @@ export function generateEnvVars(
     vars['SMOKE_RPC_SIGNING_ACTIVE_SLOT'] = 'A';
     vars['CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED'] = 'false';
     vars['AUTHRIM_AUTOMATIC_PROVISIONING'] =
-      config.tenantD1?.automaticProvisioning === true ? 'true' : 'false';
+      config.controlPlane?.automaticProvisioning === true ? 'true' : 'false';
     vars['AUTHRIM_DEPLOYMENT_TARGET'] = 'default';
     if (config.keys.keyId) {
       vars['SMOKE_RPC_SIGNING_ACTIVE_KID'] = `${config.keys.keyId}-control-smoke`;
@@ -1215,7 +1215,6 @@ export function generateEnvVars(
     throw new Error('admin_ui_origin_configuration_invalid');
   }
   const profileDefaults = config.profiles?.defaults ?? {
-    storage: 'builtin:storage:shared-d1',
     audit: 'builtin:audit:standard',
     residency: 'builtin:residency:default',
   };
@@ -1369,7 +1368,6 @@ export function generateEnvVars(
 
   if (profileAwareComponents.includes(component)) {
     vars['PROFILE_REGISTRY_BACKEND'] = profileRegistryBackend;
-    vars['DEFAULT_STORAGE_PROFILE_ID'] = profileDefaults.storage;
     vars['DEFAULT_AUDIT_PROFILE_ID'] = profileDefaults.audit;
     vars['DEFAULT_RESIDENCY_PROFILE_ID'] = profileDefaults.residency;
   }
@@ -1409,6 +1407,8 @@ export function generateEnvVars(
   if (component === 'ar-lib-core' || component === 'ar-auth' || component === 'ar-token') {
     vars['AUTHRIM_CODE_SHARDS'] = config.sharding.authCodeShards.toString();
     vars['AUTHRIM_SESSION_SHARDS'] = (config.sharding.sessionShards ?? 4).toString();
+  }
+  if (component === 'ar-lib-core' || COMPONENT_DO_BINDINGS[component].includes('CHALLENGE_STORE')) {
     vars['AUTHRIM_CHALLENGE_SHARDS'] = (config.sharding.challengeShards ?? 4).toString();
   }
 

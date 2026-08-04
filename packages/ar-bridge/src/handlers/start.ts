@@ -494,7 +494,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       // 📝 Timing: after session validation and before token issuance
       //   - failure paths leave state unconsumed (retryable)
       //   - success paths consume it before issuance (handoff/codeissuance failure is near zero)
-      const consumedAuthState = await consumeAuthState(c.env, state);
+      const consumedAuthState = await consumeAuthState(c.env, tenantIdResolved, state);
       if (!consumedAuthState) {
         // State consumption failed (already used, expired, or conflicted)
         // 📝 error=invalid_request: indicates a state issue (vs login_required=not logged in)

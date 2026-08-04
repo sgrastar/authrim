@@ -188,6 +188,30 @@ describe('setup pending Control operations', () => {
     );
   });
 
+  it('resumes a running Worker binding step after cross-operation lease contention clears', async () => {
+    const query = vi.fn(async () => [
+      {
+        ...row,
+        status: 'running',
+        last_error_code: null,
+        current_step: 'reconcile_worker_bindings',
+        provider_database_id: 'database-id',
+      },
+    ]);
+    const [operation] = await listPendingControlOperatorOperations({
+      controlDatabaseName: 'test-control',
+      query,
+    });
+
+    expect(operation).toMatchObject({
+      status: 'running',
+      lastErrorCode: null,
+      currentStep: 'reconcile_worker_bindings',
+    });
+    expect(query.mock.calls[0]?.[1]).toContain("binding_step.status = 'running'");
+    expect(query.mock.calls[0]?.[1]).toContain("binding.state = 'pending'");
+  });
+
   it('returns an expired migration commit for response-loss recovery', async () => {
     const query = vi.fn(async () => [
       {

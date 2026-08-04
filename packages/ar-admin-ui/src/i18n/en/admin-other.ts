@@ -15,7 +15,7 @@ const adminOther = {
 	admin_settings_cache_mode_desc: 'Configure cache TTL for client metadata and related data',
 	admin_settings_runtime_profiles: 'Runtime Profiles',
 	admin_settings_runtime_profiles_desc:
-		'Manage storage, audit, and residency runtime profiles, including audit sinks',
+		'Manage audit and residency runtime profiles, including audit sinks',
 	admin_settings_updated_one: 'Updated 1 setting.',
 	admin_settings_updated_many: 'Updated {count:number} settings.',
 	admin_settings_code_shards_updated: 'Code shards updated.',
@@ -40,10 +40,7 @@ const adminOther = {
 		'Failed to update the default runtime profiles.',
 	admin_settings_runtime_profile_id_required: 'Profile ID is required.',
 	admin_settings_default_audit_profile_required: 'Select a default audit profile.',
-	admin_settings_default_storage_profile_required: 'Select a default storage profile.',
 	admin_settings_default_residency_profile_required: 'Select a default residency profile.',
-	admin_settings_storage_profile_not_activatable:
-		'The selected storage profile cannot be activated.',
 	admin_settings_audit_profile_not_activatable: 'The selected audit profile cannot be activated.',
 	admin_settings_residency_profile_not_activatable:
 		'The selected residency profile cannot be activated.',

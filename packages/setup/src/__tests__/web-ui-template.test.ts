@@ -460,7 +460,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain(
       'class="region auto-region"><input type="radio" name="db-pii-location" value="auto" checked>'
     );
-    expect(html).toContain('data-i18n="web.db.storageProfileDesc"');
+    expect(html).toContain('<h2>D1 Control Plane</h2>');
+    expect(html).toContain('name="automatic-provisioning" value="on" checked');
     expect(SETUP_WEB_UI_STYLE).toContain('.topo tr');
     expect(SETUP_WEB_UI_STYLE).toContain('.region.auto-region');
     expect(SETUP_WEB_UI_STYLE).toContain('.db-profile-card .st');

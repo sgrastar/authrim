@@ -152,9 +152,7 @@ function createFixtureSecrets(keyId: string): GeneratedSecrets {
 async function writeGeneratedEnvironment(
   root: string,
   options?: {
-    externalStorageDefault?: boolean;
-    tenantD1StorageDefault?: boolean;
-    withTenantD1Bootstrap?: boolean;
+    withControlPlaneBootstrap?: boolean;
     withHyperdriveReferences?: boolean;
     queueEnabled?: boolean;
     withLoggingQueues?: boolean;
@@ -163,7 +161,6 @@ async function writeGeneratedEnvironment(
 ) {
   const env = 'portable';
   const config = createDefaultConfig(env);
-  config.profiles.defaults.storage = 'builtin:storage:shared-d1';
   config.cloudflare.accountId = 'account-id';
   config.keys.storageType = options?.externalKeys ? 'external' : 'internal';
   config.keys.secretsPath = './keys/';
@@ -173,12 +170,6 @@ async function writeGeneratedEnvironment(
     loginUi: { custom: null, auto: 'https://portable-ar-login-ui.workers.dev', sameAsApi: false },
     adminUi: { custom: null, auto: 'https://portable-ar-admin-ui.workers.dev', sameAsApi: false },
   };
-  if (options?.externalStorageDefault) {
-    config.profiles.defaults.storage = 'builtin:storage:external-postgres';
-  }
-  if (options?.tenantD1StorageDefault) {
-    config.profiles.defaults.storage = 'builtin:storage:tenant-d1';
-  }
   if (options?.withHyperdriveReferences) {
     config.profiles.references.hyperdrive = {
       'core-primary': {
@@ -211,7 +202,7 @@ async function writeGeneratedEnvironment(
     },
   ];
 
-  if (options?.withTenantD1Bootstrap) {
+  if (options?.withControlPlaneBootstrap !== false) {
     d1.push(
       {
         binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
@@ -313,29 +304,25 @@ async function writeGeneratedEnvironment(
 function mockLiveRuntimeSchema(
   env: string,
   options?: {
-    missingCoreTables?: string[];
-    missingPiiTables?: string[];
+    missingPlatformCoreTables?: string[];
+    missingPlatformPiiTables?: string[];
+    missingTenantDefaultTables?: string[];
+    missingTenantCoreTables?: string[];
+    missingTenantPiiTables?: string[];
     legacyUserCustomFieldsFk?: boolean;
   }
 ) {
   const schemaTablesByDatabase = new Map<string, string[]>([
     [
       `${env}-authrim-core-db`,
-      [
-        'users_core',
-        'identity_subjects',
-        'identity_accounts',
-        'profiles',
-        'contact_points',
-        'custom_claim_schemas',
-        'user_custom_fields',
-        'event_log',
-      ].filter((table) => !(options?.missingCoreTables ?? []).includes(table)),
+      ['tenants', 'profile_registry', 'audit_log', 'event_log'].filter(
+        (table) => !(options?.missingPlatformCoreTables ?? []).includes(table)
+      ),
     ],
     [
       `${env}-authrim-pii-db`,
-      ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'].filter(
-        (table) => !(options?.missingPiiTables ?? []).includes(table)
+      ['audit_log_pii', 'user_anonymization_map', 'pii_log'].filter(
+        (table) => !(options?.missingPlatformPiiTables ?? []).includes(table)
       ),
     ],
     [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'field_mapping_sets']],
@@ -418,6 +405,29 @@ function mockLiveRuntimeSchema(
         'plugin_runner_circuit_breakers',
         'plugin_runner_migration_state',
       ],
+    ],
+    [
+      `authrim-${env}-default-bootstrap`,
+      ['tenants', 'tenant_domain_mappings', 'oauth_clients', 'flows', 'profile_registry'].filter(
+        (table) => !(options?.missingTenantDefaultTables ?? []).includes(table)
+      ),
+    ],
+    [
+      `authrim-${env}-users-bootstrap`,
+      [
+        'identity_subjects',
+        'identity_accounts',
+        'profiles',
+        'contact_points',
+        'custom_claim_schemas',
+        'user_custom_fields',
+      ].filter((table) => !(options?.missingTenantCoreTables ?? []).includes(table)),
+    ],
+    [
+      `authrim-${env}-pii-bootstrap`,
+      ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'].filter(
+        (table) => !(options?.missingTenantPiiTables ?? []).includes(table)
+      ),
     ],
   ]);
 
@@ -603,6 +613,27 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
+  it('rejects Core and PII bindings that resolve to the same physical D1 database', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.d1.DB_PII.id = lock.d1.DB.id;
+    lock.d1.TDB_PII_BOOTSTRAP_PII.id = lock.d1.TDB_USERS_BOOTSTRAP_CORE.id;
+    await writeFile(lockPath, JSON.stringify(lock, null, 2), 'utf-8');
+
+    const result = await validateGeneratedEnvironment({ baseDir: root, env });
+    const check = result.checks.find((entry) => entry.id === 'pii-physical-isolation');
+
+    expect(result.ok).toBe(false);
+    expect(check).toMatchObject({
+      status: 'fail',
+      details: expect.arrayContaining([
+        'DB and DB_PII resolve to the same D1 database id',
+        'TDB_USERS_BOOTSTRAP_CORE and TDB_PII_BOOTSTRAP_PII resolve to the same D1 database id',
+      ]),
+    });
+  });
+
   it('detects missing deploy and master Wrangler files', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     await unlink(join(root, 'packages', 'ar-auth', 'wrangler.toml'));
@@ -621,22 +652,11 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
-  it('rejects active seeded storage and audit profiles with unresolved database targets', async () => {
+  it('rejects an active seeded audit profile with unresolved database targets', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
-    config.profiles.defaults.storage = 'tenant:storage:broken';
     config.profiles.defaults.audit = 'tenant:audit:broken';
-    config.profiles.seed.storage = [
-      {
-        id: 'tenant:storage:broken',
-        label: 'Broken storage',
-        slices: {
-          identity_core: { driver: 'd1', bindingRef: 'UNKNOWN_DB' },
-          identity_pii: { driver: 'postgres', connectionRef: 'missing-primary' },
-        },
-      },
-    ];
     config.profiles.seed.audit = [
       {
         id: 'tenant:audit:broken',
@@ -661,24 +681,13 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
-  it('accepts active seeded profiles backed by built-in D1 and configured Hyperdrive', async () => {
+  it('accepts an active seeded audit profile backed by D1 and configured Hyperdrive', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
       withHyperdriveReferences: true,
     });
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
-    config.profiles.defaults.storage = 'tenant:storage:hybrid';
     config.profiles.defaults.audit = 'tenant:audit:hybrid';
-    config.profiles.seed.storage = [
-      {
-        id: 'tenant:storage:hybrid',
-        label: 'Hybrid storage',
-        slices: {
-          identity_core: { driver: 'd1', bindingRef: 'DB' },
-          identity_pii: { driver: 'postgres', connectionRef: 'pii-primary' },
-        },
-      },
-    ];
     config.profiles.seed.audit = [
       {
         id: 'tenant:audit:hybrid',
@@ -696,10 +705,7 @@ describe('validateGeneratedEnvironment', () => {
 
     expect(compatibility?.status).toBe('pass');
     expect(compatibility?.details).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('HYPERDRIVE_PII_PRIMARY'),
-        expect.stringContaining('HYPERDRIVE_CORE_PRIMARY'),
-      ])
+      expect.arrayContaining([expect.stringContaining('HYPERDRIVE_CORE_PRIMARY')])
     );
   });
 
@@ -707,17 +713,6 @@ describe('validateGeneratedEnvironment', () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     const configPath = join(root, '.authrim', env, 'config.json');
     const config = JSON.parse(await readFile(configPath, 'utf-8'));
-    config.profiles.seed.storage = [
-      {
-        id: 'tenant:storage:future',
-        label: 'Future storage',
-        slices: {
-          identity_core: { driver: 'postgres', connectionRef: 'future-core' },
-          identity_pii: { driver: 'mysql', bindingRef: 'FUTURE_MYSQL' },
-          custom_claims: { driver: 'd1', bindingRef: 'CUSTOM_DB' },
-        },
-      },
-    ];
     config.profiles.seed.audit = [
       {
         id: 'tenant:audit:future',
@@ -735,9 +730,6 @@ describe('validateGeneratedEnvironment', () => {
     expect(portability?.status).toBe('warn');
     expect(portability?.details).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('connectionRef=future-core'),
-        expect.stringContaining('driver=mysql'),
-        expect.stringContaining('bindingRef=CUSTOM_DB'),
         expect.stringContaining('connectionRef=future-audit'),
         expect.stringContaining('bindingRef=CUSTOM_AUDIT_DB'),
       ])
@@ -877,43 +869,24 @@ describe('validateGeneratedEnvironment', () => {
     expect(check?.details).toContain('MIGRATION_RELEASES is missing from lock.json');
   });
 
-  it('fails when the active storage default requires unsupported external primary bindings', async () => {
-    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
-      externalStorageDefault: true,
-    });
+  it('passes a Control Plane generated environment with runtime registry KV bindings', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
 
-    expect(result.ok).toBe(false);
-    expect(
-      result.checks.find((check) => check.id === 'active-profile-compatibility')?.details
-    ).toEqual(
-      expect.arrayContaining([expect.stringContaining('builtin:storage:external-postgres')])
+    expect(result.ok).toBe(true);
+    expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+  });
+
+  it('generates unified runtime registry bindings', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
+    const wrangler = await readFile(
+      join(root, '.authrim', env, 'wrangler', 'ar-auth.toml'),
+      'utf-8'
     );
-  });
 
-  it('passes tenant-d1 generated environment with runtime registry KV bindings', async () => {
-    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
-      tenantD1StorageDefault: true,
-    });
-
-    const result = await validateGeneratedEnvironment({ baseDir: root, env });
-
-    expect(result.ok).toBe(true);
-    expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
-  });
-
-  it('passes when the active external storage default is backed by configured Hyperdrive references', async () => {
-    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
-      externalStorageDefault: true,
-      withHyperdriveReferences: true,
-    });
-
-    const result = await validateGeneratedEnvironment({ baseDir: root, env });
-
-    expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
-    expect(result.ok).toBe(true);
-    expect(result.checks.every((check) => check.status !== 'fail')).toBe(true);
+    expect(wrangler).toContain('PROFILE_REGISTRY_BACKEND');
+    expect(wrangler).toContain('TENANT_RUNTIME_REGISTRY');
   });
 
   it('passes live Cloudflare validation when lock D1 and R2 resources exist', async () => {
@@ -926,6 +899,9 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-control-db`, uuid: 'db-control-id' },
       { name: `${env}-authrim-lookup-db`, uuid: 'db-lookup-id' },
       { name: `${env}-authrim-plugin-runner-db`, uuid: 'db-plugin-runner-id' },
+      { name: `authrim-${env}-default-bootstrap`, uuid: 'bootstrap-default-core-id' },
+      { name: `authrim-${env}-users-bootstrap`, uuid: 'bootstrap-users-core-id' },
+      { name: `authrim-${env}-pii-bootstrap`, uuid: 'bootstrap-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
@@ -1011,8 +987,11 @@ describe('validateGeneratedEnvironment', () => {
   it('fails live Cloudflare validation when runtime schema tables are missing', async () => {
     const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     mockLiveRuntimeSchema(env, {
-      missingCoreTables: ['event_log'],
-      missingPiiTables: ['identity_sensitive_values'],
+      missingPlatformCoreTables: ['event_log'],
+      missingPlatformPiiTables: ['audit_log_pii'],
+      missingTenantDefaultTables: ['tenants'],
+      missingTenantCoreTables: ['identity_accounts'],
+      missingTenantPiiTables: ['identity_sensitive_values'],
     });
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
@@ -1036,10 +1015,13 @@ describe('validateGeneratedEnvironment', () => {
     expect(result.ok).toBe(false);
     expect(schemaCheck?.status).toBe('fail');
     expect(schemaCheck?.details).toEqual(
-      expect.arrayContaining([expect.stringContaining('missing PII runtime schema table(s)')])
-    );
-    expect(schemaCheck?.details).toEqual(
-      expect.arrayContaining([expect.stringContaining('missing core runtime schema table(s)')])
+      expect.arrayContaining([
+        expect.stringContaining('missing fixed platform metadata and audit schema table(s)'),
+        expect.stringContaining('missing fixed platform PII audit schema table(s)'),
+        expect.stringContaining('missing tenant default assignment schema table(s)'),
+        expect.stringContaining('missing tenant account assignment schema table(s)'),
+        expect.stringContaining('missing tenant PII assignment schema table(s)'),
+      ])
     );
   });
 
@@ -1072,11 +1054,8 @@ describe('validateGeneratedEnvironment', () => {
     );
   });
 
-  it('checks the live initial tenant D1 resources and accepted Control handoff', async () => {
-    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot(), {
-      tenantD1StorageDefault: true,
-      withTenantD1Bootstrap: true,
-    });
+  it('checks the live initial Control Plane resources and accepted Control handoff', async () => {
+    const { root, env } = await writeGeneratedEnvironment(await createFixtureRoot());
     mockLiveRuntimeSchema(env);
     listD1DatabasesMock.mockResolvedValueOnce([
       { name: `${env}-authrim-core-db`, uuid: 'db-core-id' },
@@ -1101,7 +1080,9 @@ describe('validateGeneratedEnvironment', () => {
     ]);
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env, liveCloudflare: true });
-    const bootstrapCheck = result.checks.find((check) => check.id === 'live-tenant-d1-bootstrap');
+    const bootstrapCheck = result.checks.find(
+      (check) => check.id === 'live-control-plane-bootstrap'
+    );
 
     expect(result.checks.filter((check) => check.status === 'fail')).toEqual([]);
     expect(result.ok).toBe(true);

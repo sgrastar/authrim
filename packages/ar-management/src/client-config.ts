@@ -43,6 +43,10 @@ import {
 } from '@authrim/ar-lib-core';
 import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
   GRANT_TYPES.AUTHORIZATION_CODE,
@@ -975,6 +979,15 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
         401
       );
     }
+
+    await disableTenantDiscoveryAliasDirectory(
+      c.env,
+      await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+        tenantId,
+        aliasKind: 'client_id',
+        aliasValue: clientId,
+      })
+    );
 
     // Delete client from D1
     const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;

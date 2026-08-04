@@ -2,8 +2,7 @@ const adminJobs = {
 	admin_jobs_page_title: 'Jobs - Admin Dashboard - Authrim',
 	admin_jobs_title: 'Jobs',
 	admin_jobs_description:
-		'Monitor queued operational work including user imports, tenant database requests, bulk updates, and report jobs. Running jobs refresh automatically.',
-	admin_jobs_tenant_db: 'Tenant DB',
+		'Monitor queued operational work including user imports, bulk updates, and report jobs. Running jobs refresh automatically.',
 	admin_jobs_import_users: 'Import Users',
 	admin_jobs_create_report_job: 'Create Report Job',
 	admin_jobs_total_jobs: 'Total jobs',
@@ -24,23 +23,12 @@ const adminJobs = {
 	admin_jobs_loading_jobs: 'Loading jobs...',
 	admin_jobs_no_jobs: 'No jobs found.',
 	admin_jobs_current_filters: 'Current filters:',
-	admin_jobs_empty_hint:
-		'Create an import, tenant database request, or report job to start tracking work.',
+	admin_jobs_empty_hint: 'Create an import or report job to start tracking work.',
 	admin_jobs_progress: 'Progress',
 	admin_jobs_duration: 'Duration',
 	admin_jobs_created: 'Created',
 	admin_jobs_actions: 'Actions',
 	admin_jobs_details: 'Details',
-	admin_jobs_tenant_database_request: 'Tenant Database Request',
-	admin_jobs_tenant_slug: 'Tenant Slug',
-	admin_jobs_tenant_slug_hint: 'Leave blank to use the current tenant context when supported.',
-	admin_jobs_generation: 'Generation',
-	admin_jobs_execution: 'Execution',
-	admin_jobs_execution_plan_only: 'Plan only',
-	admin_jobs_execution_operator_cli: 'Operator CLI',
-	admin_jobs_activate_after_deploy: 'Request activation after generated bindings are deployed',
-	admin_jobs_reason: 'Reason',
-	admin_jobs_reason_hint: 'Recorded with the job request and operational audit trail.',
 	admin_jobs_cancel: 'Cancel',
 	admin_jobs_creating: 'Creating...',
 	admin_jobs_create_request: 'Create Request',
@@ -111,8 +99,6 @@ const adminJobs = {
 	admin_jobs_type_report_generation: 'Report Generation',
 	admin_jobs_type_org_bulk_members: 'Organization Bulk Members',
 	admin_jobs_type_tenant_delete: 'Tenant Deletion',
-	admin_jobs_type_tenant_database_provision: 'Tenant DB Provisioning',
-	admin_jobs_type_tenant_database_activate_batch: 'Tenant DB Activation',
 	admin_jobs_type_tenant_database_export: 'Tenant DB Export',
 	admin_jobs_type_tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',
 	admin_jobs_type_tenant_database_purge_backup: 'Tenant DB Backup Purge',
@@ -144,9 +130,7 @@ const adminJobs = {
 	admin_jobs_date_range_error: 'Date range cannot exceed {days:number} days ({years:number} years)',
 	admin_jobs_create_report_failed: 'Failed to create report job',
 	admin_jobs_csv_required: 'CSV file is required',
-	admin_jobs_create_import_failed: 'Failed to create import job',
-	admin_jobs_generation_positive_integer: 'Generation must be a positive integer',
-	admin_jobs_create_tenant_db_failed: 'Failed to create tenant database request'
+	admin_jobs_create_import_failed: 'Failed to create import job'
 } as const;
 
 export default adminJobs;

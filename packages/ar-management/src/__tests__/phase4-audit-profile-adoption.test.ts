@@ -76,6 +76,7 @@ function createMockContext(options: {
 }) {
   const contextStore = new Map<string, unknown>([
     ['tenantId', 'default'],
+    ['tenantMetadataContext', { tenantId: 'default', coreDb: options.db, route: {} }],
     ['adminAuth', { userId: 'admin-user-1' }],
   ]);
   return {

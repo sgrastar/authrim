@@ -6,6 +6,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     const tenant = normalizeTenantConfigForApiDomain({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: true,
       userIdFormat: 'uuid',
       nakedDomain: true,
@@ -15,6 +16,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     expect(tenant).toEqual({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: false,
       baseDomain: undefined,
       userIdFormat: 'uuid',
@@ -27,6 +29,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     const tenant = normalizeTenantConfigForApiDomain({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: true,
       baseDomain: 'oidc.example.com',
       userIdFormat: 'nanoid',
@@ -37,6 +40,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     expect(tenant).toEqual({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: true,
       baseDomain: 'oidc.example.com',
       userIdFormat: 'nanoid',
@@ -59,6 +63,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     expect(tenant).toEqual({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: false,
       baseDomain: undefined,
       userIdFormat: 'nanoid',
@@ -80,6 +85,7 @@ describe('normalizeTenantConfigForApiDomain', () => {
     expect(tenant).toEqual({
       name: 'acme',
       displayName: 'Acme',
+      placementPolicy: 'tenant_exclusive',
       multiTenant: true,
       baseDomain: 'oidc.example.com',
       userIdFormat: 'nanoid',

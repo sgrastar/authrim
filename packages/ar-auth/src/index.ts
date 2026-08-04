@@ -145,6 +145,7 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
 const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
 const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
 const PHASE0C_DIAGNOSTIC_SESSION = /^phase0c-(?:mail|totp)-[0-9]{14}-[a-f0-9]{6}$/u;
+const TEST_ENVIRONMENT_NAME = /^test(?:[-_][a-z0-9][a-z0-9_-]*)?$/u;
 const AUTH_REQUEST_DIAGNOSTIC_PATHS = [
   '/authorize',
   '/api/auth/email-codes/verify',
@@ -180,7 +181,8 @@ export function isAuthRequestDiagnosticTimingEnabled(env: Env, sessionId: string
   if (!sessionId) return false;
   return (
     diagnosticFlagEnabled(env) ||
-    (env.AUTHRIM_ENVIRONMENT_NAME === 'test' && PHASE0C_DIAGNOSTIC_SESSION.test(sessionId))
+    (TEST_ENVIRONMENT_NAME.test(env.AUTHRIM_ENVIRONMENT_NAME ?? '') &&
+      PHASE0C_DIAGNOSTIC_SESSION.test(sessionId))
   );
 }
 

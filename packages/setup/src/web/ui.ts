@@ -1117,7 +1117,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Enabled (initial tenant: {{tenant}})',
           'web.loadConfig.components': 'Components',
-          'web.loadConfig.storageProfile': 'Storage profile',
           'web.loadConfig.d1Regions': 'D1 regions',
           'web.loadConfig.emailProvider': 'Email provider',
           'web.loadConfig.envConflictConfirm': 'This configuration uses an existing environment name.\\n\\nEnvironment: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuing and deploying with this configuration may overwrite the existing environment. Continue?',
@@ -1213,7 +1212,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'マルチテナント',
           'web.loadConfig.enabledInitialTenant': '有効（初期テナント: {{tenant}}）',
           'web.loadConfig.components': 'コンポーネント',
-          'web.loadConfig.storageProfile': 'ストレージプロファイル',
           'web.loadConfig.d1Regions': 'D1 リージョン',
           'web.loadConfig.emailProvider': 'メールプロバイダ',
           'web.loadConfig.envConflictConfirm': '既存の環境名と同じです。\\n\\n環境: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nこのまま設定を継続してデプロイした場合、既存環境が上書きされる可能性があります。続行しますか？',
@@ -1545,7 +1543,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '多租户',
           'web.loadConfig.enabledInitialTenant': '已启用（初始租户：{{tenant}}）',
           'web.loadConfig.components': '组件',
-          'web.loadConfig.storageProfile': '存储配置',
           'web.loadConfig.d1Regions': 'D1 区域',
           'web.loadConfig.emailProvider': '邮件服务商',
           'web.loadConfig.envConflictConfirm': '此配置使用了已有环境名称。\\n\\n环境：{{env}}\\nWorkers：{{workers}} / D1：{{d1}} / KV：{{kv}}\\n\\n继续并部署可能会覆盖现有环境。是否继续？',
@@ -1614,7 +1611,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '多租戶',
           'web.loadConfig.enabledInitialTenant': '已啟用（初始租戶：{{tenant}}）',
           'web.loadConfig.components': '元件',
-          'web.loadConfig.storageProfile': '儲存設定',
           'web.loadConfig.d1Regions': 'D1 區域',
           'web.loadConfig.emailProvider': '郵件服務商',
           'web.loadConfig.envConflictConfirm': '此設定使用了既有環境名稱。\\n\\n環境：{{env}}\\nWorkers：{{workers}} / D1：{{d1}} / KV：{{kv}}\\n\\n繼續並部署可能會覆蓋既有環境。是否繼續？',
@@ -1683,7 +1679,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Activado (tenant inicial: {{tenant}})',
           'web.loadConfig.components': 'Componentes',
-          'web.loadConfig.storageProfile': 'Perfil de almacenamiento',
           'web.loadConfig.d1Regions': 'Regiones D1',
           'web.loadConfig.emailProvider': 'Proveedor de email',
           'web.loadConfig.envConflictConfirm': 'Esta configuración usa un nombre de entorno existente.\\n\\nEntorno: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuar y desplegar puede sobrescribir el entorno existente. ¿Continuar?',
@@ -1752,7 +1747,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Ativado (tenant inicial: {{tenant}})',
           'web.loadConfig.components': 'Componentes',
-          'web.loadConfig.storageProfile': 'Perfil de armazenamento',
           'web.loadConfig.d1Regions': 'Regiões D1',
           'web.loadConfig.emailProvider': 'Provedor de email',
           'web.loadConfig.envConflictConfirm': 'Esta configuração usa um nome de ambiente existente.\\n\\nAmbiente: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuar e fazer deploy pode sobrescrever o ambiente existente. Continuar?',
@@ -1821,7 +1815,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Activé (tenant initial : {{tenant}})',
           'web.loadConfig.components': 'Composants',
-          'web.loadConfig.storageProfile': 'Profil de stockage',
           'web.loadConfig.d1Regions': 'Régions D1',
           'web.loadConfig.emailProvider': 'Fournisseur email',
           'web.loadConfig.envConflictConfirm': 'Cette configuration utilise un nom d’environnement existant.\\n\\nEnvironnement : {{env}}\\nWorkers : {{workers}} / D1 : {{d1}} / KV : {{kv}}\\n\\nContinuer et déployer peut écraser l’environnement existant. Continuer ?',
@@ -1890,7 +1883,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-Tenant',
           'web.loadConfig.enabledInitialTenant': 'Aktiviert (erster Tenant: {{tenant}})',
           'web.loadConfig.components': 'Komponenten',
-          'web.loadConfig.storageProfile': 'Speicherprofil',
           'web.loadConfig.d1Regions': 'D1-Regionen',
           'web.loadConfig.emailProvider': 'E-Mail-Anbieter',
           'web.loadConfig.envConflictConfirm': 'Diese Konfiguration verwendet einen bestehenden Umgebungsnamen.\\n\\nUmgebung: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nFortfahren und deployen kann die bestehende Umgebung überschreiben. Fortfahren?',
@@ -1959,7 +1951,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '멀티 테넌트',
           'web.loadConfig.enabledInitialTenant': '활성화됨(초기 테넌트: {{tenant}})',
           'web.loadConfig.components': '컴포넌트',
-          'web.loadConfig.storageProfile': '스토리지 프로필',
           'web.loadConfig.d1Regions': 'D1 리전',
           'web.loadConfig.emailProvider': '이메일 제공자',
           'web.loadConfig.envConflictConfirm': '이 구성은 기존 환경 이름을 사용합니다.\\n\\n환경: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\n계속 배포하면 기존 환경을 덮어쓸 수 있습니다. 계속할까요?',
@@ -2028,7 +2019,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Мультитенантность',
           'web.loadConfig.enabledInitialTenant': 'Включено (первый тенант: {{tenant}})',
           'web.loadConfig.components': 'Компоненты',
-          'web.loadConfig.storageProfile': 'Профиль хранения',
           'web.loadConfig.d1Regions': 'Регионы D1',
           'web.loadConfig.emailProvider': 'Провайдер почты',
           'web.loadConfig.envConflictConfirm': 'Эта конфигурация использует имя существующей среды.\\n\\nСреда: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nПродолжение и деплой могут перезаписать существующую среду. Продолжить?',
@@ -2097,7 +2087,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Aktif (tenant awal: {{tenant}})',
           'web.loadConfig.components': 'Komponen',
-          'web.loadConfig.storageProfile': 'Profil storage',
           'web.loadConfig.d1Regions': 'Region D1',
           'web.loadConfig.emailProvider': 'Provider email',
           'web.loadConfig.envConflictConfirm': 'Konfigurasi ini memakai nama environment yang sudah ada.\\n\\nEnvironment: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nMelanjutkan deployment dapat menimpa environment yang ada. Lanjutkan?',
@@ -2156,7 +2145,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.rescan': 'Rescan',
           'web.envDetail.overview': 'Overview',
           'web.envDetail.capacityTab': 'D1 Capacity',
-          'web.envDetail.capacityTitle': 'Tenant D1 Capacity',
+          'web.envDetail.capacityTitle': 'Control Plane Capacity',
           'web.envDetail.capacityHint': 'Server-owned placement plan',
           'web.envDetail.capacityScope': 'Scope',
           'web.envDetail.capacityShared': 'Shared pool',
@@ -4722,33 +4711,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <div id="section-database" class="setup-database-section hidden">
       <section class="row">
         <div class="rowlabel">
-          <h2 data-i18n="web.db.storageProfileTitle">Storage Profile</h2>
+          <h2>D1 Control Plane</h2>
         </div>
         <div class="rowbody">
-          <div class="radiocards db-profile-cards">
-            <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:shared-d1">
-              <span class="dot" aria-hidden="true"></span>
-              <span class="nm">
-                <span data-i18n="web.db.sharedD1Title">Shared D1</span>
-                <small data-i18n="web.db.sharedD1Desc">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
-              </span>
-              <span class="st"></span>
-            </label>
-            <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1" checked>
-              <span class="dot" aria-hidden="true"></span>
-              <span class="nm">
-                <span data-i18n="web.db.tenantD1Title">Tenant D1</span>
-                <small data-i18n="web.db.tenantD1Desc">Bootstrap the Control Plane and initial tenant shards. Later capacity is provisioned automatically.</small>
-              </span>
-              <span class="st"></span>
-            </label>
-          </div>
-
+          <p>Control Worker, Control DB, Lookup, and the signed Runtime Registry are always provisioned.</p>
+          <p class="f-help">The initial tenant uses <code>tenant_exclusive</code> placement. Tenant placement can later be selected per tenant.</p>
         </div>
-        <div class="rownote" data-i18n="web.db.storageProfileDesc">
-          Select how user core/PII data is placed for this deployment.
+        <div class="rownote">
+          Single and multiple D1 assignments use the same runtime resolver.
         </div>
       </section>
 
@@ -5447,7 +5417,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       <div id="pane-capacity" class="tabpane" data-env-pane="capacity">
         <div class="sechead">
-          <span class="idx">D1</span><h3 data-i18n="web.envDetail.capacityTitle">Tenant D1 Capacity</h3>
+          <span class="idx">D1</span><h3 data-i18n="web.envDetail.capacityTitle">Control Plane Capacity</h3>
           <span class="hint" data-i18n="web.envDetail.capacityHint">Server-owned placement plan</span>
         </div>
         <div class="twocol">
@@ -5800,16 +5770,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let provisionPollInterval = null;
     let lastPrerequisitesResult = null;
 
-    function normalizeStorageProfileId(value) {
-      return value === 'builtin:storage:shared-d1'
-        ? 'builtin:storage:shared-d1'
-        : 'builtin:storage:tenant-d1';
-    }
-
-    function buildProfilesConfig(storageProfileId) {
+    function buildProfilesConfig() {
       return {
         defaults: {
-          storage: normalizeStorageProfileId(storageProfileId),
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:default',
         },
@@ -5820,32 +5783,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           hyperdrive: {},
         },
         seed: {
-          storage: [],
           audit: [],
           residency: [],
         },
       };
     }
 
-    function getSelectedStorageProfileId() {
-      return normalizeStorageProfileId(
-        document.querySelector('input[name="storage-profile"]:checked')?.value
-      );
-    }
-
-    function setSelectedStorageProfileId(profileId) {
-      const normalized = normalizeStorageProfileId(profileId);
-      document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
-        input.checked = input.value === normalized;
-      });
-      syncAutomaticProvisioningUi();
-    }
-
     function automaticProvisioningEnabled() {
-      return (
-        getSelectedStorageProfileId() === 'builtin:storage:tenant-d1' &&
-        document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off'
-      );
+      return document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off';
     }
 
     function setAutomaticProvisioningEnabled(enabled) {
@@ -5856,16 +5801,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function syncAutomaticProvisioningUi() {
-      const tenantD1 = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
-      document.getElementById('automatic-provisioning-row')?.classList.toggle('hidden', !tenantD1);
       document
         .getElementById('control-token-bootstrap-row')
-        ?.classList.toggle('hidden', !tenantD1 || !automaticProvisioningEnabled());
+        ?.classList.toggle('hidden', !automaticProvisioningEnabled());
     }
-
-    document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
-      input.addEventListener('change', syncAutomaticProvisioningUi);
-    });
     document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
       input.addEventListener('change', syncAutomaticProvisioningUi);
     });
@@ -5900,9 +5839,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function getCompleteD1Count() {
       const baseCount = ${D1_DATABASES.length};
-      if (config?.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
-        return baseCount;
-      }
       return baseCount + 3;
     }
 
@@ -7096,13 +7032,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         components.loginUi !== false ? 'Login UI' : null,
         components.adminUi !== false ? 'Admin UI' : null,
       ].filter(Boolean);
-      const profile = (
-        raw.profiles?.defaults?.storage ||
-        config.profiles?.defaults?.storage ||
-        raw.storageProfile ||
-        config.storageProfile ||
-        'shared-d1'
-      ).replace(/^builtin:storage:/, '');
+      const placement = raw.tenant?.placementPolicy || config.tenant?.placementPolicy || 'tenant_exclusive';
       const coreRegion =
         raw.residency?.core?.location ||
         config.residency?.core?.location ||
@@ -7141,7 +7071,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             : t('config.disabled'),
         ],
         [t('web.loadConfig.components'), componentNames.join(' + ') || '-'],
-        [t('web.loadConfig.storageProfile'), profile],
+        ['D1 routing', 'Control Plane'],
+        ['Initial tenant placement', placement],
         [t('web.loadConfig.d1Regions'), 'core: ' + coreRegion + ' / pii: ' + piiRegion],
         [
           t('web.loadConfig.emailProvider'),
@@ -7211,7 +7142,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function resetDatabaseAndEmailForm() {
-      setSelectedStorageProfileId('builtin:storage:shared-d1');
+      setAutomaticProvisioningEnabled(true);
       document.getElementById('feature-queue-enabled').checked = false;
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
@@ -8082,7 +8013,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         bridge: true,
         policy: true,
       };
-      const profiles = loadedConfig.profiles || buildProfilesConfig('builtin:storage:shared-d1');
+      const profiles = loadedConfig.profiles || buildProfilesConfig();
       const features = {
         queue: { enabled: loadedConfig.features?.queue?.enabled === true },
         r2: { enabled: loadedConfig.features?.r2?.enabled !== false },
@@ -8119,8 +8050,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
       updateBaseDomainUI();
-      setSelectedStorageProfileId(config.profiles?.defaults?.storage);
-      setAutomaticProvisioningEnabled(config.tenantD1?.automaticProvisioning === true);
+      setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
       document.getElementById('feature-queue-enabled').checked =
@@ -9168,6 +9098,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         tenant: {
           name: tenantName,
           displayName: tenantDisplayName,
+          placementPolicy: 'tenant_exclusive',
           multiTenant: multiTenantEnabled,
           baseDomain: multiTenantEnabled ? baseDomain : undefined,
           nakedDomain: nakedDomain,
@@ -9189,8 +9120,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           r2: { enabled: true },
           email: { provider: 'none' },
         },
-        profiles: buildProfilesConfig('builtin:storage:tenant-d1'),
-        tenantD1: { automaticProvisioning: true },
+        profiles: buildProfilesConfig(),
+        controlPlane: { automaticProvisioning: true },
         zoneId: domainZoneId || null,
         customDomainBinding: baseDomain
           ? (document.getElementById('custom-domain-binding')?.checked ?? false)
@@ -9238,7 +9169,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     document.getElementById('btn-continue-database').addEventListener('click', () => {
       // Get selected values
-      const storageProfileId = getSelectedStorageProfileId();
       const coreLocation = document.querySelector('input[name="db-core-location"]:checked').value;
       const piiLocation = document.querySelector('input[name="db-pii-location"]:checked').value;
 
@@ -9256,18 +9186,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         pii: parseDbLocation(piiLocation),
       };
       config.profiles = {
-        ...(config.profiles || buildProfilesConfig(storageProfileId)),
+        ...(config.profiles || buildProfilesConfig()),
         defaults: {
           ...((config.profiles && config.profiles.defaults) || {}),
-          storage: storageProfileId,
           audit: config.profiles?.defaults?.audit || 'builtin:audit:standard',
           residency: config.profiles?.defaults?.residency || 'builtin:residency:default',
         },
         registry: config.profiles?.registry || { backend: 'kv' },
         references: config.profiles?.references || { hyperdrive: {} },
-        seed: config.profiles?.seed || { storage: [], audit: [], residency: [] },
+        seed: config.profiles?.seed || { audit: [], residency: [] },
       };
-      config.tenantD1 = { automaticProvisioning: automaticProvisioningEnabled() };
+      config.controlPlane = { automaticProvisioning: automaticProvisioningEnabled() };
 
       // Proceed to email configuration
       setStep(6);
@@ -9561,8 +9490,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             databaseConfig: config.database,
             createQueues: config.features?.queue?.enabled === true,
             createR2: true,
-            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:tenant-d1',
-            automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+            automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
           },
         });
 
@@ -10248,9 +10176,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
       appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
       if (d1Count) d1Count.textContent = '3';
-      if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
-        appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
-      }
+      appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
 
       for (let i = 0; i < resources.kv.length; i += 2) {
         appendPreviewPair(kvList, resources.kv[i], resources.kv[i + 1] || '');
@@ -10410,7 +10336,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           core: { location: 'auto', jurisdiction: 'none' },
           pii: { location: 'auto', jurisdiction: 'none' },
         },
-        profiles: config.profiles || buildProfilesConfig('builtin:storage:shared-d1'),
+        profiles: config.profiles || buildProfilesConfig(),
         features: {
           queue: {
             enabled: config.features?.queue?.enabled === true,
@@ -10828,9 +10754,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const status = document.getElementById('env-control-automatic-status');
       const inputs = document.getElementById('env-control-automatic-inputs');
       const message = document.getElementById('env-control-automatic-message');
-      const tenantD1 = result?.success && result.tenantD1 === true;
-      section.classList.toggle('hidden', !tenantD1);
-      if (!tenantD1) return;
+      const controlPlane = result?.success && result.controlPlane === true;
+      section.classList.toggle('hidden', !controlPlane);
+      if (!controlPlane) return;
       const capabilityState = result.authority?.capabilityState ||
         (result.enabled ? 'pending' : 'disabled');
       status.textContent = capabilityState === 'ready'

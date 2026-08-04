@@ -64,7 +64,7 @@ describe('audit event classification', () => {
       behavior: 'fail_closed_or_strong_retry',
     });
     expect(classifyAuditEvent('storage_destination.credential.update')).toMatchObject({
-      category: 'storage_profile',
+      category: 'data_governance',
       behavior: 'fail_closed_or_strong_retry',
     });
     expect(classifyAuditEvent('refresh_token.theft_detected')).toMatchObject({

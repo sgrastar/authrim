@@ -5,10 +5,10 @@
   "requiredDataRoles": ["plugin_runner", "tenant_core/default", "tenant_core/users"],
   "bindings": [
     {
-      "name": "TDB_SHARED_CORE",
+      "name": "PLATFORM_NOTIFICATION_DB",
       "kind": "d1",
       "required": true,
-      "dataRole": "tenant_core/default"
+      "capability": "notification_intent.platform"
     },
     {
       "name": "PLUGIN_RUNNER_DB",

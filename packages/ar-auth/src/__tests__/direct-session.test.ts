@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => {
         userCore: userCoreRepository,
       },
     })),
+    resolveAccountDataContextFromHono: vi.fn(async (_c, userId: string) => ({
+      tenantId: 'default',
+      accountId: `account:${userId}`,
+      legacyUserId: userId,
+    })),
     createPIIContextFromHono: vi.fn(() => ({
       piiRepositories: {
         userPII: userPIIRepository,
@@ -83,6 +88,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: mocks.isShardedSessionId,
     getTenantIdFromContext: mocks.getTenantIdFromContext,
     createAuthContextFromHono: mocks.createAuthContextFromHono,
+    createAccountAuthContextFromHono: mocks.createAuthContextFromHono,
+    resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     createPIIContextFromHono: mocks.createPIIContextFromHono,
     hasPIIDatabase: mocks.hasPIIDatabase,
     getLogger: vi.fn(() => ({

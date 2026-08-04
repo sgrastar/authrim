@@ -12,8 +12,8 @@
  * ```typescript
  * // Handler that only needs Non-PII data
  * export async function handleAuthorize(ctx: AuthContext, c: Context) {
- *   const session = await ctx.repositories.session.findById(sessionId);
- *   // Cannot access ctx.piiRepositories - compile error
+ *   const client = await ctx.repositories.client.findByClientId(clientId);
+ *   // Session state is accessed through SessionStore Durable Objects.
  * }
  *
  * // Handler that needs PII data
@@ -35,7 +35,6 @@ import type { PIIPartitionRouter, PartitionKey } from '../db/partition-router';
 import type { UserCacheScope, UserPiiCacheMode } from '../utils/kv';
 import type {
   ClientRepository,
-  SessionRepository,
   PasskeyRepository,
   TotpCredentialRepository,
   RoleRepository,
@@ -58,9 +57,6 @@ import type {
 export interface CoreRepositories {
   /** OAuth 2.0 / OIDC clients */
   client: ClientRepository;
-
-  /** User sessions with expiration handling */
-  session: SessionRepository;
 
   /** WebAuthn passkey credentials */
   passkey: PasskeyRepository;
@@ -128,10 +124,10 @@ export interface AuthContext {
   /** Original Hono context (for request/env access) */
   honoContext: HonoContext;
 
-  /** Profile-aware user cache key scope for cross-request caches. */
+  /** Route-generation-aware user cache key scope for cross-request caches. */
   userCacheScope?: UserCacheScope;
 
-  /** Runtime PII cache behavior selected by the active storage profile. */
+  /** Runtime PII cache behavior selected by the resolved account route. */
   piiCacheMode?: UserPiiCacheMode;
 }
 

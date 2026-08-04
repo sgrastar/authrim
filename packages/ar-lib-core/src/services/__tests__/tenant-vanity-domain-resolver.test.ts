@@ -1,5 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db';
+
+const resolverMocks = vi.hoisted(() => ({
+  resolveAlias: vi.fn(),
+  resolveTenantStore: vi.fn(),
+}));
+
+vi.mock('../lookup-directory/resolver', () => ({
+  LookupRouteResolver: class {
+    resolveAlias = resolverMocks.resolveAlias;
+  },
+}));
+
+vi.mock('../lookup-directory/shard-registry', () => ({
+  loadVerifiedLookupBucketAssignmentProvider: vi.fn(async () => ({
+    resolveActiveAssignment: vi.fn(),
+  })),
+}));
+
+vi.mock('../tenant-database-resolver', () => ({
+  resolveTenantDatabaseSourceFromRegistry: resolverMocks.resolveTenantStore,
+}));
+
 import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
@@ -33,9 +55,33 @@ describe('tenant-vanity-domain-resolver', () => {
     vi.clearAllMocks();
   });
 
-  it('resolves tenant IDs from an adapter source and warms the cache', async () => {
+  it('resolves and destination-revalidates a signed custom-domain alias', async () => {
     const adapter = createMockAdapter();
     const kv = createMockKV();
+
+    resolverMocks.resolveAlias.mockResolvedValueOnce({
+      tenantId: 'tenant-123',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 3,
+        residencyPolicyId: 'policy-1',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'global',
+          shardId: 'core-1',
+          bindingRef: 'TDB_CORE_001',
+          requiredBindingRouteGeneration: 3,
+        },
+      },
+    });
+    resolverMocks.resolveTenantStore.mockResolvedValueOnce({
+      source: adapter,
+      residencyPolicyId: 'policy-1',
+      residencyPartition: 'global',
+      shardId: 'core-1',
+      bindingRef: 'TDB_CORE_001',
+      bindingRouteGeneration: 3,
+    });
 
     vi.mocked(adapter.queryOne).mockResolvedValueOnce({
       tenant_id: 'tenant-123',
@@ -43,14 +89,151 @@ describe('tenant-vanity-domain-resolver', () => {
       is_active: 1,
     });
 
-    const result = await resolveTenantFromVanityHost(adapter, kv, 'Login.Example.com');
+    const result = await resolveTenantFromVanityHost(
+      {
+        AUTHRIM_CONFIG: kv,
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        TENANT_RUNTIME_REGISTRY: {} as never,
+        TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+      },
+      'Login.Example.com'
+    );
 
     expect(result).toBe('tenant-123');
     expect(adapter.queryOne).toHaveBeenCalledWith(
       expect.stringContaining("tenants.lifecycle_state = 'active'"),
-      ['login.example.com']
+      ['login.example.com', 'tenant-123']
     );
     expect(kv.put).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an alias route ahead of the signed Registry route', async () => {
+    const adapter = createMockAdapter();
+    resolverMocks.resolveAlias.mockResolvedValueOnce({
+      tenantId: 'tenant-123',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 4,
+        residencyPolicyId: 'policy-1',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'global',
+          shardId: 'core-1',
+          bindingRef: 'TDB_CORE_001',
+          requiredBindingRouteGeneration: 4,
+        },
+      },
+    });
+    resolverMocks.resolveTenantStore.mockResolvedValueOnce({
+      source: adapter,
+      residencyPolicyId: 'policy-1',
+      residencyPartition: 'global',
+      shardId: 'core-1',
+      bindingRef: 'TDB_CORE_001',
+      bindingRouteGeneration: 3,
+    });
+
+    await expect(
+      resolveTenantFromVanityHost(
+        {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          TENANT_RUNTIME_REGISTRY: {} as never,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+        },
+        'login.example.com'
+      )
+    ).resolves.toBeNull();
+    expect(adapter.queryOne).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Lookup owner that is not active at the exact destination', async () => {
+    const adapter = createMockAdapter();
+    resolverMocks.resolveAlias.mockResolvedValueOnce({
+      tenantId: 'tenant-123',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 3,
+        residencyPolicyId: 'policy-1',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'global',
+          shardId: 'core-1',
+          bindingRef: 'TDB_CORE_001',
+          requiredBindingRouteGeneration: 3,
+        },
+      },
+    });
+    resolverMocks.resolveTenantStore.mockResolvedValueOnce({
+      source: adapter,
+      residencyPolicyId: 'policy-1',
+      residencyPartition: 'global',
+      shardId: 'core-1',
+      bindingRef: 'TDB_CORE_001',
+      bindingRouteGeneration: 3,
+    });
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce(null);
+
+    await expect(
+      resolveTenantFromVanityHost(
+        {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          TENANT_RUNTIME_REGISTRY: {} as never,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+        },
+        'login.example.com'
+      )
+    ).resolves.toBeNull();
+  });
+
+  it('treats a cached tenant as a hint and falls back after exact revalidation fails', async () => {
+    const cachedAdapter = createMockAdapter();
+    const resolvedAdapter = createMockAdapter();
+    const kv = createMockKV();
+    vi.mocked(kv.get).mockResolvedValueOnce('tenant-stale');
+    resolverMocks.resolveTenantStore
+      .mockResolvedValueOnce({ source: cachedAdapter })
+      .mockResolvedValueOnce({
+        source: resolvedAdapter,
+        residencyPolicyId: 'policy-1',
+        residencyPartition: 'global',
+        shardId: 'core-1',
+        bindingRef: 'TDB_CORE_001',
+        bindingRouteGeneration: 3,
+      });
+    vi.mocked(cachedAdapter.queryOne).mockResolvedValueOnce(null);
+    resolverMocks.resolveAlias.mockResolvedValueOnce({
+      tenantId: 'tenant-123',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 3,
+        residencyPolicyId: 'policy-1',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'global',
+          shardId: 'core-1',
+          bindingRef: 'TDB_CORE_001',
+          requiredBindingRouteGeneration: 3,
+        },
+      },
+    });
+    vi.mocked(resolvedAdapter.queryOne).mockResolvedValueOnce({
+      tenant_id: 'tenant-123',
+      status: 'active',
+      is_active: 1,
+    });
+
+    await expect(
+      resolveTenantFromVanityHost(
+        {
+          AUTHRIM_CONFIG: kv,
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          TENANT_RUNTIME_REGISTRY: {} as never,
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+        },
+        'login.example.com'
+      )
+    ).resolves.toBe('tenant-123');
+    expect(kv.delete).toHaveBeenCalledWith('v1:tenant-vanity-domain:login.example.com');
   });
 
   it('loads the primary vanity domain through the portable adapter helper', async () => {
@@ -77,7 +260,7 @@ describe('tenant-vanity-domain-resolver', () => {
     });
 
     const result = await getPrimaryTenantVanityDomain(
-      { DB: adapter as never, AUTHRIM_CONFIG: kv } as never,
+      { tenantCoreDb: adapter, AUTHRIM_CONFIG: kv } as never,
       'tenant-123'
     );
 
@@ -119,7 +302,7 @@ describe('tenant-vanity-domain-resolver', () => {
     );
 
     const result = await getPrimaryTenantVanityDomain(
-      { DB: adapter as never, AUTHRIM_CONFIG: kv } as never,
+      { tenantCoreDb: adapter, AUTHRIM_CONFIG: kv } as never,
       'tenant-123'
     );
 
@@ -141,7 +324,7 @@ describe('tenant-vanity-domain-resolver', () => {
     vi.mocked(adapter.queryOne).mockResolvedValueOnce(null);
 
     const result = await getPrimaryTenantVanityDomain(
-      { DB: adapter as never, AUTHRIM_CONFIG: kv } as never,
+      { tenantCoreDb: adapter, AUTHRIM_CONFIG: kv } as never,
       'tenant-123'
     );
 

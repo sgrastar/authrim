@@ -28,15 +28,10 @@ import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
 } from '../services/tenant-vanity-domain-resolver';
-import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
 import {
   resolveTenantMetadataContext,
   type TenantMetadataContext,
 } from '../services/runtime-data-context';
-import {
-  resolveUserStoreRuntimeSourcesFromEnv,
-  type ResolvedUserStoreRuntimeSources,
-} from '../services/user-store-runtime-sources';
 import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
 /**
@@ -104,10 +99,6 @@ const DIAGNOSTIC_TIMING_PATHS = new Set([
   '/api/v1/login/interactions/start',
 ]);
 const tenantExistsCache = new WeakMap<object, Map<string, RequestContextCacheEntry<true>>>();
-const runtimeUserStoreSourcesCache = new WeakMap<
-  object,
-  Map<string, RequestContextCacheEntry<ResolvedUserStoreRuntimeSources>>
->();
 
 function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
@@ -231,10 +222,6 @@ function shouldAttemptVanityHostResolution(
   return true;
 }
 
-function isTenantDatabaseControlPlanePath(path: string): boolean {
-  return path.startsWith('/api/admin/jobs/tenant-databases/');
-}
-
 function isPublicAuthenticationMethodsPath(path: string): boolean {
   return path === '/api/auth/authentication-methods';
 }
@@ -249,10 +236,6 @@ function shouldResolveTenantDataContexts(
     | 'public_protocol_or_rest',
   path: string
 ): boolean {
-  if (isTenantDatabaseControlPlanePath(path)) {
-    return false;
-  }
-
   if (isPublicAuthenticationMethodsPath(path)) {
     return false;
   }
@@ -283,27 +266,6 @@ async function validateTenantExistsWithIsolateCache(
     cache.delete(cacheKey);
   }
   return exists;
-}
-
-async function resolveRuntimeUserStoreSourcesWithIsolateCache(
-  env: Env,
-  tenantId: string,
-  requestPath: string
-): Promise<ResolvedUserStoreRuntimeSources> {
-  const cache = getEnvScopedCache(runtimeUserStoreSourcesCache, env);
-  const cacheKey = `tenant:${tenantId}:path:${requestPath}`;
-  const now = Date.now();
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const value = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId, { requestPath });
-  setBoundedCacheEntry(cache, cacheKey, {
-    value,
-    expiresAt: now + getRequestContextCacheTtlMs(env),
-  });
-  return value;
 }
 
 function getConfiguredUrlHostname(value: string | undefined): string | null {
@@ -407,9 +369,6 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
-    const authCoreSource = await timeDiagnosticSpan(timingSpans, 'rc_auth_source', () =>
-      resolveAuthCorePersistenceSourceFromEnv(c.env).catch(() => c.env.DB)
-    );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
     if (isReservedUiHost(c.env, requestHost)) {
@@ -425,7 +384,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
     ) {
       const vanityTenantId = await timeDiagnosticSpan(timingSpans, 'rc_vanity_host', () =>
-        resolveTenantFromVanityHost(authCoreSource, c.env.AUTHRIM_CONFIG, requestHost)
+        resolveTenantFromVanityHost(c.env, requestHost)
       );
       if (vanityTenantId) {
         tenantResult.success = true;
@@ -494,17 +453,14 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
 
     // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
     // Uses positive-only isolate/KV caches to avoid per-request storage lookups.
-    // Fail-open on D1 errors to prevent outages from blocking all requests.
+    // Missing routes and storage errors fail closed unless a positive cache entry already exists.
     const shouldValidateTenantExists =
       isMultiTenantEnabled(c.env) &&
       !!tenantId &&
       (requestClass === 'tenant_scoped_admin' || tenantResult.success);
 
     let tenantMetadataContext: TenantMetadataContext | undefined;
-    if (
-      c.env.DEFAULT_STORAGE_PROFILE_ID &&
-      shouldResolveTenantDataContexts(requestClass, c.req.path)
-    ) {
+    if (shouldResolveTenantDataContexts(requestClass, c.req.path)) {
       try {
         tenantMetadataContext = await timeDiagnosticSpan(timingSpans, 'rc_tenant_metadata', () =>
           resolveTenantMetadataContext(c.env, tenantId)
@@ -514,7 +470,6 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           return c.json(
             {
               error: error.code,
-              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
               route: c.req.path,
               tenant_id: tenantId,
             },
@@ -527,7 +482,6 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           error: code,
           tenantId,
           path: c.req.path,
-          storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
         });
         return c.json(
           { error: 'temporarily_unavailable', error_description: 'Tenant unavailable' },
@@ -538,11 +492,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
 
     if (shouldValidateTenantExists) {
       const exists = await timeDiagnosticSpan(timingSpans, 'rc_tenant_exists', () =>
-        validateTenantExistsWithIsolateCache(
-          c.env,
-          tenantMetadataContext?.coreDb ?? authCoreSource,
-          tenantId
-        )
+        validateTenantExistsWithIsolateCache(c.env, tenantMetadataContext?.coreDb, tenantId)
       );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -566,7 +516,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         getPrimaryTenantVanityDomain(
           {
             AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG,
-            DB: tenantMetadataContext?.coreDb ?? authCoreSource,
+            tenantCoreDb: tenantMetadataContext?.coreDb,
           },
           tenantId
         )
@@ -627,39 +577,6 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     if (tenantMetadataContext) {
       ctx.set('tenantMetadataContext', tenantMetadataContext);
     }
-    if (
-      tenantMetadataContext?.storageProfileId !== 'builtin:storage:tenant-d1' &&
-      shouldResolveTenantDataContexts(requestClass, c.req.path)
-    ) {
-      try {
-        ctx.set(
-          'runtimeUserStoreSources',
-          await timeDiagnosticSpan(timingSpans, 'rc_user_sources', () =>
-            resolveRuntimeUserStoreSourcesWithIsolateCache(c.env, tenantId, c.req.path)
-          )
-        );
-      } catch (error) {
-        if (error instanceof TenantDatabaseResolverError) {
-          logger.warn('Tenant database runtime source resolution failed', {
-            error: error.code,
-            tenantId,
-            path: c.req.path,
-            storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
-          });
-          return c.json(
-            {
-              error: error.code,
-              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
-              route: c.req.path,
-              tenant_id: tenantId,
-            },
-            409
-          );
-        }
-        throw error;
-      }
-    }
-
     // Log request start
     logger.debug('Request started', {
       method: c.req.method,

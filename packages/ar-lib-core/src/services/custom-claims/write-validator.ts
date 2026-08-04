@@ -9,6 +9,8 @@ import { upsertUserCustomFieldValue } from './non-pii-storage';
 export interface ValidateCustomClaimWriteParams {
   db: DatabaseSource;
   dbPii?: DatabaseSource | null;
+  /** Validate a not-yet-routed account whose provisioning contract guarantees a PII shard. */
+  piiStorageAvailable?: boolean;
   schemaDb?: DatabaseSource;
   cache?: KVNamespace | null;
   tenantId: string;
@@ -203,6 +205,7 @@ export async function validateCustomClaimWrite(
   const {
     db,
     dbPii = null,
+    piiStorageAvailable = false,
     schemaDb = db,
     cache = null,
     tenantId,
@@ -212,6 +215,9 @@ export async function validateCustomClaimWrite(
     mergeExistingValues = requireCompleteRecord && !!userId,
     deleteMissingFields = false,
   } = params;
+  if (piiStorageAvailable && userId) {
+    throw new Error('custom_claim_pii_availability_requires_unpersisted_user');
+  }
 
   const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
   const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
@@ -274,7 +280,7 @@ export async function validateCustomClaimWrite(
       continue;
     }
 
-    if (isPii && !dbPii) {
+    if (isPii && !dbPii && !piiStorageAvailable) {
       return { ok: false, error: `${label} requires PII storage` };
     }
 

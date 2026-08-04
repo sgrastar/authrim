@@ -1,4 +1,4 @@
--- Authrim tenant D1 control-plane schema.
+-- Authrim unified Control Plane schema.
 -- This database stores desired state and provider metadata only. It must never store
 -- Cloudflare API tokens, blind-index key bodies, raw email addresses, or private JWKs.
 

@@ -307,13 +307,13 @@ paths:
         - name: search
           in: query
           description: >-
-            Exact email address or account identifier for sharded tenant-D1 storage. Other storage
-            profiles may also support their documented text search behavior.
+            Exact email address or account identifier for a routed account. Search resolves the
+            signed Lookup route and does not scan unrelated assignments.
           schema:
             type: string
         - name: cursor
           in: query
-          description: Opaque signed continuation cursor returned by a sharded tenant-D1 response.
+          description: Opaque signed continuation cursor returned by a sharded assignment response.
           schema:
             type: string
             maxLength: 16384
@@ -328,7 +328,7 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         List canonical runtime users in the current tenant with optional search, verification, PII
-        status, and lifecycle filters. Sharded tenant-D1 storage uses bounded fan-out and an opaque
+        status, and lifecycle filters. Sharded assignments use bounded fan-out and an opaque
         cursor. Exact identifier search resolves one account route through Lookup instead of
         scanning all shards. A cursor whose signed shard-set generation is stale returns
         `cursor_stale`; clients should restart from the first page.
@@ -1442,14 +1442,26 @@ paths:
       summary: List runtime profiles.
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
+        - name: kind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/RuntimeProfileKind'
+        - name: include_builtins
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
       responses:
         '200':
           $ref: '#/components/responses/RuntimeProfileList'
         '400':
           $ref: '#/components/responses/Error'
       description: >-
-        List runtime profiles by kind from the configured registry backend, with reference and
-        activation status metadata for Admin UI validation.
+        List audit and residency profiles by kind from the configured registry backend, with
+        reference and activation status metadata for Admin UI validation. D1 placement is managed
+        on each tenant and is not a runtime profile.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1464,7 +1476,7 @@ paths:
         '200':
           $ref: '#/components/responses/RuntimeProfileDefaults'
       description: >-
-        Return deployment default runtime profile IDs, their effective profiles, and
+        Return deployment default audit and residency profile IDs, their effective profiles, and
         activation/reference status.
       security:
         - adminBearer: []
@@ -1485,8 +1497,8 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
       description: >-
-        Update one or more deployment default runtime profile references after validating that the
-        referenced profiles exist and can be activated.
+        Update one or more deployment default audit or residency profile references after validating
+        that the referenced profiles exist and can be activated.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1501,7 +1513,7 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            $ref: '#/components/schemas/RuntimeProfileKind'
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
@@ -1510,7 +1522,7 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
-      description: 'Return one runtime profile plus reference, activation, and storage policy metadata.'
+      description: Return one audit or residency profile plus reference and activation metadata.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1524,7 +1536,7 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            $ref: '#/components/schemas/RuntimeProfileKind'
         - $ref: '#/components/parameters/Id'
       requestBody:
         $ref: '#/components/requestBodies/RuntimeProfileUpsert'
@@ -1538,8 +1550,8 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
       description: >-
-        Create or replace a runtime profile in the configured registry backend. Built-in profiles
-        are read-only.
+        Create or replace an audit or residency profile in the configured registry backend.
+        Built-in profiles are read-only.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1553,7 +1565,7 @@ paths:
           in: path
           required: true
           schema:
-            type: string
+            $ref: '#/components/schemas/RuntimeProfileKind'
         - $ref: '#/components/parameters/Id'
       responses:
         '200':
@@ -1564,7 +1576,7 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
-      description: Delete a non-built-in runtime profile from the configured registry backend.
+      description: Delete a non-built-in audit or residency profile from the configured registry backend.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -1996,7 +2008,7 @@ paths:
         The source tenant must be active. Stored secret settings and credential hashes are copied
         only when explicitly requested. End-user accounts and their role assignments are never
         copied. This operation is platform-admin scoped and does not use X-Tenant-Id to identify
-        the destination. With tenant D1 storage, the endpoint returns 202 and the durable
+        the destination. The endpoint returns 202 and the durable Control Plane
         provisioning operation performs clone preparation before Lookup activation. The
         destination remains non-routable and in provisioning state until all selected resources,
         clone-preparation audit evidence, and a fresh signing-key rotation succeed. A success audit
@@ -12694,62 +12706,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/jobs/tenant-databases/activate-batch:
-    post:
-      tags:
-        - Jobs
-      operationId: postApiAdminJobsTenantDatabasesActivateBatch
-      summary: Create a tenant database activation batch job.
-      description: >-
-        Creates a tenant-database/activate-batch deployment request for system storage operators.
-        This is a plan/operator handoff job and is rejected when tenant D1 pool mode is managed by
-        setup tooling.
-      responses:
-        '202':
-          $ref: '#/components/responses/AdminJobTenantDatabaseActivateBatchAccepted'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminJobTenantDatabaseActivateBatch'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/jobs/tenant-databases/provision:
-    post:
-      tags:
-        - Jobs
-      operationId: postApiAdminJobsTenantDatabasesProvision
-      summary: Create a tenant database provisioning job.
-      description: >-
-        Creates a tenant-database/provision deployment request for system storage operators. The
-        Admin API records required operator steps but does not mutate Cloudflare D1 resources
-        directly.
-      responses:
-        '202':
-          $ref: '#/components/responses/AdminJobTenantDatabaseProvisionAccepted'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminJobTenantDatabaseProvision'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   /api/admin/jobs/types:
     get:
       tags:
@@ -13698,8 +13654,9 @@ paths:
       operationId: getApiAdminPlatformReadReplication
       summary: Get environment read replication status.
       description: >-
-        Returns the desired mode and aggregate convergence state for eligible Lookup and tenant D1
-        databases. This platform-wide operation is restricted to system administrators.
+        Returns the desired mode and aggregate convergence state for eligible Lookup and
+        Control-managed assignment databases. This platform-wide operation is restricted to system
+        administrators.
       responses:
         '200':
           description: Current read replication policy and convergence status.
@@ -13727,8 +13684,8 @@ paths:
       operationId: putApiAdminPlatformReadReplication
       summary: Set environment read replication mode.
       description: >-
-        Starts an asynchronous environment-wide rollout for all eligible Lookup and tenant D1
-        databases. Control and Plugin Runner databases are never included.
+        Starts an asynchronous environment-wide rollout for all eligible Lookup and Control-managed
+        assignment databases. Control and Plugin Runner databases are never included.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -14588,7 +14545,7 @@ paths:
       tags:
         - Database Connections
       operationId: getApiAdminPlatformControlPlaneShardCleanup
-      summary: List retired tenant D1 shards and cleanup progress.
+      summary: List retired assignment shards and cleanup progress.
       description: >-
         Returns at most 100 environment-scoped inactive shards with quarantine, drain, binding
         removal, D1 deletion, and destructive-operation gate status. This endpoint is read-only and
@@ -14626,7 +14583,7 @@ paths:
       tags:
         - Database Connections
       operationId: getApiAdminPlatformControlPlaneShardCleanupById
-      summary: Inspect one retired tenant D1 shard cleanup.
+      summary: Inspect one retired assignment shard cleanup.
       parameters:
         - $ref: '#/components/parameters/AdminShardCleanupShardId'
       responses:
@@ -14659,7 +14616,7 @@ paths:
       tags:
         - Database Connections
       operationId: postApiAdminPlatformControlPlaneShardQuarantine
-      summary: Quarantine a retired tenant D1 shard.
+      summary: Quarantine a retired assignment shard.
       description: >-
         Starts the signed Registry deny publication and minimum 30-minute drain. Allocation and
         runtime route guards reject new references immediately. The request is human-only,
@@ -17853,7 +17810,7 @@ paths:
       operationId: putApiAdminSettingsAuditStorage
       summary: Update audit storage settings
       description: >-
-        Updates the managed audit storage profile or selects a configured audit profile after
+        Updates the managed audit runtime profile or selects a configured audit profile after
         validating the environment and backend settings.
       responses:
         '200':
@@ -21492,8 +21449,8 @@ paths:
       operationId: getApiAdminTenantsByIdRuntimeProfiles
       summary: Get tenant runtime profiles
       description: >-
-        Resolves tenant runtime profile references, effective storage/audit/residency profiles, and
-        storage policy status.
+        Resolves tenant audit and residency profile references. D1 placement is returned by the
+        tenant resource and is not exposed as a runtime profile.
       responses:
         '200':
           $ref: '#/components/responses/TenantRuntimeProfiles'
@@ -30522,7 +30479,6 @@ components:
           schema:
             $ref: '#/components/schemas/RuntimeProfileDefaultsUpdateRequest'
           example:
-            storageProfileId: 'builtin:storage:shared-d1'
             auditProfileId: 'builtin:audit:d1'
             residencyProfileId: 'builtin:residency:global'
     RuntimeProfileUpsert:
@@ -30532,11 +30488,14 @@ components:
           schema:
             $ref: '#/components/schemas/RuntimeProfileUpsertRequest'
           example:
-            displayName: Shared D1 storage
-            description: Shared control-plane D1 storage profile.
-            bindings:
-              core: DB
-              pii: DB_PII
+            label: D1 audit log
+            description: Persist audit events in the configured audit D1 binding.
+            primary:
+              type: d1
+              bindingRef: DB_AUDIT
+              dataset: event_log
+            archive: null
+            sinks: []
     TenantClone:
       required: true
       content:
@@ -30721,35 +30680,6 @@ components:
               status: suspended
             dry_run: true
             result_delivery: auto
-    AdminJobTenantDatabaseProvision:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobTenantDatabaseProvisionRequest'
-          example:
-            tenant_slug: acme
-            generation: 2
-            activate: false
-            execution_mode: plan_only
-            reason: Prepare the next tenant database generation.
-    AdminJobTenantDatabaseActivateBatch:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobTenantDatabaseActivateBatchRequest'
-          example:
-            activation_batch_id: batch_2026_02
-            targets:
-              - tenant_id: acme
-                generation: 2
-                roles:
-                  - tenant_core
-                  - tenant_pii
-            require_health_check: true
-            require_binding_reconciliation: true
-            execution_mode: plan_only
     AdminJobReportGenerate:
       required: true
       content:
@@ -35668,18 +35598,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminJobUserBulkUpdateAccepted'
-    AdminJobTenantDatabaseProvisionAccepted:
-      description: Tenant database provisioning request accepted response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobTenantDatabaseProvisionAccepted'
-    AdminJobTenantDatabaseActivateBatchAccepted:
-      description: Tenant database activation batch request accepted response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobTenantDatabaseActivateBatchAccepted'
     AdminJobReportAccepted:
       description: Report generation job accepted response.
       content:
@@ -35719,18 +35637,7 @@ components:
           schema:
             $ref: '#/components/schemas/Tenant'
           examples:
-            standard:
-              summary: Tenant created in the shared control-plane database.
-              value:
-                id: acme
-                tenant_code: acme
-                name: Acme Corp
-                description: Production tenant for Acme Corp.
-                lifecycle_state: active
-                is_default: false
-                created_at: 1770000000
-                updated_at: 1770000000
-            tenantD1ControlPlane:
+            controlPlane:
               summary: Tenant accepted for asynchronous Control Worker provisioning.
               value:
                 id: acme
@@ -35822,7 +35729,7 @@ components:
           schema:
             $ref: '#/components/schemas/TenantCloneResponse'
     TenantCloneProvisioning:
-      description: Accepted asynchronous tenant D1 clone operation.
+      description: Accepted asynchronous Control Plane tenant clone operation.
       content:
         application/json:
           schema:
@@ -39681,18 +39588,12 @@ components:
             tenant_id: acme
             registry_backend: kv
             refs:
-              storageProfileId: default-storage
               auditProfileId: default-audit
               residencyProfileId: global
               inherited:
-                storage: true
                 audit: true
                 residency: true
             effective:
-              storage:
-                id: default-storage
-                kind: storage
-                label: Default storage
               audit:
                 id: default-audit
                 kind: audit
@@ -39701,9 +39602,6 @@ components:
                 id: global
                 kind: residency
                 label: Global
-            storage_policy:
-              tenantOverrideAllowed: true
-              tenantOverrideRequested: false
     TenantRuntimeRegistryEmergencyPurge:
       description: Emergency tenant runtime registry purge result.
       content:
@@ -42048,7 +41946,7 @@ components:
                 logging_delivery_queue: true
                 logging_delivery_bulk_queue: true
               runtime_profiles:
-                profile_id: 'builtin:storage:shared-d1'
+                audit_profile_id: 'builtin:audit:standard'
               checked_at: 1770000000
     AdminLoggingRuntimeVerify:
       description: Successful JSON response.
@@ -46030,7 +45928,6 @@ components:
     RuntimeProfileKind:
       type: string
       enum:
-        - storage
         - audit
         - residency
     RuntimeProfileObject:
@@ -46111,16 +46008,11 @@ components:
         reference_management:
           type: object
           additionalProperties: true
-        storage_policy:
-          type: object
-          additionalProperties: true
     RuntimeProfileDefaultsUpdateRequest:
       type: object
       additionalProperties: false
       minProperties: 1
       properties:
-        storageProfileId:
-          type: string
         auditProfileId:
           type: string
         residencyProfileId:
@@ -46197,9 +46089,6 @@ components:
           type: object
           additionalProperties: true
         reference_management:
-          type: object
-          additionalProperties: true
-        storage_policy:
           type: object
           additionalProperties: true
     RuntimeProfileUpsertRequest:
@@ -47430,153 +47319,6 @@ components:
               minimum: 0
             dry_run:
               type: boolean
-    AdminJobTenantDatabaseProvisionRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        tenant_slug:
-          type: string
-          minLength: 1
-          maxLength: 128
-        generation:
-          type: integer
-          minimum: 1
-        activate:
-          type: boolean
-          default: false
-        execution_mode:
-          type: string
-          enum:
-            - plan_only
-            - operator_cli
-          default: plan_only
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 500
-    AdminJobTenantDatabaseProvisionAccepted:
-      type: object
-      additionalProperties: false
-      required:
-        - job_id
-        - job_type
-        - status
-        - tenant_id
-        - created_by
-        - created_at
-      properties:
-        job_id:
-          type: string
-        job_type:
-          type: string
-          enum:
-            - tenant-database/provision
-        status:
-          type: string
-          enum:
-            - pending
-        tenant_id:
-          type: string
-        created_by:
-          type: string
-        created_at:
-          type: string
-          format: date-time
-    AdminJobTenantDatabaseActivateBatchRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - targets
-      properties:
-        activation_batch_id:
-          type: string
-          minLength: 1
-          maxLength: 128
-        targets:
-          type: array
-          minItems: 1
-          maxItems: 500
-          items:
-            type: object
-            additionalProperties: false
-            required:
-              - tenant_id
-              - generation
-            properties:
-              tenant_id:
-                type: string
-                minLength: 1
-                maxLength: 128
-              generation:
-                type: integer
-                minimum: 1
-              roles:
-                type: array
-                minItems: 1
-                items:
-                  type: string
-                  enum:
-                    - tenant_core
-                    - tenant_pii
-        scheduled_window:
-          type: object
-          additionalProperties: false
-          properties:
-            not_before:
-              type: string
-              format: date-time
-            not_after:
-              type: string
-              format: date-time
-            timezone:
-              type: string
-              minLength: 1
-              maxLength: 64
-        require_health_check:
-          type: boolean
-          default: true
-        require_binding_reconciliation:
-          type: boolean
-          default: true
-        execution_mode:
-          type: string
-          enum:
-            - plan_only
-            - operator_cli
-          default: plan_only
-        reason:
-          type: string
-          minLength: 1
-          maxLength: 500
-    AdminJobTenantDatabaseActivateBatchAccepted:
-      type: object
-      additionalProperties: false
-      required:
-        - job_id
-        - job_type
-        - status
-        - target_count
-        - created_by
-        - created_at
-      properties:
-        job_id:
-          type: string
-        job_type:
-          type: string
-          enum:
-            - tenant-database/activate-batch
-        status:
-          type: string
-          enum:
-            - pending
-        target_count:
-          type: integer
-          minimum: 1
-        created_by:
-          type: string
-        created_at:
-          type: string
-          format: date-time
     AdminJobReportGenerateRequest:
       type: object
       additionalProperties: false
@@ -59910,7 +59652,7 @@ components:
       properties:
         storage:
           type: object
-          description: Resolved audit storage profile and backend configuration.
+          description: Resolved audit runtime profile and backend configuration.
           additionalProperties: true
         retention:
           type: object
@@ -62981,9 +62723,6 @@ components:
         effective:
           type: object
           properties:
-            storage:
-              type: object
-              additionalProperties: true
             audit:
               type: object
               additionalProperties: true
@@ -62991,9 +62730,6 @@ components:
               type: object
               additionalProperties: true
           additionalProperties: false
-        storage_policy:
-          type: object
-          additionalProperties: true
       additionalProperties: false
     TenantRuntimeRegistryEmergencyPurgeRequest:
       type: object

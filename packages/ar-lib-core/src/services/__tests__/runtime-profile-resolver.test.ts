@@ -9,10 +9,6 @@ import {
 import {
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,
-  DEFAULT_STORAGE_PROFILE_ID,
-  EXTERNAL_DURABLE_STORAGE_PROFILE_ID,
-  SHARED_D1_STORAGE_PROFILE_ID,
-  TENANT_D1_STORAGE_PROFILE_ID,
 } from '../../types/runtime-profile';
 
 function createMockKV(initial: Record<string, string> = {}): KVNamespace {
@@ -52,13 +48,11 @@ describe('runtime-profile-resolver', () => {
   it('reads environment defaults from env-backed infrastructure settings', async () => {
     const defaults = await loadEnvironmentProfileDefaultsFromEnv({
       DB: createMockAdapter(),
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:external-postgres',
       DEFAULT_AUDIT_PROFILE_ID: DEFAULT_AUDIT_PROFILE_ID,
       DEFAULT_RESIDENCY_PROFILE_ID: 'builtin:residency:eu',
     });
 
     expect(defaults).toEqual({
-      storageProfileId: 'builtin:storage:external-postgres',
       auditProfileId: DEFAULT_AUDIT_PROFILE_ID,
       residencyProfileId: 'builtin:residency:eu',
     });
@@ -70,7 +64,6 @@ describe('runtime-profile-resolver', () => {
         DB: createMockAdapter(),
         AUTHRIM_CONFIG: createMockKV({
           'settings:tenant:tenant-a:tenant': JSON.stringify({
-            'tenant.storage_profile_id': 'tenant-a-storage',
             'tenant.audit_profile_id': '',
             'tenant.residency_profile_id': 'builtin:residency:eu',
           }),
@@ -80,7 +73,6 @@ describe('runtime-profile-resolver', () => {
     );
 
     expect(overrides).toEqual({
-      storageProfileId: 'tenant-a-storage',
       auditProfileId: null,
       residencyProfileId: 'builtin:residency:eu',
     });
@@ -95,8 +87,8 @@ describe('runtime-profile-resolver', () => {
       PROFILE_REGISTRY_BACKEND: 'database',
     });
 
-    const builtin = await registry.get('storage', DEFAULT_STORAGE_PROFILE_ID);
-    expect(builtin?.id).toBe(DEFAULT_STORAGE_PROFILE_ID);
+    const builtin = await registry.get('audit', DEFAULT_AUDIT_PROFILE_ID);
+    expect(builtin?.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
   });
 
   it('falls back to built-in profiles when no kv registry backend is configured', async () => {
@@ -104,100 +96,14 @@ describe('runtime-profile-resolver', () => {
       DB: createMockAdapter(),
     });
 
-    const builtin = await registry.get('storage', DEFAULT_STORAGE_PROFILE_ID);
-    const listed = await registry.list('storage');
+    const builtin = await registry.get('audit', DEFAULT_AUDIT_PROFILE_ID);
+    const listed = await registry.list('audit');
 
-    expect(builtin?.id).toBe(DEFAULT_STORAGE_PROFILE_ID);
-    expect(listed.some((profile) => profile.id === DEFAULT_STORAGE_PROFILE_ID)).toBe(true);
+    expect(builtin?.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
+    expect(listed.some((profile) => profile.id === DEFAULT_AUDIT_PROFILE_ID)).toBe(true);
   });
 
-  it('exposes deployment-level storage profiles with logical sources', async () => {
-    const registry = createRuntimeProfileRegistryFromEnv({
-      DB: createMockAdapter(),
-    });
-
-    const [shared, tenantD1, externalDurable] = await Promise.all([
-      registry.get('storage', SHARED_D1_STORAGE_PROFILE_ID),
-      registry.get('storage', TENANT_D1_STORAGE_PROFILE_ID),
-      registry.get('storage', EXTERNAL_DURABLE_STORAGE_PROFILE_ID),
-    ]);
-
-    expect(DEFAULT_STORAGE_PROFILE_ID).toBe(SHARED_D1_STORAGE_PROFILE_ID);
-    expect(shared).toMatchObject({
-      deploymentProfile: 'shared-d1',
-      scope: 'deployment',
-      logicalSources: {
-        identity_core: { bindingRef: 'DB' },
-        identity_pii: { bindingRef: 'DB_PII' },
-        passkeys: { bindingRef: 'DB' },
-        linked_identities: { bindingRef: 'DB_PII' },
-        consent: { bindingRef: 'DB' },
-        authorization: { bindingRef: 'DB' },
-      },
-    });
-    expect(tenantD1).toMatchObject({
-      deploymentProfile: 'tenant-d1',
-      scope: 'deployment',
-      logicalSources: {
-        identity_core: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
-        identity_pii: { resolverRef: 'tenant-database-registry', role: 'tenant_pii' },
-        passkeys: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
-        linked_identities: { resolverRef: 'tenant-database-registry', role: 'tenant_pii' },
-        consent: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
-        authorization: { resolverRef: 'tenant-database-registry', role: 'tenant_core' },
-      },
-    });
-    expect(externalDurable).toMatchObject({
-      deploymentProfile: 'external-durable',
-      scope: 'deployment',
-      logicalSources: {
-        identity_core: { driver: 'postgres', connectionRef: 'core-primary' },
-        identity_pii: { driver: 'postgres', connectionRef: 'pii-primary' },
-        passkeys: { driver: 'postgres', connectionRef: 'core-primary' },
-        linked_identities: { driver: 'postgres', connectionRef: 'pii-primary' },
-        consent: { driver: 'postgres', connectionRef: 'core-primary' },
-        authorization: { driver: 'postgres', connectionRef: 'core-primary' },
-      },
-    });
-  });
-
-  it('resolves tenant-specific storage profile overrides during runtime resolution', async () => {
-    const authrimConfig = createMockKV({
-      'settings:tenant:tenant-a:tenant': JSON.stringify({
-        'tenant.storage_profile_id': 'tenant-a-storage',
-      }),
-      'profile-registry:storage:tenant-a-storage': JSON.stringify({
-        id: 'tenant-a-storage',
-        kind: 'storage',
-        label: 'Tenant A Storage',
-        residencyProfileId: DEFAULT_RESIDENCY_PROFILE_ID,
-        slices: {
-          custom_claims: {
-            driver: 'postgres',
-            connectionRef: 'tenant-a-core',
-            role: 'core',
-          },
-        },
-      }),
-    });
-
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(
-      {
-        DB: createMockAdapter(),
-        AUTHRIM_CONFIG: authrimConfig,
-        DEFAULT_STORAGE_PROFILE_ID,
-        DEFAULT_AUDIT_PROFILE_ID,
-        DEFAULT_RESIDENCY_PROFILE_ID,
-      },
-      'tenant-a'
-    );
-
-    expect(resolved.refs.storageProfileId).toBe('tenant-a-storage');
-    expect(resolved.refs.inherited.storage).toBe(false);
-    expect(resolved.storageProfile.id).toBe('tenant-a-storage');
-  });
-
-  it('resolves effective runtime profiles with deployment storage and tenant residency override', async () => {
+  it('resolves effective audit and residency profiles with a tenant residency override', async () => {
     const authrimConfig = createMockKV({
       'settings:tenant:tenant-a:tenant': JSON.stringify({
         'tenant.residency_profile_id': 'builtin:residency:eu',
@@ -208,16 +114,13 @@ describe('runtime-profile-resolver', () => {
       {
         DB: createMockAdapter(),
         AUTHRIM_CONFIG: authrimConfig,
-        DEFAULT_STORAGE_PROFILE_ID,
         DEFAULT_AUDIT_PROFILE_ID,
         DEFAULT_RESIDENCY_PROFILE_ID,
       },
       'tenant-a'
     );
 
-    expect(resolved.refs.storageProfileId).toBe(DEFAULT_STORAGE_PROFILE_ID);
     expect(resolved.refs.auditProfileId).toBe(DEFAULT_AUDIT_PROFILE_ID);
-    expect(resolved.storageProfile.id).toBe(DEFAULT_STORAGE_PROFILE_ID);
     expect(resolved.auditProfile.id).toBe(DEFAULT_AUDIT_PROFILE_ID);
     expect(resolved.residencyProfile.id).toBe('builtin:residency:eu');
   });

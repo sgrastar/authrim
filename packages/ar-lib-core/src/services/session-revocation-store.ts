@@ -1,11 +1,9 @@
-import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { SessionRevocationStore } from '../durable-objects/SessionRevocationStore';
 import type {
   AccountAuthenticationLifecycle,
   AccountAuthenticationSnapshot,
 } from '../durable-objects/SessionRevocationStore';
-import { recordUserSessionRevocationEpoch } from './session-persistence';
 
 export const SESSION_REVOCATION_AUTHORITY = 'user-session-do-v1' as const;
 
@@ -172,29 +170,19 @@ export async function transitionAccountAuthenticationState(
   );
 }
 
-/**
- * During the authority migration, old sessions still read the D1 epoch and new sessions read
- * the user DO. Advance both stores and report failure unless both writes settle successfully.
- */
-export async function recordHybridUserSessionRevocationEpoch(
+/** Advance the sole per-user session revocation authority. */
+export async function recordUserSessionRevocation(
   env: Pick<Env, 'SESSION_REVOCATION_STORE'>,
-  adapter: DatabaseAdapter,
   tenantId: string,
   userId: string,
   revokedAfterMs = Date.now()
 ): Promise<number> {
   const accountId = `account:${userId}`;
-  const results = await Promise.allSettled([
-    recordUserSessionRevocationEpoch(adapter, tenantId, userId, revokedAfterMs),
-    getSessionRevocationStore(env, tenantId, userId).revokeAllRpc(
-      tenantId,
-      userId,
-      accountId,
-      revokedAfterMs
-    ),
-  ]);
-  if (results.some((result) => result.status === 'rejected')) {
-    throw new Error('session_revocation_authorities_unavailable');
-  }
+  await getSessionRevocationStore(env, tenantId, userId).revokeAllRpc(
+    tenantId,
+    userId,
+    accountId,
+    revokedAfterMs
+  );
   return revokedAfterMs;
 }

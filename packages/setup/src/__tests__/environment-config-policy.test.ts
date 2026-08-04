@@ -10,11 +10,14 @@ describe('environment config policy', () => {
     expect(hasDatabaseTopologyChange(current, next)).toBe(false);
   });
 
-  it('detects storage, reference, and database changes', () => {
+  it('detects Control Plane, placement, audit reference, and database changes', () => {
     const current = createDefaultConfig('test');
     for (const mutate of [
       (next: typeof current) => {
-        next.profiles.defaults.storage = 'builtin:storage:single-db';
+        next.controlPlane.automaticProvisioning = false;
+      },
+      (next: typeof current) => {
+        next.tenant.placementPolicy = 'shared_pool';
       },
       (next: typeof current) => {
         next.profiles.references.hyperdrive.primary = {

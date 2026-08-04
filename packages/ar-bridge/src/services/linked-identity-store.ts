@@ -8,22 +8,18 @@ import {
   ensureDatabaseAdapter,
   type DatabaseAdapter,
   type DatabaseSource,
-  resolveUserStoreRuntimeSourcesFromEnv,
-  getCachedAuthCorePersistenceContextFromEnv,
   resolveAccountDataContextByIdentifier,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity, TokenResponse } from '../types';
 import { encrypt, decrypt, getEncryptionKey } from '../utils/crypto';
 
 async function getTenantLinkedIdentityAdapter(
-  env: Env,
-  tenantId: string,
+  _env: Env,
+  _tenantId: string,
   partition: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<DatabaseAdapter> {
-  if (piiSource) return ensureDatabaseAdapter(piiSource, partition);
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
-  return ensureDatabaseAdapter(sources.piiDb ?? sources.coreDb, partition);
+  return ensureDatabaseAdapter(piiSource, partition);
 }
 
 /**
@@ -33,7 +29,7 @@ export async function getLinkedIdentityById(
   env: Env,
   tenantId: string,
   id: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<LinkedIdentity | null> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -58,7 +54,7 @@ export async function findLinkedIdentity(
   tenantId: string,
   providerId: string,
   providerUserId: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<LinkedIdentity | null> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -166,7 +162,7 @@ export async function findLinkedIdentitiesByProviderSub(
   tenantId: string,
   providerId: string,
   providerUserId: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<LinkedIdentity[]> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -195,12 +191,8 @@ export async function findLinkedIdentitiesAcrossTenantsByProviderSub(
   providerId: string,
   providerUserId: string
 ): Promise<LinkedIdentity[]> {
-  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
   const results = await Promise.all(
     tenantIds.map(async (tenantId) => {
-      if (persistence.storageProfileId !== 'builtin:storage:tenant-d1') {
-        return findLinkedIdentitiesByProviderSub(env, tenantId, providerId, providerUserId);
-      }
       try {
         const account = await resolveAccountDataContextByIdentifier(env, {
           tenantId,
@@ -231,7 +223,7 @@ export async function listLinkedIdentities(
   env: Env,
   tenantId: string,
   userId: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<LinkedIdentity[]> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -255,7 +247,7 @@ export async function getLinkedIdentityForUserAndProvider(
   tenantId: string,
   userId: string,
   providerId: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<LinkedIdentity | null> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -287,7 +279,7 @@ export async function createLinkedIdentity(
     rawClaims?: Record<string, unknown>;
     tenantId: string;
   },
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<string> {
   const tenantId = params.tenantId;
   const id = crypto.randomUUID();
@@ -352,7 +344,7 @@ export async function updateLinkedIdentity(
     lastLoginAt?: number;
     rawClaims?: Record<string, unknown>;
   },
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<boolean> {
   const now = Date.now();
   const tokenExpiresAt = updates.tokens?.expires_in
@@ -417,7 +409,7 @@ export async function deleteLinkedIdentity(
   env: Env,
   tenantId: string,
   id: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<boolean> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,
@@ -439,7 +431,7 @@ export async function countLinkedIdentities(
   env: Env,
   tenantId: string,
   userId: string,
-  piiSource?: DatabaseSource
+  piiSource: DatabaseSource
 ): Promise<number> {
   const adapter = await getTenantLinkedIdentityAdapter(
     env,

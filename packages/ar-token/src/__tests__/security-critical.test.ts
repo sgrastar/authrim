@@ -139,6 +139,7 @@ const mocks = vi.hoisted(() => ({
   mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
   mockFindCanonicalRuntimeUserProjection: vi.fn(),
   mockFindCanonicalRuntimeAccount: vi.fn(),
+  mockResolveAccountDataContextFromHono: vi.fn(),
 
   // Session
   mockSessionClientRepository: {
@@ -266,6 +267,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         findAccountByLegacyUserId: mocks.mockFindCanonicalRuntimeAccount,
       };
     }),
+    resolveAccountDataContextFromHono: mocks.mockResolveAccountDataContextFromHono,
     // RBAC
     getIDTokenRBACClaims: mocks.mockGetIDTokenRBACClaims,
     getAccessTokenRBACClaims: mocks.mockGetAccessTokenRBACClaims,
@@ -386,6 +388,28 @@ function resetAllMocks() {
     .mockReturnValue({ shardIndex: 0, randomPart: 'abc', generation: 1 });
   mocks.mockGenerateRegionAwareJti.mockReset().mockResolvedValue({ jti: 'jti-region-001' });
   mocks.mockGetRefreshToken.mockReset().mockResolvedValue(null);
+  mocks.mockResolveAccountDataContextFromHono.mockReset().mockImplementation(
+    async (
+      c: {
+        env: MockEnv;
+        get: (key: string) => unknown;
+        set: (key: string, value: unknown) => void;
+      },
+      subject: string
+    ) => {
+      const existing = c.get('accountDataContext');
+      if (existing) return existing;
+      const context = {
+        tenantId: 'default',
+        accountId: `account:${subject}`,
+        legacyUserId: subject,
+        coreDb: c.env.TDB_TEST_CORE,
+        piiDb: c.env.TDB_TEST_CORE,
+      };
+      c.set('accountDataContext', context);
+      return context;
+    }
+  );
 
   // Reset RBAC mocks
   mocks.mockGetIDTokenRBACClaims.mockReset().mockResolvedValue({});
@@ -582,20 +606,11 @@ describe('Security-Critical Tests', () => {
           client_id: client.client_id,
           client_secret: 'valid-secret',
         },
-        env: {
-          ...mockEnv,
-          DB: undefined as any,
-        },
+        env: mockEnv,
       });
-      (ctx as any).set('runtimeUserStoreSources', {
-        storageProfile: {
-          id: 'tenant-default-storage',
-          kind: 'storage',
-          label: 'Tenant Default Storage',
-          slices: {},
-        },
+      (ctx as any).set('accountDataContext', {
+        tenantId: 'default',
         coreDb: runtimeCoreAdapter,
-        piiDb: null,
       });
 
       const response = await tokenHandler(ctx);
@@ -758,20 +773,11 @@ describe('Security-Critical Tests', () => {
           client_id: client.client_id,
           client_secret: 'valid-secret',
         },
-        env: {
-          ...mockEnv,
-          DB: undefined as any,
-        },
+        env: mockEnv,
       });
-      (ctx as any).set('runtimeUserStoreSources', {
-        storageProfile: {
-          id: 'tenant-default-storage',
-          kind: 'storage',
-          label: 'Tenant Default Storage',
-          slices: {},
-        },
+      (ctx as any).set('accountDataContext', {
+        tenantId: 'default',
         coreDb: runtimeCoreAdapter,
-        piiDb: null,
       });
 
       const response = await tokenHandler(ctx);

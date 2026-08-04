@@ -15,7 +15,6 @@ import {
   buildIssuerUrl,
   getTenantIdFromContext,
   getLogger,
-  getCachedAuthCorePersistenceContextFromEnv,
   resolveAccountDataContext,
 } from '@authrim/ar-lib-core';
 import {
@@ -31,8 +30,6 @@ import { revokeLinkedIdentityTokens } from '../services/token-revocation';
 import type { LinkedIdentityListResponse } from '../types';
 
 async function resolveLinkedIdentityAccountContext(env: Env, tenantId: string, userId: string) {
-  const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
-  if (persistence.storageProfileId !== 'builtin:storage:tenant-d1') return undefined;
   const account = await resolveAccountDataContext(env, {
     tenantId,
     accountId: `account:${userId}`,
@@ -243,35 +240,31 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
 
     let cleanupPending = false;
     let cleanupOperationId: string | undefined;
-    if (account) {
-      const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
-      if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
-      if (!removalDigest || !removalOperationId) {
-        throw new Error('external_idp_route_removal_operation_invalid');
-      }
-      cleanupOperationId = removalOperationId;
-      const removal = await provisioner.removeExternalIdpRoute({
-        schemaVersion: 1,
-        operationId: cleanupOperationId,
-        idempotencyKey: `auth-external-idp-route-remove:${removalDigest}`,
-        tenantId,
-        accountId: account.accountId,
-        userId: session.userId,
-        linkedIdentityId,
-        providerId: identity.providerId,
-        providerUserId: identity.providerUserId,
-      });
-      if (
-        removal.operationId !== cleanupOperationId ||
-        removal.accountId !== account.accountId ||
-        (removal.status !== 201 && removal.status !== 202)
-      ) {
-        throw new Error('external_idp_route_removal_response_invalid');
-      }
-      cleanupPending = removal.status === 202;
-    } else {
-      await deleteLinkedIdentity(c.env, tenantId, linkedIdentityId);
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    if (!removalDigest || !removalOperationId) {
+      throw new Error('external_idp_route_removal_operation_invalid');
     }
+    cleanupOperationId = removalOperationId;
+    const removal = await provisioner.removeExternalIdpRoute({
+      schemaVersion: 1,
+      operationId: cleanupOperationId,
+      idempotencyKey: `auth-external-idp-route-remove:${removalDigest}`,
+      tenantId,
+      accountId: account.accountId,
+      userId: session.userId,
+      linkedIdentityId,
+      providerId: identity.providerId,
+      providerUserId: identity.providerUserId,
+    });
+    if (
+      removal.operationId !== cleanupOperationId ||
+      removal.accountId !== account.accountId ||
+      (removal.status !== 201 && removal.status !== 202)
+    ) {
+      throw new Error('external_idp_route_removal_response_invalid');
+    }
+    cleanupPending = removal.status === 202;
 
     // Include revocation status in response for transparency
     return c.json({

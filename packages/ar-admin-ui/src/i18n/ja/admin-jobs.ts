@@ -2,8 +2,7 @@ const adminJobs = {
 	admin_jobs_page_title: 'Jobs - Admin Dashboard - Authrim',
 	admin_jobs_title: 'Jobs',
 	admin_jobs_description:
-		'ユーザーimport、tenant database request、一括更新、report jobなどのqueued operational workを監視します。実行中のjobは自動更新されます。',
-	admin_jobs_tenant_db: 'Tenant DB',
+		'ユーザーimport、一括更新、report jobなどのqueued operational workを監視します。実行中のjobは自動更新されます。',
 	admin_jobs_import_users: 'ユーザーimport',
 	admin_jobs_create_report_job: 'Report Jobを作成',
 	admin_jobs_total_jobs: 'Total jobs',
@@ -24,23 +23,12 @@ const adminJobs = {
 	admin_jobs_loading_jobs: 'Jobsを読み込み中...',
 	admin_jobs_no_jobs: 'Jobはありません。',
 	admin_jobs_current_filters: '現在のフィルター:',
-	admin_jobs_empty_hint:
-		'インポート、テナントDBリクエスト、レポートジョブを作成すると、ここで進捗を確認できます',
+	admin_jobs_empty_hint: 'インポートまたはレポートジョブを作成すると、ここで進捗を確認できます',
 	admin_jobs_progress: 'Progress',
 	admin_jobs_duration: 'Duration',
 	admin_jobs_created: 'Created',
 	admin_jobs_actions: 'Actions',
 	admin_jobs_details: '詳細',
-	admin_jobs_tenant_database_request: 'Tenant Database Request',
-	admin_jobs_tenant_slug: 'Tenant Slug',
-	admin_jobs_tenant_slug_hint: '対応している場合、空欄なら現在のtenant contextを使います。',
-	admin_jobs_generation: 'Generation',
-	admin_jobs_execution: 'Execution',
-	admin_jobs_execution_plan_only: 'Plan only',
-	admin_jobs_execution_operator_cli: 'Operator CLI',
-	admin_jobs_activate_after_deploy: '生成されたbindingのdeploy後にactivationをrequestする',
-	admin_jobs_reason: 'Reason',
-	admin_jobs_reason_hint: 'Job requestとoperational audit trailに記録されます。',
 	admin_jobs_cancel: 'キャンセル',
 	admin_jobs_creating: '作成中...',
 	admin_jobs_create_request: 'Requestを作成',
@@ -110,8 +98,6 @@ const adminJobs = {
 	admin_jobs_type_report_generation: 'Report Generation',
 	admin_jobs_type_org_bulk_members: 'Organization Bulk Members',
 	admin_jobs_type_tenant_delete: 'Tenant Deletion',
-	admin_jobs_type_tenant_database_provision: 'Tenant DB Provisioning',
-	admin_jobs_type_tenant_database_activate_batch: 'Tenant DB Activation',
 	admin_jobs_type_tenant_database_export: 'Tenant DB Export',
 	admin_jobs_type_tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',
 	admin_jobs_type_tenant_database_purge_backup: 'Tenant DB Backup Purge',
@@ -142,9 +128,7 @@ const adminJobs = {
 	admin_jobs_date_range_error: 'Date rangeは{days}日（{years}年）を超えることはできません',
 	admin_jobs_create_report_failed: 'Report jobの作成に失敗しました',
 	admin_jobs_csv_required: 'CSV fileは必須です',
-	admin_jobs_create_import_failed: 'Import jobの作成に失敗しました',
-	admin_jobs_generation_positive_integer: 'Generationは正の整数である必要があります',
-	admin_jobs_create_tenant_db_failed: 'Tenant database requestの作成に失敗しました'
+	admin_jobs_create_import_failed: 'Import jobの作成に失敗しました'
 } as const;
 
 export default adminJobs;

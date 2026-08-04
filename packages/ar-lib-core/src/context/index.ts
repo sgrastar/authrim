@@ -10,7 +10,8 @@
  * app.get('/authorize', async (c) => {
  *   // Requires requestContextMiddleware, or pass an explicit tenant ID.
  *   const ctx = createAuthContextFromHono(c);
- *   const session = await ctx.repositories.session.findById(sessionId);
+ *   const client = await ctx.repositories.client.findByClientId(clientId);
+ *   // Session state is accessed through SessionStore Durable Objects.
  * });
  *
  * app.get('/userinfo', async (c) => {
@@ -52,7 +53,6 @@ export {
   createAuthContextFromHono,
   createPIIContextFromHono,
   elevateToPIIContext,
-  getRuntimeUserStoreSourcesFromHonoContext,
   hasPIIDatabase,
   resolveOptionalCoreAdapterFromHono,
 } from './hono-context';

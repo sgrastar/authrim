@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => ({
-  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(),
+  resolveAccountDataContext: vi.fn(),
+  resolveAccountDataContextByIdentifier: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -11,8 +12,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
-    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesFromEnv,
     resolveCustomClaimRuntimeSourcesFromEnv: mocked.resolveCustomClaimRuntimeSourcesFromEnv,
+    resolveAccountDataContext: mocked.resolveAccountDataContext,
+    resolveAccountDataContextByIdentifier: mocked.resolveAccountDataContextByIdentifier,
   };
 });
 
@@ -52,12 +54,6 @@ describe('SAML user-store helpers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocked.resolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
       schemaDb: createMockAdapter(),
       nonPiiDb: createMockAdapter(),
       piiDb: null,
@@ -196,6 +192,12 @@ describe('SAML user-store helpers', () => {
     return coreAdapter;
   }
 
+  function mockAccountRoute(coreDb: DatabaseAdapter, piiDb: DatabaseAdapter): void {
+    const route = { coreDb, piiDb };
+    mocked.resolveAccountDataContext.mockResolvedValue(route);
+    mocked.resolveAccountDataContextByIdentifier.mockResolvedValue(route);
+  }
+
   it('finds active users by email from canonical sensitive PII storage', async () => {
     const coreAdapter = createCanonicalCoreAdapter('tenant-a', 'user-1');
     const piiAdapter = createMockAdapter({
@@ -208,16 +210,7 @@ describe('SAML user-store helpers', () => {
       },
     });
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
-      coreDb: coreAdapter,
-      piiDb: piiAdapter,
-    });
+    mockAccountRoute(coreAdapter, piiAdapter);
 
     await expect(
       findActiveSamlUserByEmail({ DB: {} } as Env, 'tenant-a', 'user@example.com')
@@ -238,16 +231,7 @@ describe('SAML user-store helpers', () => {
       },
     });
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
-      coreDb: coreAdapter,
-      piiDb: piiAdapter,
-    });
+    mockAccountRoute(coreAdapter, piiAdapter);
 
     await expect(getSamlUserNameIdById({ DB: {} } as Env, 'tenant-b', 'user-2')).resolves.toBe(
       'nameid@example.com'
@@ -294,23 +278,8 @@ describe('SAML user-store helpers', () => {
       },
     });
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
-      coreDb: coreAdapter,
-      piiDb: piiAdapter,
-    });
+    mockAccountRoute(coreAdapter, piiAdapter);
     mocked.resolveCustomClaimRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
       schemaDb: customAdapter,
       nonPiiDb: customAdapter,
       piiDb: null,
@@ -335,16 +304,7 @@ describe('SAML user-store helpers', () => {
     const coreAdapter = createCanonicalCoreAdapter('tenant-no-email', 'user-no-email');
     const piiAdapter = createMockAdapter();
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
-      coreDb: coreAdapter,
-      piiDb: piiAdapter,
-    });
+    mockAccountRoute(coreAdapter, piiAdapter);
 
     await expect(
       getSamlUserInfoById({ DB: {} } as Env, 'tenant-no-email', 'user-no-email')
@@ -488,16 +448,7 @@ describe('SAML user-store helpers', () => {
       },
     });
 
-    mocked.resolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: {
-        id: 'builtin:storage:single-db',
-        kind: 'storage',
-        label: 'Single DB',
-        slices: {},
-      },
-      coreDb: coreAdapter,
-      piiDb: piiAdapter,
-    });
+    mockAccountRoute(coreAdapter, piiAdapter);
 
     await expect(getSamlUserInfoById({ DB: {} } as Env, 'tenant-d', 'user-4')).resolves.toEqual({
       id: 'user-4',

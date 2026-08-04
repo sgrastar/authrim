@@ -4,7 +4,7 @@ const {
   mockCheckResolvedTenantDatabaseDeepHealth,
   mockEnsureDatabaseAdapter,
   mockRepository,
-  mockResolveTenantDatabaseSourceFromRegistry,
+  mockResolveTenantDatabaseSourceFromControlRegistry,
   MockTenantDatabaseRegistryRepository,
 } = vi.hoisted(() => {
   const repository = {
@@ -20,7 +20,7 @@ const {
     mockCheckResolvedTenantDatabaseDeepHealth: vi.fn(),
     mockEnsureDatabaseAdapter: vi.fn((source: unknown) => source),
     mockRepository: repository,
-    mockResolveTenantDatabaseSourceFromRegistry: vi.fn(),
+    mockResolveTenantDatabaseSourceFromControlRegistry: vi.fn(),
     MockTenantDatabaseRegistryRepository: vi.fn(MockRepositoryConstructor),
   };
 });
@@ -31,7 +31,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     checkResolvedTenantDatabaseDeepHealth: mockCheckResolvedTenantDatabaseDeepHealth,
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
-    resolveTenantDatabaseSourceFromRegistry: mockResolveTenantDatabaseSourceFromRegistry,
+    resolveTenantDatabaseSourceFromControlRegistry:
+      mockResolveTenantDatabaseSourceFromControlRegistry,
     TenantDatabaseRegistryRepository: MockTenantDatabaseRegistryRepository,
   };
 });
@@ -53,7 +54,9 @@ describe('tenant database health jobs', () => {
     mockRepository.listActiveRegistryRowsForTenantRole.mockResolvedValue([]);
     mockRepository.updateRegistryStatus.mockResolvedValue(undefined);
     mockRepository.updateRegistryStatusAndMetadata.mockResolvedValue(undefined);
-    mockResolveTenantDatabaseSourceFromRegistry.mockResolvedValue({ source: 'tenant-source' });
+    mockResolveTenantDatabaseSourceFromControlRegistry.mockResolvedValue({
+      source: 'tenant-source',
+    });
     mockCheckResolvedTenantDatabaseDeepHealth.mockResolvedValue({
       severity: 'healthy',
       schemaDrift: 'none',

@@ -26,18 +26,26 @@ describe('admin-database-adapter', () => {
     const adminAdapter = createMockAdapter('admin');
 
     expect(
-      resolveAdminDatabaseSource({ DB: coreAdapter as never, DB_ADMIN: adminAdapter as never })
+      resolveAdminDatabaseSource({
+        DB: coreAdapter,
+        DB_ADMIN: adminAdapter,
+      } as never)
     ).toBe(adminAdapter);
     expect(
-      ensureAdminDatabaseAdapter({ DB: coreAdapter as never, DB_ADMIN: adminAdapter as never })
+      ensureAdminDatabaseAdapter({
+        DB: coreAdapter,
+        DB_ADMIN: adminAdapter,
+      } as never)
     ).toBe(adminAdapter);
   });
 
-  it('falls back to DB when DB_ADMIN is unavailable', () => {
+  it('does not fall back to the tenant metadata DB when DB_ADMIN is unavailable', () => {
     const coreAdapter = createMockAdapter('core');
+    const env = { DB: coreAdapter } as never;
 
-    expect(resolveAdminDatabaseSource({ DB: coreAdapter as never })).toBe(coreAdapter);
-    expect(ensureAdminDatabaseAdapter({ DB: coreAdapter as never })).toBe(coreAdapter);
+    expect(resolveAdminDatabaseSource(env)).toBeNull();
+    expect(ensureAdminDatabaseAdapter(env)).toBeNull();
+    expect(() => requireAdminDatabaseAdapter(env)).toThrow('Admin database is not configured');
   });
 
   it('throws when no admin-capable database source exists', () => {

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getGrant: vi.fn(),
   getActiveDelegatorPermissions: vi.fn(),
   query: vi.fn(),
+  queryOne: vi.fn(),
   adminQuery: vi.fn(),
   findPrincipalById: vi.fn(),
   findCredentialById: vi.fn(),
@@ -58,7 +59,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         await next();
       },
     requireDedicatedAdminDatabaseAdapter: () => ({ query: mocks.adminQuery }),
-    ensureDatabaseAdapter: () => ({ query: mocks.query }),
+    ensureDatabaseAdapter: () => ({ query: mocks.query, queryOne: mocks.queryOne }),
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(async () => ({ source: {} })),
     AdminMachineAccessRepository: class {
       findPrincipalById = mocks.findPrincipalById;
       findCredentialById = mocks.findCredentialById;
@@ -126,6 +128,7 @@ describe('Agent Bulk Plan management routes', () => {
       { id: 'tenant-1', lifecycle_state: 'active' },
       { id: 'tenant-2', lifecycle_state: 'active' },
     ]);
+    mocks.queryOne.mockImplementation(async (_sql, params) => ({ id: params[0] }));
     mocks.getGrant.mockResolvedValue({
       status: 'active',
       delegatorId: 'admin-1',
@@ -222,9 +225,10 @@ describe('Agent Bulk Plan management routes', () => {
         audit: expect.objectContaining({ action: 'agent.bulk_plan.created' }),
       })
     );
-    expect(mocks.query).toHaveBeenCalledWith(
-      'SELECT id, lifecycle_state FROM tenants WHERE id IN (?, ?)',
-      ['tenant-1', 'tenant-2']
+    expect(mocks.queryOne).toHaveBeenCalledTimes(2);
+    expect(mocks.queryOne).toHaveBeenCalledWith(
+      "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active' LIMIT 1",
+      ['tenant-1']
     );
     expect(mocks.adminQuery).not.toHaveBeenCalled();
   });

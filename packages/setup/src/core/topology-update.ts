@@ -35,22 +35,7 @@ function quoteShellArgument(value: string): string {
 export function topologyUpdateResumeInstruction(update: TopologyUpdateState, env: string): string {
   const prefix = 'npx @authrim/setup';
   const quotedEnv = quoteShellArgument(env);
-  switch (update.kind) {
-    case 'tenant_database': {
-      const separator = update.subject?.lastIndexOf(':') ?? -1;
-      const tenantId = separator > 0 ? update.subject?.slice(0, separator) : undefined;
-      const generation = separator > 0 ? update.subject?.slice(separator + 1) : undefined;
-      if (!tenantId || !generation || !/^\d+$/u.test(generation)) {
-        return `${prefix} tenant-db --env ${quotedEnv} --tenant-id <recorded-tenant-id> --generation <recorded-generation>`;
-      }
-      const quotedTenantId = quoteShellArgument(tenantId);
-      return `${prefix} tenant-db --env ${quotedEnv} --tenant-id ${quotedTenantId} --generation ${generation}`;
-    }
-    case 'r2':
-      return `${prefix} r2-provision --env ${quotedEnv}`;
-    case 'external_database':
-      return `${prefix} external-db-register --env ${quotedEnv}`;
-  }
+  return `${prefix} r2-provision --env ${quotedEnv}`;
 }
 
 export function prepareTopologyUpdate(

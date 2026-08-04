@@ -172,7 +172,7 @@ async function showCliCapabilitySummaryOnce(options?: {
 
   const installed = options?.installed ?? (await isWranglerInstalled());
   const auth = options?.auth ?? (installed ? await checkAuth() : { isLoggedIn: false });
-  const workersSubdomain =
+  workersSubdomain =
     options?.workersSubdomain ??
     (installed && auth.isLoggedIn ? await getWorkersSubdomain() : null);
 
@@ -1140,37 +1140,26 @@ async function runLoadConfig(): Promise<boolean> {
   const environments = listEnvironments(baseDir);
 
   // Build list of found configs
-  const foundConfigs: { path: string; env: string; type: 'new' | 'legacy' }[] = [];
+  const foundConfigs: { path: string; env: string }[] = [];
 
   // Check new structure (.authrim/{env}/config.json)
   for (const env of environments) {
     const newPaths = getEnvironmentPaths({ baseDir, env });
     if (existsSync(newPaths.config)) {
-      foundConfigs.push({ path: newPaths.config, env, type: 'new' });
+      foundConfigs.push({ path: newPaths.config, env });
     }
   }
 
-  // Check legacy structure (authrim-{env}-config.json or authrim-config.json)
-  for (const env of environments) {
-    const legacyConfigPath = findLegacyConfigPath(baseDir, env);
-    if (existsSync(legacyConfigPath) && !foundConfigs.some((c) => c.path === legacyConfigPath)) {
-      foundConfigs.push({ path: legacyConfigPath, env, type: 'legacy' });
-    }
-  }
-
-  const fallbackLegacyConfigPath = findLegacyConfigPath(baseDir);
-  if (
-    existsSync(fallbackLegacyConfigPath) &&
-    !foundConfigs.some((c) => c.path === fallbackLegacyConfigPath)
-  ) {
-    try {
-      const legacyContent = await readFile(fallbackLegacyConfigPath, 'utf-8');
-      const legacyConfig = JSON.parse(legacyContent);
-      const legacyEnv = legacyConfig.environment?.prefix || 'unknown';
-      foundConfigs.push({ path: fallbackLegacyConfigPath, env: legacyEnv, type: 'legacy' });
-    } catch {
-      foundConfigs.push({ path: fallbackLegacyConfigPath, env: 'unknown', type: 'legacy' });
-    }
+  const legacyConfigPaths = new Set([
+    findLegacyConfigPath(baseDir),
+    ...environments.map((env) => findLegacyConfigPath(baseDir, env)),
+  ]);
+  const detectedLegacyConfig = [...legacyConfigPaths].find((path) => existsSync(path));
+  if (detectedLegacyConfig) {
+    console.log(chalk.red('Legacy Setup configuration is not supported by this release.'));
+    console.log(chalk.gray(`  Detected: ${detectedLegacyConfig}`));
+    console.log(chalk.gray('  Create a fresh environment with authrim-setup init.'));
+    return false;
   }
 
   let configPath: string;
@@ -1178,87 +1167,9 @@ async function runLoadConfig(): Promise<boolean> {
   if (foundConfigs.length > 0) {
     console.log(chalk.green(`✓ Found ${foundConfigs.length} configuration(s):`));
     for (const cfg of foundConfigs) {
-      const typeLabel = cfg.type === 'new' ? chalk.blue('(new)') : chalk.yellow('(legacy)');
-      console.log(`  • ${cfg.path} ${typeLabel} - env: ${cfg.env}`);
+      console.log(`  • ${cfg.path} - env: ${cfg.env}`);
     }
     console.log('');
-
-    // Check if there are legacy configs that could be migrated
-    const legacyConfigs = foundConfigs.filter((c) => c.type === 'legacy');
-    if (legacyConfigs.length > 0) {
-      console.log(chalk.yellow('━━━ Legacy Structure Detected ━━━'));
-      console.log(chalk.gray('Legacy files:'));
-      console.log(chalk.gray('  • authrim-{env}-config.json (or authrim-config.json)'));
-      console.log(chalk.gray('  • authrim-{env}-lock.json (or authrim-lock.json)'));
-      console.log(chalk.gray('  • .keys/{env}/'));
-      console.log('');
-      console.log(chalk.gray('New structure benefits:'));
-      console.log(chalk.gray('  • Environment portability (zip .authrim/prod/)'));
-      console.log(chalk.gray('  • Version tracking per environment'));
-      console.log(chalk.gray('  • Cleaner project structure'));
-      console.log('');
-
-      const migrateAction = await select({
-        message: 'Would you like to migrate to the new structure?',
-        choices: [
-          { value: 'migrate', name: '🔄 Migrate to new structure (.authrim/{env}/)' },
-          { value: 'continue', name: '📂 Continue with legacy structure' },
-          { value: 'back', name: '← Back to Main Menu' },
-        ],
-      });
-
-      if (migrateAction === 'back') {
-        return false;
-      }
-
-      if (migrateAction === 'migrate') {
-        const { migrateToNewStructureLocked, validateMigration } =
-          await import('../../core/migrate.js');
-
-        console.log('');
-        const envToMigrate = legacyConfigs[0].env;
-
-        const result = await migrateToNewStructureLocked({
-          baseDir,
-          env: envToMigrate,
-          onProgress: (msg) => console.log(msg),
-        });
-
-        if (result.success) {
-          console.log('');
-          console.log(chalk.green('✓ Migration completed successfully!'));
-
-          // Validate
-          const validation = await validateMigration(baseDir, envToMigrate);
-          if (validation.valid) {
-            console.log(chalk.green('✓ Validation passed'));
-          } else {
-            console.log(chalk.yellow('⚠ Validation issues:'));
-            for (const issue of validation.issues) {
-              console.log(chalk.yellow(`  • ${issue}`));
-            }
-          }
-
-          console.log('');
-          console.log(chalk.cyan('New configuration location:'));
-          console.log(chalk.cyan(`  .authrim/${envToMigrate}/config.json`));
-          console.log('');
-
-          // Update foundConfigs to use new path
-          const newPaths = getEnvironmentPaths({ baseDir, env: envToMigrate });
-          foundConfigs.length = 0;
-          foundConfigs.push({ path: newPaths.config, env: envToMigrate, type: 'new' });
-        } else {
-          console.log('');
-          console.log(chalk.red('✗ Migration failed:'));
-          for (const error of result.errors) {
-            console.log(chalk.red(`  • ${error}`));
-          }
-          console.log('');
-          console.log(chalk.yellow('Continuing with legacy structure...'));
-        }
-      }
-    }
 
     if (foundConfigs.length === 1) {
       configPath = foundConfigs[0].path;
@@ -1291,7 +1202,7 @@ async function runLoadConfig(): Promise<boolean> {
       const choices = [
         ...foundConfigs.map((cfg) => ({
           value: cfg.path,
-          name: `📂 ${cfg.env} (${cfg.path}) ${cfg.type === 'legacy' ? chalk.yellow('legacy') : ''}`,
+          name: `📂 ${cfg.env} (${cfg.path})`,
         })),
         { value: '__other__', name: '📁 Specify different file' },
         { value: '__back__', name: '← Back to Main Menu' },
@@ -1356,74 +1267,7 @@ async function runLoadConfig(): Promise<boolean> {
 // Quick Setup
 // =============================================================================
 
-const SETUP_STORAGE_PROFILE_CHOICES = [
-  {
-    value: 'builtin:storage:tenant-d1',
-    name: 'Tenant-isolated D1 - dedicated default/users/PII shards',
-    description: 'Default. The Control Plane provisions physical tenant isolation automatically.',
-  },
-  {
-    value: 'builtin:storage:shared-d1',
-    name: 'Shared D1 - explicitly shared deployment',
-    description: 'Multiple tenants may share physical D1 shards. Lowest resource count.',
-  },
-] as const;
-
-type SetupStorageProfileId = (typeof SETUP_STORAGE_PROFILE_CHOICES)[number]['value'];
-
-function normalizeSetupStorageProfileId(value: string | undefined): SetupStorageProfileId {
-  return value === 'builtin:storage:tenant-d1'
-    ? 'builtin:storage:tenant-d1'
-    : value === 'builtin:storage:shared-d1'
-      ? 'builtin:storage:shared-d1'
-      : 'builtin:storage:tenant-d1';
-}
-
-async function promptStorageDeploymentProfile(
-  current?: string,
-  options: { allowCustom?: boolean } = {}
-): Promise<string> {
-  const selected = await select({
-    message: 'Storage deployment profile',
-    choices: [
-      ...SETUP_STORAGE_PROFILE_CHOICES,
-      ...(options.allowCustom
-        ? [
-            {
-              value: '__custom__',
-              name: 'Custom profile ID',
-              description: 'Use an existing seeded/custom runtime storage profile.',
-            },
-          ]
-        : []),
-    ],
-    default: normalizeSetupStorageProfileId(current),
-  });
-
-  if (selected === '__custom__') {
-    return input({
-      message: 'Default storage profile ID',
-      default: current || 'builtin:storage:tenant-d1',
-      validate: (value) => {
-        if (!value.trim()) return 'Profile ID is required';
-        return true;
-      },
-    });
-  }
-
-  if (selected === 'builtin:storage:tenant-d1') {
-    console.log(
-      chalk.yellow(
-        '  tenant-d1 bootstraps the Control Plane; tenant shards are provisioned automatically when needed.'
-      )
-    );
-  }
-
-  return selected;
-}
-
-async function promptAutomaticProvisioning(storageProfileId: string): Promise<boolean> {
-  if (storageProfileId !== 'builtin:storage:tenant-d1') return false;
+async function promptAutomaticProvisioning(): Promise<boolean> {
   const enabled = await confirm({
     message: 'Enable Automatic provisioning from the Control Worker?',
     default: true,
@@ -1566,11 +1410,12 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     }
   }
 
-  // Storage deployment profile
+  // Unified Control Plane provisioning mode
   console.log('');
-  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:tenant-d1');
-  const automaticProvisioning = await promptAutomaticProvisioning(storageProfileId);
+  console.log(chalk.blue('━━━ Control Plane Provisioning ━━━'));
+  console.log(chalk.gray('  D1 routing is always managed by the Control Plane.'));
+  console.log(chalk.gray('  The initial tenant uses tenant_exclusive placement.'));
+  const automaticProvisioning = await promptAutomaticProvisioning();
 
   // Database Configuration
   console.log('');
@@ -1709,8 +1554,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
-  config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = { automaticProvisioning };
+  config.controlPlane = { automaticProvisioning };
   config.database = {
     core: parseDbLocation(coreDbLocation),
     pii: parseDbLocation(piiDbLocation),
@@ -1743,13 +1587,11 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   console.log(chalk.bold('Infrastructure:'));
   console.log(`  Environment:   ${chalk.cyan(envPrefix)}`);
   console.log(`  Worker Prefix: ${chalk.cyan(envPrefix + '-ar-*')}`);
-  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
-  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan('Control Plane managed')}`);
-    console.log(
-      `  Provisioning:   ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
-    );
-  }
+  console.log(`  D1 Routing:    ${chalk.cyan('Control Plane managed')}`);
+  console.log(`  Placement:     ${chalk.cyan(config.tenant.placementPolicy)}`);
+  console.log(
+    `  Provisioning:  ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
+  );
   console.log('');
   console.log(chalk.bold('URLs (Single-tenant):'));
   console.log(`  Issuer URL:    ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`);
@@ -2314,12 +2156,13 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     refreshTokenShards = parseInt(refreshTokenShardsStr, 10);
   }
 
-  // Step 9: Storage Deployment Profile
+  // Step 9: Unified Control Plane provisioning mode
   console.log('');
-  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
+  console.log(chalk.blue('━━━ Control Plane Provisioning ━━━'));
+  console.log(chalk.gray('  D1 routing is always managed by the Control Plane.'));
+  console.log(chalk.gray('  The initial tenant uses tenant_exclusive placement.'));
   console.log('');
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:tenant-d1');
-  const automaticProvisioning = await promptAutomaticProvisioning(storageProfileId);
+  const automaticProvisioning = await promptAutomaticProvisioning();
 
   // Step 10: Database Configuration
   console.log('');
@@ -2415,8 +2258,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   // Create configuration
   const config = createDefaultConfig(envPrefix);
   config.profile = profile as 'basic-op' | 'fapi-rw' | 'fapi2-security';
-  config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = { automaticProvisioning };
+  config.controlPlane = { automaticProvisioning };
   config.database = {
     core: parseDbLocationNormal(coreDbLocation),
     pii: parseDbLocationNormal(piiDbLocation),
@@ -2424,6 +2266,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   config.tenant = {
     name: tenantName,
     displayName: tenantDisplayName,
+    placementPolicy: 'tenant_exclusive',
     multiTenant: !!baseDomain,
     baseDomain,
     userIdFormat,
@@ -2573,13 +2416,11 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log(`  Refresh Token: ${chalk.cyan(refreshTokenShards)} shards`);
   console.log('');
   console.log(chalk.bold('Database:'));
-  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
-  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan('Control Plane managed')}`);
-    console.log(
-      `  Provisioning:   ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
-    );
-  }
+  console.log(`  D1 Routing:    ${chalk.cyan('Control Plane managed')}`);
+  console.log(`  Placement:     ${chalk.cyan(config.tenant.placementPolicy)}`);
+  console.log(
+    `  Provisioning:  ${automaticProvisioning ? chalk.green('Automatic') : chalk.yellow('Setup operator')}`
+  );
   const coreDbDisplay =
     coreDbLocation === 'eu'
       ? 'EU Jurisdiction'
@@ -2930,7 +2771,7 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
     console.log('');
     for (const line of buildSetupCompletionNextSteps({
       env,
-      automaticProvisioning: config.tenantD1?.automaticProvisioning === true,
+      automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
       commandPrefix: getCommandPrefix(),
     })) {
       console.log(line);
@@ -3597,21 +3438,6 @@ async function configureRequiredHyperdriveReferences(
       | null;
   }
 ): Promise<void> {
-  if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    await ensureHyperdriveReference(config, {
-      refKey: 'core-primary',
-      driver: 'postgres',
-      label: 'Storage identity core/custom claims/registration fields',
-      suggestedBinding: 'HYPERDRIVE_CORE_PRIMARY',
-    });
-    await ensureHyperdriveReference(config, {
-      refKey: 'pii-primary',
-      driver: 'postgres',
-      label: 'Storage identity PII/custom PII',
-      suggestedBinding: 'HYPERDRIVE_PII_PRIMARY',
-    });
-  }
-
   const refs = new Map<
     string,
     { refKey: string; driver: 'postgres' | 'mysql'; label: string; suggestedBinding?: string }
@@ -3666,9 +3492,6 @@ async function configureRequiredHyperdriveReferences(
 async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
   console.log(
-    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:tenant-d1')}`
-  );
-  console.log(
     `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
   );
   console.log(
@@ -3680,21 +3503,6 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     `  Hyperdrive Refs:       ${chalk.cyan(Object.keys(config.profiles.references.hyperdrive).length)}`
   );
   console.log('');
-
-  const defaultStorageProfileId = await promptStorageDeploymentProfile(
-    config.profiles.defaults.storage || 'builtin:storage:tenant-d1',
-    {
-      allowCustom: true,
-    }
-  );
-
-  if (defaultStorageProfileId === 'builtin:storage:tenant-d1') {
-    console.log(
-      chalk.yellow(
-        '  Tenant shards are provisioned automatically by the Control Plane after bootstrap.'
-      )
-    );
-  }
 
   const defaultAuditProfileId = await input({
     message: 'Default audit profile ID',
@@ -3720,7 +3528,6 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     },
   });
 
-  config.profiles.defaults.storage = defaultStorageProfileId.trim();
   config.profiles.defaults.audit = defaultAuditProfileId.trim();
   config.profiles.defaults.residency = defaultResidencyProfileId.trim();
 
@@ -3781,25 +3588,8 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
         name: 'D1 primary + archive + HTTP sink',
         description: 'Keep hot queries in D1 and also archive / forward.',
       },
-      {
-        value: 'postgres-primary',
-        name: 'PostgreSQL primary + archive + HTTP sink',
-        description: 'Use Hyperdrive / PostgreSQL as the primary audit store.',
-      },
-      {
-        value: 'mysql-primary',
-        name: 'MySQL primary + archive + HTTP sink',
-        description: 'Use Hyperdrive / MySQL as the primary audit store.',
-      },
     ],
-    default:
-      existingProfile?.primary == null
-        ? 'archive-only'
-        : existingProfile?.primary.type === 'postgres'
-          ? 'postgres-primary'
-          : existingProfile?.primary.type === 'mysql'
-            ? 'mysql-primary'
-            : 'd1-primary',
+    default: existingProfile?.primary == null ? 'archive-only' : 'd1-primary',
   });
 
   const useDirectUrl = await confirm({
@@ -3864,31 +3654,15 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     description:
       deliveryMode === 'archive-only'
         ? 'Archive-only audit profile with a generic HTTP forwarding sink.'
-        : deliveryMode === 'postgres-primary'
-          ? 'PostgreSQL-backed audit profile with archive and generic HTTP forwarding sink.'
-          : deliveryMode === 'mysql-primary'
-            ? 'MySQL-backed audit profile with archive and generic HTTP forwarding sink.'
-            : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
+        : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
     primary:
       deliveryMode === 'archive-only'
         ? null
-        : deliveryMode === 'postgres-primary'
-          ? {
-              type: 'postgres' as const,
-              connectionRef: 'audit-primary',
-              dataset: 'event_log',
-            }
-          : deliveryMode === 'mysql-primary'
-            ? {
-                type: 'mysql' as const,
-                connectionRef: 'audit-primary-mysql',
-                dataset: 'event_log',
-              }
-            : {
-                type: 'd1' as const,
-                bindingRef: 'DB',
-                dataset: 'event_log',
-              },
+        : {
+            type: 'd1' as const,
+            bindingRef: 'DB',
+            dataset: 'event_log',
+          },
     archive: {
       type: 'r2' as const,
       bucketRef: 'DIAGNOSTIC_LOGS',

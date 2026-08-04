@@ -46,6 +46,7 @@ let mockDeferredCredential: unknown = null;
 const routeCoreMocks = vi.hoisted(() => ({
   createCredential: vi.fn(),
   allocateIndex: vi.fn(),
+  resolveTenantMetadataContext: vi.fn(),
 }));
 
 // Mock @authrim/ar-lib-core - keep real implementations for region sharding functions
@@ -74,7 +75,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       }
     ),
     loadFeatureConfig: vi.fn().mockResolvedValue({ enabled: false }),
-    resolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue({}),
+    resolveTenantMetadataContext: routeCoreMocks.resolveTenantMetadataContext,
     D1Adapter: class {
       constructor() {}
     },
@@ -347,6 +348,12 @@ describe('VCI Nonce Route', () => {
 describe('Credential Offer Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    routeCoreMocks.resolveTenantMetadataContext.mockImplementation(
+      async (env: Env, tenantId: string) => ({
+        tenantId,
+        coreDb: env.DB,
+      })
+    );
   });
 
   // Region-sharded offer ID format: g{gen}:{region}:{shard}:co_{uuid}
@@ -612,6 +619,12 @@ describe('Credential Route', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    routeCoreMocks.resolveTenantMetadataContext.mockImplementation(
+      async (env: Env, tenantId: string) => ({
+        tenantId,
+        coreDb: env.DB,
+      })
+    );
     routeCoreMocks.allocateIndex.mockResolvedValue({
       listId: 'status-list-1',
       listInternalId: 'status-list-internal-1',
@@ -868,6 +881,12 @@ describe('Credential Route', () => {
 describe('Deferred Credential Route', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    routeCoreMocks.resolveTenantMetadataContext.mockImplementation(
+      async (env: Env, tenantId: string) => ({
+        tenantId,
+        coreDb: env.DB,
+      })
+    );
     // Reset mock to default valid response
     mockValidateVCIAccessToken.mockResolvedValue({
       valid: true,

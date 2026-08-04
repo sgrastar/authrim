@@ -42,6 +42,11 @@ import {
   scheduleAdminAuditLog,
   toMilliseconds,
 } from './admin-shared';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  ensureActiveTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -142,6 +147,15 @@ async function deleteClientAndOwnedPolicy(
 ): Promise<boolean> {
   const authCtx = createAuthContextFromHono(c, tenantId);
   if (!(await authCtx.repositories.client.exists(clientId))) return false;
+
+  await disableTenantDiscoveryAliasDirectory(
+    c.env,
+    await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'client_id',
+      aliasValue: clientId,
+    })
+  );
 
   // Delete remote configuration first so a transient failure leaves the client retriable.
   await deleteClientOwnedConfiguration(c.env, tenantId, clientId);
@@ -1428,6 +1442,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         );
       }
     }
+
+    const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'client_id',
+      aliasValue: client.client_id,
+    });
+    await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
 
     await putClient(c.env, {
       client_id: client.client_id,

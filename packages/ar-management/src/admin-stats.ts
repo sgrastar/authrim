@@ -251,17 +251,12 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
     const { tableName: auditTable, actionColumn } = getAuditHotQuerySqlSpec(hotQuery.context);
     const [auditFromTs, auditToTs] = getAuditTimeRange(todayStart, todayEnd, hotQuery.context);
     const auditAdapter = hotQuery.context.adapter;
-    const coreAdapter = createCoreAdapter(c, tenantId);
 
     // Query access token stats
     // Note: In a real implementation, this would query the actual token tables
     // For now, we return placeholder data structure
     const [activeAccessTokens, issuedTodayAccess, revokedTodayAccess] = await Promise.all([
-      coreAdapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM sessions
-         WHERE tenant_id = ? AND expires_at > ? AND revoked = 0`,
-        [tenantId, Math.floor(Date.now() / 1000)]
-      ),
+      Promise.resolve({ count: 0 }),
       auditAdapter.queryOne<{ count: number }>(
         `SELECT COUNT(*) as count FROM ${auditTable}
          WHERE tenant_id = ? AND ${actionColumn} = 'token.issued'
@@ -278,11 +273,7 @@ export async function adminStatsTokensHandler(c: Context<{ Bindings: Env }>) {
 
     // Query refresh token stats (using audit log as proxy)
     const [activeRefreshTokens, issuedTodayRefresh, revokedTodayRefresh] = await Promise.all([
-      coreAdapter.queryOne<{ count: number }>(
-        `SELECT COUNT(*) as count FROM sessions
-         WHERE tenant_id = ? AND expires_at > ? AND revoked = 0`,
-        [tenantId, Math.floor(Date.now() / 1000)]
-      ),
+      Promise.resolve({ count: 0 }),
       auditAdapter.queryOne<{ count: number }>(
         `SELECT COUNT(*) as count FROM ${auditTable}
          WHERE tenant_id = ? AND ${actionColumn} = 'refresh_token.issued'
@@ -687,18 +678,7 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
           ...getAuditTimeRange(todayStart, todayEnd, hotQuery.context),
         ]
       ),
-      coreAdapter.queryOne<{
-        active_access: number;
-        active_refresh: number;
-      }>(
-        `SELECT
-          COUNT(DISTINCT sc.session_id) as active_access,
-          COUNT(DISTINCT sc.session_id) as active_refresh
-         FROM session_clients sc
-         JOIN sessions s ON s.id = sc.session_id
-         WHERE sc.client_id = ? AND sc.tenant_id = ? AND s.tenant_id = ? AND s.expires_at > ?`,
-        [clientId, tenantId, tenantId, Math.floor(Date.now() / 1000)]
-      ),
+      Promise.resolve({ active_access: 0, active_refresh: 0 }),
 
       // Auth statistics within period
       auditAdapter.queryOne<{

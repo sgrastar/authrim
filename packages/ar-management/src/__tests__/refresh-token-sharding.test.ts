@@ -66,17 +66,12 @@ function createMockContext(options: {
       if (key === 'tenantId') {
         return 'tenant-a';
       }
-      if (key === 'runtimeUserStoreSources') {
+      if (key === 'tenantMetadataContext') {
         return options.runtimeCoreDb
           ? {
-              storageProfile: {
-                id: 'tenant-a-storage',
-                kind: 'storage',
-                label: 'Tenant A Storage',
-                slices: {},
-              },
+              tenantId: 'tenant-a',
               coreDb: options.runtimeCoreDb,
-              piiDb: null,
+              route: {},
             }
           : undefined;
       }

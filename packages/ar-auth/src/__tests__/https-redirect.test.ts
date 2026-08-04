@@ -24,6 +24,18 @@ describe('auth Phase 0c request diagnostics', () => {
     ).toBe(true);
     expect(
       isAuthRequestDiagnosticTimingEnabled(
+        { AUTHRIM_ENVIRONMENT_NAME: 'test-ucp' } as Env,
+        mailRunId
+      )
+    ).toBe(true);
+    expect(
+      isAuthRequestDiagnosticTimingEnabled(
+        { AUTHRIM_ENVIRONMENT_NAME: 'testing' } as Env,
+        mailRunId
+      )
+    ).toBe(false);
+    expect(
+      isAuthRequestDiagnosticTimingEnabled(
         { AUTHRIM_ENVIRONMENT_NAME: 'production' } as Env,
         totpRunId
       )

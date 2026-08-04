@@ -333,7 +333,7 @@ async function main(): Promise<void> {
     pluginId: PLUGIN_ID,
     purpose: 'dynamic-plugin',
   });
-  if (config.tenantD1.automaticProvisioning !== (options.mode === 'on')) {
+  if (config.controlPlane.automaticProvisioning !== (options.mode === 'on')) {
     throw new Error('phase2_plugin_resource_live_automatic_provisioning_mode_mismatch');
   }
   if (

@@ -252,9 +252,6 @@ export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
 export * from './services/pii-write-compensation';
-export * from './services/storage-boundary-policy';
-export * from './services/storage-profile-capabilities';
-export * from './services/storage-profile-health';
 export * from './services/approval-governance';
 export * from './services/step-up';
 export * from './services/downstream-elevation-grant';
@@ -369,18 +366,17 @@ export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
-export { recordUserSessionRevocationEpoch } from './services/session-persistence';
+export * from './services/external-provider-session-store';
 export {
   advancePasskeyAuthenticationState,
   consumeTotpAuthenticationState,
   ensureAccountAuthenticationState,
   getSessionRevocationStore,
   isAccountAuthenticationDeniedError,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocation,
   SESSION_REVOCATION_AUTHORITY,
   transitionAccountAuthenticationState,
 } from './services/session-revocation-store';
-export * from './services/storage-target-resolver';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
 export * from './services/tenant-database-naming';
@@ -389,6 +385,7 @@ export * from './services/tenant-database-registry-signature';
 export * from './services/tenant-database-reconciliation';
 export * from './services/tenant-database-migration-validation';
 export * from './services/tenant-database-resolver';
+export * from './services/environment-tenant-directory';
 export * from './services/tenant-database-sharding-policy';
 export * from './services/tenant-database-stats';
 export * from './services/tenant-runtime-config-snapshot';
@@ -400,7 +397,6 @@ export * from './services/control-plane/control-plane-contracts';
 export * from './services/control-plane/migration-history-contract';
 export * from './services/control-plane/plugin-hook-outbox-retention';
 export * from './services/control-plane/runtime-smoke-rpc';
-export * from './services/user-store-runtime-sources';
 export * from './services/refresh-token-family-store';
 
 // Repositories

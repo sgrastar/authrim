@@ -39,13 +39,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         });
         return {
           reference: { intentId: input.intentId },
-          bindingRef: 'TDB_SHARED_CORE',
+          bindingRef: 'PLATFORM_NOTIFICATION_DB',
           delivery: 'delivered',
         };
       } catch {
         return {
           reference: { intentId: input.intentId },
-          bindingRef: 'TDB_SHARED_CORE',
+          bindingRef: 'PLATFORM_NOTIFICATION_DB',
           delivery: 'pending',
         };
       }

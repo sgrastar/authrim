@@ -2,7 +2,13 @@ export const LOOKUP_VIRTUAL_BUCKET_COUNT = 4096;
 export const LOOKUP_NORMALIZATION_VERSION = 1;
 
 export type LookupIdentifierKind = 'email_exact' | 'external_subject' | 'account_id';
-export type LookupAliasKind = 'tenant_code' | 'tenant_slug';
+export type LookupAliasKind =
+  | 'tenant_code'
+  | 'tenant_slug'
+  | 'environment_tenant'
+  | 'client_id'
+  | 'invitation_token'
+  | 'custom_domain';
 
 export interface LookupBlindIndexKey {
   generation: number;
@@ -226,8 +232,32 @@ export async function createLookupAliasIndex(
   aliasKind: LookupAliasKind,
   value: string
 ): Promise<LookupAliasIndex> {
-  const normalized = requiredBoundedString(value, 64, 'lookup_alias_invalid').toLowerCase();
-  if (!SAFE_TENANT_ALIAS.test(normalized)) throw new Error('lookup_alias_invalid');
+  const exact = requiredBoundedString(
+    value,
+    aliasKind === 'invitation_token' ? 2048 : 255,
+    'lookup_alias_invalid'
+  );
+  const normalized =
+    aliasKind === 'tenant_code' ||
+    aliasKind === 'tenant_slug' ||
+    aliasKind === 'environment_tenant' ||
+    aliasKind === 'custom_domain'
+      ? exact.toLowerCase()
+      : exact;
+  if (
+    (aliasKind === 'tenant_code' ||
+      aliasKind === 'tenant_slug' ||
+      aliasKind === 'environment_tenant') &&
+    !SAFE_TENANT_ALIAS.test(normalized)
+  ) {
+    throw new Error('lookup_alias_invalid');
+  }
+  if (
+    aliasKind === 'custom_domain' &&
+    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u.test(normalized)
+  ) {
+    throw new Error('lookup_alias_invalid');
+  }
   const hash = await sha256(
     concatBytes(encoder.encode(aliasKind), new Uint8Array([0]), encoder.encode(normalized))
   );

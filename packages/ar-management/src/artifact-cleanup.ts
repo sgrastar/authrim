@@ -1,7 +1,8 @@
 import {
+  ensureDatabaseAdapter,
+  isD1DatabaseLike,
   listDeletedObjectCatalogObjectsForSystemCleanup,
   purgeDeletedObjectCatalogObjectsForSystemCleanup,
-  resolveAuthCorePersistenceAdapterFromEnv,
   tombstoneObjectCatalogEntryForTenant,
   type Env,
   type DatabaseAdapter,
@@ -12,6 +13,55 @@ const ADMIN_JOB_ARTIFACT_RETENTION_DAYS = 30;
 const ADMIN_JOB_CLEANUP_BATCH_LIMIT = 25;
 const DELETED_OBJECT_PURGE_BATCH_LIMIT = 100;
 const OBJECT_CATALOG_TOMBSTONE_RETENTION_DAYS = 7;
+const ACCOUNT_ARTIFACT_SHARD_PAGE_LIMIT = 8;
+const ACCOUNT_ARTIFACT_SHARD_CURSOR_KEY = 'jobs:artifact-cleanup:account-source-cursor';
+
+async function resolveAccountArtifactCleanupAdapters(env: Env): Promise<{
+  adapters: DatabaseAdapter[];
+  nextCursor: string;
+}> {
+  if (!env.CONTROL || !env.AUTHRIM_CONFIG) {
+    throw new Error('artifact_cleanup_account_directory_unavailable');
+  }
+  const afterShardId =
+    (await env.AUTHRIM_CONFIG.get(ACCOUNT_ARTIFACT_SHARD_CURSOR_KEY))?.trim() || null;
+  if (afterShardId && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(afterShardId)) {
+    throw new Error('artifact_cleanup_shard_cursor_invalid');
+  }
+  let shards = await env.CONTROL.listAccountDirectorySourceShards({
+    afterShardId,
+    limit: ACCOUNT_ARTIFACT_SHARD_PAGE_LIMIT,
+  });
+  if (shards.length === 0 && afterShardId) {
+    shards = await env.CONTROL.listAccountDirectorySourceShards({
+      afterShardId: null,
+      limit: ACCOUNT_ARTIFACT_SHARD_PAGE_LIMIT,
+    });
+  }
+  if (shards.length > ACCOUNT_ARTIFACT_SHARD_PAGE_LIMIT) {
+    throw new Error('artifact_cleanup_shard_page_invalid');
+  }
+  const adapters = shards.map((shard) => {
+    if (
+      typeof shard.shardId !== 'string' ||
+      typeof shard.bindingRef !== 'string' ||
+      !Number.isSafeInteger(shard.routeGeneration) ||
+      shard.routeGeneration < 1
+    ) {
+      throw new Error('artifact_cleanup_shard_page_invalid');
+    }
+    const source = (env as unknown as Record<string, unknown>)[shard.bindingRef];
+    if (!isD1DatabaseLike(source)) throw new Error('artifact_cleanup_source_binding_unavailable');
+    return ensureDatabaseAdapter(source, `artifact-cleanup:${shard.bindingRef}`);
+  });
+  return {
+    adapters,
+    nextCursor:
+      shards.length === ACCOUNT_ARTIFACT_SHARD_PAGE_LIMIT
+        ? (shards[shards.length - 1]?.shardId ?? '')
+        : '',
+  };
+}
 
 async function deleteBucketObject(bucket: R2Bucket, objectKey: string): Promise<void> {
   await bucket.delete(objectKey);
@@ -29,57 +79,64 @@ export async function cleanupExpiredDataExportArtifacts(
     return 0;
   }
 
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-data-export-artifact-cleanup'
-  );
+  const page = await resolveAccountArtifactCleanupAdapters(env);
   const now = Date.now();
-  const expiredRows = await adapter.query<{
-    id: string;
-    tenant_id: string;
-    object_catalog_id: string | null;
-    file_path: string | null;
-  }>(
-    `SELECT id, tenant_id, object_catalog_id, file_path
-       FROM data_export_requests
-      WHERE status = 'completed'
-        AND expires_at IS NOT NULL
-        AND expires_at < ?
-        AND (object_catalog_id IS NOT NULL OR file_path IS NOT NULL)
-      ORDER BY expires_at ASC
-      LIMIT ${DATA_EXPORT_CLEANUP_BATCH_LIMIT}`,
-    [now]
-  );
-
   let cleaned = 0;
-  for (const row of expiredRows) {
-    try {
-      if (row.object_catalog_id) {
-        await tombstoneObjectCatalogEntryForTenant(
-          adapter,
-          row.tenant_id,
-          row.object_catalog_id,
-          now
+  for (const adapter of page.adapters) {
+    const remaining = DATA_EXPORT_CLEANUP_BATCH_LIMIT - cleaned;
+    if (remaining <= 0) break;
+    const expiredRows = await adapter.query<{
+      id: string;
+      tenant_id: string;
+      object_catalog_id: string | null;
+      file_path: string | null;
+    }>(
+      `SELECT id, tenant_id, object_catalog_id, file_path
+         FROM data_export_requests
+        WHERE status = 'completed'
+          AND expires_at IS NOT NULL
+          AND expires_at < ?
+          AND (object_catalog_id IS NOT NULL OR file_path IS NOT NULL)
+        ORDER BY expires_at ASC
+        LIMIT ${remaining}`,
+      [now]
+    );
+
+    for (const row of expiredRows) {
+      try {
+        if (row.object_catalog_id) {
+          await tombstoneObjectCatalogEntryForTenant(
+            adapter,
+            row.tenant_id,
+            row.object_catalog_id,
+            now
+          );
+        } else if (row.file_path) {
+          await deleteBucketObject(env.EXPORT_ARTIFACTS, row.file_path);
+        }
+        await adapter.execute(
+          `UPDATE data_export_requests
+              SET object_catalog_id = NULL,
+                  file_path = NULL
+            WHERE id = ? AND tenant_id = ?`,
+          [row.id, row.tenant_id]
         );
-      } else if (row.file_path) {
-        await deleteBucketObject(env.EXPORT_ARTIFACTS, row.file_path);
+        cleaned += 1;
+      } catch (error) {
+        logger.error(
+          'Failed to tombstone data export artifact',
+          {
+            request_id: row.id,
+            object_catalog_id: row.object_catalog_id,
+            file_path: row.file_path,
+          },
+          error as Error
+        );
       }
-      await adapter.execute(
-        `UPDATE data_export_requests
-            SET object_catalog_id = NULL,
-                file_path = NULL
-          WHERE id = ? AND tenant_id = ?`,
-        [row.id, row.tenant_id]
-      );
-      cleaned += 1;
-    } catch (error) {
-      logger.error(
-        'Failed to tombstone data export artifact',
-        { request_id: row.id, object_catalog_id: row.object_catalog_id, file_path: row.file_path },
-        error as Error
-      );
     }
+    await purgeDeletedObjectArtifacts(env, adapter, logger);
   }
+  await env.AUTHRIM_CONFIG!.put(ACCOUNT_ARTIFACT_SHARD_CURSOR_KEY, page.nextCursor);
 
   if (cleaned > 0) {
     logger.info('Tombstoned expired data export artifacts', { count: cleaned });
@@ -100,10 +157,8 @@ export async function cleanupExpiredAdminJobArtifacts(
     return 0;
   }
 
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-admin-job-artifact-cleanup'
-  );
+  if (!env.DB_ADMIN) throw new Error('artifact_cleanup_admin_database_unavailable');
+  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-admin-job-artifact-cleanup');
   const cutoffSeconds =
     Math.floor(Date.now() / 1000) - ADMIN_JOB_ARTIFACT_RETENTION_DAYS * 24 * 60 * 60;
   const oldRows = await adapter.query<{
@@ -226,10 +281,8 @@ export async function runObjectArtifactCleanup(
     error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
   }
 ): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'management-object-artifact-cleanup'
-  );
+  if (!env.DB_ADMIN) throw new Error('artifact_cleanup_admin_database_unavailable');
+  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-object-artifact-cleanup');
 
   await cleanupExpiredDataExportArtifacts(env, logger);
   await cleanupExpiredAdminJobArtifacts(env, logger);

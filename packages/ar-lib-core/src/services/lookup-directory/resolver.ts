@@ -270,6 +270,27 @@ export class LookupRouteResolver {
     return aliases[0] ?? null;
   }
 
+  async resolveAliases(input: {
+    index: LookupAliasIndex;
+    maximumResults: number;
+    afterTenantId?: string;
+    consistency?: D1ConsistencyRequest;
+  }): Promise<ResolvedLookupAlias[]> {
+    const assignment = strictAssignment(
+      await this.assignments.resolveActiveAssignment(input.index.virtualBucket),
+      input.index.virtualBucket
+    );
+    const binding = this.env[assignment.bindingRef];
+    if (!isSessionCapableD1(binding)) throw new Error('lookup_physical_binding_unavailable');
+    const result = await new LookupDirectoryRepository(binding).findActiveAliases(
+      input.index,
+      input.maximumResults,
+      input.consistency ?? createD1ConsistencyRequest('replica_eligible'),
+      input.afterTenantId
+    );
+    return cloneAliases(result.aliases);
+  }
+
   resolveTarget(input: {
     membership: ResolvedLookupMembership;
     dataRole: TenantRouteDataRole;

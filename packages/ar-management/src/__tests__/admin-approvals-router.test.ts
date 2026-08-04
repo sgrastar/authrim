@@ -113,23 +113,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
     ensureDatabaseAdapter: vi.fn(() => mockAdapter),
-    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async () => ({
-      storageProfile: {
-        id: 'builtin:storage:shared-d1',
-        kind: 'storage',
-        label: 'Shared D1',
-        deploymentProfile: 'shared-d1',
-        slices: {},
-      },
-      coreDb: mockAdapter,
-      piiDb: mockAdapter,
-      userCacheScope: {
-        storageProfileId: 'builtin:storage:shared-d1',
-        sourceGeneration: 'core:0:pii:0',
-        schemaVersion: 'core:1:pii:1',
-      },
-      piiCacheMode: 'merged',
-    })),
+    resolveAccountDataContext: vi.fn(async (_env, input: { accountId: string }) => {
+      const legacyUserId = input.accountId.replace(/^account:/, '');
+      return {
+        tenantId: 'tenant-a',
+        accountId: `account:${legacyUserId}`,
+        legacyUserId,
+        coreDb: {},
+        piiDb: {},
+      };
+    }),
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         if (userId !== 'user-42' && userId !== 'user-1') {

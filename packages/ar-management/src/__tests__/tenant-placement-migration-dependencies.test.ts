@@ -153,7 +153,6 @@ describe('tenant placement migration dependencies', () => {
       },
     });
     const env = {
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       TENANT_RUNTIME_REGISTRY: { put: vi.fn(), get: vi.fn() },
       TDB_TARGET_0: { withSession },
     } as unknown as Env;
@@ -204,8 +203,8 @@ describe('tenant placement migration dependencies', () => {
       expect.arrayContaining([
         expect.objectContaining({
           control_operation_id: 'control-operation-a',
-          residency_policy_id: 'builtin:residency:eu',
-          residency_partition: 'eu-primary',
+          control_residency_policy_id: 'builtin:residency:eu',
+          control_residency_partition: 'eu-primary',
         }),
       ])
     );

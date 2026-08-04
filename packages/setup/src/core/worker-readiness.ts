@@ -148,7 +148,9 @@ async function hasExpectedMissingTenantSnapshot(
   if (
     !allowMissingTenantSnapshot ||
     response.status !== 409 ||
-    (!workerName.endsWith('-ar-auth') && !workerName.endsWith('-ar-saml'))
+    (!workerName.endsWith('-ar-auth') &&
+      !workerName.endsWith('-ar-policy') &&
+      !workerName.endsWith('-ar-saml'))
   ) {
     return false;
   }
@@ -156,7 +158,7 @@ async function hasExpectedMissingTenantSnapshot(
   const body = await readResponseTextWithLimit(response, 2048).catch(() => '');
   try {
     const payload = JSON.parse(body) as { error?: unknown };
-    return payload.error === 'missing_snapshot';
+    return payload.error === 'missing_snapshot' || payload.error === 'missing_generation';
   } catch {
     return false;
   }
@@ -387,7 +389,7 @@ export async function waitForWorkerHttpReady(options: {
   initialDelayMs?: number;
   maxDelayMs?: number;
   requestTimeoutMs?: number;
-  /** Initial tenant-D1 deploys may not have a Runtime Registry snapshot yet. */
+  /** Initial Control Plane deploys may not have a Runtime Registry snapshot yet. */
   allowMissingTenantSnapshot?: boolean;
   onProgress?: (message: string) => void;
 }): Promise<WorkerHttpReadinessResult> {

@@ -1801,7 +1801,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/quarantine', async (c
   try {
     auditId = await writeAdminAuditLog(c, {
       action: 'control_plane.shard.quarantine_requested',
-      resourceType: 'tenant_d1_shard',
+      resourceType: 'assignment_shard',
       resourceId: shardId,
       result: 'success',
       before: { quarantineState: 'none' },
@@ -1866,7 +1866,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-quarantine', as
   try {
     auditId = await writeAdminAuditLog(c, {
       action: 'control_plane.shard.quarantine_retry_requested',
-      resourceType: 'tenant_d1_shard',
+      resourceType: 'assignment_shard',
       resourceId: shardId,
       result: 'success',
       before: { quarantineState: 'blocked' },
@@ -1932,7 +1932,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/approve', async (c) =
   try {
     auditId = await writeAdminAuditLog(c, {
       action: 'control_plane.shard.cleanup_approved',
-      resourceType: 'tenant_d1_shard',
+      resourceType: 'assignment_shard',
       resourceId: shardId,
       result: 'success',
       before: { cleanupState: null, quarantineState: 'ready_for_cleanup' },
@@ -1999,7 +1999,7 @@ controlPlaneOperationsRouter.post('/shard-cleanup/:shardId/retry-cleanup', async
   try {
     auditId = await writeAdminAuditLog(c, {
       action: 'control_plane.shard.cleanup_retry_requested',
-      resourceType: 'tenant_d1_shard',
+      resourceType: 'assignment_shard',
       resourceId: shardId,
       result: 'success',
       before: { cleanupState: 'blocked' },

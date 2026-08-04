@@ -123,9 +123,9 @@ function sleep(ms: number): Promise<void> {
  * @example
  * await retryD1Operation(
  *   async () => {
- *     await this.env.DB.prepare('INSERT INTO ...').bind(...).run();
+ *     await this.db.prepare('INSERT INTO ...').bind(...).run();
  *   },
- *   'SessionStore.saveToD1',
+ *   'AuditStore.append',
  *   { maxRetries: 3 }
  * );
  */

@@ -22,7 +22,7 @@ import {
   ensureDatabaseAdapter,
   getLogger,
   getTenantIdFromContext,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   type DatabaseSource,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -43,12 +43,19 @@ interface TombstoneRecord {
 
 type TombstoneTenantScope = 'tenant' | 'platform';
 
-async function resolveTombstoneDatabase(
+async function resolveTombstoneDatabases(
   c: Context<{ Bindings: Env }>,
   tenantId: string
-): Promise<DatabaseSource | null> {
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(c.env, tenantId);
-  return sources.piiDb;
+): Promise<DatabaseSource[]> {
+  return (
+    await resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
+      tenantId,
+      role: 'tenant_pii',
+      dataRole: 'tenant_pii',
+      maxStores: 32,
+      concurrency: 4,
+    })
+  ).map((source) => source.source);
 }
 
 function resolveTombstoneTenantId(
@@ -93,11 +100,9 @@ async function listTombstonesForScope(
     });
   }
 
-  const db = await resolveTombstoneDatabase(c, tenantId);
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+  const adapters = (await resolveTombstoneDatabases(c, tenantId)).map((db, index) =>
+    ensureDatabaseAdapter(db, `admin-tombstones:${index}`)
+  );
   const deletionReason = c.req.query('deletion_reason');
   const expiredParam = c.req.query('expired');
   const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10));
@@ -132,13 +137,23 @@ async function listTombstonesForScope(
   try {
     // Count total
     const countSql = `SELECT COUNT(*) as count FROM users_pii_tombstone ${whereClause}`;
-    const countResult = await adapter.queryOne<{ count: number }>(countSql, params);
-    const total = countResult?.count ?? 0;
+    const countResults = await Promise.all(
+      adapters.map((adapter) => adapter.queryOne<{ count: number }>(countSql, params))
+    );
+    const total = countResults.reduce((sum, row) => sum + (row?.count ?? 0), 0);
 
     // Get items
     const dataSql = `SELECT * FROM users_pii_tombstone ${whereClause} ORDER BY deleted_at DESC LIMIT ? OFFSET ?`;
-    const items = (await adapter.query<TombstoneRecord>(dataSql, [...params, limit, offset])).map(
-      (row: TombstoneRecord) => ({
+    const shardRows = await Promise.all(
+      adapters.map((adapter) =>
+        adapter.query<TombstoneRecord>(dataSql, [...params, limit + offset, 0])
+      )
+    );
+    const items = shardRows
+      .flat()
+      .sort((left, right) => right.deleted_at - left.deleted_at)
+      .slice(offset, offset + limit)
+      .map((row: TombstoneRecord) => ({
         id: row.id,
         tenant_id: row.tenant_id,
         has_email_blind_index: row.email_blind_index !== null,
@@ -150,8 +165,7 @@ async function listTombstonesForScope(
         retention_until_iso: new Date(row.retention_until).toISOString(),
         is_expired: row.retention_until < now,
         metadata: row.deletion_metadata ? safeJsonParse(row.deletion_metadata) : null,
-      })
-    );
+      }));
 
     const totalPages = Math.ceil(total / limit);
 
@@ -212,11 +226,9 @@ async function getTombstoneForScope(
       variables: { field: 'tenant_id' },
     });
   }
-  const db = await resolveTombstoneDatabase(c, tenantId);
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+  const adapters = (await resolveTombstoneDatabases(c, tenantId)).map((db, index) =>
+    ensureDatabaseAdapter(db, `admin-tombstones:${index}`)
+  );
 
   const id = c.req.param('id')!;
   if (!id) {
@@ -226,10 +238,18 @@ async function getTombstoneForScope(
   }
 
   try {
-    const row = await adapter.queryOne<TombstoneRecord>(
-      'SELECT * FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const rows = (
+      await Promise.all(
+        adapters.map((adapter) =>
+          adapter.queryOne<TombstoneRecord>(
+            'SELECT * FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
+            [id, tenantId]
+          )
+        )
+      )
+    ).filter((row): row is TombstoneRecord => row !== null);
+    if (rows.length > 1) throw new Error('duplicate_tombstone_across_shards');
+    const row = rows[0] ?? null;
 
     if (!row) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -286,11 +306,9 @@ async function getTombstoneStatsForScope(
       variables: { field: 'tenant_id' },
     });
   }
-  const db = await resolveTombstoneDatabase(c, tenantId);
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+  const adapters = (await resolveTombstoneDatabases(c, tenantId)).map((db, index) =>
+    ensureDatabaseAdapter(db, `admin-tombstones:${index}`)
+  );
   const now = Date.now();
 
   try {
@@ -300,41 +318,53 @@ async function getTombstoneStatsForScope(
 
     // Total count
     const totalSql = `SELECT COUNT(*) as count FROM users_pii_tombstone ${baseCondition}`;
-    const totalResult = await adapter.queryOne<{ count: number }>(totalSql, baseParams);
+    const totalResults = await Promise.all(
+      adapters.map((adapter) => adapter.queryOne<{ count: number }>(totalSql, baseParams))
+    );
+    const total = totalResults.reduce((sum, row) => sum + (row?.count ?? 0), 0);
 
     // Expired count
     const expiredCondition = 'WHERE tenant_id = ? AND retention_until < ?';
     const expiredParams = [tenantId, now];
     const expiredSql = `SELECT COUNT(*) as count FROM users_pii_tombstone ${expiredCondition}`;
-    const expiredResult = await adapter.queryOne<{ count: number }>(expiredSql, expiredParams);
+    const expiredResults = await Promise.all(
+      adapters.map((adapter) => adapter.queryOne<{ count: number }>(expiredSql, expiredParams))
+    );
+    const expired = expiredResults.reduce((sum, row) => sum + (row?.count ?? 0), 0);
 
     // By reason
     const byReasonSql = `SELECT deletion_reason, COUNT(*) as count FROM users_pii_tombstone ${baseCondition} GROUP BY deletion_reason`;
-    const byReasonResult = await adapter.query<{ deletion_reason: string | null; count: number }>(
-      byReasonSql,
-      baseParams
-    );
+    const byReasonResult = (
+      await Promise.all(
+        adapters.map((adapter) =>
+          adapter.query<{ deletion_reason: string | null; count: number }>(byReasonSql, baseParams)
+        )
+      )
+    ).flat();
 
     const byReason: Record<string, number> = {};
     for (const row of byReasonResult) {
       const reason = row.deletion_reason ?? 'unknown';
-      byReason[reason] = row.count;
+      byReason[reason] = (byReason[reason] ?? 0) + row.count;
     }
 
-    const byTenant: Record<string, number> | null = { [tenantId]: totalResult?.count ?? 0 };
+    const byTenant: Record<string, number> | null = { [tenantId]: total };
 
     // Recent deletions (last 30 days)
     const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
     const recentCondition = 'WHERE tenant_id = ? AND deleted_at >= ?';
     const recentParams = [tenantId, thirtyDaysAgo];
     const recentSql = `SELECT COUNT(*) as count FROM users_pii_tombstone ${recentCondition}`;
-    const recentResult = await adapter.queryOne<{ count: number }>(recentSql, recentParams);
+    const recentResults = await Promise.all(
+      adapters.map((adapter) => adapter.queryOne<{ count: number }>(recentSql, recentParams))
+    );
+    const recent = recentResults.reduce((sum, row) => sum + (row?.count ?? 0), 0);
 
     return c.json({
-      total: totalResult?.count ?? 0,
-      expired: expiredResult?.count ?? 0,
-      active: (totalResult?.count ?? 0) - (expiredResult?.count ?? 0),
-      recentDeletions: recentResult?.count ?? 0,
+      total,
+      expired,
+      active: total - expired,
+      recentDeletions: recent,
       byReason,
       byTenant,
       tenantId,
@@ -389,11 +419,9 @@ async function cleanupTombstonesForScope(
       variables: { field: 'tenant_id' },
     });
   }
-  const db = await resolveTombstoneDatabase(c, tenantId);
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+  const adapters = (await resolveTombstoneDatabases(c, tenantId)).map((db, index) =>
+    ensureDatabaseAdapter(db, `admin-tombstones:${index}`)
+  );
   const dryRun = body.dry_run ?? false;
   const now = Date.now();
 
@@ -402,9 +430,10 @@ async function cleanupTombstonesForScope(
     const countCondition = 'WHERE tenant_id = ? AND retention_until < ?';
     const countParams = [tenantId, now];
     const countSql = `SELECT COUNT(*) as count FROM users_pii_tombstone ${countCondition}`;
-    const countResult = await adapter.queryOne<{ count: number }>(countSql, countParams);
-
-    const toDelete = countResult?.count ?? 0;
+    const countResults = await Promise.all(
+      adapters.map((adapter) => adapter.queryOne<{ count: number }>(countSql, countParams))
+    );
+    const toDelete = countResults.reduce((sum, row) => sum + (row?.count ?? 0), 0);
 
     if (dryRun) {
       return c.json({
@@ -428,7 +457,7 @@ async function cleanupTombstonesForScope(
     const deleteCondition = 'WHERE tenant_id = ? AND retention_until < ?';
     const deleteParams = [tenantId, now];
     const deleteSql = `DELETE FROM users_pii_tombstone ${deleteCondition}`;
-    await adapter.execute(deleteSql, deleteParams);
+    await Promise.all(adapters.map((adapter) => adapter.execute(deleteSql, deleteParams)));
 
     return c.json({
       dryRun: false,
@@ -467,11 +496,9 @@ async function deleteTombstoneForScope(
       variables: { field: 'tenant_id' },
     });
   }
-  const db = await resolveTombstoneDatabase(c, tenantId);
-  if (!db) {
-    return createErrorResponse(c, AR_ERROR_CODES.CONFIG_DB_NOT_CONFIGURED);
-  }
-  const adapter = ensureDatabaseAdapter(db, 'admin-tombstones');
+  const adapters = (await resolveTombstoneDatabases(c, tenantId)).map((db, index) =>
+    ensureDatabaseAdapter(db, `admin-tombstones:${index}`)
+  );
 
   const id = c.req.param('id')!;
   if (!id) {
@@ -482,20 +509,28 @@ async function deleteTombstoneForScope(
 
   try {
     // Check if exists
-    const existing = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const matches = (
+      await Promise.all(
+        adapters.map(async (adapter) => ({
+          adapter,
+          row: await adapter.queryOne<{ id: string }>(
+            'SELECT id FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
+            [id, tenantId]
+          ),
+        }))
+      )
+    ).filter((match) => match.row !== null);
 
-    if (!existing) {
+    if (matches.length === 0) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    if (matches.length > 1) throw new Error('duplicate_tombstone_across_shards');
 
     // Delete
-    await adapter.execute('DELETE FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?', [
-      id,
-      tenantId,
-    ]);
+    await matches[0].adapter.execute(
+      'DELETE FROM users_pii_tombstone WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
 
     return c.json({
       success: true,

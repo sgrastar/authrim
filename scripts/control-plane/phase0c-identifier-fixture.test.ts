@@ -63,19 +63,34 @@ async function runtimeFixture() {
   ] as const;
   const snapshot = await signTenantRuntimeRegistrySnapshot(
     {
-      version: 2,
+      version: 4,
       tenantId: 'default',
       snapshotScope: 'tenant',
       deploymentTarget: 'default',
       runtimeGeneration: 7,
       routeStatus: 'active',
       quarantineDenyGeneration: 0,
-      storageProfileId: 'builtin:storage:tenant-d1',
+      backend: { provider: 'd1', resolver: 'control-plane' },
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
       publishedAt: '2026-07-31T05:30:00.000Z',
       expiresAt: '2026-07-31T06:00:00.000Z',
       stores: stores.map((store) => ({
         tenantId: 'default',
         role: store.role,
+        dataRole:
+          store.role === 'tenant_pii'
+            ? ('tenant_pii' as const)
+            : store.shardGroup === 'default'
+              ? ('tenant_core/default' as const)
+              : ('tenant_core/users' as const),
+        residencyPolicyId: 'default',
+        residencyPartition: 'default',
+        shardId: `shard-${store.shardGroup}`,
+        assignmentGeneration: 3,
+        bindingRouteGeneration: 7,
+        placementPolicyGeneration: 1,
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'default',
         generation: 3,
         runtimeGeneration: 7,
         schemaVersion: 1,

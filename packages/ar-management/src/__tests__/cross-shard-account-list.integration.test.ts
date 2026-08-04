@@ -16,6 +16,33 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const resolveTenantAssignedDatabaseSourcesFromRegistry = vi.hoisted(() =>
+  vi.fn(async (env: any, input: { dataRole: string }) => {
+    const shards =
+      input.dataRole === 'tenant_pii'
+        ? await env.CONTROL.listAccountRouteSourceShards()
+        : await env.CONTROL.listAccountDirectorySourceShards();
+    return shards.map((shard: any) => ({
+      tenantId: 'tenant-a',
+      dataRole: input.dataRole,
+      shardId: shard.shardId,
+      bindingRef: shard.bindingRef,
+      residencyPartition: shard.residencyPartition,
+      bindingRouteGeneration: shard.routeGeneration,
+      source: env[shard.bindingRef],
+    }));
+  })
+);
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveTenantAssignedDatabaseSourcesFromRegistry,
+  };
+});
+
 import {
   CrossShardAccountExactSearchService,
   CrossShardAccountListService,

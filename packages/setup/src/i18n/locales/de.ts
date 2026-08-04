@@ -242,9 +242,9 @@ const de: Translations = {
   // Database
   'db.title': 'Datenbank-Konfiguration',
   'db.regionWarning': 'Die Datenbankregion kann nach der Erstellung nicht mehr geändert werden.',
-  'db.coreDescription': 'Core-DB: Speichert OAuth-Clients, Tokens, Sitzungen, Audit-Logs',
+  'db.coreDescription': 'Plattform-DB: Speichert Metadaten und Nicht-PII-Audit-Logs',
   'db.coreRegion': 'Core-Datenbank-Region',
-  'db.piiDescription': 'PII-DB: Speichert Benutzerprofile, Anmeldedaten, persönliche Daten',
+  'db.piiDescription': 'Plattform-PII-DB: Speichert PII-Audit- und Anonymisierungsdaten',
   'db.piiNote': 'Berücksichtigen Sie Ihre Datenschutzanforderungen.',
   'db.piiRegion': 'PII-Datenbank-Region',
   'db.creating': 'Erstelle Datenbank...',
@@ -786,14 +786,8 @@ const de: Translations = {
   'web.db.name': 'Name',
   'web.db.region': 'Region',
   'web.db.regionAuto': 'Automatisch (nächstgelegene)',
-  'web.db.storageProfileTitle': 'Speicher-Bereitstellungsprofil',
-  'web.db.storageProfileDesc':
-    'Wählen Sie aus, wie Benutzer-Core- und PII-Daten für diese Bereitstellung platziert werden.',
-  'web.db.sharedD1Title': 'Geteiltes D1',
-  'web.db.sharedD1Desc':
-    'Eine bereitstellungsweite Core-D1- und PII-D1-Datenbank. Geringster Einrichtungsaufwand und Standardpfad.',
-  'web.db.tenantD1Title': 'Tenant D1',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Initialisiert die Control Plane und erste Tenant-Shards; weitere Kapazität wird automatisch erstellt.',
 
   // Web UI Email

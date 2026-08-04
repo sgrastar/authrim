@@ -7941,7 +7941,7 @@ type RootTranslation = {
 	 */
 	admin_scale_read_replication_update_failed: string
 	/**
-	 * T​e​n​a​n​t​ ​D​1​ ​C​a​p​a​c​i​t​y
+	 * D​1​ ​A​s​s​i​g​n​m​e​n​t​ ​C​a​p​a​c​i​t​y
 	 */
 	admin_scale_d1_capacity: string
 	/**
@@ -22501,7 +22501,7 @@ type RootTranslation = {
 	 */
 	admin_database_connections_detail_title: string
 	/**
-	 * R​e​g​i​s​t​e​r​ ​a​ ​d​a​t​a​b​a​s​e​ ​t​a​r​g​e​t​ ​f​o​r​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​,​ ​a​u​d​i​t​s​,​ ​a​n​d​ ​t​e​n​a​n​t​ ​s​t​o​r​a​g​e​ ​r​o​u​t​i​n​g​.
+	 * R​e​g​i​s​t​e​r​ ​a​ ​d​a​t​a​b​a​s​e​ ​t​a​r​g​e​t​ ​f​o​r​ ​a​u​d​i​t​s​ ​a​n​d​ ​f​u​t​u​r​e​ ​b​a​c​k​e​n​d​ ​i​n​t​e​g​r​a​t​i​o​n​s​.​ ​T​e​n​a​n​t​ ​D​1​ ​p​l​a​c​e​m​e​n​t​ ​i​s​ ​m​a​n​a​g​e​d​ ​b​y​ ​t​h​e​ ​C​o​n​t​r​o​l​ ​P​l​a​n​e​.
 	 */
 	admin_database_connections_create_description: string
 	/**
@@ -22736,13 +22736,9 @@ type RootTranslation = {
 	 */
 	admin_jobs_title: string
 	/**
-	 * M​o​n​i​t​o​r​ ​q​u​e​u​e​d​ ​o​p​e​r​a​t​i​o​n​a​l​ ​w​o​r​k​ ​i​n​c​l​u​d​i​n​g​ ​u​s​e​r​ ​i​m​p​o​r​t​s​,​ ​t​e​n​a​n​t​ ​d​a​t​a​b​a​s​e​ ​r​e​q​u​e​s​t​s​,​ ​b​u​l​k​ ​u​p​d​a​t​e​s​,​ ​a​n​d​ ​r​e​p​o​r​t​ ​j​o​b​s​.​ ​R​u​n​n​i​n​g​ ​j​o​b​s​ ​r​e​f​r​e​s​h​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
+	 * M​o​n​i​t​o​r​ ​q​u​e​u​e​d​ ​o​p​e​r​a​t​i​o​n​a​l​ ​w​o​r​k​ ​i​n​c​l​u​d​i​n​g​ ​u​s​e​r​ ​i​m​p​o​r​t​s​,​ ​b​u​l​k​ ​u​p​d​a​t​e​s​,​ ​a​n​d​ ​r​e​p​o​r​t​ ​j​o​b​s​.​ ​R​u​n​n​i​n​g​ ​j​o​b​s​ ​r​e​f​r​e​s​h​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.
 	 */
 	admin_jobs_description: string
-	/**
-	 * T​e​n​a​n​t​ ​D​B
-	 */
-	admin_jobs_tenant_db: string
 	/**
 	 * I​m​p​o​r​t​ ​U​s​e​r​s
 	 */
@@ -22820,7 +22816,7 @@ type RootTranslation = {
 	 */
 	admin_jobs_current_filters: string
 	/**
-	 * C​r​e​a​t​e​ ​a​n​ ​i​m​p​o​r​t​,​ ​t​e​n​a​n​t​ ​d​a​t​a​b​a​s​e​ ​r​e​q​u​e​s​t​,​ ​o​r​ ​r​e​p​o​r​t​ ​j​o​b​ ​t​o​ ​s​t​a​r​t​ ​t​r​a​c​k​i​n​g​ ​w​o​r​k​.
+	 * C​r​e​a​t​e​ ​a​n​ ​i​m​p​o​r​t​ ​o​r​ ​r​e​p​o​r​t​ ​j​o​b​ ​t​o​ ​s​t​a​r​t​ ​t​r​a​c​k​i​n​g​ ​w​o​r​k​.
 	 */
 	admin_jobs_empty_hint: string
 	/**
@@ -22843,46 +22839,6 @@ type RootTranslation = {
 	 * D​e​t​a​i​l​s
 	 */
 	admin_jobs_details: string
-	/**
-	 * T​e​n​a​n​t​ ​D​a​t​a​b​a​s​e​ ​R​e​q​u​e​s​t
-	 */
-	admin_jobs_tenant_database_request: string
-	/**
-	 * T​e​n​a​n​t​ ​S​l​u​g
-	 */
-	admin_jobs_tenant_slug: string
-	/**
-	 * L​e​a​v​e​ ​b​l​a​n​k​ ​t​o​ ​u​s​e​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​t​e​n​a​n​t​ ​c​o​n​t​e​x​t​ ​w​h​e​n​ ​s​u​p​p​o​r​t​e​d​.
-	 */
-	admin_jobs_tenant_slug_hint: string
-	/**
-	 * G​e​n​e​r​a​t​i​o​n
-	 */
-	admin_jobs_generation: string
-	/**
-	 * E​x​e​c​u​t​i​o​n
-	 */
-	admin_jobs_execution: string
-	/**
-	 * P​l​a​n​ ​o​n​l​y
-	 */
-	admin_jobs_execution_plan_only: string
-	/**
-	 * O​p​e​r​a​t​o​r​ ​C​L​I
-	 */
-	admin_jobs_execution_operator_cli: string
-	/**
-	 * R​e​q​u​e​s​t​ ​a​c​t​i​v​a​t​i​o​n​ ​a​f​t​e​r​ ​g​e​n​e​r​a​t​e​d​ ​b​i​n​d​i​n​g​s​ ​a​r​e​ ​d​e​p​l​o​y​e​d
-	 */
-	admin_jobs_activate_after_deploy: string
-	/**
-	 * R​e​a​s​o​n
-	 */
-	admin_jobs_reason: string
-	/**
-	 * R​e​c​o​r​d​e​d​ ​w​i​t​h​ ​t​h​e​ ​j​o​b​ ​r​e​q​u​e​s​t​ ​a​n​d​ ​o​p​e​r​a​t​i​o​n​a​l​ ​a​u​d​i​t​ ​t​r​a​i​l​.
-	 */
-	admin_jobs_reason_hint: string
 	/**
 	 * C​a​n​c​e​l
 	 */
@@ -23167,14 +23123,6 @@ type RootTranslation = {
 	 */
 	admin_jobs_type_tenant_delete: string
 	/**
-	 * T​e​n​a​n​t​ ​D​B​ ​P​r​o​v​i​s​i​o​n​i​n​g
-	 */
-	admin_jobs_type_tenant_database_provision: string
-	/**
-	 * T​e​n​a​n​t​ ​D​B​ ​A​c​t​i​v​a​t​i​o​n
-	 */
-	admin_jobs_type_tenant_database_activate_batch: string
-	/**
 	 * T​e​n​a​n​t​ ​D​B​ ​E​x​p​o​r​t
 	 */
 	admin_jobs_type_tenant_database_export: string
@@ -23280,14 +23228,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​i​m​p​o​r​t​ ​j​o​b
 	 */
 	admin_jobs_create_import_failed: string
-	/**
-	 * G​e​n​e​r​a​t​i​o​n​ ​m​u​s​t​ ​b​e​ ​a​ ​p​o​s​i​t​i​v​e​ ​i​n​t​e​g​e​r
-	 */
-	admin_jobs_generation_positive_integer: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​t​e​n​a​n​t​ ​d​a​t​a​b​a​s​e​ ​r​e​q​u​e​s​t
-	 */
-	admin_jobs_create_tenant_db_failed: string
 	/**
 	 * A​p​p​r​o​v​a​l​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -31290,7 +31230,7 @@ type RootTranslation = {
 	 */
 	admin_settings_runtime_profiles: string
 	/**
-	 * M​a​n​a​g​e​ ​s​t​o​r​a​g​e​,​ ​a​u​d​i​t​,​ ​a​n​d​ ​r​e​s​i​d​e​n​c​y​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​,​ ​i​n​c​l​u​d​i​n​g​ ​a​u​d​i​t​ ​s​i​n​k​s
+	 * M​a​n​a​g​e​ ​a​u​d​i​t​ ​a​n​d​ ​r​e​s​i​d​e​n​c​y​ ​r​u​n​t​i​m​e​ ​p​r​o​f​i​l​e​s​,​ ​i​n​c​l​u​d​i​n​g​ ​a​u​d​i​t​ ​s​i​n​k​s
 	 */
 	admin_settings_runtime_profiles_desc: string
 	/**
@@ -31388,17 +31328,9 @@ type RootTranslation = {
 	 */
 	admin_settings_default_audit_profile_required: string
 	/**
-	 * S​e​l​e​c​t​ ​a​ ​d​e​f​a​u​l​t​ ​s​t​o​r​a​g​e​ ​p​r​o​f​i​l​e​.
-	 */
-	admin_settings_default_storage_profile_required: string
-	/**
 	 * S​e​l​e​c​t​ ​a​ ​d​e​f​a​u​l​t​ ​r​e​s​i​d​e​n​c​y​ ​p​r​o​f​i​l​e​.
 	 */
 	admin_settings_default_residency_profile_required: string
-	/**
-	 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​s​t​o​r​a​g​e​ ​p​r​o​f​i​l​e​ ​c​a​n​n​o​t​ ​b​e​ ​a​c​t​i​v​a​t​e​d​.
-	 */
-	admin_settings_storage_profile_not_activatable: string
 	/**
 	 * T​h​e​ ​s​e​l​e​c​t​e​d​ ​a​u​d​i​t​ ​p​r​o​f​i​l​e​ ​c​a​n​n​o​t​ ​b​e​ ​a​c​t​i​v​a​t​e​d​.
 	 */
@@ -42353,7 +42285,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_scale_read_replication_update_failed: () => LocalizedString
 	/**
-	 * Tenant D1 Capacity
+	 * D1 Assignment Capacity
 	 */
 	admin_scale_d1_capacity: () => LocalizedString
 	/**
@@ -56719,7 +56651,7 @@ Remove this role from {email}?
 	 */
 	admin_database_connections_detail_title: () => LocalizedString
 	/**
-	 * Register a database target for runtime profiles, audits, and tenant storage routing.
+	 * Register a database target for audits and future backend integrations. Tenant D1 placement is managed by the Control Plane.
 	 */
 	admin_database_connections_create_description: () => LocalizedString
 	/**
@@ -56951,13 +56883,9 @@ Remove this role from {email}?
 	 */
 	admin_jobs_title: () => LocalizedString
 	/**
-	 * Monitor queued operational work including user imports, tenant database requests, bulk updates, and report jobs. Running jobs refresh automatically.
+	 * Monitor queued operational work including user imports, bulk updates, and report jobs. Running jobs refresh automatically.
 	 */
 	admin_jobs_description: () => LocalizedString
-	/**
-	 * Tenant DB
-	 */
-	admin_jobs_tenant_db: () => LocalizedString
 	/**
 	 * Import Users
 	 */
@@ -57035,7 +56963,7 @@ Remove this role from {email}?
 	 */
 	admin_jobs_current_filters: () => LocalizedString
 	/**
-	 * Create an import, tenant database request, or report job to start tracking work.
+	 * Create an import or report job to start tracking work.
 	 */
 	admin_jobs_empty_hint: () => LocalizedString
 	/**
@@ -57058,46 +56986,6 @@ Remove this role from {email}?
 	 * Details
 	 */
 	admin_jobs_details: () => LocalizedString
-	/**
-	 * Tenant Database Request
-	 */
-	admin_jobs_tenant_database_request: () => LocalizedString
-	/**
-	 * Tenant Slug
-	 */
-	admin_jobs_tenant_slug: () => LocalizedString
-	/**
-	 * Leave blank to use the current tenant context when supported.
-	 */
-	admin_jobs_tenant_slug_hint: () => LocalizedString
-	/**
-	 * Generation
-	 */
-	admin_jobs_generation: () => LocalizedString
-	/**
-	 * Execution
-	 */
-	admin_jobs_execution: () => LocalizedString
-	/**
-	 * Plan only
-	 */
-	admin_jobs_execution_plan_only: () => LocalizedString
-	/**
-	 * Operator CLI
-	 */
-	admin_jobs_execution_operator_cli: () => LocalizedString
-	/**
-	 * Request activation after generated bindings are deployed
-	 */
-	admin_jobs_activate_after_deploy: () => LocalizedString
-	/**
-	 * Reason
-	 */
-	admin_jobs_reason: () => LocalizedString
-	/**
-	 * Recorded with the job request and operational audit trail.
-	 */
-	admin_jobs_reason_hint: () => LocalizedString
 	/**
 	 * Cancel
 	 */
@@ -57371,14 +57259,6 @@ Remove this role from {email}?
 	 */
 	admin_jobs_type_tenant_delete: () => LocalizedString
 	/**
-	 * Tenant DB Provisioning
-	 */
-	admin_jobs_type_tenant_database_provision: () => LocalizedString
-	/**
-	 * Tenant DB Activation
-	 */
-	admin_jobs_type_tenant_database_activate_batch: () => LocalizedString
-	/**
 	 * Tenant DB Export
 	 */
 	admin_jobs_type_tenant_database_export: () => LocalizedString
@@ -57482,14 +57362,6 @@ Remove this role from {email}?
 	 * Failed to create import job
 	 */
 	admin_jobs_create_import_failed: () => LocalizedString
-	/**
-	 * Generation must be a positive integer
-	 */
-	admin_jobs_generation_positive_integer: () => LocalizedString
-	/**
-	 * Failed to create tenant database request
-	 */
-	admin_jobs_create_tenant_db_failed: () => LocalizedString
 	/**
 	 * Approvals - Admin Dashboard - Authrim
 	 */
@@ -65383,7 +65255,7 @@ Remove this role from {email}?
 	 */
 	admin_settings_runtime_profiles: () => LocalizedString
 	/**
-	 * Manage storage, audit, and residency runtime profiles, including audit sinks
+	 * Manage audit and residency runtime profiles, including audit sinks
 	 */
 	admin_settings_runtime_profiles_desc: () => LocalizedString
 	/**
@@ -65479,17 +65351,9 @@ Remove this role from {email}?
 	 */
 	admin_settings_default_audit_profile_required: () => LocalizedString
 	/**
-	 * Select a default storage profile.
-	 */
-	admin_settings_default_storage_profile_required: () => LocalizedString
-	/**
 	 * Select a default residency profile.
 	 */
 	admin_settings_default_residency_profile_required: () => LocalizedString
-	/**
-	 * The selected storage profile cannot be activated.
-	 */
-	admin_settings_storage_profile_not_activatable: () => LocalizedString
 	/**
 	 * The selected audit profile cannot be activated.
 	 */

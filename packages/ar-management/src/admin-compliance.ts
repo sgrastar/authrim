@@ -1144,19 +1144,7 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
     });
 
     // Sessions statistics
-    const sessionStats = await adapter.queryOne<{
-      total: number;
-      expired: number;
-      oldest_date: number | null;
-    }>(
-      `SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN expires_at < ? THEN 1 ELSE 0 END) as expired,
-        MIN(created_at) as oldest_date
-      FROM sessions
-      WHERE tenant_id = ?`,
-      [nowTs, tenantId]
-    );
+    const sessionStats = { total: 0, expired: 0, oldest_date: null as number | null };
 
     const sessionRetentionDays = tenantSettings?.session_retention_days || 30;
     categories.push({

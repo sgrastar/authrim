@@ -33,7 +33,7 @@ const mocks = vi.hoisted(() => ({
   resolveAccountDataContextFromHono: vi.fn(),
   markOtpLoginEmailVerified: vi.fn(),
   ensureDatabaseAdapter: vi.fn((source) => source),
-  provisionTenantD1EmailAccount: vi.fn(),
+  provisionEmailAccount: vi.fn(),
   ensureAccountAuthenticationState: vi.fn(),
   findCanonicalAccountAuthenticationState: vi.fn(),
 }));
@@ -44,11 +44,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   return {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
-    getTenantMetadataContextFromHono: vi.fn((c) =>
-      c.env.__TENANT_D1
-        ? { tenantId: 'tenant-1', storageProfileId: 'builtin:storage:tenant-d1' }
-        : undefined
-    ),
+    getTenantMetadataContextFromHono: vi.fn(() => ({ tenantId: 'tenant-1' })),
     resolveAccountDataContextByIdentifierFromHono:
       mocks.resolveAccountDataContextByIdentifierFromHono,
     resolveOtpAccountCoreDataContextByIdentifierFromHono:
@@ -82,7 +78,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
       const result = await notifier.send(input.payload);
       return {
         reference: { intentId: input.intentId },
-        bindingRef: 'TDB_SHARED_CORE',
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
         delivery: result.success ? 'delivered' : 'permanent_failure',
       };
     }),
@@ -128,7 +124,7 @@ vi.mock('../account-provisioning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../account-provisioning')>();
   return {
     ...actual,
-    provisionTenantD1EmailAccount: mocks.provisionTenantD1EmailAccount,
+    provisionEmailAccount: mocks.provisionEmailAccount,
   };
 });
 
@@ -254,7 +250,6 @@ describe('email code handlers through HTTP', () => {
       tenantId: 'tenant-1',
       accountId: 'account:user-1',
       legacyUserId: 'user-1',
-      storageProfileId: 'builtin:storage:tenant-d1',
       coreDb: { adapter: 'tenant-core' },
       coreBindingRef: 'TDB_USERS',
       coreResidencyPartition: 'default',
@@ -270,7 +265,7 @@ describe('email code handlers through HTTP', () => {
         created_at: '2023-11-14T22:13:20.000Z',
       },
     });
-    mocks.provisionTenantD1EmailAccount.mockResolvedValue({
+    mocks.provisionEmailAccount.mockResolvedValue({
       status: 'ready',
       accountId: 'account:new-user-1',
       userId: 'new-user-1',
@@ -306,25 +301,37 @@ describe('email code handlers through HTTP', () => {
     });
 
     it('rejects missing registration fields before creating a new user', async () => {
-      mocks.findByEmail.mockResolvedValueOnce(null);
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
       mocks.validateRegistration.mockResolvedValueOnce({
         ok: false,
         error: 'required',
         missingRequiredFields: [{ fieldKey: 'department', label: 'Department', fieldType: 'text' }],
       });
 
-      const response = await post('/send', { email: 'new@example.com' });
+      const response = await post(
+        '/send',
+        { email: 'new@example.com' },
+        { OTP_HMAC_SECRET: 'private-secret' }
+      );
 
       expect(response.status).toBe(400);
-      expect(mocks.syncUser).not.toHaveBeenCalled();
+      expect(mocks.provisionEmailAccount).not.toHaveBeenCalled();
       expect(mocks.storeChallengeRpc).not.toHaveBeenCalled();
     });
 
     it('does not leak PII when canonical user creation fails', async () => {
-      mocks.findByEmail.mockResolvedValueOnce(null);
-      mocks.syncUser.mockRejectedValueOnce(new Error('sensitive database detail'));
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      mocks.provisionEmailAccount.mockRejectedValueOnce(new Error('sensitive database detail'));
 
-      const response = await post('/send', { email: 'new@example.com', name: 'New User' });
+      const response = await post(
+        '/send',
+        { email: 'new@example.com', name: 'New User' },
+        { OTP_HMAC_SECRET: 'private-secret' }
+      );
 
       expect(response.status).toBe(500);
       expect(mocks.error).toHaveBeenCalledWith(
@@ -379,7 +386,9 @@ describe('email code handlers through HTTP', () => {
     });
 
     it('creates a new canonical user with validated custom fields', async () => {
-      mocks.findByEmail.mockResolvedValueOnce(null);
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
       mocks.validateRegistration.mockResolvedValueOnce({
         ok: true,
         values: { department: 'Security' },
@@ -396,13 +405,16 @@ describe('email code handlers through HTTP', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(mocks.syncUser).toHaveBeenCalledWith(
+      expect(mocks.provisionEmailAccount).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({
-          userId: 'new-user-1',
+          candidateUserId: 'new-user-1',
           email: 'new@example.com',
-          name: 'New User',
-          emailVerified: false,
-          userType: 'end_user',
+          runtimeUser: expect.objectContaining({
+            displayName: 'New User',
+            emailVerified: false,
+            userType: 'end_user',
+          }),
         })
       );
       expect(mocks.storeChallengeRpc).toHaveBeenCalledWith(
@@ -412,11 +424,11 @@ describe('email code handlers through HTTP', () => {
       );
     });
 
-    it('returns 202 and does not create an OTP while tenant-D1 publication is pending', async () => {
+    it('returns 202 and does not create an OTP while routed publication is pending', async () => {
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
       );
-      mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
+      mocks.provisionEmailAccount.mockResolvedValueOnce({
         status: 'pending',
         response: Response.json(
           {
@@ -432,12 +444,12 @@ describe('email code handlers through HTTP', () => {
       const response = await post(
         '/send',
         { email: 'new@example.com', name: 'New User' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true }
+        { OTP_HMAC_SECRET: 'private-secret' }
       );
 
       expect(response.status).toBe(202);
       expect(await response.json()).toMatchObject({ status: 'provisioning' });
-      expect(mocks.provisionTenantD1EmailAccount).toHaveBeenCalledWith(
+      expect(mocks.provisionEmailAccount).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
           tenantId: 'tenant-1',
@@ -457,11 +469,11 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.notifierSend).not.toHaveBeenCalled();
     });
 
-    it('uses the routed account and the Core-only OTP projection for an existing tenant-D1 user', async () => {
+    it('uses the routed account and the Core-only OTP projection for an existing routed user', async () => {
       const response = await post(
         '/send',
         { email: 'User@Example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true }
+        { OTP_HMAC_SECRET: 'private-secret' }
       );
 
       expect(response.status).toBe(200);
@@ -586,7 +598,13 @@ describe('email code handlers through HTTP', () => {
     it.each([null, { ...validChallenge, active: 0 }])(
       'rejects a missing or inactive canonical user',
       async (runtimeUser) => {
-        mocks.findForOtpLogin.mockResolvedValueOnce(runtimeUser);
+        mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockResolvedValueOnce({
+          tenantId: 'tenant-1',
+          accountId: 'account:user-1',
+          legacyUserId: 'user-1',
+          coreDb: { adapter: 'tenant-core' },
+          user: runtimeUser,
+        });
 
         const response = await post(
           '/verify',
@@ -630,7 +648,9 @@ describe('email code handlers through HTTP', () => {
       );
       expect(response.headers.get('set-cookie')).toContain('authrim_otp_session=;');
       expect(response.headers.get('set-cookie')).toContain('authrim_session=session-1');
-      expect(mocks.markEmailVerifiedAndTouchLastLogin).toHaveBeenCalledWith(
+      expect(mocks.markOtpLoginEmailVerified).toHaveBeenCalledWith(
+        { adapter: 'tenant-core' },
+        'tenant-1',
         'user-1',
         expect.any(Number)
       );
@@ -645,11 +665,11 @@ describe('email code handlers through HTTP', () => {
       );
     });
 
-    it('resolves the challenge account route before tenant-D1 user reads', async () => {
+    it('resolves the challenge account route before routed user reads', async () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        { OTP_HMAC_SECRET: 'private-secret' },
         cookie
       );
 
@@ -677,12 +697,11 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.markEmailVerifiedAndTouchLastLogin).not.toHaveBeenCalled();
     });
 
-    it('skips the tenant-D1 Core update when the routed email is already verified', async () => {
+    it('skips the routed Core update when the routed email is already verified', async () => {
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockResolvedValueOnce({
         tenantId: 'tenant-1',
         accountId: 'account:user-1',
         legacyUserId: 'user-1',
-        storageProfileId: 'builtin:storage:tenant-d1',
         coreDb: { adapter: 'tenant-core' },
         coreBindingRef: 'TDB_USERS',
         coreResidencyPartition: 'default',
@@ -702,7 +721,7 @@ describe('email code handlers through HTTP', () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        { OTP_HMAC_SECRET: 'private-secret' },
         cookie
       );
 
@@ -712,7 +731,7 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.markEmailVerifiedAndTouchLastLogin).not.toHaveBeenCalled();
     });
 
-    it('fails closed when the consumed challenge cannot resolve a tenant-D1 account route', async () => {
+    it('fails closed when the consumed challenge cannot resolve a routed account route', async () => {
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
         new Error('account_data_route_not_found')
       );
@@ -720,7 +739,7 @@ describe('email code handlers through HTTP', () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        { OTP_HMAC_SECRET: 'private-secret' },
         cookie
       );
 
@@ -729,7 +748,7 @@ describe('email code handlers through HTTP', () => {
       expect(mocks.createSessionRpc).not.toHaveBeenCalled();
     });
 
-    it('returns retryable 503 when tenant-D1 is overloaded', async () => {
+    it('returns retryable 503 when routed is overloaded', async () => {
       mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
         new Error('D1 DB is overloaded')
       );
@@ -737,7 +756,7 @@ describe('email code handlers through HTTP', () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
-        { OTP_HMAC_SECRET: 'private-secret', __TENANT_D1: true },
+        { OTP_HMAC_SECRET: 'private-secret' },
         cookie
       );
 
@@ -749,7 +768,7 @@ describe('email code handlers through HTTP', () => {
       });
     });
 
-    it('does not add account routing to the standard storage verification path', async () => {
+    it('uses the unified account route for OTP verification', async () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
@@ -758,7 +777,7 @@ describe('email code handlers through HTTP', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).not.toHaveBeenCalled();
+      expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalled();
       expect(mocks.resolveAccountDataContextFromHono).not.toHaveBeenCalled();
     });
 
@@ -808,12 +827,18 @@ describe('email code handlers through HTTP', () => {
     });
 
     it('does not attach an already verified account to an anonymous session', async () => {
-      mocks.findForOtpLogin.mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'user@example.com',
-        name: 'User',
-        active: 1,
-        email_verified: 1,
+      mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockResolvedValueOnce({
+        tenantId: 'tenant-1',
+        accountId: 'account:user-1',
+        legacyUserId: 'user-1',
+        coreDb: { adapter: 'tenant-core' },
+        user: {
+          id: 'user-1',
+          email: 'user@example.com',
+          name: 'User',
+          active: 1,
+          email_verified: 1,
+        },
       });
       mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_anonymous: true } });
 

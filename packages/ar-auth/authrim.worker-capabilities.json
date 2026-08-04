@@ -5,14 +5,14 @@
   "lookupBlindIndex": true,
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
+    { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
     {
-      "name": "TDB_SHARED_CORE",
+      "name": "PLATFORM_NOTIFICATION_DB",
       "kind": "d1",
       "required": true,
-      "dataRole": "tenant_core/default"
+      "capability": "notification_intent.platform"
     },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
+    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
     { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "admin_login" },
     { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },

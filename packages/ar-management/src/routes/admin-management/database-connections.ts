@@ -237,18 +237,7 @@ async function buildDatabaseTenantAssignments(
       }
     }
   } catch {
-    // Registry rows may not exist in older or shared-D1 deployments.
-  }
-
-  if (c.env.DEFAULT_STORAGE_PROFILE_ID !== 'builtin:storage:tenant-d1') {
-    for (const connection of connections) {
-      const binding = String(connection.config.bindingRef ?? '').toUpperCase();
-      if ((binding === 'DB' || binding === 'DB_PII') && !assignments.has(connection.id)) {
-        for (const tenant of tenants) {
-          add(connection.id, tenant);
-        }
-      }
-    }
+    // Registry inventory is best-effort for this administrative summary.
   }
 
   for (const connection of connections) {

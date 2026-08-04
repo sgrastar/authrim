@@ -14,6 +14,7 @@ import {
 } from '@authrim/ar-lib-core';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import { AccountDirectoryCoordinator } from './account-directory-coordinator';
+import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
 import { AccountDirectoryRemovalCoordinator } from './account-directory-removal';
 import { AccountCreationOperationRepository } from './account-creation-operation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
@@ -833,6 +834,7 @@ export function createRoutingOutboxProcessor(
       },
       now: () => Math.floor(input.nowMs() / 1000),
       onAccountActivated: async (publication, now) => {
+        await activatePublishedAccountAuthenticationState(env, tenantCore, publication, now);
         await (
           await operationRepositoryForTenant(publication.tenantId)
         ).recordDirectoryOutcome({

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import app from '../index';
+import { createPolicyRuntimeEnv } from './helpers/runtime-env';
 
 function createDb(options: { throwOnPrepare?: boolean } = {}) {
   const run = vi.fn().mockResolvedValue({ success: true, meta: { changes: 0 } });
@@ -35,11 +36,12 @@ function createKv(options: { throwOnWrite?: boolean } = {}) {
 }
 
 function createEnv(overrides: Record<string, unknown> = {}) {
-  return {
+  const coreDb = (overrides.TDB_POLICY_TEST_CORE as D1Database | undefined) ?? createDb();
+  const { TDB_POLICY_TEST_CORE: _coreOverride, ...values } = overrides;
+  return createPolicyRuntimeEnv(coreDb, {
     POLICY_API_SECRET: 'policy-secret',
     ENABLE_POLICY_SIMULATION_API: 'true',
     ENABLE_REBAC: 'true',
-    DB: createDb(),
     VERSION_MANAGER: {
       idFromName: vi.fn(() => ({ toString: () => 'version-id' })),
       get: vi.fn(() => ({
@@ -47,8 +49,8 @@ function createEnv(overrides: Record<string, unknown> = {}) {
       })),
     },
     CODE_VERSION_UUID: '',
-    ...overrides,
-  };
+    ...values,
+  });
 }
 
 function request(
@@ -392,7 +394,7 @@ describe('Policy service branch and failure behavior', () => {
         };
         const response = await app.fetch(
           request(`/api/rebac${path}`, { method: 'POST', body: bodies[path] }),
-          createEnv({ DB: createDb({ throwOnPrepare: true }) })
+          createEnv({ TDB_POLICY_TEST_CORE: createDb({ throwOnPrepare: true }) })
         );
         expect(response.status).toBe(500);
       }

@@ -5,8 +5,6 @@
   "lookupBlindIndex": true,
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
-    { "name": "DB", "kind": "d1", "required": true, "dataRole": "tenant_core/default" },
-    { "name": "DB_PII", "kind": "d1", "required": true, "dataRole": "tenant_pii" },
     { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },
     { "name": "USER_CACHE", "kind": "kv_namespace", "required": true },

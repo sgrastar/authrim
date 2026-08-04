@@ -576,44 +576,15 @@ export type ResolvedPaths =
   | { type: 'legacy'; paths: LegacyPaths };
 
 /**
- * Resolve paths based on detected structure or explicit options
- *
- * Priority:
- * 1. If forceNew is true, use new structure
- * 2. If forceLegacy is true, use legacy structure
- * 3. If new structure exists for this env, use it
- * 4. If legacy structure exists, use it
- * 5. Default to new structure for new environments
+ * Resolve paths for the fresh-install environment structure.
+ * Legacy flat-file layouts are deliberately not auto-detected or reinterpreted.
  */
 export function resolvePaths(options: ResolvePathsOptions): ResolvedPaths {
-  const { baseDir, env, forceLegacy, forceNew } = options;
-
-  // Explicit overrides
-  if (forceNew) {
-    return { type: 'new', paths: getEnvironmentPaths({ baseDir, env }) };
-  }
-  if (forceLegacy) {
-    return { type: 'legacy', paths: getLegacyPaths(baseDir, env) };
-  }
-
-  // Check if new structure exists for this environment
-  const newPaths = getEnvironmentPaths({ baseDir, env });
-  if (existsSync(newPaths.root)) {
-    return { type: 'new', paths: newPaths };
-  }
-
-  // Check if legacy structure exists
-  const legacyPaths = getLegacyPaths(baseDir, env);
-  if (
-    existsSync(legacyPaths.config) ||
-    existsSync(legacyPaths.lock) ||
-    existsSync(legacyPaths.keys)
-  ) {
-    return { type: 'legacy', paths: legacyPaths };
-  }
-
-  // Default to new structure for new environments
-  return { type: 'new', paths: newPaths };
+  if (options.forceLegacy) throw new Error('legacy_environment_structure_not_supported');
+  return {
+    type: 'new',
+    paths: getEnvironmentPaths({ baseDir: options.baseDir, env: options.env }),
+  };
 }
 
 /**

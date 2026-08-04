@@ -132,7 +132,8 @@ export async function runGeneratedAuthFlowSmoke(
   try {
     const redirectUri =
       options.redirectUri ?? 'https://example.invalid/authrim/generated-auth-flow/callback';
-    const clientName = `Generated Auth Flow Smoke Client ${Date.now()}`;
+    const smokeRunId = Date.now();
+    const clientName = `Generated Auth Flow Smoke Client ${smokeRunId}`;
     const grantTypes = clientRegistrationDefaults.supportsClientCredentials
       ? ['client_credentials']
       : ['authorization_code'];
@@ -149,7 +150,10 @@ export async function runGeneratedAuthFlowSmoke(
       timeoutMs,
       {
         method: 'POST',
-        headers: getAdminHeaders(adminSecret, tenantId),
+        headers: {
+          ...getAdminHeaders(adminSecret, tenantId),
+          'Idempotency-Key': `setup-auth-flow-smoke-client-${smokeRunId}`,
+        },
         body: JSON.stringify({
           client_name: clientName,
           description: 'Generated auth flow smoke client',

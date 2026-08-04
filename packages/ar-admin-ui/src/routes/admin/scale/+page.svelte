@@ -151,8 +151,7 @@
 	// Derived Values
 	// =========================================================================
 
-	// LPS estimation for full login flow (based on load test: 32 shards ≈ 150 LPS)
-	// See: load-testing/reports/Dec2025/full-login-otp.md
+	// LPS estimation for the full login flow, based on historical DO shard measurements.
 	function estimateLPS(shards: number): number {
 		return Math.round(shards * 4.7);
 	}

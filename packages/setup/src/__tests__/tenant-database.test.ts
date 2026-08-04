@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   buildTenantDatabaseProvisioningPlan,
-  buildTenantDatabaseAdminJobSql,
   buildTenantDatabaseActivationBatchJobConfig,
   buildTenantDatabaseMigrationPlan,
   buildTenantDatabaseMigrationOperatorActionJobConfig,
@@ -62,7 +61,7 @@ describe('tenant database setup helpers', () => {
     expect(plan.resources.every((resource) => resource.generation === 2)).toBe(true);
   });
 
-  it('identifies generated tenant D1 bindings', () => {
+  it('identifies generated assignment bindings', () => {
     expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_CORE')).toBe(true);
     expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_PII')).toBe(true);
     expect(isTenantDatabaseBinding('TDB_SLOT_0001_CORE')).toBe(true);
@@ -78,7 +77,7 @@ describe('tenant database setup helpers', () => {
     expect(getTenantDatabaseRoleFromBinding('TDB_EXAMPLE_ABC123_PII')).toBe('tenant_pii');
   });
 
-  it('lists tenant D1 migration targets from the lock file', () => {
+  it('lists assignment migration targets from the lock file', () => {
     const targets = listTenantDatabaseMigrationTargets({
       d1: {
         DB: { id: 'shared-core-id', name: 'shared-core' },
@@ -150,7 +149,7 @@ describe('tenant database setup helpers', () => {
     ]);
   });
 
-  it('evaluates generated tenant D1 binding count thresholds', () => {
+  it('evaluates generated assignment binding count thresholds', () => {
     expect(
       evaluateTenantDatabaseBindingCapacity({
         currentBindings: 2998,
@@ -165,7 +164,7 @@ describe('tenant database setup helpers', () => {
     ).toBe('strong_warning');
   });
 
-  it('evaluates tenant D1 account and storage warning thresholds', () => {
+  it('evaluates assignment account and storage warning thresholds', () => {
     expect(
       evaluateTenantDatabaseSizeWarning({
         accountCount: 699_999,
@@ -243,7 +242,7 @@ describe('tenant database setup helpers', () => {
     );
   });
 
-  it('can preserve active pointer runtime generation for initial tenant-d1 bootstrap', () => {
+  it('can preserve active pointer runtime generation for initial Control Plane bootstrap', () => {
     const sql = buildTenantDatabaseRegistrySql({
       tenantId: 'tenant-a',
       tenantSlug: 'Tenant A',
@@ -333,59 +332,6 @@ describe('tenant database setup helpers', () => {
     expect(sql).toContain("'tenant_core', 2");
     expect(sql).toContain("'failed', 1, 'none'");
     expect(sql).not.toContain('INSERT INTO tenant_database_active_pointers');
-  });
-
-  it('builds idempotent admin job SQL for tenant database provisioning progress', () => {
-    const sql = buildTenantDatabaseAdminJobSql({
-      jobId: 'tenant-db-provision:tenant-a:1',
-      tenantId: 'tenant-a',
-      jobType: 'tenant-database/provision',
-      status: 'completed',
-      createdBy: 'setup',
-      createdAt: 1_779_000_000,
-      progress: {
-        total: 2,
-        processed: 2,
-        succeeded: 2,
-        failed: 0,
-        stage: 'ready',
-      },
-      config: {
-        env: 'prod',
-        generation: 1,
-        activate: false,
-      },
-      result: {
-        resources: [{ role: 'tenant_core', binding: 'TDB_TENANT_A_ABC123_CORE' }],
-      },
-    });
-
-    expect(sql).toContain('INSERT INTO admin_jobs');
-    expect(sql).toContain("'tenant-db-provision:tenant-a:1'");
-    expect(sql).toContain("'tenant-database/provision'");
-    expect(sql).toContain('"stage":"ready"');
-    expect(sql).toContain('ON CONFLICT(id) DO UPDATE SET');
-  });
-
-  it('builds idempotent admin job SQL for post-activation health checks', () => {
-    const sql = buildTenantDatabaseAdminJobSql({
-      jobId: 'tenant-db-health:tenant-a:2',
-      tenantId: 'tenant-a',
-      jobType: 'tenant-database/health-check',
-      status: 'pending',
-      createdBy: 'setup',
-      createdAt: 1_779_000_000,
-      progress: { total: 2, processed: 0, succeeded: 0, failed: 0, stage: 'requested' },
-      config: {
-        reason: 'post_activation',
-        generation: 2,
-        roles: ['tenant_core', 'tenant_pii'],
-      },
-    });
-
-    expect(sql).toContain("'tenant-db-health:tenant-a:2'");
-    expect(sql).toContain("'tenant-database/health-check'");
-    expect(sql).toContain('"reason":"post_activation"');
   });
 
   it('reserves worker shard split job config and package role requirement manifest contracts', () => {
@@ -481,7 +427,7 @@ describe('tenant database setup helpers', () => {
     });
   });
 
-  it('reconciles generated tenant D1 bindings against Cloudflare D1 state', () => {
+  it('reconciles generated assignment bindings against Cloudflare D1 state', () => {
     const result = reconcileTenantDatabaseDerivedBindings({
       lock: {
         d1: {

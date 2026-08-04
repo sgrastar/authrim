@@ -43,11 +43,13 @@ function createPointer(
 function createRegistryRow(
   overrides: Partial<TenantDatabaseRegistryRow> = {}
 ): TenantDatabaseRegistryRow {
+  const role = overrides.role ?? 'tenant_core';
+  const shardGroup = overrides.shard_group ?? 'default';
   return {
     tenant_id: 'tenant-a',
-    role: 'tenant_core',
+    role,
     generation: 2,
-    shard_group: 'default',
+    shard_group: shardGroup,
     shard_index: 0,
     provider: 'd1',
     database_id: 'db-core-id',
@@ -64,7 +66,21 @@ function createRegistryRow(
     jurisdiction: null,
     signature: null,
     signature_key_id: null,
-    metadata_json: null,
+    metadata_json: JSON.stringify({
+      control_data_role:
+        role === 'tenant_pii'
+          ? 'tenant_pii'
+          : shardGroup === 'default'
+            ? 'tenant_core/default'
+            : 'tenant_core/users',
+      control_residency_policy_id: 'builtin:residency:default',
+      control_residency_partition: 'default',
+      control_shard_id: `shard-${role}-${shardGroup}`,
+      control_assignment_generation: 7,
+      control_allocation_scope: 'tenant_exclusive',
+      control_owner_tenant_id: 'tenant-a',
+      control_placement_policy_generation: 7,
+    }),
     created_at: '2026-05-16T00:00:00.000Z',
     updated_at: '2026-05-16T00:00:00.000Z',
     created_by: null,
@@ -119,8 +135,10 @@ function createRepository(options: {
       snapshot_scope: 'tenant',
       deployment_target: 'edge-a',
       runtime_generation: 7,
-      storage_profile_id: 'builtin:storage:tenant-d1',
-      snapshot_version: 2,
+      backend_provider: 'd1',
+      placement_policy: 'tenant_exclusive',
+      placement_policy_generation: 7,
+      snapshot_version: 4,
       status: 'active',
       object_ref: buildTenantRuntimeRegistrySnapshotKey('tenant-a', 'edge-a'),
       published_at: '2026-05-16T00:00:00.000Z',
@@ -187,7 +205,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     const result = await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
       deploymentTarget: 'edge-a',
       repository,
       snapshotStore,
@@ -207,7 +225,7 @@ describe('tenant-runtime-registry-snapshot', () => {
         runtimeGeneration: 7,
         routeStatus: 'active',
         quarantineDenyGeneration: 0,
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         expiresAt: '2026-05-16T00:30:00.000Z',
       })
     );
@@ -263,6 +281,110 @@ describe('tenant-runtime-registry-snapshot', () => {
     );
     expect(repository.updateActivePointerStatus).not.toHaveBeenCalled();
     expect(repository.updateRegistryStatusAndMetadata).not.toHaveBeenCalled();
+  });
+
+  it('publishes shared-pool ownership metadata and rejects placement drift', async () => {
+    const sharedMetadata = JSON.stringify({
+      control_data_role: 'tenant_core/default',
+      control_residency_policy_id: 'builtin:residency:default',
+      control_residency_partition: 'default',
+      control_shard_id: 'shared-core-default',
+      control_assignment_generation: 7,
+      control_allocation_scope: 'shared_pool',
+      control_owner_tenant_id: null,
+      control_placement_policy_generation: 9,
+    });
+    const repository = createRepository({
+      rows: [createRegistryRow({ metadata_json: sharedMetadata })],
+    });
+    const { privateJwk } = await generateEd25519Jwks();
+
+    const result = await publishTenantRuntimeRegistrySnapshot({
+      tenantId: 'tenant-a',
+      placement: { isolationPolicy: 'shared_pool', policyGeneration: 9 },
+      deploymentTarget: 'edge-a',
+      repository,
+      now: new Date('2026-05-16T00:00:00.000Z'),
+      signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+    });
+
+    expect(result.snapshot.stores[0]).toMatchObject({
+      allocationScope: 'shared_pool',
+      ownerTenantId: null,
+      placementPolicyGeneration: 9,
+    });
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 9 },
+        deploymentTarget: 'edge-a',
+        repository,
+        now: new Date('2026-05-16T00:00:00.000Z'),
+        signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+      })
+    ).rejects.toThrow('tenant_runtime_registry_snapshot_placement_mismatch');
+  });
+
+  it('rejects a snapshot assembled from mixed active runtime generations', async () => {
+    const repository = createRepository({
+      pointers: [
+        createPointer({ role: 'tenant_core', runtime_generation: 7 }),
+        createPointer({ role: 'tenant_pii', generation: 3, runtime_generation: 8 }),
+      ],
+      rows: [
+        createRegistryRow({ role: 'tenant_core' }),
+        createRegistryRow({
+          role: 'tenant_pii',
+          generation: 3,
+          database_id: 'db-pii-id',
+          database_name: 'authrim-dev-tenant-a-pii',
+          binding_ref: 'TDB_TENANT_A_1234_PII',
+        }),
+      ],
+    });
+    const { privateJwk } = await generateEd25519Jwks();
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
+        deploymentTarget: 'edge-a',
+        repository,
+        now: new Date('2026-05-16T00:00:00.000Z'),
+        signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+      })
+    ).rejects.toThrow('tenant_runtime_registry_snapshot_generation_mismatch');
+  });
+
+  it('rejects a snapshot whose Core and PII routes share a physical D1 database', async () => {
+    const repository = createRepository({
+      pointers: [
+        createPointer({ role: 'tenant_core', runtime_generation: 7 }),
+        createPointer({ role: 'tenant_pii', generation: 3, runtime_generation: 7 }),
+      ],
+      rows: [
+        createRegistryRow({ role: 'tenant_core', database_id: 'shared-physical-db-id' }),
+        createRegistryRow({
+          role: 'tenant_pii',
+          generation: 3,
+          database_id: 'shared-physical-db-id',
+          database_name: 'authrim-dev-tenant-a-pii',
+          binding_ref: 'TDB_TENANT_A_1234_PII',
+        }),
+      ],
+    });
+    const { privateJwk } = await generateEd25519Jwks();
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
+        deploymentTarget: 'edge-a',
+        repository,
+        now: new Date('2026-05-16T00:00:00.000Z'),
+        signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+      })
+    ).rejects.toThrow('tenant_runtime_registry_snapshot_pii_isolation_violation');
   });
 
   it('transitions active routes to quarantining with a monotonic deny generation', async () => {
@@ -400,7 +522,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
         snapshotStore,
         actorId: 'system',
@@ -443,7 +565,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
       repository,
       snapshotStore,
       actorId: 'system',
@@ -470,6 +592,40 @@ describe('tenant-runtime-registry-snapshot', () => {
     );
   });
 
+  it('marks registry state degraded when the Control DB snapshot record fails after publication', async () => {
+    const repository = createRepository({});
+    repository.upsertRuntimeRegistrySnapshot.mockRejectedValueOnce(
+      new Error('control_snapshot_record_unavailable')
+    );
+    const { privateJwk } = await generateEd25519Jwks();
+
+    await expect(
+      publishTenantRuntimeRegistrySnapshot({
+        tenantId: 'tenant-a',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
+        deploymentTarget: 'edge-a',
+        repository,
+        snapshotStore: createSnapshotStore(),
+        now: new Date('2026-05-16T00:00:00.000Z'),
+        signingKey: { privateJwk, keyId: 'runtime-registry-key-1' },
+      })
+    ).rejects.toThrow('control_snapshot_record_unavailable');
+    expect(repository.updateActivePointerStatus).toHaveBeenCalledWith(
+      'tenant-a',
+      'tenant_core',
+      'default',
+      'degraded_pending_snapshot',
+      null,
+      expect.stringContaining('control_snapshot_record_unavailable')
+    );
+    expect(repository.updateRegistryStatusAndMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant_id: 'tenant-a', role: 'tenant_core' }),
+      'degraded_pending_snapshot',
+      expect.stringContaining('control_snapshot_record_unavailable'),
+      null
+    );
+  });
+
   it('signs runtime registry snapshots with Ed25519 and verifies with public JWKS', async () => {
     const repository = createRepository({});
     const snapshotStore = createSnapshotStore();
@@ -477,7 +633,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     const result = await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
       repository,
       snapshotStore,
       actorId: 'system',
@@ -529,7 +685,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     const result = await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
       repository,
       snapshotStore,
       actorId: 'system',
@@ -582,7 +738,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
         snapshotStore,
         actorId: 'system',
@@ -618,7 +774,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
         snapshotStore,
         externalSigner: {
@@ -639,7 +795,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
         actorId: 'system',
         now: new Date('2026-05-16T00:00:00.000Z'),
@@ -660,7 +816,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
         now: new Date('2026-05-16T00:00:00.000Z'),
       })
@@ -685,7 +841,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     const result = await publishTenantRuntimeRegistrySnapshot({
       tenantId: 'tenant-a',
-      storageProfileId: 'builtin:storage:tenant-d1',
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
       repository,
       snapshotStore,
       now: new Date('2026-05-16T00:00:00.000Z'),
@@ -694,7 +850,7 @@ describe('tenant-runtime-registry-snapshot', () => {
 
     expect(result.snapshot).toEqual(
       expect.objectContaining({
-        version: 2,
+        version: 4,
         runtimeGeneration: 9,
         routeStatus: 'quarantined',
         quarantineDenyGeneration: 3,
@@ -726,7 +882,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         repository,
       })
     ).rejects.toThrow('runtime_registry_quarantine_deny_generation_invalid');
@@ -756,7 +912,7 @@ describe('tenant-runtime-registry-snapshot', () => {
     await expect(
       publishTenantRuntimeRegistrySnapshot({
         tenantId: 'tenant-a',
-        storageProfileId: 'builtin:storage:tenant-d1',
+        placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 7 },
         deploymentTarget: 'edge-a',
         repository,
         snapshotStore,

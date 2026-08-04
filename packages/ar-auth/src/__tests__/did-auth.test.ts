@@ -41,6 +41,7 @@ const mockLinkedIdentityRepo = vi.hoisted(() => ({
 const mockResolveDID = vi.hoisted(() => vi.fn());
 const mockPublishEvent = vi.hoisted(() => vi.fn());
 const mockCreateAuditLog = vi.hoisted(() => vi.fn());
+const mockResolveAccountDataContextByIdentifierFromHono = vi.hoisted(() => vi.fn());
 
 // Mock @authrim/ar-lib-core
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -64,6 +65,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     },
     publishEvent: mockPublishEvent,
     createAuditLog: mockCreateAuditLog,
+    resolveAccountDataContextByIdentifierFromHono:
+      mockResolveAccountDataContextByIdentifierFromHono,
   };
 });
 
@@ -151,8 +154,27 @@ describe('DID Authentication', () => {
     mockLinkedIdentityRepo.findByProviderUser.mockReset();
     mockPublishEvent.mockReset();
     mockCreateAuditLog.mockReset();
+    mockResolveAccountDataContextByIdentifierFromHono.mockReset();
     mockPublishEvent.mockResolvedValue(undefined);
     mockCreateAuditLog.mockResolvedValue(undefined);
+    mockResolveAccountDataContextByIdentifierFromHono.mockImplementation(async (c) => {
+      const account = {
+        tenantId: 'default',
+        accountId: 'account:linked-user-id',
+        legacyUserId: 'linked-user-id',
+        coreDb: c.env.DB,
+        piiDb: c.env.DB_PII,
+        coreBindingRef: 'DB',
+        piiBindingRef: 'DB_PII',
+        coreResidencyPartition: 'default',
+        piiResidencyPartition: 'default',
+        accountRouteGeneration: 1,
+        userCacheScope: { tenantId: 'default', accountRouteGeneration: 1 },
+        piiCacheMode: 'disabled',
+      };
+      c.set('accountDataContext', account);
+      return account;
+    });
   });
 
   describe('didAuthChallengeHandler', () => {

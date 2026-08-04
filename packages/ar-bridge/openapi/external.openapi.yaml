@@ -9,8 +9,8 @@ paths:
       operationId: unlinkExternalIdentity
       summary: Unlink an external identity from the current account
       description: >-
-        Revokes upstream tokens on a best-effort basis. Tenant-D1 accounts durably schedule removal
-        of the external-subject Lookup route before acknowledging the authority deletion.
+        Revokes upstream tokens on a best-effort basis. Routed accounts durably schedule removal of
+        the external-subject Lookup route before acknowledging the authority deletion.
       security:
         - authrimSession: []
       parameters:

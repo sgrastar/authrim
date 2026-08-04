@@ -577,7 +577,7 @@ export class CanonicalRuntimeUserStore {
   /**
    * Mark only the routed account's active email contact as verified.
    *
-   * Tenant-D1 OTP login already resolved the account route and stores last-login state in the
+   * OTP login already resolved the account route and stores last-login state in the
    * user-scoped session revocation DO. Keeping this as one portable DatabaseAdapter statement
    * avoids re-reading the account and rewriting its complete metadata document.
    */

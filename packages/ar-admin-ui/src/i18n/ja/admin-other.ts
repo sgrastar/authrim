@@ -15,7 +15,7 @@ const adminOther = {
 	admin_settings_cache_mode_desc: 'クライアントメタデータなどのキャッシュTTLを設定します',
 	admin_settings_runtime_profiles: 'ランタイムプロファイル',
 	admin_settings_runtime_profiles_desc:
-		'ストレージ、監査、データ所在のランタイムプロファイルと監査シンクを管理します',
+		'監査、データ所在のランタイムプロファイルと監査シンクを管理します',
 	admin_settings_updated_one: '1件の設定を更新しました。',
 	admin_settings_updated_many: '{count}件の設定を更新しました。',
 	admin_settings_code_shards_updated: 'コードシャードを更新しました。',
@@ -41,12 +41,8 @@ const adminOther = {
 		'デフォルトのランタイムプロファイルを更新できませんでした。',
 	admin_settings_runtime_profile_id_required: 'プロファイルIDを入力してください。',
 	admin_settings_default_audit_profile_required: 'デフォルトの監査プロファイルを選択してください。',
-	admin_settings_default_storage_profile_required:
-		'デフォルトのストレージプロファイルを選択してください。',
 	admin_settings_default_residency_profile_required:
 		'デフォルトのデータ所在プロファイルを選択してください。',
-	admin_settings_storage_profile_not_activatable:
-		'選択したストレージプロファイルは有効化できません。',
 	admin_settings_audit_profile_not_activatable: '選択した監査プロファイルは有効化できません。',
 	admin_settings_residency_profile_not_activatable:
 		'選択したデータ所在プロファイルは有効化できません。',

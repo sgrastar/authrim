@@ -39,7 +39,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     usesNakedDomainIssuer: vi.fn(() => false),
     buildIssuerUrl: vi.fn(() => 'https://tenant.example.test'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
-    recordHybridUserSessionRevocationEpoch: mocks.revoke,
+    recordUserSessionRevocation: mocks.revoke,
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
     }),

@@ -5,13 +5,12 @@ import {
   CanonicalRuntimeUserStore,
   PasskeyRepository,
   passkeyCredentialLookupSubject,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   buildDOKey,
   generateId,
   getChallengeStoreByChallengeId,
   getLogger,
-  getTenantMetadataContextFromHono,
   markAccountDirectoryRemovalReady,
   produceNotificationDelivery,
   resolveAccountDataContextFromHono,
@@ -44,6 +43,15 @@ import {
 import { attemptImmediateAccountDirectoryRemovals } from './account-directory-removal-producer';
 
 const MAX_DEVICE_NAME_LENGTH = 100;
+
+async function resolveAccountAuthContext(
+  c: Context<{ Bindings: Env }>,
+  userId: string,
+  tenantId: string
+) {
+  await resolveAccountDataContextFromHono(c, userId);
+  return createAccountAuthContextFromHono(c, tenantId);
+}
 const REAUTH_TTL_SECONDS = 5 * 60;
 const EMAIL_REAUTH_TTL_SECONDS = 5 * 60;
 const RP_NAME = 'Authrim';
@@ -59,10 +67,6 @@ const VALID_TRANSPORTS: AccountAuthenticatorTransport[] = [
   'internal',
   'hybrid',
 ];
-
-function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
-  return getTenantMetadataContextFromHono(c)?.storageProfileId === 'builtin:storage:tenant-d1';
-}
 
 type AccountPasskeyRecord = {
   id: string;
@@ -540,7 +544,7 @@ export async function createAccountPasskeyReauthOptionsHandler(
       403
     );
   }
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const passkeys = await passkeyRepo.findByUserId(accountSession.userId);
   if (passkeys.length === 0) {
@@ -659,7 +663,7 @@ export async function completeAccountPasskeyReauthHandler(
   }
 
   const credentialId = toBase64URLString(body.credential.id);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const passkey = await passkeyRepo.findByCredentialId(credentialId);
   if (!passkey || passkey.user_id !== accountSession.userId) {
@@ -768,7 +772,7 @@ export async function sendAccountEmailCodeReauthHandler(
     );
   }
 
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -1017,7 +1021,7 @@ async function hasVerifiedEmailLoginMethod(
   }
 
   try {
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
     const piiCtx = createPIIContextFromHono(c, tenantId);
     const runtimeUsers = new CanonicalRuntimeUserStore({
       coreAdapter: authCtx.coreAdapter,
@@ -1063,7 +1067,7 @@ export async function createAccountPasskeyOptionsHandler(
   }
   const rpID = new URL(origin).hostname;
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const existingPasskeys = await passkeyRepo.findByUserId(accountSession.userId);
   const excludeCredentials = existingPasskeys.map((passkey) => ({
@@ -1222,10 +1226,8 @@ export async function completeAccountPasskeyRegistrationHandler(
   }
 
   const credentialId = toBase64URLString(credentialID);
-  const accountDataContext = usesTenantD1AccountStorage(c)
-    ? await resolveAccountDataContextFromHono(c, accountSession.userId)
-    : null;
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const accountDataContext = await resolveAccountDataContextFromHono(c, accountSession.userId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const existing = await passkeyRepo.findByCredentialId(credentialId);
   if (existing) {
@@ -1308,7 +1310,7 @@ export async function listAccountPasskeysHandler(c: Context<{ Bindings: Env }>):
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const passkeys = await passkeyRepo.findByUserId(accountSession.userId);
 
@@ -1357,7 +1359,7 @@ export async function updateAccountPasskeyHandler(
 
   const passkeyId = c.req.param('id');
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = await resolveAccountAuthContext(c, accountSession.userId, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const existing = passkeyId ? await passkeyRepo.findById(passkeyId) : null;
   if (!existing || existing.user_id !== accountSession.userId) {
@@ -1393,10 +1395,8 @@ export async function deleteAccountPasskeyHandler(
 
   const passkeyId = c.req.param('id');
   const tenantId = getTenantIdFromContext(c);
-  const accountDataContext = usesTenantD1AccountStorage(c)
-    ? await resolveAccountDataContextFromHono(c, accountSession.userId)
-    : null;
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const accountDataContext = await resolveAccountDataContextFromHono(c, accountSession.userId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const passkeyRepo = new PasskeyRepository(authCtx.coreAdapter, tenantId);
   const existing = passkeyId ? await passkeyRepo.findById(passkeyId) : null;
   if (!existing || existing.user_id !== accountSession.userId) {

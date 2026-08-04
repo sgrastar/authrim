@@ -5,6 +5,17 @@ import type {
   HealthStatus,
   TransactionContext,
 } from '@authrim/ar-lib-core';
+
+const resolveTenantDatabaseSourceFromRegistry = vi.hoisted(() => vi.fn());
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveTenantDatabaseSourceFromRegistry,
+  };
+});
+
 import { DirectoryConnectorRelay } from '../directory-connector-relay';
 import {
   buildDirectoryRelayAuthCanonical,
@@ -149,6 +160,9 @@ async function authResponse(overrides: Record<string, unknown> = {}) {
 describe('DirectoryConnectorRelay', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolveTenantDatabaseSourceFromRegistry.mockImplementation(async (env) => ({
+      source: env.DB,
+    }));
   });
 
   it('reports relay runtime defaults in status responses', async () => {

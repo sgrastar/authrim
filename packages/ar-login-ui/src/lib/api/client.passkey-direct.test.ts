@@ -265,7 +265,7 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
 	});
 
-	it('keeps the Email Code request loading until tenant-D1 provisioning is ready', async () => {
+	it('keeps the Email Code request loading until routed provisioning is ready', async () => {
 		const token = 'A'.repeat(43);
 		const fetchMock = vi
 			.fn<typeof fetch>()

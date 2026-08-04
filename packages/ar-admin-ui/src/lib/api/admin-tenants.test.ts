@@ -88,7 +88,7 @@ describe('adminTenantsAPI', () => {
 		);
 	});
 
-	it('accepts an asynchronous tenant D1 clone operation', async () => {
+	it('accepts an asynchronous Control Plane tenant clone operation', async () => {
 		const response = {
 			id: 'destination',
 			tenant_code: 'destination',

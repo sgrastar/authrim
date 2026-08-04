@@ -11,6 +11,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getChallengeStoreByChallengeId: vi.fn(async () => challengeStore),
+    resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async (env) => env.DB),
     getWebOriginRegistry,
     isIframeOidcAuthEnabled,
     getLogger: vi.fn(() => ({
@@ -186,7 +187,12 @@ describe('login challenge metadata contract', () => {
     const body = (await response.json()) as Record<string, unknown>;
 
     expect(response.status).toBe(200);
-    expect(getWebOriginRegistry).toHaveBeenCalledWith(expect.anything(), 'tenant_a', 'rp_web');
+    expect(getWebOriginRegistry).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant_a',
+      'rp_web',
+      expect.anything()
+    );
     expect(body.web_origin_registry).toEqual({
       origins: [
         {

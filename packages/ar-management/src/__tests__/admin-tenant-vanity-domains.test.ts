@@ -18,6 +18,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     resolveOptionalCoreAdapterFromHono: vi.fn(() => mocks.adapter),
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(async (_env, input) => ({
+      tenantId: input.tenantId,
+      source: mocks.adapter,
+    })),
+    loadVerifiedLookupBucketAssignmentProvider: vi.fn(async () => ({})),
+    LookupRouteResolver: class {
+      async resolveAliases() {
+        return [{ tenantId: 'tenant-a', routeProjection: {} }];
+      }
+    },
     ensureDatabaseAdapter: vi.fn((db) => db),
     hasAdminPermission: vi.fn((permissions: string[], permission: string) =>
       permissions.includes(permission)
@@ -40,6 +50,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: vi.fn(() => ({ module: vi.fn(() => ({ error: vi.fn() })) })),
   };
 });
+
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {},
+  })),
+  prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  disableTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+}));
 
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 import {
@@ -112,7 +133,13 @@ function context(
       param: vi.fn((name: string) => (name === 'id' ? (options.id ?? 'domain-1') : undefined)),
       query: vi.fn((name: string) => query[name]),
     },
-    env: { AUTHRIM_CONFIG: { delete: vi.fn() }, ...options.env },
+    env: {
+      AUTHRIM_CONFIG: { delete: vi.fn() },
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      TENANT_RUNTIME_REGISTRY: { get: vi.fn() },
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+      ...options.env,
+    },
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -134,6 +161,10 @@ function cfResponse(
 describe('tenant vanity domain administration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.adapter.query.mockReset();
+    mocks.adapter.queryOne.mockReset();
+    mocks.adapter.execute.mockReset();
+    mocks.adapter.transaction.mockReset();
     mocks.adapter.query.mockResolvedValue([]);
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
@@ -234,7 +265,7 @@ describe('tenant vanity domain administration', () => {
         context({ auth, query: { tenant_id: 'tenant-b' } })
       );
       expect(mocks.adapter.query).toHaveBeenCalledWith(
-        expect.stringContaining('AND tenant_id = ?'),
+        expect.stringContaining('WHERE tenant_id = ?'),
         ['tenant-b']
       );
 

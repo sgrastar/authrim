@@ -7,28 +7,17 @@ import type {
   ResidencyProfile,
   RuntimeProfile,
   RuntimeProfileKind,
-  StorageProfile,
-  StorageProfileOperatorGuidance,
-  TenantDatabaseStatsSummary,
 } from '@authrim/ar-lib-core';
 import {
-  AUTH_CORE_STORAGE_SLICE,
-  AUTH_CORE_STORAGE_SLICES,
   AR_ERROR_CODES,
   createErrorResponse,
   createRuntimeProfileRegistryFromEnv,
   createSettingsManager,
-  ensureDatabaseAdapter,
   getLogger,
   INFRASTRUCTURE_CATEGORY_META,
-  STORAGE_SLICE_BOUNDARY_POLICIES,
-  TenantDatabaseRegistryRepository,
-  describeStorageProfileCapabilityStatus,
-  describeStorageProfileOperatorGuidance,
   loadEnvironmentProfileDefaultsFromEnv,
+  loadTenantProfileOverridesFromEnv,
   purgeTenantRuntimeRegistrySnapshot,
-  resolveTenantRuntimeProfilesFromEnv,
-  validateTenantStorageProfileOverride,
 } from '@authrim/ar-lib-core';
 import { validateAuditOperationalConstraints } from './audit-ops-policy';
 import {
@@ -42,11 +31,9 @@ import { ensureSupportedTenantId } from './single-tenant-guard';
 import { requireTenantResourceAccess } from './admin-tenant-access';
 import { writeAdminAuditLog } from './admin-shared';
 
-const VALID_KINDS = [
-  'storage',
-  'audit',
-  'residency',
-] as const satisfies readonly RuntimeProfileKind[];
+type AdminRuntimeProfileKind = Extract<RuntimeProfileKind, 'audit' | 'residency'>;
+
+const VALID_KINDS = ['audit', 'residency'] as const satisfies readonly AdminRuntimeProfileKind[];
 const QUERY_SCHEMA = z.object({
   kind: z.enum(VALID_KINDS).optional(),
   include_builtins: z
@@ -54,85 +41,8 @@ const QUERY_SCHEMA = z.object({
     .optional()
     .transform((value) => value !== 'false'),
 });
-const TENANT_DATABASE_STATS_STALE_AFTER_HOURS = 36;
-const MS_PER_HOUR = 60 * 60 * 1000;
-
 const VERSION_SCHEMA = z.number().int().positive().optional();
 const METADATA_SCHEMA = z.record(z.string(), z.unknown()).optional();
-
-const StorageTargetSchema = z
-  .object({
-    driver: z.enum(['d1', 'postgres', 'mysql']),
-    bindingRef: z.string().min(1).optional(),
-    connectionRef: z.string().min(1).optional(),
-    role: z
-      .enum([
-        'core',
-        'pii',
-        'admin',
-        'custom',
-        'control',
-        'transient_auth',
-        'audit',
-        'policy',
-        'tenant_core',
-        'tenant_pii',
-        'tenant_audit',
-        'tenant_custom',
-      ])
-      .optional(),
-  })
-  .refine((value) => Boolean(value.bindingRef || value.connectionRef), {
-    message: 'Storage targets require bindingRef or connectionRef',
-  });
-
-const StorageProfileBodySchema = z
-  .object({
-    label: z.string().min(1),
-    description: z.string().min(1).optional(),
-    version: VERSION_SCHEMA,
-    metadata: METADATA_SCHEMA,
-    transientAuth: z
-      .object({
-        sessionColdPersistence: z.enum(['enabled', 'disabled']),
-        sessionClientMirror: z.enum(['sync', 'async', 'disabled']),
-        deviceCibaColdPersistence: z.enum(['enabled', 'disabled']),
-        externalDurableMirror: z.enum(['disabled', 'future']),
-      })
-      .optional(),
-    residencyProfileId: z.string().min(1).optional(),
-    slices: z
-      .object({
-        identity_core: StorageTargetSchema.optional(),
-        identity_pii: StorageTargetSchema.optional(),
-        custom_claims: StorageTargetSchema.optional(),
-        registration_fields: StorageTargetSchema.optional(),
-        custom_pii: StorageTargetSchema.optional(),
-        passkeys: StorageTargetSchema.optional(),
-        linked_identities: StorageTargetSchema.optional(),
-        consent: StorageTargetSchema.optional(),
-        authorization: StorageTargetSchema.optional(),
-      })
-      .superRefine((value, ctx) => {
-        if (
-          !value.identity_core &&
-          !value.identity_pii &&
-          !value.custom_claims &&
-          !value.registration_fields &&
-          !value.custom_pii &&
-          !value.passkeys &&
-          !value.linked_identities &&
-          !value.consent &&
-          !value.authorization
-        ) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'At least one storage slice must be configured',
-          });
-        }
-      }),
-  })
-  .strict();
 
 const DatabaseAuditTargetSchema = z.object({
   type: z.enum(['d1', 'postgres', 'mysql']),
@@ -292,20 +202,13 @@ const ResidencyProfileBodySchema = z
 
 const RuntimeProfileDefaultsBodySchema = z
   .object({
-    storageProfileId: z.string().min(1).optional(),
     auditProfileId: z.string().min(1).optional(),
     residencyProfileId: z.string().min(1).optional(),
   })
   .strict()
-  .refine(
-    (value) =>
-      value.storageProfileId !== undefined ||
-      value.auditProfileId !== undefined ||
-      value.residencyProfileId !== undefined,
-    {
-      message: 'At least one default profile ID must be provided',
-    }
-  );
+  .refine((value) => value.auditProfileId !== undefined || value.residencyProfileId !== undefined, {
+    message: 'At least one default profile ID must be provided',
+  });
 
 const RuntimeRegistryEmergencyPurgeBodySchema = z
   .object({
@@ -315,8 +218,8 @@ const RuntimeRegistryEmergencyPurgeBodySchema = z
   })
   .strict();
 
-function isRuntimeProfileKind(value: string | undefined): value is RuntimeProfileKind {
-  return value !== undefined && VALID_KINDS.includes(value as RuntimeProfileKind);
+function isRuntimeProfileKind(value: string | undefined): value is AdminRuntimeProfileKind {
+  return value !== undefined && VALID_KINDS.includes(value as AdminRuntimeProfileKind);
 }
 
 function getRegistryBackend(env: Env): string {
@@ -326,7 +229,6 @@ function getRegistryBackend(env: Env): string {
 function createInfrastructureSettingsManager(env: Env) {
   const manager = createSettingsManager({
     env: {
-      DEFAULT_STORAGE_PROFILE_ID: env.DEFAULT_STORAGE_PROFILE_ID,
       DEFAULT_AUDIT_PROFILE_ID: env.DEFAULT_AUDIT_PROFILE_ID,
       DEFAULT_RESIDENCY_PROFILE_ID: env.DEFAULT_RESIDENCY_PROFILE_ID,
     },
@@ -337,234 +239,14 @@ function createInfrastructureSettingsManager(env: Env) {
   return manager;
 }
 
-interface StorageProfileTenantOverridePolicy {
-  authCoreSlice: typeof AUTH_CORE_STORAGE_SLICE;
-  authCoreSlices: readonly string[];
-  slicePolicies: typeof STORAGE_SLICE_BOUNDARY_POLICIES;
-  environmentDefaultStorageProfileId: string;
-  tenantOverrideAllowed: boolean;
-  violationCode?: string;
-  reason?: string;
-}
-
-interface StorageProfileDeploymentSelectionPolicy {
-  profileId: string;
-  environmentDefaultStorageProfileId: string;
-  deploymentSelectionAllowed: boolean;
-  selectionScope: 'deployment';
-  isEnvironmentDefault: boolean;
-  guidance: StorageProfileOperatorGuidance;
-}
-
-interface StoragePolicyContext {
-  defaultStorageProfileId: string;
-  defaultStorageProfile: StorageProfile;
-}
-
-interface TenantDatabaseStatsStatus {
-  available: boolean;
-  staleAfterHours: number;
-  cutoffIso: string;
-  summary: TenantDatabaseStatsSummary | null;
-  attentionRequired: boolean;
-  unavailableReason?: 'db_admin_not_configured' | 'query_failed';
-}
-
-interface RuntimeRegistrySecurityNotificationStatus {
-  available: boolean;
-  attentionRequired: boolean;
-  summary: {
-    pending_count: number;
-    failed_count: number;
-    dead_letter_count: number;
-    critical_count: number;
-    high_count: number;
-    latest_created_at: string | null;
-  } | null;
-  unavailableReason?: 'db_admin_not_configured' | 'query_failed';
-}
-
-function buildStoragePolicyCatalog(context: StoragePolicyContext) {
-  return {
-    authCoreSlice: AUTH_CORE_STORAGE_SLICE,
-    authCoreSlices: AUTH_CORE_STORAGE_SLICES,
-    slicePolicies: STORAGE_SLICE_BOUNDARY_POLICIES,
-    environmentDefaultStorageProfileId: context.defaultStorageProfileId,
-  };
-}
-
-async function loadStoragePolicyContext(env: Env): Promise<StoragePolicyContext> {
-  const defaults = await loadEnvironmentProfileDefaultsFromEnv(env);
-  const registry = createRuntimeProfileRegistryFromEnv(env);
-  const defaultStorageProfile = await registry.get<StorageProfile>(
-    'storage',
-    defaults.storageProfileId
-  );
-
-  if (!defaultStorageProfile) {
-    throw new Error(`storage_profile_not_found:${defaults.storageProfileId}`);
-  }
-
-  return {
-    defaultStorageProfileId: defaults.storageProfileId,
-    defaultStorageProfile,
-  };
-}
-
-async function loadTenantDatabaseStatsStatus(env: Env): Promise<TenantDatabaseStatsStatus> {
-  const cutoffIso = new Date(
-    Date.now() - TENANT_DATABASE_STATS_STALE_AFTER_HOURS * MS_PER_HOUR
-  ).toISOString();
-  const base = {
-    staleAfterHours: TENANT_DATABASE_STATS_STALE_AFTER_HOURS,
-    cutoffIso,
-  };
-
-  if (!env.DB_ADMIN) {
-    return {
-      ...base,
-      available: false,
-      summary: null,
-      attentionRequired: false,
-      unavailableReason: 'db_admin_not_configured',
-    };
-  }
-
-  try {
-    const repository = new TenantDatabaseRegistryRepository(
-      ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-database-stats-status')
-    );
-    const summary = await repository.getStatsSummary(cutoffIso);
-    return {
-      ...base,
-      available: true,
-      summary,
-      attentionRequired:
-        summary.missing_stats_count > 0 ||
-        summary.stale_stats_count > 0 ||
-        summary.warning_count > 0 ||
-        summary.strong_warning_count > 0 ||
-        summary.stale_file_size_count > 0 ||
-        summary.unavailable_file_size_count > 0,
-    };
-  } catch {
-    return {
-      ...base,
-      available: false,
-      summary: null,
-      attentionRequired: false,
-      unavailableReason: 'query_failed',
-    };
-  }
-}
-
-async function loadRuntimeRegistrySecurityNotificationStatus(
-  env: Env
-): Promise<RuntimeRegistrySecurityNotificationStatus> {
-  if (!env.DB_ADMIN) {
-    return {
-      available: false,
-      attentionRequired: false,
-      summary: null,
-      unavailableReason: 'db_admin_not_configured',
-    };
-  }
-
-  try {
-    const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'runtime-registry-security-notifications');
-    const summary = await adapter.queryOne<{
-      pending_count: number;
-      failed_count: number;
-      dead_letter_count: number;
-      critical_count: number;
-      high_count: number;
-      latest_created_at: string | null;
-    }>(
-      `SELECT
-        COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count,
-        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
-        COALESCE(SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END), 0) AS dead_letter_count,
-        COALESCE(SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END), 0) AS critical_count,
-        COALESCE(SUM(CASE WHEN severity = 'high' THEN 1 ELSE 0 END), 0) AS high_count,
-        MAX(created_at) AS latest_created_at
-       FROM internal_notification_events
-       WHERE category IN ('storage_registry_security', 'storage_registry_health')
-         AND (
-           event_type LIKE 'tenant_runtime_registry_snapshot.%'
-           OR event_type LIKE 'tenant_database.reconciliation.%'
-           OR event_type LIKE 'tenant_database.resolver.%'
-         )
-         AND status IN ('pending', 'failed', 'dead_letter')`
-    );
-    const normalized = summary ?? {
-      pending_count: 0,
-      failed_count: 0,
-      dead_letter_count: 0,
-      critical_count: 0,
-      high_count: 0,
-      latest_created_at: null,
-    };
-    return {
-      available: true,
-      attentionRequired:
-        normalized.pending_count > 0 ||
-        normalized.failed_count > 0 ||
-        normalized.dead_letter_count > 0,
-      summary: normalized,
-    };
-  } catch {
-    return {
-      available: false,
-      attentionRequired: false,
-      summary: null,
-      unavailableReason: 'query_failed',
-    };
-  }
-}
-
-function describeStorageProfileTenantOverridePolicy(
-  context: StoragePolicyContext,
-  profile: StorageProfile
-): StorageProfileTenantOverridePolicy {
-  const violation = validateTenantStorageProfileOverride(context.defaultStorageProfile, profile);
-  return {
-    ...buildStoragePolicyCatalog(context),
-    tenantOverrideAllowed: violation === null,
-    violationCode: violation?.code,
-    reason: violation?.message,
-  };
-}
-
-function describeStorageProfileDeploymentPolicy(
-  context: StoragePolicyContext,
-  profile: StorageProfile
-): StorageProfileDeploymentSelectionPolicy {
-  const isEnvironmentDefault = profile.id === context.defaultStorageProfileId;
-  return {
-    profileId: profile.id,
-    environmentDefaultStorageProfileId: context.defaultStorageProfileId,
-    deploymentSelectionAllowed: true,
-    selectionScope: 'deployment',
-    isEnvironmentDefault,
-    guidance: describeStorageProfileOperatorGuidance(profile),
-  };
-}
-
 type RuntimeProfileDraft =
-  | Omit<StorageProfile, 'id' | 'builtin'>
   | Omit<AuditProfile, 'id' | 'builtin'>
   | Omit<ResidencyProfile, 'id' | 'builtin'>;
 
 function parseRuntimeProfileBody(
-  kind: RuntimeProfileKind,
+  kind: AdminRuntimeProfileKind,
   body: unknown
 ): RuntimeProfileDraft | null {
-  if (kind === 'storage') {
-    const parsed = StorageProfileBodySchema.safeParse(body);
-    return parsed.success
-      ? ({ kind, ...parsed.data } as Omit<StorageProfile, 'id' | 'builtin'>)
-      : null;
-  }
   if (kind === 'audit') {
     const parsed = AuditProfileBodySchema.safeParse(body);
     return parsed.success
@@ -579,13 +261,10 @@ function parseRuntimeProfileBody(
 }
 
 function buildPersistedProfile(
-  kind: RuntimeProfileKind,
+  kind: AdminRuntimeProfileKind,
   id: string,
   parsed: RuntimeProfileDraft
 ): RuntimeProfile {
-  if (kind === 'storage') {
-    return { ...(parsed as Omit<StorageProfile, 'id' | 'builtin'>), id, builtin: false };
-  }
   if (kind === 'audit') {
     return { ...(parsed as Omit<AuditProfile, 'id' | 'builtin'>), id, builtin: false };
   }
@@ -660,17 +339,6 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
       kinds.map(async (kind) => [kind, await registry.list(kind, { includeBuiltins })] as const)
     );
     const profiles = Object.fromEntries(listed);
-    const storagePolicyContext =
-      requestedKind === undefined || requestedKind === 'storage'
-        ? await loadStoragePolicyContext(c.env)
-        : null;
-    const tenantDatabaseStatsStatus = storagePolicyContext
-      ? await loadTenantDatabaseStatsStatus(c.env)
-      : null;
-    const runtimeRegistrySecurityNotifications = storagePolicyContext
-      ? await loadRuntimeRegistrySecurityNotificationStatus(c.env)
-      : null;
-    const storageProfiles = (profiles.storage as StorageProfile[] | undefined) ?? [];
     const referenceStatus = Object.fromEntries(
       Object.entries(profiles).map(([profileKind, entries]) => [
         profileKind,
@@ -696,36 +364,6 @@ export async function adminRuntimeProfileListHandler(c: Context<{ Bindings: Env 
       activation_status: activationStatus,
       reference_catalog: referenceCatalog,
       reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
-      storage_policy:
-        storagePolicyContext && storageProfiles.length > 0
-          ? {
-              ...buildStoragePolicyCatalog(storagePolicyContext),
-              tenantDatabaseStatsStatus,
-              runtimeRegistrySecurityNotifications,
-              capabilityStatus: Object.fromEntries(
-                storageProfiles.map((profile) => [
-                  profile.id,
-                  describeStorageProfileCapabilityStatus(profile),
-                ])
-              ),
-              tenantOverrideEligibility: Object.fromEntries(
-                storageProfiles.map((profile) => [
-                  profile.id,
-                  describeStorageProfileTenantOverridePolicy(storagePolicyContext, profile),
-                ])
-              ),
-              deploymentSelectionPolicy: {
-                selectionScope: 'deployment',
-                environmentDefaultStorageProfileId: storagePolicyContext.defaultStorageProfileId,
-                profiles: Object.fromEntries(
-                  storageProfiles.map((profile) => [
-                    profile.id,
-                    describeStorageProfileDeploymentPolicy(storagePolicyContext, profile),
-                  ])
-                ),
-              },
-            }
-          : undefined,
     });
   } catch (error) {
     log.error('Failed to list runtime profiles', { error: String(error) });
@@ -757,8 +395,6 @@ export async function adminRuntimeProfileGetHandler(c: Context<{ Bindings: Env }
         variables: { resource: 'runtime_profile' },
       });
     }
-    const storagePolicyContext = kind === 'storage' ? await loadStoragePolicyContext(c.env) : null;
-
     return c.json({
       registry_backend: getRegistryBackend(c.env),
       profile,
@@ -766,20 +402,6 @@ export async function adminRuntimeProfileGetHandler(c: Context<{ Bindings: Env }
       activation_status: describeRuntimeProfileActivationStatus(c.env, profile),
       reference_catalog: await loadRuntimeProfileReferenceCatalog(c.env),
       reference_management: RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY,
-      storage_policy:
-        kind === 'storage' && storagePolicyContext
-          ? {
-              ...describeStorageProfileTenantOverridePolicy(
-                storagePolicyContext,
-                profile as StorageProfile
-              ),
-              deploymentSelectionPolicy: describeStorageProfileDeploymentPolicy(
-                storagePolicyContext,
-                profile as StorageProfile
-              ),
-              capabilityStatus: describeStorageProfileCapabilityStatus(profile as StorageProfile),
-            }
-          : undefined,
     });
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -892,27 +514,26 @@ export async function adminRuntimeProfileDefaultsHandler(c: Context<{ Bindings: 
   try {
     const defaults = await loadEnvironmentProfileDefaultsFromEnv(c.env);
     const registry = createRuntimeProfileRegistryFromEnv(c.env);
-    const [storage, audit, residency] = await Promise.all([
-      registry.get('storage', defaults.storageProfileId),
+    const [audit, residency] = await Promise.all([
       registry.get('audit', defaults.auditProfileId),
       registry.get('residency', defaults.residencyProfileId),
     ]);
 
     return c.json({
       registry_backend: getRegistryBackend(c.env),
-      defaults,
+      defaults: {
+        auditProfileId: defaults.auditProfileId,
+        residencyProfileId: defaults.residencyProfileId,
+      },
       effective: {
-        storage,
         audit,
         residency,
       },
       reference_status: {
-        storage: storage ? describeRuntimeProfileReferenceStatus(c.env, storage) : [],
         audit: audit ? describeRuntimeProfileReferenceStatus(c.env, audit) : [],
         residency: residency ? describeRuntimeProfileReferenceStatus(c.env, residency) : [],
       },
       activation_status: {
-        storage: describeOptionalRuntimeProfileActivationStatus(c.env, storage),
         audit: describeOptionalRuntimeProfileActivationStatus(c.env, audit),
         residency: describeOptionalRuntimeProfileActivationStatus(c.env, residency),
       },
@@ -943,25 +564,6 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
   try {
     const registry = createRuntimeProfileRegistryFromEnv(c.env);
     const updates: Record<string, string> = {};
-
-    if (parsedBody.data.storageProfileId !== undefined) {
-      const profile = await registry.get('storage', parsedBody.data.storageProfileId);
-      if (!profile) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-          variables: { resource: 'runtime_profile' },
-        });
-      }
-      const activation = describeRuntimeProfileActivationStatus(c.env, profile);
-      if (!activation.activatable) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-          variables: {
-            field: 'storageProfileId',
-            reason: activation.blockingReasons.join(' '),
-          },
-        });
-      }
-      updates['infra.default_storage_profile_id'] = profile.id;
-    }
 
     if (parsedBody.data.auditProfileId !== undefined) {
       const profile = await registry.get('audit', parsedBody.data.auditProfileId);
@@ -1011,8 +613,7 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
     );
 
     const defaults = await loadEnvironmentProfileDefaultsFromEnv(c.env);
-    const [storage, audit, residency] = await Promise.all([
-      registry.get('storage', defaults.storageProfileId),
+    const [audit, residency] = await Promise.all([
       registry.get('audit', defaults.auditProfileId),
       registry.get('residency', defaults.residencyProfileId),
     ]);
@@ -1020,19 +621,19 @@ export async function adminRuntimeProfileDefaultsUpdateHandler(c: Context<{ Bind
     return c.json({
       registry_backend: getRegistryBackend(c.env),
       updated: Object.keys(updates),
-      defaults,
+      defaults: {
+        auditProfileId: defaults.auditProfileId,
+        residencyProfileId: defaults.residencyProfileId,
+      },
       effective: {
-        storage,
         audit,
         residency,
       },
       reference_status: {
-        storage: storage ? describeRuntimeProfileReferenceStatus(c.env, storage) : [],
         audit: audit ? describeRuntimeProfileReferenceStatus(c.env, audit) : [],
         residency: residency ? describeRuntimeProfileReferenceStatus(c.env, residency) : [],
       },
       activation_status: {
-        storage: describeOptionalRuntimeProfileActivationStatus(c.env, storage),
         audit: describeOptionalRuntimeProfileActivationStatus(c.env, audit),
         residency: describeOptionalRuntimeProfileActivationStatus(c.env, residency),
       },
@@ -1065,31 +666,38 @@ export async function adminTenantRuntimeProfilesHandler(c: Context<{ Bindings: E
   }
 
   try {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(c.env, tenantId);
-    const storagePolicyContext = await loadStoragePolicyContext(c.env);
-    const tenantOverridePolicy = describeStorageProfileTenantOverridePolicy(
-      storagePolicyContext,
-      resolved.storageProfile
-    );
-    const deploymentSelectionPolicy = describeStorageProfileDeploymentPolicy(
-      storagePolicyContext,
-      resolved.storageProfile
-    );
+    const [defaults, overrides] = await Promise.all([
+      loadEnvironmentProfileDefaultsFromEnv(c.env),
+      loadTenantProfileOverridesFromEnv(c.env, tenantId),
+    ]);
+    const auditProfileId = overrides.auditProfileId ?? defaults.auditProfileId;
+    const residencyProfileId = overrides.residencyProfileId ?? defaults.residencyProfileId;
+    const registry = createRuntimeProfileRegistryFromEnv(c.env);
+    const [auditProfile, residencyProfile] = await Promise.all([
+      registry.get<AuditProfile>('audit', auditProfileId),
+      registry.get<ResidencyProfile>('residency', residencyProfileId),
+    ]);
+    if (!auditProfile) {
+      throw new Error(`audit_profile_not_found:${auditProfileId}`);
+    }
+    if (!residencyProfile) {
+      throw new Error(`residency_profile_not_found:${residencyProfileId}`);
+    }
 
     return c.json({
       tenant_id: tenantId,
       registry_backend: getRegistryBackend(c.env),
-      refs: resolved.refs,
-      effective: {
-        storage: resolved.storageProfile,
-        audit: resolved.auditProfile,
-        residency: resolved.residencyProfile,
+      refs: {
+        auditProfileId,
+        residencyProfileId,
+        inherited: {
+          audit: !overrides.auditProfileId,
+          residency: !overrides.residencyProfileId,
+        },
       },
-      storage_policy: {
-        ...tenantOverridePolicy,
-        deploymentSelectionPolicy,
-        capabilityStatus: describeStorageProfileCapabilityStatus(resolved.storageProfile),
-        tenantOverrideRequested: !resolved.refs.inherited.storage,
+      effective: {
+        audit: auditProfile,
+        residency: residencyProfile,
       },
     });
   } catch (error) {

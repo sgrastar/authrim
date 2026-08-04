@@ -549,14 +549,14 @@ describe('KV Utilities', () => {
       return { coreAdapter, piiAdapter };
     }
 
-    it('builds profile-aware user cache keys when storage scope is provided', () => {
+    it('builds route-aware user cache keys when routing scope is provided', () => {
       expect(
         buildUserCacheKey('tenant-a', 'user-1', {
-          storageProfileId: 'builtin:storage:tenant-d1',
-          sourceGeneration: 3,
-          schemaVersion: 12,
+          routeGeneration: 3,
+          bindingGeneration: 8,
+          schemaGeneration: 12,
         })
-      ).toBe('tenant:tenant-a:user:v2:sp:builtin%3Astorage%3Atenant-d1:gen:3:schema:12:user-1');
+      ).toBe('tenant:tenant-a:user:v3:route:3:binding:8:schema:12:user-1');
     });
 
     it('should isolate cached user metadata by tenant', async () => {
@@ -587,16 +587,16 @@ describe('KV Utilities', () => {
       expect(env.DB.prepare).not.toHaveBeenCalled();
     });
 
-    it('should ignore old user cache entries when storage profile scope changes', async () => {
+    it('should ignore old user cache entries when route scope changes', async () => {
       const userCacheKV = new MockKVNamespace();
       (env as unknown as Env).USER_CACHE = userCacheKV as unknown as KVNamespace;
       const userId = 'profile-scoped-user';
 
       await userCacheKV.put(
         buildUserCacheKey('tenant-a', userId, {
-          storageProfileId: 'builtin:storage:shared-d1',
-          sourceGeneration: 1,
-          schemaVersion: 1,
+          routeGeneration: 1,
+          bindingGeneration: 1,
+          schemaGeneration: 1,
         }),
         JSON.stringify({ id: userId, email: 'old@example.test', email_verified: true })
       );
@@ -608,9 +608,9 @@ describe('KV Utilities', () => {
         piiDb: piiAdapter,
         piiCacheMode: 'merged',
         cacheScope: {
-          storageProfileId: 'builtin:storage:tenant-d1',
-          sourceGeneration: 2,
-          schemaVersion: 1,
+          routeGeneration: 2,
+          bindingGeneration: 1,
+          schemaGeneration: 1,
         },
       });
 

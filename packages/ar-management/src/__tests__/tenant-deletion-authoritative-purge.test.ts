@@ -105,14 +105,15 @@ describe('tenant deletion authoritative purge', () => {
     const core = createSession();
     const pii = createSession();
     const snapshot = {
-      version: 2,
+      version: 4,
       tenantId: 'tenant-a',
       snapshotScope: 'tenant',
       deploymentTarget: 'edge-a',
       runtimeGeneration: 8,
       routeStatus: 'quarantined',
       quarantineDenyGeneration: 2,
-      storageProfileId: 'builtin:storage:tenant-d1',
+      backend: { provider: 'd1', resolver: 'control-plane' },
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
       publishedAt: '2026-05-16T00:00:00.000Z',
       expiresAt: '2099-05-16T00:30:00.000Z',
       stores: [
@@ -129,7 +130,6 @@ describe('tenant deletion authoritative purge', () => {
     const env = {
       AUTHRIM_ENVIRONMENT_NAME: 'test',
       AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
       TENANT_RUNTIME_REGISTRY: { get: vi.fn(async () => JSON.stringify(snapshot)) },
       TDB_CORE: { withSession: vi.fn(() => core.session) },
@@ -173,12 +173,14 @@ describe('tenant deletion authoritative purge', () => {
   it('fails before mutation when signed registry and Control inventory disagree', async () => {
     const core = createSession();
     const snapshot = {
-      version: 2,
+      version: 4,
       tenantId: 'tenant-a',
       deploymentTarget: 'edge-a',
       runtimeGeneration: 8,
       routeStatus: 'quarantined',
       quarantineDenyGeneration: 2,
+      backend: { provider: 'd1', resolver: 'control-plane' },
+      placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
       expiresAt: '2099-05-16T00:30:00.000Z',
       stores: [{ provider: 'd1', bindingRef: 'TDB_UNKNOWN' }],
       metadata: { signature: 'header.payload.signature', signatureKeyId: 'runtime-key-1' },
@@ -189,7 +191,6 @@ describe('tenant deletion authoritative purge', () => {
         {
           AUTHRIM_ENVIRONMENT_NAME: 'test',
           AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
-          DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
           TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
           TENANT_RUNTIME_REGISTRY: { get: vi.fn(async () => JSON.stringify(snapshot)) },
           TDB_CORE: { withSession: vi.fn(() => core.session) },

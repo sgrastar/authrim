@@ -239,9 +239,9 @@ const id: Translations = {
   // Database
   'db.title': 'Konfigurasi Database',
   'db.regionWarning': 'Wilayah database tidak dapat diubah setelah dibuat.',
-  'db.coreDescription': 'Core DB: Menyimpan klien OAuth, token, sesi, log audit',
+  'db.coreDescription': 'DB platform: Menyimpan metadata dan log audit non-PII',
   'db.coreRegion': 'Wilayah Database Core',
-  'db.piiDescription': 'PII DB: Menyimpan profil pengguna, kredensial, data pribadi',
+  'db.piiDescription': 'DB PII platform: Menyimpan audit PII dan data anonimisasi',
   'db.piiNote': 'Pertimbangkan persyaratan perlindungan data Anda.',
   'db.piiRegion': 'Wilayah Database PII',
   'db.creating': 'Membuat database...',
@@ -779,14 +779,8 @@ const id: Translations = {
   'web.db.name': 'Nama',
   'web.db.region': 'Wilayah',
   'web.db.regionAuto': 'Otomatis (terdekat)',
-  'web.db.storageProfileTitle': 'Profil Deployment Penyimpanan',
-  'web.db.storageProfileDesc':
-    'Pilih bagaimana data core/PII pengguna ditempatkan untuk deployment ini.',
-  'web.db.sharedD1Title': 'D1 Bersama',
-  'web.db.sharedD1Desc':
-    'Satu core D1 dan PII D1 untuk seluruh deployment. Biaya setup paling rendah dan jalur default.',
-  'web.db.tenantD1Title': 'Tenant D1',
-  'web.db.tenantD1Desc':
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
     'Menginisialisasi Control Plane dan shard awal; kapasitas berikutnya dibuat otomatis saat diperlukan.',
 
   // Web UI Email

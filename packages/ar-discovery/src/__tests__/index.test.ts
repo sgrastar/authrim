@@ -5,12 +5,6 @@ import type { Env, OIDCProviderMetadata } from '@authrim/ar-lib-core';
 function createMockEnv(): Env {
   return {
     ISSUER_URL: 'https://auth.example.com',
-    DB: {
-      prepare: () => {
-        throw new Error('DB should not be queried by discovery app route tests');
-      },
-      batch: async () => [],
-    } as unknown as D1Database,
   } as unknown as Env;
 }
 

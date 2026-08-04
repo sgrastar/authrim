@@ -23,6 +23,10 @@ import {
   isSingleTenantMode,
 } from './single-tenant-guard';
 import type { TenantProvisioningOperationView } from './tenant-provisioning-operation';
+import {
+  ensureActiveTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 // Keep synchronous clone work below the lowest Workers/D1 invocation budgets. Larger copies must
@@ -72,7 +76,7 @@ const TenantCloneRequestSchema = z
 
 type CloneOptions = z.infer<typeof CloneOptionsSchema>;
 
-interface TenantCloneInternalExecution {
+export interface TenantCloneInternalExecution {
   sourceTenantId: string;
   requestBody: z.infer<typeof TenantCloneRequestSchema>;
   sourceAdapter: DatabaseAdapter;
@@ -330,7 +334,6 @@ export function sanitizeCopiedSettingsValue(
       'tenant.audit_profile_id',
       'tenant.base_domain',
       'tenant.residency_profile_id',
-      'tenant.storage_profile_id',
     ]) {
       delete record[key];
     }
@@ -1351,14 +1354,8 @@ async function executeTenantCloneHandler(
   // Keep the provisioning saga's static dependency graph one-way: admin-tenants owns the saga and
   // imports this module's clone preparation callback. The public clone route loads its lifecycle
   // helpers only after both modules have initialized.
-  const {
-    activateProvisionedTenant,
-    beginTenantProvisioning,
-    formatTenantProvisioningOperation,
-    provisionTenant,
-    rollbackProvisionedTenant,
-    rotateProvisionedTenantSigningKey,
-  } = await import('./admin-tenants');
+  const { beginTenantProvisioning, formatTenantProvisioningOperation } =
+    await import('./admin-tenants');
 
   const sourceTenantId = internal?.sourceTenantId ?? c.req.param('id');
   if (!internal) {
@@ -1481,7 +1478,7 @@ async function executeTenantCloneHandler(
       tenantPluginSettings
     );
 
-    if (!internal && c.env.DEFAULT_STORAGE_PROFILE_ID === 'builtin:storage:tenant-d1') {
+    if (!internal) {
       const sourceSnapshot = {
         tenant_updated_at: sourceTenant.updated_at,
         database_version: await sha256Hex(sourceDatabaseSnapshot.sourceVersion),
@@ -1518,17 +1515,6 @@ async function executeTenantCloneHandler(
       );
     }
 
-    let created: Awaited<ReturnType<typeof provisionTenant>> | null = null;
-    if (!internal) {
-      created = await provisionTenant(c, {
-        id: targetTenantId,
-        tenantCode: parsed.data.tenant_code ?? targetTenantId,
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        deferActivation: true,
-      });
-      if (!created.ok) return created.response;
-    }
     provisioned = true;
 
     const targetAdapter =
@@ -1628,7 +1614,6 @@ async function executeTenantCloneHandler(
           'tenant.audit_profile_id',
           'tenant.base_domain',
           'tenant.residency_profile_id',
-          'tenant.storage_profile_id',
         ] as const;
         const mergedValues: Record<string, unknown> = { ...sourceValues };
         for (const key of destinationIdentityKeys) {
@@ -1694,6 +1679,14 @@ async function executeTenantCloneHandler(
         now
       );
       clonedClientIds = clonedClients.clientIds;
+      for (const clientId of clonedClientIds) {
+        const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+          tenantId: targetTenantId,
+          aliasKind: 'client_id',
+          aliasValue: clientId,
+        });
+        await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
+      }
       summary.clients = clonedClients.clients;
       summary.client_web_origins = clonedClients.webOrigins;
       summary.client_trust_policies = clonedClients.trustPolicies;
@@ -1843,53 +1836,33 @@ async function executeTenantCloneHandler(
       throw new Error('source_tenant_changed_during_clone');
     }
 
-    let activatedTenant: Record<string, unknown>;
-    if (internal) {
-      const keyManager = c.env.KEY_MANAGER.get(
-        c.env.KEY_MANAGER.idFromName(`${targetTenantId}-v3`)
-      );
-      await keyManager.rotateKeysRpc();
-      await createAuditLog(c.env, {
-        tenantId: targetTenantId,
-        userId: internal.actorId,
-        action: 'tenant.clone.prepared',
-        resource: 'tenant',
-        resourceId: targetTenantId,
-        ipAddress: 'internal',
-        userAgent: 'tenant-provisioning-saga',
-        metadata: JSON.stringify({
-          source_tenant_id: sourceTenantId,
-          options,
-          cloned_items: summary,
-          signing_keys: 'generated',
-          operation: 'control-plane-provisioning',
-        }),
-        severity: 'info',
-      });
-      activatedTenant = {
-        id: targetTenantId,
-        tenant_code: parsed.data.tenant_code ?? targetTenantId,
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        lifecycle_state: 'provisioning',
-        is_default: false,
-      };
-    } else {
-      await rotateProvisionedTenantSigningKey(c, targetTenantId);
-      await createAuditLogFromContext(c, 'tenant.clone.prepared', 'tenant', targetTenantId, {
+    const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${targetTenantId}-v3`));
+    await keyManager.rotateKeysRpc();
+    await createAuditLog(c.env, {
+      tenantId: targetTenantId,
+      userId: internal.actorId,
+      action: 'tenant.clone.prepared',
+      resource: 'tenant',
+      resourceId: targetTenantId,
+      ipAddress: 'internal',
+      userAgent: 'tenant-provisioning-saga',
+      metadata: JSON.stringify({
         source_tenant_id: sourceTenantId,
         options,
         cloned_items: summary,
         signing_keys: 'generated',
-      });
-      activatedTenant = await activateProvisionedTenant(c, targetTenantId);
-      await createAuditLogFromContext(c, 'tenant.cloned', 'tenant', targetTenantId, {
-        source_tenant_id: sourceTenantId,
-        options,
-        cloned_items: summary,
-        signing_keys: 'generated',
-      });
-    }
+        operation: 'control-plane-provisioning',
+      }),
+      severity: 'info',
+    });
+    const activatedTenant: Record<string, unknown> = {
+      id: targetTenantId,
+      tenant_code: parsed.data.tenant_code ?? targetTenantId,
+      name: parsed.data.name,
+      description: parsed.data.description ?? null,
+      lifecycle_state: 'provisioning',
+      is_default: false,
+    };
 
     return c.json(
       {
@@ -1920,59 +1893,28 @@ async function executeTenantCloneHandler(
         },
       });
     }
-    if (provisioned && targetTenantId) {
-      if (internal) {
-        await rollbackKvWrites(writtenKvKeys);
-        try {
-          await cleanupInternalCloneDatabaseRows(internal.targetAdapter, targetTenantId);
-        } catch {
-          // The provisioning operation remains blocked and cleanup can be retried safely.
-        }
-        if (adminAccessTouched) {
-          try {
-            await internal.adminAdapter.execute(
-              'DELETE FROM admin_role_assignments WHERE tenant_id = ?',
-              [targetTenantId]
-            );
-            await internal.adminAdapter.execute(
-              'DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0',
-              [targetTenantId]
-            );
-          } catch {
-            // The destination is not active; the next attempt repeats cleanup before copying.
-          }
-        }
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    if (provisioned && targetTenantId && internal) {
+      await rollbackKvWrites(writtenKvKeys);
+      try {
+        await cleanupInternalCloneDatabaseRows(internal.targetAdapter, targetTenantId);
+      } catch {
+        // The provisioning operation remains blocked and cleanup can be retried safely.
       }
-      const cleanupFailures: string[] = [];
-      if (!(await rollbackKvWrites(writtenKvKeys))) cleanupFailures.push('kv');
       if (adminAccessTouched) {
         try {
-          const adminAdapter = requireAdminDatabaseAdapter(c.env, 'tenant-clone-rollback-admin');
-          await adminAdapter.execute('DELETE FROM admin_role_assignments WHERE tenant_id = ?', [
-            targetTenantId,
-          ]);
-          await adminAdapter.execute(
+          await internal.adminAdapter.execute(
+            'DELETE FROM admin_role_assignments WHERE tenant_id = ?',
+            [targetTenantId]
+          );
+          await internal.adminAdapter.execute(
             'DELETE FROM admin_roles WHERE tenant_id = ? AND is_system = 0',
             [targetTenantId]
           );
         } catch {
-          cleanupFailures.push('admin_access');
+          // The destination is not active; the next attempt repeats cleanup before copying.
         }
       }
-      try {
-        const rollback = await rollbackProvisionedTenant(c, targetTenantId);
-        cleanupFailures.push(...rollback.failures);
-      } catch {
-        cleanupFailures.push('rollback_execution');
-      }
-      if (cleanupFailures.length > 0) {
-        getLogger(c).module('ADMIN-TENANT-CLONE').error('Tenant clone rollback incomplete', {
-          sourceTenantId,
-          targetTenantId,
-          cleanupFailures,
-        });
-      }
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
     if (!internal) {
       getLogger(c)
@@ -1981,6 +1923,18 @@ async function executeTenantCloneHandler(
     }
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/**
+ * Executes the bounded clone copy after Control Plane provisioning has allocated both routes.
+ * This is intentionally not exposed as an HTTP route; the provisioning saga is its only runtime
+ * caller. Exporting the boundary keeps the copy/rollback behavior independently testable.
+ */
+export async function executePreparedTenantClone(
+  c: Context<{ Bindings: Env }>,
+  internal: TenantCloneInternalExecution
+) {
+  return executeTenantCloneHandler(c, internal);
 }
 
 export async function adminTenantCloneHandler(c: Context<{ Bindings: Env }>) {
@@ -2016,11 +1970,9 @@ export async function prepareTenantCloneForProvisioning(
   const [sourceAdapter, targetAdapter] = await Promise.all([
     resolveAuthCorePersistenceAdapterFromEnv(env, 'tenant-clone-source', {
       tenantId: operation.sourceTenantId,
-      runtimeSnapshotMode: 'required',
     }),
     resolveAuthCorePersistenceAdapterFromEnv(env, 'tenant-clone-target', {
       tenantId: operation.tenantId,
-      runtimeSnapshotMode: 'required',
     }),
   ]);
   const adminAdapter = requireAdminDatabaseAdapter(env, 'tenant-clone-provisioning');
@@ -2080,7 +2032,7 @@ export async function prepareTenantCloneForProvisioning(
         headers: { 'content-type': 'application/json' },
       }),
   } as unknown as Context<{ Bindings: Env }>;
-  const response = await executeTenantCloneHandler(internalContext, {
+  const response = await executePreparedTenantClone(internalContext, {
     sourceTenantId: operation.sourceTenantId,
     requestBody,
     sourceAdapter,

@@ -167,7 +167,13 @@ function createEnv(settings: Record<string, string> = {}) {
 function createApp() {
   const app = new Hono<{ Bindings: Env }>();
   app.use('*', async (c, next) => {
-    (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'tenant-a');
+    const context = c as unknown as { set: (key: string, value: unknown) => void };
+    context.set('tenantId', 'tenant-a');
+    context.set('tenantMetadataContext', {
+      tenantId: 'tenant-a',
+      coreDb: c.env.DB,
+      route: {},
+    });
     await next();
   });
   app.route('/auth/step-up', stepUpRouter);

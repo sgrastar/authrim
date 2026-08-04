@@ -27,7 +27,7 @@ import {
   getLogger,
   createLogger,
   createAuthContextFromHono,
-  recordHybridUserSessionRevocationEpoch,
+  recordUserSessionRevocation,
 } from '@authrim/ar-lib-core';
 import {
   parseLogoutResponsePost,
@@ -449,7 +449,7 @@ async function terminateSessionByNameId(
     const user = await findActiveSamlUserByEmail(env, tenantId, nameId);
     if (user) {
       const authCtx = createAuthContextFromHono(c, tenantId);
-      await recordHybridUserSessionRevocationEpoch(env, authCtx.coreAdapter, tenantId, user.id);
+      await recordUserSessionRevocation(env, tenantId, user.id);
       log.info('Terminated all user sessions by revocation epoch', {});
     } else {
       // PII Protection: Do not log NameID (may contain email/PII)

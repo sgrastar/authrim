@@ -128,15 +128,15 @@ k6 run \
   scripts/benchmarks/test-userinfo-benchmark.js
 ```
 
-For `tenant-d1` production-readiness checks, run UserInfo against a large seeded core/PII
-dataset and tag the result so it can be compared with Cloudflare D1/DO analytics:
+For Control Plane production-readiness checks, run UserInfo against a large seeded Core/PII dataset
+within the tenant-assigned shard set and tag the tenant placement for analytics comparison:
 
 ```bash
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
   --env TOKEN_PATH=../seeds/access_tokens.json \
   --env PRESET=rps500 \
-  --env STORAGE_PROFILE=tenant-d1 \
+  --env TENANT_PLACEMENT_POLICY=tenant_exclusive \
   --env DATASET_USER_COUNT=1000000 \
   scripts/benchmarks/test-userinfo-benchmark.js
 ```
@@ -279,36 +279,25 @@ k6 run \
   scripts/benchmarks/test-mail-otp-full-login-benchmark.js
 ```
 
-### Transient Auth Mirror Comparison
+### Transient Authentication State Verification
 
-Use the Mail OTP Full Login benchmark for transient auth state comparison because it exercises
-ChallengeStore, SessionStore, AuthorizationCodeStore, RefreshTokenRotator, and `session_clients`
-registration on the `/authorize` and `/token` path. Run it twice against deployments that differ
-only by transient auth mirror policy, then compare k6 latency with Cloudflare D1 read/write counts.
+Use the Mail OTP Full Login benchmark to verify ChallengeStore, SessionStore, AuthCodeStore,
+RefreshTokenRotator, SessionRevocationStore, and the `/authorize` and `/token` paths. The Control
+Plane runtime policy is fixed: session and Device/CIBA cold D1 persistence are disabled, so the
+benchmark does not expose a mirror-mode switch.
 
 ```bash
-# D1 mirrors enabled, for shared-d1 or compatibility profiles
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
   --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps100 \
-  --env STORAGE_PROFILE=shared-d1 \
-  --env TRANSIENT_AUTH_MIRROR_MODE=d1-enabled \
-  scripts/benchmarks/test-mail-otp-full-login-benchmark.js
-
-# D1 mirrors disabled or minimized, for tenant-d1/external-durable scale profiles
-k6 run \
-  --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
-  --env PRESET=rps100 \
-  --env STORAGE_PROFILE=tenant-d1 \
-  --env TRANSIENT_AUTH_MIRROR_MODE=d1-disabled \
+  --env TENANT_PLACEMENT_POLICY=tenant_exclusive \
   scripts/benchmarks/test-mail-otp-full-login-benchmark.js
 ```
 
 For the comparison report, record `authorize_code_latency`, `token_latency`, `full_flow_latency`,
 D1 write/read counts by binding, Durable Object request counts, and queue retry/backlog metrics if
-async mirrors or audit sinks are enabled.
+audit sinks are enabled. Confirm that no session or Device/CIBA cold-mirror D1 statements appear.
 
 ### Audit-heavy Token Activity
 

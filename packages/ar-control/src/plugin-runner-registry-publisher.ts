@@ -16,14 +16,6 @@ const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_BINDING = /^TDB_[A-Z0-9_]{1,120}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const DATA_ROLES = new Set(['tenant_core/default', 'tenant_core/users'] as const);
-const SHARED_CORE_SHARD: ShardRow = {
-  shard_id: 'platform-shared-core',
-  binding_ref: 'TDB_SHARED_CORE',
-  data_role: 'tenant_core/default',
-  residency_partition: 'global',
-  generation: 1,
-};
-
 interface ShardRow {
   shard_id: string;
   binding_ref: string;
@@ -169,9 +161,7 @@ export class PluginRunnerRegistryPublisher {
       .bind(environmentId, MAX_SHARDS_PER_ENVIRONMENT + 1)
       .all<ShardRow>();
     const shards = normalizeShards(
-      [...rows.results, SHARED_CORE_SHARD].sort((left, right) =>
-        left.shard_id.localeCompare(right.shard_id)
-      )
+      [...rows.results].sort((left, right) => left.shard_id.localeCompare(right.shard_id))
     );
     const inventoryDigest = await sha256(JSON.stringify(shards));
     if (

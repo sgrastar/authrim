@@ -14,7 +14,6 @@ import {
   getTenantIdFromContext,
   getLogger,
   isShardedSessionId,
-  resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
@@ -70,8 +69,6 @@ async function resolveTargetUri(
 }
 
 async function terminateLocalSession(
-  env: Env,
-  tenantId: string,
   sessionId: string,
   sessionStore: ReturnType<typeof getSessionStoreBySessionId>['stub']
 ): Promise<void> {
@@ -81,19 +78,6 @@ async function terminateLocalSession(
     })
   );
   if (!response.ok) throw new Error('session_store_delete_failed');
-  try {
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      `bridge-rp-initiated-logout:${tenantId}`,
-      { tenantId }
-    );
-    await adapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-      sessionId,
-      tenantId,
-    ]);
-  } catch {
-    // The sharded SessionStore is authoritative; the D1 row is a lookup index.
-  }
 }
 
 export async function handleRpInitiatedLogout(c: Context<{ Bindings: Env }>): Promise<Response> {
@@ -201,7 +185,7 @@ export async function handleRpInitiatedLogout(c: Context<{ Bindings: Env }>): Pr
     });
 
     operation = 'session_termination';
-    await terminateLocalSession(c.env, tenantId, sessionId, sessionStore);
+    await terminateLocalSession(sessionId, sessionStore);
     deleteCookie(c, 'authrim_session', { path: '/' });
     setCookie(c, LOGOUT_COOKIE, logoutId, {
       path: callbackPath(providerIdentifier),

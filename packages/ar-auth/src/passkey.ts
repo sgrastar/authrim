@@ -14,7 +14,6 @@ import {
   getChallengeStoreByUserId,
   getTenantIdFromContext,
   getTenantSettings,
-  generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
   createPIIContextFromHono,
@@ -51,11 +50,10 @@ import {
 import { resolveSessionTtl } from './session-ttl';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
-  publishTenantD1PasskeyRoute,
-  provisionTenantD1EmailAccount,
-  resolveTenantD1PasskeyAccountRoute,
-  resolveTenantD1EmailAccountRoute,
-  usesTenantD1AccountStorage,
+  publishPasskeyRoute,
+  provisionEmailAccount,
+  resolvePasskeyAccountRoute,
+  resolveEmailAccountRoute,
 } from './account-provisioning';
 
 // ===== Module-level Logger for Helper Functions =====
@@ -299,8 +297,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     });
 
     // Check if user exists in the canonical runtime user store.
-    const tenantD1 = usesTenantD1AccountStorage(c);
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email.toLowerCase());
+    const accountRoute = await resolveEmailAccountRoute(c, email.toLowerCase());
     let runtimeUsers: CanonicalRuntimeUserStore | null =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string; name: string | null } | null = null;
@@ -336,36 +333,21 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       };
 
       try {
-        if (tenantD1) {
-          const provisioned = await provisionTenantD1EmailAccount(c, {
-            tenantId,
-            candidateUserId: newUserId,
-            flow: 'passkey',
-            email: normalizedEmail,
-            runtimeUser: provisioningRuntimeUser,
-          });
-          if (provisioned.status === 'pending') return provisioned.response;
-          await resolveAccountDataContextFromHono(c, provisioned.accountId);
-          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-          user = {
-            id: provisioned.userId,
-            email: normalizedEmail,
-            name: defaultName || email.split('@')[0],
-          };
-        } else {
-          await runtimeUsers!.syncUser({
-            userId: newUserId,
-            email: normalizedEmail,
-            name: defaultName,
-            active: true,
-            emailVerified: false,
-            userType: 'end_user',
-            sourceRef: 'passkey',
-            piiFields: canonicalProfileFields.piiFields,
-            sensitiveValues: canonicalProfileFields.sensitiveValues,
-            customAttributesJson: provisioningRuntimeUser.customAttributesJson,
-          });
-        }
+        const provisioned = await provisionEmailAccount(c, {
+          tenantId,
+          candidateUserId: newUserId,
+          flow: 'passkey',
+          email: normalizedEmail,
+          runtimeUser: provisioningRuntimeUser,
+        });
+        if (provisioned.status === 'pending') return provisioned.response;
+        await resolveAccountDataContextFromHono(c, provisioned.accountId);
+        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        user = {
+          id: provisioned.userId,
+          email: normalizedEmail,
+          name: defaultName || email.split('@')[0],
+        };
       } catch (piiError: unknown) {
         const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
         if (writeFenceResponse) return writeFenceResponse;
@@ -576,9 +558,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const tenantId = getTenantIdFromContext(c);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
 
-    if (usesTenantD1AccountStorage(c)) {
-      await resolveAccountDataContextFromHono(c, userId);
-    }
+    await resolveAccountDataContextFromHono(c, userId);
 
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
@@ -621,7 +601,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       device_name: deviceName || 'Unknown Device',
       aaguid: regInfo.aaguid ?? null,
     });
-    await publishTenantD1PasskeyRoute(c, {
+    await publishPasskeyRoute(c, {
       tenantId,
       userId,
       passkeyId,
@@ -804,7 +784,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     let accountRoute;
     try {
-      accountRoute = await resolveTenantD1PasskeyAccountRoute(c, {
+      accountRoute = await resolvePasskeyAccountRoute(c, {
         credentialId: credentialIDBase64URL,
         rpId: rpID,
       });

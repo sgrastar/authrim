@@ -10,21 +10,19 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
-  type DatabaseAdapter,
   getSessionStoreBySessionId,
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listExternalProviderSessions,
   safeFetchJson,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
   DIAGNOSTIC_FLOW_ID_HEADER,
-  getCachedAuthCorePersistenceContextFromEnv,
   resolveAccountDataContextByIdentifier,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
@@ -154,8 +152,8 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
 
     log.info('Backchannel logout processed', {
       provider: provider.name,
-      sub: claims.sub,
-      sid: claims.sid,
+      hasSub: Boolean(claims.sub),
+      hasSid: Boolean(claims.sid),
       identitiesAffected: result.identitiesAffected,
       sessionsTerminated: result.sessionsTerminated,
     });
@@ -418,32 +416,26 @@ async function invalidateUserSessions(
     let accountContext:
       | Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>
       | undefined;
-    const persistence = await getCachedAuthCorePersistenceContextFromEnv(env);
-    const tenantD1 = persistence.storageProfileId === 'builtin:storage:tenant-d1';
-    if (tenantD1) {
-      try {
-        accountContext = await resolveAccountDataContextByIdentifier(env, {
-          tenantId,
-          indexKind: 'external_subject',
-          identifier: { issuer: providerId, subject: claims.sub },
-        });
-      } catch (error) {
-        if (!(error instanceof Error && error.message === 'account_data_route_not_found')) {
-          throw error;
-        }
+    try {
+      accountContext = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'external_subject',
+        identifier: { issuer: providerId, subject: claims.sub },
+      });
+    } catch (error) {
+      if (!(error instanceof Error && error.message === 'account_data_route_not_found')) {
+        throw error;
       }
     }
-    const identities = tenantD1
-      ? accountContext
-        ? await findLinkedIdentitiesByProviderSub(
-            env,
-            tenantId,
-            providerId,
-            claims.sub,
-            accountContext.piiDb
-          )
-        : []
-      : await findLinkedIdentitiesByProviderSub(env, tenantId, providerId, claims.sub);
+    const identities = accountContext
+      ? await findLinkedIdentitiesByProviderSub(
+          env,
+          tenantId,
+          providerId,
+          claims.sub,
+          accountContext.piiDb
+        )
+      : [];
 
     for (const identity of identities) {
       identitiesAffected++;
@@ -462,7 +454,7 @@ async function invalidateUserSessions(
           accountContext.piiDb
         );
       } else {
-        await updateLinkedIdentity(env, identity.tenantId, identity.id, updates);
+        throw new Error('external_idp_logout_account_route_missing');
       }
     }
   }
@@ -472,40 +464,36 @@ async function invalidateUserSessions(
   // session for that subject.
   const sessionClaim = claims.sid ?? claims.sub;
   if (sessionClaim) {
-    const selector = claims.sid ? 'external_provider_sid' : 'external_provider_sub';
-    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      `bridge-backchannel-logout:${tenantId}`,
-      { tenantId }
-    );
-    const sessions = await coreAdapter.query<{ id: string }>(
-      `SELECT id FROM sessions
-       WHERE external_provider_id = ?
-         AND ${selector} = ?
-         AND tenant_id = ?
-         AND expires_at > ?`,
-      [providerId, sessionClaim, tenantId, Date.now()]
-    );
+    const claimKind = claims.sid ? 'sid' : 'sub';
+    const sessions = await listExternalProviderSessions(env, {
+      tenantId,
+      providerId,
+      claimKind,
+      claim: sessionClaim,
+    });
     let terminationFailures = 0;
 
     for (const session of sessions) {
       try {
-        if (isShardedSessionId(session.id)) {
-          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id, tenantId);
-          const response = await sessionStore.fetch(
-            new Request(`https://session-store/session/${encodeURIComponent(session.id)}`, {
-              method: 'DELETE',
-            })
-          );
-          if (!response.ok) {
-            terminationFailures++;
-            continue;
-          }
+        if (!isShardedSessionId(session.sessionId)) continue;
+        const { stub: sessionStore } = getSessionStoreBySessionId(env, session.sessionId, tenantId);
+        const current = (await sessionStore.getSessionRpc(session.sessionId)) as Session | null;
+        const expectedClaim =
+          claimKind === 'sid'
+            ? current?.data?.external_provider_sid
+            : current?.data?.external_provider_sub;
+        if (
+          !current ||
+          current.tenantId !== tenantId ||
+          current.data?.external_provider_id !== providerId ||
+          expectedClaim !== sessionClaim
+        ) {
+          continue;
         }
-        await coreAdapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-          session.id,
-          tenantId,
-        ]);
+        if (!(await sessionStore.invalidateSessionRpc(session.sessionId))) {
+          terminationFailures++;
+          continue;
+        }
         sessionsTerminated++;
       } catch {
         terminationFailures++;

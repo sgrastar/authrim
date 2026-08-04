@@ -2,19 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
-const { mockAdapter, mockAdminAdapter, mockGetTenantSettings } = vi.hoisted(() => ({
-  mockAdapter: {
-    query: vi.fn(),
-    queryOne: vi.fn(),
-    execute: vi.fn(),
-  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
-  mockAdminAdapter: {
-    query: vi.fn(),
-    queryOne: vi.fn(),
-    execute: vi.fn(),
-  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
-  mockGetTenantSettings: vi.fn(),
-}));
+const { mockAdapter, mockAdminAdapter, mockGetTenantSettings, mockListTenantStores } = vi.hoisted(
+  () => ({
+    mockAdapter: {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+    mockAdminAdapter: {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+    mockGetTenantSettings: vi.fn(),
+    mockListTenantStores: vi.fn(async () => [
+      { tenantId: 'tenant-a', store: { source: {}, bindingRef: 'TDB_TENANT_A' } },
+    ]),
+  })
+);
 
 const { mockWriteAdminAuditLog } = vi.hoisted(() => ({
   mockWriteAdminAuditLog: vi.fn(),
@@ -141,6 +146,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getTenantSettings: mockGetTenantSettings,
+    ensureDatabaseAdapter: vi.fn(() => mockAdapter),
+    listEnvironmentTenantDefaultStores: mockListTenantStores,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdminAdapter),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mockAdapter),
   };
@@ -151,7 +158,20 @@ vi.mock('../admin-shared', () => ({
 }));
 
 import { ADMIN_PERMISSIONS, compileSupportOpsSelector } from '@authrim/ar-lib-core';
-import { processPendingSupportOpsSnapshotJobs, supportOpsRouter } from '../support-ops';
+import {
+  processPendingSupportOpsSnapshotJobs as processPendingSupportOpsSnapshotJobsImpl,
+  supportOpsRouter,
+} from '../support-ops';
+
+function processPendingSupportOpsSnapshotJobs(env: Env) {
+  return processPendingSupportOpsSnapshotJobsImpl({
+    ...env,
+    AUTHRIM_CONFIG: {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => undefined),
+    } as unknown as KVNamespace,
+  });
+}
 
 function approvalRequestEntity(overrides: Record<string, unknown> = {}) {
   const scope = {

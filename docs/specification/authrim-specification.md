@@ -34,34 +34,34 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 
 ## 3. Core Concepts
 
-| Term | Meaning |
-| --- | --- |
-| Authenticated session | A client/RP-specific login session. It is distinct from Authrim's internal AS-wide SSO state. |
-| AS SSO session | Authrim's internal global SSO state. It is not directly exposed as a public API object. |
-| Direct Auth | A first-party headless authentication initiation layer. It is not a separate token model. |
-| Direct Auth artifact | A single-use artifact returned by a Direct Auth finish operation and redeemed through a canonical token/session path. |
-| Native SSO | Native app SSO based on `device_secret` and OAuth token exchange. Refresh-token sharing across apps is not the canonical model. |
-| Device secret | Native SSO credential bound to an installation and used as the actor token in native token exchange. |
-| Installation | A server-assigned opaque app installation record. Device inventory is exposed as installation inventory. |
-| `managed_browser_session` | Built-in LoginUI profile. Authrim manages handoff, cookie session, domain policy, CORS, and CSP. Browser JavaScript does not receive OAuth/OIDC token material. |
-| `cookie_session` | BFF/SSR/MPA profile using an opaque HttpOnly cookie and server-side session state. |
-| `token_session` | Pure browser/API-oriented SDK profile using OAuth tokens, PKCE, DPoP, and memory-first token storage. |
-| Application group | Public/Admin/API name for a related application set used for explicit group logout and managed grouping. Internally this maps to the security boundary historically named `trust_group`. |
-| Web origin registry | Public/Admin/API name for the registry of RP/browser origins, CORS policy, CSP policy, handoff permission, iframe permission, and environment membership. Internally this may map to `rp_origin_registry`. |
-| Storage profile | Runtime policy describing where auth core, PII, custom/extension, and related data are stored. |
-| Audit profile | Runtime policy describing audit primary store, archive store, forwarding sinks, routing, and failure behavior. |
-| Storage destination | Admin-managed or setup-managed storage/sink target used for archive, diagnostic detail, sensitive detail, import/export artifacts, DLQ payloads, or external logging delivery. |
-| Logging policy snapshot | Published runtime logging policy used by Workers to resolve log type, plane, destination, fallback, and delivery behavior. |
-| SAML entityID style | Tenant-wide choice that determines whether Authrim publishes metadata URL entityIDs or shorter role URL entityIDs for local IdP/SP metadata. |
-| SAML interactive login redirect policy | Tenant-wide choice that determines whether SAML interactive login starts at the tenant login host or the shared Login UI base URL with a tenant hint. |
-| Handoff | A short-lived, single-use browser continuation mechanism used when Authrim must move an authenticated result from one browser context or origin to another without relying on third-party cookies or exposing OAuth/OIDC token material to browser JavaScript. |
-| Step-up | A fresh authentication or verification action required before a sensitive operation can proceed. Step-up proves recent user presence or a stronger factor and returns a short-lived receipt bound to the specific operation. |
-| Support Ops | Privacy-preserving administrative support surface for aggregate investigation, cohort selection, and approved action execution without exposing individual end-user records through the standard support workflow. |
-| Support Ops selector | A constrained JSON filter expression used to select or aggregate support-operation targets. It exposes only registered non-sensitive fields and compiles to parameterized storage queries. |
-| Support Ops cohort | A frozen target snapshot derived from a selector, intended action, tenant, and support case. Cohorts expose only redacted counts and expire before execution can occur. |
-| Approved action | A Support Ops action that was requested against a cohort and authorized through the approval workflow before execution. |
-| Break-glass | Reserved future Support Ops flow for individually revealing end-user data under stricter approval. The current Support Ops action path must remain compatible with adding this later. |
-| Policy | Runtime configuration and decision logic that determines whether a request is allowed, which assurance level is required, which origins or clients may participate, where data is stored, and how audit/retention rules apply. |
+| Term                                   | Meaning                                                                                                                                                                                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authenticated session                  | A client/RP-specific login session. It is distinct from Authrim's internal AS-wide SSO state.                                                                                                                                                                  |
+| AS SSO session                         | Authrim's internal global SSO state. It is not directly exposed as a public API object.                                                                                                                                                                        |
+| Direct Auth                            | A first-party headless authentication initiation layer. It is not a separate token model.                                                                                                                                                                      |
+| Direct Auth artifact                   | A single-use artifact returned by a Direct Auth finish operation and redeemed through a canonical token/session path.                                                                                                                                          |
+| Native SSO                             | Native app SSO based on `device_secret` and OAuth token exchange. Refresh-token sharing across apps is not the canonical model.                                                                                                                                |
+| Device secret                          | Native SSO credential bound to an installation and used as the actor token in native token exchange.                                                                                                                                                           |
+| Installation                           | A server-assigned opaque app installation record. Device inventory is exposed as installation inventory.                                                                                                                                                       |
+| `managed_browser_session`              | Built-in LoginUI profile. Authrim manages handoff, cookie session, domain policy, CORS, and CSP. Browser JavaScript does not receive OAuth/OIDC token material.                                                                                                |
+| `cookie_session`                       | BFF/SSR/MPA profile using an opaque HttpOnly cookie and server-side session state.                                                                                                                                                                             |
+| `token_session`                        | Pure browser/API-oriented SDK profile using OAuth tokens, PKCE, DPoP, and memory-first token storage.                                                                                                                                                          |
+| Application group                      | Public/Admin/API name for a related application set used for explicit group logout and managed grouping. Internally this maps to the security boundary historically named `trust_group`.                                                                       |
+| Web origin registry                    | Public/Admin/API name for the registry of RP/browser origins, CORS policy, CSP policy, handoff permission, iframe permission, and environment membership. Internally this may map to `rp_origin_registry`.                                                     |
+| Tenant placement policy                | Tenant-owned policy selecting `shared_pool` or `tenant_exclusive`; it does not select a runtime backend or transient-authentication persistence.                                                                                                                |
+| Audit profile                          | Runtime policy describing audit primary store, archive store, forwarding sinks, routing, and failure behavior.                                                                                                                                                 |
+| Storage destination                    | Admin-managed or setup-managed storage/sink target used for archive, diagnostic detail, sensitive detail, import/export artifacts, DLQ payloads, or external logging delivery.                                                                                 |
+| Logging policy snapshot                | Published runtime logging policy used by Workers to resolve log type, plane, destination, fallback, and delivery behavior.                                                                                                                                     |
+| SAML entityID style                    | Tenant-wide choice that determines whether Authrim publishes metadata URL entityIDs or shorter role URL entityIDs for local IdP/SP metadata.                                                                                                                   |
+| SAML interactive login redirect policy | Tenant-wide choice that determines whether SAML interactive login starts at the tenant login host or the shared Login UI base URL with a tenant hint.                                                                                                          |
+| Handoff                                | A short-lived, single-use browser continuation mechanism used when Authrim must move an authenticated result from one browser context or origin to another without relying on third-party cookies or exposing OAuth/OIDC token material to browser JavaScript. |
+| Step-up                                | A fresh authentication or verification action required before a sensitive operation can proceed. Step-up proves recent user presence or a stronger factor and returns a short-lived receipt bound to the specific operation.                                   |
+| Support Ops                            | Privacy-preserving administrative support surface for aggregate investigation, cohort selection, and approved action execution without exposing individual end-user records through the standard support workflow.                                             |
+| Support Ops selector                   | A constrained JSON filter expression used to select or aggregate support-operation targets. It exposes only registered non-sensitive fields and compiles to parameterized storage queries.                                                                     |
+| Support Ops cohort                     | A frozen target snapshot derived from a selector, intended action, tenant, and support case. Cohorts expose only redacted counts and expire before execution can occur.                                                                                        |
+| Approved action                        | A Support Ops action that was requested against a cohort and authorized through the approval workflow before execution.                                                                                                                                        |
+| Break-glass                            | Reserved future Support Ops flow for individually revealing end-user data under stricter approval. The current Support Ops action path must remain compatible with adding this later.                                                                          |
+| Policy                                 | Runtime configuration and decision logic that determines whether a request is allowed, which assurance level is required, which origins or clients may participate, where data is stored, and how audit/retention rules apply.                                 |
 
 ### 3.1 Handoff in Plain Terms
 
@@ -111,40 +111,40 @@ Public APIs expose policy outcomes and stable configuration names. Internal poli
 
 ## 4. Secure Defaults
 
-| Area | Default | Rationale |
-| --- | --- | --- |
-| Built-in LoginUI session | `managed_browser_session` backed by cookie session | Prevents OAuth/OIDC token material from reaching browser JavaScript. |
-| Browser SDK profile | Explicit profile required unless an adapter can safely infer it. Vanilla browser examples use `profile: "token"`. |
-| SvelteKit/BFF profile | `profile: "auto"` may resolve to cookie/BFF when the adapter can prove server mediation. |
-| Browser public token path | Authorization Code + PKCE + DPoP | Avoids implicit/ROPC defaults and constrains token replay. |
-| Browser access token storage | Memory-only | Reduces persistent token theft after XSS. |
-| Browser refresh token policy | `disabled` | Refresh tokens in browser are explicit opt-in only. |
-| Browser refresh token opt-in | `dpop_bound` | If browser refresh tokens are enabled, they must be sender-constrained. |
-| DPoP key fallback | `fail_closed` | SDKs must not silently downgrade sender-constraining. |
-| DPoP algorithm | `ES256` for browser public clients | Broad Web Crypto support and good security/performance tradeoff. |
-| Cookie session CSRF | SameSite + double-submit CSRF + Origin/Referer check | Cookie-bearing mutation requests need browser CSRF protection. |
-| Same-origin cookie session | `SameSite=Lax; Secure; HttpOnly` | Safe default for same-site browser apps. |
-| Cross-origin cookie session | `SameSite=None; Secure; HttpOnly` plus CSRF and Origin/Referer checks | Required for legitimate cross-origin deployments. |
-| Cross-domain SSO | top-level redirect + login challenge + handoff | Avoids relying on third-party cookies and iframe storage access. |
-| iframe OIDC authentication | Disabled by default | Optional compatibility feature only. |
-| Handoff artifact TTL | 60 seconds | Short-lived single-use transfer. |
-| Handoff artifact policy range | 30-300 seconds | Allows bounded deployment tuning. |
-| Same-client Native SSO | Enabled | Allows a native client to re-establish its own installation session through `device_secret`. |
-| Cross-client Native SSO | Disabled | Requires explicit application-group opt-in. |
-| Native SSO token type | `DPoP` | Native public-client exchange requires DPoP sender-constraining. |
-| Native SSO ID Token clock-skew window | 60 seconds | Short tolerance for exchange-time ID Token freshness. |
-| Device secret rotation | Disabled | Rotation is tenant-policy controlled and explicit. |
-| Support Ops self approval | Disabled | Support actions must be approved by a different operator unless tenant policy explicitly allows self approval. |
-| Support Ops duty separation | Requester and approver must be distinct | Tenants may require requester, approver, and executor to all be distinct. |
-| Support Ops minimum cohort size | 10 | Low-count matched/actionable/blocked subsets are suppressed or rejected depending on operation phase. |
-| Support Ops aggregate counts | Bucketed and suppressible | Aggregate responses are not exact by default and apply low-count plus complementary suppression. |
-| Support Ops cohort TTL | 24 hours | Expired cohorts cannot be used for action execution. |
-| Support Ops action approval | Required | Action execution is bound to a matching approved approval request. |
-| SAML entityID style | `metadata_url` | Published IdP/SP entityIDs default to metadata URLs for compatibility. |
-| SAML interactive login redirect | `tenant_host` | SAML interactive login defaults to the tenant `/login` URL. |
-| Bearer token transport | Authorization header only | Query/form bearer tokens are rejected on Authrim canonical endpoints. |
-| Logout scope | Current client/session by default | Prevents accidental global logout. |
-| UI deployment | Cloudflare Workers static assets / SSR | Cloudflare Pages is not the supported default UI deployment path. |
+| Area                                  | Default                                                                                                           | Rationale                                                                                                      |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Built-in LoginUI session              | `managed_browser_session` backed by cookie session                                                                | Prevents OAuth/OIDC token material from reaching browser JavaScript.                                           |
+| Browser SDK profile                   | Explicit profile required unless an adapter can safely infer it. Vanilla browser examples use `profile: "token"`. |
+| SvelteKit/BFF profile                 | `profile: "auto"` may resolve to cookie/BFF when the adapter can prove server mediation.                          |
+| Browser public token path             | Authorization Code + PKCE + DPoP                                                                                  | Avoids implicit/ROPC defaults and constrains token replay.                                                     |
+| Browser access token storage          | Memory-only                                                                                                       | Reduces persistent token theft after XSS.                                                                      |
+| Browser refresh token policy          | `disabled`                                                                                                        | Refresh tokens in browser are explicit opt-in only.                                                            |
+| Browser refresh token opt-in          | `dpop_bound`                                                                                                      | If browser refresh tokens are enabled, they must be sender-constrained.                                        |
+| DPoP key fallback                     | `fail_closed`                                                                                                     | SDKs must not silently downgrade sender-constraining.                                                          |
+| DPoP algorithm                        | `ES256` for browser public clients                                                                                | Broad Web Crypto support and good security/performance tradeoff.                                               |
+| Cookie session CSRF                   | SameSite + double-submit CSRF + Origin/Referer check                                                              | Cookie-bearing mutation requests need browser CSRF protection.                                                 |
+| Same-origin cookie session            | `SameSite=Lax; Secure; HttpOnly`                                                                                  | Safe default for same-site browser apps.                                                                       |
+| Cross-origin cookie session           | `SameSite=None; Secure; HttpOnly` plus CSRF and Origin/Referer checks                                             | Required for legitimate cross-origin deployments.                                                              |
+| Cross-domain SSO                      | top-level redirect + login challenge + handoff                                                                    | Avoids relying on third-party cookies and iframe storage access.                                               |
+| iframe OIDC authentication            | Disabled by default                                                                                               | Optional compatibility feature only.                                                                           |
+| Handoff artifact TTL                  | 60 seconds                                                                                                        | Short-lived single-use transfer.                                                                               |
+| Handoff artifact policy range         | 30-300 seconds                                                                                                    | Allows bounded deployment tuning.                                                                              |
+| Same-client Native SSO                | Enabled                                                                                                           | Allows a native client to re-establish its own installation session through `device_secret`.                   |
+| Cross-client Native SSO               | Disabled                                                                                                          | Requires explicit application-group opt-in.                                                                    |
+| Native SSO token type                 | `DPoP`                                                                                                            | Native public-client exchange requires DPoP sender-constraining.                                               |
+| Native SSO ID Token clock-skew window | 60 seconds                                                                                                        | Short tolerance for exchange-time ID Token freshness.                                                          |
+| Device secret rotation                | Disabled                                                                                                          | Rotation is tenant-policy controlled and explicit.                                                             |
+| Support Ops self approval             | Disabled                                                                                                          | Support actions must be approved by a different operator unless tenant policy explicitly allows self approval. |
+| Support Ops duty separation           | Requester and approver must be distinct                                                                           | Tenants may require requester, approver, and executor to all be distinct.                                      |
+| Support Ops minimum cohort size       | 10                                                                                                                | Low-count matched/actionable/blocked subsets are suppressed or rejected depending on operation phase.          |
+| Support Ops aggregate counts          | Bucketed and suppressible                                                                                         | Aggregate responses are not exact by default and apply low-count plus complementary suppression.               |
+| Support Ops cohort TTL                | 24 hours                                                                                                          | Expired cohorts cannot be used for action execution.                                                           |
+| Support Ops action approval           | Required                                                                                                          | Action execution is bound to a matching approved approval request.                                             |
+| SAML entityID style                   | `metadata_url`                                                                                                    | Published IdP/SP entityIDs default to metadata URLs for compatibility.                                         |
+| SAML interactive login redirect       | `tenant_host`                                                                                                     | SAML interactive login defaults to the tenant `/login` URL.                                                    |
+| Bearer token transport                | Authorization header only                                                                                         | Query/form bearer tokens are rejected on Authrim canonical endpoints.                                          |
+| Logout scope                          | Current client/session by default                                                                                 | Prevents accidental global logout.                                                                             |
+| UI deployment                         | Cloudflare Workers static assets / SSR                                                                            | Cloudflare Pages is not the supported default UI deployment path.                                              |
 
 ## 5. OAuth 2.0 and OpenID Connect
 
@@ -161,16 +161,16 @@ Returns OpenID Provider metadata.
 
 Key defaults:
 
-| Field | Default / Behavior |
-| --- | --- |
-| `authorization_endpoint` | `{issuer}/authorize` |
-| `token_endpoint` | `{issuer}/token` |
-| `userinfo_endpoint` | `{issuer}/userinfo` |
-| `jwks_uri` | `{issuer}/.well-known/jwks.json` |
-| `registration_endpoint` | `{issuer}/register` when Dynamic Client Registration is enabled |
-| `code_challenge_methods_supported` | `S256` is the default and recommended method. |
-| `dpop_signing_alg_values_supported` | `ES256`, `PS256`, `EdDSA` |
-| `native_sso_supported` | Authoritative Native SSO capability field when Native SSO is enabled. Removed fields such as `native_sso_token_exchange_supported` and `native_sso_device_secret_supported` are not authoritative. |
+| Field                               | Default / Behavior                                                                                                                                                                                 |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `authorization_endpoint`            | `{issuer}/authorize`                                                                                                                                                                               |
+| `token_endpoint`                    | `{issuer}/token`                                                                                                                                                                                   |
+| `userinfo_endpoint`                 | `{issuer}/userinfo`                                                                                                                                                                                |
+| `jwks_uri`                          | `{issuer}/.well-known/jwks.json`                                                                                                                                                                   |
+| `registration_endpoint`             | `{issuer}/register` when Dynamic Client Registration is enabled                                                                                                                                    |
+| `code_challenge_methods_supported`  | `S256` is the default and recommended method.                                                                                                                                                      |
+| `dpop_signing_alg_values_supported` | `ES256`, `PS256`, `EdDSA`                                                                                                                                                                          |
+| `native_sso_supported`              | Authoritative Native SSO capability field when Native SSO is enabled. Removed fields such as `native_sso_token_exchange_supported` and `native_sso_device_secret_supported` are not authoritative. |
 
 ### 5.2 Authorization Endpoint
 
@@ -184,24 +184,24 @@ Starts an OAuth/OIDC authorization request.
 
 Query/form parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `response_type` | Yes | none | Default browser-facing profile SHOULD use `code`. Implicit and Hybrid response types are compatibility/conformance options only. |
-| `client_id` | Yes | none | Registered client identifier. |
-| `redirect_uri` | Required unless PAR/request object supplies it | none | Must match registered redirect URI policy. |
-| `scope` | Yes | none | OIDC requests include `openid`. |
-| `state` | Strongly recommended; required by SDKs | none | SDKs must validate exact round-trip. |
-| `nonce` | Required for OIDC flows that issue ID Tokens | none | SDKs must validate exact round-trip. |
-| `code_challenge` | Required for public/browser/native clients | none | PKCE is required for default browser-facing flows. |
-| `code_challenge_method` | No | `S256` | `plain` is compatibility only and SHOULD NOT be used by SDK defaults. |
-| `prompt` | No | normal login policy | Supports `none`, `login`, `consent`, `select_account`. |
-| `max_age` | No | no freshness requirement | When supplied, Authrim must enforce `auth_time` freshness. |
-| `acr_values` | No | client/default assurance policy | Passed through login challenge and session metadata. |
-| `claims` | No | none | JSON claims request. |
-| `ui_locales` | No | deployment default locale | Space-separated locale preference. |
-| `login_hint` | No | none | Passed to LoginUI / upstream provider when applicable. |
-| `request_uri` | No | none | PAR request URI when PAR is used. |
-| `handoff` | No | `false` | `true` asks for handoff-based continuation for compatible clients. |
+| Parameter               | Required                                       | Default                         | Notes                                                                                                                            |
+| ----------------------- | ---------------------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `response_type`         | Yes                                            | none                            | Default browser-facing profile SHOULD use `code`. Implicit and Hybrid response types are compatibility/conformance options only. |
+| `client_id`             | Yes                                            | none                            | Registered client identifier.                                                                                                    |
+| `redirect_uri`          | Required unless PAR/request object supplies it | none                            | Must match registered redirect URI policy.                                                                                       |
+| `scope`                 | Yes                                            | none                            | OIDC requests include `openid`.                                                                                                  |
+| `state`                 | Strongly recommended; required by SDKs         | none                            | SDKs must validate exact round-trip.                                                                                             |
+| `nonce`                 | Required for OIDC flows that issue ID Tokens   | none                            | SDKs must validate exact round-trip.                                                                                             |
+| `code_challenge`        | Required for public/browser/native clients     | none                            | PKCE is required for default browser-facing flows.                                                                               |
+| `code_challenge_method` | No                                             | `S256`                          | `plain` is compatibility only and SHOULD NOT be used by SDK defaults.                                                            |
+| `prompt`                | No                                             | normal login policy             | Supports `none`, `login`, `consent`, `select_account`.                                                                           |
+| `max_age`               | No                                             | no freshness requirement        | When supplied, Authrim must enforce `auth_time` freshness.                                                                       |
+| `acr_values`            | No                                             | client/default assurance policy | Passed through login challenge and session metadata.                                                                             |
+| `claims`                | No                                             | none                            | JSON claims request.                                                                                                             |
+| `ui_locales`            | No                                             | deployment default locale       | Space-separated locale preference.                                                                                               |
+| `login_hint`            | No                                             | none                            | Passed to LoginUI / upstream provider when applicable.                                                                           |
+| `request_uri`           | No                                             | none                            | PAR request URI when PAR is used.                                                                                                |
+| `handoff`               | No                                             | `false`                         | `true` asks for handoff-based continuation for compatible clients.                                                               |
 
 Default behavior:
 
@@ -222,49 +222,49 @@ security: client authentication as required by client type
 
 Common parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `grant_type` | Yes | none | Standard or Authrim extension grant. |
-| `client_id` | Public clients: yes | none | Confidential clients may authenticate through standard client auth. |
-| `client_secret` | Confidential clients depending on auth method | none | Never accepted for public browser clients. |
-| `code` | Authorization Code grant | none | Single-use authorization code. |
-| `code_verifier` | Authorization Code + PKCE; Direct Auth finish | none | Must match original `code_challenge`. |
-| `redirect_uri` | Authorization Code when originally supplied | none | Must match authorization request. |
-| `refresh_token` | Refresh Token grant | none | Rotation and reuse detection apply. |
-| `resource` / `audience` | Optional | client default resource | Issuer fallback MUST NOT be used as resource audience. |
-| `direct_auth_artifact` | Direct Auth finish grant | none | Single-use artifact. |
-| `channel` | Direct Auth finish grant | none | `browser`, `native`, or `server`. |
+| Parameter               | Required                                      | Default                 | Notes                                                               |
+| ----------------------- | --------------------------------------------- | ----------------------- | ------------------------------------------------------------------- |
+| `grant_type`            | Yes                                           | none                    | Standard or Authrim extension grant.                                |
+| `client_id`             | Public clients: yes                           | none                    | Confidential clients may authenticate through standard client auth. |
+| `client_secret`         | Confidential clients depending on auth method | none                    | Never accepted for public browser clients.                          |
+| `code`                  | Authorization Code grant                      | none                    | Single-use authorization code.                                      |
+| `code_verifier`         | Authorization Code + PKCE; Direct Auth finish | none                    | Must match original `code_challenge`.                               |
+| `redirect_uri`          | Authorization Code when originally supplied   | none                    | Must match authorization request.                                   |
+| `refresh_token`         | Refresh Token grant                           | none                    | Rotation and reuse detection apply.                                 |
+| `resource` / `audience` | Optional                                      | client default resource | Issuer fallback MUST NOT be used as resource audience.              |
+| `direct_auth_artifact`  | Direct Auth finish grant                      | none                    | Single-use artifact.                                                |
+| `channel`               | Direct Auth finish grant                      | none                    | `browser`, `native`, or `server`.                                   |
 
 Supported default grants:
 
-| Grant | Default status | Notes |
-| --- | --- | --- |
-| `authorization_code` | Enabled | Default browser-facing flow. PKCE required for public clients. |
-| `refresh_token` | Enabled when client policy permits it | Rotation and reuse detection required. |
-| `client_credentials` | Enabled for service clients | Scope/resource policy applies. |
-| `urn:authrim:params:oauth:grant-type:direct-auth-finish` | Enabled for Direct Auth | Redeems a Direct Auth artifact. |
-| `urn:ietf:params:oauth:grant-type:token-exchange` | Optional / policy-controlled | Downstream grant and delegation policy applies. |
+| Grant                                                    | Default status                        | Notes                                                          |
+| -------------------------------------------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| `authorization_code`                                     | Enabled                               | Default browser-facing flow. PKCE required for public clients. |
+| `refresh_token`                                          | Enabled when client policy permits it | Rotation and reuse detection required.                         |
+| `client_credentials`                                     | Enabled for service clients           | Scope/resource policy applies.                                 |
+| `urn:authrim:params:oauth:grant-type:direct-auth-finish` | Enabled for Direct Auth               | Redeems a Direct Auth artifact.                                |
+| `urn:ietf:params:oauth:grant-type:token-exchange`        | Optional / policy-controlled          | Downstream grant and delegation policy applies.                |
 
 Token defaults:
 
-| Token property | Default / Behavior |
-| --- | --- |
-| `access_token` | Canonical OAuth access token. |
-| `aud` | Target resource from request or client default. If unresolved, issuance fails with `invalid_target`. |
-| `client_id` | Requesting client identity. |
-| `token_type` | `Bearer` or `DPoP`; DPoP-bound flows return/use DPoP semantics. |
-| Browser access token storage | SDK default is memory-only. |
-| Browser refresh token | Disabled unless `browser_refresh_token_policy=dpop_bound`. |
-| Refresh reuse detection | Reuse revokes the affected token family and affected session/device. |
+| Token property               | Default / Behavior                                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `access_token`               | Canonical OAuth access token.                                                                        |
+| `aud`                        | Target resource from request or client default. If unresolved, issuance fails with `invalid_target`. |
+| `client_id`                  | Requesting client identity.                                                                          |
+| `token_type`                 | `Bearer` or `DPoP`; DPoP-bound flows return/use DPoP semantics.                                      |
+| Browser access token storage | SDK default is memory-only.                                                                          |
+| Browser refresh token        | Disabled unless `browser_refresh_token_policy=dpop_bound`.                                           |
+| Refresh reuse detection      | Reuse revokes the affected token family and affected session/device.                                 |
 
 Access-token validation profile:
 
-| Actor | Default / Behavior |
-| --- | --- |
-| OAuth clients | Treat access tokens as opaque strings. Clients MUST NOT parse access-token claims for application behavior. |
-| Resource servers | Default validation profile is JWT + JWKS unless configured otherwise. |
+| Actor                              | Default / Behavior                                                                                                                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OAuth clients                      | Treat access tokens as opaque strings. Clients MUST NOT parse access-token claims for application behavior.                                                      |
+| Resource servers                   | Default validation profile is JWT + JWKS unless configured otherwise.                                                                                            |
 | High-risk / real-time state checks | Resource servers SHOULD use introspection when they need immediate revocation state, user/session status, policy-sensitive decisions, or device-secret metadata. |
-| Future opaque token profile | Reserved for explicit validation-profile configuration. Authrim clients remain compatible because clients treat access tokens as opaque. |
+| Future opaque token profile        | Reserved for explicit validation-profile configuration. Authrim clients remain compatible because clients treat access tokens as opaque.                         |
 
 Bearer transport:
 
@@ -282,12 +282,12 @@ security: Bearer or DPoP access token
 
 Defaults:
 
-| Behavior | Default |
-| --- | --- |
-| Missing Authorization header | `401` with RFC 6750-compatible error. |
-| DPoP-bound token without DPoP proof | `401 invalid_dpop_proof`. |
-| Claims returned | Filtered by granted scopes and claims policy. |
-| Encrypted/signed response | Controlled by client metadata. |
+| Behavior                            | Default                                       |
+| ----------------------------------- | --------------------------------------------- |
+| Missing Authorization header        | `401` with RFC 6750-compatible error.         |
+| DPoP-bound token without DPoP proof | `401 invalid_dpop_proof`.                     |
+| Claims returned                     | Filtered by granted scopes and claims policy. |
+| Encrypted/signed response           | Controlled by client metadata.                |
 
 ### 5.5 Introspection Endpoint
 
@@ -299,10 +299,10 @@ security: client authentication
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `token` | Yes | none | Token to inspect. |
-| `token_type_hint` | No | none | Hint only. |
+| Parameter         | Required | Default | Notes             |
+| ----------------- | -------- | ------- | ----------------- |
+| `token`           | Yes      | none    | Token to inspect. |
+| `token_type_hint` | No       | none    | Hint only.        |
 
 Behavior:
 
@@ -320,10 +320,10 @@ security: client authentication
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `token` | Yes | none | Token to revoke. |
-| `token_type_hint` | No | none | Hint only. |
+| Parameter         | Required | Default | Notes            |
+| ----------------- | -------- | ------- | ---------------- |
+| `token`           | Yes      | none    | Token to revoke. |
+| `token_type_hint` | No       | none    | Hint only.       |
 
 Behavior:
 
@@ -339,16 +339,16 @@ security: deployment policy
 
 Selected parameters and defaults:
 
-| Parameter | Default | Notes |
-| --- | --- | --- |
-| `redirect_uris` | required for redirect-based clients | Must satisfy origin/redirect policy. |
-| `response_types` | `["code"]` | Browser SDK/LoginUI defaults do not auto-select implicit or hybrid. |
-| `grant_types` | inferred from response types | Authorization Code is the default browser-facing grant. |
-| `token_endpoint_auth_method` | client type dependent | Public browser clients do not use client secret. |
-| `application_group` | managed/Admin assignment only | Public runtime registration cannot set internal trust-group fields directly. |
-| `web_origin_registry` | managed/Admin/setup surface | SDK receives read-only metadata through discovery/login challenge. |
-| `browser_public_client_mode` | built-in LoginUI: `cookie_fallback`; custom browser public client: `strict` | See session profiles below. |
-| `browser_refresh_token_policy` | `disabled` | `dpop_bound` requires explicit opt-in. |
+| Parameter                      | Default                                                                     | Notes                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `redirect_uris`                | required for redirect-based clients                                         | Must satisfy origin/redirect policy.                                         |
+| `response_types`               | `["code"]`                                                                  | Browser SDK/LoginUI defaults do not auto-select implicit or hybrid.          |
+| `grant_types`                  | inferred from response types                                                | Authorization Code is the default browser-facing grant.                      |
+| `token_endpoint_auth_method`   | client type dependent                                                       | Public browser clients do not use client secret.                             |
+| `application_group`            | managed/Admin assignment only                                               | Public runtime registration cannot set internal trust-group fields directly. |
+| `web_origin_registry`          | managed/Admin/setup surface                                                 | SDK receives read-only metadata through discovery/login challenge.           |
+| `browser_public_client_mode`   | built-in LoginUI: `cookie_fallback`; custom browser public client: `strict` | See session profiles below.                                                  |
+| `browser_refresh_token_policy` | `disabled`                                                                  | `dpop_bound` requires explicit opt-in.                                       |
 
 ### 5.8 Native SSO Token Exchange
 
@@ -363,17 +363,17 @@ security: DPoP proof; client authentication according to client type and policy
 
 Request parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `grant_type` | Yes | none | `urn:ietf:params:oauth:grant-type:token-exchange`. |
-| `subject_token` | Yes | none | ID Token from the source installation/session. |
-| `subject_token_type` | Yes | none | `urn:ietf:params:oauth:token-type:id_token`. |
-| `actor_token` | Yes | none | `device_secret`. |
-| `actor_token_type` | Yes | none | `urn:openid:params:token-type:device-secret`. |
-| `client_id` | Public clients: yes | none | Target client. |
-| `channel` | Native public clients: yes | none | Must be `native` for native public-client exchange. |
-| `audience` | Optional | client default resource | RFC 8693 target parameter. |
-| `scope` | Optional | client/resource policy default | Granted scope may be narrowed by policy. |
+| Parameter            | Required                   | Default                        | Notes                                               |
+| -------------------- | -------------------------- | ------------------------------ | --------------------------------------------------- |
+| `grant_type`         | Yes                        | none                           | `urn:ietf:params:oauth:grant-type:token-exchange`.  |
+| `subject_token`      | Yes                        | none                           | ID Token from the source installation/session.      |
+| `subject_token_type` | Yes                        | none                           | `urn:ietf:params:oauth:token-type:id_token`.        |
+| `actor_token`        | Yes                        | none                           | `device_secret`.                                    |
+| `actor_token_type`   | Yes                        | none                           | `urn:openid:params:token-type:device-secret`.       |
+| `client_id`          | Public clients: yes        | none                           | Target client.                                      |
+| `channel`            | Native public clients: yes | none                           | Must be `native` for native public-client exchange. |
+| `audience`           | Optional                   | client default resource        | RFC 8693 target parameter.                          |
+| `scope`              | Optional                   | client/resource policy default | Granted scope may be narrowed by policy.            |
 
 Native public-client eligibility:
 
@@ -384,13 +384,13 @@ Native public-client eligibility:
 
 Native SSO defaults:
 
-| Setting | Default |
-| --- | --- |
-| Same-client Native SSO | Enabled |
-| Cross-client Native SSO | Disabled |
-| Cross-client sharing boundary | Explicit `application_group` opt-in; internally this may map to a trust-group boundary. |
-| ID Token expiry / clock-skew window | 60 seconds |
-| Device secret rotation | Disabled |
+| Setting                             | Default                                                                                 |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| Same-client Native SSO              | Enabled                                                                                 |
+| Cross-client Native SSO             | Disabled                                                                                |
+| Cross-client sharing boundary       | Explicit `application_group` opt-in; internally this may map to a trust-group boundary. |
+| ID Token expiry / clock-skew window | 60 seconds                                                                              |
+| Device secret rotation              | Disabled                                                                                |
 
 Success response:
 
@@ -437,24 +437,24 @@ Success response rules:
 
 Failure mapping:
 
-| Condition | Top-level error | `error_details.code` |
-| --- | --- | --- |
-| Native SSO disabled | `unsupported_grant_type` | `native_sso_disabled` |
-| Client not configured for Native SSO | `unauthorized_client` | `native_sso_client_disabled` |
-| Missing `device_secret` actor token | `invalid_request` | `device_secret_missing` |
-| Rate limit exceeded | `slow_down` | `native_sso_rate_limited` |
-| Malformed ID Token subject token | `invalid_grant` | `id_token_malformed` |
-| Invalid ID Token signature | `invalid_grant` | `id_token_signature_invalid` |
-| Invalid ID Token issuer | `invalid_grant` | `id_token_issuer_invalid` |
-| Invalid ID Token audience | `invalid_grant` | `id_token_audience_invalid` |
-| ID Token expired beyond allowed window | `invalid_grant` | `id_token_expired` |
-| Replayed ID Token subject token | `invalid_grant` | `id_token_replayed` |
-| Missing DPoP proof | `invalid_request` | `dpop_proof_missing` |
-| Invalid DPoP proof | `invalid_request` | `dpop_proof_invalid` |
-| ID Token / device secret binding mismatch | `invalid_grant` | `device_secret_binding_failed` |
-| Cross-client exchange not allowed by application group | `access_denied` | `trust_group_not_allowed` |
-| Inactive or revoked device secret | `invalid_grant` | `device_secret_inactive` |
-| Server-side Native SSO issuance failure | `server_error` | `native_sso_server_error` |
+| Condition                                              | Top-level error          | `error_details.code`           |
+| ------------------------------------------------------ | ------------------------ | ------------------------------ |
+| Native SSO disabled                                    | `unsupported_grant_type` | `native_sso_disabled`          |
+| Client not configured for Native SSO                   | `unauthorized_client`    | `native_sso_client_disabled`   |
+| Missing `device_secret` actor token                    | `invalid_request`        | `device_secret_missing`        |
+| Rate limit exceeded                                    | `slow_down`              | `native_sso_rate_limited`      |
+| Malformed ID Token subject token                       | `invalid_grant`          | `id_token_malformed`           |
+| Invalid ID Token signature                             | `invalid_grant`          | `id_token_signature_invalid`   |
+| Invalid ID Token issuer                                | `invalid_grant`          | `id_token_issuer_invalid`      |
+| Invalid ID Token audience                              | `invalid_grant`          | `id_token_audience_invalid`    |
+| ID Token expired beyond allowed window                 | `invalid_grant`          | `id_token_expired`             |
+| Replayed ID Token subject token                        | `invalid_grant`          | `id_token_replayed`            |
+| Missing DPoP proof                                     | `invalid_request`        | `dpop_proof_missing`           |
+| Invalid DPoP proof                                     | `invalid_request`        | `dpop_proof_invalid`           |
+| ID Token / device secret binding mismatch              | `invalid_grant`          | `device_secret_binding_failed` |
+| Cross-client exchange not allowed by application group | `access_denied`          | `trust_group_not_allowed`      |
+| Inactive or revoked device secret                      | `invalid_grant`          | `device_secret_inactive`       |
+| Server-side Native SSO issuance failure                | `server_error`           | `native_sso_server_error`      |
 
 Cross-client installation semantics:
 
@@ -531,23 +531,23 @@ POST /api/v1/auth/direct/passkey/login/finish
 
 Start parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `client_id` | Yes | none | Client initiating Direct Auth. |
-| `channel` | Yes | none | `browser`, `native`, or `server`. |
-| `transaction_id` | Recommended / SDK generated | generated by SDK | Binds start and finish. |
-| `code_challenge` | Yes | none | PKCE challenge. |
-| `code_challenge_method` | No | `S256` | SDKs use `S256`. |
-| `login_hint` | No | none | Optional user hint. |
+| Parameter               | Required                    | Default          | Notes                             |
+| ----------------------- | --------------------------- | ---------------- | --------------------------------- |
+| `client_id`             | Yes                         | none             | Client initiating Direct Auth.    |
+| `channel`               | Yes                         | none             | `browser`, `native`, or `server`. |
+| `transaction_id`        | Recommended / SDK generated | generated by SDK | Binds start and finish.           |
+| `code_challenge`        | Yes                         | none             | PKCE challenge.                   |
+| `code_challenge_method` | No                          | `S256`           | SDKs use `S256`.                  |
+| `login_hint`            | No                          | none             | Optional user hint.               |
 
 Finish parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `client_id` | Yes | none | Must match start. |
-| `channel` | Yes | none | Must match request policy. |
-| `transaction_id` | Yes | none | Must match start. |
-| `credential` / WebAuthn response | Yes | none | Passkey assertion. |
+| Parameter                        | Required | Default | Notes                      |
+| -------------------------------- | -------- | ------- | -------------------------- |
+| `client_id`                      | Yes      | none    | Must match start.          |
+| `channel`                        | Yes      | none    | Must match request policy. |
+| `transaction_id`                 | Yes      | none    | Must match start.          |
+| `credential` / WebAuthn response | Yes      | none    | Passkey assertion.         |
 
 Finish behavior:
 
@@ -581,24 +581,24 @@ POST /api/v1/auth/direct/email-code/verify
 
 Send parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `client_id` | Yes | none | Client initiating Direct Auth. |
-| `channel` | Yes | none | `browser`, `native`, or `server`. |
-| `email` | Yes | none | Email address. |
-| `transaction_id` | Recommended / SDK generated | generated by SDK | Binds send and verify. |
-| `code_challenge` | Yes | none | PKCE challenge. |
-| `code_challenge_method` | No | `S256` | SDK default. |
+| Parameter               | Required                    | Default          | Notes                             |
+| ----------------------- | --------------------------- | ---------------- | --------------------------------- |
+| `client_id`             | Yes                         | none             | Client initiating Direct Auth.    |
+| `channel`               | Yes                         | none             | `browser`, `native`, or `server`. |
+| `email`                 | Yes                         | none             | Email address.                    |
+| `transaction_id`        | Recommended / SDK generated | generated by SDK | Binds send and verify.            |
+| `code_challenge`        | Yes                         | none             | PKCE challenge.                   |
+| `code_challenge_method` | No                          | `S256`           | SDK default.                      |
 
 Verify parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `client_id` | Yes | none | Must match send. |
-| `channel` | Yes | none | Must match request policy. |
-| `email` | Yes | none | Must match pending transaction. |
-| `code` | Yes | none | One-time email code. |
-| `transaction_id` | Yes | none | Must match send. |
+| Parameter        | Required | Default | Notes                           |
+| ---------------- | -------- | ------- | ------------------------------- |
+| `client_id`      | Yes      | none    | Must match send.                |
+| `channel`        | Yes      | none    | Must match request policy.      |
+| `email`          | Yes      | none    | Must match pending transaction. |
+| `code`           | Yes      | none    | One-time email code.            |
+| `transaction_id` | Yes      | none    | Must match send.                |
 
 ### 6.4 Managed Browser Session Finish
 
@@ -610,12 +610,12 @@ Used by built-in LoginUI and other server-mediated browser surfaces.
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `direct_auth_artifact` | Yes | none | Single-use artifact. |
-| `client_id` | Yes | none | Client that initiated the flow. |
-| `code_verifier` | Yes | none | Must match PKCE challenge. |
-| `challenge_id` | When continuing authorization/login challenge | none | Preserves OAuth/OIDC continuation. |
+| Parameter              | Required                                      | Default | Notes                              |
+| ---------------------- | --------------------------------------------- | ------- | ---------------------------------- |
+| `direct_auth_artifact` | Yes                                           | none    | Single-use artifact.               |
+| `client_id`            | Yes                                           | none    | Client that initiated the flow.    |
+| `code_verifier`        | Yes                                           | none    | Must match PKCE challenge.         |
+| `challenge_id`         | When continuing authorization/login challenge | none    | Preserves OAuth/OIDC continuation. |
 
 Behavior:
 
@@ -631,11 +631,11 @@ POST /api/v1/auth/direct/logout
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `client_id` | Recommended | resolved from session when possible | Used for scoped logout. |
-| `logout_scope` | No | `local` | `local`, `group`, or `global`. `group` maps to application group logout. |
-| `revoke_tokens` | No | `false` | Whether related tokens should be revoked when supported. |
+| Parameter       | Required    | Default                             | Notes                                                                    |
+| --------------- | ----------- | ----------------------------------- | ------------------------------------------------------------------------ |
+| `client_id`     | Recommended | resolved from session when possible | Used for scoped logout.                                                  |
+| `logout_scope`  | No          | `local`                             | `local`, `group`, or `global`. `group` maps to application group logout. |
+| `revoke_tokens` | No          | `false`                             | Whether related tokens should be revoked when supported.                 |
 
 Default behavior:
 
@@ -657,22 +657,22 @@ GET /auth/login-challenge
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `challenge_id` | Yes | none | Login challenge identifier generated by Authrim. |
+| Parameter      | Required | Default | Notes                                            |
+| -------------- | -------- | ------- | ------------------------------------------------ |
+| `challenge_id` | Yes      | none    | Login challenge identifier generated by Authrim. |
 
 Response includes:
 
-| Field | Default / Behavior |
-| --- | --- |
-| `client_id` | Client requesting login. |
-| `session_mode` | `managed_browser_session` unless client policy requires `token_session`. |
-| `handoff_methods` | `cookie_session_finalize` for managed browser session; `dpop_token_verify` for token session. |
-| `prompt` | Original OIDC prompt when present. |
-| `max_age` | Original OIDC max age when present. |
-| `acr_values` | Original OIDC ACR values when present. |
-| `nonce_present` | Indicates nonce was supplied without exposing nonce to UI unnecessarily. |
-| `web_origin_registry` metadata | Read-only CORS/CSP/handoff/iframe metadata when applicable. |
+| Field                          | Default / Behavior                                                                            |
+| ------------------------------ | --------------------------------------------------------------------------------------------- |
+| `client_id`                    | Client requesting login.                                                                      |
+| `session_mode`                 | `managed_browser_session` unless client policy requires `token_session`.                      |
+| `handoff_methods`              | `cookie_session_finalize` for managed browser session; `dpop_token_verify` for token session. |
+| `prompt`                       | Original OIDC prompt when present.                                                            |
+| `max_age`                      | Original OIDC max age when present.                                                           |
+| `acr_values`                   | Original OIDC ACR values when present.                                                        |
+| `nonce_present`                | Indicates nonce was supplied without exposing nonce to UI unnecessarily.                      |
+| `web_origin_registry` metadata | Read-only CORS/CSP/handoff/iframe metadata when applicable.                                   |
 
 ### 7.2 Consent
 
@@ -698,12 +698,12 @@ Use this path when the target profile expects a token-session continuation. The 
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `handoff_token` | Yes | none | Single-use handoff artifact. |
-| `state` | Yes | none | Must match artifact metadata. |
-| `client_id` | Yes | none | Must match artifact metadata. |
-| `include` | No | none | Comma-separated extension fields, for example `session,user`. |
+| Parameter       | Required | Default | Notes                                                         |
+| --------------- | -------- | ------- | ------------------------------------------------------------- |
+| `handoff_token` | Yes      | none    | Single-use handoff artifact.                                  |
+| `state`         | Yes      | none    | Must match artifact metadata.                                 |
+| `client_id`     | Yes      | none    | Must match artifact metadata.                                 |
+| `include`       | No       | none    | Comma-separated extension fields, for example `session,user`. |
 
 Defaults:
 
@@ -724,11 +724,11 @@ Use this path when the target profile is `managed_browser_session` or `cookie_se
 
 Parameters:
 
-| Parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `handoff_token` | Yes | none | Single-use handoff artifact. |
-| `state` | Yes | none | Must match artifact metadata. |
-| `client_id` | Yes | none | Must match artifact metadata. |
+| Parameter       | Required | Default | Notes                         |
+| --------------- | -------- | ------- | ----------------------------- |
+| `handoff_token` | Yes      | none    | Single-use handoff artifact.  |
+| `state`         | Yes      | none    | Must match artifact metadata. |
+| `client_id`     | Yes      | none    | Must match artifact metadata. |
 
 Defaults:
 
@@ -747,45 +747,45 @@ Compatibility aliases:
 
 ### 8.1 Profile Selection
 
-| Profile | Intended use | Default storage | Token material visible to browser JS |
-| --- | --- | --- | --- |
-| `managed_browser_session` | Built-in LoginUI | HttpOnly cookie + Authrim-managed server-side session | No |
-| `cookie_session` | BFF/SSR/MPA SDK/server apps | HttpOnly cookie + application server session | No |
-| `token_session` | Pure browser/API SDK apps | Memory-only access token; optional DPoP-bound refresh token | Yes, access token in memory only |
+| Profile                   | Intended use                | Default storage                                             | Token material visible to browser JS |
+| ------------------------- | --------------------------- | ----------------------------------------------------------- | ------------------------------------ |
+| `managed_browser_session` | Built-in LoginUI            | HttpOnly cookie + Authrim-managed server-side session       | No                                   |
+| `cookie_session`          | BFF/SSR/MPA SDK/server apps | HttpOnly cookie + application server session                | No                                   |
+| `token_session`           | Pure browser/API SDK apps   | Memory-only access token; optional DPoP-bound refresh token | Yes, access token in memory only     |
 
 SDK defaults:
 
-| SDK / Surface | Default / Behavior |
-| --- | --- |
-| Core SDK | Exposes OAuth/OIDC/PKCE/DPoP primitives. Lower abstraction level. |
-| Web SDK | Requires `profile`; `auto` only works when runtime adapter can safely infer. |
-| SvelteKit SDK | `profile: "auto"` may resolve to server-mediated cookie profile. |
-| Server SDK | Provides BFF/cookie session helpers, CSRF helpers, DPoP validation, and Direct Auth artifact redeem helper. |
-| Built-in LoginUI | Uses `managed_browser_session`. |
+| SDK / Surface    | Default / Behavior                                                                                          |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| Core SDK         | Exposes OAuth/OIDC/PKCE/DPoP primitives. Lower abstraction level.                                           |
+| Web SDK          | Requires `profile`; `auto` only works when runtime adapter can safely infer.                                |
+| SvelteKit SDK    | `profile: "auto"` may resolve to server-mediated cookie profile.                                            |
+| Server SDK       | Provides BFF/cookie session helpers, CSRF helpers, DPoP validation, and Direct Auth artifact redeem helper. |
+| Built-in LoginUI | Uses `managed_browser_session`.                                                                             |
 
 ### 8.2 `authrim.fetch()` Defaults
 
-| Behavior | Default |
-| --- | --- |
+| Behavior                           | Default                                                                                 |
+| ---------------------------------- | --------------------------------------------------------------------------------------- |
 | Cookie profile request credentials | Include credentials and attach CSRF header for state-changing requests when configured. |
-| Token profile Authorization | Attach access token through Authorization header. |
-| Token profile DPoP | Attach DPoP proof when required. |
-| DPoP nonce challenge | Retry once with nonce. |
-| 401 refresh retry | Retry refresh once. |
-| Original request replay | GET/HEAD/OPTIONS may replay. Mutations replay only when `Idempotency-Key` is present. |
-| Network retry | No automatic network retry by default. |
+| Token profile Authorization        | Attach access token through Authorization header.                                       |
+| Token profile DPoP                 | Attach DPoP proof when required.                                                        |
+| DPoP nonce challenge               | Retry once with nonce.                                                                  |
+| 401 refresh retry                  | Retry refresh once.                                                                     |
+| Original request replay            | GET/HEAD/OPTIONS may replay. Mutations replay only when `Idempotency-Key` is present.   |
+| Network retry                      | No automatic network retry by default.                                                  |
 
 ### 8.3 DPoP Key Lifecycle
 
-| Setting | Default |
-| --- | --- |
-| Key scope | `issuer + client_id` |
-| Browser key type | Non-extractable `CryptoKey` preferred |
-| Browser persistent storage | IndexedDB-class storage |
-| Fallback policy | `fail_closed` |
-| Compatibility fallback | `wrapped_exported_key`, explicit opt-in only |
-| Ephemeral fallback | `memory_only_key`, explicit opt-in only |
-| Logout behavior | Clear scoped key on logout/current device unlink |
+| Setting                    | Default                                          |
+| -------------------------- | ------------------------------------------------ |
+| Key scope                  | `issuer + client_id`                             |
+| Browser key type           | Non-extractable `CryptoKey` preferred            |
+| Browser persistent storage | IndexedDB-class storage                          |
+| Fallback policy            | `fail_closed`                                    |
+| Compatibility fallback     | `wrapped_exported_key`, explicit opt-in only     |
+| Ephemeral fallback         | `memory_only_key`, explicit opt-in only          |
+| Logout behavior            | Clear scoped key on logout/current device unlink |
 
 ## 9. Cross-Domain SSO and Origin Registry
 
@@ -804,15 +804,15 @@ Internal implementation name may be `rp_origin_registry`.
 
 Fields:
 
-| Field | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `origin` | Yes | none | Full origin, for example `https://app.example.com`. |
-| `client_ids` | Yes | empty | Clients allowed to use this origin. |
-| `cors.allowed` | No | `false` | Whether CORS should be enabled for the origin. |
-| `csp.frame_ancestors` | No | empty | Frame ancestor policy for optional iframe compatibility. |
-| `handoff_allowed` | No | `false` | Whether top-level handoff may target this origin. |
-| `iframe_allowed` | No | `false` | Whether optional iframe OIDC metadata may be returned. |
-| `environment` | No | deployment default | Environment label such as production/staging. |
+| Field                 | Required | Default            | Notes                                                    |
+| --------------------- | -------- | ------------------ | -------------------------------------------------------- |
+| `origin`              | Yes      | none               | Full origin, for example `https://app.example.com`.      |
+| `client_ids`          | Yes      | empty              | Clients allowed to use this origin.                      |
+| `cors.allowed`        | No       | `false`            | Whether CORS should be enabled for the origin.           |
+| `csp.frame_ancestors` | No       | empty              | Frame ancestor policy for optional iframe compatibility. |
+| `handoff_allowed`     | No       | `false`            | Whether top-level handoff may target this origin.        |
+| `iframe_allowed`      | No       | `false`            | Whether optional iframe OIDC metadata may be returned.   |
+| `environment`         | No       | deployment default | Environment label such as production/staging.            |
 
 Wildcard rule:
 
@@ -852,24 +852,24 @@ Record model:
 
 Canonical device shape:
 
-| Field | Type | Default / Rule |
-| --- | --- | --- |
-| `id` | string | Opaque installation id. |
-| `display_name` | string | User-set name, or `""` when unset. |
-| `fallback_display_name` | string | Optional; returned only when user-set name is absent. |
-| `platform` | string | Open string; representative values include `ios`, `android`, `macos`, `windows`, `linux`, `web`, `unknown`. |
-| `current` | boolean | Only the current caller app/session installation is `true`. |
-| `last_seen_at` | RFC3339 string or `null` | Canonical time field. |
-| `last_seen_at_unix` | integer or `null` | Unix epoch seconds mirror of `last_seen_at`. |
-| `client_id` | string | May be returned for application-group-wide inventory. |
-| `app_display_name` | string | Optional; omitted when unresolved. |
+| Field                   | Type                     | Default / Rule                                                                                              |
+| ----------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `id`                    | string                   | Opaque installation id.                                                                                     |
+| `display_name`          | string                   | User-set name, or `""` when unset.                                                                          |
+| `fallback_display_name` | string                   | Optional; returned only when user-set name is absent.                                                       |
+| `platform`              | string                   | Open string; representative values include `ios`, `android`, `macos`, `windows`, `linux`, `web`, `unknown`. |
+| `current`               | boolean                  | Only the current caller app/session installation is `true`.                                                 |
+| `last_seen_at`          | RFC3339 string or `null` | Canonical time field.                                                                                       |
+| `last_seen_at_unix`     | integer or `null`        | Unix epoch seconds mirror of `last_seen_at`.                                                                |
+| `client_id`             | string                   | May be returned for application-group-wide inventory.                                                       |
+| `app_display_name`      | string                   | Optional; omitted when unresolved.                                                                          |
 
 `GET /me/devices`:
 
-| Query parameter | Required | Default | Notes |
-| --- | --- | --- | --- |
-| `cursor` | No | none | Cursor from the previous response. |
-| `limit` | No | `50` | Server max is `100`. |
+| Query parameter | Required | Default | Notes                              |
+| --------------- | -------- | ------- | ---------------------------------- |
+| `cursor`        | No       | none    | Cursor from the previous response. |
+| `limit`         | No       | `50`    | Server max is `100`.               |
 
 Response:
 
@@ -946,13 +946,13 @@ Rules:
 
 Summary defaults:
 
-| Behavior | Default |
-| --- | --- |
-| Listed object | Installation/device-session record visible to the current user. |
-| Revocation | Revokes the selected device/session. |
-| Current client logout | Local/current client by default. |
-| Application group logout | Explicit action only. |
-| Global logout | Explicit action only. |
+| Behavior                 | Default                                                         |
+| ------------------------ | --------------------------------------------------------------- |
+| Listed object            | Installation/device-session record visible to the current user. |
+| Revocation               | Revokes the selected device/session.                            |
+| Current client logout    | Local/current client by default.                                |
+| Application group logout | Explicit action only.                                           |
+| Global logout            | Explicit action only.                                           |
 
 ## 11. Step-Up and Delegated Writes
 
@@ -960,9 +960,9 @@ Summary defaults:
 
 Self-service and delegated operations use different path families:
 
-| Operation type | Path model | Identity rule |
-| --- | --- | --- |
-| Self-service | `/me/*` | Actor and subject are the current authenticated user. |
+| Operation type      | Path model                     | Identity rule                                                                |
+| ------------------- | ------------------------------ | ---------------------------------------------------------------------------- |
+| Self-service        | `/me/*`                        | Actor and subject are the current authenticated user.                        |
 | Delegated operation | `/users/{subject_user_id}/...` | Actor remains actor. Subject impersonation tokens are not standard behavior. |
 
 Downstream elevation grants are product-specific protected-resource flows. They are not accepted as the standard delegated write credential unless a route explicitly opts into that product-specific flow.
@@ -992,10 +992,10 @@ Rules:
 
 Delegated audit object:
 
-| Field | Default / Rule |
-| --- | --- |
-| `reason_code` | Open string on wire. Unknown values may still satisfy a reason-required policy. |
-| `reason_note` | Optional text. Empty after trim is treated as unspecified. Newlines are allowed. Max length is 1024 grapheme clusters. |
+| Field          | Default / Rule                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `reason_code`  | Open string on wire. Unknown values may still satisfy a reason-required policy.                                        |
+| `reason_note`  | Optional text. Empty after trim is treated as unspecified. Newlines are allowed. Max length is 1024 grapheme clusters. |
 | `reference_id` | Single public string. Max length is 128 characters. Empty after trim is invalid only when policy requires a reference. |
 
 Audit rules:
@@ -1077,13 +1077,13 @@ DELETE /auth/step-up/actions/{action_id}
 
 Defaults:
 
-| Behavior | Default |
-| --- | --- |
-| Response cache policy | `Cache-Control: no-store` |
-| Error shape | Machine-readable `status` and `input_state`. |
-| Receipt transport | `Authrim-Step-Up-Receipt` header. |
-| Receipt scope | Bound to operation/user/session policy. |
-| Receipt replay | Rejected when expired, mismatched, or replayed. |
+| Behavior              | Default                                         |
+| --------------------- | ----------------------------------------------- |
+| Response cache policy | `Cache-Control: no-store`                       |
+| Error shape           | Machine-readable `status` and `input_state`.    |
+| Receipt transport     | `Authrim-Step-Up-Receipt` header.               |
+| Receipt scope         | Bound to operation/user/session policy.         |
+| Receipt replay        | Rejected when expired, mismatched, or replayed. |
 
 Step-up requirement error:
 
@@ -1138,11 +1138,11 @@ Complete/resend rules:
 
 Input state:
 
-| Field | Default / Rule |
-| --- | --- |
-| `remaining_attempts` | Returned for input-based methods. |
-| `attempt_limit` | Returned for input-based methods. |
-| `remaining_resends` | Returned when resend applies. |
+| Field                 | Default / Rule                    |
+| --------------------- | --------------------------------- |
+| `remaining_attempts`  | Returned for input-based methods. |
+| `attempt_limit`       | Returned for input-based methods. |
+| `remaining_resends`   | Returned when resend applies.     |
 | `resend_available_at` | RFC3339 time when resend applies. |
 
 Input state rules:
@@ -1154,14 +1154,14 @@ Input state rules:
 
 Default step-up policy:
 
-| Policy | Default |
-| --- | --- |
-| `step_up_token_ttl_seconds` | `300` |
-| `step_up_action_ttl_seconds` | `600` |
-| `step_up_receipt_ttl_seconds` | `300` |
-| `step_up_attempt_limit` | `5` |
-| `step_up_resend_cooldown_seconds` | `60` |
-| `step_up_max_resends` | `3` |
+| Policy                            | Default |
+| --------------------------------- | ------- |
+| `step_up_token_ttl_seconds`       | `300`   |
+| `step_up_action_ttl_seconds`      | `600`   |
+| `step_up_receipt_ttl_seconds`     | `300`   |
+| `step_up_attempt_limit`           | `5`     |
+| `step_up_resend_cooldown_seconds` | `60`    |
+| `step_up_max_resends`             | `3`     |
 
 Tenant administrators may override these values by policy. Implementations reject non-positive TTL/cooldown values and should enforce safety bounds so tenant overrides cannot create indefinitely reusable step-up tokens, actions, or receipts.
 
@@ -1183,22 +1183,22 @@ Returns Support Ops resource descriptors, fields, actions, minimum count policy,
 MVP resource registry:
 
 | Resource | Default `minCount` | Default `maxSnapshotCount` | Implemented action |
-| --- | --- | --- | --- |
-| `User` | `10` | `10000` | `suspend` |
+| -------- | ------------------ | -------------------------- | ------------------ |
+| `User`   | `10`               | `10000`                    | `suspend`          |
 
 User fields:
 
-| Field | Filterable | Aggregatable | Sensitive | Notes |
-| --- | --- | --- | --- | --- |
-| `status` | Yes | Yes | No | Enum: `active`, `suspended`, `locked`. |
-| `lifecycle_state` | Yes | Yes | No | Enum lifecycle stage. |
-| `email_verified` | Yes | Yes | No | Boolean. |
-| `pii_status` | Yes | Yes | No | PII write/delete state, not raw PII. |
-| `user_type` | Yes | Yes | No | Enum: `end_user`, `admin`, `m2m`. |
-| `created_at` | Yes | No | No | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `updated_at` | Yes | No | No | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `last_login_at` | Yes | No | No | Datetime. Filter comparisons normalize seconds and milliseconds. |
-| `email` | No | No | Yes | Reserved as sensitive and not selectable. |
+| Field             | Filterable | Aggregatable | Sensitive | Notes                                                            |
+| ----------------- | ---------- | ------------ | --------- | ---------------------------------------------------------------- |
+| `status`          | Yes        | Yes          | No        | Enum: `active`, `suspended`, `locked`.                           |
+| `lifecycle_state` | Yes        | Yes          | No        | Enum lifecycle stage.                                            |
+| `email_verified`  | Yes        | Yes          | No        | Boolean.                                                         |
+| `pii_status`      | Yes        | Yes          | No        | PII write/delete state, not raw PII.                             |
+| `user_type`       | Yes        | Yes          | No        | Enum: `end_user`, `admin`, `m2m`.                                |
+| `created_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
+| `updated_at`      | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
+| `last_login_at`   | Yes        | No           | No        | Datetime. Filter comparisons normalize seconds and milliseconds. |
+| `email`           | No         | No           | Yes       | Reserved as sensitive and not selectable.                        |
 
 Selector shape:
 
@@ -1224,12 +1224,12 @@ Selector rules:
 
 Supported operators:
 
-| Operator | Meaning |
-| --- | --- |
-| `eq` / `ne` | Equal / not equal. |
-| `in` | Value is in list. |
+| Operator                    | Meaning                                        |
+| --------------------------- | ---------------------------------------------- |
+| `eq` / `ne`                 | Equal / not equal.                             |
+| `in`                        | Value is in list.                              |
 | `lt` / `lte` / `gt` / `gte` | Ordered comparison for datetime/number fields. |
-| `exists` / `not_exists` | Null checks. |
+| `exists` / `not_exists`     | Null checks.                                   |
 
 ### 12.2 Aggregates
 
@@ -1253,9 +1253,7 @@ Response:
 ```json
 {
   "resource": "User",
-  "groups": [
-    { "key": { "status": "active" }, "count": 120 }
-  ],
+  "groups": [{ "key": { "status": "active" }, "count": 120 }],
   "suppressed_groups": 1,
   "privacy": {
     "min_count": 10,
@@ -1412,26 +1410,26 @@ Execution rules:
 
 MVP action behavior:
 
-| Action | Resource | Behavior |
-| --- | --- | --- |
-| `suspend` | `User` | Sets active users in the frozen actionable target set to `status=suspended`, clears `suspended_until`, and records suspension/update timestamps. |
+| Action    | Resource | Behavior                                                                                                                                         |
+| --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `suspend` | `User`   | Sets active users in the frozen actionable target set to `status=suspended`, clears `suspended_until`, and records suspension/update timestamps. |
 
 Reserved actions:
 
-| Action | Status |
-| --- | --- |
-| `delete` | Reserved, not implemented. |
+| Action            | Status                     |
+| ----------------- | -------------------------- |
+| `delete`          | Reserved, not implemented. |
 | `revoke_sessions` | Reserved, not implemented. |
-| `resync_profile` | Reserved, not implemented. |
+| `resync_profile`  | Reserved, not implemented. |
 
 ### 12.5 Approval, Duty Separation, and Break-Glass Compatibility
 
 Support Ops approval defaults:
 
-| Setting | Default |
-| --- | --- |
-| `support_ops.allow_self_approval` | `false` |
-| `support_ops.duty_separation` | `requester_approver` |
+| Setting                           | Default              |
+| --------------------------------- | -------------------- |
+| `support_ops.allow_self_approval` | `false`              |
+| `support_ops.duty_separation`     | `requester_approver` |
 
 Rules:
 
@@ -1443,10 +1441,10 @@ Rules:
 
 Reserved break-glass permissions:
 
-| Permission | Meaning |
-| --- | --- |
-| `admin:support_ops:break_glass:request` | Request individual detail access. |
-| `admin:support_ops:break_glass:reveal` | Reveal approved individual detail. |
+| Permission                              | Meaning                            |
+| --------------------------------------- | ---------------------------------- |
+| `admin:support_ops:break_glass:request` | Request individual detail access.  |
+| `admin:support_ops:break_glass:reveal`  | Reveal approved individual detail. |
 
 ### 12.6 Audit and Error Handling
 
@@ -1470,21 +1468,21 @@ Each tenant can expose local Authrim IdP and SP registration metadata.
 
 Default endpoint references:
 
-| Role | Endpoint | Default URL pattern |
-| --- | --- | --- |
-| IdP | SSO | `{tenantIssuer}/saml/idp/sso` |
-| IdP | Metadata | `{tenantIssuer}/saml/idp/metadata` |
-| IdP | SLO | `{tenantIssuer}/saml/idp/slo` |
-| SP | ACS | `{tenantIssuer}/saml/sp/acs` |
-| SP | Metadata | `{tenantIssuer}/saml/sp/metadata` |
-| SP | SLO | `{tenantIssuer}/saml/sp/slo` |
+| Role | Endpoint | Default URL pattern                |
+| ---- | -------- | ---------------------------------- |
+| IdP  | SSO      | `{tenantIssuer}/saml/idp/sso`      |
+| IdP  | Metadata | `{tenantIssuer}/saml/idp/metadata` |
+| IdP  | SLO      | `{tenantIssuer}/saml/idp/slo`      |
+| SP   | ACS      | `{tenantIssuer}/saml/sp/acs`       |
+| SP   | Metadata | `{tenantIssuer}/saml/sp/metadata`  |
+| SP   | SLO      | `{tenantIssuer}/saml/sp/slo`       |
 
 Published entityID style is tenant-wide:
 
-| Style | IdP entityID | SP entityID |
-| --- | --- | --- |
+| Style          | IdP entityID                       | SP entityID                       |
+| -------------- | ---------------------------------- | --------------------------------- |
 | `metadata_url` | `{tenantIssuer}/saml/idp/metadata` | `{tenantIssuer}/saml/sp/metadata` |
-| `role_url` | `{tenantIssuer}/saml/idp` | `{tenantIssuer}/saml/sp` |
+| `role_url`     | `{tenantIssuer}/saml/idp`          | `{tenantIssuer}/saml/sp`          |
 
 Changing published entityIDs affects SAML trust. Existing SP/IdP configurations may need updated
 metadata, audience settings, issuer settings, and certificate validation review before production
@@ -1494,10 +1492,10 @@ use.
 
 Authrim local SAML signing keys are modeled per role and slot:
 
-| Slot | Meaning |
-| --- | --- |
-| `active` | Current signing key and primary metadata certificate. |
-| `next` | Published future certificate used during rollover preparation. |
+| Slot     | Meaning                                                             |
+| -------- | ------------------------------------------------------------------- |
+| `active` | Current signing key and primary metadata certificate.               |
+| `next`   | Published future certificate used during rollover preparation.      |
 | `backup` | Previous certificate kept in metadata while partner caches age out. |
 
 Operators can recreate local signing material, publish next, promote next, and retire backup through
@@ -1526,10 +1524,10 @@ When imported providers are used as Login UI methods:
 SAML flows sometimes need interactive login before the IdP can produce a response. Authrim supports
 two tenant-wide redirect policies:
 
-| Policy | Behavior |
-| --- | --- |
+| Policy        | Behavior                                                              |
+| ------------- | --------------------------------------------------------------------- |
 | `tenant_host` | Sends users to the tenant `/login` URL. This is the default for SAML. |
-| `ui_base_url` | Sends users to the shared Login UI `/login` with a tenant hint. |
+| `ui_base_url` | Sends users to the shared Login UI `/login` with a tenant hint.       |
 
 Admin UI previews the selected login URL and first visible page. The preview uses tenant discovery
 settings, including tenant override behavior. If the common entry is configured as WAYF-only, the
@@ -1557,65 +1555,68 @@ common-entry method, Authrim shows only the tenant dropdown.
 
 Authrim separates storage concerns into boundary classes. This section is public because operators need to know what can be moved to external storage and what remains part of Authrim's core runtime.
 
-### 14.1 Profile Model
+### 14.1 Control Plane Placement Model
 
-Authrim recognizes three profile categories:
+All new D1 environments use the same Control Plane routing model. The Control Worker and Control DB
+manage resource desired state, capacity, tenant assignment, and signed Runtime Registry/Lookup
+publication. Runtime Workers resolve routes from the published registry and explicit bindings; the
+Control Worker is not called on the login hot path.
 
-| Profile category | Purpose |
-| --- | --- |
-| Storage profile | Places auth core, PII, custom/extension, and related data. |
-| Audit profile | Places audit primary/archive/sink targets and routing. |
-| Residency profile | Describes residency expectations for data placement. |
+D1 placement is a tenant property, not a Runtime Profile:
 
-Profile rules:
+| Placement policy   | Meaning                                                               |
+| ------------------ | --------------------------------------------------------------------- |
+| `shared_pool`      | The tenant is assigned to platform-owned Core and PII shard capacity. |
+| `tenant_exclusive` | The tenant is assigned to tenant-owned Core and PII shard capacity.   |
 
-- An environment has default profiles.
-- A tenant stores profile pointers rather than full profile JSON.
-- Tenant overrides are allowed only for supported boundary classes.
-- Registry backend may vary by deployment profile.
+Both policies may coexist in one environment. A single-D1 deployment is represented by one assigned
+shard and uses the same resolver contract as a multi-shard deployment. Account routes remain within
+the tenant-assigned shard set and preserve Core/PII, residency, and route-generation boundaries.
+Missing, stale, corrupt, cross-tenant, or owner-mismatched routes fail closed; Runtime Workers never
+fall back to a shared database binding.
 
-### 14.2 Built-In Storage Profiles
+### 14.2 Runtime Profiles and Backend Extension Points
 
-| Profile | Default behavior |
-| --- | --- |
-| `builtin:storage:standard` | D1-centered default with separated PII support where configured. |
-| `builtin:storage:single-db` | Compatibility profile; setup mirrors PII schema into the core DB. |
-| `builtin:storage:eu-pii-split` | PII plane is separated for EU/data-residency use cases. |
-| `builtin:storage:external-postgres` | External Postgres-capable profile for supported planes. |
+The public Runtime Profile API manages only these categories:
 
-### 14.3 Boundary Classes
+| Profile category  | Purpose                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| Audit profile     | Selects audit primary, archive, and sink targets.                |
+| Residency profile | Describes residency expectations used during resource placement. |
 
-| Boundary class | Tenant override | D1 default | Non-D1 option required | Typical data |
-| --- | --- | --- | --- | --- |
-| Auth core plane | No | Yes | Not initially | Clients, passkeys, roles, org membership, consents, session clients, device secrets, refresh token family metadata, security-sensitive cold persistence. |
-| PII plane | Yes | Yes | Yes | `users_pii`, linked identities, subject identifiers, PII tombstones, PII audit data. |
-| Custom / extension plane | Yes | Yes | Yes | Custom claims, registration fields, user custom fields, custom attributes JSON. |
-| Audit profile | Yes | Not fixed to D1 | Yes | Audit primary store, archive store, forwarding sinks. |
-| Control plane | No | D1/KV-biased today | Not a tenant user-data requirement | Tenants, settings, runtime profile registry, admin DB. |
-| DO/KV canonical state | n/a | n/a | n/a | Refresh token rotator canonical state, session/device/CIBA hot state, cache/sharding metadata. |
+Every new D1 environment uses the same Control Plane resolver, with no environment-wide backend
+mode and no per-tenant backend-profile pointer. Operators choose D1 placement on tenant create/detail
+surfaces. The internal `DatabaseAdapter`
+boundary remains the extension point for a future Control Plane resolver that can return non-D1
+resources, but external PostgreSQL/MySQL user-data backends are not currently exposed as a completed
+Setup or Admin UI option. Backend driver/capability selection must remain separate from tenant
+placement and from transient-authentication policy.
 
-Important rules:
+### 14.3 Data and State Boundaries
 
-- `users_core` is a historical shorthand for the auth core relational plane. It does not mean tenant-specific user-data backend switching is allowed.
-- Auth core tenant-specific backend switching is not supported by the current public contract.
-- PII, custom/extension, and audit are the first-class tenant override targets.
-- Control plane and health/adapter implementation paths may still use D1/KV-specific bindings.
-- Business paths for auth core, PII, custom, and audit SHOULD use runtime source resolvers or adapter helpers rather than ad hoc raw database binding access.
-- Admin UI database connection inventory includes setup-managed D1 bindings such as core, PII,
-  and Admin databases. These rows are read-oriented operational inventory and may show tenant
-  assignment badges when a tenant database registry row points at the binding/connection.
-- Shared D1 deployments may show multiple tenant badges on one setup-managed database connection.
-- Storage destination inventory includes setup-managed R2 bindings and registry-backed R2/S3/sink
-  destinations. Setup-managed destinations are read-only from the destination editor and are used
-  to make actual deployment resources visible to operators.
+| Boundary           | Authoritative placement                             | Operational rule                                                |
+| ------------------ | --------------------------------------------------- | --------------------------------------------------------------- |
+| Identity Core      | Control Plane-assigned Core shard                   | Resolved from signed tenant/account routes.                     |
+| Identity PII       | Control Plane-assigned PII shard                    | Must match tenant, account, residency, and generation metadata. |
+| Audit              | Audit profile targets                               | Independent of D1 tenant placement.                             |
+| Session            | `SessionStore` Durable Object                       | No synchronous D1 cold mirror.                                  |
+| Challenge          | `ChallengeStore` Durable Object                     | Authentication challenge state only.                            |
+| Authorization code | `AuthCodeStore` Durable Object                      | Short-lived code state only.                                    |
+| Session revocation | user-scoped `SessionRevocationStore` Durable Object | Checked without identity-D1 route lookup.                       |
+| Device/CIBA        | Durable Object business state                       | D1 cold persistence is disabled.                                |
+| Control Plane      | Control DB, Runtime Registry, and Lookup            | Not queried through the normal authentication hot path.         |
+
+The Admin database-connection inventory may show Control Plane-managed D1 resources and tenant
+assignment metadata. Those rows are operational inventory, not selectable storage modes. R2 and audit
+destination inventory remains separate from identity-data placement.
 
 ### 14.4 Custom Schema Validation
 
-| Field | Meaning | Default |
-| --- | --- | --- |
-| `is_required` | Canonical server-side required flag. | `false` |
-| `registration_required` | Built-in LoginUI/signup required flag. | `false` |
-| `show_on_registration` | Whether the field appears on registration. | `true` unless configured otherwise |
+| Field                   | Meaning                                    | Default                            |
+| ----------------------- | ------------------------------------------ | ---------------------------------- |
+| `is_required`           | Canonical server-side required flag.       | `false`                            |
+| `registration_required` | Built-in LoginUI/signup required flag.     | `false`                            |
+| `show_on_registration`  | Whether the field appears on registration. | `true` unless configured otherwise |
 
 Write paths that must share validation semantics:
 
@@ -1642,11 +1643,11 @@ Missing required fields return:
 
 ### 14.5 Lifecycle Fields
 
-| Field | Meaning |
-| --- | --- |
-| `status` | Operational access-control status. |
-| `user_type` | Principal type. |
-| `lifecycle_state` | Account lifecycle state. |
+| Field             | Meaning                            |
+| ----------------- | ---------------------------------- |
+| `status`          | Operational access-control status. |
+| `user_type`       | Principal type.                    |
+| `lifecycle_state` | Account lifecycle state.           |
 
 Default materialized lifecycle states include `active` and `incomplete`.
 
@@ -1668,23 +1669,23 @@ Audit is a separate profile, not a storage slice.
 
 Supported target categories:
 
-| Target category | Supported targets |
-| --- | --- |
-| Primary store | D1, PostgreSQL + Hyperdrive, MySQL + Hyperdrive |
-| Archive store | R2 |
-| Forwarding sink | Cloudflare Logpush, generic HTTPS sink |
+| Target category | Supported targets                               |
+| --------------- | ----------------------------------------------- |
+| Primary store   | D1, PostgreSQL + Hyperdrive, MySQL + Hyperdrive |
+| Archive store   | R2                                              |
+| Forwarding sink | Cloudflare Logpush, generic HTTPS sink          |
 
 Defaults:
 
-| Setting | Default / Behavior |
-| --- | --- |
-| Request-path primary write | Synchronous primary write. |
-| Archive/sink fan-out | Queue consumer fan-out. |
-| Archive-only profile | Allowed with `primary=null`. |
-| Archive-only hot query/cleanup | `not_supported`. |
-| Failure mode | Controlled by `archiveFailureMode` and `sinkFailureMode`. |
-| Legacy `audit_log` write | Transitional compatibility behavior. |
-| Queue consumer package | `ar-management`. |
+| Setting                        | Default / Behavior                                        |
+| ------------------------------ | --------------------------------------------------------- |
+| Request-path primary write     | Synchronous primary write.                                |
+| Archive/sink fan-out           | Queue consumer fan-out.                                   |
+| Archive-only profile           | Allowed with `primary=null`.                              |
+| Archive-only hot query/cleanup | `not_supported`.                                          |
+| Failure mode                   | Controlled by `archiveFailureMode` and `sinkFailureMode`. |
+| Legacy `audit_log` write       | Transitional compatibility behavior.                      |
+| Queue consumer package         | `ar-management`.                                          |
 
 ### 15.2 Managed Logging Model
 
@@ -1692,28 +1693,28 @@ Managed logging separates the event type from the storage/delivery plane.
 
 Log types:
 
-| Type | Typical data |
-| --- | --- |
-| `normal` | General operational logs. |
-| `audit` | End-user, protocol, and tenant audit evidence. |
-| `admin_audit` | Admin UI/API operations. |
-| `security` | Security-relevant runtime events. |
-| `pii` | PII-related evidence and access records. |
-| `diagnostic` | Troubleshooting records. |
-| `job` | Background job activity. |
-| `webhook` | Webhook delivery and callbacks. |
-| `operational` | Platform operational state. |
+| Type          | Typical data                                   |
+| ------------- | ---------------------------------------------- |
+| `normal`      | General operational logs.                      |
+| `audit`       | End-user, protocol, and tenant audit evidence. |
+| `admin_audit` | Admin UI/API operations.                       |
+| `security`    | Security-relevant runtime events.              |
+| `pii`         | PII-related evidence and access records.       |
+| `diagnostic`  | Troubleshooting records.                       |
+| `job`         | Background job activity.                       |
+| `webhook`     | Webhook delivery and callbacks.                |
+| `operational` | Platform operational state.                    |
 
 Planes:
 
-| Plane | Purpose |
-| --- | --- |
-| `primary` | Hot/queryable primary storage. |
-| `archive` | Object archive such as R2/S3 JSONL chunks. |
-| `external_sink` | External forwarding destination. |
-| `sensitive_detail` | Separately protected sensitive detail chunks. |
-| `diagnostic_detail` | Short-retention diagnostic detail. |
-| `delivery_event` | Delivery/DLQ/retry telemetry. |
+| Plane               | Purpose                                       |
+| ------------------- | --------------------------------------------- |
+| `primary`           | Hot/queryable primary storage.                |
+| `archive`           | Object archive such as R2/S3 JSONL chunks.    |
+| `external_sink`     | External forwarding destination.              |
+| `sensitive_detail`  | Separately protected sensitive detail chunks. |
+| `diagnostic_detail` | Short-retention diagnostic detail.            |
+| `delivery_event`    | Delivery/DLQ/retry telemetry.                 |
 
 ### 15.3 Storage Destinations
 
@@ -1777,13 +1778,13 @@ Supported public deployment path:
 
 Defaults:
 
-| Area | Default |
-| --- | --- |
-| UI deployment command | `wrangler deploy` |
-| Pages deployment | Not the supported UI deployment path |
+| Area                   | Default                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| UI deployment command  | `wrangler deploy`                                                                                                  |
+| Pages deployment       | Not the supported UI deployment path                                                                               |
 | LoginUI route handling | OAuth/OIDC core endpoints stay on core Authrim Workers; UI proxy/session/callback routes remain on LoginUI Worker. |
-| AdminUI pilot | AdminUI is the lower-risk UI deployment pilot before LoginUI changes. |
-| Setup runtime | `ui_runtime: workers` |
+| AdminUI pilot          | AdminUI is the lower-risk UI deployment pilot before LoginUI changes.                                              |
+| Setup runtime          | `ui_runtime: workers`                                                                                              |
 
 LoginUI Worker route policy:
 
@@ -1792,25 +1793,25 @@ LoginUI Worker route policy:
 
 ## 17. Compatibility and Legacy Behavior
 
-| Legacy surface | Public behavior |
-| --- | --- |
-| `/api/v1/auth/direct/token` | Must not issue tokens. Returns compatibility error such as `legacy_endpoint_not_supported` with `error_uri`. |
-| `GET /api/admin/sessions/me` | Removed surface. Use `GET /api/admin/me/session` where available. |
-| Discovery field `native_sso_token_exchange_supported` | Removed. Use `native_sso_supported`. |
-| Discovery field `native_sso_device_secret_supported` | Removed. Use `native_sso_supported`. |
-| Legacy `app_suite` runtime/public config | Not supported. Use `application_group`. |
-| Query/form bearer token on Authrim endpoints | Not supported. Use Authorization header. |
+| Legacy surface                                                                                   | Public behavior                                                                                                        |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `/api/v1/auth/direct/token`                                                                      | Must not issue tokens. Returns compatibility error such as `legacy_endpoint_not_supported` with `error_uri`.           |
+| `GET /api/admin/sessions/me`                                                                     | Removed surface. Use `GET /api/admin/me/session` where available.                                                      |
+| Discovery field `native_sso_token_exchange_supported`                                            | Removed. Use `native_sso_supported`.                                                                                   |
+| Discovery field `native_sso_device_secret_supported`                                             | Removed. Use `native_sso_supported`.                                                                                   |
+| Legacy `app_suite` runtime/public config                                                         | Not supported. Use `application_group`.                                                                                |
+| Query/form bearer token on Authrim endpoints                                                     | Not supported. Use Authorization header.                                                                               |
 | Implicit/Hybrid/Form Post/session-management/front-channel/back-channel/DCR conformance features | Supported only through explicit OP conformance / compatibility settings. Not selected by default SDK/LoginUI profiles. |
-| iframe-based OIDC auth | Optional compatibility feature, default off. |
+| iframe-based OIDC auth                                                                           | Optional compatibility feature, default off.                                                                           |
 
 Exact compatibility errors:
 
-| Error code | Default severity | `error_uri` |
-| --- | --- | --- |
-| `legacy_app_suite_not_supported` | fatal | Always returned |
-| `legacy_native_sso_discovery_unsupported` | fatal | Always returned |
-| `legacy_endpoint_not_supported` | fatal | Always returned |
-| `legacy_passkey_error_unsupported` | fatal | Always returned |
+| Error code                                | Default severity | `error_uri`     |
+| ----------------------------------------- | ---------------- | --------------- |
+| `legacy_app_suite_not_supported`          | fatal            | Always returned |
+| `legacy_native_sso_discovery_unsupported` | fatal            | Always returned |
+| `legacy_endpoint_not_supported`           | fatal            | Always returned |
+| `legacy_passkey_error_unsupported`        | fatal            | Always returned |
 
 Compatibility error rules:
 
@@ -1825,10 +1826,10 @@ Compatibility error rules:
 
 Legacy passkey error handling:
 
-| Removed server/public code | Canonical SDK-generated code |
-| --- | --- |
-| `passkey_cancelled` | `passkey_user_canceled` |
-| `passkey_not_found` | `passkey_no_credential` |
+| Removed server/public code    | Canonical SDK-generated code |
+| ----------------------------- | ---------------------------- |
+| `passkey_cancelled`           | `passkey_user_canceled`      |
+| `passkey_not_found`           | `passkey_no_credential`      |
 | `passkey_verification_failed` | `passkey_invalid_credential` |
 
 Official SDKs classify inbound legacy passkey server errors as `legacy_passkey_error_unsupported` rather than silently normalizing a stale server protocol.
@@ -1845,13 +1846,13 @@ Authrim errors are machine-readable. OAuth/OIDC endpoints use OAuth/OIDC-compati
 
 Common fields:
 
-| Field | Meaning |
-| --- | --- |
-| `error` | Stable machine-readable error code. |
-| `error_description` | Human-readable summary. |
-| `error_uri` | Migration or documentation URI when applicable. |
-| `error_details` | Optional machine-readable details, including nested `code` when a top-level OAuth error must remain standard. |
-| `details` | Optional structured details. |
+| Field               | Meaning                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `error`             | Stable machine-readable error code.                                                                           |
+| `error_description` | Human-readable summary.                                                                                       |
+| `error_uri`         | Migration or documentation URI when applicable.                                                               |
+| `error_details`     | Optional machine-readable details, including nested `code` when a top-level OAuth error must remain standard. |
+| `details`           | Optional structured details.                                                                                  |
 
 Error detail rules:
 
@@ -1888,76 +1889,76 @@ Examples:
 
 ### 19.1 Client Metadata
 
-| Field | Default | Notes |
-| --- | --- | --- |
-| `browser_public_client_mode` | built-in LoginUI: `cookie_fallback`; custom browser public client: `strict` | Persisted compatibility enum. Public profile names are `managed_browser_session`, `cookie_session`, and `token_session`. |
-| `browser_refresh_token_policy` | `disabled` | `dpop_bound` is explicit opt-in. |
-| `dpop_bound_access_tokens` | policy dependent | Required for token-session browser public clients. |
-| `handoff_artifact_ttl_seconds` | `60` | Policy range 30-300 seconds. |
-| `allowed_redirect_origins` | empty | Legacy/fallback origin source when `web_origin_registry` is not configured. |
-| `application_group` | none | Public grouping surface; maps to internal security boundary. |
-| `web_origin_registry` | none | Source of truth for browser handoff/CORS/iframe metadata when configured. |
+| Field                          | Default                                                                     | Notes                                                                                                                    |
+| ------------------------------ | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `browser_public_client_mode`   | built-in LoginUI: `cookie_fallback`; custom browser public client: `strict` | Persisted compatibility enum. Public profile names are `managed_browser_session`, `cookie_session`, and `token_session`. |
+| `browser_refresh_token_policy` | `disabled`                                                                  | `dpop_bound` is explicit opt-in.                                                                                         |
+| `dpop_bound_access_tokens`     | policy dependent                                                            | Required for token-session browser public clients.                                                                       |
+| `handoff_artifact_ttl_seconds` | `60`                                                                        | Policy range 30-300 seconds.                                                                                             |
+| `allowed_redirect_origins`     | empty                                                                       | Legacy/fallback origin source when `web_origin_registry` is not configured.                                              |
+| `application_group`            | none                                                                        | Public grouping surface; maps to internal security boundary.                                                             |
+| `web_origin_registry`          | none                                                                        | Source of truth for browser handoff/CORS/iframe metadata when configured.                                                |
 
 `browser_public_client_mode` values:
 
-| Mode | Meaning |
-| --- | --- |
-| `strict` | Browser token path requires DPoP. If DPoP preflight/key setup fails, token path is unavailable. |
-| `cookie_fallback` | Hosted/built-in/BFF-style cookie session path. Browser JavaScript does not receive token material. |
-| `legacy` | Compatibility mode for custom browser clients only. Requires explicit opt-in and is never used by built-in LoginUI. |
+| Mode              | Meaning                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `strict`          | Browser token path requires DPoP. If DPoP preflight/key setup fails, token path is unavailable.                     |
+| `cookie_fallback` | Hosted/built-in/BFF-style cookie session path. Browser JavaScript does not receive token material.                  |
+| `legacy`          | Compatibility mode for custom browser clients only. Requires explicit opt-in and is never used by built-in LoginUI. |
 
 Native SSO client metadata:
 
-| Field | Default | Notes |
-| --- | --- | --- |
-| `native_sso_supported` | deployment/client policy dependent | Authoritative discovery capability when enabled. |
-| `application_type` | client registration dependent | Native public-client exchange eligibility requires `native`. |
-| Native channel permission | disabled unless configured | Required for public-client Native SSO exchange. |
-| Cross-client Native SSO | disabled | Requires explicit `application_group` policy. |
-| Device secret rotation policy | disabled | Explicit tenant policy may enable rotation. |
+| Field                         | Default                            | Notes                                                        |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------------ |
+| `native_sso_supported`        | deployment/client policy dependent | Authoritative discovery capability when enabled.             |
+| `application_type`            | client registration dependent      | Native public-client exchange eligibility requires `native`. |
+| Native channel permission     | disabled unless configured         | Required for public-client Native SSO exchange.              |
+| Cross-client Native SSO       | disabled                           | Requires explicit `application_group` policy.                |
+| Device secret rotation policy | disabled                           | Explicit tenant policy may enable rotation.                  |
 
 ### 19.2 Web Origin Registry
 
-| Field | Default |
-| --- | --- |
-| `cors.allowed` | `false` |
-| `handoff_allowed` | `false` |
-| `iframe_allowed` | `false` |
-| `csp.frame_ancestors` | empty |
-| `environment` | deployment default |
+| Field                 | Default            |
+| --------------------- | ------------------ |
+| `cors.allowed`        | `false`            |
+| `handoff_allowed`     | `false`            |
+| `iframe_allowed`      | `false`            |
+| `csp.frame_ancestors` | empty              |
+| `environment`         | deployment default |
 
 ### 19.3 Deployment Flags
 
-| Flag | Default | Notes |
-| --- | --- | --- |
-| `ENABLE_IFRAME_OIDC_AUTH` | `false` | Enables optional iframe OIDC metadata only when origin/client policy also allows it. |
-| UI runtime | `workers` | setup-generated UI deployment uses Workers. |
+| Flag                      | Default   | Notes                                                                                |
+| ------------------------- | --------- | ------------------------------------------------------------------------------------ |
+| `ENABLE_IFRAME_OIDC_AUTH` | `false`   | Enables optional iframe OIDC metadata only when origin/client policy also allows it. |
+| UI runtime                | `workers` | setup-generated UI deployment uses Workers.                                          |
 
 ### 19.4 Support Ops Settings
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| `support_ops.allow_self_approval` | `false` | When false, a Support Ops requester cannot approve their own action request. |
-| `support_ops.duty_separation` | `requester_approver` | Allowed values are `requester_approver` and `requester_approver_executor`. |
+| Setting                           | Default              | Notes                                                                        |
+| --------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `support_ops.allow_self_approval` | `false`              | When false, a Support Ops requester cannot approve their own action request. |
+| `support_ops.duty_separation`     | `requester_approver` | Allowed values are `requester_approver` and `requester_approver_executor`.   |
 
 Support Ops registry defaults are part of the runtime contract:
 
-| Registry field | Default |
-| --- | --- |
-| `User.minCount` | `10` |
-| `User.maxSnapshotCount` | `10000` |
-| `User.actions.suspend.implemented` | `true` |
-| `User.actions.delete.implemented` | `false` |
+| Registry field                             | Default |
+| ------------------------------------------ | ------- |
+| `User.minCount`                            | `10`    |
+| `User.maxSnapshotCount`                    | `10000` |
+| `User.actions.suspend.implemented`         | `true`  |
+| `User.actions.delete.implemented`          | `false` |
 | `User.actions.revoke_sessions.implemented` | `false` |
-| `User.actions.resync_profile.implemented` | `false` |
+| `User.actions.resync_profile.implemented`  | `false` |
 
 ### 19.5 SAML Tenant Settings
 
-| Setting | Default | Notes |
-| --- | --- | --- |
-| SAML entityID style | `metadata_url` | May be changed to `role_url`; changing this affects partner trust. |
-| SAML interactive login redirect | `tenant_host` | May be changed to `ui_base_url` when shared Login UI entry is desired. |
-| SAML signing certificate subject | `O=Authrim, CN=Authrim SAML Signing` plus deployment defaults | Applies to newly generated local SAML certificates. |
+| Setting                          | Default                                                       | Notes                                                                  |
+| -------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| SAML entityID style              | `metadata_url`                                                | May be changed to `role_url`; changing this affects partner trust.     |
+| SAML interactive login redirect  | `tenant_host`                                                 | May be changed to `ui_base_url` when shared Login UI entry is desired. |
+| SAML signing certificate subject | `O=Authrim, CN=Authrim SAML Signing` plus deployment defaults | Applies to newly generated local SAML certificates.                    |
 
 ## 20. Security Requirements Checklist
 

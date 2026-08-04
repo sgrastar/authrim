@@ -19,7 +19,7 @@ describe('authorization logging security contract', () => {
     expect(source).not.toContain('instanceName: authCodeStoreInstanceName');
   });
 
-  it('resolves tenant-D1 account data before consent and fails closed on consent errors', async () => {
+  it('resolves routed account data before consent and fails closed on consent errors', async () => {
     const source = await readFile(new URL('../authorize.ts', import.meta.url), 'utf8');
     const accountRoute = source.indexOf("'auth_authorize_account_route'");
     const consentEvaluation = source.indexOf('// Check if consent is required');

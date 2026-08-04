@@ -57,6 +57,7 @@ export interface TenantDatabaseRegistryResourceInput extends TenantDatabaseResou
   status?: TenantDatabaseProvisioningState;
   signature?: string | null;
   signatureKeyId?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TenantDatabaseProvisioningPlan {
@@ -121,31 +122,6 @@ export interface TenantDatabaseStatsFreshness {
   state: 'fresh' | 'stale' | 'unknown';
   checkedAt: string | null;
   staleAfterHours: number;
-}
-
-export type TenantDatabaseAdminJobType =
-  | 'tenant-database/provision'
-  | 'tenant-database/migrate'
-  | 'tenant-database/health-check'
-  | 'tenant-database/migration-resume'
-  | 'tenant-database/migration-rollback'
-  | 'tenant-database/migration-repair'
-  | 'tenant-database/activate-batch'
-  | 'tenant-database/scheduled-activation'
-  | 'tenant-database/profile-change'
-  | 'tenant-database/worker-shard-split';
-
-export interface TenantDatabaseAdminJobSqlInput {
-  jobId: string;
-  tenantId: string;
-  jobType: TenantDatabaseAdminJobType;
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'partial_failure';
-  createdBy?: string;
-  createdAt?: number;
-  progress: Record<string, unknown>;
-  config: Record<string, unknown>;
-  result?: Record<string, unknown> | null;
-  errorMessage?: string | null;
 }
 
 export interface TenantWorkerShardSplitJobConfig {
@@ -662,13 +638,6 @@ export function buildTenantDatabaseRegistrySql(options: {
 }): string {
   const now = new Date().toISOString();
   const actor = options.actorId ?? 'setup';
-  const metadataJson = escapeSql(
-    JSON.stringify({
-      creation_slug: options.tenantSlug ?? options.tenantId,
-      current_slug: options.tenantSlug ?? options.tenantId,
-      provisioning_tool: 'authrim-setup tenant-db',
-    })
-  );
   const statements: string[] = [];
 
   for (const resource of options.resources) {
@@ -697,6 +666,14 @@ export function buildTenantDatabaseRegistrySql(options: {
     const signatureKeyId = resource.signatureKeyId
       ? `'${escapeSql(resource.signatureKeyId)}'`
       : 'NULL';
+    const metadataJson = escapeSql(
+      JSON.stringify({
+        creation_slug: options.tenantSlug ?? options.tenantId,
+        current_slug: options.tenantSlug ?? options.tenantId,
+        provisioning_tool: 'authrim-setup control-plane',
+        ...(resource.metadata ?? {}),
+      })
+    );
     statements.push(
       `
 INSERT INTO tenant_database_registry (
@@ -764,41 +741,6 @@ ON CONFLICT(tenant_id, role, shard_group) DO UPDATE SET
   }
 
   return statements.join('\n\n');
-}
-
-export function buildTenantDatabaseAdminJobSql(input: TenantDatabaseAdminJobSqlInput): string {
-  const now = input.createdAt ?? Math.floor(Date.now() / 1000);
-  const actor = input.createdBy ?? 'setup';
-  const resultSql = input.result ? `'${escapeSql(JSON.stringify(input.result))}'` : 'NULL';
-  const errorSql = input.errorMessage ? `'${escapeSql(input.errorMessage)}'` : 'NULL';
-
-  return `
-INSERT INTO admin_jobs (
-  id, tenant_id, job_type, status, progress, config, result, error_message,
-  created_by, created_at, updated_at, started_at, completed_at
-) VALUES (
-  '${escapeSql(input.jobId)}',
-  '${escapeSql(input.tenantId)}',
-  '${input.jobType}',
-  '${input.status}',
-  '${escapeSql(JSON.stringify(input.progress))}',
-  '${escapeSql(JSON.stringify(input.config))}',
-  ${resultSql},
-  ${errorSql},
-  '${escapeSql(actor)}',
-  ${now},
-  ${now},
-  ${now},
-  ${input.status === 'completed' || input.status === 'failed' || input.status === 'partial_failure' ? now : 'NULL'}
-)
-ON CONFLICT(id) DO UPDATE SET
-  status = excluded.status,
-  progress = excluded.progress,
-  config = excluded.config,
-  result = excluded.result,
-  error_message = excluded.error_message,
-  updated_at = excluded.updated_at,
-  completed_at = excluded.completed_at;`.trim();
 }
 
 export function buildTenantWorkerShardSplitJobConfig(

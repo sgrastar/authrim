@@ -393,7 +393,6 @@ export function getRefreshTokenRotatorId(
  * In-memory cache for shard configuration.
  */
 const shardConfigCache = new Map<string, { config: RefreshTokenShardConfig; expiresAt: number }>();
-const shardConfigLoads = new Map<string, Promise<RefreshTokenShardConfig>>();
 const shardConfigEpochs = new Map<string, number>();
 
 function validateRefreshTokenShardConfig(value: unknown): RefreshTokenShardConfig {
@@ -473,52 +472,39 @@ export async function getRefreshTokenShardConfig(
     return cached.config;
   }
 
-  const existingLoad = shardConfigLoads.get(cacheKey);
-  if (existingLoad) {
-    return existingLoad;
-  }
-
   const loadEpoch = shardConfigEpochs.get(cacheKey) ?? 0;
-  const load = (async (): Promise<RefreshTokenShardConfig> => {
-    let config: RefreshTokenShardConfig | null = null;
-    const kv = env.AUTHRIM_CONFIG ?? env.KV;
-    if (kv) {
-      const [clientConfig, globalConfig] = await Promise.all([
-        kv.get<unknown>(buildShardConfigKvKey(clientId, normalizedTenantId), 'json'),
-        kv.get<unknown>(buildShardConfigKvKey(null, normalizedTenantId), 'json'),
-      ]);
-      const configured = clientConfig ?? globalConfig;
-      if (configured !== null) {
-        config = validateRefreshTokenShardConfig(configured);
-      }
-    }
-
-    if (!config) {
-      config = {
-        currentGeneration: 1,
-        currentShardCount: DEFAULT_REFRESH_TOKEN_SHARD_COUNT,
-        previousGenerations: [],
-        updatedAt: now,
-      };
-    }
-
-    if ((shardConfigEpochs.get(cacheKey) ?? 0) === loadEpoch) {
-      shardConfigCache.set(cacheKey, {
-        config,
-        expiresAt: Date.now() + SHARD_CONFIG_CACHE_TTL_MS,
-      });
-    }
-    return config;
-  })();
-  shardConfigLoads.set(cacheKey, load);
-
-  try {
-    return await load;
-  } finally {
-    if (shardConfigLoads.get(cacheKey) === load) {
-      shardConfigLoads.delete(cacheKey);
+  // Keep only a numeric epoch in isolate scope. Sharing an in-flight Promise across
+  // Cloudflare request contexts can make the consumer request impossible to complete.
+  shardConfigEpochs.set(cacheKey, loadEpoch);
+  let config: RefreshTokenShardConfig | null = null;
+  const kv = env.AUTHRIM_CONFIG ?? env.KV;
+  if (kv) {
+    const [clientConfig, globalConfig] = await Promise.all([
+      kv.get<unknown>(buildShardConfigKvKey(clientId, normalizedTenantId), 'json'),
+      kv.get<unknown>(buildShardConfigKvKey(null, normalizedTenantId), 'json'),
+    ]);
+    const configured = clientConfig ?? globalConfig;
+    if (configured !== null) {
+      config = validateRefreshTokenShardConfig(configured);
     }
   }
+
+  if (!config) {
+    config = {
+      currentGeneration: 1,
+      currentShardCount: DEFAULT_REFRESH_TOKEN_SHARD_COUNT,
+      previousGenerations: [],
+      updatedAt: now,
+    };
+  }
+
+  if ((shardConfigEpochs.get(cacheKey) ?? 0) === loadEpoch) {
+    shardConfigCache.set(cacheKey, {
+      config,
+      expiresAt: Date.now() + SHARD_CONFIG_CACHE_TTL_MS,
+    });
+  }
+  return config;
 }
 
 /**
@@ -553,18 +539,16 @@ export async function saveRefreshTokenShardConfig(
 
   if (clientId === null) {
     const tenantPrefix = `shard-config:${normalizedTenantId}:`;
-    const affectedKeys = new Set([...shardConfigCache.keys(), ...shardConfigLoads.keys()]);
+    const affectedKeys = new Set([...shardConfigCache.keys(), ...shardConfigEpochs.keys()]);
     for (const key of affectedKeys) {
       if (!key.startsWith(tenantPrefix)) continue;
       shardConfigEpochs.set(key, (shardConfigEpochs.get(key) ?? 0) + 1);
       shardConfigCache.delete(key);
-      shardConfigLoads.delete(key);
     }
   } else {
     const cacheKey = `shard-config:${normalizedTenantId}:${clientId}`;
     shardConfigEpochs.set(cacheKey, (shardConfigEpochs.get(cacheKey) ?? 0) + 1);
     shardConfigCache.delete(cacheKey);
-    shardConfigLoads.delete(cacheKey);
   }
 }
 
@@ -574,7 +558,6 @@ export async function saveRefreshTokenShardConfig(
  */
 export function clearShardConfigCache(): void {
   shardConfigCache.clear();
-  shardConfigLoads.clear();
   shardConfigEpochs.clear();
 }
 

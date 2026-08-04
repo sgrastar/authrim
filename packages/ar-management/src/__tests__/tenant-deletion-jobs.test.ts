@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
 const {
-  mockResolveAuthCorePersistenceAdapterFromEnv,
+  mockListEnvironmentTenantDefaultStores,
   mockEnsureDatabaseAdapter,
   mockAdapter,
   mockTx,
@@ -36,7 +36,7 @@ const {
   };
 
   return {
-    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(adapter),
+    mockListEnvironmentTenantDefaultStores: vi.fn(),
     mockEnsureDatabaseAdapter: vi.fn().mockReturnValue(controlAdapter),
     mockAdapter: adapter,
     mockTx: tx,
@@ -53,7 +53,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
-    resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
+    listEnvironmentTenantDefaultStores: mockListEnvironmentTenantDefaultStores,
   };
 });
 
@@ -113,6 +113,10 @@ const mockFinalizeTenantDeletionControlState = vi.fn();
 function controlEnvironment(overrides: Record<string, unknown> = {}) {
   return {
     DB_ADMIN: 'admin-db',
+    AUTHRIM_CONFIG: {
+      get: vi.fn().mockResolvedValue(null),
+      put: vi.fn().mockResolvedValue(undefined),
+    },
     AUTHRIM_ENVIRONMENT_NAME: 'test',
     CONTROL: {
       getTenantDeletionInventory: mockGetTenantDeletionInventory,
@@ -130,14 +134,21 @@ describe('tenant deletion jobs', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockAdapter);
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([
+      {
+        tenantId: 'operator-tenant',
+        store: { source: 'tenant-job-db', bindingRef: 'TENANT_JOB_DB' },
+      },
+    ]);
     mockAdapter.query.mockReset();
     mockAdapter.queryOne.mockReset();
     mockAdapter.execute.mockReset();
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
     mockAdapter.transaction.mockClear();
     mockTx.execute.mockReset();
-    mockEnsureDatabaseAdapter.mockReturnValue(mockControlAdapter);
+    mockEnsureDatabaseAdapter.mockImplementation((source: unknown) =>
+      source === 'admin-db' ? mockControlAdapter : mockAdapter
+    );
     mockControlAdapter.query.mockReset();
     mockControlAdapter.queryOne.mockReset();
     mockControlAdapter.execute.mockReset();
@@ -197,7 +208,17 @@ describe('tenant deletion jobs', () => {
       },
     ]);
 
-    await processPendingTenantDeletionJobs(controlEnvironment(), logger);
+    const environment = controlEnvironment();
+    await processPendingTenantDeletionJobs(environment, logger);
+
+    expect(mockListEnvironmentTenantDefaultStores).toHaveBeenCalledWith(
+      environment,
+      expect.objectContaining({ limit: 8, concurrency: 4 })
+    );
+    expect(mockEnsureDatabaseAdapter).toHaveBeenCalledWith(
+      'tenant-job-db',
+      'tenant-deletion-jobs:TENANT_JOB_DB'
+    );
 
     expect(mockAdapter.query).toHaveBeenCalledWith(
       expect.stringContaining('SELECT id, tenant_id, config, attempt_count, max_attempts'),
@@ -284,14 +305,6 @@ describe('tenant deletion jobs', () => {
       expect.any(Array)
     );
     expect(mockControlTx.execute).toHaveBeenCalledWith(
-      'DELETE FROM tenant_database_migration_job_targets WHERE tenant_id = ?',
-      ['target-tenant']
-    );
-    expect(mockControlTx.execute).toHaveBeenCalledWith(
-      'DELETE FROM tenant_database_migration_jobs WHERE tenant_id = ?',
-      ['target-tenant']
-    );
-    expect(mockControlTx.execute).toHaveBeenCalledWith(
       'DELETE FROM internal_notification_events WHERE tenant_id = ?',
       ['target-tenant']
     );
@@ -310,6 +323,14 @@ describe('tenant deletion jobs', () => {
       expect.stringContaining('UPDATE tenant_database_registry'),
       ['deleted', expect.any(String), 'job-1', expect.any(String), 'target-tenant']
     );
+  });
+
+  it('fails closed when the signed tenant directory cursor store is unavailable', async () => {
+    await expect(
+      processPendingTenantDeletionJobs(controlEnvironment({ AUTHRIM_CONFIG: undefined }), logger)
+    ).rejects.toThrow('tenant_deletion_tenant_directory_unavailable');
+    expect(mockListEnvironmentTenantDefaultStores).not.toHaveBeenCalled();
+    expect(mockAdapter.query).not.toHaveBeenCalled();
   });
 
   it('marks the scoped job failed when the config is invalid', async () => {
@@ -599,7 +620,7 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs({} as never, logger);
+    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
 
     expect(mockAdapter.queryOne).toHaveBeenCalledWith(
       'SELECT status, job_type, created_by, config FROM admin_jobs WHERE id = ? AND tenant_id = ?',
@@ -643,7 +664,7 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs({} as never, logger);
+    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
 
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT OR IGNORE INTO admin_jobs'),
@@ -686,7 +707,7 @@ describe('tenant deletion jobs', () => {
       }),
     });
 
-    await processPendingTenantDeletionJobs({} as never, logger);
+    await processPendingTenantDeletionJobs(controlEnvironment({ DB_ADMIN: undefined }), logger);
 
     expect(mockAdapter.transaction).not.toHaveBeenCalled();
     expect(mockDisableTenantLookupDirectory).not.toHaveBeenCalled();
