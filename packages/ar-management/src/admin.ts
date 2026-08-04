@@ -1345,7 +1345,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
+    );
+    await Promise.all(
+      sessions.map((session) =>
+        authCtx.coreAdapter.execute(
+          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
+          [tenantId, session.id]
+        )
+      )
+    );
+
     await Promise.all([
+      authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+        tenantId,
+        userId,
+      ]),
       authCtx.repositories.passkey.deleteByUserId(userId),
       authCtx.repositories.role.removeAllRolesFromUser(userId),
       authCtx.coreAdapter.execute(
@@ -2749,10 +2766,16 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const createUser = body.create_user !== false;
-    const tenantD1 = true;
+    const tenantMetadata = getTenantMetadataContextFromHono(c);
+    const legacyStorageProfileId = (
+      tenantMetadata as (typeof tenantMetadata & { storageProfileId?: string }) | undefined
+    )?.storageProfileId;
+    const tenantD1 =
+      tenantMetadata?.route?.allocationScope === 'tenant_exclusive' ||
+      legacyStorageProfileId === 'builtin:storage:tenant-d1';
     const effectiveStorageProfile = {
-      id: 'builtin:storage:tenant-d1',
-      sessionColdPersistence: false,
+      id: tenantD1 ? 'builtin:storage:tenant-d1' : 'builtin:storage:standard',
+      sessionColdPersistence: tenantD1 ? 'disabled' : 'enabled',
     } as const;
     let resolvedOtpUser: CanonicalOtpLoginUser | null = null;
 

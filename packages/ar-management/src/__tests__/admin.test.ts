@@ -70,6 +70,26 @@ vi.mock('../account-directory-removal-producer', () => ({
   eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
 }));
 
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {
+      schemaVersion: 1,
+      tenantRouteGeneration: 1,
+      residencyPolicyId: 'default',
+      target: {
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'default',
+        bindingRef: 'DB',
+        requiredBindingRouteGeneration: 1,
+      },
+    },
+  })),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
+  disableTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../cross-shard-account-list', () => ({
   CrossShardAccountListService: class {
     list = listCrossShardAccounts;
@@ -117,8 +137,33 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
 });
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  const ensureMockAccountDataContext = (c: {
+    get(key: string): unknown;
+    set(key: string, value: unknown): void;
+    env: Env;
+  }) => {
+    if (c.get('accountDataContext')) return;
+    c.set('accountDataContext', {
+      tenantId: c.get('tenantId') ?? 'default',
+      accountId: 'account:test-user',
+      legacyUserId: 'test-user',
+      coreDb: c.env.DB,
+      piiDb: c.env.DB_PII ?? c.env.DB,
+      membership: {},
+      userCacheScope: { kind: 'tenant', tenantId: c.get('tenantId') ?? 'default' },
+      piiCacheMode: 'encrypted_short_ttl',
+    });
+  };
   return {
     ...actual,
+    createAccountAuthContextFromHono: vi.fn((c, tenantId) => {
+      ensureMockAccountDataContext(c);
+      return actual.createAccountAuthContextFromHono(c, tenantId);
+    }),
+    createPIIContextFromHono: vi.fn((c, tenantId) => {
+      ensureMockAccountDataContext(c);
+      return actual.createPIIContextFromHono(c, tenantId);
+    }),
     transitionAccountAuthenticationState: vi.fn(async (_env, input) => ({
       lifecycle: input.lifecycle,
     })),
@@ -696,9 +741,25 @@ function createMockContext(options: {
       allResults: [],
     });
 
+  const runtimeStorageProfileId = (
+    options.runtimeUserStoreSources as { storageProfile?: { id?: string } } | undefined
+  )?.storageProfile?.id;
+  const defaultTenantMetadata = options.tenantMetadataContext ?? {
+    tenantId: options.tenantId ?? 'default',
+    coreDb: mockDB,
+    route: {
+      allocationScope:
+        runtimeStorageProfileId === 'builtin:storage:tenant-d1'
+          ? 'tenant_exclusive'
+          : 'shared_pool',
+      source: mockDB,
+    },
+  };
+
   // Store context values (simulating Hono's context store)
   const contextStore = new Map<string, unknown>([
     ['tenantId', options.tenantId ?? 'default'],
+    ['tenantMetadataContext', defaultTenantMetadata],
     [
       'adminAuth',
       {
@@ -734,6 +795,7 @@ function createMockContext(options: {
     },
     env: {
       DB: mockDB,
+      DB_ADMIN: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),

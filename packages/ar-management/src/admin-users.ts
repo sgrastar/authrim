@@ -8,6 +8,7 @@ import {
   TombstoneRepository,
   invalidateUserCache,
   getTenantIdFromContext,
+  getTenantMetadataContextFromHono,
   createPIIContextFromHono,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
@@ -86,8 +87,24 @@ type AdminRuntimeUserPII = {
 };
 
 function usesTenantD1Storage(c: Context<{ Bindings: Env }>): boolean {
-  void c;
-  return true;
+  const metadata = getTenantMetadataContextFromHono(c);
+  const legacyStorageProfileId = (
+    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
+  )?.storageProfileId;
+  return (
+    metadata?.route?.allocationScope === 'tenant_exclusive' ||
+    legacyStorageProfileId === 'builtin:storage:tenant-d1'
+  );
+}
+
+function resolveAdminPiiAdapter(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): DatabaseAdapter | null {
+  if (hasPIIDatabase(c)) {
+    return createPIIContextFromHono(c, tenantId).defaultPiiAdapter;
+  }
+  return c.env.DB_PII ? ensureDatabaseAdapter(c.env.DB_PII, 'pii') : null;
 }
 
 function createCanonicalRuntimeUserWriter(
@@ -95,10 +112,11 @@ function createCanonicalRuntimeUserWriter(
   coreAdapter: DatabaseAdapter,
   tenantId: string
 ): CanonicalRuntimeUserWriter {
-  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+  if (!piiAdapter) throw new Error('admin_user_pii_database_required');
   return new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
-    piiCtx.defaultPiiAdapter
+    piiAdapter
   );
 }
 
@@ -108,13 +126,14 @@ function createCanonicalRuntimeUserProjectionRepository(
   tenantId: string
 ): CanonicalRuntimeUserProjectionRepository | null {
   if (!hasPIIDatabase(c)) {
-    return null;
+    if (!c.env.DB_PII) return null;
   }
-  const piiCtx = createPIIContextFromHono(c, tenantId);
+  const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+  if (!piiAdapter) return null;
   return new CanonicalRuntimeUserProjectionRepository(
     coreAdapter,
     tenantId,
-    new CanonicalSensitiveValueResolver(piiCtx.defaultPiiAdapter)
+    new CanonicalSensitiveValueResolver(piiAdapter)
   );
 }
 
@@ -1576,10 +1595,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       revokeSessions: true,
     });
 
-    if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-
-      await piiCtx.piiRepositories.tombstone.createTombstone(
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (piiAdapter) {
+      await new TombstoneRepository(piiAdapter).createTombstone(
         {
           id: userId,
           tenant_id: tenantId,
@@ -1592,7 +1610,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
             timestamp: new Date().toISOString(),
           },
         },
-        piiCtx.defaultPiiAdapter
+        piiAdapter
       );
     }
 
@@ -1809,9 +1827,12 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
 
     const deletionReason = body.reason ?? 'user_request';
     const retentionDays = body.retention_days ?? 90;
-    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+    if (!piiAdapter) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
 
-    await piiCtx.piiRepositories.tombstone.createTombstone(
+    await new TombstoneRepository(piiAdapter).createTombstone(
       {
         id: userId,
         tenant_id: tenantId,
@@ -1825,7 +1846,7 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
           user_active: true,
         },
       },
-      piiCtx.defaultPiiAdapter
+      piiAdapter
     );
 
     await createCanonicalRuntimeUserWriter(c, authCtx.coreAdapter, tenantId).syncFromRuntimeUser({

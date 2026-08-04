@@ -1204,6 +1204,7 @@ async function main(): Promise<void> {
         method: 'POST',
         token: adminToken,
         tenantId,
+        idempotencyKey: `${runId}-oauth-client`,
         body: {
           client_name: clientName,
           description: 'Disposable Phase 0c Mail OTP benchmark client.',
