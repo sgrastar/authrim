@@ -50,7 +50,6 @@ import {
   getBrowserStateCookieSameSite,
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
-  getTenantMetadataContextFromHono,
   markOtpLoginEmailVerified,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   type CanonicalOtpLoginUser,
@@ -70,7 +69,7 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
-import { provisionTenantD1EmailAccount } from './account-provisioning';
+import { provisionTenantD1EmailAccount, usesTenantD1AccountStorage } from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const EMAIL_CODE_TTL = 5 * 60; // 5 minutes in seconds
@@ -186,7 +185,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
 
       // Check if user exists, if not create a new canonical runtime user.
       let user: { id: string; email: string; name: string | null } | null = null;
-      const tenantD1 = true;
+      const tenantD1 = usesTenantD1AccountStorage(c);
       let runtimeUsers: CanonicalRuntimeUserStore | null = null;
       const normalizedEmail = email.toLowerCase();
       let routedUser: CanonicalOtpLoginUser | null = null;
@@ -547,7 +546,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       // Parallel: verify the code hash and resolve the minimal OTP user projection.
       const tenantId = getTenantIdFromContext(c);
-      const tenantD1 = true;
+      const tenantD1 = usesTenantD1AccountStorage(c);
       const hmacSecret = c.env.OTP_HMAC_SECRET;
       if (!hmacSecret) {
         log.error('OTP_HMAC_SECRET must be configured for email-code verification', {

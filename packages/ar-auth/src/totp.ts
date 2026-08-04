@@ -44,7 +44,11 @@ import {
   type AuthorizationChallengeContinuation,
 } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
-import { provisionEmailAccount, resolveEmailAccountRoute } from './account-provisioning';
+import {
+  provisionTenantD1EmailAccount,
+  resolveTenantD1EmailAccountRoute,
+  usesTenantD1AccountStorage,
+} from './account-provisioning';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const TOTP_LOGIN_CHALLENGE_TTL_SECONDS = 5 * 60;
@@ -401,7 +405,7 @@ export async function totpSignupOptionsHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const accountRoute = await resolveEmailAccountRoute(c, email);
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email);
     const runtimeUsers =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     const existingUser = await runtimeUsers?.findByEmail(email, { includeInactive: true });
@@ -561,7 +565,8 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_SESSION_EXPIRED);
     }
     activationStage = 'account_route';
-    const accountRoute = await resolveEmailAccountRoute(c, signupEmail);
+    const tenantD1 = usesTenantD1AccountStorage(c);
+    const accountRoute = await resolveTenantD1EmailAccountRoute(c, signupEmail);
     let runtimeUsers: CanonicalRuntimeUserStore | null =
       accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
     let runtimeUser = await runtimeUsers?.findById(userId, { includeInactive: true });
@@ -601,36 +606,51 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
         JSON.stringify({
           preferred_username: signupEmail.split('@')[0],
         });
-      activationStage = 'account_provision';
-      const provisioned = await provisionEmailAccount(c, {
-        tenantId,
-        candidateUserId: userId,
-        flow: 'totp',
-        email: signupEmail,
-        runtimeUser: {
+      if (tenantD1) {
+        activationStage = 'account_provision';
+        const provisioned = await provisionTenantD1EmailAccount(c, {
+          tenantId,
+          candidateUserId: userId,
+          flow: 'totp',
+          email: signupEmail,
+          runtimeUser: {
+            active: true,
+            emailVerified: runtimeUser?.email_verified === 1,
+            userType: 'end_user',
+            displayName: signupName,
+            sourceRef: 'auth:totp',
+            piiFields: {
+              ...canonicalProfileFields.piiFields,
+              email: true,
+              ...(signupName ? { name: true } : {}),
+            },
+            sensitiveValues: {
+              ...canonicalProfileFields.sensitiveValues,
+              email: signupEmail,
+              ...(signupName ? { name: signupName } : {}),
+            },
+            customAttributesJson,
+          },
+        });
+        if (provisioned.status === 'pending') return provisioned.response;
+        userId = provisioned.userId;
+        activationStage = 'account_context';
+        await resolveAccountDataContextFromHono(c, provisioned.accountId);
+        runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+      } else {
+        await runtimeUsers!.syncUser({
+          userId,
+          email: signupEmail,
+          name: signupName,
           active: true,
           emailVerified: runtimeUser?.email_verified === 1,
           userType: 'end_user',
-          displayName: signupName,
-          sourceRef: 'auth:totp',
-          piiFields: {
-            ...canonicalProfileFields.piiFields,
-            email: true,
-            ...(signupName ? { name: true } : {}),
-          },
-          sensitiveValues: {
-            ...canonicalProfileFields.sensitiveValues,
-            email: signupEmail,
-            ...(signupName ? { name: signupName } : {}),
-          },
+          sourceRef: 'direct_auth_totp',
+          piiFields: canonicalProfileFields.piiFields,
+          sensitiveValues: canonicalProfileFields.sensitiveValues,
           customAttributesJson,
-        },
-      });
-      if (provisioned.status === 'pending') return provisioned.response;
-      userId = provisioned.userId;
-      activationStage = 'account_context';
-      await resolveAccountDataContextFromHono(c, provisioned.accountId);
-      runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        });
+      }
       runtimeUser = await runtimeUsers!.findById(userId, { includeInactive: true });
     }
     if (!runtimeUsers || !runtimeUser || runtimeUser.active !== 1) {
@@ -920,20 +940,22 @@ export async function totpLoginStartHandler(c: Context<{ Bindings: Env }>) {
       if (rateLimited) return rateLimited;
 
       let accountRouteAvailable = true;
-      if (boundUserId) {
-        try {
-          await resolveAccountDataContextFromHono(c, boundUserId);
-        } catch (error) {
-          if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
-            throw error;
+      if (usesTenantD1AccountStorage(c)) {
+        if (boundUserId) {
+          try {
+            await resolveAccountDataContextFromHono(c, boundUserId);
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
+              throw error;
+            }
+            accountRouteAvailable = false;
           }
-          accountRouteAvailable = false;
+        } else {
+          accountRouteAvailable =
+            (await timeAuthRequestDiagnosticOperation(c, 'auth_totp_account_route', () =>
+              resolveTenantD1EmailAccountRoute(c, identifier!)
+            )) !== 'not_found';
         }
-      } else {
-        accountRouteAvailable =
-          (await timeAuthRequestDiagnosticOperation(c, 'auth_totp_account_route', () =>
-            resolveEmailAccountRoute(c, identifier!)
-          )) !== 'not_found';
       }
       const authCtx = accountRouteAvailable ? createAccountAuthContextFromHono(c, tenantId) : null;
       const runtimeUsers = accountRouteAvailable
@@ -1059,14 +1081,16 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
       }
 
-      try {
-        await resolveAccountDataContextFromHono(c, userId);
-      } catch (error) {
-        if (error instanceof Error && error.message === 'account_data_route_not_found') {
-          publishTotpFailure(c, tenantId, 'credential_not_found');
-          return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      if (usesTenantD1AccountStorage(c)) {
+        try {
+          await resolveAccountDataContextFromHono(c, userId);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'account_data_route_not_found') {
+            publishTotpFailure(c, tenantId, 'credential_not_found');
+            return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+          }
+          throw error;
         }
-        throw error;
       }
       const authCtx = createAccountAuthContextFromHono(c, tenantId);
       const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);

@@ -86,6 +86,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         passkey: mocks.passkeyRepo,
       },
     })),
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
     resolveAccountDataContextByIdentifierFromHono:
       mocks.resolveAccountDataContextByIdentifierFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),

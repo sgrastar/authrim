@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import {
   anonymousDeviceLookupSubject,
   getChallengeStoreByChallengeId,
+  getTenantMetadataContextFromHono,
   getTenantIdFromContext,
   isCanonicalAccountIdForUser,
   isValidPersistedUserId,
@@ -358,11 +359,42 @@ export async function provisionEmailAccount(
 
 // Transitional symbol aliases for authentication handlers; all implementations route through
 // the Control Plane account provisioner above.
-export const resolveTenantD1EmailAccountRoute = resolveEmailAccountRoute;
-export const resolveTenantD1PasskeyAccountRoute = resolvePasskeyAccountRoute;
-export const publishTenantD1PasskeyRoute = publishPasskeyRoute;
+export function usesTenantD1AccountStorage(c: Context<{ Bindings: Env }>): boolean {
+  const metadata = getTenantMetadataContextFromHono(c);
+  const legacyStorageProfileId = (
+    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
+  )?.storageProfileId;
+  return (
+    metadata?.route?.allocationScope === 'tenant_exclusive' ||
+    legacyStorageProfileId === 'builtin:storage:tenant-d1'
+  );
+}
+
+export async function resolveTenantD1EmailAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  email: string
+): Promise<'not_required' | 'resolved' | 'not_found'> {
+  if (!usesTenantD1AccountStorage(c)) return 'not_required';
+  return resolveEmailAccountRoute(c, email);
+}
+
+export async function resolveTenantD1PasskeyAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  input: { credentialId: string; rpId: string }
+): Promise<AccountDataContext | null> {
+  if (!usesTenantD1AccountStorage(c)) return null;
+  return resolvePasskeyAccountRoute(c, input);
+}
+
+export async function publishTenantD1PasskeyRoute(
+  c: Context<{ Bindings: Env }>,
+  input: PublishPasskeyRouteInput
+): Promise<201 | 202> {
+  if (!usesTenantD1AccountStorage(c)) return 201;
+  return publishPasskeyRoute(c, input);
+}
+
 export const provisionTenantD1EmailAccount = provisionEmailAccount;
-export const usesTenantD1AccountStorage = (_c?: unknown): boolean => true;
 
 export async function provisionAnonymousAccount(
   c: Context<{ Bindings: Env }>,

@@ -123,7 +123,10 @@ function createMockContext(options: {
   };
 
   // Store context values (simulating Hono's context store)
-  const contextStore = new Map<string, unknown>([['tenantId', 'default']]);
+  const contextStore = new Map<string, unknown>([
+    ['tenantId', 'default'],
+    ['tenantMetadataContext', { tenantId: 'default', coreDb: mockEnv.DB }],
+  ]);
 
   const c = {
     req: {

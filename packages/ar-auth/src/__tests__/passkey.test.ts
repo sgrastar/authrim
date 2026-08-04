@@ -206,6 +206,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     // Repository pattern mocks - return the pre-defined context objects
     createAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
     getTenantIdFromContext: () => 'default',
     advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({

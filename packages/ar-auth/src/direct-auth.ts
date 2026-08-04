@@ -2301,7 +2301,7 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
-    const tenantD1 = true;
+    const tenantD1 = usesTenantD1AccountStorage(c);
     if (tenantD1 && tenantId !== challengeTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
