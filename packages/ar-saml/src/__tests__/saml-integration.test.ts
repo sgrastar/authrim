@@ -1215,6 +1215,19 @@ describe('SAML Integration', () => {
       );
     });
 
+    it('should include the configured Login UI client ID in the handoff artifact', async () => {
+      mockEnv.LOGIN_UI_CLIENT_ID = 'login-ui-client';
+
+      const res = await callACSDirectly(createMockSAMLResponse(), 'https://ui.example.com/');
+      const handoffLocation = new URL(res.headers.get('Location')!);
+      const token = handoffLocation.searchParams.get('handoff_token');
+
+      expect(res.status).toBe(302);
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).toEqual(
+        expect.objectContaining({ client_id: 'login-ui-client' })
+      );
+    });
+
     it('should reject JIT provisioning when required custom claims are missing', async () => {
       mockValidateCustomClaimWrite.mockResolvedValueOnce({
         ok: false,
