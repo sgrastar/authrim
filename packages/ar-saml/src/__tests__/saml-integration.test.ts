@@ -23,6 +23,7 @@ import type { Env } from '@authrim/ar-lib-core';
 type SamlTestEnv = Partial<Env> & {
   TDB_TEST_CORE?: D1Database;
   TDB_TEST_PII?: D1Database;
+  LOGIN_UI_CLIENT_ID?: string;
 };
 import { handleSPACS } from '../sp/acs';
 import { handleSPSLO } from '../sp/slo';
