@@ -17,6 +17,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-runtime-registry-snapshot';
 import {
   deriveControlRegionShardAllowedRegions,
+  getTenantDatabaseBootstrapBinding,
   type ControlRegionShardJurisdiction,
   type ControlRegionShardLocationHint,
 } from '@authrim/ar-lib-core/control-plane';
@@ -50,6 +51,14 @@ import {
 const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
 const RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+function isRecoverableInitialHandoffError(errorCode: unknown): boolean {
+  return (
+    typeof errorCode === 'string' &&
+    (errorCode === 'control_bootstrap_provider_capability_rejected' ||
+      /^control_bootstrap_worker_[a-z0-9_]+$/u.test(errorCode))
+  );
+}
+
 type InitialControlPlaneBootstrapResource = TenantDatabaseRegistryResourceInput & {
   databaseName: string;
   binding: string;
@@ -82,26 +91,28 @@ export interface InitialControlPlaneResourcePlan {
   migrationFiles: Array<{ path: string; checksum: string }>;
 }
 
-const INITIAL_TENANT_SHARD_DEFINITIONS = [
-  {
-    role: 'tenant_core/default',
-    binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
-    nameRole: 'default',
-    streamId: 'd1-core',
-  },
-  {
-    role: 'tenant_core/users',
-    binding: 'TDB_USERS_BOOTSTRAP_CORE',
-    nameRole: 'users',
-    streamId: 'd1-core',
-  },
-  {
-    role: 'tenant_pii',
-    binding: 'TDB_PII_BOOTSTRAP_PII',
-    nameRole: 'pii',
-    streamId: 'd1-pii',
-  },
-] as const;
+function initialTenantShardDefinitions(env: string) {
+  return [
+    {
+      role: 'tenant_core/default' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'default'),
+      nameRole: 'default',
+      streamId: 'd1-core' as const,
+    },
+    {
+      role: 'tenant_core/users' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'users'),
+      nameRole: 'users',
+      streamId: 'd1-core' as const,
+    },
+    {
+      role: 'tenant_pii' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'pii'),
+      nameRole: 'pii',
+      streamId: 'd1-pii' as const,
+    },
+  ];
+}
 
 function bootstrapDigest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -114,7 +125,7 @@ function bootstrapDatabaseName(env: string, nameRole: string): string {
     .replace(/^-+|-+$/gu, '')
     .slice(0, 24);
   if (!normalizedEnv) throw new Error('initial_control_plane_environment_invalid');
-  return `authrim-${normalizedEnv}-${nameRole}-bootstrap`;
+  return `${normalizedEnv}-authrim-tenant-${nameRole}-bootstrap-db`;
 }
 
 export function buildInitialControlPlaneResourcePlans(input: {
@@ -139,7 +150,7 @@ export function buildInitialControlPlaneResourcePlans(input: {
       databaseName: input.lock.d1.LOOKUP_DB?.name ?? '',
       streamId: 'd1-lookup',
     },
-    ...INITIAL_TENANT_SHARD_DEFINITIONS.map((definition) => ({
+    ...initialTenantShardDefinitions(input.env).map((definition) => ({
       role: definition.role,
       binding: definition.binding,
       databaseName:
@@ -476,7 +487,7 @@ export function inspectInitialControlPlaneTopology(input: {
   const manifestChecksum = calculateReleaseManifestChecksum(input.manifest);
   const issues: ControlPlaneTopologyIssue[] = [];
 
-  for (const resource of INITIAL_TENANT_SHARD_DEFINITIONS) {
+  for (const resource of initialTenantShardDefinitions(input.env)) {
     const locked = input.lock.d1[resource.binding];
     if (!locked) {
       issues.push({ binding: resource.binding, reason: 'missing_binding' });
@@ -910,19 +921,21 @@ export async function ensureInitialControlPlaneResources(input: {
     if (!input.release) throw new Error('initial_control_plane_release_required');
     const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
     if (!controlDatabaseName) throw new Error('control_database_name_required');
-    const [handoff] = await queryD1Rows<{ state: string }>(
+    const [handoff] = await queryD1Rows<{ state: string; verification_error_code: string | null }>(
       controlDatabaseName,
-      `SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ${sqlString(input.env)}`
+      `SELECT state, verification_error_code
+         FROM control_bootstrap_handoffs
+        WHERE environment_id = ${sqlString(input.env)}`
     );
     if (handoff?.state === 'accepted') {
       return { success: true, skipped: true };
     }
-    if (handoff?.state === 'blocked') {
+    if (handoff?.state === 'blocked' && !isRecoverableInitialHandoffError(handoff.verification_error_code)) {
       throw new Error(`initial_control_plane_handoff_${handoff.state}`);
     }
 
     input.onProgress?.('🔧 Ensuring initial Control-plane tenant shards exist (3 D1)...');
-    for (const definition of INITIAL_TENANT_SHARD_DEFINITIONS) {
+    for (const definition of initialTenantShardDefinitions(input.env)) {
       const existing = input.lock.d1[definition.binding];
       if (existing) {
         const expectedName = bootstrapDatabaseName(input.env, definition.nameRole);

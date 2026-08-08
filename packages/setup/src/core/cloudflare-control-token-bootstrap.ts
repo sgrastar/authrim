@@ -5,6 +5,22 @@ const ACCOUNT_ID = /^[0-9a-f]{32}$/u;
 const TOKEN_ID = /^[0-9a-f]{32}$/u;
 const SAFE_ENV = /^[a-z][a-z0-9-]{0,31}$/u;
 const ACCOUNT_RESOURCE_PREFIX = 'com.cloudflare.api.account.';
+const CLOUDFLARE_TOKEN_API_RETRY_DELAYS_MS = [500, 1_000, 2_000] as const;
+
+function isRetryableTokenApiStatus(status: number): boolean {
+  return (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+function waitForTokenApiRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
 
 export type CloudflareTokenOwnership = 'account' | 'user';
 export type ControlTokenResourceClass = 'd1' | 'workers' | 'kv' | 'r2';
@@ -712,6 +728,7 @@ export class CloudflareTokenAuthorityHttpClient implements CloudflareTokenAuthor
       ownership: CloudflareTokenOwnership;
       bootstrapToken: string;
       fetcher?: typeof fetch;
+      tokenApiRetryDelaysMs?: readonly number[];
     }
   ) {
     requiredAccountId(input.accountId);
@@ -731,17 +748,42 @@ export class CloudflareTokenAuthorityHttpClient implements CloudflareTokenAuthor
     path: string,
     init: Parameters<typeof fetch>[1] = {}
   ): Promise<CloudflareEnvelope<T>> {
-    let response: Response;
-    try {
-      response = await this.fetcher(path, {
-        ...init,
-        headers: {
-          Authorization: `Bearer ${this.input.bootstrapToken}`,
-          ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-          ...init.headers,
-        },
-      });
-    } catch {
+    const method = String(init.method ?? 'GET').toUpperCase();
+    const retryableRead = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+    const retryDelays = retryableRead
+      ? (this.input.tokenApiRetryDelaysMs ?? CLOUDFLARE_TOKEN_API_RETRY_DELAYS_MS)
+      : [];
+    let response: Response | undefined;
+    let lastTransportError = false;
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await this.fetcher(path, {
+          ...init,
+          headers: {
+            Authorization: `Bearer ${this.input.bootstrapToken}`,
+            ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+            ...init.headers,
+          },
+        });
+        lastTransportError = false;
+      } catch {
+        lastTransportError = true;
+      }
+
+      const retryDelay = retryDelays[attempt];
+      if (
+        retryDelay !== undefined &&
+        (lastTransportError ||
+          (response !== undefined && isRetryableTokenApiStatus(response.status)))
+      ) {
+        await waitForTokenApiRetry(retryDelay);
+        continue;
+      }
+      break;
+    }
+
+    if (lastTransportError || response === undefined) {
       throw new CloudflareTokenBootstrapError('cloudflare_token_api_response_lost');
     }
     if (!response.ok) {

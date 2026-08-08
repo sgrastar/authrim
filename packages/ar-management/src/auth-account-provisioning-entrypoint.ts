@@ -440,7 +440,10 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
         piiEntries.length === 0 &&
         jsonObject(sensitiveValues) &&
         sensitiveEntries.length === 0
-      : typeof value.email === 'string' &&
+      : true;
+  const emailAccountFlowValid =
+    value.flow !== 'passkey' || value.email !== null
+      ? typeof value.email === 'string' &&
         value.email.length <= 320 &&
         value.email === value.email.trim().toLowerCase() &&
         EMAIL.test(value.email) &&
@@ -449,7 +452,17 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
         piiFields.email === true &&
         jsonObject(sensitiveValues) &&
         sensitiveValues.email === value.email &&
-        (anonymousDevice === undefined || anonymousDevice === null);
+        (anonymousDevice === undefined || anonymousDevice === null)
+      : false;
+  const emailLessPasskeyFlowValid =
+    value.flow === 'passkey' &&
+    value.email === null &&
+    runtimeUser.sourceRef === 'auth:passkey' &&
+    jsonObject(piiFields) &&
+    piiFields.email !== true &&
+    jsonObject(sensitiveValues) &&
+    !Object.hasOwn(sensitiveValues, 'email') &&
+    (anonymousDevice === undefined || anonymousDevice === null);
   const externalIdpFlowValid =
     value.flow === 'external_idp'
       ? jsonObject(externalSubject) &&
@@ -461,6 +474,7 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
     runtimeUser.active !== true ||
     !externalSubjectValid ||
     !anonymousFlowValid ||
+    !(value.flow === 'anonymous' || emailAccountFlowValid || emailLessPasskeyFlowValid) ||
     !externalIdpFlowValid ||
     piiEntries.length > 32 ||
     piiEntries.some(

@@ -47,6 +47,12 @@ const discoverExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
 const registerExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
 const publishDynamicPluginWorkerBundlesMock = vi.hoisted(() => vi.fn());
 const queryD1RowsMock = vi.hoisted(() => vi.fn());
+const completeControlTokenBootstrapMock = vi.hoisted(() => vi.fn());
+const initializeControlKeyStateMock = vi.hoisted(() => vi.fn());
+const reconcileLocalControlKeyFilesMock = vi.hoisted(() => vi.fn());
+const loadControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
+const loadControlStagedSigningKeysMock = vi.hoisted(() => vi.fn());
+const projectControlGeneratedKeyStateMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../core/deploy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/deploy.js')>();
@@ -128,6 +134,17 @@ vi.mock('../core/control-plane-bootstrap.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../core/control-key-state.js', () => ({
+  initializeControlKeyState: initializeControlKeyStateMock,
+  reconcileLocalControlKeyFiles: reconcileLocalControlKeyFilesMock,
+}));
+
+vi.mock('../core/control-generated-state.js', () => ({
+  loadControlGeneratedKeyState: loadControlGeneratedKeyStateMock,
+  loadControlStagedSigningKeys: loadControlStagedSigningKeysMock,
+  projectControlGeneratedKeyState: projectControlGeneratedKeyStateMock,
+}));
+
 vi.mock('../core/notification-provider-bootstrap.js', () => ({
   ensureInitialNotificationProviderConfiguration:
     ensureInitialNotificationProviderConfigurationMock,
@@ -160,6 +177,14 @@ vi.mock('../core/external-capability-registration.js', () => ({
 vi.mock('../core/dynamic-plugin-publication.js', () => ({
   publishDynamicPluginWorkerBundles: publishDynamicPluginWorkerBundlesMock,
 }));
+
+vi.mock('../core/control-token-bootstrap-orchestrator.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/control-token-bootstrap-orchestrator.js')>();
+  return {
+    ...actual,
+    completeControlTokenBootstrap: completeControlTokenBootstrapMock,
+  };
+});
 
 import { createApiRoutes, generateSessionToken } from '../web/api.js';
 
@@ -206,17 +231,17 @@ async function writeEnvironment(env: string) {
         d1: {
           CONTROL_DB: { id: 'control-id', name: `authrim-${env}-control` },
           LOOKUP_DB: { id: 'lookup-id', name: `authrim-${env}-lookup` },
-          TDB_DEFAULT_BOOTSTRAP_CORE: {
+          TEST_TDB_DEFAULT_BOOTSTRAP_CORE: {
             id: 'bootstrap-default-id',
-            name: `authrim-${env}-default-bootstrap`,
+            name: `${env}-authrim-tenant-default-bootstrap-db`,
           },
-          TDB_USERS_BOOTSTRAP_CORE: {
+          TEST_TDB_USERS_BOOTSTRAP_CORE: {
             id: 'bootstrap-users-id',
-            name: `authrim-${env}-users-bootstrap`,
+            name: `${env}-authrim-tenant-users-bootstrap-db`,
           },
-          TDB_PII_BOOTSTRAP_PII: {
+          TEST_TDB_PII_BOOTSTRAP_PII: {
             id: 'bootstrap-pii-id',
-            name: `authrim-${env}-pii-bootstrap`,
+            name: `${env}-authrim-tenant-pii-bootstrap-db`,
           },
         },
         kv: {
@@ -352,9 +377,9 @@ async function writeDraftManifest(version: string): Promise<void> {
 async function configureControlPlaneWithoutBootstrapResources(env: string): Promise<void> {
   const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
   const currentLock = JSON.parse(await readFile(lockPath, 'utf-8'));
-  delete currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE;
-  delete currentLock.d1.TDB_USERS_BOOTSTRAP_CORE;
-  delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+  delete currentLock.d1.TEST_TDB_DEFAULT_BOOTSTRAP_CORE;
+  delete currentLock.d1.TEST_TDB_USERS_BOOTSTRAP_CORE;
+  delete currentLock.d1.TEST_TDB_PII_BOOTSTRAP_PII;
   currentLock.schemaTargets = {};
   await writeFile(lockPath, `${JSON.stringify(currentLock, null, 2)}\n`);
 
@@ -423,6 +448,12 @@ describe('setup web worker update API', () => {
     registerExternalCapabilitiesMock.mockReset();
     publishDynamicPluginWorkerBundlesMock.mockReset();
     queryD1RowsMock.mockReset();
+    completeControlTokenBootstrapMock.mockReset();
+    initializeControlKeyStateMock.mockReset();
+    reconcileLocalControlKeyFilesMock.mockReset();
+    loadControlGeneratedKeyStateMock.mockReset();
+    loadControlStagedSigningKeysMock.mockReset();
+    projectControlGeneratedKeyStateMock.mockReset();
 
     buildApiPackagesMock.mockResolvedValue({ success: true });
     deployAllUiWorkersMock.mockResolvedValue({
@@ -484,6 +515,40 @@ describe('setup web worker update API', () => {
       sql: '',
     });
     publishDynamicPluginWorkerBundlesMock.mockResolvedValue({ published: [] });
+    completeControlTokenBootstrapMock.mockResolvedValue(undefined);
+    initializeControlKeyStateMock.mockResolvedValue({
+      initialized: true,
+      operationId: null,
+      fingerprints: null,
+    });
+    reconcileLocalControlKeyFilesMock.mockResolvedValue(undefined);
+    loadControlGeneratedKeyStateMock.mockResolvedValue({
+      runtimeRegistry: {
+        activeSlot: 'A',
+        activeKeyId: 'runtime-test',
+        activeFingerprint: 'a'.repeat(64),
+        updatedAt: 1,
+      },
+      smokeRpc: {
+        activeSlot: 'A',
+        activeKeyId: 'smoke-test',
+        activeFingerprint: 'b'.repeat(64),
+        updatedAt: 1,
+      },
+      lookupHmac: {
+        stateRevision: 1,
+        activeGeneration: 1,
+        activeSlot: 'A',
+        activeKeyId: 'lookup-test',
+        activeFingerprint: 'c'.repeat(64),
+        updatedAt: 1,
+      },
+    });
+    loadControlStagedSigningKeysMock.mockResolvedValue([]);
+    projectControlGeneratedKeyStateMock.mockImplementation((lock) => ({
+      lock,
+      changed: false,
+    }));
     runMigrationsForEnvironmentMock.mockResolvedValue({
       success: true,
       core: { success: true, appliedCount: 0, skippedCount: 0 },
@@ -657,9 +722,9 @@ describe('setup web worker update API', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: false,
       topologyIssues: [
-        { binding: 'TDB_DEFAULT_BOOTSTRAP_CORE', reason: 'missing_binding' },
-        { binding: 'TDB_USERS_BOOTSTRAP_CORE', reason: 'missing_binding' },
-        { binding: 'TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
+        { binding: 'TEST_TDB_DEFAULT_BOOTSTRAP_CORE', reason: 'missing_binding' },
+        { binding: 'TEST_TDB_USERS_BOOTSTRAP_CORE', reason: 'missing_binding' },
+        { binding: 'TEST_TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
       ],
     });
     expect(ensureInitialControlPlaneResourcesMock).not.toHaveBeenCalled();
@@ -708,6 +773,36 @@ describe('setup web worker update API', () => {
     expect(deployAllMock).not.toHaveBeenCalled();
   });
 
+  it('exposes a recovery path for an interrupted initial deployment', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    delete lock.productVersion;
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const app = createApiRoutes();
+    const response = await app.request('/deploy/recovery/test');
+    const responseBody = await response.json();
+
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({
+      success: true,
+      env,
+      configExists: true,
+      canResume: true,
+    });
+  });
+
   it('acquires the environment lock before initial deployment build work begins', async () => {
     const env = 'test';
     await writeEnvironment(env);
@@ -740,7 +835,7 @@ describe('setup web worker update API', () => {
     await expect(readFile(operationLockPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('completes a schema-first initial Web deployment without Login UI or Admin UI', async () => {
+  it('completes a schema-first initial Web deployment with automatic provisioning', async () => {
     const env = 'headless';
     await writeEnvironment(env);
     await markEnvironmentProvisioned(env);
@@ -748,7 +843,8 @@ describe('setup web worker update API', () => {
     await rm(join(tempDir!, 'packages'), { recursive: true, force: true });
     const configPath = join(tempDir!, '.authrim', env, 'config.json');
     const config = createDefaultConfig(env);
-    config.controlPlane.automaticProvisioning = false;
+    config.controlPlane.automaticProvisioning = true;
+    config.cloudflare.accountId = 'account-id';
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
@@ -831,12 +927,15 @@ describe('setup web worker update API', () => {
       headers: {
         'Content-Type': 'application/json',
         'X-Session-Token': token,
+        Origin: 'http://localhost',
       },
       body: JSON.stringify({
         env,
         rootDir: tempDir,
         skipBuild: true,
         runMigrations: true,
+        bootstrapToken: 'bootstrap-token-1234567890',
+        tokenOwnership: 'account',
       }),
     });
 
@@ -866,6 +965,7 @@ describe('setup web worker update API', () => {
       expect.objectContaining({
         environmentId: env,
         controlDatabaseName: `authrim-${env}-control`,
+        allowSecretTriggeredVersionAdvanceFor: [`${env}-ar-control`],
       })
     );
 

@@ -284,7 +284,7 @@ describe('PluginRunnerWorker RPC boundary', () => {
       intentId: 'intent-a',
       outboxId: 'outbox-a',
       pluginInstallationId: 'installation-a',
-      bindingRef: 'TDB_CORE_A',
+      bindingRef: 'TEST_TDB_CORE_A',
     };
     await expect(worker('ar-policy').deliverNotification(input)).rejects.toThrow(
       'plugin_sync_caller_unauthorized'

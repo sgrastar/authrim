@@ -205,18 +205,18 @@ async function writeGeneratedEnvironment(
   if (options?.withControlPlaneBootstrap !== false) {
     d1.push(
       {
-        binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
-        name: `authrim-${env}-default-bootstrap`,
+        binding: 'PORTABLE_TDB_DEFAULT_BOOTSTRAP_CORE',
+        name: `${env}-authrim-tenant-default-bootstrap-db`,
         id: 'bootstrap-default-core-id',
       },
       {
-        binding: 'TDB_USERS_BOOTSTRAP_CORE',
-        name: `authrim-${env}-users-bootstrap`,
+        binding: 'PORTABLE_TDB_USERS_BOOTSTRAP_CORE',
+        name: `${env}-authrim-tenant-users-bootstrap-db`,
         id: 'bootstrap-users-core-id',
       },
       {
-        binding: 'TDB_PII_BOOTSTRAP_PII',
-        name: `authrim-${env}-pii-bootstrap`,
+        binding: 'PORTABLE_TDB_PII_BOOTSTRAP_PII',
+        name: `${env}-authrim-tenant-pii-bootstrap-db`,
         id: 'bootstrap-pii-id',
       }
     );
@@ -407,13 +407,13 @@ function mockLiveRuntimeSchema(
       ],
     ],
     [
-      `authrim-${env}-default-bootstrap`,
+      `${env}-authrim-tenant-default-bootstrap-db`,
       ['tenants', 'tenant_domain_mappings', 'oauth_clients', 'flows', 'profile_registry'].filter(
         (table) => !(options?.missingTenantDefaultTables ?? []).includes(table)
       ),
     ],
     [
-      `authrim-${env}-users-bootstrap`,
+      `${env}-authrim-tenant-users-bootstrap-db`,
       [
         'identity_subjects',
         'identity_accounts',
@@ -424,7 +424,7 @@ function mockLiveRuntimeSchema(
       ].filter((table) => !(options?.missingTenantCoreTables ?? []).includes(table)),
     ],
     [
-      `authrim-${env}-pii-bootstrap`,
+      `${env}-authrim-tenant-pii-bootstrap-db`,
       ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'].filter(
         (table) => !(options?.missingTenantPiiTables ?? []).includes(table)
       ),
@@ -618,7 +618,7 @@ describe('validateGeneratedEnvironment', () => {
     const lockPath = join(root, '.authrim', env, 'lock.json');
     const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
     lock.d1.DB_PII.id = lock.d1.DB.id;
-    lock.d1.TDB_PII_BOOTSTRAP_PII.id = lock.d1.TDB_USERS_BOOTSTRAP_CORE.id;
+    lock.d1.PORTABLE_TDB_PII_BOOTSTRAP_PII.id = lock.d1.PORTABLE_TDB_USERS_BOOTSTRAP_CORE.id;
     await writeFile(lockPath, JSON.stringify(lock, null, 2), 'utf-8');
 
     const result = await validateGeneratedEnvironment({ baseDir: root, env });
@@ -629,7 +629,7 @@ describe('validateGeneratedEnvironment', () => {
       status: 'fail',
       details: expect.arrayContaining([
         'DB and DB_PII resolve to the same D1 database id',
-        'TDB_USERS_BOOTSTRAP_CORE and TDB_PII_BOOTSTRAP_PII resolve to the same D1 database id',
+        'PORTABLE_TDB_USERS_BOOTSTRAP_CORE and PORTABLE_TDB_PII_BOOTSTRAP_PII resolve to the same D1 database id',
       ]),
     });
   });
@@ -899,9 +899,9 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-control-db`, uuid: 'db-control-id' },
       { name: `${env}-authrim-lookup-db`, uuid: 'db-lookup-id' },
       { name: `${env}-authrim-plugin-runner-db`, uuid: 'db-plugin-runner-id' },
-      { name: `authrim-${env}-default-bootstrap`, uuid: 'bootstrap-default-core-id' },
-      { name: `authrim-${env}-users-bootstrap`, uuid: 'bootstrap-users-core-id' },
-      { name: `authrim-${env}-pii-bootstrap`, uuid: 'bootstrap-pii-id' },
+      { name: `${env}-authrim-tenant-default-bootstrap-db`, uuid: 'bootstrap-default-core-id' },
+      { name: `${env}-authrim-tenant-users-bootstrap-db`, uuid: 'bootstrap-users-core-id' },
+      { name: `${env}-authrim-tenant-pii-bootstrap-db`, uuid: 'bootstrap-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
@@ -1064,9 +1064,9 @@ describe('validateGeneratedEnvironment', () => {
       { name: `${env}-authrim-control-db`, uuid: 'db-control-id' },
       { name: `${env}-authrim-lookup-db`, uuid: 'db-lookup-id' },
       { name: `${env}-authrim-plugin-runner-db`, uuid: 'db-plugin-runner-id' },
-      { name: `authrim-${env}-default-bootstrap`, uuid: 'bootstrap-default-core-id' },
-      { name: `authrim-${env}-users-bootstrap`, uuid: 'bootstrap-users-core-id' },
-      { name: `authrim-${env}-pii-bootstrap`, uuid: 'bootstrap-pii-id' },
+      { name: `${env}-authrim-tenant-default-bootstrap-db`, uuid: 'bootstrap-default-core-id' },
+      { name: `${env}-authrim-tenant-users-bootstrap-db`, uuid: 'bootstrap-users-core-id' },
+      { name: `${env}-authrim-tenant-pii-bootstrap-db`, uuid: 'bootstrap-pii-id' },
     ]);
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },

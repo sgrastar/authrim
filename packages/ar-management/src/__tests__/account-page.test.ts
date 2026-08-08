@@ -6,7 +6,9 @@ const {
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
   mockCreatePIIContextFromHono,
+  mockResolveAccountDataContextFromHono,
   mockCoreAdapter,
   mockCreateAuditLog,
   mockFindById,
@@ -23,7 +25,9 @@ const {
     mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
+    mockResolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
     mockCoreAdapter: coreAdapter,
     mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
     mockFindById: vi.fn(),
@@ -38,7 +42,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createAuditLog: mockCreateAuditLog,
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
@@ -66,6 +72,7 @@ import {
 
 function createMockContext(cookie?: string, body?: unknown, bodyError?: Error) {
   const headers = new Headers();
+  const contextValues = new Map<string, unknown>();
   const request = new Request('https://op.example.com/api/account/profile', {
     headers: cookie ? { Cookie: cookie } : {},
   });
@@ -80,6 +87,10 @@ function createMockContext(cookie?: string, body?: unknown, bodyError?: Error) {
     },
     header: (name: string, value: string) => {
       headers.set(name, value);
+    },
+    get: (key: string) => contextValues.get(key),
+    set: (key: string, value: unknown) => {
+      contextValues.set(key, value);
     },
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
@@ -155,6 +166,14 @@ describe('Account Page API', () => {
     expect(mockGetSessionStoreBySessionId).toHaveBeenCalledWith(
       expect.anything(),
       'g1:apac:3:session_123',
+      'default'
+    );
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
+    expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
       'default'
     );
     expect(body.profile).toEqual({

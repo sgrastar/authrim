@@ -11,7 +11,7 @@ import {
 } from '../../services/lookup-directory';
 
 const NOW = Math.floor(Date.now() / 1000);
-const BINDING = 'TDB_DEFAULT_1234_CORE';
+const BINDING = 'TEST_TDB_DEFAULT_1234_CORE';
 let privateJwk: JWK;
 let publicJwks: string;
 
@@ -23,14 +23,14 @@ beforeAll(async () => {
   });
 });
 
-function database() {
+function database(bindingRef = BINDING) {
   const prepare = vi.fn((sql: string) => {
     const statement = {
       bind: () => statement,
       first: async () =>
         sql.includes('authrim_control_plane_shard_metadata')
           ? {
-              binding_ref: BINDING,
+              binding_ref: bindingRef,
               data_role: 'tenant_core/default',
               residency_partition: 'default',
               migration_generation: 1,
@@ -187,12 +187,13 @@ describe('RuntimeSmokeEntrypoint', () => {
       fingerprint: await fingerprintLookupHmacKey(candidateSecret),
     };
     const entrypoint = worker({
+      TEST_TDB_LOOKUP_HMAC_TEST: database('TEST_TDB_LOOKUP_HMAC_TEST'),
       LOOKUP_HMAC_KEY_SLOT_A: currentSecret,
       LOOKUP_HMAC_KEY_SLOT_B: candidateSecret,
     });
     const lookupToken = await token({
       operationId: 'hmac-rotation-1',
-      bindingRef: 'TDB_LOOKUP_HMAC_TEST',
+      bindingRef: 'TEST_TDB_LOOKUP_HMAC_TEST',
     });
 
     const result = await entrypoint.verifyLookupHmacCandidate({
@@ -234,12 +235,13 @@ describe('RuntimeSmokeEntrypoint', () => {
       fingerprint: 'f'.repeat(64),
     };
     const entrypoint = worker({
+      TEST_TDB_LOOKUP_HMAC_TEST: database('TEST_TDB_LOOKUP_HMAC_TEST'),
       LOOKUP_HMAC_KEY_SLOT_A: currentSecret,
       LOOKUP_HMAC_KEY_SLOT_B: candidateSecret,
     });
     const lookupToken = await token({
       operationId: 'hmac-rotation-1',
-      bindingRef: 'TDB_LOOKUP_HMAC_TEST',
+      bindingRef: 'TEST_TDB_LOOKUP_HMAC_TEST',
     });
     const input = {
       purpose: 'lookup_hmac',
@@ -298,13 +300,14 @@ describe('RuntimeSmokeEntrypoint', () => {
       }),
     };
     const entrypoint = worker({
+      TEST_TDB_LOOKUP_HMAC_TEST: database('TEST_TDB_LOOKUP_HMAC_TEST'),
       TENANT_RUNTIME_REGISTRY: store,
       LOOKUP_HMAC_KEY_SLOT_A: previousSecret,
       LOOKUP_HMAC_KEY_SLOT_B: currentSecret,
     });
     const lookupToken = await token({
       operationId: 'hmac-rotation-1',
-      bindingRef: 'TDB_LOOKUP_HMAC_TEST',
+      bindingRef: 'TEST_TDB_LOOKUP_HMAC_TEST',
     });
 
     await expect(

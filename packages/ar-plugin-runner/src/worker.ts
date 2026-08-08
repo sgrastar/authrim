@@ -206,7 +206,10 @@ function notificationDeliveryInput(input: unknown): ImmediateNotificationDeliver
     'pluginInstallationId',
     'bindingRef',
   ]);
-  if (typeof value.bindingRef !== 'string' || !/^TDB_[A-Z0-9_]{1,120}$/u.test(value.bindingRef)) {
+  if (
+    typeof value.bindingRef !== 'string' ||
+    !/^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u.test(value.bindingRef)
+  ) {
     throw new Error('plugin_notification_input_invalid');
   }
   return {

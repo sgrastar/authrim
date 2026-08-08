@@ -29,11 +29,11 @@ type ProvisioningRuntimeUser = Omit<CanonicalRuntimeUserWriteInput, 'userId' | '
   sensitiveValues?: Partial<Record<CanonicalSensitiveUserField, unknown>>;
 };
 
-export interface ProvisionEmailAccountInput {
+export interface ProvisionAccountInput {
   tenantId: string;
   candidateUserId: string;
   flow: AuthAccountProvisioningFlow;
-  email: string;
+  email: string | null;
   runtimeUser: ProvisioningRuntimeUser;
 }
 
@@ -62,7 +62,7 @@ export interface RemoveAnonymousDeviceRouteInput {
   deviceIdHash: string;
 }
 
-interface ResumeMetadata {
+export interface AccountProvisioningResumeMetadata {
   schema_version: 1;
   operation_id: string;
   flow: AuthAccountProvisioningFlow;
@@ -131,7 +131,7 @@ function randomResumeToken(): string {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 }
 
-function resumeMetadata(value: unknown): ResumeMetadata | null {
+function resumeMetadata(value: unknown): AccountProvisioningResumeMetadata | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const metadata = value as Record<string, unknown>;
   if (
@@ -156,7 +156,49 @@ function resumeMetadata(value: unknown): ResumeMetadata | null {
   ) {
     return null;
   }
-  return metadata as unknown as ResumeMetadata;
+  return metadata as unknown as AccountProvisioningResumeMetadata;
+}
+
+/**
+ * Resolve a browser-bound account provisioning resume token without exposing the
+ * operation identifier or other internal routing metadata to the caller.
+ */
+export async function resolveAccountProvisioningResume(
+  c: Context<{ Bindings: Env }>,
+  token: unknown
+): Promise<AccountProvisioningResumeMetadata | null> {
+  if (typeof token !== 'string' || !RESUME_TOKEN.test(token)) return null;
+
+  const tenantId = getTenantIdFromContext(c);
+  const tokenHash = await sha256Hex(token);
+  const challengeId = `account_provisioning:${tokenHash}`;
+  const challengeStore = await accountProvisioningChallengeStore(c.env, challengeId, tenantId);
+  const challenge = await challengeStore.getChallengeRpc(challengeId);
+  const metadata = resumeMetadata(challenge?.metadata);
+  if (
+    !challenge ||
+    challenge.type !== 'account_provisioning_resume' ||
+    challenge.tenantId !== tenantId ||
+    challenge.userId !== metadata?.user_id ||
+    challenge.challenge !== tokenHash ||
+    challenge.consumed ||
+    !metadata
+  ) {
+    return null;
+  }
+  return metadata;
+}
+
+export async function resolvePasskeyProvisioningResumeUserId(
+  c: Context<{ Bindings: Env }>,
+  token: unknown,
+  resumeUserId: unknown
+): Promise<string | null> {
+  if (typeof resumeUserId !== 'string' || !resumeUserId.trim()) return null;
+  const metadata = await resolveAccountProvisioningResume(c, token);
+  return metadata?.flow === 'passkey' && metadata.user_id === resumeUserId
+    ? metadata.user_id
+    : null;
 }
 
 export async function resolveEmailAccountRoute(
@@ -292,9 +334,9 @@ async function provisionAuthAccountWithReconciliation(
   }
 }
 
-export async function provisionEmailAccount(
+export async function provisionAccount(
   c: Context<{ Bindings: Env }>,
-  input: ProvisionEmailAccountInput
+  input: ProvisionAccountInput
 ): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
   const stableRequest = canonicalJson({
@@ -340,7 +382,7 @@ export async function provisionEmailAccount(
       flow: input.flow,
       account_id: result.accountId,
       user_id: result.userId,
-    } satisfies ResumeMetadata,
+    } satisfies AccountProvisioningResumeMetadata,
   });
   return {
     status: 'pending',
@@ -351,11 +393,17 @@ export async function provisionEmailAccount(
         status_endpoint: '/api/v1/auth/account-provisioning/status',
         retry_after_ms: 500,
         expires_in: RESUME_TTL_SECONDS,
+        ...(input.flow === 'passkey' ? { resume_user_id: result.userId } : {}),
       },
       202
     ),
   };
 }
+
+// Kept as an internal compatibility alias for callers that still use the old
+// email-oriented name. The account directory can also provision email-less
+// passkey accounts; the input validation is enforced by the management worker.
+export const provisionEmailAccount = provisionAccount;
 
 // Transitional symbol aliases for authentication handlers; all implementations route through
 // the Control Plane account provisioner above.
@@ -394,7 +442,8 @@ export async function publishTenantD1PasskeyRoute(
   return publishPasskeyRoute(c, input);
 }
 
-export const provisionTenantD1EmailAccount = provisionEmailAccount;
+export const provisionTenantD1Account = provisionAccount;
+export const provisionTenantD1EmailAccount = provisionTenantD1Account;
 
 export async function provisionAnonymousAccount(
   c: Context<{ Bindings: Env }>,
@@ -460,7 +509,7 @@ export async function provisionAnonymousAccount(
       flow: 'anonymous',
       account_id: result.accountId,
       user_id: result.userId,
-    } satisfies ResumeMetadata,
+    } satisfies AccountProvisioningResumeMetadata,
   });
   return {
     status: 'pending',
@@ -490,21 +539,8 @@ export async function accountProvisioningStatusHandler(c: Context<{ Bindings: En
       return c.json({ error: 'invalid_request' }, 400);
     }
     const tenantId = getTenantIdFromContext(c);
-    const tokenHash = await sha256Hex(body.provisioning_token);
-    const challengeId = `account_provisioning:${tokenHash}`;
-    const challengeStore = await accountProvisioningChallengeStore(c.env, challengeId, tenantId);
-    const challenge = await challengeStore.getChallengeRpc(challengeId);
-    const metadata = resumeMetadata(challenge?.metadata);
-    if (
-      !challenge ||
-      challenge.type !== 'account_provisioning_resume' ||
-      challenge.tenantId !== tenantId ||
-      challenge.userId !== metadata?.user_id ||
-      challenge.challenge !== tokenHash ||
-      challenge.consumed ||
-      !metadata ||
-      !c.env.ACCOUNT_PROVISIONER
-    ) {
+    const metadata = await resolveAccountProvisioningResume(c, body.provisioning_token);
+    if (!metadata || !c.env.ACCOUNT_PROVISIONER) {
       return c.json({ error: 'invalid_or_expired_provisioning_token' }, 400);
     }
     const status = await c.env.ACCOUNT_PROVISIONER.getAuthAccountProvisioningStatus({

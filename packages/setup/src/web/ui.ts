@@ -1123,6 +1123,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Validating',
           'web.loadConfig.loadDeploy': 'Load & Deploy',
           'web.loadConfig.provisionedValid': 'The configuration is valid. Resources are already provisioned, so setup can resume from Step 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Initial deployment incomplete',
+          'web.envDetail.initialDeployRecoveryDesc': 'The previous deployment stopped before verification. Existing resources will be reused when you resume.',
+          'web.envDetail.initialDeployRecoveryAction': 'Resume initial deployment',
+          'web.deploy.retryDeploy': 'Retry deployment',
           'web.loadConfig.checkingEnvironment': 'Checking environment',
           'web.provision.resourcesToCreate': 'Resources to Create',
           'web.provision.queues': 'Queues',
@@ -1146,8 +1150,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler log',
           'web.deploy.cancelDeploy': 'Cancel Deploy',
           'web.deploy.continueComplete': 'Continue to Complete',
-          'web.deploy.manualWildcardTitle': 'Manual action - wildcard DNS record',
-          'web.deploy.manualWildcardSummary': 'DNS edit permission is unavailable for zone {{zone}}. Add the wildcard record manually before relying on tenant URLs.',
+          'web.deploy.manualWildcardTitle': 'Check wildcard DNS setup',
+          'web.deploy.manualWildcardSummary': 'The wildcard DNS record for tenant URLs could not be confirmed. If you already created it, click Re-check DNS. Otherwise, add the record shown below.',
           'web.deploy.manualWildcardStep1': 'Open Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Add a CNAME record: name {{record}}, target {{target}}, proxy on.',
           'web.deploy.manualWildcardStep3': 'After adding it, click Re-check DNS on this screen.',
@@ -1218,6 +1222,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': '検証中',
           'web.loadConfig.loadDeploy': '読み込んでデプロイへ',
           'web.loadConfig.provisionedValid': '設定は有効です。リソース作成は完了しているため、ステップ08（デプロイ）から再開できます。',
+          'web.envDetail.initialDeployRecoveryTitle': '初回デプロイが完了していません',
+          'web.envDetail.initialDeployRecoveryDesc': '前回のデプロイは検証前に停止しました。作成済みのリソースを再利用して再開できます。',
+          'web.envDetail.initialDeployRecoveryAction': '初回デプロイを再開',
+          'web.deploy.retryDeploy': 'デプロイを再試行',
           'web.loadConfig.checkingEnvironment': '既存環境を確認中',
           'web.provision.resourcesToCreate': '作成されるリソース',
           'web.provision.queues': 'Queues',
@@ -1241,8 +1249,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler log',
           'web.deploy.cancelDeploy': 'デプロイを中止',
           'web.deploy.continueComplete': '完了へ',
-          'web.deploy.manualWildcardTitle': '手動作業 - ワイルドカードDNSレコード',
-          'web.deploy.manualWildcardSummary': 'ゾーン {{zone}} へのDNS編集権限がないため、ワイルドカードレコードを手動で追加してください。追加が終わるまでテナントURLは解決されません。',
+          'web.deploy.manualWildcardTitle': 'ワイルドカードDNS設定の確認',
+          'web.deploy.manualWildcardSummary': 'テナントURL用のワイルドカードDNSレコードを確認できていません。すでに設定済みの場合は「DNSを再確認」を押してください。未設定の場合は、以下のレコードを追加してください。',
           'web.deploy.manualWildcardStep1': 'Cloudflareダッシュボード -> {{zone}} -> DNS > Records を開く',
           'web.deploy.manualWildcardStep2': 'タイプ CNAME、名前 {{record}}、ターゲット {{target}}、Proxy オンで追加',
           'web.deploy.manualWildcardStep3': '追加後にこの画面の「DNSを再確認」を押す',
@@ -1549,6 +1557,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': '验证中',
           'web.loadConfig.loadDeploy': '加载并部署',
           'web.loadConfig.provisionedValid': '配置有效。资源已创建，可从步骤08（部署）继续。',
+          'web.envDetail.initialDeployRecoveryTitle': '初始部署未完成',
+          'web.envDetail.initialDeployRecoveryDesc': '上次部署在验证前停止。继续时将重复使用已创建的资源。',
+          'web.envDetail.initialDeployRecoveryAction': '继续初始部署',
+          'web.deploy.retryDeploy': '重试部署',
           'web.loadConfig.checkingEnvironment': '正在检查环境',
           'web.provision.resourcesToCreate': '将创建的资源',
           'web.provision.queues': '队列',
@@ -1572,8 +1584,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 日志',
           'web.deploy.cancelDeploy': '取消部署',
           'web.deploy.continueComplete': '继续到完成',
-          'web.deploy.manualWildcardTitle': '手动操作 - 通配 DNS 记录',
-          'web.deploy.manualWildcardSummary': '没有 {{zone}} 的 DNS 编辑权限。请手动添加通配记录；添加前租户 URL 不会解析。',
+          'web.deploy.manualWildcardTitle': '检查通配 DNS 设置',
+          'web.deploy.manualWildcardSummary': '无法确认租户 URL 所需的通配 DNS 记录。如果已经创建，请点击重新检查 DNS；否则请添加下方显示的记录。',
           'web.deploy.manualWildcardStep1': '打开 Cloudflare Dashboard -> {{zone}} -> DNS > Records。',
           'web.deploy.manualWildcardStep2': '添加 CNAME：名称 {{record}}，目标 {{target}}，开启代理。',
           'web.deploy.manualWildcardStep3': '添加后点击本页面的重新检查 DNS。',
@@ -1617,6 +1629,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': '驗證中',
           'web.loadConfig.loadDeploy': '載入並部署',
           'web.loadConfig.provisionedValid': '設定有效。資源已建立，可從步驟08（部署）繼續。',
+          'web.envDetail.initialDeployRecoveryTitle': '初始部署尚未完成',
+          'web.envDetail.initialDeployRecoveryDesc': '上次部署在驗證前停止。繼續時會重複使用已建立的資源。',
+          'web.envDetail.initialDeployRecoveryAction': '繼續初始部署',
+          'web.deploy.retryDeploy': '重試部署',
           'web.loadConfig.checkingEnvironment': '正在檢查環境',
           'web.provision.resourcesToCreate': '將建立的資源',
           'web.provision.queues': '佇列',
@@ -1640,8 +1656,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 日誌',
           'web.deploy.cancelDeploy': '取消部署',
           'web.deploy.continueComplete': '繼續到完成',
-          'web.deploy.manualWildcardTitle': '手動操作 - 萬用 DNS 記錄',
-          'web.deploy.manualWildcardSummary': '沒有 {{zone}} 的 DNS 編輯權限。請手動新增萬用記錄；新增前租戶 URL 不會解析。',
+          'web.deploy.manualWildcardTitle': '檢查萬用 DNS 設定',
+          'web.deploy.manualWildcardSummary': '無法確認租戶 URL 所需的萬用 DNS 記錄。如果已經建立，請點擊重新檢查 DNS；否則請新增下方顯示的記錄。',
           'web.deploy.manualWildcardStep1': '開啟 Cloudflare Dashboard -> {{zone}} -> DNS > Records。',
           'web.deploy.manualWildcardStep2': '新增 CNAME：名稱 {{record}}，目標 {{target}}，開啟代理。',
           'web.deploy.manualWildcardStep3': '新增後點擊本頁面的重新檢查 DNS。',
@@ -1685,6 +1701,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Validando',
           'web.loadConfig.loadDeploy': 'Cargar y desplegar',
           'web.loadConfig.provisionedValid': 'La configuración es válida. Los recursos ya están creados, así que puedes continuar desde el paso 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'El despliegue inicial está incompleto',
+          'web.envDetail.initialDeployRecoveryDesc': 'El despliegue anterior se detuvo antes de la verificación. Al reanudar, se reutilizarán los recursos existentes.',
+          'web.envDetail.initialDeployRecoveryAction': 'Reanudar despliegue inicial',
+          'web.deploy.retryDeploy': 'Reintentar despliegue',
           'web.loadConfig.checkingEnvironment': 'Comprobando entorno',
           'web.provision.resourcesToCreate': 'Recursos a crear',
           'web.provision.queues': 'Colas',
@@ -1708,8 +1728,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log de wrangler',
           'web.deploy.cancelDeploy': 'Cancelar despliegue',
           'web.deploy.continueComplete': 'Continuar a finalización',
-          'web.deploy.manualWildcardTitle': 'Acción manual - registro DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'No hay permiso para editar DNS en la zona {{zone}}. Añade manualmente el registro wildcard antes de usar URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Comprobar la configuración del DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'No se pudo confirmar el registro DNS wildcard de las URLs de tenants. Si ya lo has creado, pulsa Revisar DNS. Si no, añade el registro que se muestra abajo.',
           'web.deploy.manualWildcardStep1': 'Abre Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Añade un CNAME: nombre {{record}}, destino {{target}}, proxy activado.',
           'web.deploy.manualWildcardStep3': 'Después, pulsa Re-check DNS en esta pantalla.',
@@ -1753,6 +1773,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Validando',
           'web.loadConfig.loadDeploy': 'Carregar e fazer deploy',
           'web.loadConfig.provisionedValid': 'A configuração é válida. Os recursos já foram criados; você pode continuar do passo 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'O deploy inicial não foi concluído',
+          'web.envDetail.initialDeployRecoveryDesc': 'O deploy anterior parou antes da verificação. Os recursos existentes serão reutilizados ao continuar.',
+          'web.envDetail.initialDeployRecoveryAction': 'Continuar o deploy inicial',
+          'web.deploy.retryDeploy': 'Tentar deploy novamente',
           'web.loadConfig.checkingEnvironment': 'Verificando ambiente',
           'web.provision.resourcesToCreate': 'Recursos a criar',
           'web.provision.queues': 'Filas',
@@ -1776,8 +1800,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log do wrangler',
           'web.deploy.cancelDeploy': 'Cancelar deploy',
           'web.deploy.continueComplete': 'Continuar para conclusão',
-          'web.deploy.manualWildcardTitle': 'Ação manual - registro DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'Não há permissão para editar DNS na zona {{zone}}. Adicione manualmente o registro wildcard antes de usar URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Verificar a configuração do DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'Não foi possível confirmar o registro DNS wildcard das URLs dos tenants. Se você já o criou, clique em Verificar DNS novamente. Caso contrário, adicione o registro mostrado abaixo.',
           'web.deploy.manualWildcardStep1': 'Abra Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Adicione CNAME: nome {{record}}, destino {{target}}, proxy ativado.',
           'web.deploy.manualWildcardStep3': 'Depois, clique em verificar DNS novamente nesta tela.',
@@ -1821,6 +1845,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Validation',
           'web.loadConfig.loadDeploy': 'Charger et déployer',
           'web.loadConfig.provisionedValid': 'La configuration est valide. Les ressources existent déjà ; vous pouvez reprendre à l’étape 08 (Déploiement).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Le déploiement initial est incomplet',
+          'web.envDetail.initialDeployRecoveryDesc': 'Le déploiement précédent s’est arrêté avant la vérification. Les ressources existantes seront réutilisées lors de la reprise.',
+          'web.envDetail.initialDeployRecoveryAction': 'Reprendre le déploiement initial',
+          'web.deploy.retryDeploy': 'Réessayer le déploiement',
           'web.loadConfig.checkingEnvironment': 'Vérification de l’environnement',
           'web.provision.resourcesToCreate': 'Ressources à créer',
           'web.provision.queues': 'Files',
@@ -1844,8 +1872,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'journal wrangler',
           'web.deploy.cancelDeploy': 'Annuler le déploiement',
           'web.deploy.continueComplete': 'Continuer vers la fin',
-          'web.deploy.manualWildcardTitle': 'Action manuelle - enregistrement DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'L’autorisation DNS est indisponible pour la zone {{zone}}. Ajoutez manuellement l’enregistrement wildcard avant d’utiliser les URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Vérifier la configuration du DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'L’enregistrement DNS wildcard des URLs de tenants n’a pas pu être confirmé. S’il existe déjà, cliquez sur Revérifier DNS. Sinon, ajoutez l’enregistrement indiqué ci-dessous.',
           'web.deploy.manualWildcardStep1': 'Ouvrez Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Ajoutez un CNAME : nom {{record}}, cible {{target}}, proxy activé.',
           'web.deploy.manualWildcardStep3': 'Après ajout, cliquez sur Revérifier DNS sur cet écran.',
@@ -1889,6 +1917,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Validierung',
           'web.loadConfig.loadDeploy': 'Laden und deployen',
           'web.loadConfig.provisionedValid': 'Die Konfiguration ist gültig. Ressourcen sind bereits erstellt; Sie können bei Schritt 08 (Deploy) fortfahren.',
+          'web.envDetail.initialDeployRecoveryTitle': 'Das initiale Deployment ist unvollständig',
+          'web.envDetail.initialDeployRecoveryDesc': 'Das vorherige Deployment wurde vor der Prüfung beendet. Vorhandene Ressourcen werden beim Fortsetzen wiederverwendet.',
+          'web.envDetail.initialDeployRecoveryAction': 'Initiales Deployment fortsetzen',
+          'web.deploy.retryDeploy': 'Deployment erneut versuchen',
           'web.loadConfig.checkingEnvironment': 'Umgebung wird geprüft',
           'web.provision.resourcesToCreate': 'Zu erstellende Ressourcen',
           'web.provision.queues': 'Queues',
@@ -1912,8 +1944,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler-Log',
           'web.deploy.cancelDeploy': 'Deployment abbrechen',
           'web.deploy.continueComplete': 'Weiter zum Abschluss',
-          'web.deploy.manualWildcardTitle': 'Manuelle Aktion - Wildcard-DNS-Eintrag',
-          'web.deploy.manualWildcardSummary': 'DNS-Bearbeitung ist für Zone {{zone}} nicht verfügbar. Fügen Sie den Wildcard-Eintrag manuell hinzu, bevor Sie Tenant-URLs verwenden.',
+          'web.deploy.manualWildcardTitle': 'Wildcard-DNS-Einstellungen prüfen',
+          'web.deploy.manualWildcardSummary': 'Der Wildcard-DNS-Eintrag für Tenant-URLs konnte nicht bestätigt werden. Wenn Sie ihn bereits erstellt haben, klicken Sie auf DNS erneut prüfen. Andernfalls fügen Sie den unten gezeigten Eintrag hinzu.',
           'web.deploy.manualWildcardStep1': 'Öffnen Sie Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'CNAME hinzufügen: Name {{record}}, Ziel {{target}}, Proxy an.',
           'web.deploy.manualWildcardStep3': 'Klicken Sie danach auf DNS erneut prüfen.',
@@ -1957,6 +1989,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': '검증 중',
           'web.loadConfig.loadDeploy': '불러오고 배포',
           'web.loadConfig.provisionedValid': '구성이 유효합니다. 리소스가 이미 생성되었으므로 08단계(배포)부터 재개할 수 있습니다.',
+          'web.envDetail.initialDeployRecoveryTitle': '초기 배포가 완료되지 않았습니다',
+          'web.envDetail.initialDeployRecoveryDesc': '이전 배포가 검증 전에 중단되었습니다. 계속하면 이미 생성된 리소스를 재사용합니다.',
+          'web.envDetail.initialDeployRecoveryAction': '초기 배포 재개',
+          'web.deploy.retryDeploy': '배포 재시도',
           'web.loadConfig.checkingEnvironment': '환경 확인 중',
           'web.provision.resourcesToCreate': '생성할 리소스',
           'web.provision.queues': 'Queues',
@@ -1980,8 +2016,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 로그',
           'web.deploy.cancelDeploy': '배포 취소',
           'web.deploy.continueComplete': '완료로 계속',
-          'web.deploy.manualWildcardTitle': '수동 작업 - 와일드카드 DNS 레코드',
-          'web.deploy.manualWildcardSummary': '{{zone}} Zone의 DNS 편집 권한이 없습니다. 테넌트 URL을 사용하기 전에 와일드카드 레코드를 수동으로 추가하세요.',
+          'web.deploy.manualWildcardTitle': '와일드카드 DNS 설정 확인',
+          'web.deploy.manualWildcardSummary': '테넌트 URL에 필요한 와일드카드 DNS 레코드를 확인할 수 없습니다. 이미 만들었다면 DNS 다시 확인을 누르고, 아직이라면 아래 레코드를 추가하세요.',
           'web.deploy.manualWildcardStep1': 'Cloudflare Dashboard -> {{zone}} -> DNS > Records를 엽니다.',
           'web.deploy.manualWildcardStep2': 'CNAME 추가: 이름 {{record}}, 대상 {{target}}, 프록시 켬.',
           'web.deploy.manualWildcardStep3': '추가 후 이 화면에서 DNS 다시 확인을 누릅니다.',
@@ -2025,6 +2061,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Проверка',
           'web.loadConfig.loadDeploy': 'Загрузить и деплоить',
           'web.loadConfig.provisionedValid': 'Конфигурация корректна. Ресурсы уже созданы, можно продолжить с шага 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Первоначальный деплой не завершен',
+          'web.envDetail.initialDeployRecoveryDesc': 'Предыдущий деплой остановился до проверки. При продолжении будут повторно использованы существующие ресурсы.',
+          'web.envDetail.initialDeployRecoveryAction': 'Продолжить первоначальный деплой',
+          'web.deploy.retryDeploy': 'Повторить деплой',
           'web.loadConfig.checkingEnvironment': 'Проверка среды',
           'web.provision.resourcesToCreate': 'Ресурсы для создания',
           'web.provision.queues': 'Очереди',
@@ -2048,8 +2088,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'лог wrangler',
           'web.deploy.cancelDeploy': 'Отменить деплой',
           'web.deploy.continueComplete': 'Перейти к завершению',
-          'web.deploy.manualWildcardTitle': 'Ручное действие - wildcard DNS-запись',
-          'web.deploy.manualWildcardSummary': 'Нет права редактировать DNS в зоне {{zone}}. Добавьте wildcard-запись вручную перед использованием URL тенантов.',
+          'web.deploy.manualWildcardTitle': 'Проверка настройки wildcard DNS',
+          'web.deploy.manualWildcardSummary': 'Не удалось подтвердить wildcard DNS-запись для URL тенантов. Если вы уже создали ее, нажмите «Проверить DNS снова». Иначе добавьте запись ниже.',
           'web.deploy.manualWildcardStep1': 'Откройте Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Добавьте CNAME: имя {{record}}, цель {{target}}, proxy включен.',
           'web.deploy.manualWildcardStep3': 'После добавления нажмите повторную проверку DNS на этом экране.',
@@ -2093,6 +2133,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.validating': 'Memvalidasi',
           'web.loadConfig.loadDeploy': 'Muat & Deploy',
           'web.loadConfig.provisionedValid': 'Konfigurasi valid. Resource sudah dibuat, jadi setup dapat dilanjutkan dari langkah 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Deployment awal belum selesai',
+          'web.envDetail.initialDeployRecoveryDesc': 'Deployment sebelumnya berhenti sebelum verifikasi. Resource yang sudah ada akan digunakan kembali saat dilanjutkan.',
+          'web.envDetail.initialDeployRecoveryAction': 'Lanjutkan deployment awal',
+          'web.deploy.retryDeploy': 'Coba deployment lagi',
           'web.loadConfig.checkingEnvironment': 'Memeriksa environment',
           'web.provision.resourcesToCreate': 'Resource yang dibuat',
           'web.provision.queues': 'Queue',
@@ -2116,8 +2160,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log wrangler',
           'web.deploy.cancelDeploy': 'Batalkan deploy',
           'web.deploy.continueComplete': 'Lanjut ke selesai',
-          'web.deploy.manualWildcardTitle': 'Tindakan manual - record DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'Izin edit DNS tidak tersedia untuk zone {{zone}}. Tambahkan record wildcard secara manual sebelum memakai URL tenant.',
+          'web.deploy.manualWildcardTitle': 'Periksa pengaturan DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'Record DNS wildcard untuk URL tenant belum dapat dikonfirmasi. Jika sudah dibuat, klik Periksa ulang DNS. Jika belum, tambahkan record yang ditampilkan di bawah.',
           'web.deploy.manualWildcardStep1': 'Buka Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Tambahkan CNAME: nama {{record}}, target {{target}}, proxy aktif.',
           'web.deploy.manualWildcardStep3': 'Setelah ditambahkan, klik Periksa ulang DNS di layar ini.',
@@ -2247,6 +2291,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Delete target',
           'web.delete.resourcesIrreversible': 'resources - irreversible',
           'web.delete.deletePermanently': 'Delete permanently',
+          'web.delete.manualR2Title': 'Large R2 buckets were not deleted automatically. Empty them in Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
         },
         ja: {
           'web.common.setupTool': 'セットアップツール',
@@ -2360,6 +2406,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': '削除対象',
           'web.delete.resourcesIrreversible': 'リソース - 戻すことはできません',
           'web.delete.deletePermanently': '完全に削除する',
+          'web.delete.manualR2Title': '大容量のR2バケットは自動削除していません。Cloudflare DashboardでEmpty Bucketを実行してください：',
+          'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
         },
         'zh-CN': {
           'web.common.setupTool': '设置工具',
@@ -4498,18 +4546,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <div class="radiocards" role="radiogroup" aria-label="User ID Format">
               <button type="button" class="radiocard on" data-user-id-format="nanoid">
                 <span class="dot" aria-hidden="true"></span>
-                <span class="nm"><span data-i18n="web.form.userIdNanoid">NanoID (recommended)</span><small><span data-i18n="web.form.userIdFormatHint">User ID generation format. Cannot be changed after users are created.</span></small></span>
+                <span class="nm"><span data-i18n="web.form.userIdNanoid">NanoID (recommended)</span><small data-i18n="userId.nanoidDesc">URL-safe 21-character IDs, compact and secure</small><small class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline">V1StGXR8_Z5jdHi6B-myT</code></small></span>
                 <span class="st"></span>
               </button>
               <button type="button" class="radiocard" data-user-id-format="uuid">
                 <span class="dot" aria-hidden="true"></span>
-                <span class="nm"><span data-i18n="web.form.userIdUuid">UUID v4</span><small><code class="inline">550e8400-e29b-41d4-a716-446655440000</code></small></span>
+                <span class="nm"><span data-i18n="web.form.userIdUuid">UUID v4</span><small data-i18n="userId.uuidDesc">Standard 36-character UUIDs with hyphens</small><small class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline">550e8400-e29b-41d4-a716-446655440000</code></small></span>
                 <span class="st"></span>
               </button>
             </div>
             <div class="alert basic-alert">
               <div class="a-head" data-i18n="web.form.userIdFormat">User ID Format</div>
-              <p data-i18n="web.form.userIdFormatHint">User ID generation format. Cannot be changed after users are created.</p>
+              <p id="user-id-format-description" data-i18n="userId.nanoidDesc">URL-safe 21-character IDs, compact and secure</p>
+              <p class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline" id="user-id-format-example-value">V1StGXR8_Z5jdHi6B-myT</code></p>
+              <p class="f-help" data-i18n="web.form.userIdFormatHint">Cannot be changed after users are created.</p>
             </div>
           </div>
         </section>
@@ -4711,20 +4761,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <div id="section-database" class="setup-database-section hidden">
       <section class="row">
         <div class="rowlabel">
-          <h2>D1 Control Plane</h2>
+          <h2 data-i18n="web.db.controlPlaneTitle">D1 Control Plane</h2>
         </div>
         <div class="rowbody">
-          <p>Control Worker, Control DB, Lookup, and the signed Runtime Registry are always provisioned.</p>
-          <p class="f-help">The initial tenant uses <code>tenant_exclusive</code> placement. Tenant placement can later be selected per tenant.</p>
+          <p data-i18n="web.db.controlPlaneWorkerDesc">Control Worker, Control DB, Lookup, and the signed Runtime Registry are always provisioned.</p>
+          <p class="f-help" data-i18n="web.db.controlPlaneTenantPlacement">The initial tenant uses <code>tenant_exclusive</code> placement. Tenant placement can later be selected per tenant.</p>
         </div>
         <div class="rownote">
-          Single and multiple D1 assignments use the same runtime resolver.
+          <span data-i18n="web.db.controlPlaneResolverNote">Single and multiple D1 assignments use the same runtime resolver.</span>
         </div>
       </section>
 
       <section class="row" id="automatic-provisioning-row">
         <div class="rowlabel">
-          <h2>Automatic provisioning</h2>
+          <h2 data-i18n="web.db.automaticProvisioningTitle">Automatic provisioning</h2>
         </div>
         <div class="rowbody">
           <div class="radiocards db-profile-cards">
@@ -4732,8 +4782,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               <input type="radio" name="automatic-provisioning" value="on" checked>
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
-                <span>On</span>
-                <small>Control creates capacity automatically with separate scoped Cloudflare tokens.</small>
+                <span data-i18n="web.db.automaticProvisioningOn">On</span>
+                <small data-i18n="web.db.automaticProvisioningOnDesc">Control creates capacity automatically with separate scoped Cloudflare tokens.</small>
+                <strong class="db-profile-security-note" data-i18n="web.db.automaticProvisioningTokenNote">A dedicated Control Worker stores and uses the scoped Cloudflare API token needed to create tenant databases.</strong>
               </span>
               <span class="st"></span>
             </label>
@@ -4741,14 +4792,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               <input type="radio" name="automatic-provisioning" value="off">
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
-                <span>Off</span>
-                <small>No Cloudflare API token is stored on Control. Setup executes pending operations.</small>
+                <span data-i18n="web.db.automaticProvisioningOff">Off</span>
+                <small data-i18n="web.db.automaticProvisioningOffDesc">No Cloudflare API token is stored on Control. Setup executes pending operations.</small>
               </span>
               <span class="st"></span>
             </label>
           </div>
         </div>
-        <div class="rownote">This can be skipped without changing tenant physical isolation.</div>
+        <div class="rownote" data-i18n="web.db.automaticProvisioningNote">This can be skipped without changing tenant physical isolation.</div>
       </section>
 
       <section class="row">
@@ -5077,20 +5128,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 8: Deployment -->
     <div id="section-deploy" class="hidden setup-step-surface">
-      <p class="section-lead hidden" id="deploy-ready-text" data-i18n="web.deploy.readyText">
-        Ready to deploy Authrim workers to Cloudflare.
-      </p>
-
       <section class="row wide hidden" id="control-token-bootstrap-row">
         <div class="rowlabel">
-          <h2>Control credentials</h2>
+          <h2 data-i18n="web.deploy.controlCredentialsTitle">Cloudflare connection</h2>
         </div>
         <div class="rowbody">
           <div class="cred">
-            <div class="c-head">One-time Cloudflare bootstrap token</div>
-            <div class="c-note">Cloudflare Dashboard login is separate from Wrangler OAuth and may ask you to sign in again.</div>
-            <button type="button" class="btn btn-ghost sm" id="btn-create-control-bootstrap-token">Create one-time Cloudflare token</button>
-            <label class="f-label" for="control-bootstrap-token">Bootstrap token</label>
+            <div class="c-head" data-i18n="web.deploy.bootstrapTokenTitle">Temporary Cloudflare token for automatic setup</div>
+            <div class="c-note" data-i18n="web.deploy.cloudflareLoginNote">Cloudflare Dashboard login is separate from Wrangler OAuth and may ask you to sign in again.</div>
+            <div class="c-note" data-i18n="web.deploy.bootstrapTokenDescription">This one-time token lets Authrim set up automatic tenant database provisioning. It needs account token management permission. Setup uses it to create narrowly scoped API tokens for D1, Workers, KV, and R2, registers them with the Control Worker, and then revokes the one-time token.</div>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-control-bootstrap-token" data-i18n="web.deploy.createBootstrapToken">Create one-time Cloudflare token</button>
+            <label class="f-label" for="control-bootstrap-token" data-i18n="web.deploy.bootstrapTokenLabel">Temporary token</label>
             <input
               class="f-input sm"
               type="password"
@@ -5099,31 +5147,39 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               autocapitalize="none"
               spellcheck="false"
               aria-describedby="control-bootstrap-token-status"
+              data-i18n-placeholder="web.deploy.bootstrapTokenPlaceholder"
             >
-            <div class="f-help" id="control-bootstrap-token-status" aria-live="polite">The token is used once and revoked after split tokens are registered.</div>
+            <div class="f-help" id="control-bootstrap-token-status" aria-live="polite" data-i18n="web.deploy.bootstrapTokenHelp">The token is used once and revoked after split tokens are registered.</div>
           </div>
         </div>
       </section>
 
-      <div id="deploy-manual-wildcard-warning" class="alert manual-wildcard-warning hidden">
-        <div class="a-head" id="deploy-manual-wildcard-title"></div>
-        <p id="deploy-manual-wildcard-summary"></p>
-        <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
-        <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
-        <div class="manual-guide-visual hidden">
-          <img
-            id="deploy-manual-wildcard-example-image"
-            alt="Cloudflare DNS Add record example"
-            src=${cloudflareDnsAddRecordImageDataUriJson}
-          >
+      <section class="row wide hidden" id="deploy-manual-wildcard-warning">
+        <div class="rowlabel">
+          <h2 data-i18n="web.deploy.manualDnsSectionTitle">DNS settings</h2>
         </div>
-        <p id="deploy-manual-wildcard-retry" class="manual-guide-retry"></p>
-        <div class="manual-guide-actions">
-          <a id="deploy-manual-wildcard-dashboard-link" class="btn btn-ghost sm hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
-          <a id="deploy-manual-wildcard-docs-link" class="btn btn-ghost sm" target="_blank" rel="noreferrer">Open DNS docs</a>
-          <button type="button" id="deploy-manual-wildcard-recheck" class="btn btn-ghost sm">↻ <span data-i18n="web.deploy.recheckDns">Re-check DNS</span></button>
+        <div class="rowbody">
+          <div class="alert manual-wildcard-warning">
+            <div class="a-head" id="deploy-manual-wildcard-title"></div>
+            <p id="deploy-manual-wildcard-summary"></p>
+            <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
+            <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
+            <div class="manual-guide-visual hidden">
+              <img
+                id="deploy-manual-wildcard-example-image"
+                alt="Cloudflare DNS Add record example"
+                src=${cloudflareDnsAddRecordImageDataUriJson}
+              >
+            </div>
+            <p id="deploy-manual-wildcard-retry" class="manual-guide-retry"></p>
+            <div class="manual-guide-actions">
+              <a id="deploy-manual-wildcard-dashboard-link" class="btn btn-ghost sm hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
+              <a id="deploy-manual-wildcard-docs-link" class="btn btn-ghost sm" target="_blank" rel="noreferrer">Open DNS docs</a>
+              <button type="button" id="deploy-manual-wildcard-recheck" class="btn btn-ghost sm">↻ <span data-i18n="web.deploy.recheckDns">Re-check DNS</span></button>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
       <section class="row wide">
         <div class="rowlabel">
@@ -5132,11 +5188,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="rowbody rowbody-tight">
           <div class="deploygrid deploygrid-progress-only">
             <div class="progress-side deploy-progress-wide">
-              <div id="deploy-progress-ui" class="deploy-progress-panel">
-                <div class="percent"><span id="deploy-percent">38</span><small>%</small></div>
-                <div class="percentbar"><i id="deploy-progress-bar" style="width: 38%"></i></div>
+              <div id="deploy-ready-text" class="deploy-ready-card" data-i18n="web.deploy.readyText">
+                Ready to deploy Authrim workers to Cloudflare.
+              </div>
+
+              <div id="deploy-progress-ui" class="deploy-progress-panel hidden">
+                <div class="percent"><span id="deploy-percent">0</span><small>%</small></div>
+                <div class="percentbar"><i id="deploy-progress-bar" style="width: 0%"></i></div>
                 <div class="elapsed">
-                  <span id="deploy-current-task">prod-ar-userinfo uploading...</span>
+                  <span id="deploy-current-task" data-i18n="web.status.initializing">Initializing...</span>
                   <span id="deploy-progress-text" data-i18n="web.deploy.elapsedPending">Waiting for progress...</span>
                   <span id="deploy-spinner" class="spinner"></span>
                 </div>
@@ -5146,20 +5206,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 </button>
               </div>
 
-              <div class="logbox" id="deploy-log">
+              <div class="logbox hidden" id="deploy-log">
                 <div class="cap">
                   <span data-i18n="web.deploy.wranglerLog">wrangler log</span>
                   <button type="button" id="deploy-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
                 </div>
-                <pre id="deploy-output">→ <b>prod-ar-token</b>
-  bindings: D1(3) KV(9) DO(12)
-  <span class="ok">✓ deployed</span> — 14:02:11
-→ <b>prod-ar-userinfo</b>
-  uploading <span class="hot">▮▮▮▮▮▮▮▯▯▯</span> 71%
-→ <b>prod-ar-management</b>
-  bundling… 388 modules
-  vars: ENVIRONMENT=prod
-  …</pre>
+                <pre id="deploy-output"></pre>
               </div>
             </div>
           </div>
@@ -5249,6 +5301,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="stat"><div class="s-k" data-i18n="web.loadConfig.environment">Environment</div><div class="s-v env-code" id="detail-env-name">-</div></div>
         </div>
 
+        <div id="env-initial-deploy-recovery" class="alert warn hidden">
+          <div class="a-head" data-i18n="web.envDetail.initialDeployRecoveryTitle">Initial deployment incomplete</div>
+          <p data-i18n="web.envDetail.initialDeployRecoveryDesc">The previous deployment stopped before verification. Existing resources will be reused when you resume.</p>
+          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</button>
+        </div>
+
         <div class="sechead"><span class="idx">URL</span><h3 data-i18n="web.complete.endpoints">Endpoints</h3></div>
         <div class="bigtable">
           <div class="cap"><span>URLs</span><em data-i18n="web.envDetail.verified">verified ✓</em></div>
@@ -5256,9 +5314,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
 
         <div id="env-control-automatic-provisioning" class="hidden">
-          <div class="sechead"><span class="idx">D1</span><h3>Automatic provisioning</h3><span class="hint" id="env-control-automatic-status">Checking...</span></div>
+          <div class="sechead"><span class="idx">D1</span><h3 data-i18n="web.envDetail.automaticProvisioningTitle">Automatic provisioning</h3><span class="hint" id="env-control-automatic-status" data-i18n="web.envDetail.automaticProvisioningChecking">Checking...</span></div>
           <div id="env-control-automatic-inputs" class="inline-form">
-            <button type="button" class="btn btn-ghost sm" id="btn-env-create-control-bootstrap-token">Create one-time Cloudflare token</button>
+            <button type="button" class="btn btn-ghost sm" id="btn-env-create-control-bootstrap-token" data-i18n="web.envDetail.createOneTimeCloudflareToken">Create one-time Cloudflare token</button>
             <input
               class="f-input sm"
               type="password"
@@ -5267,8 +5325,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               spellcheck="false"
               aria-label="One-time Cloudflare bootstrap token"
               placeholder="One-time bootstrap token"
+              data-i18n-placeholder="web.envDetail.oneTimeBootstrapTokenPlaceholder"
             >
-            <button type="button" class="btn btn-next sm" id="btn-env-enable-control-automatic">Enable</button>
+            <button type="button" class="btn btn-next sm" id="btn-env-enable-control-automatic" data-i18n="web.envDetail.enableAutomaticProvisioning">Enable</button>
           </div>
           <div class="f-help" id="env-control-automatic-message" aria-live="polite"></div>
         </div>
@@ -6849,6 +6908,36 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         div.appendChild(content);
       }
       return div;
+    }
+
+    function appendManualR2CleanupNotice(parent, targets) {
+      if (!Array.isArray(targets) || targets.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.delete.manualR2Title');
+      content.appendChild(title);
+
+      const list = document.createElement('ul');
+      for (const target of targets) {
+        const item = document.createElement('li');
+        item.textContent =
+          target.bucketName +
+          ' (' +
+          Number(target.objectCount || 0).toLocaleString() +
+          ' objects) ';
+        if (target.dashboardUrl) {
+          const link = document.createElement('a');
+          link.href = target.dashboardUrl;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.textContent = t('web.delete.manualR2Open');
+          item.appendChild(link);
+        }
+        list.appendChild(item);
+      }
+      content.appendChild(list);
+      parent.appendChild(createAlert('warning', content));
     }
 
     function createUrlItem(label, text, href) {
@@ -8566,6 +8655,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           status.textContent = '';
         }
       });
+      const description = document.getElementById('user-id-format-description');
+      const example = document.getElementById('user-id-format-example-value');
+      const descriptionKey = selected === 'uuid' ? 'userId.uuidDesc' : 'userId.nanoidDesc';
+      if (description) {
+        description.setAttribute('data-i18n', descriptionKey);
+        description.textContent = t(descriptionKey);
+      }
+      if (example) {
+        example.textContent = selected === 'uuid'
+          ? '550e8400-e29b-41d4-a716-446655440000'
+          : 'V1StGXR8_Z5jdHi6B-myT';
+      }
     }
 
     // Attach event listeners to all inputs
@@ -9589,8 +9690,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         controlBootstrapOwnership = result.ownership;
         if (dashboardWindow) dashboardWindow.location.replace(result.url);
         status.textContent = dashboardWindow
-          ? 'Create the token in Cloudflare Dashboard, then enter it below.'
-          : 'The browser blocked the new tab. Allow popups and select this button again.';
+          ? t('web.deploy.bootstrapTokenCreateStatus')
+          : t('web.deploy.bootstrapPopupBlocked');
       });
 
     document
@@ -9612,8 +9713,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         envControlBootstrapOwnership = result.ownership;
         if (dashboardWindow) dashboardWindow.location.replace(result.url);
         status.textContent = dashboardWindow
-          ? 'Enter the one-time token, then select Enable.'
-          : 'The browser blocked the Cloudflare Dashboard tab.';
+          ? t('web.envDetail.enterOneTimeTokenThenEnable')
+          : t('web.envDetail.bootstrapPopupBlocked');
       });
 
     document
@@ -9626,13 +9727,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const status = document.getElementById('env-control-automatic-message');
         let bootstrapToken = input.value.trim();
         if (!bootstrapToken) {
-          status.textContent = 'Enter the one-time Cloudflare token first.';
+          status.textContent = t('web.envDetail.enterOneTimeTokenFirst');
           input.focus();
           return;
         }
         input.value = '';
         button.disabled = true;
-        status.textContent = 'Preparing Control provisioning authority...';
+        status.textContent = t('web.envDetail.preparingControlAuthority');
         try {
           const prepared = await api('/control/automatic-provisioning/prepare', {
             method: 'POST',
@@ -9644,13 +9745,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             },
           });
           if (!prepared.success) throw new Error(prepared.error || 'Preparation failed');
-          status.textContent = 'Deploying the Control Worker configuration...';
+          status.textContent = t('web.envDetail.deployingControlWorker');
           const deployed = await api('/deploy/component/ar-control', {
             method: 'POST',
             body: { env: envName, dryRun: false, skipBuild: false },
           });
           if (!deployed.success) throw new Error(deployed.error || 'Control deployment failed');
-          status.textContent = 'Registering scoped credentials...';
+          status.textContent = t('web.envDetail.registeringScopedCredentials');
           const completed = await api('/control/automatic-provisioning/complete', {
             method: 'POST',
             body: {
@@ -9702,12 +9803,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
           status.textContent = manualCleanup
             ? (error.message || 'Automatic provisioning setup failed.') +
-              ' Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.'
+              ' ' + t('web.envDetail.revokeTokensBeforeRetry')
             : !pendingCanceled
               ? (error.message || 'Automatic provisioning setup failed.') +
-                ' The bootstrap token was revoked, but the pending state could not be reset. Retry or repair the pending operation.'
-            : (error.message || 'Automatic provisioning setup failed.') +
-              ' The bootstrap token was revoked and Automatic provisioning returned to Off.';
+                ' ' + t('web.envDetail.bootstrapRevokedPendingReset')
+              : (error.message || 'Automatic provisioning setup failed.') +
+                ' ' + t('web.envDetail.bootstrapRevokedDisabled');
         } finally {
           bootstrapToken = '';
           button.disabled = false;
@@ -9730,7 +9831,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (automaticProvisioningEnabled() && (!bootstrapToken || !controlBootstrapOwnership)) {
         document.getElementById('control-bootstrap-token-status').textContent =
-          'Create and enter the one-time Cloudflare bootstrap token before deployment.';
+          t('web.deploy.bootstrapTokenRequired');
         bootstrapTokenInput.focus();
         return;
       }
@@ -9903,6 +10004,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           status.textContent = t('web.status.error');
           status.className = '';
           btn.disabled = false;
+          btn.textContent = t('web.deploy.retryDeploy');
           btn.classList.remove('hidden');
           btnBack.classList.remove('hidden');
           btnCancel.classList.add('hidden');
@@ -9925,6 +10027,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         status.textContent = t('web.status.error');
         status.className = '';
         btn.disabled = false;
+        btn.textContent = t('web.deploy.retryDeploy');
         btn.classList.remove('hidden');
         btnBack.classList.remove('hidden');
         btnCancel.classList.add('hidden');
@@ -10672,6 +10775,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
       renderEnvDetailUrls(env);
       loadEnvControlAutomaticProvisioning(env.env);
+      loadInitialDeploymentRecovery(env.env);
       loadEnvEmailStatus(env.env);
       loadServiceSiteStatus(env.env);
       document.getElementById('env-email-progress').classList.add('hidden');
@@ -10749,6 +10853,92 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       loadResourceDetails(env);
     }
 
+    async function loadInitialDeploymentRecovery(envName) {
+      const recovery = document.getElementById('env-initial-deploy-recovery');
+      if (!recovery) return;
+      recovery.classList.add('hidden');
+      try {
+        const result = await api('/deploy/recovery/' + encodeURIComponent(envName));
+        recovery.classList.toggle('hidden', result.success !== true || result.canResume !== true);
+      } catch (error) {
+        recovery.classList.add('hidden');
+        console.warn('Failed to load initial deployment recovery status:', error);
+      }
+    }
+
+    function buildSetupConfigFromSavedConfig(savedConfig) {
+      const isNewFormat = savedConfig.version === '1.0.0' || savedConfig.environment?.prefix;
+      const env = isNewFormat ? savedConfig.environment?.prefix : savedConfig.env || 'prod';
+      const apiDomain = isNewFormat ? savedConfig.urls?.api?.custom : savedConfig.apiDomain;
+      const loginUiDomain = isNewFormat
+        ? savedConfig.urls?.loginUi?.custom
+        : savedConfig.loginUiDomain;
+      const adminUiDomain = isNewFormat
+        ? savedConfig.urls?.adminUi?.custom
+        : savedConfig.adminUiDomain;
+      return {
+        env,
+        apiDomain: stripProtocol(apiDomain) || null,
+        loginUiDomain: stripProtocol(loginUiDomain) || null,
+        adminUiDomain: stripProtocol(adminUiDomain) || null,
+        tenant: savedConfig.tenant || {
+          name: 'default',
+          displayName: 'Initial Tenant',
+          multiTenant: false,
+        },
+        components: {
+          api: true,
+          ...(savedConfig.components || {}),
+          loginUi: savedConfig.components?.loginUi ?? true,
+          adminUi: savedConfig.components?.adminUi ?? true,
+          saml: true,
+          async: true,
+          vc: true,
+          bridge: true,
+          policy: true,
+        },
+        features: {
+          queue: { enabled: savedConfig.features?.queue?.enabled === true },
+          r2: { enabled: savedConfig.features?.r2?.enabled !== false },
+          email: savedConfig.features?.email || { provider: 'none' },
+        },
+        profiles: savedConfig.profiles || buildProfilesConfig(),
+        controlPlane: {
+          automaticProvisioning: savedConfig.controlPlane?.automaticProvisioning === true,
+        },
+        database: savedConfig.database,
+        zoneId: isNewFormat ? savedConfig.urls?.api?.zoneId || null : savedConfig.zoneId || null,
+        customDomainBinding:
+          isNewFormat
+            ? savedConfig.urls?.api?.customDomainBinding === true
+            : savedConfig.customDomainBinding === true,
+      };
+    }
+
+    async function resumeInitialDeploymentFromEnvironment() {
+      if (!selectedEnvForDetail) return;
+      const button = document.getElementById('btn-resume-initial-deploy');
+      button.disabled = true;
+      try {
+        const response = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
+        if (!response.exists || !response.config) {
+          throw new Error(t('web.loadConfig.provisionedValid'));
+        }
+        config = buildSetupConfigFromSavedConfig(response.config);
+        controlBootstrapOwnership = null;
+        const bootstrapInput = document.getElementById('control-bootstrap-token');
+        if (bootstrapInput) bootstrapInput.value = '';
+        setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
+        renderDeployManualWildcardWarning();
+        setStep(8);
+        showSection('deploy');
+      } catch (error) {
+        alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function renderEnvControlAutomaticProvisioning(result) {
       const section = document.getElementById('env-control-automatic-provisioning');
       const status = document.getElementById('env-control-automatic-status');
@@ -10760,32 +10950,34 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const capabilityState = result.authority?.capabilityState ||
         (result.enabled ? 'pending' : 'disabled');
       status.textContent = capabilityState === 'ready'
-        ? 'On'
+        ? t('web.envDetail.automaticProvisioningOn')
         : capabilityState === 'disabled'
-          ? 'Off'
+          ? t('web.envDetail.automaticProvisioningOff')
           : capabilityState;
       inputs.classList.toggle('hidden', capabilityState === 'ready');
       const missingResourceClasses = Array.isArray(result.missingResourceClasses)
         ? result.missingResourceClasses.join(', ')
         : '';
       message.textContent = capabilityState === 'ready'
-        ? 'Scoped Control Worker credentials are registered.'
+        ? t('web.envDetail.automaticProvisioningCredentialsRegistered')
         : capabilityState === 'blocked'
-          ? 'Automatic provisioning is blocked' +
-            (missingResourceClasses ? ' (missing: ' + missingResourceClasses + ')' : '') +
-            '. Enter a new one-time token to repair it.'
+          ? t('web.envDetail.automaticProvisioningBlocked') +
+            (missingResourceClasses
+              ? ' ' + t('web.envDetail.automaticProvisioningMissing', { missing: missingResourceClasses })
+              : '') +
+            ' ' + t('web.envDetail.automaticProvisioningRepairHint')
           : '';
     }
 
     async function loadEnvControlAutomaticProvisioning(envName) {
       const status = document.getElementById('env-control-automatic-status');
-      status.textContent = 'Checking...';
+      status.textContent = t('web.envDetail.automaticProvisioningChecking');
       try {
         renderEnvControlAutomaticProvisioning(
           await api('/control/automatic-provisioning/status?env=' + encodeURIComponent(envName))
         );
       } catch (error) {
-        status.textContent = 'Unavailable';
+        status.textContent = t('web.envDetail.automaticProvisioningUnavailable');
       }
     }
 
@@ -12705,6 +12897,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pane.classList.toggle('on', pane.getAttribute('data-env-pane') === name);
         });
 
+        const activePane = [...document.querySelectorAll('[data-env-pane]')].find(
+          (pane) => pane.getAttribute('data-env-pane') === name
+        );
+        if (activePane) {
+          activePane.classList.remove('env-tab-enter');
+          void activePane.offsetWidth;
+          activePane.classList.add('env-tab-enter');
+        }
+
         if (name === 'migrations' && selectedEnvForDetail) {
           loadMigrationStatus(selectedEnvForDetail.env);
         }
@@ -12740,6 +12941,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (selectedEnvForDetail) {
         showDeleteConfirmation(selectedEnvForDetail);
       }
+    });
+
+    document.getElementById('btn-resume-initial-deploy')?.addEventListener('click', () => {
+      resumeInitialDeploymentFromEnvironment();
     });
 
     // Admin setup button
@@ -12966,6 +13171,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else {
           result.textContent = '';
           result.appendChild(createAlert('error', t('web.delete.errorList', { errors: (deleteResult.errors || []).join(', ') })));
+          appendManualR2CleanupNotice(result, deleteResult.manualR2);
           btn.classList.remove('hidden');
           btn.disabled = false;
         }

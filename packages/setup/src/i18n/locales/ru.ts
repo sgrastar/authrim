@@ -783,6 +783,65 @@ const ru: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Инициализирует Control Plane и первые shards; дальнейшая емкость создается автоматически.',
+  'web.db.controlPlaneWorkerDesc':
+    'Эта функция позволяет Authrim управлять базами данных tenant. Нужные ресурсы управления создаются при настройке.',
+  'web.db.controlPlaneTenantPlacement':
+    'Начальный tenant начинает с собственного места хранения. Для добавляемых tenant можно выбрать отдельное место.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim автоматически управляет созданием баз данных и маршрутизацией подключений.',
+  'web.db.automaticProvisioningTitle': 'Автоматическое создание баз tenant',
+  'web.db.automaticProvisioningOn': 'Вкл. (создавать автоматически)',
+  'web.db.automaticProvisioningOnDesc':
+    'При росте числа tenant или объема данных Authrim автоматически создает нужные базы.',
+  'web.db.automaticProvisioningTokenNote':
+    'Выделенный Control Worker хранит и использует Cloudflare API token с ограниченными правами, необходимый для создания баз данных tenant.',
+  'web.db.automaticProvisioningOff': 'Выкл. (создавать через Setup)',
+  'web.db.automaticProvisioningOffDesc':
+    'Базы не создаются автоматически. Создайте их через Setup, когда это потребуется.',
+  'web.db.automaticProvisioningNote': 'При отключении разделение данных tenant сохраняется.',
+  'web.deploy.controlCredentialsTitle': 'Подключение к Cloudflare',
+  'web.deploy.bootstrapTokenTitle': 'Временный токен Cloudflare для автоматической настройки',
+  'web.deploy.cloudflareLoginNote':
+    'Вход в Cloudflare Dashboard отдельный от Wrangler OAuth и может потребовать повторного входа.',
+  'web.deploy.createBootstrapToken': 'Создать одноразовый токен Cloudflare',
+  'web.deploy.bootstrapTokenLabel': 'Временный токен Cloudflare',
+  'web.deploy.bootstrapTokenPlaceholder': 'Введите временный токен Cloudflare',
+  'web.deploy.bootstrapTokenHelp':
+    'Этот токен используется один раз и отзывается после регистрации необходимых токенов.',
+  'web.deploy.bootstrapTokenDescription':
+    'Этот временный токен позволяет Authrim автоматически создавать базы данных тенантов. Нужны права на создание и изменение API-токенов: Account API Tokens: Write/Edit для токена аккаунта или API Tokens: Write/Edit для пользовательского токена. Setup использует его для создания при необходимости API-токенов с ограниченной областью для D1, Workers, KV и R2, регистрирует их в Control Worker и затем отзывает временный токен.',
+  'web.deploy.manualDnsSectionTitle': 'Настройки DNS',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Создайте временный токен в Cloudflare Dashboard и введите его ниже.',
+  'web.deploy.bootstrapPopupBlocked':
+    'Браузер заблокировал новую вкладку. Разрешите всплывающие окна и нажмите кнопку снова.',
+  'web.deploy.bootstrapTokenRequired':
+    'Перед развертыванием создайте и введите временный токен Cloudflare.',
+  'web.envDetail.automaticProvisioningTitle': 'Автоматическое провижининг',
+  'web.envDetail.automaticProvisioningChecking': 'Проверка...',
+  'web.envDetail.automaticProvisioningUnavailable': 'Недоступно',
+  'web.envDetail.createOneTimeCloudflareToken': 'Создать одноразовый токен Cloudflare',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Одноразовый bootstrap-токен',
+  'web.envDetail.enableAutomaticProvisioning': 'Включить',
+  'web.envDetail.enterOneTimeTokenThenEnable': 'Введите одноразовый токен и выберите «Включить».',
+  'web.envDetail.bootstrapPopupBlocked': 'Браузер заблокировал вкладку Cloudflare Dashboard.',
+  'web.envDetail.enterOneTimeTokenFirst': 'Сначала введите одноразовый токен Cloudflare.',
+  'web.envDetail.preparingControlAuthority': 'Подготовка полномочий провижининга Control...',
+  'web.envDetail.deployingControlWorker': 'Развертывание конфигурации Control Worker...',
+  'web.envDetail.registeringScopedCredentials': 'Регистрация ограниченных учетных данных...',
+  'web.envDetail.automaticProvisioningOn': 'Вкл.',
+  'web.envDetail.automaticProvisioningOff': 'Выкл.',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    'Ограниченные учетные данные Control Worker зарегистрированы.',
+  'web.envDetail.automaticProvisioningBlocked': 'Автоматическое провижининг заблокировано.',
+  'web.envDetail.automaticProvisioningMissing': '(отсутствует: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint': 'Введите новый одноразовый токен для исправления.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    'Перед повторной попыткой отзовите указанные bootstrap- и дочерние токены Authrim в Cloudflare Dashboard.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'Bootstrap-токен отозван, но ожидающее состояние не удалось сбросить.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'Bootstrap-токен отозван, автоматическое провижининг выключено.',
 
   // Web UI Email
   'web.email.title': 'Провайдер email',
@@ -923,8 +982,9 @@ const ru: Translations = {
   'web.form.userIdFormat': 'Формат ID пользователя',
   'web.form.userIdNanoid': 'NanoID (рекомендуется)',
   'web.form.userIdUuid': 'UUID v4',
+  'web.form.userIdExample': 'Пример:',
   'web.form.userIdFormatHint':
-    'Формат генерации ID пользователей. Нельзя изменить после создания пользователей.',
+    'Нельзя изменить после создания пользователей.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

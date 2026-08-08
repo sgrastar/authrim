@@ -365,7 +365,7 @@ export class D1PluginRunnerStateRepository {
     for (const row of candidates) {
       if (
         !SAFE_ID.test(row.tenant_shard_id) ||
-        !/^TDB_[A-Z0-9_]{1,120}$/u.test(row.binding_ref) ||
+        !/^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u.test(row.binding_ref) ||
         (row.data_role !== 'tenant_core/default' && row.data_role !== 'tenant_core/users')
       ) {
         throw new Error('plugin_runner_shard_candidate_invalid');

@@ -136,11 +136,16 @@ describe('Cloudflare pure resource contracts', () => {
     expect(
       filterKnownD1NamesForEnvironment('prod', [
         'prod-authrim-core-db',
+        'prod-authrim-tenant-core-default-default-db-a1b2c3d4',
         'authrim-prod-core-default-default-a1b2c3d4',
         'prod-authrim-core-db',
         'production-authrim-core-db',
       ])
-    ).toEqual(['prod-authrim-core-db', 'authrim-prod-core-default-default-a1b2c3d4']);
+    ).toEqual([
+      'prod-authrim-core-db',
+      'prod-authrim-tenant-core-default-default-db-a1b2c3d4',
+      'authrim-prod-core-default-default-a1b2c3d4',
+    ]);
     expect(
       filterKnownQueueNamesForEnvironment('prod', [
         'prod-audit-queue',

@@ -582,6 +582,36 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     );
   });
 
+  it('provisions an email-less passkey account without creating an email lookup index', async () => {
+    const request = input({
+      flow: 'passkey',
+      email: null,
+      runtimeUser: {
+        active: true,
+        emailVerified: false,
+        userType: 'end_user',
+        sourceRef: 'auth:passkey',
+        piiFields: { name: true },
+        sensitiveValues: { name: 'Passkey User' },
+        customAttributesJson: JSON.stringify({ preferred_username: 'user-a' }),
+      },
+    });
+
+    await expect(worker().provisionAuthAccount(request)).resolves.toMatchObject({
+      status: 201,
+      accountId: 'account:user-a',
+      userId: 'user-a',
+    });
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        actorId: 'auth:passkey',
+        email: null,
+      }),
+      expect.anything()
+    );
+  });
+
   it('rejects anonymous route and authority digest mismatches', async () => {
     await expect(
       worker().provisionAuthAccount(

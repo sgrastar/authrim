@@ -38,9 +38,10 @@
 	import type { APIError } from '$lib/api/client';
 	import { messageForCaughtError } from '$lib/errors/display-error';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 
-	const { brandingStore, loginUIPageStore } = useLoginUIStores();
+	const { brandingStore, languageStore, loginUIPageStore } = useLoginUIStores();
 
 	let loading = $state(true);
 	let logoutLoading = $state(false);
@@ -76,6 +77,7 @@
 	let securityLoading = $state(false);
 	let actionLoading = $state('');
 	let passkeySupported = $state(false);
+	let currentLocale = $state<Locales>(getLocale());
 	let reauthModalOpen = $state(false);
 	let reauthLoading = $state(false);
 	let reauthError = $state('');
@@ -160,13 +162,34 @@
 		);
 	}
 
+	function localeVariants(locale: string): string[] {
+		return [...new Set([locale, locale.replace('_', '-'), locale.split('-')[0]])];
+	}
+
+	function localeCandidates(locale: string): string[] {
+		return [...localeVariants(locale), ...localeVariants(languageStore.defaultLocale)].filter(
+			(candidate, index, values) => values.indexOf(candidate) === index
+		);
+	}
+
 	function localizedPageCopy(): { title: string; description: string } {
 		const definition = accountCapabilities?.account_page?.definition;
-		const localized = definition?.localizations?.[getLocale()];
-		const themeTitle = loginUIPageStore.getLocalizedText(getLocale(), 'accountTitle');
+		const localizations = localeCandidates(currentLocale).map(
+			(locale) => definition?.localizations?.[locale]
+		);
+		const themeTitle = localeCandidates(currentLocale)
+			.map((locale) => loginUIPageStore.getLocalizedText(locale, 'accountTitle'))
+			.find((value): value is string => Boolean(value));
 		return {
-			title: themeTitle ?? localized?.title ?? definition?.title ?? $LL.account_title(),
-			description: localized?.description || definition?.description || ''
+			title:
+				themeTitle ??
+				localizations.find((entry) => Boolean(entry?.title))?.title ??
+				definition?.title ??
+				$LL.account_title(),
+			description:
+				localizations.find((entry) => Boolean(entry?.description))?.description ??
+				definition?.description ??
+				''
 		};
 	}
 
@@ -201,13 +224,23 @@
 	}
 
 	function localizedScreenFields(screen: AccountPageScreen): AccountPageScreenField[] {
-		const language = getLocale();
-		const localized = screen.localizations?.[language]?.fields ?? {};
+		const localized =
+			localeVariants(currentLocale)
+				.map((locale) => screen.localizations?.[locale]?.fields)
+				.find((fields) => fields && Object.keys(fields).length > 0) ?? {};
+		const defaultLocalized =
+			localeVariants(languageStore.defaultLocale)
+				.map((locale) => screen.localizations?.[locale]?.fields)
+				.find((fields) => fields && Object.keys(fields).length > 0) ?? {};
 		return [...screen.fields]
 			.sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
 			.map((field, index) => {
 				const key = field.block_id ?? `${field.field}-${index}`;
-				return { ...field, ...(localized[key] ?? {}) };
+				return {
+					...field,
+					...(defaultLocalized[key] ?? {}),
+					...(localized[key] ?? {})
+				};
 			});
 	}
 
@@ -293,7 +326,10 @@
 	onMount(() => {
 		const handleLocaleChange = (event: Event) => {
 			const locale = (event as CustomEvent<{ locale?: string }>).detail?.locale;
-			if (locale) void refreshLocalizedAccountData(locale);
+			if (locale) {
+				currentLocale = locale as Locales;
+				void refreshLocalizedAccountData(locale);
+			}
 		};
 		window.addEventListener('authrim:locale-change', handleLocaleChange);
 		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);

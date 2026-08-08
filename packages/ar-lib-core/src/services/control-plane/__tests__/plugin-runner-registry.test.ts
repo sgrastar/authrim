@@ -26,14 +26,14 @@ function registry(overrides: Partial<PluginRunnerRegistryInput> = {}): PluginRun
     shards: [
       {
         shardId: 'shard-a',
-        bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
         dataRole: 'tenant_core/default',
         residencyPartition: 'jp',
         routeGeneration: 1,
       },
       {
         shardId: 'shard-b',
-        bindingRef: 'TDB_USERS_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
         dataRole: 'tenant_core/users',
         residencyPartition: 'jp',
         routeGeneration: 2,

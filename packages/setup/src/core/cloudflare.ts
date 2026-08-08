@@ -52,6 +52,12 @@ const QUEUE_PROVISIONING_DEFINITIONS = [
 ] as const;
 const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
 const WORKER_DELETE_PROPAGATION_DELAY_MS = 20_000;
+const WORKER_DELETE_MAX_ATTEMPTS = 3;
+const WORKER_DELETE_RETRY_DELAY_MS = 1_000;
+// Cloudflare's REST API is rate limited. Keep deletion concurrent, while letting the request
+// retry/backoff logic absorb transient 429/971 responses instead of adding a fixed delay per object.
+const R2_OBJECT_DELETE_CONCURRENCY = 5;
+export const R2_MANUAL_CLEANUP_THRESHOLD = 2_000;
 
 // =============================================================================
 // Types
@@ -4885,7 +4891,7 @@ export function getQueueConsumerWorkerNamesForDeletion(
 
 export async function deleteQueueConsumer(queueName: string, workerName: string): Promise<boolean> {
   try {
-    await wrangler(['queues', 'consumer', 'remove', queueName, workerName]);
+    await wrangler(['queues', 'consumer', 'worker', 'remove', queueName, workerName]);
     return true;
   } catch {
     return false;
@@ -4918,6 +4924,33 @@ export async function deleteQueueConsumersForWorkers(
 // =============================================================================
 
 const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/u;
+
+export interface R2ManualCleanupTarget {
+  bucketName: string;
+  objectCount: number;
+  dashboardUrl: string | null;
+}
+
+export type R2BucketDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'manual_cleanup_required'; target: R2ManualCleanupTarget }
+  | { status: 'failed'; error: string };
+
+export function getR2BucketDashboardUrl(
+  accountId: string | null | undefined,
+  bucketName: string | null | undefined
+): string | null {
+  if (
+    !accountId ||
+    !/^[a-f0-9]{32}$/u.test(accountId) ||
+    !bucketName ||
+    !R2_BUCKET_NAME_PATTERN.test(bucketName)
+  ) {
+    return null;
+  }
+
+  return `https://dash.cloudflare.com/${accountId}/r2/default/buckets/${encodeURIComponent(bucketName)}`;
+}
 
 function assertSafeR2ObjectKey(key: string): void {
   const segments = key.split('/');
@@ -5488,7 +5521,8 @@ export function filterKnownD1NamesForEnvironment(env: string, names: string[]): 
   return Array.from(
     new Set(
       names.filter(
-        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+        (name) =>
+          name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
       )
     )
   );
@@ -5509,14 +5543,16 @@ export function filterKnownQueueNamesForEnvironment(env: string, names: string[]
   );
 }
 
-const CONTROL_SHARD_D1_SUFFIX = /^(?:core-default|core-users|pii)-[a-z0-9-]+-[a-f0-9]{8}$/u;
+const CONTROL_SHARD_D1_SUFFIX =
+  /^(?:(?:tenant-core-default|tenant-core-users|tenant-pii|tenant-lookup)-[a-z0-9-]+-db-[a-f0-9]{8}|(?:core-default|core-users|pii|lookup)-[a-z0-9-]+(?:-db)?-[a-f0-9]{8})$/u;
 const CONTROL_PLUGIN_D1_SUFFIX = /^[a-f0-9]{32}-d1$/u;
 const CONTROL_PLUGIN_KV_SUFFIX = /^[a-f0-9]{32}-kv$/u;
 const CONTROL_PLUGIN_R2_SUFFIX = /^[a-f0-9]{32}-r2$/u;
 
 function controlManagedSuffix(env: string, name: string): string | null {
-  const prefix = `authrim-${env}-`;
-  return name.startsWith(prefix) ? name.slice(prefix.length) : null;
+  const prefixes = [`${env}-authrim-`, `authrim-${env}-`];
+  const prefix = prefixes.find((candidate) => name.startsWith(candidate));
+  return prefix ? name.slice(prefix.length) : null;
 }
 
 export function filterControlManagedD1ForEnvironment(
@@ -5622,18 +5658,95 @@ export async function listR2Buckets(
 /**
  * List Queues
  */
+type QueueListRow = { name: string; id?: string };
+
+function normalizeQueueRows(rows: unknown): QueueListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('Queue list was not an array');
+  }
+
+  return rows
+    .map((row): QueueListRow | null => {
+      if (!row || typeof row !== 'object') return null;
+      const value = row as {
+        name?: unknown;
+        id?: unknown;
+        queue_name?: unknown;
+        queue_id?: unknown;
+      };
+      const name =
+        typeof value.queue_name === 'string'
+          ? value.queue_name
+          : typeof value.name === 'string'
+            ? value.name
+            : '';
+      const id =
+        typeof value.queue_id === 'string'
+          ? value.queue_id
+          : typeof value.id === 'string'
+            ? value.id
+            : undefined;
+      const normalizedName = name.trim();
+      return normalizedName.length > 0
+        ? ({ name: normalizedName, id } satisfies QueueListRow)
+        : null;
+    })
+    .filter((row): row is QueueListRow => row !== null);
+}
+
+export function parseQueueRows(stdout: string): QueueListRow[] {
+  try {
+    return parseValidatedJsonOutput(
+      stdout,
+      normalizeQueueRows,
+      'Wrangler output did not contain a valid Queue list'
+    );
+  } catch {
+    const lines = stripAnsiSequences(stdout).split('\n');
+    const tableLines = lines.filter((line) => line.includes('│'));
+    const headerLine = tableLines.find((line) =>
+      /(?:^|│)\s*(?:name|queue(?:[_ ]?name)?)\s*(?:│|$)/iu.test(line)
+    );
+    if (!headerLine) return [];
+
+    const headerCells = headerLine.split('│').map((cell) => cell.trim().toLowerCase());
+    const nameIndex = headerCells.findIndex((cell) => /^(?:name|queue(?:[_ ]?name)?)$/u.test(cell));
+    if (nameIndex < 0) return [];
+
+    return tableLines
+      .filter((line) => line !== headerLine && !/^[\s├┼┤┌┐└┘─]+$/u.test(line))
+      .map((line) => line.split('│').map((cell) => cell.trim())[nameIndex] ?? '')
+      .filter((name) => name.length > 0 && !/^name$/iu.test(name))
+      .map((name) => ({ name }));
+  }
+}
+
+async function listQueuesViaApi(): Promise<QueueListRow[] | null> {
+  try {
+    return await listCloudflarePaginatedResourcesViaApi({
+      path: 'queues',
+      label: 'Queue list',
+      normalizeRows: normalizeQueueRows,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function listQueues(): Promise<Array<{ name: string; id?: string }>> {
+  let wranglerQueues: QueueListRow[] = [];
   try {
     const { stdout } = await wrangler(['queues', 'list']);
-    // Parse JSON output
-    const queues = JSON.parse(stdout);
-    return queues.map((q: { queue_name?: string; queue_id?: string }) => ({
-      name: q.queue_name || '',
-      id: q.queue_id,
-    }));
+    // Parse JSON or the table output emitted by current Wrangler versions.
+    wranglerQueues = parseQueueRows(stdout);
+    if (wranglerQueues.length > 0) return wranglerQueues;
   } catch {
-    return [];
+    // Fall back to the account API below.
   }
+
+  const apiQueues = await listQueuesViaApi();
+  if (apiQueues && apiQueues.length > 0) return apiQueues;
+  return wranglerQueues;
 }
 
 /**
@@ -5905,14 +6018,47 @@ export async function detectEnvironments(
 /**
  * Delete a Worker
  */
-export async function deleteWorker(name: string): Promise<boolean> {
-  try {
-    await wrangler(['delete', '--name', name, '--force']);
-    return true;
-  } catch {
-    // Worker might not exist
-    return false;
+type WorkerDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'already_absent'; error: string }
+  | { status: 'failed'; error: string };
+
+function isWorkerAlreadyAbsentError(error: string): boolean {
+  return /(not found|does not exist|could not find|no such script|10007)/iu.test(error);
+}
+
+async function deleteWorkerWithResult(
+  name: string,
+  onProgress?: (message: string) => void
+): Promise<WorkerDeleteResult> {
+  let lastError = 'unknown error';
+
+  for (let attempt = 1; attempt <= WORKER_DELETE_MAX_ATTEMPTS; attempt++) {
+    try {
+      await wrangler(['delete', '--name', name, '--force']);
+      return { status: 'deleted' };
+    } catch (error) {
+      lastError = sanitizeError(error);
+      if (isWorkerAlreadyAbsentError(lastError)) {
+        return { status: 'already_absent', error: lastError };
+      }
+      if (attempt < WORKER_DELETE_MAX_ATTEMPTS) {
+        onProgress?.(
+          `  ⏳ Retrying Worker deletion for ${name} (${attempt + 1}/${WORKER_DELETE_MAX_ATTEMPTS})...`
+        );
+        if (process.env.NODE_ENV !== 'test') {
+          await sleep(WORKER_DELETE_RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
   }
+
+  return { status: 'failed', error: lastError };
+}
+
+export async function deleteWorker(name: string): Promise<boolean> {
+  const result = await deleteWorkerWithResult(name);
+  return result.status === 'deleted';
 }
 
 /**
@@ -6319,28 +6465,53 @@ async function removeAllR2ObjectsViaApi(
   bucketName: string,
   credentials: { accountId: string; token: string },
   onProgress?: (message: string) => void
-): Promise<void> {
+): Promise<R2ManualCleanupTarget | null> {
   const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
   if (objectKeys.length === 0) {
-    return;
+    return null;
+  }
+
+  if (objectKeys.length >= R2_MANUAL_CLEANUP_THRESHOLD) {
+    const target: R2ManualCleanupTarget = {
+      bucketName,
+      objectCount: objectKeys.length,
+      dashboardUrl: getR2BucketDashboardUrl(credentials.accountId, bucketName),
+    };
+    onProgress?.(
+      `  ⚠️ Skipping R2 cleanup for ${bucketName}: ${objectKeys.length} objects require manual Dashboard cleanup`
+    );
+    return target;
   }
 
   onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
+  let completed = 0;
   let removed = 0;
-  for (const [index, objectKey] of objectKeys.entries()) {
-    await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
-    removed += 1;
-    const completed = index + 1;
-    if (completed % 50 === 0 || completed === objectKeys.length) {
-      onProgress?.(
-        `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
-      );
-    }
-    if (process.env.NODE_ENV !== 'test') await sleep(300);
-  }
+  let nextIndex = 0;
+  const workerCount = Math.min(R2_OBJECT_DELETE_CONCURRENCY, objectKeys.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < objectKeys.length) {
+        const objectKey = objectKeys[nextIndex];
+        nextIndex += 1;
+        try {
+          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+          removed += 1;
+        } finally {
+          completed += 1;
+          if (completed % 50 === 0 || completed === objectKeys.length) {
+            onProgress?.(
+              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+            );
+          }
+        }
+      }
+    })
+  );
   onProgress?.(
     `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
   );
+  return null;
 }
 
 /**
@@ -6353,21 +6524,29 @@ export async function deleteR2Bucket(
     onProgress?: (message: string) => void;
     apiCredentials?: { accountId: string; token: string } | null;
   } = {}
-): Promise<boolean> {
+): Promise<R2BucketDeleteResult> {
   try {
     const credentials =
       options.apiCredentials === undefined ? await getR2ApiCredentials() : options.apiCredentials;
     if (credentials) {
-      await removeAllR2ObjectsViaApi(name, credentials, options.onProgress);
+      const manualCleanupTarget = await removeAllR2ObjectsViaApi(
+        name,
+        credentials,
+        options.onProgress
+      );
+      if (manualCleanupTarget) {
+        return { status: 'manual_cleanup_required', target: manualCleanupTarget };
+      }
       await deleteR2BucketViaApi(name, credentials);
     } else {
       await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
       await wrangler(['r2', 'bucket', 'delete', name]);
     }
-    return true;
+    return { status: 'deleted' };
   } catch (error) {
-    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${sanitizeError(error)}`);
-    return false;
+    const detail = sanitizeError(error);
+    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${detail}`);
+    return { status: 'failed', error: detail };
   }
 }
 
@@ -6384,6 +6563,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     r2: string[];
     pages: string[];
   };
+  manualR2: R2ManualCleanupTarget[];
   errors: string[];
 }> {
   const {
@@ -6411,6 +6591,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     r2: [] as string[],
     pages: [] as string[],
   };
+  const manualR2: R2ManualCleanupTarget[] = [];
   const errors: string[] = [];
 
   // Get environment info first
@@ -6445,6 +6626,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     return {
       success: false,
       deleted,
+      manualR2,
       errors: [`Environment '${env}' not found`],
     };
   }
@@ -6499,11 +6681,23 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   onProgress('');
 
   // Queue consumers must be detached before Cloudflare allows the Worker script to be deleted.
-  if (deleteWorkers && envInfo.workers.length > 0 && envInfo.queues.length > 0) {
+  const queuesForConsumerDetach =
+    deleteWorkers && envInfo.workers.length > 0
+      ? Array.from(
+          new Map(
+            [...envInfo.queues, ...(await listQueues())].map((queue) => [queue.name, queue])
+          ).values()
+        )
+      : envInfo.queues;
+  if (deleteWorkers && envInfo.workers.length > 0 && queuesForConsumerDetach.length > 0) {
     const queueConsumerWorkerNames = getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers);
     if (queueConsumerWorkerNames.length > 0) {
-      onProgress(`📨 Detaching Queue Consumers (${envInfo.queues.length})...`);
-      await deleteQueueConsumersForWorkers(envInfo.queues, queueConsumerWorkerNames, onProgress);
+      onProgress(`📨 Detaching Queue Consumers (${queuesForConsumerDetach.length})...`);
+      await deleteQueueConsumersForWorkers(
+        queuesForConsumerDetach,
+        queueConsumerWorkerNames,
+        onProgress
+      );
       if (queueConsumerDetachPropagationDelayMs > 0) {
         onProgress(
           `  ⏳ Waiting ${Math.ceil(
@@ -6521,15 +6715,19 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(`🔧 Deleting Workers (${envInfo.workers.length})...`);
     for (const worker of envInfo.workers) {
       onProgress(`  ⏳ Deleting: ${worker.name}...`);
-      const success = await deleteWorker(worker.name);
-      if (success) {
+      const workerResult = await deleteWorkerWithResult(worker.name, onProgress);
+      if (workerResult.status === 'deleted') {
         deleted.workers.push(worker.name);
         onProgress(`  ✅ ${worker.name}`);
+      } else if (workerResult.status === 'already_absent') {
+        deleted.workers.push(worker.name);
+        onProgress(`  ⚠️ ${worker.name} (already absent)`);
       } else {
-        onProgress(`  ⚠️ ${worker.name} (not found or already deleted)`);
+        errors.push(`Failed to delete Worker: ${worker.name} (${workerResult.error})`);
+        onProgress(`  ❌ ${worker.name} - ${workerResult.error}`);
       }
     }
-    if (envInfo.queues.length > 0 && workerDeletePropagationDelayMs > 0) {
+    if (queuesForConsumerDetach.length > 0 && workerDeletePropagationDelayMs > 0) {
       onProgress(
         `  ⏳ Waiting ${Math.ceil(
           workerDeletePropagationDelayMs / 1000
@@ -6549,14 +6747,20 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const success = await deleteR2Bucket(bucket.name, {
+      const r2Result = await deleteR2Bucket(bucket.name, {
         objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
         onProgress,
         apiCredentials: r2ApiCredentials,
       });
-      if (success) {
+      if (r2Result.status === 'deleted') {
         deleted.r2.push(bucket.name);
         onProgress(`  ✅ ${bucket.name}`);
+      } else if (r2Result.status === 'manual_cleanup_required') {
+        manualR2.push(r2Result.target);
+        errors.push(
+          `R2 bucket ${bucket.name} requires manual cleanup (${r2Result.target.objectCount} objects)`
+        );
+        onProgress(`  ⚠️ ${bucket.name} requires manual Dashboard cleanup`);
       } else {
         errors.push(
           `Failed to delete R2: ${bucket.name} (bucket may still contain objects or require manual cleanup)`
@@ -6659,6 +6863,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   return {
     success: errors.length === 0,
     deleted,
+    manualR2,
     errors,
   };
 }

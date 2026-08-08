@@ -95,7 +95,7 @@ function registry(generation: number, shardCount: number): PluginRunnerRegistryC
       const suffix = String(index).padStart(4, '0');
       return {
         shardId: `shard-${suffix}`,
-        bindingRef: `TDB_USERS_JP_${suffix}_CORE`,
+        bindingRef: `TEST_TDB_USERS_JP_${suffix}_CORE`,
         dataRole: 'tenant_core/users' as const,
         residencyPartition: 'jp',
         routeGeneration: generation,

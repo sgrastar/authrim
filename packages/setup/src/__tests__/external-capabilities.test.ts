@@ -236,7 +236,7 @@ describe('external capability manifests', () => {
   });
 
   it('rejects raw data bindings, token bindings, and inconsistent execution policy', () => {
-    for (const name of ['DB_ADMIN', 'TDB_USERS_0001_CORE', 'CLOUDFLARE_D1_API_TOKEN']) {
+    for (const name of ['DB_ADMIN', 'TEST_TDB_USERS_0001_CORE', 'CLOUDFLARE_D1_API_TOKEN']) {
       const manifest = pluginManifest();
       manifest.bindings[0].name = name;
       expect(() => parsePluginWorkerCapabilityManifest(manifest)).toThrow(

@@ -196,6 +196,37 @@ describe('routed account provisioning resume boundary', () => {
     expect(JSON.stringify(stored)).not.toContain('Person');
   });
 
+  it('returns the stable user candidate needed to resume an email-less Passkey provision', async () => {
+    const provision = vi.fn().mockResolvedValue({
+      status: 202,
+      operationId: OPERATION_ID,
+      accountId: 'account:user-a',
+      userId: 'user-a',
+    });
+    const { c } = context({ provision });
+    const result = await provisionEmailAccount(c, {
+      ...provisioningInput(),
+      flow: 'passkey',
+      email: null,
+      runtimeUser: {
+        active: true,
+        emailVerified: false,
+        userType: 'end_user',
+        sourceRef: 'auth:passkey',
+        piiFields: {},
+        sensitiveValues: {},
+        customAttributesJson: JSON.stringify({ preferred_username: 'user-a' }),
+      },
+    });
+
+    expect(result.status).toBe('pending');
+    if (result.status !== 'pending') throw new Error('expected pending result');
+    expect(await result.response.json()).toMatchObject({
+      status: 'provisioning',
+      resume_user_id: 'user-a',
+    });
+  });
+
   it('derives a stable idempotency key while keeping candidate operation IDs unique', async () => {
     const provision = vi.fn().mockResolvedValue({
       status: 201,

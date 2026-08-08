@@ -15,8 +15,10 @@ describe('tenant-database-naming', () => {
       role: 'tenant_core',
     });
 
-    expect(plan.databaseName).toBe('authrim-prod-us-example-university-core');
-    expect(plan.bindingRef).toMatch(/^TDB_EXAMPLE_UNIVERSITY_[A-Z0-9]{6}_CORE$/);
+    expect(plan.databaseName).toMatch(
+      /^prod-us-authrim-tenant-example-university-core-db-[a-f0-9]{8}$/u
+    );
+    expect(plan.bindingRef).toMatch(/^PROD_US_TDB_EXAMPLE_UNIVERSITY_[A-F0-9]{8}_CORE$/u);
     expect(plan.workerShard).toBe('primary');
     expect(
       buildTenantDatabaseBindingPlan({

@@ -428,7 +428,7 @@ const SHARD_CLEANUP_STATES = new Set([
 	'succeeded',
 	'blocked'
 ]);
-const SAFE_D1_BINDING = /^TDB_[A-Z0-9_]{1,123}$/u;
+const SAFE_D1_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
 const SAFE_DATABASE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u;
 const CAPACITY_PREVIEW_KEYS = new Set([
 	'dryRun',

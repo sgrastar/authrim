@@ -10,6 +10,9 @@ const source = readFileSync(
 describe('Account Page published composition', () => {
 	it('uses localized page copy and evaluates allowlisted placement conditions', () => {
 		expect(source).toContain('localizedPageCopy().title');
+		expect(source).toContain('currentLocale = locale as Locales');
+		expect(source).toContain('screen.localizations?.[locale]?.fields');
+		expect(source).toContain('languageStore.defaultLocale');
 		expect(source).toContain('placementVisible(item.condition)');
 		expect(source).toContain("case 'passkey_enabled'");
 		expect(source).toContain("case 'consent_records_available'");

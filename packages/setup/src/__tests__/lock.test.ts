@@ -35,7 +35,7 @@ function createTestLock(): AuthrimLock {
     queues: [],
     r2: [],
   });
-  lock.d1.TDB_SLOT_0001_CORE = {
+  lock.d1.TEST_TDB_SLOT_0001_CORE = {
     name: 'authrim-test-tdb-slot-0001-core',
     id: 'stale-tenant-core-id',
   };
@@ -136,7 +136,7 @@ describe('reconcileD1ResourcesInLock', () => {
       { name: 'authrim-test-tdb-slot-0001-core', uuid: 'live-tenant-core-id' },
     ]);
 
-    expect(result.updatedBindings).toEqual(['DB_PII', 'DB_ADMIN', 'TDB_SLOT_0001_CORE']);
+    expect(result.updatedBindings).toEqual(['DB_PII', 'DB_ADMIN', 'TEST_TDB_SLOT_0001_CORE']);
     expect(result.missingBindings).toEqual([]);
     expect(result.lock.d1.DB).toEqual({ name: 'test-authrim-core-db', id: 'live-core-id' });
     expect(result.lock.d1.DB_PII).toEqual({ name: 'test-authrim-pii-db', id: 'live-pii-id' });
@@ -144,7 +144,7 @@ describe('reconcileD1ResourcesInLock', () => {
       name: 'test-authrim-admin-db',
       id: 'live-admin-id',
     });
-    expect(result.lock.d1.TDB_SLOT_0001_CORE).toEqual({
+    expect(result.lock.d1.TEST_TDB_SLOT_0001_CORE).toEqual({
       name: 'authrim-test-tdb-slot-0001-core',
       id: 'live-tenant-core-id',
     });
@@ -200,7 +200,7 @@ describe('reconcileD1ResourcesInLock', () => {
     ]);
 
     expect(result.missingBindings).toEqual([
-      { binding: 'TDB_SLOT_0001_CORE', name: 'authrim-test-tdb-slot-0001-core' },
+      { binding: 'TEST_TDB_SLOT_0001_CORE', name: 'authrim-test-tdb-slot-0001-core' },
     ]);
   });
 });

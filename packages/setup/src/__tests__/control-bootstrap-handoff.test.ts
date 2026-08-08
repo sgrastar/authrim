@@ -53,15 +53,15 @@ function lock(): AuthrimLock {
     d1: {
       CONTROL_DB: { id: 'control-id', name: 'authrim-test-control' },
       LOOKUP_DB: { id: 'lookup-id', name: 'authrim-test-lookup' },
-      TDB_DEFAULT_BOOTSTRAP_CORE: {
+      TEST_TDB_DEFAULT_BOOTSTRAP_CORE: {
         id: 'default-id',
-        name: 'authrim-test-default-bootstrap',
+        name: 'test-authrim-tenant-default-bootstrap-db',
       },
-      TDB_USERS_BOOTSTRAP_CORE: {
+      TEST_TDB_USERS_BOOTSTRAP_CORE: {
         id: 'users-id',
-        name: 'authrim-test-users-bootstrap',
+        name: 'test-authrim-tenant-users-bootstrap-db',
       },
-      TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'authrim-test-pii-bootstrap' },
+      TEST_TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'test-authrim-tenant-pii-bootstrap-db' },
     },
     kv: {},
     workers: {},
@@ -368,21 +368,21 @@ describe('initial Control topology handoff registration', () => {
     ).toEqual([
       {
         data_role: 'tenant_core/default',
-        binding_ref: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+        binding_ref: 'TEST_TDB_DEFAULT_BOOTSTRAP_CORE',
         status: 'ready',
         allocation_scope: 'tenant_exclusive',
         owner_tenant_id: 'default',
       },
       {
         data_role: 'tenant_core/users',
-        binding_ref: 'TDB_USERS_BOOTSTRAP_CORE',
+        binding_ref: 'TEST_TDB_USERS_BOOTSTRAP_CORE',
         status: 'ready',
         allocation_scope: 'tenant_exclusive',
         owner_tenant_id: 'default',
       },
       {
         data_role: 'tenant_pii',
-        binding_ref: 'TDB_PII_BOOTSTRAP_PII',
+        binding_ref: 'TEST_TDB_PII_BOOTSTRAP_PII',
         status: 'ready',
         allocation_scope: 'tenant_exclusive',
         owner_tenant_id: 'default',
@@ -522,7 +522,7 @@ describe('initial Control topology handoff registration', () => {
 
   it('fails closed when a required lock binding is absent', async () => {
     const incomplete = lock();
-    delete incomplete.d1.TDB_USERS_BOOTSTRAP_CORE;
+    delete incomplete.d1.TEST_TDB_USERS_BOOTSTRAP_CORE;
     await expect(
       buildInitialControlTopologyRegistration({
         environmentId: 'test',
@@ -531,7 +531,7 @@ describe('initial Control topology handoff registration', () => {
         lock: incomplete,
         release: release(),
       })
-    ).rejects.toThrow('initial_control_plane_binding_missing:TDB_USERS_BOOTSTRAP_CORE');
+    ).rejects.toThrow('initial_control_plane_binding_missing:TEST_TDB_USERS_BOOTSTRAP_CORE');
   });
 
   it('rejects an invalid bootstrap tenant identifier before generating SQL', async () => {
@@ -802,17 +802,20 @@ describe('initial Control topology handoff registration', () => {
 
   it('waits for Control acceptance and surfaces a stable blocked result', async () => {
     let time = 0;
+    const progress: string[] = [];
     const states = [
       {
         state: 'pending_verification',
         verification_error_code: null,
         accepted_at: null,
+        total_bindings: 2,
         pending_bindings: 2,
       },
       {
         state: 'accepted',
         verification_error_code: null,
         accepted_at: 200,
+        total_bindings: 2,
         pending_bindings: 0,
       },
     ];
@@ -825,10 +828,14 @@ describe('initial Control topology handoff registration', () => {
         sleep: async (milliseconds) => {
           time += milliseconds;
         },
+        onProgress: (message) => progress.push(message),
         timeoutMs: 1_000,
         pollIntervalMs: 250,
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
+    expect(progress).toEqual([
+      'Control bootstrap verification progress: 0/2 binding checks complete (2 remaining)...',
+    ]);
 
     await expect(
       waitForInitialBootstrapHandoff({
@@ -840,6 +847,7 @@ describe('initial Control topology handoff registration', () => {
               state: 'blocked',
               verification_error_code: 'control_bootstrap_worker_binding_mismatch',
               accepted_at: null,
+              total_bindings: 2,
               pending_bindings: 1,
             },
           ] as never,

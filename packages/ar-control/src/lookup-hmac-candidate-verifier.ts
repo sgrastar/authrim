@@ -1,4 +1,5 @@
 import type { ControlLookupHmacKeyMetadata } from '@authrim/ar-lib-core/control-plane';
+import { getTenantDatabaseBindingPrefix } from '@authrim/ar-lib-core/services/tenant-database-naming';
 import { signControlRuntimeSmokeRequest } from './runtime-smoke-signer';
 import type { ControlEnv } from './types';
 
@@ -9,6 +10,10 @@ const SAFE_ERROR_FRAGMENT =
   /(?:^|[^a-z0-9_])((?:runtime|control|lookup)_[a-z0-9_]{1,119})(?=$|[^a-z0-9_])/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const LOOKUP_HMAC_TEST_VECTOR = 'authrim-control-lookup-hmac-v1';
+
+function lookupHmacTestBinding(environmentId: string): string {
+  return `${getTenantDatabaseBindingPrefix(environmentId)}_LOOKUP_HMAC_TEST`;
+}
 
 export const LOOKUP_HMAC_VERIFICATION_BINDINGS = {
   'ar-lib-core': 'SMOKE_AR_LIB_CORE',
@@ -348,7 +353,7 @@ export class LookupHmacCandidateVerifier {
             operationId: rotation.operationId,
             attempt: 1,
             targetWorker: workerScriptName,
-            bindingRef: 'TDB_LOOKUP_HMAC_TEST',
+            bindingRef: lookupHmacTestBinding(rotation.environmentId),
             expectedMigrationGeneration: 1,
             dataRole: 'tenant_core/default',
             residencyPartition: 'default',
@@ -452,7 +457,7 @@ export class LookupHmacCandidateVerifier {
             operationId: rotation.operationId,
             attempt: 1,
             targetWorker: workerScriptName,
-            bindingRef: 'TDB_LOOKUP_HMAC_TEST',
+            bindingRef: lookupHmacTestBinding(rotation.environmentId),
             expectedMigrationGeneration: 1,
             dataRole: 'tenant_core/default',
             residencyPartition: 'default',

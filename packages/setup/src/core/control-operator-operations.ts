@@ -9,7 +9,7 @@ import { queryD1Rows } from './cloudflare.js';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const SAFE_DATABASE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/u;
-const SAFE_BINDING = /^TDB_[A-Z0-9_]{1,123}$/u;
+const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
 const DATA_ROLES = new Set(['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup']);
 
 interface PendingOperatorOperationRow extends Record<string, unknown> {

@@ -1,6 +1,7 @@
 import type { AuthrimLock, ControlKeyState } from './lock.js';
 import { queryD1Rows } from './cloudflare.js';
 import { isControlGeneratedDatabaseBinding } from './tenant-database.js';
+import { getTenantDatabaseBindingPrefix } from '@authrim/ar-lib-core/services/tenant-database-naming';
 
 const SAFE_ENVIRONMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_DATABASE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
@@ -274,7 +275,7 @@ export async function loadControlGeneratedD1Bindings(input: {
       AND o.desired_resource_id = d.desired_resource_id
      WHERE b.environment_id = ${sqlString(input.environmentId)}
        AND b.binding_kind = 'd1'
-       AND b.binding_name LIKE 'TDB_%'
+       AND b.binding_name GLOB ${sqlString(`${getTenantDatabaseBindingPrefix(input.environmentId)}_*`)}
      ORDER BY b.binding_name`
   );
   return parseControlGeneratedD1Rows(rows);

@@ -781,6 +781,68 @@ const en: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Bootstrap the Control Plane and initial tenant shards. Later tenant capacity is provisioned automatically.',
+  'web.db.controlPlaneWorkerDesc':
+    'Authrim uses this feature to manage databases for your tenants. The required management resources are created during setup.',
+  'web.db.controlPlaneTenantPlacement':
+    'The initial tenant starts with its own storage location. As you add tenants, you can choose a storage location for each one.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim automatically manages database creation and connection routing.',
+  'web.db.automaticProvisioningTitle': 'Automatic tenant database creation',
+  'web.db.automaticProvisioningOn': 'On (create automatically)',
+  'web.db.automaticProvisioningOnDesc':
+    'When tenants or data grow, Authrim automatically creates the databases it needs.',
+  'web.db.automaticProvisioningTokenNote':
+    'A dedicated Control Worker stores and uses the scoped Cloudflare API token needed to create tenant databases.',
+  'web.db.automaticProvisioningOff': 'Off (create from Setup)',
+  'web.db.automaticProvisioningOffDesc':
+    'Databases are not created automatically. Create them from the Setup tool when needed.',
+  'web.db.automaticProvisioningNote': 'Tenant data separation remains in place when this is off.',
+
+  // Control Plane credentials
+  'web.deploy.controlCredentialsTitle': 'Cloudflare connection',
+  'web.deploy.bootstrapTokenTitle': 'Temporary Cloudflare token for automatic setup',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare Dashboard login is separate from Wrangler OAuth and may ask you to sign in again.',
+  'web.deploy.createBootstrapToken': 'Create one-time Cloudflare token',
+  'web.deploy.bootstrapTokenLabel': 'Temporary Cloudflare token',
+  'web.deploy.bootstrapTokenPlaceholder': 'Enter temporary Cloudflare token',
+  'web.deploy.bootstrapTokenHelp':
+    'This token is used once and revoked after the required tokens are registered.',
+  'web.deploy.bootstrapTokenDescription':
+    'This temporary token lets Authrim create tenant databases automatically. It needs permission to create and edit API tokens: Account API Tokens: Write/Edit for an account-owned token, or API Tokens: Write/Edit for a user-owned token. Setup uses it to create narrowly scoped API tokens for D1, Workers, KV, and R2 as needed, registers them with the Control Worker, and then revokes the temporary token.',
+  'web.deploy.manualDnsSectionTitle': 'DNS settings',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Create a temporary token in Cloudflare Dashboard, then enter it below.',
+  'web.deploy.bootstrapPopupBlocked':
+    'The browser blocked the new tab. Allow popups and select this button again.',
+  'web.deploy.bootstrapTokenRequired':
+    'Create and enter the temporary Cloudflare token before deployment.',
+  'web.envDetail.automaticProvisioningTitle': 'Automatic provisioning',
+  'web.envDetail.automaticProvisioningChecking': 'Checking...',
+  'web.envDetail.automaticProvisioningUnavailable': 'Unavailable',
+  'web.envDetail.createOneTimeCloudflareToken': 'Create one-time Cloudflare token',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'One-time bootstrap token',
+  'web.envDetail.enableAutomaticProvisioning': 'Enable',
+  'web.envDetail.enterOneTimeTokenThenEnable': 'Enter the one-time token, then select Enable.',
+  'web.envDetail.bootstrapPopupBlocked': 'The browser blocked the Cloudflare Dashboard tab.',
+  'web.envDetail.enterOneTimeTokenFirst': 'Enter the one-time Cloudflare token first.',
+  'web.envDetail.preparingControlAuthority': 'Preparing Control provisioning authority...',
+  'web.envDetail.deployingControlWorker': 'Deploying the Control Worker configuration...',
+  'web.envDetail.registeringScopedCredentials': 'Registering scoped credentials...',
+  'web.envDetail.automaticProvisioningOn': 'On',
+  'web.envDetail.automaticProvisioningOff': 'Off',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    'Scoped Control Worker credentials are registered.',
+  'web.envDetail.automaticProvisioningBlocked': 'Automatic provisioning is blocked.',
+  'web.envDetail.automaticProvisioningMissing': '(missing: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Enter a new one-time token to repair it.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    'Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'The bootstrap token was revoked, but the pending state could not be reset. Retry or repair the pending operation.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'The bootstrap token was revoked and Automatic provisioning returned to Off.',
 
   // Web UI Email
   'web.email.title': 'Email Provider',
@@ -919,8 +981,9 @@ const en: Translations = {
   'web.form.userIdFormat': 'User ID Format',
   'web.form.userIdNanoid': 'NanoID (recommended)',
   'web.form.userIdUuid': 'UUID v4',
+  'web.form.userIdExample': 'Example:',
   'web.form.userIdFormatHint':
-    'Format for generating user IDs. Cannot be changed after users are created.',
+    'Cannot be changed after users are created.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

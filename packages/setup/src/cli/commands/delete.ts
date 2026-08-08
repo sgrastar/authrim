@@ -219,6 +219,16 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     console.log(chalk.green(`R2 buckets deleted: ${result.deleted.r2.length}`));
   }
 
+  if (result.manualR2.length > 0) {
+    console.log(chalk.yellow('\nR2 buckets requiring manual cleanup:'));
+    for (const target of result.manualR2) {
+      console.log(chalk.yellow(`  • ${target.bucketName} (${target.objectCount} objects)`));
+      if (target.dashboardUrl) {
+        console.log(chalk.cyan(`    ${target.dashboardUrl}`));
+      }
+    }
+  }
+
   if (result.errors.length > 0) {
     console.log(chalk.yellow(`\nErrors (${result.errors.length}):`));
     for (const error of result.errors) {

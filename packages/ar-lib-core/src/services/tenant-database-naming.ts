@@ -21,6 +21,32 @@ export interface TenantDatabaseSlotBindingPlan {
   workerShard: string;
 }
 
+/**
+ * The fixed part of all generated tenant-D1 names.
+ *
+ * Resource names follow the existing `{env}-authrim-*` convention. Worker
+ * binding names are identifiers, so the same environment is normalized to
+ * uppercase and separated with underscores.
+ */
+export function getTenantDatabaseResourcePrefix(environment: string): string {
+  return `${normalizeTenantDatabaseNamePart(environment, 'env')}-authrim`;
+}
+
+export function getTenantDatabaseBindingPrefix(environment: string): string {
+  return `${normalizeTenantBindingNamePart(environment, 'ENV')}_TDB`;
+}
+
+export function getTenantDatabaseBootstrapBinding(
+  environment: string,
+  role: 'default' | 'users' | 'pii'
+): string {
+  const suffix = role === 'pii' ? 'PII' : 'CORE';
+  return `${getTenantDatabaseBindingPrefix(environment)}_${role.toUpperCase()}_BOOTSTRAP_${suffix}`;
+}
+
+/** Generated tenant bindings always carry the environment prefix. */
+export const TENANT_DATABASE_BINDING_PATTERN = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
+
 export interface TenantDatabaseBindingCapacity {
   currentBindings: number;
   addedBindings: number;
@@ -50,7 +76,7 @@ function fnv1a32(value: string): string {
     hash ^= value.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193);
   }
-  return (hash >>> 0).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
+  return (hash >>> 0).toString(16).padStart(8, '0').toUpperCase();
 }
 
 function trimToLength(value: string, maxLength: number): string {
@@ -127,8 +153,8 @@ export function buildTenantDatabaseBindingPlan(
   );
 
   return {
-    databaseName: `authrim-${environment}-${tenantName}-${databaseRole}${shardSuffix}`,
-    bindingRef: `TDB_${bindingTenant}_${shortHash}_${roleSuffix}${bindingShard}`,
+    databaseName: `${getTenantDatabaseResourcePrefix(environment)}-tenant-${tenantName}-${databaseRole}-db-${shortHash.toLowerCase()}${shardSuffix}`,
+    bindingRef: `${getTenantDatabaseBindingPrefix(environment)}_${bindingTenant}_${shortHash}_${roleSuffix}${bindingShard}`,
     workerShard: 'primary',
   };
 }
@@ -150,8 +176,8 @@ export function buildTenantDatabaseSlotBindingPlan(input: {
   const roleSuffix = ROLE_SUFFIX[input.role];
   const databaseRole = ROLE_DATABASE_SUFFIX[input.role];
   return {
-    databaseName: `authrim-${environment}-tdb-slot-${slot}-${databaseRole}`,
-    bindingRef: `TDB_SLOT_${slot}_${roleSuffix}`,
+    databaseName: `${getTenantDatabaseResourcePrefix(environment)}-tenant-slot-${slot}-${databaseRole}-db`,
+    bindingRef: `${getTenantDatabaseBindingPrefix(environment)}_SLOT_${slot}_${roleSuffix}`,
     slotNumber: input.slotNumber,
     workerShard: 'primary',
   };

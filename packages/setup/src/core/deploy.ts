@@ -7,7 +7,7 @@
 
 import { execa, type ExecaError } from 'execa';
 import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import {
@@ -72,6 +72,160 @@ function isValidEnv(env: string): boolean {
 
 function sanitizeDeploymentErrorMessage(message: string): string {
   return message.replace(/\/[^\s:]+/g, '[path]').replace(/\\[^\s:]+/g, '[path]');
+}
+
+interface NodeVersion {
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+export interface NodeEngineMismatch {
+  packageName: string;
+  requirement: string;
+}
+
+function parseNodeVersion(value: string): NodeVersion | null {
+  const match = String(value).trim().replace(/^v/u, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/u);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2] ?? 0),
+    patch: Number(match[3] ?? 0),
+  };
+}
+
+function compareNodeVersions(left: NodeVersion, right: NodeVersion): number {
+  if (left.major !== right.major) return left.major - right.major;
+  if (left.minor !== right.minor) return left.minor - right.minor;
+  return left.patch - right.patch;
+}
+
+function parseRangeVersion(value: string): NodeVersion | null {
+  const match = value.match(/^(\d+|x|X|\*)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?/u);
+  if (!match || /[xX*]/u.test(match[1])) return null;
+  return {
+    major: Number(match[1]),
+    minor: match[2] && !/[xX*]/u.test(match[2]) ? Number(match[2]) : 0,
+    patch: match[3] && !/[xX*]/u.test(match[3]) ? Number(match[3]) : 0,
+  };
+}
+
+function satisfiesNodeComparator(version: NodeVersion, comparator: string): boolean {
+  const normalized = comparator.trim();
+  if (!normalized || normalized === '*' || normalized.toLowerCase() === 'x') return true;
+
+  const operatorMatch = normalized.match(/^(\^|~|>=|<=|>|<|=)?\s*(.+)$/u);
+  if (!operatorMatch) return false;
+  const operator = operatorMatch[1] ?? '=';
+  const versionSpec = operatorMatch[2];
+  const target = parseRangeVersion(versionSpec);
+  if (!target) {
+    const wildcard = versionSpec.match(/^(\d+)(?:\.(\d+|x|X|\*))?(?:\.(\d+|x|X|\*))?$/u);
+    if (!wildcard) return false;
+    if (version.major !== Number(wildcard[1])) return false;
+    if (!wildcard[2] || /[xX*]/u.test(wildcard[2])) return true;
+    if (version.minor !== Number(wildcard[2])) return false;
+    return !wildcard[3] || /[xX*]/u.test(wildcard[3]) || version.patch === Number(wildcard[3]);
+  }
+
+  const comparison = compareNodeVersions(version, target);
+  if (operator === '=') return comparison === 0;
+  if (operator === '>') return comparison > 0;
+  if (operator === '>=') return comparison >= 0;
+  if (operator === '<') return comparison < 0;
+  if (operator === '<=') return comparison <= 0;
+
+  if (operator === '~') {
+    return comparison >= 0 && version.major === target.major && version.minor === target.minor;
+  }
+
+  const upperBound: NodeVersion =
+    target.major > 0
+      ? { major: target.major + 1, minor: 0, patch: 0 }
+      : target.minor > 0
+        ? { major: 0, minor: target.minor + 1, patch: 0 }
+        : { major: 0, minor: 0, patch: target.patch + 1 };
+  return comparison >= 0 && compareNodeVersions(version, upperBound) < 0;
+}
+
+/** Check the Node.js version against the common npm engines.node range syntax. */
+export function nodeVersionSatisfiesEngine(version: string, range: string): boolean {
+  const parsedVersion = parseNodeVersion(version);
+  if (!parsedVersion || !range.trim()) return true;
+  return range
+    .split('||')
+    .some((alternative) =>
+      alternative
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean)
+        .every((comparator) => satisfiesNodeComparator(parsedVersion, comparator))
+    );
+}
+
+function readNodeEngineRequirement(packageJsonPath: string): {
+  packageName: string;
+  requirement: string;
+} | null {
+  try {
+    const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+      name?: unknown;
+      engines?: { node?: unknown };
+    };
+    if (typeof manifest.name !== 'string' || typeof manifest.engines?.node !== 'string') {
+      return null;
+    }
+    return { packageName: manifest.name, requirement: manifest.engines.node };
+  } catch {
+    return null;
+  }
+}
+
+export function findNodeEngineMismatches(
+  rootDir: string,
+  components?: readonly string[],
+  runtimeVersion = process.version
+): NodeEngineMismatch[] {
+  const packageJsonPaths = [join(rootDir, 'package.json')];
+  const packagesDir = join(rootDir, 'packages');
+  const packageNames = components?.length
+    ? new Set(components.map((component) => `@authrim/${component}`))
+    : null;
+
+  if (existsSync(packagesDir)) {
+    for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const packageJsonPath = join(packagesDir, entry.name, 'package.json');
+      if (!existsSync(packageJsonPath)) continue;
+      const requirement = readNodeEngineRequirement(packageJsonPath);
+      if (requirement && (!packageNames || packageNames.has(requirement.packageName))) {
+        packageJsonPaths.push(packageJsonPath);
+      }
+    }
+  }
+
+  return packageJsonPaths
+    .map((packageJsonPath) => readNodeEngineRequirement(packageJsonPath))
+    .filter(
+      (requirement): requirement is NodeEngineMismatch =>
+        requirement !== null && !nodeVersionSatisfiesEngine(runtimeVersion, requirement.requirement)
+    );
+}
+
+function formatNodeEngineMismatchError(
+  runtimeVersion: string,
+  mismatches: readonly NodeEngineMismatch[]
+): string {
+  const packageLines = mismatches
+    .map(({ packageName, requirement }) => `  - ${packageName}: node ${requirement}`)
+    .join('\n');
+  return [
+    `Node.js version check failed (running ${runtimeVersion}).`,
+    'The following package requirements are not satisfied:',
+    packageLines,
+    'Install a compatible Node.js version and restart Setup before deploying.',
+  ].join('\n');
 }
 
 // =============================================================================
@@ -434,6 +588,14 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
   const { rootDir, components, onProgress } = options;
 
   try {
+    onProgress?.('Checking Node.js version requirements...');
+    const nodeEngineMismatches = findNodeEngineMismatches(rootDir, components);
+    if (nodeEngineMismatches.length > 0) {
+      const error = formatNodeEngineMismatchError(process.version, nodeEngineMismatches);
+      onProgress?.(`❌ ${error}`);
+      return { success: false, error };
+    }
+
     // Check if node_modules exists
     const nodeModulesPath = join(rootDir, 'node_modules');
     if (!existsSync(nodeModulesPath)) {

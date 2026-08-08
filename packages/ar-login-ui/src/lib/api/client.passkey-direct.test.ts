@@ -324,6 +324,55 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		expect(retriedBody).toEqual(initialBody);
 	});
 
+	it('replays email-less Passkey signup with the provisioning continuation values', async () => {
+		const token = 'A'.repeat(43);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						status: 'provisioning',
+						provisioning_token: token,
+						status_endpoint: '/api/v1/auth/account-provisioning/status',
+						retry_after_ms: 250,
+						resume_user_id: 'user_passkey_resume'
+					}),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_passkey_resume',
+						options: { challenge: 'passkey-challenge' }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await expect(passkeyAPI.getRegisterOptions({})).resolves.toMatchObject({
+			data: { userId: 'challenge_passkey_resume' }
+		});
+
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		const replayBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+		expect(initialBody).not.toHaveProperty('provisioning_token');
+		expect(replayBody).toMatchObject({
+			provisioning_token: token,
+			resume_user_id: 'user_passkey_resume'
+		});
+		expect(replayBody.client_id).toBe(initialBody.client_id);
+		expect(replayBody.code_challenge).toBe(initialBody.code_challenge);
+	});
+
 	it('continues polling when the resumed request returns a second provisioning operation', async () => {
 		const firstToken = 'A'.repeat(43);
 		const secondToken = 'B'.repeat(43);

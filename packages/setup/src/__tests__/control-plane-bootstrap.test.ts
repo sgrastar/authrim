@@ -69,15 +69,18 @@ function lock() {
       DB_ADMIN: { id: 'admin-id', name: 'admin-db' },
       CONTROL_DB: { id: 'control-id', name: 'control-db' },
       LOOKUP_DB: { id: 'lookup-id', name: 'lookup-db' },
-      TDB_DEFAULT_BOOTSTRAP_CORE: {
+      PROD_TDB_DEFAULT_BOOTSTRAP_CORE: {
         id: 'default-id',
-        name: 'authrim-prod-default-bootstrap',
+        name: 'prod-authrim-tenant-default-bootstrap-db',
       },
-      TDB_USERS_BOOTSTRAP_CORE: {
+      PROD_TDB_USERS_BOOTSTRAP_CORE: {
         id: 'users-id',
-        name: 'authrim-prod-users-bootstrap',
+        name: 'prod-authrim-tenant-users-bootstrap-db',
       },
-      TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'authrim-prod-pii-bootstrap' },
+      PROD_TDB_PII_BOOTSTRAP_PII: {
+        id: 'pii-id',
+        name: 'prod-authrim-tenant-pii-bootstrap-db',
+      },
     },
     kv: {
       AUTHRIM_CONFIG: { id: 'config-kv', title: 'config' },
@@ -172,9 +175,9 @@ describe('initial Control Plane bootstrap orchestration', () => {
 
   it('creates the initial default, users, and PII databases and pins their migrations', async () => {
     const currentLock = lock();
-    delete currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE;
-    delete currentLock.d1.TDB_USERS_BOOTSTRAP_CORE;
-    delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+    delete currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
     const progress: string[] = [];
     const result = await ensureInitialControlPlaneResources({
       env: 'prod',
@@ -185,9 +188,11 @@ describe('initial Control Plane bootstrap orchestration', () => {
       onProgress: (message) => progress.push(message),
     });
     expect(result).toEqual({ success: true, createdCount: 3, migratedCount: 3 });
-    expect(currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE).toMatchObject({ id: expect.any(String) });
+    expect(currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE).toMatchObject({
+      id: expect.any(String),
+    });
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-default-bootstrap',
+      'prod-authrim-tenant-default-bootstrap-db',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -195,7 +200,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-users-bootstrap',
+      'prod-authrim-tenant-users-bootstrap-db',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -203,7 +208,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-pii-bootstrap',
+      'prod-authrim-tenant-pii-bootstrap-db',
       join(root, 'migrations', 'pii'),
       expect.any(Function),
       expect.objectContaining({
@@ -219,7 +224,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
   it('detects missing or unregistered tenant topology without mutating resources', () => {
     const manifest = release();
     const currentLock = lock();
-    delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
 
     expect(
       inspectInitialControlPlaneTopology({
@@ -231,22 +236,22 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     ).toEqual([
       {
-        binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+        binding: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
         targetId: 'd1:default-id:d1-core',
       },
       {
-        binding: 'TDB_USERS_BOOTSTRAP_CORE',
+        binding: 'PROD_TDB_USERS_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
         targetId: 'd1:users-id:d1-core',
       },
-      { binding: 'TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
+      { binding: 'PROD_TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
     ]);
     expect(mocks.createD1Database).not.toHaveBeenCalled();
 
-    currentLock.d1.TDB_PII_BOOTSTRAP_PII = {
+    currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII = {
       id: 'pii-id',
-      name: 'authrim-prod-pii-bootstrap',
+      name: 'prod-authrim-tenant-pii-bootstrap-db',
     };
     const manifestChecksum = calculateReleaseManifestChecksum(manifest);
     currentLock.schemaTargets = {
@@ -544,7 +549,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       ])
     );
     expect(mocks.executeD1Command).toHaveBeenCalledWith(
-      'authrim-prod-default-bootstrap',
+      'prod-authrim-tenant-default-bootstrap-db',
       'INITIAL TENANT SQL'
     );
     expect(mocks.queryD1Rows).toHaveBeenCalledTimes(3);
@@ -595,15 +600,18 @@ describe('initial Control Plane bootstrap orchestration', () => {
         DB_ADMIN: { id: 'admin-id', name: 'admin-db' },
         CONTROL_DB: { id: 'control-id', name: 'control-db' },
         LOOKUP_DB: { id: 'lookup-id', name: 'lookup-db' },
-        TDB_DEFAULT_BOOTSTRAP_CORE: {
+        PROD_TDB_DEFAULT_BOOTSTRAP_CORE: {
           id: 'default-id',
-          name: 'authrim-prod-default-bootstrap',
+          name: 'prod-authrim-tenant-default-bootstrap-db',
         },
-        TDB_USERS_BOOTSTRAP_CORE: {
+        PROD_TDB_USERS_BOOTSTRAP_CORE: {
           id: 'users-id',
-          name: 'authrim-prod-users-bootstrap',
+          name: 'prod-authrim-tenant-users-bootstrap-db',
         },
-        TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'authrim-prod-pii-bootstrap' },
+        PROD_TDB_PII_BOOTSTRAP_PII: {
+          id: 'pii-id',
+          name: 'prod-authrim-tenant-pii-bootstrap-db',
+        },
       },
       kv: {
         AUTHRIM_CONFIG: { id: 'config-kv', title: 'config' },

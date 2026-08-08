@@ -1493,7 +1493,7 @@ const SENSITIVE_CONTROL_KEY_PATTERN =
 const PRIVATE_JWK_MEMBERS = new Set(['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k']);
 const SAFE_IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9-]{0,62}$/u;
-const SAFE_D1_BINDING = /^TDB_[A-Z0-9_]{1,123}$/u;
+const SAFE_D1_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
 const ROUTE_DATA_ROLES = new Set<TenantRouteDataRole>([
   'tenant_core/default',
   'tenant_core/users',

@@ -716,8 +716,10 @@ describe('ControlService tenant shard provisioning', () => {
         },
       ],
     });
-    expect(result.targets[0]?.databaseName).toMatch(/^authrim-test-core-users-jp-/u);
-    expect(result.targets[0]?.bindingRef).toMatch(/^TDB_USERS_[A-F0-9]{8}_CORE$/u);
+    expect(result.targets[0]?.databaseName).toMatch(
+      /^test-authrim-tenant-core-users-jp-db-[a-f0-9]{8}$/u
+    );
+    expect(result.targets[0]?.bindingRef).toMatch(/^TEST_TDB_USERS_[A-F0-9]{8}_CORE$/u);
     expect(repository.operations.size).toBe(0);
   });
 

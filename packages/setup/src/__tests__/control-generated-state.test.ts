@@ -101,7 +101,7 @@ function lock(includeTenantBinding = true) {
       { binding: 'CONTROL_DB', name: 'test-control', id: 'control-id' },
       { binding: 'DB', name: 'test-core', id: 'core-id' },
       ...(includeTenantBinding
-        ? [{ binding: 'TDB_SLOT_0001_CORE', name: 'old-slot', id: 'old-slot-id' }]
+        ? [{ binding: 'TEST_TDB_SLOT_0001_CORE', name: 'old-slot', id: 'old-slot-id' }]
         : []),
     ],
     kv: [],
@@ -114,14 +114,14 @@ describe('Control generated D1 state', () => {
   it('loads ready provider-backed bindings with an environment-scoped query', async () => {
     const query = vi.fn(async () => [
       {
-        binding_name: 'TDB_USERS_AABBCCDD_CORE',
+        binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
         deterministic_name: 'authrim-test-users-jp-aabbccdd',
         provider_resource_id: '01234567-89ab-cdef-0123-456789abcdef',
         observed_state: 'present',
         provisioning_state: 'ready',
       },
       {
-        binding_name: 'TDB_LOOKUP_ED83F354_LOOKUP',
+        binding_name: 'TEST_TDB_LOOKUP_ED83F354_LOOKUP',
         deterministic_name: 'authrim-test-lookup-default-ed83f354',
         provider_resource_id: '11234567-89ab-cdef-0123-456789abcdef',
         observed_state: 'present',
@@ -137,12 +137,12 @@ describe('Control generated D1 state', () => {
       })
     ).resolves.toEqual([
       {
-        binding: 'TDB_LOOKUP_ED83F354_LOOKUP',
+        binding: 'TEST_TDB_LOOKUP_ED83F354_LOOKUP',
         name: 'authrim-test-lookup-default-ed83f354',
         id: '11234567-89ab-cdef-0123-456789abcdef',
       },
       {
-        binding: 'TDB_USERS_AABBCCDD_CORE',
+        binding: 'TEST_TDB_USERS_AABBCCDD_CORE',
         name: 'authrim-test-users-jp-aabbccdd',
         id: '01234567-89ab-cdef-0123-456789abcdef',
       },
@@ -153,7 +153,7 @@ describe('Control generated D1 state', () => {
   it('fails closed when desired binding provider state is incomplete or conflicting', async () => {
     const notReady = vi.fn(async () => [
       {
-        binding_name: 'TDB_USERS_AABBCCDD_CORE',
+        binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
         deterministic_name: 'authrim-test-users-jp-aabbccdd',
         provider_resource_id: null,
         observed_state: null,
@@ -170,7 +170,7 @@ describe('Control generated D1 state', () => {
 
     const migrationIncomplete = vi.fn(async () => [
       {
-        binding_name: 'TDB_USERS_AABBCCDD_CORE',
+        binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
         deterministic_name: 'authrim-test-users-jp-aabbccdd',
         provider_resource_id: '01234567-89ab-cdef-0123-456789abcdef',
         observed_state: 'present',
@@ -187,14 +187,14 @@ describe('Control generated D1 state', () => {
 
     const conflicting = vi.fn(async () => [
       {
-        binding_name: 'TDB_USERS_AABBCCDD_CORE',
+        binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
         deterministic_name: 'authrim-test-users-jp-aabbccdd',
         provider_resource_id: '01234567-89ab-cdef-0123-456789abcdef',
         observed_state: 'present',
         provisioning_state: 'ready',
       },
       {
-        binding_name: 'TDB_USERS_AABBCCDD_CORE',
+        binding_name: 'TEST_TDB_USERS_AABBCCDD_CORE',
         deterministic_name: 'authrim-test-users-jp-other',
         provider_resource_id: '11234567-89ab-cdef-0123-456789abcdef',
         observed_state: 'present',
@@ -213,7 +213,7 @@ describe('Control generated D1 state', () => {
   it('adds generated tenant bindings while preserving shared resources', () => {
     const projected = projectControlGeneratedD1Bindings(lock(false), [
       {
-        binding: 'TDB_USERS_AABBCCDD_CORE',
+        binding: 'TEST_TDB_USERS_AABBCCDD_CORE',
         name: 'authrim-test-users-jp-aabbccdd',
         id: '01234567-89ab-cdef-0123-456789abcdef',
       },
@@ -222,18 +222,18 @@ describe('Control generated D1 state', () => {
     expect(projected.lock.d1).toEqual({
       CONTROL_DB: { name: 'test-control', id: 'control-id' },
       DB: { name: 'test-core', id: 'core-id' },
-      TDB_USERS_AABBCCDD_CORE: {
+      TEST_TDB_USERS_AABBCCDD_CORE: {
         name: 'authrim-test-users-jp-aabbccdd',
         id: '01234567-89ab-cdef-0123-456789abcdef',
       },
     });
-    expect(projected.added).toEqual(['TDB_USERS_AABBCCDD_CORE']);
+    expect(projected.added).toEqual(['TEST_TDB_USERS_AABBCCDD_CORE']);
     expect(projected.removed).toEqual([]);
   });
 
   it('fails closed when Control export would remove an existing runtime binding', () => {
     expect(() => projectControlGeneratedD1Bindings(lock(), [])).toThrow(
-      'control_generated_d1_binding_removal_requires_approval:TDB_SLOT_0001_CORE'
+      'control_generated_d1_binding_removal_requires_approval:TEST_TDB_SLOT_0001_CORE'
     );
   });
 
@@ -241,12 +241,12 @@ describe('Control generated D1 state', () => {
     expect(() =>
       projectControlGeneratedD1Bindings(lock(), [
         {
-          binding: 'TDB_SLOT_0001_CORE',
+          binding: 'TEST_TDB_SLOT_0001_CORE',
           name: 'replacement-slot',
           id: 'replacement-slot-id',
         },
       ])
-    ).toThrow('control_generated_d1_binding_retarget_requires_approval:TDB_SLOT_0001_CORE');
+    ).toThrow('control_generated_d1_binding_retarget_requires_approval:TEST_TDB_SLOT_0001_CORE');
   });
 });
 

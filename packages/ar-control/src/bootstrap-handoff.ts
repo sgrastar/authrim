@@ -130,10 +130,17 @@ function safeLimit(limit: number): number {
 
 function permanentError(error: unknown): boolean {
   if (error instanceof CloudflareControlApiError) {
+    // Secret-triggered Control Worker versions can become active before the newly
+    // registered child token is accepted by every provider endpoint. Keep 401/403
+    // retryable during the initial handoff; Setup's bounded handoff wait will still
+    // surface a timeout when the capability is genuinely missing.
     return (
-      (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) ||
-      error.status === 401 ||
-      error.status === 403
+      error.status >= 400 &&
+      error.status < 500 &&
+      error.status !== 401 &&
+      error.status !== 403 &&
+      error.status !== 408 &&
+      error.status !== 429
     );
   }
   return (
