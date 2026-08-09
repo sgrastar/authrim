@@ -73,6 +73,19 @@
 		return areas.includes(area);
 	}
 
+	function sessionTitle(session: AccountSession): string {
+		return [session.browser, session.os].filter(Boolean).join(' / ') || $LL.account_unknownDevice();
+	}
+
+	function formatCountry(countryCode: string | null): string | null {
+		if (!countryCode) return null;
+		try {
+			return new Intl.DisplayNames(['en'], { type: 'region' }).of(countryCode) ?? countryCode;
+		} catch {
+			return countryCode;
+		}
+	}
+
 	let newPasskeyName = $state('');
 	let newTotpLabel = $state('');
 	let totpActivationCode = $state('');
@@ -153,8 +166,9 @@
 		{#if shows('devices')}
 			<section class="security-block">
 				{#if showSectionHeadings}<h3>{$LL.account_devices()}</h3>{/if}
+				<p class="section-description">{$LL.account_connectedDevicesDescription()}</p>
 				{#if devices.length === 0}
-					<p class="empty-text">{$LL.account_empty()}</p>
+					<p class="empty-text">{$LL.account_noConnectedDevices()}</p>
 				{:else}
 					<ul class="item-list">
 						{#each devices as device (device.id)}
@@ -183,15 +197,30 @@
 		{#if shows('sessions')}
 			<section class="security-block">
 				{#if showSectionHeadings}<h3>{$LL.account_sessions()}</h3>{/if}
+				<p class="section-description">{$LL.account_sessionsDescription()}</p>
 				{#if sessions.length === 0}
 					<p class="empty-text">{$LL.account_empty()}</p>
 				{:else}
 					<ul class="item-list">
 						{#each sessions as session (session.id)}
-							<li>
-								<div>
-									<strong>{session.current ? $LL.account_currentSession() : session.id}</strong>
-									<span>{formatTimestamp(session.created_at, getLocale())}</span>
+							{@const country = formatCountry(session.country_code)}
+							{@const signedInAt = formatTimestamp(session.created_at, getLocale())}
+							<li class="session-row">
+								<div class="session-summary">
+									<strong class="session-title">
+										{sessionTitle(session)}
+										{#if session.current}
+											<span class="inline-tag">{$LL.account_currentSession()}</span>
+										{/if}
+									</strong>
+									<div class="session-meta">
+										{#if country}
+											<span aria-label={$LL.account_sessionLocation({ country })}>{country}</span>
+										{/if}
+										<span aria-label={$LL.account_signedInAt({ time: signedInAt })}
+											>{signedInAt}</span
+										>
+									</div>
 								</div>
 								<Button
 									variant={session.current ? 'danger' : 'secondary'}
@@ -573,9 +602,59 @@
 
 	.item-list span,
 	.muted,
-	.empty-text {
+	.empty-text,
+	.section-description {
 		font-size: 0.8125rem;
 		color: var(--text-muted);
+	}
+
+	.section-description,
+	.empty-text {
+		margin: 0;
+	}
+
+	.session-summary {
+		display: contents;
+	}
+
+	.session-title {
+		display: flex !important;
+		align-items: center;
+		flex-wrap: nowrap;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.session-meta {
+		grid-column: 1 / -1;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 2px 8px;
+		margin-top: 2px;
+	}
+
+	.session-meta span + span::before {
+		content: '·';
+		margin-inline-end: 8px;
+		color: var(--text-muted);
+	}
+
+	.item-list .session-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		align-items: center;
+	}
+
+	.session-row > :global(button) {
+		grid-column: 2;
+		grid-row: 1;
+		flex: 0 0 auto;
+	}
+
+	.session-title .inline-tag {
+		margin-inline-start: 0;
+		white-space: nowrap;
 	}
 
 	.passkey-provider {

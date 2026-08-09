@@ -294,7 +294,9 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain("className = 'e-st");
     expect(html).not.toContain('admin-badge');
     expect(html).toContain('if (response.adminSetupCompleted) {');
-    expect(html).toContain("section.classList.add('hidden');");
+    expect(html).toContain("section.className = 'alert ok';");
+    expect(html).toContain("heading.setAttribute('data-i18n', 'web.env.adminConfigured');");
+    expect(html).toContain("description.classList.add('hidden');");
     expect(html).not.toContain('If every administrator is locked out');
     expect(html).not.toContain('管理者が全員ロックアウト');
     expect(html).toContain('class="setup-recap"');
@@ -331,6 +333,12 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
     expect(html).toContain('class="twocol ui-update-grid"');
     expect(html).toContain('class="bigtable ui-update-card"');
+    expect(html).toContain('id="full-environment-deploy-card"');
+    expect(html).toContain('id="btn-deploy-full-environment"');
+    expect(html).toContain('id="full-environment-deploy-progress"');
+    expect(html).toContain('onlyChanged: false');
+    expect(html).toContain("'/deploy/component/' + encodeURIComponent(componentName)");
+    expect(html).toContain('getFullDeployUiComponents');
     expect(html).toContain("'theme-transition-to-dark'");
     expect(html).toContain("'theme-transition-to-light'");
     expect(SETUP_WEB_UI_STYLE).toContain('--paper: #f9f8f3');
@@ -347,6 +355,10 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-hero.setup-enter .setup-hero-number');
     expect(SETUP_WEB_UI_STYLE).toContain('body.env-management-mode .setup-hero-number');
     expect(SETUP_WEB_UI_STYLE).toContain('.env-management-surface .tabpane.env-tab-enter');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-full-deploy-card');
+    expect(SETUP_WEB_UI_STYLE).toContain(
+      '.env-management-surface #env-control-automatic-provisioning:not(.hidden)'
+    );
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .row');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .modepanel:nth-child(3)');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-masthead');
@@ -361,6 +373,8 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .step-complete');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .checkitem.on:not(.lock) .sq');
     expect(html).toContain("activePane.classList.add('env-tab-enter');");
+    expect(html).toContain("t('web.env.adminConfigured')");
+    expect(html).toContain("button.classList.add('hidden');");
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .radiocard.on .dot');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .switchline:has(input:checked) .sw');
     expect(SETUP_WEB_UI_STYLE).toContain('.region .dot::before');

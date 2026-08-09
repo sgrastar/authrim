@@ -2811,6 +2811,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Configured buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 bucket provisioning completed.',
           'web.envDetail.workerUpdateStarting': 'Starting worker update for {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Deploy Entire Environment',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': 'Build and deploy all API Workers and enabled UI Workers from the current source. Existing data and settings are preserved.',
+          'web.envDetail.fullDeployAction': 'Deploy Entire Environment',
+          'web.envDetail.fullDeployProgress': 'Deployment Progress',
+          'web.envDetail.fullDeployStarting': 'Starting full environment deployment for {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Deploying all API Workers...',
+          'web.envDetail.fullDeployUiComponent': 'Deploying {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Completed: {{success}} / {{total}} components',
+          'web.envDetail.fullDeployComplete': 'Full environment deployment completed.',
+          'web.envDetail.fullDeployFailed': 'Full environment deployment failed: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update completed successfully.',
           'web.envDetail.workerUpdateSummary': 'Summary: {{success}} / {{total}} workers updated',
           'web.envDetail.updateFailedWithMessage': 'Update failed: {{error}}',
@@ -2880,6 +2891,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '設定済みバケット: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2バケットの作成が完了しました。',
           'web.envDetail.workerUpdateStarting': '{{env}} のWorker更新を開始しています...',
+          'web.envDetail.fullDeployTitle': '環境全体をデプロイ',
+          'web.envDetail.fullDeployScope': 'API Worker + UI Worker',
+          'web.envDetail.fullDeployDesc': '現在のソースからAPI Workerと有効なUI Workerをすべてビルド・デプロイします。既存のデータと設定は維持されます。',
+          'web.envDetail.fullDeployAction': '環境全体をデプロイ',
+          'web.envDetail.fullDeployProgress': 'デプロイ進捗',
+          'web.envDetail.fullDeployStarting': '{{env}} の環境全体デプロイを開始しています...',
+          'web.envDetail.fullDeployApiPhase': 'API Workerをすべてデプロイ中...',
+          'web.envDetail.fullDeployUiComponent': '{{component}}をデプロイ中...',
+          'web.envDetail.fullDeploySummary': '完了: {{success}} / {{total}} コンポーネント',
+          'web.envDetail.fullDeployComplete': '環境全体のデプロイが完了しました。',
+          'web.envDetail.fullDeployFailed': '環境全体のデプロイに失敗しました: {{error}}',
           'web.envDetail.updateCompletedSuccess': '更新が完了しました。',
           'web.envDetail.workerUpdateSummary': '概要: {{success}} / {{total}} Workers 更新済み',
           'web.envDetail.updateFailedWithMessage': '更新に失敗しました: {{error}}',
@@ -2949,6 +2971,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '已配置存储桶：{{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 存储桶创建已完成。',
           'web.envDetail.workerUpdateStarting': '正在开始更新 {{env}} 的 Worker...',
+          'web.envDetail.fullDeployTitle': '部署整个环境',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': '从当前源代码构建并部署所有 API Worker 和已启用的 UI Worker。现有数据和设置会保留。',
+          'web.envDetail.fullDeployAction': '部署整个环境',
+          'web.envDetail.fullDeployProgress': '部署进度',
+          'web.envDetail.fullDeployStarting': '正在开始部署环境 {{env}}...',
+          'web.envDetail.fullDeployApiPhase': '正在部署所有 API Worker...',
+          'web.envDetail.fullDeployUiComponent': '正在部署 {{component}}...',
+          'web.envDetail.fullDeploySummary': '已完成：{{success}} / {{total}} 个组件',
+          'web.envDetail.fullDeployComplete': '整个环境部署已完成。',
+          'web.envDetail.fullDeployFailed': '整个环境部署失败：{{error}}',
           'web.envDetail.updateCompletedSuccess': '更新已完成。',
           'web.envDetail.workerUpdateSummary': '摘要：{{success}} / {{total}} Workers 已更新',
           'web.envDetail.updateFailedWithMessage': '更新失败：{{error}}',
@@ -3018,6 +3051,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '已設定儲存桶：{{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 儲存桶建立已完成。',
           'web.envDetail.workerUpdateStarting': '正在開始更新 {{env}} 的 Worker...',
+          'web.envDetail.fullDeployTitle': '部署整個環境',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': '從目前的原始碼建置並部署所有 API Worker 與已啟用的 UI Worker。現有資料與設定會保留。',
+          'web.envDetail.fullDeployAction': '部署整個環境',
+          'web.envDetail.fullDeployProgress': '部署進度',
+          'web.envDetail.fullDeployStarting': '正在開始部署環境 {{env}}...',
+          'web.envDetail.fullDeployApiPhase': '正在部署所有 API Worker...',
+          'web.envDetail.fullDeployUiComponent': '正在部署 {{component}}...',
+          'web.envDetail.fullDeploySummary': '已完成：{{success}} / {{total}} 個元件',
+          'web.envDetail.fullDeployComplete': '整個環境部署已完成。',
+          'web.envDetail.fullDeployFailed': '整個環境部署失敗：{{error}}',
           'web.envDetail.updateCompletedSuccess': '更新已完成。',
           'web.envDetail.workerUpdateSummary': '摘要：{{success}} / {{total}} Workers 已更新',
           'web.envDetail.updateFailedWithMessage': '更新失敗：{{error}}',
@@ -3086,6 +3130,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurados: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionamiento R2 completado.',
           'web.envDetail.workerUpdateStarting': 'Iniciando actualización de workers para {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Desplegar todo el entorno',
+          'web.envDetail.fullDeployScope': 'Workers API + Workers UI',
+          'web.envDetail.fullDeployDesc': 'Compila y despliega todos los Workers API y los Workers UI habilitados desde el código actual. Los datos y la configuración existentes se conservan.',
+          'web.envDetail.fullDeployAction': 'Desplegar todo el entorno',
+          'web.envDetail.fullDeployProgress': 'Progreso del despliegue',
+          'web.envDetail.fullDeployStarting': 'Iniciando el despliegue completo del entorno {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Desplegando todos los Workers API...',
+          'web.envDetail.fullDeployUiComponent': 'Desplegando {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Completado: {{success}} / {{total}} componentes',
+          'web.envDetail.fullDeployComplete': 'El despliegue completo del entorno ha terminado.',
+          'web.envDetail.fullDeployFailed': 'El despliegue completo del entorno ha fallado: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Actualización completada.',
           'web.envDetail.workerUpdateSummary': 'Resumen: {{success}} / {{total}} workers actualizados',
           'web.envDetail.updateFailedWithMessage': 'La actualización falló: {{error}}',
@@ -3154,6 +3209,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurados: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionamento R2 concluído.',
           'web.envDetail.workerUpdateStarting': 'Iniciando atualização de workers para {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Fazer deploy do ambiente inteiro',
+          'web.envDetail.fullDeployScope': 'Workers de API + Workers de UI',
+          'web.envDetail.fullDeployDesc': 'Compile e faça deploy de todos os Workers de API e Workers de UI habilitados a partir do código atual. Os dados e as configurações existentes serão preservados.',
+          'web.envDetail.fullDeployAction': 'Fazer deploy do ambiente inteiro',
+          'web.envDetail.fullDeployProgress': 'Progresso do deploy',
+          'web.envDetail.fullDeployStarting': 'Iniciando o deploy completo do ambiente {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Fazendo deploy de todos os Workers de API...',
+          'web.envDetail.fullDeployUiComponent': 'Fazendo deploy de {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Concluído: {{success}} / {{total}} componentes',
+          'web.envDetail.fullDeployComplete': 'O deploy completo do ambiente foi concluído.',
+          'web.envDetail.fullDeployFailed': 'Falha no deploy completo do ambiente: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Atualização concluída.',
           'web.envDetail.workerUpdateSummary': 'Resumo: {{success}} / {{total}} workers atualizados',
           'web.envDetail.updateFailedWithMessage': 'Falha na atualização: {{error}}',
@@ -3222,6 +3288,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurés : {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionnement R2 terminé.',
           'web.envDetail.workerUpdateStarting': 'Démarrage de la mise à jour des workers pour {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Déployer tout l’environnement',
+          'web.envDetail.fullDeployScope': 'Workers API + Workers UI',
+          'web.envDetail.fullDeployDesc': 'Construisez et déployez tous les Workers API et les Workers UI activés depuis le code actuel. Les données et paramètres existants sont conservés.',
+          'web.envDetail.fullDeployAction': 'Déployer tout l’environnement',
+          'web.envDetail.fullDeployProgress': 'Progression du déploiement',
+          'web.envDetail.fullDeployStarting': 'Démarrage du déploiement complet de l’environnement {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Déploiement de tous les Workers API...',
+          'web.envDetail.fullDeployUiComponent': 'Déploiement de {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Terminé : {{success}} / {{total}} composants',
+          'web.envDetail.fullDeployComplete': 'Le déploiement complet de l’environnement est terminé.',
+          'web.envDetail.fullDeployFailed': 'Échec du déploiement complet de l’environnement : {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Mise à jour terminée.',
           'web.envDetail.workerUpdateSummary': 'Résumé : {{success}} / {{total}} workers mis à jour',
           'web.envDetail.updateFailedWithMessage': 'Échec de la mise à jour : {{error}}',
@@ -3290,6 +3367,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Konfigurierte Buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2-Bereitstellung abgeschlossen.',
           'web.envDetail.workerUpdateStarting': 'Worker-Update für {{env}} wird gestartet...',
+          'web.envDetail.fullDeployTitle': 'Gesamte Umgebung bereitstellen',
+          'web.envDetail.fullDeployScope': 'API-Worker + UI-Worker',
+          'web.envDetail.fullDeployDesc': 'Alle API-Worker und aktivierten UI-Worker aus dem aktuellen Quellcode bauen und bereitstellen. Vorhandene Daten und Einstellungen bleiben erhalten.',
+          'web.envDetail.fullDeployAction': 'Gesamte Umgebung bereitstellen',
+          'web.envDetail.fullDeployProgress': 'Bereitstellungsfortschritt',
+          'web.envDetail.fullDeployStarting': 'Gesamte Bereitstellung für {{env}} wird gestartet...',
+          'web.envDetail.fullDeployApiPhase': 'Alle API-Worker werden bereitgestellt...',
+          'web.envDetail.fullDeployUiComponent': '{{component}} wird bereitgestellt...',
+          'web.envDetail.fullDeploySummary': 'Abgeschlossen: {{success}} / {{total}} Komponenten',
+          'web.envDetail.fullDeployComplete': 'Die gesamte Umgebung wurde bereitgestellt.',
+          'web.envDetail.fullDeployFailed': 'Die gesamte Bereitstellung ist fehlgeschlagen: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update abgeschlossen.',
           'web.envDetail.workerUpdateSummary': 'Zusammenfassung: {{success}} / {{total}} Workers aktualisiert',
           'web.envDetail.updateFailedWithMessage': 'Update fehlgeschlagen: {{error}}',
@@ -3358,6 +3446,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '설정된 버킷: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 버킷 생성이 완료되었습니다.',
           'web.envDetail.workerUpdateStarting': '{{env}}의 Worker 업데이트를 시작합니다...',
+          'web.envDetail.fullDeployTitle': '전체 환경 배포',
+          'web.envDetail.fullDeployScope': 'API Worker + UI Worker',
+          'web.envDetail.fullDeployDesc': '현재 소스에서 모든 API Worker와 활성화된 UI Worker를 빌드하고 배포합니다. 기존 데이터와 설정은 유지됩니다.',
+          'web.envDetail.fullDeployAction': '전체 환경 배포',
+          'web.envDetail.fullDeployProgress': '배포 진행 상황',
+          'web.envDetail.fullDeployStarting': '{{env}} 전체 환경 배포를 시작합니다...',
+          'web.envDetail.fullDeployApiPhase': '모든 API Worker를 배포하는 중...',
+          'web.envDetail.fullDeployUiComponent': '{{component}} 배포 중...',
+          'web.envDetail.fullDeploySummary': '완료: {{success}} / {{total}}개 구성 요소',
+          'web.envDetail.fullDeployComplete': '전체 환경 배포가 완료되었습니다.',
+          'web.envDetail.fullDeployFailed': '전체 환경 배포에 실패했습니다: {{error}}',
           'web.envDetail.updateCompletedSuccess': '업데이트가 완료되었습니다.',
           'web.envDetail.workerUpdateSummary': '요약: {{success}} / {{total}} Workers 업데이트됨',
           'web.envDetail.updateFailedWithMessage': '업데이트 실패: {{error}}',
@@ -3426,6 +3525,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Настроенные buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Создание R2 buckets завершено.',
           'web.envDetail.workerUpdateStarting': 'Запуск обновления Workers для {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Развернуть всё окружение',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': 'Соберите и разверните все API Workers и включённые UI Workers из текущего исходного кода. Существующие данные и настройки сохраняются.',
+          'web.envDetail.fullDeployAction': 'Развернуть всё окружение',
+          'web.envDetail.fullDeployProgress': 'Прогресс развертывания',
+          'web.envDetail.fullDeployStarting': 'Запуск полного развертывания окружения {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Развертывание всех API Workers...',
+          'web.envDetail.fullDeployUiComponent': 'Развертывание {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Завершено: {{success}} / {{total}} компонентов',
+          'web.envDetail.fullDeployComplete': 'Полное развертывание окружения завершено.',
+          'web.envDetail.fullDeployFailed': 'Полное развертывание окружения не удалось: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Обновление завершено.',
           'web.envDetail.workerUpdateSummary': 'Итог: {{success}} / {{total}} Workers обновлено',
           'web.envDetail.updateFailedWithMessage': 'Обновление не удалось: {{error}}',
@@ -3494,6 +3604,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Bucket terkonfigurasi: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Pembuatan bucket R2 selesai.',
           'web.envDetail.workerUpdateStarting': 'Memulai update Worker untuk {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Deploy seluruh environment',
+          'web.envDetail.fullDeployScope': 'Worker API + Worker UI',
+          'web.envDetail.fullDeployDesc': 'Build dan deploy semua Worker API serta Worker UI yang diaktifkan dari source saat ini. Data dan pengaturan yang ada tetap dipertahankan.',
+          'web.envDetail.fullDeployAction': 'Deploy seluruh environment',
+          'web.envDetail.fullDeployProgress': 'Progres deploy',
+          'web.envDetail.fullDeployStarting': 'Memulai deploy seluruh environment {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Men-deploy semua Worker API...',
+          'web.envDetail.fullDeployUiComponent': 'Men-deploy {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Selesai: {{success}} / {{total}} komponen',
+          'web.envDetail.fullDeployComplete': 'Deploy seluruh environment selesai.',
+          'web.envDetail.fullDeployFailed': 'Deploy seluruh environment gagal: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update selesai.',
           'web.envDetail.workerUpdateSummary': 'Ringkasan: {{success}} / {{total}} Workers diperbarui',
           'web.envDetail.updateFailedWithMessage': 'Update gagal: {{error}}',
@@ -5355,6 +5476,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div id="pane-workers" class="tabpane" data-env-pane="workers">
+        <div class="bigtable env-full-deploy-card" id="full-environment-deploy-card">
+          <div class="cap">
+            <span data-i18n="web.envDetail.fullDeployTitle">Deploy Entire Environment</span>
+            <em data-i18n="web.envDetail.fullDeployScope">API Workers + UI Workers</em>
+          </div>
+          <div class="secdesc" data-i18n="web.envDetail.fullDeployDesc">
+            Build and deploy all API Workers and enabled UI Workers from the current source. Existing data and settings are preserved.
+          </div>
+          <div class="inline-form env-full-deploy-actions">
+            <button class="btn btn-next" id="btn-deploy-full-environment">
+              <span data-i18n="web.envDetail.fullDeployAction">Deploy Entire Environment</span><span class="arr">→</span>
+            </button>
+          </div>
+        </div>
+        <div id="full-environment-deploy-progress" class="hidden logbox">
+          <div class="cap">
+            <span data-i18n="web.envDetail.fullDeployProgress">Deployment Progress</span>
+            <button type="button" id="full-environment-deploy-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
+          </div>
+          <pre id="full-environment-deploy-log"></pre>
+        </div>
         <div class="sechead">
           <span class="idx">UPDATE</span><h3 data-i18n="web.envDetail.workerUpdate">Update Workers</h3>
           <span class="hint" data-i18n="web.envDetail.workerUpdateHint">Compare deployed and local builds</span>
@@ -6629,6 +6771,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     setupLogCopyButton('deploy-log-copy-btn', 'deploy-output');
     setupLogCopyButton('provision-log-copy-btn', 'provision-output');
     setupLogCopyButton('delete-log-copy-btn', 'delete-output');
+    setupLogCopyButton('full-environment-deploy-log-copy-btn', 'full-environment-deploy-log');
     setupLogCopyButton('worker-update-log-copy-btn', 'worker-update-log');
     setupLogCopyButton('ui-update-log-copy-btn', 'ui-update-log');
 
@@ -10822,6 +10965,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       adminSetupSection.classList.add('hidden');
       resultDiv.classList.add('hidden');
       btn.disabled = false;
+      btn.classList.remove('hidden');
+      adminSetupSection.querySelector('p')?.classList.remove('hidden');
       btn.textContent =
         t('web.envDetail.startPasskey');
 
@@ -12279,6 +12424,137 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    function getFullDeployUiComponents() {
+      const configuredComponents = selectedEnvDetailConfig?.components;
+      if (configuredComponents && typeof configuredComponents === 'object') {
+        return ['ar-admin-ui', 'ar-login-ui'].filter((componentName) => {
+          const configKey = componentName === 'ar-admin-ui' ? 'adminUi' : 'loginUi';
+          return configuredComponents[configKey] !== false;
+        });
+      }
+
+      if (!selectedEnvForDetail) return [];
+      return ['ar-admin-ui', 'ar-login-ui'].filter((componentName) =>
+        hasUiWorker(selectedEnvForDetail, currentEnvForUpdate + '-' + componentName)
+      );
+    }
+
+    async function runFullDeployStep(endpoint, body, startMarker, addLog) {
+      let lastProgressLength = 0;
+      let hasSeenStart = false;
+      const appendProgressMessages = (progress) => {
+        if (!Array.isArray(progress)) return;
+
+        if (!hasSeenStart) {
+          const startIndex = progress.findIndex((msg) => String(msg || '').includes(startMarker));
+          if (startIndex === -1) return;
+          hasSeenStart = true;
+          lastProgressLength = startIndex + 1;
+        }
+
+        if (progress.length < lastProgressLength) lastProgressLength = 0;
+        if (progress.length > lastProgressLength) {
+          progress.slice(lastProgressLength).forEach((msg) => addLog(formatProgressMessageForDisplay(msg)));
+          lastProgressLength = progress.length;
+        }
+      };
+
+      const pollProgress = async () => {
+        try {
+          const statusResult = await api('/deploy/status');
+          appendProgressMessages(statusResult.progress || []);
+        } catch {
+          // The deployment request remains the source of truth for the final result.
+        }
+      };
+
+      const pollTimer = window.setInterval(pollProgress, 1000);
+      window.setTimeout(pollProgress, 300);
+      try {
+        const response = await api(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        appendProgressMessages(response.progress || []);
+        return response;
+      } finally {
+        window.clearInterval(pollTimer);
+        await pollProgress();
+      }
+    }
+
+    async function startFullEnvironmentDeploy() {
+      if (!currentEnvForUpdate) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+
+      const btn = document.getElementById('btn-deploy-full-environment');
+      const progressDiv = document.getElementById('full-environment-deploy-progress');
+      const logDiv = document.getElementById('full-environment-deploy-log');
+      if (!btn || !progressDiv || !logDiv) return;
+
+      const workerUpdateButton = document.getElementById('btn-update-workers');
+      const adminUpdateButton = document.getElementById('btn-update-admin-ui');
+      const loginUpdateButton = document.getElementById('btn-update-login-ui');
+      const buttons = [btn, workerUpdateButton, adminUpdateButton, loginUpdateButton].filter(Boolean);
+      const uiComponents = getFullDeployUiComponents();
+      const totalComponents = 1 + uiComponents.length;
+      let completedComponents = 0;
+
+      buttons.forEach((button) => { button.disabled = true; });
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.fullDeployStarting', { env: currentEnvForUpdate }));
+        addLog(t('web.envDetail.fullDeployApiPhase'));
+        const workerResponse = await runFullDeployStep(
+          '/update/workers',
+          { env: currentEnvForUpdate, onlyChanged: false, includeUiWorkers: true },
+          'Starting worker update for environment: ' + currentEnvForUpdate,
+          addLog
+        );
+        if (!workerResponse.success) {
+          throw new Error(workerResponse.error || t('web.status.unknownError'));
+        }
+        completedComponents += 1;
+
+        for (const componentName of uiComponents) {
+          addLog(t('web.envDetail.fullDeployUiComponent', { component: componentName }));
+          const uiResponse = await runFullDeployStep(
+            '/deploy/component/' + encodeURIComponent(componentName),
+            { env: currentEnvForUpdate, skipBuild: false, dryRun: false },
+            'Deploying component: ' + componentName,
+            addLog
+          );
+          if (!uiResponse.success) {
+            throw new Error(uiResponse.error || t('web.status.unknownError'));
+          }
+          completedComponents += 1;
+        }
+
+        addLog(t('web.envDetail.fullDeploySummary', {
+          success: completedComponents,
+          total: totalComponents,
+        }));
+        addLog(t('web.envDetail.fullDeployComplete'));
+        await loadWorkerVersionComparison(currentEnvForUpdate);
+      } catch (error) {
+        addLog(t('web.envDetail.fullDeployFailed', { error: error.message }));
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+        updateWorkerUpdateButtonState();
+      }
+    }
+
     // Update a single worker component
     async function updateSingleComponent(componentName) {
       if (!currentEnvForUpdate) {
@@ -12412,6 +12688,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Event listeners for Worker Update
+    document.getElementById('btn-deploy-full-environment')?.addEventListener('click', startFullEnvironmentDeploy);
     document.getElementById('btn-update-workers')?.addEventListener('click', startWorkerUpdate);
     document.getElementById('update-only-changed')?.addEventListener('change', () => {
       updateWorkerUpdateButtonState();
@@ -12462,9 +12739,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const button = document.getElementById('btn-start-admin-setup');
 
         if (response.adminSetupCompleted) {
-          section.classList.add('hidden');
+          section.className = 'alert ok';
+          section.classList.remove('hidden');
+          if (heading) {
+            heading.setAttribute('data-i18n', 'web.env.adminConfigured');
+            heading.textContent = t('web.env.adminConfigured');
+          }
+          if (description) {
+            description.removeAttribute('data-i18n');
+            description.textContent = '';
+            description.classList.add('hidden');
+          }
           document.getElementById('admin-setup-result')?.classList.add('hidden');
-          if (button) button.disabled = true;
+          if (button) {
+            button.disabled = true;
+            button.classList.add('hidden');
+          }
           return;
         }
 
@@ -12475,11 +12765,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           heading.textContent = t('web.envDetail.adminNotConfigured');
         }
         if (description) {
+          description.classList.remove('hidden');
           description.setAttribute('data-i18n', 'web.envDetail.adminNotConfiguredDesc');
           description.textContent = t('web.envDetail.adminNotConfiguredDesc');
         }
         if (button) {
           button.disabled = false;
+          button.classList.remove('hidden');
           button.setAttribute('data-i18n', 'web.envDetail.startPasskey');
           button.textContent = t('web.envDetail.startPasskey');
         }

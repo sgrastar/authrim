@@ -60,7 +60,7 @@ type RootTranslation = {
 	 */
 	dialog_close: string
 	/**
-	 * P​o​w​e​r​e​d​ ​b​y​ ​A​u​t​h​r​i​m
+	 * P​o​w​e​r​e​d​ ​b​y​ ​<​a​ ​h​r​e​f​=​"​h​t​t​p​s​:​/​/​a​u​t​h​r​i​m​.​c​o​m​/​"​>​A​u​t​h​r​i​m​<​/​a​>
 	 */
 	footer_stack: string
 	/**
@@ -266,7 +266,7 @@ type RootTranslation = {
 	 */
 	account_reauthNoMethods: string
 	/**
-	 * D​e​v​i​c​e​s
+	 * C​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s
 	 */
 	account_devices: string
 	/**
@@ -274,13 +274,39 @@ type RootTranslation = {
 	 */
 	account_currentDevice: string
 	/**
-	 * S​e​s​s​i​o​n​s
+	 * A​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_connectedDevicesDescription: string
+	/**
+	 * N​o​ ​c​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​o​r​ ​d​e​v​i​c​e​s
+	 */
+	account_noConnectedDevices: string
+	/**
+	 * S​i​g​n​e​d​-​i​n​ ​d​e​v​i​c​e​s
 	 */
 	account_sessions: string
 	/**
-	 * C​u​r​r​e​n​t​ ​s​e​s​s​i​o​n
+	 * T​h​i​s​ ​d​e​v​i​c​e
 	 */
 	account_currentSession: string
+	/**
+	 * B​r​o​w​s​e​r​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​c​u​r​r​e​n​t​l​y​ ​s​i​g​n​e​d​ ​i​n​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_sessionsDescription: string
+	/**
+	 * D​e​v​i​c​e​ ​d​e​t​a​i​l​s​ ​u​n​a​v​a​i​l​a​b​l​e
+	 */
+	account_unknownDevice: string
+	/**
+	 * L​o​c​a​t​i​o​n​:​ ​{​c​o​u​n​t​r​y​}
+	 * @param {string} country
+	 */
+	account_sessionLocation: RequiredParams<'country'>
+	/**
+	 * S​i​g​n​e​d​ ​i​n​ ​{​t​i​m​e​}
+	 * @param {string} time
+	 */
+	account_signedInAt: RequiredParams<'time'>
 	/**
 	 * L​o​g​ ​o​u​t
 	 */
@@ -1431,7 +1457,7 @@ export type TranslationFunctions = {
 	 */
 	dialog_close: () => LocalizedString
 	/**
-	 * Powered by Authrim
+	 * Powered by <a href="https://authrim.com/">Authrim</a>
 	 */
 	footer_stack: () => LocalizedString
 	/**
@@ -1635,7 +1661,7 @@ export type TranslationFunctions = {
 	 */
 	account_reauthNoMethods: () => LocalizedString
 	/**
-	 * Devices
+	 * Connected apps and devices
 	 */
 	account_devices: () => LocalizedString
 	/**
@@ -1643,13 +1669,37 @@ export type TranslationFunctions = {
 	 */
 	account_currentDevice: () => LocalizedString
 	/**
-	 * Sessions
+	 * Apps and devices linked to your account.
+	 */
+	account_connectedDevicesDescription: () => LocalizedString
+	/**
+	 * No connected apps or devices
+	 */
+	account_noConnectedDevices: () => LocalizedString
+	/**
+	 * Signed-in devices
 	 */
 	account_sessions: () => LocalizedString
 	/**
-	 * Current session
+	 * This device
 	 */
 	account_currentSession: () => LocalizedString
+	/**
+	 * Browsers and devices currently signed in to your account.
+	 */
+	account_sessionsDescription: () => LocalizedString
+	/**
+	 * Device details unavailable
+	 */
+	account_unknownDevice: () => LocalizedString
+	/**
+	 * Location: {country}
+	 */
+	account_sessionLocation: (arg: { country: string }) => LocalizedString
+	/**
+	 * Signed in {time}
+	 */
+	account_signedInAt: (arg: { time: string }) => LocalizedString
 	/**
 	 * Log out
 	 */

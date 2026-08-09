@@ -10,6 +10,10 @@ import {
   type RegionShardResidencyProjection,
 } from '@authrim/ar-lib-core/utils/region-sharding';
 import {
+  createLookupAliasIndex,
+  type LookupAliasIndex,
+} from '@authrim/ar-lib-core/services/lookup-directory/blind-index';
+import {
   RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
   RUNTIME_REGISTRY_SNAPSHOT_VERSION,
   signRuntimeRegistrySnapshotPayloadJws,
@@ -203,6 +207,12 @@ interface CountRow extends Record<string, unknown> {
   count: number | string;
 }
 
+interface InitialTenantAliasBootstrap {
+  indexes: LookupAliasIndex[];
+  projectionJson: string;
+  sql: string;
+}
+
 export interface ControlPlaneBootstrapResult {
   success: boolean;
   skipped?: boolean;
@@ -278,6 +288,65 @@ interface RuntimeSnapshot {
 
 function tenantIdForConfig(config: AuthrimConfig): string {
   return config.tenant?.name?.trim() || 'default';
+}
+
+export async function buildInitialTenantAliasBootstrap(input: {
+  environmentId: string;
+  tenantId: string;
+  tenantCode: string;
+  defaultStore: RuntimeSnapshotStore;
+  now?: number;
+}): Promise<InitialTenantAliasBootstrap> {
+  const bindingRef = input.defaultStore.bindingRef?.trim();
+  if (!bindingRef) throw new Error('initial_tenant_alias_binding_ref_missing');
+  const now = input.now ?? Math.floor(Date.now() / 1000);
+  if (!Number.isSafeInteger(now) || now < 1) {
+    throw new Error('initial_tenant_alias_timestamp_invalid');
+  }
+  const projection = {
+    schemaVersion: 1,
+    tenantRouteGeneration: input.defaultStore.bindingRouteGeneration,
+    residencyPolicyId: input.defaultStore.residencyPolicyId,
+    target: {
+      dataRole: 'tenant_core/default',
+      residencyPartition: input.defaultStore.residencyPartition,
+      shardId: input.defaultStore.shardId,
+      bindingRef,
+      requiredBindingRouteGeneration: input.defaultStore.bindingRouteGeneration,
+    },
+  };
+  const projectionJson = JSON.stringify(projection);
+  const indexes = await Promise.all([
+    createLookupAliasIndex('tenant_code', input.tenantCode),
+    createLookupAliasIndex('tenant_slug', input.tenantId),
+    createLookupAliasIndex('environment_tenant', input.environmentId),
+  ]);
+  const values = indexes
+    .map(
+      (index) =>
+        `(${index.virtualBucket}, ${sqlString(index.aliasKind)}, ${sqlString(index.digest)}, ` +
+        `${sqlString(input.tenantId)}, 1, ${sqlString(projectionJson)}, ` +
+        `'active', 'active', 'active', ${now}, ${now})`
+    )
+    .join(',\n');
+
+  return {
+    indexes,
+    projectionJson,
+    sql: `INSERT INTO lookup_tenant_aliases (
+      virtual_bucket, alias_kind, alias_sha256_digest, tenant_id,
+      route_schema_version, route_projection_json, tenant_lifecycle_state,
+      runtime_route_status, lifecycle_state, created_at, updated_at
+    ) VALUES
+    ${values}
+    ON CONFLICT(virtual_bucket, alias_kind, alias_sha256_digest, tenant_id) DO UPDATE SET
+      route_schema_version = excluded.route_schema_version,
+      route_projection_json = excluded.route_projection_json,
+      tenant_lifecycle_state = excluded.tenant_lifecycle_state,
+      runtime_route_status = excluded.runtime_route_status,
+      lifecycle_state = excluded.lifecycle_state,
+      updated_at = excluded.updated_at;`,
+  };
 }
 
 interface InitialTenantRegionPolicyRow extends Record<string, unknown> {
@@ -791,11 +860,13 @@ async function executeAdminSql(input: {
 
 async function verifyInitialControlPlaneBootstrap(input: {
   adminDbName: string;
+  lookupDatabaseName: string;
   runtimeRegistryNamespaceId: string;
   tenantId: string;
   coreDatabaseName: string;
   resources: readonly InitialControlPlaneBootstrapResource[];
   expectedSnapshot: RuntimeSnapshot;
+  expectedAliases: InitialTenantAliasBootstrap;
 }): Promise<void> {
   const tenantIdSql = sqlString(input.tenantId);
   const [pointerRow] = await queryD1Rows<CountRow>(
@@ -820,6 +891,29 @@ async function verifyInitialControlPlaneBootstrap(input: {
   );
   if (countValue(tenantRow) !== 1) {
     throw new Error('initial_control_plane_core_tenant_verification_failed');
+  }
+
+  const aliasPredicates = input.expectedAliases.indexes
+    .map(
+      (index) =>
+        `(virtual_bucket = ${index.virtualBucket} AND alias_kind = ${sqlString(index.aliasKind)} ` +
+        `AND alias_sha256_digest = ${sqlString(index.digest)})`
+    )
+    .join(' OR ');
+  const [aliasRow] = await queryD1Rows<CountRow>(
+    input.lookupDatabaseName,
+    `SELECT COUNT(*) AS count
+       FROM lookup_tenant_aliases
+      WHERE tenant_id = ${tenantIdSql}
+        AND route_schema_version = 1
+        AND route_projection_json = ${sqlString(input.expectedAliases.projectionJson)}
+        AND tenant_lifecycle_state = 'active'
+        AND runtime_route_status = 'active'
+        AND lifecycle_state = 'active'
+        AND (${aliasPredicates});`
+  );
+  if (countValue(aliasRow) !== input.expectedAliases.indexes.length) {
+    throw new Error('initial_control_plane_tenant_alias_verification_failed');
   }
 
   const snapshotText = await getKVKeyByNamespaceId(
@@ -930,7 +1024,10 @@ export async function ensureInitialControlPlaneResources(input: {
     if (handoff?.state === 'accepted') {
       return { success: true, skipped: true };
     }
-    if (handoff?.state === 'blocked' && !isRecoverableInitialHandoffError(handoff.verification_error_code)) {
+    if (
+      handoff?.state === 'blocked' &&
+      !isRecoverableInitialHandoffError(handoff.verification_error_code)
+    ) {
       throw new Error(`initial_control_plane_handoff_${handoff.state}`);
     }
 
@@ -1030,6 +1127,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   const tenantId = tenantIdForConfig(input.config);
   const adminDbName = input.lock.d1.DB_ADMIN?.name;
   const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
+  const lookupDatabaseName = input.lock.d1.LOOKUP_DB?.name;
   const configNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
   const runtimeRegistryNamespaceId = input.lock.kv.TENANT_RUNTIME_REGISTRY?.id;
   if (!adminDbName) {
@@ -1040,6 +1138,9 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   }
   if (!controlDatabaseName) {
     return { success: false, error: 'CONTROL_DB is missing from the lock file' };
+  }
+  if (!lookupDatabaseName) {
+    return { success: false, error: 'LOOKUP_DB is missing from the lock file' };
   }
   if (!configNamespaceId) {
     return { success: false, error: 'AUTHRIM_CONFIG KV is missing from the lock file' };
@@ -1155,14 +1256,29 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       { expirationTtl: RUNTIME_REGISTRY_GENERATION_TTL_SECONDS }
     );
 
+    const defaultStore = snapshot.stores.find(
+      (store) => store.role === 'tenant_core' && store.shardGroup === 'default'
+    );
+    if (!defaultStore) throw new Error('initial_tenant_alias_default_store_missing');
+    const aliases = await buildInitialTenantAliasBootstrap({
+      environmentId: input.env,
+      tenantId,
+      tenantCode: input.config.tenant.name,
+      defaultStore,
+    });
+    input.onProgress?.(`🔧 Ensuring initial tenant discovery aliases (${tenantId})...`);
+    await executeD1Command(lookupDatabaseName, aliases.sql);
+
     input.onProgress?.(`🔎 Verifying initial Control Plane bootstrap (${tenantId})...`);
     await verifyInitialControlPlaneBootstrap({
       adminDbName,
+      lookupDatabaseName,
       runtimeRegistryNamespaceId,
       tenantId,
       coreDatabaseName: defaultCoreResource.databaseName,
       resources,
       expectedSnapshot: snapshot,
+      expectedAliases: aliases,
     });
 
     input.onProgress?.(`  ✅ Initial Control Plane runtime snapshot published: ${tenantId}`);

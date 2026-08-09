@@ -21,6 +21,7 @@
 	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
+	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import {
 		fetchAuthenticationMethods,
@@ -236,12 +237,20 @@
 			.sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
 			.map((field, index) => {
 				const key = field.block_id ?? `${field.field}-${index}`;
-				return {
+				const localizedField = {
 					...field,
 					...(defaultLocalized[key] ?? {}),
 					...(localized[key] ?? {})
 				};
-			});
+				return screen.screen_key === 'account_overview' &&
+					field.field === 'heading.account_overview'
+					? { ...localizedField, text: undefined }
+					: localizedField;
+			})
+			.filter(
+				(field) =>
+					screen.screen_key !== 'account_overview' || field.field !== 'link.account_security'
+			);
 	}
 
 	function accountWidgetTitle(field: AccountPageScreenField): string {
@@ -261,14 +270,30 @@
 		const defaultLabels = new Set([
 			'User profile',
 			'Devices',
+			'Connected apps and devices',
 			'Sessions',
+			'Signed-in devices',
 			'Passkeys',
 			'Authenticator app',
 			'Consent information',
 			'Account activity',
 			'Connected accounts'
 		]);
-		return !field.label || defaultLabels.has(field.label) ? (title ?? field.label) : field.label;
+		const systemWidgetFields = new Set([
+			'account.profile',
+			'account.devices',
+			'account.sessions',
+			'account.passkeys',
+			'account.totp',
+			'account.consents',
+			'account.activity',
+			'account.social_accounts'
+		]);
+		return !field.label ||
+			defaultLabels.has(field.label) ||
+			(!field.block_id && systemWidgetFields.has(field.field))
+			? (title ?? field.label)
+			: field.label;
 	}
 
 	function isDedicatedLoginUiHostname(hostname: string): boolean {
@@ -935,10 +960,6 @@
 </svelte:head>
 
 <div class="account-shell">
-	<div class="account-language">
-		<LanguageSwitcher />
-	</div>
-
 	{#if loading}
 		<div class="account-loading">
 			<Spinner size="lg" />
@@ -1223,6 +1244,17 @@
 		</div>
 	{/if}
 
+	{#if loginUIPageStore.showTopbar}
+		<div class="account-preferences" data-position={loginUIPageStore.topbarPosition}>
+			<LanguageSwitcher
+				showThemeToggle={loginUIPageStore.themeToggleEnabled}
+				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+			/>
+		</div>
+	{/if}
+
+	<ConfiguredFooter locale={currentLocale} class="account-footer" />
+
 	{#if reauthModalOpen}
 		<button
 			type="button"
@@ -1330,6 +1362,8 @@
 		color: var(--text-primary);
 		isolation: isolate;
 		padding: 24px;
+		display: flex;
+		flex-direction: column;
 	}
 
 	:global(.account-shell .card),
@@ -1396,10 +1430,67 @@
 		box-shadow: none !important;
 	}
 
-	.account-language {
+	.account-preferences {
+		order: 2;
+		width: min(1040px, 100%);
+		margin: 24px auto 0;
 		display: flex;
+		justify-content: center;
+	}
+
+	.account-preferences[data-position='in_card'] {
+		order: -1;
 		justify-content: flex-end;
-		margin-bottom: 24px;
+		margin: 0 auto 24px;
+	}
+
+	.account-preferences[data-position='top_right'],
+	.account-preferences[data-position='bottom_left'],
+	.account-preferences[data-position='bottom_center'],
+	.account-preferences[data-position='bottom_right'] {
+		position: fixed;
+		z-index: 40;
+		width: auto;
+		margin: 0;
+	}
+
+	.account-preferences[data-position='top_right'] {
+		top: max(20px, env(safe-area-inset-top));
+		right: max(20px, env(safe-area-inset-right));
+	}
+
+	.account-preferences[data-position='bottom_left'],
+	.account-preferences[data-position='bottom_center'],
+	.account-preferences[data-position='bottom_right'] {
+		bottom: max(20px, env(safe-area-inset-bottom));
+	}
+
+	.account-preferences[data-position='bottom_left'] {
+		left: max(20px, env(safe-area-inset-left));
+	}
+
+	.account-preferences[data-position='bottom_center'] {
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.account-preferences[data-position='bottom_right'] {
+		right: max(20px, env(safe-area-inset-right));
+	}
+
+	:global(.account-shell .account-footer) {
+		order: 3;
+		align-self: center;
+		margin-top: 32px;
+		padding-bottom: max(0px, env(safe-area-inset-bottom));
+	}
+
+	:global(.account-shell .account-footer p) {
+		margin: 0;
+	}
+
+	:global(.account-shell .account-footer p + p) {
+		margin-top: 6px;
 	}
 
 	.account-loading {

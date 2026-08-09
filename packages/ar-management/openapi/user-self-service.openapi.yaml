@@ -2023,6 +2023,10 @@ components:
         - current
         - created_at
         - expires_at
+        - browser
+        - os
+        - device_type
+        - country_code
       properties:
         id:
           type: string
@@ -2032,6 +2036,32 @@ components:
           type: integer
         expires_at:
           type: integer
+        browser:
+          type:
+            - string
+            - 'null'
+          description: Browser family parsed from the login request User-Agent, when available.
+        os:
+          type:
+            - string
+            - 'null'
+          description: Operating system family parsed from the login request User-Agent, when available.
+        device_type:
+          type:
+            - string
+            - 'null'
+          enum:
+            - desktop
+            - mobile
+            - tablet
+            - null
+          description: General device class parsed from the login request User-Agent, when available.
+        country_code:
+          type:
+            - string
+            - 'null'
+          pattern: '^[A-Z]{2}$'
+          description: ISO 3166-1 alpha-2 country captured from trusted edge metadata at login. This is null when the platform does not provide trusted country metadata, including non-Cloudflare deployments.
     AccountSessionsResponse:
       type: object
       required:

@@ -9,6 +9,14 @@ vi.mock('$app/environment', () => ({ browser: true }));
 describe('loginUIPageStore', () => {
 	beforeEach(() => {
 		document.documentElement.removeAttribute('style');
+		document.documentElement.setAttribute('data-theme', 'dark');
+		document.documentElement.setAttribute('data-login-theme', 'meridian');
+		const themeColor = document.querySelector("meta[name='theme-color']");
+		if (themeColor) themeColor.remove();
+		const newThemeColor = document.createElement('meta');
+		newThemeColor.name = 'theme-color';
+		document.head.appendChild(newThemeColor);
+		document.body.style.backgroundColor = '';
 		document.getElementById('authrim-login-ui-custom-css')?.remove();
 	});
 
@@ -108,6 +116,11 @@ describe('loginUIPageStore', () => {
 		expect(html.getAttribute('data-brand-align')).toBe('right');
 		expect(html.getAttribute('data-logo-display')).toBe('text');
 		expect(html.style.getPropertyValue('--login-page-background-color')).toBe('#112233');
+		expect(html.style.backgroundColor).toBe('rgb(17, 34, 51)');
+		expect(document.body.style.backgroundColor).toBe('rgb(17, 34, 51)');
+		expect(document.querySelector("meta[name='theme-color']")?.getAttribute('content')).toBe(
+			'#112233'
+		);
 		expect(html.style.getPropertyValue('--login-accent-color')).toBe('#336699');
 		expect(html.style.getPropertyValue('--login-title-color')).toBe('#fefefe');
 		expect(html.style.getPropertyValue('--login-text-color')).toBe('#e1e2e3');

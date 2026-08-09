@@ -26,6 +26,7 @@ import {
   parseAllowedOrigins,
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
@@ -3018,6 +3019,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       artifactData.userId,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         email: runtimeUser.email || null,
         name: runtimeUser.name,
         amr,

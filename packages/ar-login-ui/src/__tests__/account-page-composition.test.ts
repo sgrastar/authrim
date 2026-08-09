@@ -24,6 +24,14 @@ describe('Account Page published composition', () => {
 		expect(source).not.toContain('min-height: 100vh');
 	});
 
+	it('shares the configured footer and preference controls with authentication pages', () => {
+		expect(source).toContain('<ConfiguredFooter locale={currentLocale} class="account-footer" />');
+		expect(source).toContain('{#if loginUIPageStore.showTopbar}');
+		expect(source).toContain('data-position={loginUIPageStore.topbarPosition}');
+		expect(source).toContain('showThemeToggle={loginUIPageStore.themeToggleEnabled}');
+		expect(source).toContain('showLanguageSelect={loginUIPageStore.languageSelectEnabled}');
+	});
+
 	it('connects identifier replacement to reauthentication and bounded status polling', () => {
 		expect(source).toContain("{ type: 'change-email'; email: string }");
 		expect(source).toContain("requestReauth({ type: 'change-email', email: email.trim() })");

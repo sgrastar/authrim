@@ -25,6 +25,7 @@ import {
   isAccountAuthenticationDeniedError,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getTenantIdFromContext,
   profileForTotpPreset,
   publishEvent,
@@ -744,6 +745,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
       runtimeUser.id,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         email: runtimeUser.email,
         name: runtimeUser.name,
         amr: ['otp', 'totp'],
@@ -1195,6 +1197,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           userId,
           sessionTtl.seconds,
           {
+            ...getSessionClientMetadata(c.req.raw),
             amr: ['otp', 'totp'],
             acr: defaultAcr,
             authTime,

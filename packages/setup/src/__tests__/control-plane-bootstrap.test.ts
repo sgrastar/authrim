@@ -44,6 +44,7 @@ vi.mock('../core/tenant-database.js', async (importOriginal) => {
 
 import { createDefaultConfig } from '../core/config.js';
 import {
+  buildInitialTenantAliasBootstrap,
   ensureInitialControlPlaneResources,
   ensureInitialTenantRegionShardConfig,
   inspectInitialControlPlaneTopology,
@@ -59,7 +60,7 @@ let root: string;
 function config(automaticProvisioning = true) {
   const value = createDefaultConfig('prod');
   value.controlPlane.automaticProvisioning = automaticProvisioning;
-  value.tenant.name = "tenant-o'hara";
+  value.tenant.name = 'tenant-ohara';
   return value;
 }
 
@@ -154,11 +155,44 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.buildTenantDatabaseRegistrySql.mockReturnValue('REGISTRY SQL');
     mocks.getOptionalKVKeyByNamespaceId.mockResolvedValue(null);
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) =>
-      sql.includes('control_tenant_default_allocations') ? regionPolicyRows() : [{ count: 1 }]
+      sql.includes('control_tenant_default_allocations')
+        ? regionPolicyRows()
+        : [{ count: sql.includes('lookup_tenant_aliases') ? 3 : 1 }]
     );
   });
 
   afterEach(async () => rm(root, { recursive: true, force: true }));
+
+  it('builds active lookup aliases for the initial tenant and environment', async () => {
+    const result = await buildInitialTenantAliasBootstrap({
+      environmentId: 'prod',
+      tenantId: 'first',
+      tenantCode: 'first',
+      defaultStore: {
+        bindingRef: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+        bindingRouteGeneration: 1,
+        residencyPolicyId: 'builtin:residency:default',
+        residencyPartition: 'default',
+        shardId: 'shard-bootstrap-default',
+      } as never,
+      now: 1_700_000_000,
+    });
+
+    expect(result.indexes.map((index) => index.aliasKind)).toEqual([
+      'tenant_code',
+      'tenant_slug',
+      'environment_tenant',
+    ]);
+    expect(result.sql).toContain('INSERT INTO lookup_tenant_aliases');
+    expect(result.sql).toContain("'active', 'active', 'active'");
+    expect(JSON.parse(result.projectionJson)).toMatchObject({
+      tenantRouteGeneration: 1,
+      target: {
+        dataRole: 'tenant_core/default',
+        bindingRef: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+      },
+    });
+  });
 
   it('bootstraps the initial shards even when automatic provisioning is disabled', async () => {
     await expect(
@@ -492,6 +526,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
     const result = await publishInitialControlPlaneRuntimeSnapshot({
@@ -510,7 +545,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     const snapshot = JSON.parse(snapshotCall[2]) as Record<string, unknown>;
     expect(snapshot).toMatchObject({
       version: 4,
-      tenantId: "tenant-o'hara",
+      tenantId: 'tenant-ohara',
       backend: { provider: 'd1', resolver: 'control-plane' },
       placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
       metadata: {
@@ -542,7 +577,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
           bindingRouteGeneration: 1,
           placementPolicyGeneration: 1,
           allocationScope: 'tenant_exclusive',
-          ownerTenantId: "tenant-o'hara",
+          ownerTenantId: 'tenant-ohara',
         }),
         expect.objectContaining({ dataRole: 'tenant_core/users' }),
         expect.objectContaining({ dataRole: 'tenant_pii' }),
@@ -552,7 +587,11 @@ describe('initial Control Plane bootstrap orchestration', () => {
       'prod-authrim-tenant-default-bootstrap-db',
       'INITIAL TENANT SQL'
     );
-    expect(mocks.queryD1Rows).toHaveBeenCalledTimes(3);
+    expect(mocks.executeD1Command).toHaveBeenCalledWith(
+      'lookup-db',
+      expect.stringContaining('INSERT INTO lookup_tenant_aliases')
+    );
+    expect(mocks.queryD1Rows).toHaveBeenCalledTimes(4);
   });
 
   it('does not publish a runtime route when the dedicated core tenant seed fails', async () => {
@@ -639,6 +678,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 
@@ -690,6 +730,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 
@@ -728,6 +769,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 

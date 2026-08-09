@@ -24,6 +24,7 @@ import { setCookie } from 'hono/cookie';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
   resolveAccountDataContextFromHono,
@@ -542,6 +543,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           userId,
           sessionTtl.seconds,
           {
+            ...getSessionClientMetadata(c.req.raw),
             amr: ['anon'],
             acr: 'urn:mace:incommon:iap:anonymous',
             is_anonymous: true,

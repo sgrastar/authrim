@@ -1524,6 +1524,12 @@ describe('LoginUI runtime Flow handlers', () => {
         screen_kind: 'registration',
         fields_json: JSON.stringify([
           {
+            field: 'email',
+            label: 'Email',
+            required: true,
+            block_type: 'identity_field',
+          },
+          {
             field: 'auth.mail_otp',
             label: 'Send verification code',
             text: 'Send a code to your email address.',
@@ -1537,7 +1543,7 @@ describe('LoginUI runtime Flow handlers', () => {
             display_name: '新規登録',
             description: '標準の新規登録スクリーンです。',
             fields: {
-              'auth.mail_otp-0': {
+              'auth.mail_otp-1': {
                 label: '認証コードを送信',
                 text: 'メールアドレスにコードを送信します。',
               },
@@ -1546,6 +1552,9 @@ describe('LoginUI runtime Flow handlers', () => {
         }),
         settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
       });
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { field_key: 'email', registration_required: 0 },
+    ]);
 
     const response = await loginRuntimeInteractionStartHandler(
       createContext({ body: { flow_kind: 'registration', requested_locale: 'ja' } })
@@ -1563,11 +1572,94 @@ describe('LoginUI runtime Flow handlers', () => {
         description: '標準の新規登録スクリーンです。',
         fields: [
           {
+            field: 'email',
+            label: 'Email',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
             label: '認証コードを送信',
             text: 'メールアドレスにコードを送信します。',
             block_type: 'auth_widget',
             auth_method: 'mail_otp',
           },
+        ],
+      },
+    });
+  });
+
+  it('reconciles every registration identity field with the active schema requirement', async () => {
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        flow_id: 'flow_registration',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'registration',
+        published_version_id: 'fv_1',
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_registration',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(screenRuntime),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      })
+      .mockResolvedValueOnce({
+        id: 'profile_1',
+        screen_key: 'registration_custom',
+        display_name: 'Registration',
+        description: 'Registration screen',
+        screen_kind: 'registration',
+        fields_json: JSON.stringify([
+          {
+            field: 'field.canonical.email',
+            label: 'Email',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'department',
+            label: 'Department',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'locale',
+            label: 'Locale',
+            required: true,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'unmanaged',
+            label: 'Unmanaged',
+            required: true,
+            block_type: 'identity_field',
+          },
+        ]),
+        localizations_json: JSON.stringify({}),
+        settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { field_key: 'email', registration_required: 1 },
+      { field_key: 'department', registration_required: 1 },
+      { field_key: 'locale', registration_required: 0 },
+    ]);
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'registration' } })
+    );
+    const data = await readJson(response);
+    const runtimeData = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    expect(runtimeData.ui.steps[0].config).toMatchObject({
+      screen: {
+        fields: [
+          { field: 'field.canonical.email', required: true },
+          { field: 'department', required: true },
+          { field: 'locale', required: false },
+          { field: 'unmanaged', required: true },
         ],
       },
     });

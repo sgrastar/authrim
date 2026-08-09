@@ -20,6 +20,7 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   getChallengeStoreByDID,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getTenantIdFromContext,
   LinkedIdentityRepository,
   createPIIContextFromHono,
@@ -322,6 +323,7 @@ export async function didAuthVerifyHandler(c: Context<{ Bindings: Env }>): Promi
       linkedIdentity.user_id,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         amr: ['did'],
         acr: 'urn:authrim:acr:did',
         auth_time: Math.floor(Date.now() / 1000),

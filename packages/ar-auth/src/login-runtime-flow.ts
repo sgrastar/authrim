@@ -495,6 +495,49 @@ function applyRuntimeScreenDefaultMetadata(
   });
 }
 
+function normalizeRegistrationFieldKey(field: string): string {
+  const normalized = field.trim().toLowerCase();
+  return normalized.startsWith('field.canonical.')
+    ? normalized.slice('field.canonical.'.length)
+    : normalized;
+}
+
+function registrationIdentityFieldKey(field: FlowRuntimeJsonObject): string | null {
+  const fieldName = readString(field.field, 200);
+  const blockType = readString(field.block_type, 80) ?? 'identity_field';
+  if (blockType !== 'identity_field' || !fieldName) return null;
+  return normalizeRegistrationFieldKey(fieldName);
+}
+
+async function applyRegistrationSchemaRequirements(
+  db: DatabaseAdapter,
+  tenantId: string,
+  fields: FlowRuntimeJsonObject[]
+): Promise<FlowRuntimeJsonObject[]> {
+  const schemas = await db.query<{ field_key: string; registration_required: number }>(
+    `SELECT field_key, registration_required
+     FROM custom_claim_schemas
+     WHERE tenant_id = ? AND is_active = 1`,
+    [tenantId]
+  );
+  const schemaRequirements = new Map<string, boolean>();
+  for (const schema of schemas) {
+    const fieldKey = normalizeRegistrationFieldKey(schema.field_key);
+    schemaRequirements.set(
+      fieldKey,
+      (schemaRequirements.get(fieldKey) ?? false) || schema.registration_required === 1
+    );
+  }
+
+  return fields.map((field) => {
+    const fieldKey = registrationIdentityFieldKey(field);
+    if (!fieldKey) return field;
+    const required = schemaRequirements.get(fieldKey);
+    if (required === undefined) return field;
+    return { ...field, required };
+  });
+}
+
 function jsonError(
   c: AuthContext,
   status: 400 | 403 | 404 | 409 | 500,
@@ -1602,10 +1645,13 @@ async function resolveRuntimeScreenContent(
       ? await queryScreen('default', fallbackScreenRef, true)
       : null);
   if (!row) return null;
-  const fields = applyRuntimeScreenDefaultMetadata(
+  let fields = applyRuntimeScreenDefaultMetadata(
     row.screen_key,
     parseJsonObjectArray(row.fields_json)
   );
+  if (row.screen_kind === 'registration') {
+    fields = await applyRegistrationSchemaRequirements(db, tenantId, fields);
+  }
   const localizations = parseRuntimeJsonObject(row.localizations_json);
   const localized = applyRuntimeScreenLocalization(
     fields,

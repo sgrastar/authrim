@@ -34,6 +34,10 @@ export type AccountSession = {
 	current: boolean;
 	created_at: number;
 	expires_at: number;
+	browser: string | null;
+	os: string | null;
+	device_type: 'desktop' | 'mobile' | 'tablet' | null;
+	country_code: string | null;
 	store_status?: string;
 };
 

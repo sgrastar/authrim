@@ -10,6 +10,7 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
@@ -620,6 +621,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         userId,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
@@ -1045,6 +1047,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         passkey.user_id as string,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
           authTime,

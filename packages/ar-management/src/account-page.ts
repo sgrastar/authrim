@@ -24,6 +24,8 @@ export type AccountSession = {
   authTime: number;
   acr?: string;
   amr?: string[];
+  userAgent?: string;
+  countryCode?: string;
 };
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
@@ -54,6 +56,10 @@ function normalizeSession(session: Session): AccountSession {
         : Math.floor(session.createdAt / 1000),
     ...(typeof session.data?.acr === 'string' && { acr: session.data.acr }),
     ...(Array.isArray(session.data?.amr) && { amr: session.data.amr }),
+    ...(typeof session.data?.userAgent === 'string' && { userAgent: session.data.userAgent }),
+    ...(typeof session.data?.countryCode === 'string' && {
+      countryCode: session.data.countryCode,
+    }),
   };
 }
 

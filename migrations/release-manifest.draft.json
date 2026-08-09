@@ -185,6 +185,10 @@
         {
           "path": "046_allow_environment_prefixed_tenant_bindings.sql",
           "checksum": "e0fad80f4b53ed5db70498b71770db46691869df24cb088978c13bc03d872bfd"
+        },
+        {
+          "path": "047_align_registration_email_requirement.sql",
+          "checksum": "7c4ba530a7f701dcbaa92bdab9c5ce4dc688f2f2cd6509444ce125ff37d196b7"
         }
       ]
     },
