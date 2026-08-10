@@ -804,7 +804,8 @@ const de: Translations = {
   'web.db.automaticProvisioningOff': 'Aus (über Setup erstellen)',
   'web.db.automaticProvisioningOffDesc':
     'Datenbanken werden nicht automatisch erstellt. Erstellen Sie sie bei Bedarf über das Setup-Tool.',
-  'web.db.automaticProvisioningNote': 'Die Datentrennung der Tenants bleibt auch bei deaktivierter Option erhalten.',
+  'web.db.automaticProvisioningNote':
+    'Die Datentrennung der Tenants bleibt auch bei deaktivierter Option erhalten.',
   'web.deploy.controlCredentialsTitle': 'Cloudflare-Verbindung',
   'web.deploy.bootstrapTokenTitle': 'Temporäres Cloudflare-Token für die automatische Einrichtung',
   'web.deploy.cloudflareLoginNote':
@@ -829,10 +830,13 @@ const de: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Einmaliges Cloudflare-Token erstellen',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Einmaliges Bootstrap-Token',
   'web.envDetail.enableAutomaticProvisioning': 'Aktivieren',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Geben Sie das einmalige Token ein und wählen Sie Aktivieren.',
-  'web.envDetail.bootstrapPopupBlocked': 'Der Cloudflare-Dashboard-Tab wurde vom Browser blockiert.',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Geben Sie das einmalige Token ein und wählen Sie Aktivieren.',
+  'web.envDetail.bootstrapPopupBlocked':
+    'Der Cloudflare-Dashboard-Tab wurde vom Browser blockiert.',
   'web.envDetail.enterOneTimeTokenFirst': 'Geben Sie zuerst das einmalige Cloudflare-Token ein.',
-  'web.envDetail.preparingControlAuthority': 'Control-Bereitstellungsberechtigung wird vorbereitet...',
+  'web.envDetail.preparingControlAuthority':
+    'Control-Bereitstellungsberechtigung wird vorbereitet...',
   'web.envDetail.deployingControlWorker': 'Control-Worker-Konfiguration wird bereitgestellt...',
   'web.envDetail.registeringScopedCredentials': 'Eingeschränkte Anmeldedaten werden registriert...',
   'web.envDetail.automaticProvisioningOn': 'Ein',
@@ -841,7 +845,8 @@ const de: Translations = {
     'Eingeschränkte Control-Worker-Anmeldedaten sind registriert.',
   'web.envDetail.automaticProvisioningBlocked': 'Automatische Bereitstellung ist blockiert.',
   'web.envDetail.automaticProvisioningMissing': '(fehlend: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Geben Sie zur Reparatur ein neues einmaliges Token ein.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Geben Sie zur Reparatur ein neues einmaliges Token ein.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Widerrufen Sie die genannten Authrim-Bootstrap- und Child-Tokens im Cloudflare Dashboard vor dem erneuten Versuch.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -988,8 +993,7 @@ const de: Translations = {
   'web.form.userIdNanoid': 'NanoID (empfohlen)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Beispiel:',
-  'web.form.userIdFormatHint':
-    'Kann nach der Benutzererstellung nicht geändert werden.',
+  'web.form.userIdFormatHint': 'Kann nach der Benutzererstellung nicht geändert werden.',
   'web.form.loginDomainPlaceholder': 'login.beispiel.de',
   'web.form.adminDomainPlaceholder': 'admin.beispiel.de',
 

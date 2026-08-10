@@ -835,8 +835,7 @@ const en: Translations = {
     'Scoped Control Worker credentials are registered.',
   'web.envDetail.automaticProvisioningBlocked': 'Automatic provisioning is blocked.',
   'web.envDetail.automaticProvisioningMissing': '(missing: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint':
-    'Enter a new one-time token to repair it.',
+  'web.envDetail.automaticProvisioningRepairHint': 'Enter a new one-time token to repair it.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -982,8 +981,7 @@ const en: Translations = {
   'web.form.userIdNanoid': 'NanoID (recommended)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Example:',
-  'web.form.userIdFormatHint':
-    'Cannot be changed after users are created.',
+  'web.form.userIdFormatHint': 'Cannot be changed after users are created.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

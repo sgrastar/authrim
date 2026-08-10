@@ -45,7 +45,7 @@ export function getTenantDatabaseBootstrapBinding(
 }
 
 /** Generated tenant bindings always carry the environment prefix. */
-export const TENANT_DATABASE_BINDING_PATTERN = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
+export const TENANT_DATABASE_BINDING_PATTERN = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,123}$/u;
 
 export interface TenantDatabaseBindingCapacity {
   currentBindings: number;

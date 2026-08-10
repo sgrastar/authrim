@@ -324,12 +324,11 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const accountRoute = normalizedEmail
       ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
       : 'not_required';
-    let runtimeUsers: CanonicalRuntimeUserStore | null =
-      tenantD1
-        ? accountRoute === 'resolved'
-          ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
-          : null
-        : createCanonicalRuntimeUserStore(c, tenantId);
+    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+      ? accountRoute === 'resolved'
+        ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
+        : null
+      : createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string | null; name: string | null } | null = null;
 
     const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;

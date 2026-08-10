@@ -97,7 +97,7 @@ const capacityPreview = {
 			residencyPartition: 'jp',
 			logicalShardId: 'users:jp:capacity-1',
 			databaseName: 'authrim-test-users-jp-capacity-1',
-			bindingRef: 'TDB_USERS_CAPACITY_1_CORE',
+			bindingRef: 'TEST_TDB_USERS_CAPACITY_1_CORE',
 			readReplicationMode: 'disabled',
 			migrationStreamId: 'd1-core'
 		}

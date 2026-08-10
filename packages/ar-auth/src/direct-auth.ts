@@ -1368,12 +1368,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const accountRoute = normalizedEmail
       ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
       : 'not_required';
-    let runtimeUsers: CanonicalRuntimeUserStore | null =
-      tenantD1
-        ? accountRoute === 'resolved'
-          ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
-          : null
-        : createCanonicalRuntimeUserStore(c, tenantId);
+    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+      ? accountRoute === 'resolved'
+        ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
+        : null
+      : createCanonicalRuntimeUserStore(c, tenantId);
 
     if (normalizedEmail) {
       const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);

@@ -194,9 +194,7 @@ describe('Cloudflare R2 helpers', () => {
   });
 
   it('builds a dashboard URL from the Cloudflare account ID and bucket name', () => {
-    expect(
-      getR2BucketDashboardUrl('0123456789abcdef0123456789abcdef', 'prod-audit-archive')
-    ).toBe(
+    expect(getR2BucketDashboardUrl('0123456789abcdef0123456789abcdef', 'prod-audit-archive')).toBe(
       'https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/default/buckets/prod-audit-archive'
     );
     expect(getR2BucketDashboardUrl('not-an-account', 'prod-audit-archive')).toBeNull();

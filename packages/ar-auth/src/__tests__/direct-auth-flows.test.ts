@@ -275,13 +275,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         passkey: mocks.passkey,
       },
     })),
-    createAccountAuthContextFromHono: mocks.createAccountAuthContextFromHono.mockImplementation(() => ({
-      coreAdapter: mocks.coreAdapter,
-      repositories: {
-        userCore: mocks.userCore,
-        passkey: mocks.passkey,
-      },
-    })),
+    createAccountAuthContextFromHono: mocks.createAccountAuthContextFromHono.mockImplementation(
+      () => ({
+        coreAdapter: mocks.coreAdapter,
+        repositories: {
+          userCore: mocks.userCore,
+          passkey: mocks.passkey,
+        },
+      })
+    ),
     createPIIContextFromHono: mocks.createPIIContextFromHono,
     hasPIIDatabase: vi.fn(() => true),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),

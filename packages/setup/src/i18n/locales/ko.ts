@@ -799,8 +799,7 @@ const ko: Translations = {
   'web.deploy.createBootstrapToken': '일회용 Cloudflare 토큰 생성',
   'web.deploy.bootstrapTokenLabel': '임시 Cloudflare 토큰',
   'web.deploy.bootstrapTokenPlaceholder': '임시 Cloudflare 토큰 입력',
-  'web.deploy.bootstrapTokenHelp':
-    '이 토큰은 한 번 사용되며 필요한 토큰을 등록한 후 폐기됩니다.',
+  'web.deploy.bootstrapTokenHelp': '이 토큰은 한 번 사용되며 필요한 토큰을 등록한 후 폐기됩니다.',
   'web.deploy.bootstrapTokenDescription':
     '이 임시 토큰은 Authrim이 테넌트 데이터베이스를 자동으로 만들 수 있도록 합니다. 계정 소유 토큰에는 Account API Tokens: Write/Edit, 사용자 소유 토큰에는 API Tokens: Write/Edit 권한이 필요합니다. Setup은 필요에 따라 D1, Workers, KV, R2용 범위 제한 API 토큰을 만들고 Control Worker에 등록한 뒤 임시 토큰을 폐기합니다.',
   'web.deploy.manualDnsSectionTitle': 'DNS 설정',
@@ -808,8 +807,7 @@ const ko: Translations = {
     'Cloudflare Dashboard에서 임시 토큰을 만든 후 아래에 입력하세요.',
   'web.deploy.bootstrapPopupBlocked':
     '브라우저가 새 탭을 차단했습니다. 팝업을 허용하고 버튼을 다시 선택하세요.',
-  'web.deploy.bootstrapTokenRequired':
-    '배포 전에 임시 Cloudflare 토큰을 생성하고 입력하세요.',
+  'web.deploy.bootstrapTokenRequired': '배포 전에 임시 Cloudflare 토큰을 생성하고 입력하세요.',
   'web.envDetail.automaticProvisioningTitle': '자동 프로비저닝',
   'web.envDetail.automaticProvisioningChecking': '확인 중...',
   'web.envDetail.automaticProvisioningUnavailable': '사용할 수 없음',

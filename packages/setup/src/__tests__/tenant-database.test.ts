@@ -138,7 +138,9 @@ describe('tenant database setup helpers', () => {
       'TEST_TDB_BETA_DEF456_CORE',
       'TEST_TDB_ALPHA_ABC123_CORE',
     ]);
-    expect(plan.remainingTargets.map((target) => target.binding)).toEqual(['TEST_TDB_ALPHA_ABC123_PII']);
+    expect(plan.remainingTargets.map((target) => target.binding)).toEqual([
+      'TEST_TDB_ALPHA_ABC123_PII',
+    ]);
   });
 
   it('defines tenant database provisioning states used by the registry schema', () => {

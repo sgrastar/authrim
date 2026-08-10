@@ -835,7 +835,8 @@ const ru: Translations = {
     'Ограниченные учетные данные Control Worker зарегистрированы.',
   'web.envDetail.automaticProvisioningBlocked': 'Автоматическое провижининг заблокировано.',
   'web.envDetail.automaticProvisioningMissing': '(отсутствует: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Введите новый одноразовый токен для исправления.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Введите новый одноразовый токен для исправления.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Перед повторной попыткой отзовите указанные bootstrap- и дочерние токены Authrim в Cloudflare Dashboard.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -983,8 +984,7 @@ const ru: Translations = {
   'web.form.userIdNanoid': 'NanoID (рекомендуется)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Пример:',
-  'web.form.userIdFormatHint':
-    'Нельзя изменить после создания пользователей.',
+  'web.form.userIdFormatHint': 'Нельзя изменить после создания пользователей.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

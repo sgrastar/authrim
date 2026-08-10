@@ -834,7 +834,8 @@ const id: Translations = {
     'Kredensial Control Worker terbatas telah terdaftar.',
   'web.envDetail.automaticProvisioningBlocked': 'Provisi otomatis diblokir.',
   'web.envDetail.automaticProvisioningMissing': '(kurang: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Masukkan token sekali pakai baru untuk memperbaikinya.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Masukkan token sekali pakai baru untuk memperbaikinya.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Cabut token bootstrap dan token turunan Authrim yang disebutkan di Cloudflare Dashboard sebelum mencoba lagi.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -980,8 +981,7 @@ const id: Translations = {
   'web.form.userIdNanoid': 'NanoID (disarankan)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Contoh:',
-  'web.form.userIdFormatHint':
-    'Tidak dapat diubah setelah pengguna dibuat.',
+  'web.form.userIdFormatHint': 'Tidak dapat diubah setelah pengguna dibuat.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

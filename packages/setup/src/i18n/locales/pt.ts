@@ -803,7 +803,8 @@ const pt: Translations = {
   'web.db.automaticProvisioningOff': 'Desativado (criar pelo Setup)',
   'web.db.automaticProvisioningOffDesc':
     'Os bancos não serão criados automaticamente. Crie-os pela ferramenta Setup quando necessário.',
-  'web.db.automaticProvisioningNote': 'A separação de dados por tenant continua ativa quando desativado.',
+  'web.db.automaticProvisioningNote':
+    'A separação de dados por tenant continua ativa quando desativado.',
   'web.deploy.controlCredentialsTitle': 'Conexão com o Cloudflare',
   'web.deploy.bootstrapTokenTitle': 'Token temporário do Cloudflare para configuração automática',
   'web.deploy.cloudflareLoginNote':
@@ -831,7 +832,8 @@ const pt: Translations = {
   'web.envDetail.enterOneTimeTokenThenEnable': 'Digite o token de uso único e selecione Ativar.',
   'web.envDetail.bootstrapPopupBlocked': 'O navegador bloqueou a aba do Dashboard Cloudflare.',
   'web.envDetail.enterOneTimeTokenFirst': 'Digite primeiro o token Cloudflare de uso único.',
-  'web.envDetail.preparingControlAuthority': 'Preparando a autoridade de provisionamento do Control...',
+  'web.envDetail.preparingControlAuthority':
+    'Preparando a autoridade de provisionamento do Control...',
   'web.envDetail.deployingControlWorker': 'Implantando a configuração do Control Worker...',
   'web.envDetail.registeringScopedCredentials': 'Registrando credenciais com escopo...',
   'web.envDetail.automaticProvisioningOn': 'Ativado',
@@ -840,7 +842,8 @@ const pt: Translations = {
     'As credenciais com escopo do Control Worker estão registradas.',
   'web.envDetail.automaticProvisioningBlocked': 'O provisionamento automático está bloqueado.',
   'web.envDetail.automaticProvisioningMissing': '(ausente: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Digite um novo token de uso único para corrigir.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Digite um novo token de uso único para corrigir.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revogue os tokens bootstrap e filhos do Authrim indicados no Dashboard Cloudflare antes de tentar novamente.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -989,8 +992,7 @@ const pt: Translations = {
   'web.form.userIdNanoid': 'NanoID (recomendado)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Exemplo:',
-  'web.form.userIdFormatHint':
-    'Não pode ser alterado após a criação de usuários.',
+  'web.form.userIdFormatHint': 'Não pode ser alterado após a criação de usuários.',
   'web.form.loginDomainPlaceholder': 'login.exemplo.com',
   'web.form.adminDomainPlaceholder': 'admin.exemplo.com',
 

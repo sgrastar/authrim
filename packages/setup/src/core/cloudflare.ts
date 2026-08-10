@@ -5521,8 +5521,7 @@ export function filterKnownD1NamesForEnvironment(env: string, names: string[]): 
   return Array.from(
     new Set(
       names.filter(
-        (name) =>
-          name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
+        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
       )
     )
   );

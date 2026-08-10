@@ -802,8 +802,7 @@ const ja: Translations = {
   'web.deploy.createBootstrapToken': '一回限りのCloudflare tokenを作成',
   'web.deploy.bootstrapTokenLabel': '一時Cloudflare token',
   'web.deploy.bootstrapTokenPlaceholder': '一時Cloudflare tokenを入力',
-  'web.deploy.bootstrapTokenHelp':
-    'このtokenは一度だけ使用され、必要なtokenの登録後に失効します。',
+  'web.deploy.bootstrapTokenHelp': 'このtokenは一度だけ使用され、必要なtokenの登録後に失効します。',
   'web.deploy.bootstrapTokenDescription':
     'この一時tokenは、Authrimがテナント用データベースを自動作成するために使用します。入力するtokenには、API tokenを作成・編集する権限（アカウント所有の場合は Account API Tokens: Write/Edit、ユーザー所有の場合は API Tokens: Write/Edit）が必要です。Setupはこのtokenを使い、必要な範囲に限定したD1・Workers・KV・R2用のAPI tokenを作成してControl Workerに登録します。登録後、一時tokenは失効します。',
   'web.deploy.manualDnsSectionTitle': 'DNS設定',
@@ -821,7 +820,8 @@ const ja: Translations = {
   'web.envDetail.enableAutomaticProvisioning': '有効化',
   'web.envDetail.enterOneTimeTokenThenEnable':
     '一回限りのtokenを入力してから「有効化」を選択してください。',
-  'web.envDetail.bootstrapPopupBlocked': 'Cloudflare Dashboardのタブがブラウザにブロックされました。',
+  'web.envDetail.bootstrapPopupBlocked':
+    'Cloudflare Dashboardのタブがブラウザにブロックされました。',
   'web.envDetail.enterOneTimeTokenFirst': '先に一回限りのCloudflare tokenを入力してください。',
   'web.envDetail.preparingControlAuthority': 'Controlのプロビジョニング権限を準備しています…',
   'web.envDetail.deployingControlWorker': 'Control Workerの設定をデプロイしています…',

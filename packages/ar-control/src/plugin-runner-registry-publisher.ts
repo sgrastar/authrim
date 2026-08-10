@@ -13,7 +13,7 @@ const REGISTRY_REFRESH_WINDOW_SECONDS = 10 * 60;
 const MAX_ENVIRONMENTS_PER_RUN = 100;
 const MAX_SHARDS_PER_ENVIRONMENT = 5_000;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
-const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const DATA_ROLES = new Set(['tenant_core/default', 'tenant_core/users'] as const);
 interface ShardRow {

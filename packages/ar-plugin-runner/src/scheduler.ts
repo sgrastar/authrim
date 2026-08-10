@@ -30,7 +30,7 @@ const SHARD_CONCURRENCY = 6;
 const MAX_HOOKS_PER_SHARD = 2;
 const IDLE_RESCAN_SECONDS = 5 * 60;
 const ERROR_RETRY_SECONDS = 60;
-const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
 const NEXT_DUE_SQL = `SELECT MIN(next_due_at) AS next_due_at
   FROM (
     SELECT MIN(CASE

@@ -763,21 +763,19 @@ const zhTW: Translations = {
   'web.db.regionAuto': '自動（最近）',
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc': '初始化控制平面和首批租戶分片，後續容量會按需自動建立。',
-    'web.db.controlPlaneWorkerDesc':
-      '此功能讓 Authrim 管理各租戶的資料庫。設定過程會建立所需的管理資源。',
-    'web.db.controlPlaneTenantPlacement':
-      '初始租戶從獨立的儲存位置開始。新增租戶後，可以為每個租戶選擇儲存位置。',
-    'web.db.controlPlaneResolverNote': 'Authrim 會自動管理資料庫建立和連線路由。',
-    'web.db.automaticProvisioningTitle': '自動建立租戶資料庫',
-    'web.db.automaticProvisioningOn': '開啟（自動建立）',
-    'web.db.automaticProvisioningOnDesc':
-      '當租戶或資料量增加時，Authrim 會自動建立所需的資料庫。',
-    'web.db.automaticProvisioningTokenNote':
-      '專用的 Control Worker 會儲存並使用建立租戶資料庫所需、權限受限的 Cloudflare API token。',
-    'web.db.automaticProvisioningOff': '關閉（從 Setup 建立）',
-    'web.db.automaticProvisioningOffDesc':
-      '不會自動建立資料庫。需要時請從 Setup 工具建立。',
-    'web.db.automaticProvisioningNote': '關閉此選項後，租戶之間的資料分離仍會維持。',
+  'web.db.controlPlaneWorkerDesc':
+    '此功能讓 Authrim 管理各租戶的資料庫。設定過程會建立所需的管理資源。',
+  'web.db.controlPlaneTenantPlacement':
+    '初始租戶從獨立的儲存位置開始。新增租戶後，可以為每個租戶選擇儲存位置。',
+  'web.db.controlPlaneResolverNote': 'Authrim 會自動管理資料庫建立和連線路由。',
+  'web.db.automaticProvisioningTitle': '自動建立租戶資料庫',
+  'web.db.automaticProvisioningOn': '開啟（自動建立）',
+  'web.db.automaticProvisioningOnDesc': '當租戶或資料量增加時，Authrim 會自動建立所需的資料庫。',
+  'web.db.automaticProvisioningTokenNote':
+    '專用的 Control Worker 會儲存並使用建立租戶資料庫所需、權限受限的 Cloudflare API token。',
+  'web.db.automaticProvisioningOff': '關閉（從 Setup 建立）',
+  'web.db.automaticProvisioningOffDesc': '不會自動建立資料庫。需要時請從 Setup 工具建立。',
+  'web.db.automaticProvisioningNote': '關閉此選項後，租戶之間的資料分離仍會維持。',
   'web.deploy.controlCredentialsTitle': 'Cloudflare 連線資訊',
   'web.deploy.bootstrapTokenTitle': '用於自動設定的臨時 Cloudflare token',
   'web.deploy.cloudflareLoginNote':
@@ -789,7 +787,8 @@ const zhTW: Translations = {
   'web.deploy.bootstrapTokenDescription':
     '此臨時 token 讓 Authrim 能自動建立租戶資料庫。它需要建立和編輯 API token 的權限：帳戶所有的 token 需要 Account API Tokens: Write/Edit，使用者所有的 token 需要 API Tokens: Write/Edit。Setup 會依需要建立 D1、Workers、KV 和 R2 的範圍受限 API token，將其註冊到 Control Worker，然後撤銷臨時 token。',
   'web.deploy.manualDnsSectionTitle': 'DNS 設定',
-  'web.deploy.bootstrapTokenCreateStatus': '請在 Cloudflare Dashboard 建立臨時 token，然後在下方輸入。',
+  'web.deploy.bootstrapTokenCreateStatus':
+    '請在 Cloudflare Dashboard 建立臨時 token，然後在下方輸入。',
   'web.deploy.bootstrapPopupBlocked': '瀏覽器封鎖了新分頁。請允許彈出視窗後再次選取此按鈕。',
   'web.deploy.bootstrapTokenRequired': '部署前請建立並輸入臨時 Cloudflare token。',
   'web.envDetail.automaticProvisioningTitle': '自動佈建',
@@ -806,7 +805,8 @@ const zhTW: Translations = {
   'web.envDetail.registeringScopedCredentials': '正在註冊範圍受限的憑證...',
   'web.envDetail.automaticProvisioningOn': '開啟',
   'web.envDetail.automaticProvisioningOff': '關閉',
-  'web.envDetail.automaticProvisioningCredentialsRegistered': '範圍受限的 Control Worker 憑證已註冊。',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '範圍受限的 Control Worker 憑證已註冊。',
   'web.envDetail.automaticProvisioningBlocked': '自動佈建已被封鎖。',
   'web.envDetail.automaticProvisioningMissing': '（缺少：{{missing}}）',
   'web.envDetail.automaticProvisioningRepairHint': '請輸入新的一次性 token 進行修復。',
@@ -945,8 +945,8 @@ const zhTW: Translations = {
   'web.form.tenantDisplayHint': '顯示在登入頁面和同意畫面上的名稱',
   'web.form.userIdFormat': '使用者 ID 格式',
   'web.form.userIdNanoid': 'NanoID（推薦）',
-    'web.form.userIdUuid': 'UUID v4',
-    'web.form.userIdExample': '範例：',
+  'web.form.userIdUuid': 'UUID v4',
+  'web.form.userIdExample': '範例：',
   'web.form.userIdFormatHint': '建立使用者後無法變更。',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',

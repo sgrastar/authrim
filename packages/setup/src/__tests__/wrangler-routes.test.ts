@@ -883,7 +883,9 @@ describe('generateRoutes', () => {
       ])
     );
     expect(discoveryConfig.d1_databases).toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' })])
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
     );
     expect(discoveryConfig.d1_databases).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
@@ -987,7 +989,9 @@ describe('generateRoutes', () => {
     );
     expect(controlConfig.durable_objects).toBeUndefined();
     expect(controlConfig.d1_databases).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' })])
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
     );
     expect(controlConfig.d1_databases).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' })])

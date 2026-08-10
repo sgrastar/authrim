@@ -483,7 +483,7 @@ describe('PluginRunnerScheduler integration', () => {
         shards: [
           {
             shardId: 'shard-a',
-        bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
+            bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
             dataRole: 'tenant_core/default',
             residencyPartition: 'jp',
             routeGeneration: 1,

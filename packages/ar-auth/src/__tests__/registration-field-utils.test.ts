@@ -173,9 +173,7 @@ describe('registration-field-utils', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      missingRequiredFields: [
-        expect.objectContaining({ fieldKey: 'field.canonical.email' }),
-      ],
+      missingRequiredFields: [expect.objectContaining({ fieldKey: 'field.canonical.email' })],
     });
   });
 

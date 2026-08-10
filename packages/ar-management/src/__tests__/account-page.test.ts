@@ -172,10 +172,7 @@ describe('Account Page API', () => {
       expect.anything(),
       'user-001'
     );
-    expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(
-      expect.anything(),
-      'default'
-    );
+    expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(expect.anything(), 'default');
     expect(body.profile).toEqual({
       user_id: 'user-001',
       email: 'person@example.test',

@@ -541,11 +541,7 @@ const loginUiDirectAuthHttp: HttpClient = {
 								{
 									method: options.method,
 									headers: options.headers,
-									body: (requestBody = attachPasskeyProvisioningResume(
-										url,
-										requestBody,
-										accepted
-									)),
+									body: (requestBody = attachPasskeyProvisioningResume(url, requestBody, accepted)),
 									signal: controller.signal
 								},
 								Date.now() + 120_000

@@ -44,7 +44,7 @@ const ALIAS_PROJECTION = {
     dataRole: 'tenant_core/default' as const,
     residencyPartition: 'default',
     shardId: 'default-1',
-      bindingRef: 'TEST_TDB_DEFAULT_0001',
+    bindingRef: 'TEST_TDB_DEFAULT_0001',
     requiredBindingRouteGeneration: 8,
   },
 };
@@ -314,7 +314,7 @@ describe('LookupRouteResolver', () => {
         membership,
         dataRole: 'tenant_core/users',
         residencyPartition: 'default',
-      observedBindingRouteGenerations: { TEST_TDB_USERS_0001_CORE: 9 },
+        observedBindingRouteGenerations: { TEST_TDB_USERS_0001_CORE: 9 },
         verifyAtDestination: async () => false,
       })
     ).rejects.toThrow('lookup_destination_revalidation_failed');

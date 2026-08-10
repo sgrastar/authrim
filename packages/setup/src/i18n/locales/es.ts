@@ -805,7 +805,8 @@ const es: Translations = {
   'web.db.automaticProvisioningOff': 'Desactivado (crear desde Setup)',
   'web.db.automaticProvisioningOffDesc':
     'Las bases de datos no se crean automáticamente. Créalas desde Setup cuando sea necesario.',
-  'web.db.automaticProvisioningNote': 'La separación de datos por tenant se mantiene aunque esté desactivado.',
+  'web.db.automaticProvisioningNote':
+    'La separación de datos por tenant se mantiene aunque esté desactivado.',
   'web.deploy.controlCredentialsTitle': 'Conexión con Cloudflare',
   'web.deploy.bootstrapTokenTitle': 'Token temporal de Cloudflare para la configuración automática',
   'web.deploy.cloudflareLoginNote':
@@ -830,10 +831,14 @@ const es: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Crear token de Cloudflare de un solo uso',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap de un solo uso',
   'web.envDetail.enableAutomaticProvisioning': 'Activar',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Introduce el token de un solo uso y selecciona Activar.',
-  'web.envDetail.bootstrapPopupBlocked': 'El navegador bloqueó la pestaña del Dashboard de Cloudflare.',
-  'web.envDetail.enterOneTimeTokenFirst': 'Introduce primero el token de Cloudflare de un solo uso.',
-  'web.envDetail.preparingControlAuthority': 'Preparando la autoridad de aprovisionamiento de Control...',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Introduce el token de un solo uso y selecciona Activar.',
+  'web.envDetail.bootstrapPopupBlocked':
+    'El navegador bloqueó la pestaña del Dashboard de Cloudflare.',
+  'web.envDetail.enterOneTimeTokenFirst':
+    'Introduce primero el token de Cloudflare de un solo uso.',
+  'web.envDetail.preparingControlAuthority':
+    'Preparando la autoridad de aprovisionamiento de Control...',
   'web.envDetail.deployingControlWorker': 'Desplegando la configuración de Control Worker...',
   'web.envDetail.registeringScopedCredentials': 'Registrando credenciales limitadas...',
   'web.envDetail.automaticProvisioningOn': 'Activado',
@@ -842,7 +847,8 @@ const es: Translations = {
     'Las credenciales limitadas de Control Worker están registradas.',
   'web.envDetail.automaticProvisioningBlocked': 'El aprovisionamiento automático está bloqueado.',
   'web.envDetail.automaticProvisioningMissing': '(faltan: {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Introduce un nuevo token de un solo uso para repararlo.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Introduce un nuevo token de un solo uso para repararlo.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoca los tokens bootstrap y secundarios de Authrim indicados en el Dashboard de Cloudflare antes de reintentar.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -992,8 +998,7 @@ const es: Translations = {
   'web.form.userIdNanoid': 'NanoID (recomendado)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Ejemplo:',
-  'web.form.userIdFormatHint':
-    'No se puede cambiar después de crear usuarios.',
+  'web.form.userIdFormatHint': 'No se puede cambiar después de crear usuarios.',
   'web.form.loginDomainPlaceholder': 'login.ejemplo.com',
   'web.form.adminDomainPlaceholder': 'admin.ejemplo.com',
 

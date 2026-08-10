@@ -170,14 +170,15 @@ function assertSmokeResult(input: {
 function smokeFailureCode(error: unknown, fallback: string): string {
   let current: unknown = error;
   for (let depth = 0; depth < 4; depth += 1) {
-    const message =
+    const messageValue =
       current instanceof Error
         ? current.message
         : current && typeof current === 'object' && 'message' in current
-          ? String((current as { message?: unknown }).message ?? '')
+          ? (current as { message?: unknown }).message
           : typeof current === 'string'
             ? current
-            : '';
+            : undefined;
+    const message = typeof messageValue === 'string' ? messageValue : '';
     const code = message.match(
       /(?:^|\b)((?:runtime_smoke|control_smoke|control_worker_smoke_result)_[a-z0-9_]+)(?:\b|$)/u
     )?.[1];

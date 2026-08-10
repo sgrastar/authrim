@@ -86,7 +86,10 @@ export interface NodeEngineMismatch {
 }
 
 function parseNodeVersion(value: string): NodeVersion | null {
-  const match = String(value).trim().replace(/^v/u, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/u);
+  const match = String(value)
+    .trim()
+    .replace(/^v/u, '')
+    .match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/u);
   if (!match) return null;
   return {
     major: Number(match[1]),
@@ -153,15 +156,13 @@ function satisfiesNodeComparator(version: NodeVersion, comparator: string): bool
 export function nodeVersionSatisfiesEngine(version: string, range: string): boolean {
   const parsedVersion = parseNodeVersion(version);
   if (!parsedVersion || !range.trim()) return true;
-  return range
-    .split('||')
-    .some((alternative) =>
-      alternative
-        .trim()
-        .split(/\s+/u)
-        .filter(Boolean)
-        .every((comparator) => satisfiesNodeComparator(parsedVersion, comparator))
-    );
+  return range.split('||').some((alternative) =>
+    alternative
+      .trim()
+      .split(/\s+/u)
+      .filter(Boolean)
+      .every((comparator) => satisfiesNodeComparator(parsedVersion, comparator))
+  );
 }
 
 function readNodeEngineRequirement(packageJsonPath: string): {

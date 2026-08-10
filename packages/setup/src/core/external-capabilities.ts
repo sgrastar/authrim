@@ -15,7 +15,8 @@ const SAFE_BINDING_NAME = /^[A-Z][A-Z0-9_]*$/u;
 const SAFE_HOST =
   /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 const CLOUDFLARE_TOKEN_NAME = /^(?:CLOUDFLARE|CF)_.+_(?:API_)?TOKEN$/u;
-const RAW_PLUGIN_BINDING = /^(?:DB(?:_PII|_ADMIN)?|CONTROL_DB|LOOKUP_DB|PLUGIN_RUNNER_DB|[A-Z][A-Z0-9_]*_TDB_.+)$/u;
+const RAW_PLUGIN_BINDING =
+  /^(?:DB(?:_PII|_ADMIN)?|CONTROL_DB|LOOKUP_DB|PLUGIN_RUNNER_DB|(?:[A-Z][A-Z0-9_]*_)?TDB_.+)$/u;
 const DISALLOWED_HOST_SUFFIX = /(?:^|\.)(?:internal|localhost|local|localdomain|home|lan)$/u;
 const SAFE_MODULE = /^(?!\/)(?!.*(?:^|\/)\.\.?\/)\S{1,240}\.(?:js|cjs|json|txt)$/u;
 const SAFE_CONFIG_KEY = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/u;

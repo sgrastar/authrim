@@ -179,7 +179,8 @@ vi.mock('../core/dynamic-plugin-publication.js', () => ({
 }));
 
 vi.mock('../core/control-token-bootstrap-orchestrator.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../core/control-token-bootstrap-orchestrator.js')>();
+  const actual =
+    await importOriginal<typeof import('../core/control-token-bootstrap-orchestrator.js')>();
   return {
     ...actual,
     completeControlTokenBootstrap: completeControlTokenBootstrapMock,

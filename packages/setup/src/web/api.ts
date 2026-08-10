@@ -4741,9 +4741,9 @@ export function createApiRoutes(): Hono {
       const { lock } = await loadLockFileAuto(baseDir, env);
       const interruptedInitialRelease = Boolean(
         lock &&
-          !lock.productVersion &&
-          lock.releaseUpdate !== undefined &&
-          lock.releaseUpdate.phase !== 'verified'
+        !lock.productVersion &&
+        lock.releaseUpdate !== undefined &&
+        lock.releaseUpdate.phase !== 'verified'
       );
 
       return c.json({

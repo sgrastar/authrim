@@ -812,7 +812,8 @@ const fr: Translations = {
   'web.db.automaticProvisioningOff': 'Désactivé (création depuis Setup)',
   'web.db.automaticProvisioningOffDesc':
     'Les bases ne sont pas créées automatiquement. Créez-les depuis l’outil Setup lorsque nécessaire.',
-  'web.db.automaticProvisioningNote': 'La séparation des données entre tenants reste active même si cette option est désactivée.',
+  'web.db.automaticProvisioningNote':
+    'La séparation des données entre tenants reste active même si cette option est désactivée.',
   'web.deploy.controlCredentialsTitle': 'Connexion Cloudflare',
   'web.deploy.bootstrapTokenTitle': 'Token Cloudflare temporaire pour la configuration automatique',
   'web.deploy.cloudflareLoginNote':
@@ -837,10 +838,12 @@ const fr: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Créer un token Cloudflare à usage unique',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap à usage unique',
   'web.envDetail.enableAutomaticProvisioning': 'Activer',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Saisissez le token à usage unique, puis sélectionnez Activer.',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Saisissez le token à usage unique, puis sélectionnez Activer.',
   'web.envDetail.bootstrapPopupBlocked': 'Le navigateur a bloqué l’onglet du Dashboard Cloudflare.',
   'web.envDetail.enterOneTimeTokenFirst': 'Saisissez d’abord le token Cloudflare à usage unique.',
-  'web.envDetail.preparingControlAuthority': 'Préparation de l’autorité de provisionnement de Control...',
+  'web.envDetail.preparingControlAuthority':
+    'Préparation de l’autorité de provisionnement de Control...',
   'web.envDetail.deployingControlWorker': 'Déploiement de la configuration du Control Worker...',
   'web.envDetail.registeringScopedCredentials': 'Enregistrement des identifiants limités...',
   'web.envDetail.automaticProvisioningOn': 'Activé',
@@ -849,7 +852,8 @@ const fr: Translations = {
     'Les identifiants limités du Control Worker sont enregistrés.',
   'web.envDetail.automaticProvisioningBlocked': 'Le provisionnement automatique est bloqué.',
   'web.envDetail.automaticProvisioningMissing': '(manquant : {{missing}})',
-  'web.envDetail.automaticProvisioningRepairHint': 'Saisissez un nouveau token à usage unique pour réparer.',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Saisissez un nouveau token à usage unique pour réparer.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Révoquez les tokens bootstrap et enfants Authrim indiqués dans le Dashboard Cloudflare avant de réessayer.',
   'web.envDetail.bootstrapRevokedPendingReset':
@@ -1000,8 +1004,7 @@ const fr: Translations = {
   'web.form.userIdNanoid': 'NanoID (recommandé)',
   'web.form.userIdUuid': 'UUID v4',
   'web.form.userIdExample': 'Exemple :',
-  'web.form.userIdFormatHint':
-    'Ne peut pas être modifié après la création des utilisateurs.',
+  'web.form.userIdFormatHint': 'Ne peut pas être modifié après la création des utilisateurs.',
   'web.form.loginDomainPlaceholder': 'login.exemple.com',
   'web.form.adminDomainPlaceholder': 'admin.exemple.com',
 
