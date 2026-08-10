@@ -52,7 +52,7 @@ const cleanupCandidate = {
 	shardId: 'retired-shard-1',
 	dataRole: 'tenant_core/default',
 	residencyPartition: 'global',
-	bindingRef: 'TDB_DEFAULT_RETIRED_1',
+	bindingRef: 'TEST_TDB_DEFAULT_RETIRED_1',
 	databaseId: 'database-retired-1',
 	databaseName: 'test-tenant-core-retired-1',
 	shardStatus: 'retired',
@@ -144,7 +144,7 @@ const tenantRecovery = {
 			residencyPartition: 'jp',
 			assignmentGeneration: 1,
 			shardGeneration: 2,
-			bindingRef: 'TDB_DEFAULT_TENANT_1',
+			bindingRef: 'TEST_TDB_DEFAULT_TENANT_1',
 			providerDatabaseId: 'database-tenant-1',
 			migrationStreamId: 'd1-core',
 			releaseId: 'draft-2026-08-02',
@@ -442,6 +442,22 @@ describe('admin control-plane API', () => {
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/shard-cleanup');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('rejects a retired shard that uses a legacy unprefixed D1 binding ref', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					items: [{ ...cleanupCandidate, bindingRef: 'TDB_DEFAULT_RETIRED_1' }],
+					count: 1
+				})
+			)
+		);
+
+		await expect(adminControlPlaneAPI.listShardCleanupCandidates()).rejects.toMatchObject({
+			status: 502,
+			message: 'CONTROL_PLANE_RESPONSE_INVALID'
+		});
 	});
 
 	it('accepts an unreferenced failed shard as a quarantine candidate', async () => {

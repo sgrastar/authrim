@@ -133,7 +133,7 @@ function projection(generation = 3): TenantAliasRouteProjection {
       dataRole: 'tenant_core/default',
       residencyPartition: 'default',
       shardId: 'tenant-default-a',
-      bindingRef: 'TDB_DEFAULT_A',
+      bindingRef: 'TEST_TDB_DEFAULT_A',
       requiredBindingRouteGeneration: generation,
     },
   };
@@ -393,7 +393,7 @@ describe('tenant alias directory', () => {
       ...alias,
       routeProjection: {
         ...projection(),
-        target: { ...projection().target, bindingRef: 'TDB_DEFAULT_B' },
+        target: { ...projection().target, bindingRef: 'TEST_TDB_DEFAULT_B' },
       },
       now: 101,
     };

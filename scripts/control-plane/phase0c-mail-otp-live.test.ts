@@ -425,16 +425,17 @@ describe('Phase 0c Mail OTP live runner', () => {
       strictTenantUsersDatabaseNames({
         d1: {
           DB_ADMIN: { name: 'test-admin' },
-          TDB_USERS_B_CORE: { name: 'test-users-b' },
-          TDB_USERS_A_CORE: { name: 'test-users-a' },
+          TEST_TDB_USERS_B_CORE: { name: 'test-users-b' },
+          TEST_TDB_USERS_A_CORE: { name: 'test-users-a' },
           TEST_TDB_USERS_C_CORE: { name: 'test-users-c' },
-          TDB_PII_A_PII: { name: 'test-pii-a' },
+          TEST_TDB_PII_A_PII: { name: 'test-pii-a' },
+          TDB_USERS_LEGACY_CORE: { name: 'legacy-users' },
         },
       })
     ).toEqual(['test-users-a', 'test-users-b', 'test-users-c']);
     expect(() =>
       strictTenantUsersDatabaseNames({
-        d1: { TDB_USERS_A_CORE: { name: '../invalid' } },
+        d1: { TEST_TDB_USERS_A_CORE: { name: '../invalid' } },
       })
     ).toThrow('phase0c_mail_users_databases_invalid');
   });
@@ -444,16 +445,17 @@ describe('Phase 0c Mail OTP live runner', () => {
       strictTenantPiiDatabaseNames({
         d1: {
           DB_PII: { name: 'test-legacy-pii' },
-          TDB_PII_B_PII: { name: 'test-pii-b' },
-          TDB_PII_A_PII: { name: 'test-pii-a' },
+          TEST_TDB_PII_B_PII: { name: 'test-pii-b' },
+          TEST_TDB_PII_A_PII: { name: 'test-pii-a' },
           TEST_TDB_PII_C_PII: { name: 'test-pii-c' },
-          TDB_USERS_A_CORE: { name: 'test-users-a' },
+          TEST_TDB_USERS_A_CORE: { name: 'test-users-a' },
+          TDB_PII_LEGACY_PII: { name: 'legacy-pii' },
         },
       })
     ).toEqual(['test-pii-a', 'test-pii-b', 'test-pii-c']);
     expect(() =>
       strictTenantPiiDatabaseNames({
-        d1: { TDB_PII_A_PII: { name: '../invalid' } },
+        d1: { TEST_TDB_PII_A_PII: { name: '../invalid' } },
       })
     ).toThrow('phase0c_mail_pii_databases_invalid');
   });

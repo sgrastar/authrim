@@ -18,7 +18,7 @@ const MAX_JSON_NODES = 256;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_METADATA_KEY = /^[a-z][a-z0-9._-]{0,63}$/u;
 const SAFE_OBJECT_KEY = /^[\x20-\x7e]{1,128}$/u;
-const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
 const FINGERPRINT_KEY_ID = 'mutation-v1';
 
 interface AuthorizedInstallationRow {

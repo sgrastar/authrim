@@ -113,7 +113,7 @@ function env() {
         dataRole: 'tenant_core/users' as const,
         residencyPartition: 'jp',
         shardId: 'users-jp-1',
-        bindingRef: 'TDB_USERS_JP_1',
+        bindingRef: 'TEST_TDB_USERS_JP_1',
         routeGeneration: 3,
       },
       {
@@ -121,7 +121,7 @@ function env() {
         dataRole: 'tenant_pii' as const,
         residencyPartition: 'jp',
         shardId: 'pii-jp-1',
-        bindingRef: 'TDB_PII_JP_1',
+        bindingRef: 'TEST_TDB_PII_JP_1',
         routeGeneration: 5,
       },
     ],
@@ -139,7 +139,7 @@ function env() {
         residencyPolicyId: 'policy-a',
         residencyPartition: 'jp',
         routeGeneration: dataRole === 'tenant_pii' ? 5 : 3,
-        bindingRef: dataRole === 'tenant_pii' ? 'TDB_PII_JP_1' : 'TDB_USERS_JP_1',
+        bindingRef: dataRole === 'tenant_pii' ? 'TEST_TDB_PII_JP_1' : 'TEST_TDB_USERS_JP_1',
         databaseId: dataRole === 'tenant_pii' ? 'database-pii-jp-1' : 'database-users-jp-1',
         databaseName: dataRole === 'tenant_pii' ? 'pii-jp-1' : 'users-jp-1',
         allocationScope: 'tenant_exclusive',
@@ -206,7 +206,7 @@ describe('account directory producer', () => {
             dataRole: 'tenant_core/users',
             residencyPartition: 'jp',
             shardId: 'users-jp-1',
-            bindingRef: 'TDB_USERS_JP_1',
+            bindingRef: 'TEST_TDB_USERS_JP_1',
             routeGeneration: 3,
           },
           {
@@ -214,7 +214,7 @@ describe('account directory producer', () => {
             dataRole: 'tenant_pii',
             residencyPartition: 'jp',
             shardId: 'pii-jp-1',
-            bindingRef: 'TDB_PII_JP_1',
+            bindingRef: 'TEST_TDB_PII_JP_1',
             routeGeneration: 5,
           },
         ],
@@ -286,7 +286,7 @@ describe('account directory producer', () => {
         residencyPolicyId: 'policy-a',
         residencyPartition: 'jp',
         routeGeneration: 5,
-        bindingRef: 'TDB_PII_JP_1',
+        bindingRef: 'TEST_TDB_PII_JP_1',
         databaseId: 'database-pii-jp-1',
         databaseName: 'pii-jp-1',
         allocationScope: 'tenant_exclusive',
@@ -372,7 +372,7 @@ describe('account directory producer', () => {
           dataRole: 'tenant_core/users',
           residencyPartition: 'jp',
           shardId: 'users-jp-1',
-          bindingRef: 'TDB_USERS_JP_1',
+          bindingRef: 'TEST_TDB_USERS_JP_1',
           routeGeneration: 3,
         },
         {
@@ -380,7 +380,7 @@ describe('account directory producer', () => {
           dataRole: 'tenant_core/users',
           residencyPartition: 'jp',
           shardId: 'users-jp-2',
-          bindingRef: 'TDB_USERS_JP_2',
+          bindingRef: 'TEST_TDB_USERS_JP_2',
           routeGeneration: 4,
         },
       ],
@@ -406,7 +406,7 @@ describe('account directory producer', () => {
           dataRole: 'tenant_core/users',
           residencyPartition: 'jp',
           shardId: 'users-jp-1',
-          bindingRef: 'TDB_USERS_JP_1',
+          bindingRef: 'TEST_TDB_USERS_JP_1',
           routeGeneration: 3,
         },
         {
@@ -414,7 +414,7 @@ describe('account directory producer', () => {
           dataRole: 'tenant_pii',
           residencyPartition: 'eu',
           shardId: 'pii-eu-1',
-          bindingRef: 'TDB_PII_EU_1',
+          bindingRef: 'TEST_TDB_PII_EU_1',
           routeGeneration: 5,
         },
       ],
@@ -452,8 +452,8 @@ describe('account directory producer', () => {
       withSession: vi.fn(),
     };
     Object.assign(workerEnv as unknown as Record<string, unknown>, {
-      TDB_USERS_JP_1: core,
-      TDB_PII_JP_1: pii,
+      TEST_TDB_USERS_JP_1: core,
+      TEST_TDB_PII_JP_1: pii,
     });
     await expect(
       resolveInitialAccountDirectoryWriteTargets(workerEnv, publication)
@@ -462,7 +462,7 @@ describe('account directory producer', () => {
       tenantPii: pii,
       residencyPartition: 'jp',
     });
-    delete (workerEnv as unknown as Record<string, unknown>).TDB_PII_JP_1;
+    delete (workerEnv as unknown as Record<string, unknown>).TEST_TDB_PII_JP_1;
     await expect(
       resolveInitialAccountDirectoryWriteTargets(workerEnv, publication)
     ).rejects.toThrow('account_directory_write_binding_unavailable');
@@ -474,8 +474,8 @@ describe('account directory producer', () => {
     const core = writableD1(order);
     const pii = writableD1(order);
     Object.assign(workerEnv as unknown as Record<string, unknown>, {
-      TDB_USERS_JP_1: core.binding,
-      TDB_PII_JP_1: pii.binding,
+      TEST_TDB_USERS_JP_1: core.binding,
+      TEST_TDB_PII_JP_1: pii.binding,
       ACCOUNT_DIRECTORY: {
         publishAccountDirectory: vi.fn(async () => {
           expect(core.getOutboxStatus()).toBe('pending');
@@ -528,8 +528,8 @@ describe('account directory producer', () => {
     const core = writableD1(order);
     const pii = writableD1(order);
     Object.assign(workerEnv as unknown as Record<string, unknown>, {
-      TDB_USERS_JP_1: core.binding,
-      TDB_PII_JP_1: pii.binding,
+      TEST_TDB_USERS_JP_1: core.binding,
+      TEST_TDB_PII_JP_1: pii.binding,
     });
     await expect(
       executeInitialAccountDirectoryWrite(
@@ -563,8 +563,8 @@ describe('account directory producer', () => {
     const core = writableD1(order);
     const pii = writableD1(order);
     Object.assign(workerEnv as unknown as Record<string, unknown>, {
-      TDB_USERS_JP_1: core.binding,
-      TDB_PII_JP_1: pii.binding,
+      TEST_TDB_USERS_JP_1: core.binding,
+      TEST_TDB_PII_JP_1: pii.binding,
     });
     let operation: AccountCreationOperation = {
       operationId: 'operation-account-a',

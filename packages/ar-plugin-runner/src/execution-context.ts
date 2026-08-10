@@ -3,7 +3,7 @@ import type { PluginEgressContext, PluginExecutionScope } from './types';
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_REQUEST_ID = /^[\x21-\x7e]{1,256}$/u;
 const SAFE_CAPABILITY = /^[a-z][a-z0-9_.:-]{0,127}$/u;
-const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

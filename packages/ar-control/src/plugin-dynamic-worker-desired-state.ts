@@ -16,7 +16,7 @@ const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_BINDING = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const RAW_DATA_BINDING =
-  /^(?:DB(?:_PII|_ADMIN)?|CONTROL_DB|LOOKUP_DB|PLUGIN_RUNNER_DB|(?:[A-Z][A-Z0-9_]*_)?TDB_.+)$/u;
+  /^(?:DB(?:_PII|_ADMIN)?|CONTROL_DB|LOOKUP_DB|PLUGIN_RUNNER_DB|[A-Z][A-Z0-9_]*_TDB_.+)$/u;
 const CLOUDFLARE_TOKEN_BINDING = /^(?:CLOUDFLARE|CF)_.+_(?:API_)?TOKEN$/u;
 const SAFE_LOGICAL_RESOURCE = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const SAFE_MIGRATION_STREAM = /^[a-z0-9][a-z0-9._/-]{0,199}$/u;
