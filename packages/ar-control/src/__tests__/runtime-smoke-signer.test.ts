@@ -26,7 +26,7 @@ const request = {
   operationId: 'operation-1',
   attempt: 1,
   targetWorker: 'test-ar-auth',
-  bindingRef: 'TDB_CORE_001',
+  bindingRef: 'TEST_TDB_CORE_001',
   expectedMigrationGeneration: 1,
   dataRole: 'tenant_core/default' as const,
   residencyPartition: 'global',
@@ -52,7 +52,7 @@ describe('Control runtime smoke signer', () => {
         publicJwks: { keys: [current.publicJwk] },
         now: 1_800_000_000,
       })
-    ).resolves.toMatchObject({ bindingRef: 'TDB_CORE_001', attempt: 1 });
+    ).resolves.toMatchObject({ bindingRef: 'TEST_TDB_CORE_001', attempt: 1 });
   });
 
   it('supports switching to slot B while retaining the previous public key', async () => {

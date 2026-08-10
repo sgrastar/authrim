@@ -126,6 +126,9 @@ describe('runtime smoke RPC JWS', () => {
     await expect(signed({ ...REQUEST, bindingRef: 'DB' })).rejects.toThrow(
       'runtime_smoke_invalid_binding_ref'
     );
+    await expect(signed({ ...REQUEST, bindingRef: 'TDB_DEFAULT_1234_CORE' })).rejects.toThrow(
+      'runtime_smoke_invalid_binding_ref'
+    );
     await expect(signed({ ...REQUEST, attempt: 0 })).rejects.toThrow(
       'runtime_smoke_invalid_attempt'
     );

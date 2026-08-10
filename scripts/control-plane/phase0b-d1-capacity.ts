@@ -371,7 +371,7 @@ export function buildPhase0bSeedBatches(
         CASE ${offset} WHEN 0 THEN 'account_id' WHEN 1 THEN 'email_exact' ELSE 'external_subject' END,
         1, 1, ${digest(offset)}, 'benchmark-tenant', ${account}, 1, 1, 1, 'default',
         json_object('tenant_id', 'benchmark-tenant', 'account_id', ${account},
-          'tenant_core_binding', 'TDB_CORE_0001', 'tenant_pii_binding', 'TDB_PII_0001',
+          'tenant_core_binding', 'TEST_TDB_CORE_0001', 'tenant_pii_binding', 'TEST_TDB_PII_0001',
           'residency_partition', 'default'),
         'active', 'active', 'active', ${now}, ${now} FROM benchmark_seq`,
       params,

@@ -17,7 +17,7 @@ import {
 import { D1PluginHookOutboxStore, PluginHookOutboxDispatcher } from './outbox';
 import type { PluginRunnerEnv } from './types';
 
-const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
 
 export interface ImmediateNotificationDeliveryInput {
   tenantId: string;

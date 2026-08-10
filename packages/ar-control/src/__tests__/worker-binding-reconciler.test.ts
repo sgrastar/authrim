@@ -15,7 +15,7 @@ const reflectedSettings = {
   ...beforeSettings,
   bindings: [
     { name: 'DB', type: 'd1', database_id: 'shared-db' },
-    { name: 'TDB_USERS_001', type: 'd1', database_id: 'tenant-db' },
+    { name: 'TEST_TDB_USERS_001', type: 'd1', database_id: 'tenant-db' },
   ],
 };
 
@@ -42,7 +42,7 @@ function target(overrides: Partial<WorkerBindingTarget> = {}): WorkerBindingTarg
     environmentName: 'test',
     workerScriptName: 'test-ar-auth',
     shardId: 'shard-1',
-    bindingRef: 'TDB_USERS_001',
+    bindingRef: 'TEST_TDB_USERS_001',
     dataRole: 'tenant_core/users',
     residencyPartition: 'global',
     migrationGeneration: 1,
@@ -146,7 +146,7 @@ async function controlEnv(smoke?: RuntimeSmokeServiceBinding): Promise<ControlEn
       smoke ??
       ({
         smokeTenantBinding: vi.fn().mockResolvedValue({
-          bindingRef: 'TDB_USERS_001',
+          bindingRef: 'TEST_TDB_USERS_001',
           migrationGeneration: 1,
           dataRole: 'tenant_core/users',
           residencyPartition: 'global',
@@ -387,7 +387,7 @@ describe('WorkerBindingReconciler', () => {
       expect.objectContaining({
         bindings: [
           { name: 'DB', type: 'inherit', version_id: 'latest' },
-          { name: 'TDB_USERS_001', type: 'd1', database_id: 'tenant-db' },
+          { name: 'TEST_TDB_USERS_001', type: 'd1', database_id: 'tenant-db' },
         ],
       })
     );
@@ -652,7 +652,7 @@ describe('WorkerBindingReconciler', () => {
       api,
       await controlEnv({
         smokeTenantBinding: vi.fn().mockResolvedValue({
-          bindingRef: 'TDB_USERS_001',
+          bindingRef: 'TEST_TDB_USERS_001',
           migrationGeneration: 1,
           dataRole: 'tenant_core/users',
           residencyPartition: 'global',
