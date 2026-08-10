@@ -492,8 +492,20 @@ export async function buildInitialControlTopologyRegistration(input: {
      ) ON CONFLICT(environment_id) DO UPDATE SET
        ownership_fingerprint = excluded.ownership_fingerprint,
        release_manifest_digest = excluded.release_manifest_digest,
+       state = 'creating',
+       verification_error_code = NULL,
+       verified_at = NULL,
+       accepted_at = NULL,
        updated_at = excluded.updated_at
-     WHERE control_bootstrap_handoffs.state = 'creating';`,
+     WHERE control_bootstrap_handoffs.state = 'creating'
+        OR (
+          control_bootstrap_handoffs.state = 'blocked'
+          AND (
+            control_bootstrap_handoffs.verification_error_code GLOB 'control_bootstrap_worker_*'
+            OR control_bootstrap_handoffs.verification_error_code =
+               'control_bootstrap_provider_capability_rejected'
+          )
+        );`,
   ].join('\n\n');
   return { plans, ownershipFingerprint, manifestDigest, sql };
 }
@@ -839,8 +851,12 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
           WHERE handoff.environment_id = excluded.environment_id
             AND (
               handoff.state IN ('creating', 'pending_verification') OR
-              (handoff.state = 'blocked'
-               AND handoff.verification_error_code GLOB 'control_bootstrap_worker_*')
+               (handoff.state = 'blocked'
+                AND (
+                  handoff.verification_error_code GLOB 'control_bootstrap_worker_*'
+                  OR handoff.verification_error_code =
+                     'control_bootstrap_provider_capability_rejected'
+                ))
             )
        );`
     )
@@ -857,14 +873,18 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
         AND (
           state = 'creating'
           OR state = 'pending_verification'
-          OR (state = 'blocked'
-            AND verification_error_code GLOB 'control_bootstrap_worker_*')
+            OR (state = 'blocked'
+            AND (
+              verification_error_code GLOB 'control_bootstrap_worker_*'
+              OR verification_error_code = 'control_bootstrap_provider_capability_rejected'
+            ))
         );`
   );
   const [reflected] = await query<{
     state: string;
     observed_deployment_id: string | null;
     observed_version_id: string | null;
+    verification_error_code: string | null;
     expected_count: number | string;
     exact_count: number | string;
     evidence_count: number | string;
@@ -874,6 +894,7 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
        worker_script_name, expected_deployment_id, expected_version_id, expected_settings_digest
      ) AS (VALUES ${expectedValues})
      SELECT handoff.state, handoff.observed_deployment_id, handoff.observed_version_id,
+            handoff.verification_error_code,
             (SELECT COUNT(*) FROM control_desired_worker_inventory inventory
               WHERE inventory.environment_id = handoff.environment_id
                 AND inventory.status = 'active') AS expected_count,
@@ -890,6 +911,13 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
        FROM control_bootstrap_handoffs handoff
       WHERE handoff.environment_id = ${sqlString(input.environmentId)}`
   );
+  if (
+    reflected?.state === 'blocked' &&
+    typeof reflected.verification_error_code === 'string' &&
+    /^control_bootstrap_[a-z0-9_]+$/u.test(reflected.verification_error_code)
+  ) {
+    throw new Error(reflected.verification_error_code);
+  }
   if (
     !reflected ||
     !['pending_verification', 'accepted'].includes(reflected.state) ||
@@ -947,10 +975,13 @@ export async function waitForInitialBootstrapHandoff(input: {
       state: string;
       verification_error_code: string | null;
       accepted_at: number | string | null;
+      total_bindings: number | string;
       pending_bindings: number | string;
     }>(
       input.controlDatabaseName,
       `SELECT handoff.state, handoff.verification_error_code, handoff.accepted_at,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id) AS total_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
                   AND reconciliation.state <> 'succeeded') AS pending_bindings
@@ -970,8 +1001,15 @@ export async function waitForInitialBootstrapHandoff(input: {
         `control_bootstrap_handoff_blocked:${row.verification_error_code ?? 'unknown'}`
       );
     }
+    const pendingBindings = Math.max(0, Number(row.pending_bindings));
+    const queriedTotalBindings = Number(row.total_bindings);
+    const totalBindings =
+      Number.isFinite(queriedTotalBindings) && queriedTotalBindings >= pendingBindings
+        ? queriedTotalBindings
+        : pendingBindings;
+    const completedBindings = Math.max(0, totalBindings - pendingBindings);
     input.onProgress?.(
-      `Waiting for Control bootstrap verification (${Number(row.pending_bindings)} binding checks pending)...`
+      `Control bootstrap verification progress: ${completedBindings}/${totalBindings} binding checks complete (${pendingBindings} remaining)...`
     );
     await sleep(pollIntervalMs);
   }

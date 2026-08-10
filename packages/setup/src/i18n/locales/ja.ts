@@ -447,9 +447,9 @@ const ja: Translations = {
   'userId.title': 'ユーザーID形式',
   'userId.prompt': 'ユーザーIDの形式を選択してください',
   'userId.nanoid': 'NanoID（推奨）',
-  'userId.nanoidDesc': 'URL安全な21文字のID、コンパクトで安全',
+  'userId.nanoidDesc': 'URLで使いやすい、21文字の短いIDです。',
   'userId.uuid': 'UUID v4',
-  'userId.uuidDesc': 'ハイフン付き36文字の標準UUID',
+  'userId.uuidDesc': 'ハイフンを含む、標準的な36文字のIDです。',
   'userId.note': '注意: この設定はユーザー作成後に変更できません。',
   'userId.selected': 'ユーザーID形式: {{format}}',
 
@@ -777,6 +777,69 @@ const ja: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Control Planeと初期tenant shardを構築します。以後のtenant容量は必要に応じて自動作成されます。',
+  'web.db.controlPlaneWorkerDesc':
+    'Authrimがテナント用データベースを管理するための機能です。セットアップ時に必要な管理用リソースを作成します。',
+  'web.db.controlPlaneTenantPlacement':
+    '初期テナントは専用の保存先で開始します。テナントが増えた後は、テナントごとに保存先を選択できます。',
+  'web.db.controlPlaneResolverNote':
+    'データベースの作成と接続先の管理は、Authrimが自動で行います。',
+  'web.db.automaticProvisioningTitle': 'テナント用データベースの自動作成',
+  'web.db.automaticProvisioningOn': 'オン（自動で作成）',
+  'web.db.automaticProvisioningOnDesc':
+    'テナントやデータ量が増えたとき、Authrimが必要なデータベースを自動で作成します。',
+  'web.db.automaticProvisioningTokenNote':
+    '専用のControl Workerに、必要な権限だけを持つCloudflare API tokenを保存し、テナント用データベースの作成時に使用します。',
+  'web.db.automaticProvisioningOff': 'オフ（Setupから作成）',
+  'web.db.automaticProvisioningOffDesc':
+    'データベースを自動では作成しません。必要になったときにSetupツールから作成します。',
+  'web.db.automaticProvisioningNote': 'オフにしても、テナントごとのデータ分離は維持されます。',
+
+  // Control Plane credentials
+  'web.deploy.controlCredentialsTitle': 'Cloudflare接続情報',
+  'web.deploy.bootstrapTokenTitle': '自動作成用の一時Cloudflare token',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare DashboardのログインはWrangler OAuthとは別で、再度ログインを求められる場合があります。',
+  'web.deploy.createBootstrapToken': '一回限りのCloudflare tokenを作成',
+  'web.deploy.bootstrapTokenLabel': '一時Cloudflare token',
+  'web.deploy.bootstrapTokenPlaceholder': '一時Cloudflare tokenを入力',
+  'web.deploy.bootstrapTokenHelp': 'このtokenは一度だけ使用され、必要なtokenの登録後に失効します。',
+  'web.deploy.bootstrapTokenDescription':
+    'この一時tokenは、Authrimがテナント用データベースを自動作成するために使用します。入力するtokenには、API tokenを作成・編集する権限（アカウント所有の場合は Account API Tokens: Write/Edit、ユーザー所有の場合は API Tokens: Write/Edit）が必要です。Setupはこのtokenを使い、必要な範囲に限定したD1・Workers・KV・R2用のAPI tokenを作成してControl Workerに登録します。登録後、一時tokenは失効します。',
+  'web.deploy.manualDnsSectionTitle': 'DNS設定',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Cloudflare Dashboardで一時tokenを作成し、下の欄に入力してください。',
+  'web.deploy.bootstrapPopupBlocked':
+    '新しいタブがブラウザにブロックされました。ポップアップを許可して、もう一度このボタンを選択してください。',
+  'web.deploy.bootstrapTokenRequired':
+    'デプロイ前に一時Cloudflare tokenを作成して入力してください。',
+  'web.envDetail.automaticProvisioningTitle': '自動プロビジョニング',
+  'web.envDetail.automaticProvisioningChecking': '確認中…',
+  'web.envDetail.automaticProvisioningUnavailable': '利用できません',
+  'web.envDetail.createOneTimeCloudflareToken': '一回限りのCloudflare tokenを作成',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '一回限りのbootstrap token',
+  'web.envDetail.enableAutomaticProvisioning': '有効化',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    '一回限りのtokenを入力してから「有効化」を選択してください。',
+  'web.envDetail.bootstrapPopupBlocked':
+    'Cloudflare Dashboardのタブがブラウザにブロックされました。',
+  'web.envDetail.enterOneTimeTokenFirst': '先に一回限りのCloudflare tokenを入力してください。',
+  'web.envDetail.preparingControlAuthority': 'Controlのプロビジョニング権限を準備しています…',
+  'web.envDetail.deployingControlWorker': 'Control Workerの設定をデプロイしています…',
+  'web.envDetail.registeringScopedCredentials': '権限範囲付きcredentialを登録しています…',
+  'web.envDetail.automaticProvisioningOn': 'オン',
+  'web.envDetail.automaticProvisioningOff': 'オフ',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '権限範囲付きControl Worker credentialが登録されています。',
+  'web.envDetail.automaticProvisioningBlocked': '自動プロビジョニングがブロックされています。',
+  'web.envDetail.automaticProvisioningMissing': '（不足: {{missing}}）',
+  'web.envDetail.automaticProvisioningRepairHint':
+    '修復するには新しい一回限りのtokenを入力してください。',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '再試行前に、Cloudflare Dashboardで表示されたAuthrim bootstrap tokenと子tokenを失効させてください。',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'bootstrap tokenは失効しましたが、保留状態をリセットできませんでした。保留中の操作を再試行または修復してください。',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'bootstrap tokenを失効させ、自動プロビジョニングをオフに戻しました。',
 
   // Web UI Email
   'web.email.title': 'メールプロバイダー',
@@ -913,7 +976,8 @@ const ja: Translations = {
   'web.form.userIdFormat': 'ユーザーID形式',
   'web.form.userIdNanoid': 'NanoID（推奨）',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': 'ユーザーID生成形式。ユーザー作成後は変更できません。',
+  'web.form.userIdExample': '例:',
+  'web.form.userIdFormatHint': 'ユーザー作成後は変更できません。',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

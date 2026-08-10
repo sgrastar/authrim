@@ -435,9 +435,9 @@ describe('release migration topology', () => {
         CONTROL_DB: { id: 'db-control', name: 'control' },
         LOOKUP_DB: { id: 'db-lookup', name: 'lookup' },
         PLUGIN_RUNNER_DB: { id: 'db-plugin-runner', name: 'plugin-runner' },
-        TDB_SLOT_0001_CORE: { id: 'tenant-core', name: 'tenant-core' },
-        TDB_SLOT_0001_PII: { id: 'tenant-pii', name: 'tenant-pii' },
-        TDB_ACME_CORE_S1: { id: 'tenant-core-s1', name: 'tenant-core-s1' },
+        TEST_TDB_SLOT_0001_CORE: { id: 'tenant-core', name: 'tenant-core' },
+        TEST_TDB_SLOT_0001_PII: { id: 'tenant-pii', name: 'tenant-pii' },
+        TEST_TDB_ACME_CORE_S1: { id: 'tenant-core-s1', name: 'tenant-core-s1' },
       }),
     });
 
@@ -460,12 +460,12 @@ describe('release migration topology', () => {
           logicalRoles: ['plugin_runner'],
         }),
         expect.objectContaining({
-          binding: 'TDB_SLOT_0001_CORE',
+          binding: 'TEST_TDB_SLOT_0001_CORE',
           streamId: 'd1-core',
           scope: 'tenant',
         }),
         expect.objectContaining({
-          binding: 'TDB_ACME_CORE_S1',
+          binding: 'TEST_TDB_ACME_CORE_S1',
           streamId: 'd1-core',
           shard: '1',
         }),
@@ -478,20 +478,20 @@ describe('release migration topology', () => {
     const targets = resolveReleaseMigrationTargets({
       config,
       lock: lock({
-        TDB_ACME_AUDIT: { id: 'tenant-audit', name: 'tenant-audit' },
-        TDB_ACME_CUSTOM_S2: { id: 'tenant-custom-s2', name: 'tenant-custom-s2' },
+        TEST_TDB_ACME_AUDIT: { id: 'tenant-audit', name: 'tenant-audit' },
+        TEST_TDB_ACME_CUSTOM_S2: { id: 'tenant-custom-s2', name: 'tenant-custom-s2' },
       }),
     });
 
     expect(targets).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          binding: 'TDB_ACME_AUDIT',
+          binding: 'TEST_TDB_ACME_AUDIT',
           streamId: null,
           blockedReason: 'release_migration_stream_not_available:tenant_audit',
         }),
         expect.objectContaining({
-          binding: 'TDB_ACME_CUSTOM_S2',
+          binding: 'TEST_TDB_ACME_CUSTOM_S2',
           streamId: null,
           shard: '2',
           blockedReason: 'release_migration_stream_not_available:tenant_custom',
@@ -781,8 +781,8 @@ describe('release update lock state', () => {
     const config = createDefaultConfig('prod');
     const installed = lock({
       DB: { id: 'core-id', name: 'prod-core' },
-      TDB_SLOT_001_CORE: { id: 'tenant-core-id', name: 'prod-tenant-core-001' },
-      TDB_SLOT_001_PII: { id: 'tenant-pii-id', name: 'prod-tenant-pii-001' },
+      TEST_TDB_SLOT_001_CORE: { id: 'tenant-core-id', name: 'prod-tenant-core-001' },
+      TEST_TDB_SLOT_001_PII: { id: 'tenant-pii-id', name: 'prod-tenant-pii-001' },
     });
     installed.productVersion = '1.0.0';
     installed.releaseUpdate = {

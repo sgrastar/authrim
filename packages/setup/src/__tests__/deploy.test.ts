@@ -20,8 +20,10 @@ import {
   deployUiWorkerBindingTargets,
   deployWorker,
   deployWorkerGradually,
+  findNodeEngineMismatches,
   hasBlockingDeploymentFailures,
   loadDeploySecretsFromKeys,
+  nodeVersionSatisfiesEngine,
   resolveExistingWorkerComponents,
   type WorkerDeploymentLeaseCoordinator,
 } from '../core/deploy.js';
@@ -226,6 +228,60 @@ describe('hasBlockingDeploymentFailures', () => {
 });
 
 describe('buildApiPackages', () => {
+  it('detects an incompatible Node.js engine before starting the build', async () => {
+    const rootDir = createTempRoot();
+    const packageDir = join(rootDir, 'packages', 'ar-agent-access');
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(rootDir, 'package.json'),
+      JSON.stringify({ name: 'authrim', engines: { node: '>=22.0.0' } })
+    );
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({
+        name: '@authrim/ar-agent-access',
+        engines: { node: '>=99.0.0' },
+      })
+    );
+
+    const progressMessages: string[] = [];
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-agent-access'],
+      onProgress: (message) => progressMessages.push(message),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('@authrim/ar-agent-access');
+    expect(result.error).toContain('>=99.0.0');
+    expect(progressMessages).toContain('Checking Node.js version requirements...');
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('supports the Node.js engine range syntax used by workspace packages', () => {
+    const rootDir = createTempRoot();
+    const packageDir = join(rootDir, 'packages', 'ar-agent-access');
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(
+      join(rootDir, 'package.json'),
+      JSON.stringify({ name: 'authrim', engines: { node: '>=22.0.0' } })
+    );
+    writeFileSync(
+      join(packageDir, 'package.json'),
+      JSON.stringify({
+        name: '@authrim/ar-agent-access',
+        engines: { node: '^22.18.0 || >=24.11.0' },
+      })
+    );
+
+    expect(nodeVersionSatisfiesEngine('22.17.0', '^22.18.0 || >=24.11.0')).toBe(false);
+    expect(nodeVersionSatisfiesEngine('22.23.2', '^22.18.0 || >=24.11.0')).toBe(true);
+    expect(nodeVersionSatisfiesEngine('24.11.1', '^22.18.0 || >=24.11.0')).toBe(true);
+    expect(findNodeEngineMismatches(rootDir, undefined, '22.17.0')).toEqual([
+      { packageName: '@authrim/ar-agent-access', requirement: '^22.18.0 || >=24.11.0' },
+    ]);
+  });
+
   it('builds only the requested worker component when components are specified', async () => {
     const rootDir = createTempRoot();
     mkdirSync(join(rootDir, 'node_modules'), { recursive: true });

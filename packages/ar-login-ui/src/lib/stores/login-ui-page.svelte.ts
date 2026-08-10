@@ -4,6 +4,7 @@ import type {
 	LoginUITextField,
 	LoginUITextLocalizations
 } from '$lib/api/authentication-methods';
+import { syncLoginUIDocumentSurface } from '$lib/document-surface';
 import { isValidImageUrl, isValidLinkUrl, sanitizeColor } from '$lib/utils/url-validation';
 
 type ThemeTemplate = 'classic' | 'meridian' | 'split-brand-panel' | 'fullbleed-glass';
@@ -289,6 +290,7 @@ export function createLoginUIPageStore() {
 			'--login-page-background-color',
 			sanitizeColor(backgroundColor) || null
 		);
+		syncLoginUIDocumentSurface();
 		setOptionalStyleProperty('--login-accent-color', sanitizeColor(accentColor) || null);
 		setOptionalStyleProperty('--login-title-color', sanitizeColor(titleColor) || null);
 		setOptionalStyleProperty('--login-text-color', sanitizeColor(textColor) || null);

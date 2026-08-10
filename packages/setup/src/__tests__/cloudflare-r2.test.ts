@@ -13,6 +13,7 @@ import {
   buildR2BucketProvisioningStatus,
   createR2Bucket,
   deleteR2Bucket,
+  getR2BucketDashboardUrl,
   getWorkerDeployments,
   getR2ObjectBytes,
   listR2Buckets,
@@ -192,6 +193,13 @@ describe('Cloudflare R2 helpers', () => {
     expect(execaMock).not.toHaveBeenCalled();
   });
 
+  it('builds a dashboard URL from the Cloudflare account ID and bucket name', () => {
+    expect(getR2BucketDashboardUrl('0123456789abcdef0123456789abcdef', 'prod-audit-archive')).toBe(
+      'https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/default/buckets/prod-audit-archive'
+    );
+    expect(getR2BucketDashboardUrl('not-an-account', 'prod-audit-archive')).toBeNull();
+  });
+
   it('refuses to record provisioned R2 buckets until Cloudflare lists them', async () => {
     execaMock
       .mockResolvedValueOnce({
@@ -322,7 +330,7 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
       objectKeys: Array.from({ length: 12 }, (_, index) => `objects/${index}.json`),
     });
 
-    expect(success).toBe(true);
+    expect(success).toEqual({ status: 'deleted' });
     expect(maxActiveObjectDeletes).toBe(5);
     expect(activeObjectDeletesWhenBucketDeleted).toBe(0);
     expect(
@@ -359,7 +367,7 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
         json: async () => ({ success: true }),
       });
 
-    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toBe(true);
+    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toEqual({ status: 'deleted' });
 
     const urls = fetchMock.mock.calls.map(([url]) => String(url));
     expect(urls[0]).toContain('/r2/buckets/prod-audit-archive/objects?per_page=1000');
@@ -375,6 +383,73 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
       expect.objectContaining({ method: 'DELETE' })
     );
     expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('skips large R2 buckets and returns a dashboard cleanup target', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: Array.from({ length: 2_000 }, (_, index) => ({ key: `logs/${index}.json` })),
+        result_info: { is_truncated: false },
+      }),
+    });
+
+    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toEqual({
+      status: 'manual_cleanup_required',
+      target: {
+        bucketName: 'prod-audit-archive',
+        objectCount: 2_000,
+        dashboardUrl:
+          'https://dash.cloudflare.com/0123456789abcdef0123456789abcdef/r2/default/buckets/prod-audit-archive',
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes Cloudflare API R2 objects concurrently without exceeding the cap', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+
+    let activeObjectDeletes = 0;
+    let maxActiveObjectDeletes = 0;
+    let listRequest = true;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (listRequest) {
+        listRequest = false;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            result: Array.from({ length: 12 }, (_, index) => ({ key: `logs/${index}.json` })),
+            result_info: { is_truncated: false },
+          }),
+        };
+      }
+
+      if (url.includes('/objects/')) {
+        activeObjectDeletes += 1;
+        maxActiveObjectDeletes = Math.max(maxActiveObjectDeletes, activeObjectDeletes);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeObjectDeletes -= 1;
+      }
+
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true }),
+      };
+    });
+
+    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toEqual({ status: 'deleted' });
+
+    expect(maxActiveObjectDeletes).toBe(5);
+    expect(fetchMock).toHaveBeenCalledTimes(14);
   });
 
   it('backs off and retries Cloudflare 971 responses without falling back to Wrangler', async () => {
@@ -412,7 +487,7 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
         json: async () => ({ success: true }),
       });
 
-    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toBe(true);
+    await expect(deleteR2Bucket('prod-audit-archive')).resolves.toEqual({ status: 'deleted' });
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(execaMock).not.toHaveBeenCalled();

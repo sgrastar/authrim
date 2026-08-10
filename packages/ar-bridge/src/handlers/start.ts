@@ -369,8 +369,15 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       let ssoEnabled = provider.enableSso !== false; // Default from provider config
 
       try {
-        const { createSettingsManager, CLIENT_CATEGORY_META, OAUTH_CATEGORY_META } =
-          await import('@authrim/ar-lib-core');
+        const [settingsManagerModule, clientSettingsModule, oauthSettingsModule] =
+          await Promise.all([
+            import('@authrim/ar-lib-core/utils/settings-manager'),
+            import('@authrim/ar-lib-core/types/settings/client'),
+            import('@authrim/ar-lib-core/types/settings/oauth'),
+          ]);
+        const { createSettingsManager } = settingsManagerModule;
+        const { CLIENT_CATEGORY_META } = clientSettingsModule;
+        const { OAUTH_CATEGORY_META } = oauthSettingsModule;
         const settingsManager = createSettingsManager({
           env: c.env as unknown as Record<string, string | undefined>,
           kv: c.env.SETTINGS ?? null,

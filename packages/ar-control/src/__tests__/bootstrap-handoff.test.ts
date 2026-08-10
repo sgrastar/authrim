@@ -283,6 +283,22 @@ describe('BootstrapHandoffVerifier', () => {
     expect(state.blocked).not.toHaveBeenCalled();
   });
 
+  it('keeps the handoff pending while a newly registered provider token stabilizes', async () => {
+    const state = await fixture();
+    state.api.getD1Database = vi.fn(async () => {
+      throw new CloudflareControlApiError('d1.get', 403);
+    });
+    const result = await new BootstrapHandoffVerifier(
+      state.repository,
+      state.api,
+      () => 1_800_000_000
+    ).reconcile();
+
+    expect(result).toEqual({ attempted: 1, accepted: 0, blocked: 0, retrying: 1 });
+    expect(state.accepted).not.toHaveBeenCalled();
+    expect(state.blocked).not.toHaveBeenCalled();
+  });
+
   it('keeps the handoff pending while initial shard binding activation is still running', async () => {
     const state = await fixture();
     const pending = state.resources.find((entry) => entry.role === 'tenant_core/default');

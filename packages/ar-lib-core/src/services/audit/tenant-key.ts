@@ -1,4 +1,4 @@
-import { deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging';
+import { deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging/contract';
 import type { DatabaseAdapter } from '../../db/adapter';
 
 export type TenantKeyResolver = (

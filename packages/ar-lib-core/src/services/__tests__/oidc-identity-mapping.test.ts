@@ -11,7 +11,7 @@ vi.mock('../identity-mapping-runtime-resolver', () => ({
   resolveRuntimeIdentityMappingBinding: resolveBinding,
 }));
 
-vi.mock('@authrim/ar-lib-field-mapping', () => ({
+vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
   executeRuntimeMapping: executeMapping,
 }));
 

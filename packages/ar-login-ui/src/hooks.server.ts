@@ -29,6 +29,10 @@ import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonica
 import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
 import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
 import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
+import {
+	loadAccountPageInitialData,
+	type AccountPageInitialData
+} from '$lib/server/account-page-initial-data';
 import { sanitizeColor } from '$lib/utils/url-validation';
 import {
 	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
@@ -46,6 +50,8 @@ type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider 
 interface ServiceBinding {
 	fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
+
+type ServerFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH = 32;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH = 4096;
@@ -384,6 +390,61 @@ export async function fetchAuthenticationMethodsForPageRequest(
 		forwardedHost,
 		clientId
 	);
+}
+
+/**
+ * Fetch account bootstrap data directly from the configured API binding.
+ *
+ * Server-side `event.fetch('/api/...')` normally re-enters the Login UI proxy. On the
+ * Cloudflare UI Worker that nested request can finish without the original platform
+ * binding, leaving the first account document without its published composition. The
+ * browser then has to discover the composition after hydration, which causes the whole
+ * widget grid to appear at once. This path mirrors the proxy request directly so the
+ * initial HTML already knows exactly which configured widgets may render.
+ */
+export function createAccountPageBootstrapFetch(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): ServerFetch {
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
+	const apiBinding =
+		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
+		null;
+	const upstreamBaseUrl = apiBinding
+		? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
+		: apiBackendUrl;
+
+	return async (input, init) => {
+		const sourceUrl =
+			input instanceof Request
+				? new URL(input.url)
+				: new URL(typeof input === 'string' ? input : input.toString(), event.url);
+		if (sourceUrl.origin !== event.url.origin || !sourceUrl.pathname.startsWith('/api/account/')) {
+			throw new TypeError('Account bootstrap requests must use a same-origin account API path');
+		}
+
+		const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, upstreamBaseUrl);
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+		new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
+		const requestInit: RequestInit = {
+			method: 'GET',
+			headers,
+			redirect: 'manual'
+		};
+
+		return apiBinding
+			? apiBinding.fetch(upstreamUrl.toString(), requestInit)
+			: fetch(new Request(upstreamUrl.toString(), requestInit));
+	};
+}
+
+export async function fetchAccountPageInitialDataForPageRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<AccountPageInitialData> {
+	return loadAccountPageInitialData(createAccountPageBootstrapFetch(event, platformEnv));
 }
 
 export async function fetchLoginChallengeThemeTargetForPageRequest(
@@ -1093,11 +1154,22 @@ const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 		if (challengeTarget) {
 			event.locals.loginChallengeThemeTarget = challengeTarget;
 		}
-		event.locals.authenticationMethods = await fetchAuthenticationMethodsForPageRequest(
-			event,
-			platformEnv,
-			challengeTarget?.valid ? challengeTarget.clientId : null
-		);
+		const accountPageInitialPromise =
+			event.url.pathname === '/account' || event.url.pathname.startsWith('/account/')
+				? fetchAccountPageInitialDataForPageRequest(event, platformEnv)
+				: Promise.resolve(undefined);
+		const [authenticationMethods, accountPageInitial] = await Promise.all([
+			fetchAuthenticationMethodsForPageRequest(
+				event,
+				platformEnv,
+				challengeTarget?.valid ? challengeTarget.clientId : null
+			),
+			accountPageInitialPromise
+		]);
+		event.locals.authenticationMethods = authenticationMethods;
+		if (accountPageInitial) {
+			event.locals.accountPageInitial = accountPageInitial;
+		}
 	}
 
 	return resolve(event);

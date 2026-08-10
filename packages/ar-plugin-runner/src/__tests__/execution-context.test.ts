@@ -15,7 +15,7 @@ describe('parsePluginExecutionContext', () => {
       parsePluginExecutionContext({
         ...base,
         executionScope: {
-          bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+          bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
           dataRole: 'tenant_core/default',
           residencyPartition: 'jp',
         },
@@ -23,7 +23,7 @@ describe('parsePluginExecutionContext', () => {
     ).toEqual({
       ...base,
       executionScope: {
-        bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
         dataRole: 'tenant_core/default',
         residencyPartition: 'jp',
       },
@@ -36,7 +36,7 @@ describe('parsePluginExecutionContext', () => {
         ...base,
         executionScope: {
           accountId: 'account-a',
-          bindingRef: 'TDB_USERS_JP_0001_CORE',
+          bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
           dataRole: 'tenant_core/users',
           residencyPartition: 'jp',
         },
@@ -46,12 +46,12 @@ describe('parsePluginExecutionContext', () => {
     for (const executionScope of [
       {
         accountId: '',
-        bindingRef: 'TDB_USERS_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
         dataRole: 'tenant_core/users',
         residencyPartition: 'jp',
       },
       {
-        bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
         dataRole: 'tenant_core/default',
         residencyPartition: 'jp',
         unknown: true,

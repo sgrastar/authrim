@@ -26,6 +26,7 @@ import {
   produceNotificationDelivery,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getTenantSettings,
   getTenantIdFromContext,
   hasRemainingInvitationUses,
@@ -622,6 +623,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       runtimeUser.id,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         email: runtimeUser.email,
         name: runtimeUser.name,
         amr: ['pwd', 'directory'],
@@ -1669,6 +1671,7 @@ async function createDirectorySessionSuccessResponse(
     input.user.id,
     sessionTtl.seconds,
     {
+      ...getSessionClientMetadata(c.req.raw),
       email: input.user.email,
       name: input.user.name,
       amr: directorySessionAmr(input.method),

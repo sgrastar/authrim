@@ -710,6 +710,29 @@ describe('Cloudflare Control token bootstrap', () => {
     expect(requestedPages).toEqual([1, 2]);
   });
 
+  it('retries transient token API read failures before failing bootstrap', async () => {
+    let permissionGroupCalls = 0;
+    const fetcher = (async (url: string | URL | Request) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/permission_groups')) {
+        permissionGroupCalls += 1;
+        if (permissionGroupCalls === 1) return new Response('{}', { status: 500 });
+        return new Response(JSON.stringify({ success: true, result: groups }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch;
+    const client = new CloudflareTokenAuthorityHttpClient({
+      accountId: ACCOUNT_ID,
+      ownership: 'account',
+      bootstrapToken: 'bootstrap-token-value',
+      fetcher,
+      tokenApiRetryDelaysMs: [0],
+    });
+
+    await expect(client.listPermissionGroups()).resolves.toEqual(groups);
+    expect(permissionGroupCalls).toBe(2);
+  });
+
   it('propagates bootstrap verification transport loss instead of treating it as revoked', async () => {
     const client = new CloudflareTokenAuthorityHttpClient({
       accountId: ACCOUNT_ID,
@@ -718,6 +741,7 @@ describe('Cloudflare Control token bootstrap', () => {
       fetcher: (async () => {
         throw new Error('network down');
       }) as typeof fetch,
+      tokenApiRetryDelaysMs: [],
     });
 
     await expect(client.verifySelf()).rejects.toMatchObject({

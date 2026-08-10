@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Button, Input, Card, Alert, TurnstileWidget, SanitizedHtml } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
+	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
@@ -83,9 +83,6 @@
 	);
 	const localizedBrandPanelText = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelText')
-	);
-	const localizedFooterText = $derived(
-		loginUIPageStore.getLocalizedText(getLocale(), 'footerText')
 	);
 	const localizedLoginTitle = $derived(
 		loginUIPageStore.getLocalizedText(getLocale(), 'loginTitle') ?? $LL.login_title()
@@ -2844,21 +2841,7 @@
 		</div>
 	</div>
 
-	<!-- Footer -->
-	{#if loginUIPageStore.footerEnabled}
-		<footer class="auth-footer auth-page-footer">
-			{#if loginUIPageStore.footerLinks.length > 0}
-				<nav class="auth-footer__links" aria-label={$LL.common_footerLinks()}>
-					{#each loginUIPageStore.footerLinks as link (link.url)}
-						<a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a>
-					{/each}
-				</nav>
-			{/if}
-			{#if loginUIPageStore.poweredByEnabled}
-				<FooterText value={localizedFooterText ?? $LL.footer_stack()} />
-			{/if}
-		</footer>
-	{/if}
+	<ConfiguredFooter class="auth-page-footer" />
 </div>
 
 <style>

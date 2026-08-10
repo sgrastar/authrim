@@ -44,6 +44,7 @@ vi.mock('../core/tenant-database.js', async (importOriginal) => {
 
 import { createDefaultConfig } from '../core/config.js';
 import {
+  buildInitialTenantAliasBootstrap,
   ensureInitialControlPlaneResources,
   ensureInitialTenantRegionShardConfig,
   inspectInitialControlPlaneTopology,
@@ -59,7 +60,7 @@ let root: string;
 function config(automaticProvisioning = true) {
   const value = createDefaultConfig('prod');
   value.controlPlane.automaticProvisioning = automaticProvisioning;
-  value.tenant.name = "tenant-o'hara";
+  value.tenant.name = 'tenant-ohara';
   return value;
 }
 
@@ -69,15 +70,18 @@ function lock() {
       DB_ADMIN: { id: 'admin-id', name: 'admin-db' },
       CONTROL_DB: { id: 'control-id', name: 'control-db' },
       LOOKUP_DB: { id: 'lookup-id', name: 'lookup-db' },
-      TDB_DEFAULT_BOOTSTRAP_CORE: {
+      PROD_TDB_DEFAULT_BOOTSTRAP_CORE: {
         id: 'default-id',
-        name: 'authrim-prod-default-bootstrap',
+        name: 'prod-authrim-tenant-default-bootstrap-db',
       },
-      TDB_USERS_BOOTSTRAP_CORE: {
+      PROD_TDB_USERS_BOOTSTRAP_CORE: {
         id: 'users-id',
-        name: 'authrim-prod-users-bootstrap',
+        name: 'prod-authrim-tenant-users-bootstrap-db',
       },
-      TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'authrim-prod-pii-bootstrap' },
+      PROD_TDB_PII_BOOTSTRAP_PII: {
+        id: 'pii-id',
+        name: 'prod-authrim-tenant-pii-bootstrap-db',
+      },
     },
     kv: {
       AUTHRIM_CONFIG: { id: 'config-kv', title: 'config' },
@@ -151,11 +155,44 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.buildTenantDatabaseRegistrySql.mockReturnValue('REGISTRY SQL');
     mocks.getOptionalKVKeyByNamespaceId.mockResolvedValue(null);
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) =>
-      sql.includes('control_tenant_default_allocations') ? regionPolicyRows() : [{ count: 1 }]
+      sql.includes('control_tenant_default_allocations')
+        ? regionPolicyRows()
+        : [{ count: sql.includes('lookup_tenant_aliases') ? 3 : 1 }]
     );
   });
 
   afterEach(async () => rm(root, { recursive: true, force: true }));
+
+  it('builds active lookup aliases for the initial tenant and environment', async () => {
+    const result = await buildInitialTenantAliasBootstrap({
+      environmentId: 'prod',
+      tenantId: 'first',
+      tenantCode: 'first',
+      defaultStore: {
+        bindingRef: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+        bindingRouteGeneration: 1,
+        residencyPolicyId: 'builtin:residency:default',
+        residencyPartition: 'default',
+        shardId: 'shard-bootstrap-default',
+      } as never,
+      now: 1_700_000_000,
+    });
+
+    expect(result.indexes.map((index) => index.aliasKind)).toEqual([
+      'tenant_code',
+      'tenant_slug',
+      'environment_tenant',
+    ]);
+    expect(result.sql).toContain('INSERT INTO lookup_tenant_aliases');
+    expect(result.sql).toContain("'active', 'active', 'active'");
+    expect(JSON.parse(result.projectionJson)).toMatchObject({
+      tenantRouteGeneration: 1,
+      target: {
+        dataRole: 'tenant_core/default',
+        bindingRef: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+      },
+    });
+  });
 
   it('bootstraps the initial shards even when automatic provisioning is disabled', async () => {
     await expect(
@@ -172,9 +209,9 @@ describe('initial Control Plane bootstrap orchestration', () => {
 
   it('creates the initial default, users, and PII databases and pins their migrations', async () => {
     const currentLock = lock();
-    delete currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE;
-    delete currentLock.d1.TDB_USERS_BOOTSTRAP_CORE;
-    delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+    delete currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
     const progress: string[] = [];
     const result = await ensureInitialControlPlaneResources({
       env: 'prod',
@@ -185,9 +222,11 @@ describe('initial Control Plane bootstrap orchestration', () => {
       onProgress: (message) => progress.push(message),
     });
     expect(result).toEqual({ success: true, createdCount: 3, migratedCount: 3 });
-    expect(currentLock.d1.TDB_DEFAULT_BOOTSTRAP_CORE).toMatchObject({ id: expect.any(String) });
+    expect(currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE).toMatchObject({
+      id: expect.any(String),
+    });
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-default-bootstrap',
+      'prod-authrim-tenant-default-bootstrap-db',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -195,7 +234,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-users-bootstrap',
+      'prod-authrim-tenant-users-bootstrap-db',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -203,7 +242,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'authrim-prod-pii-bootstrap',
+      'prod-authrim-tenant-pii-bootstrap-db',
       join(root, 'migrations', 'pii'),
       expect.any(Function),
       expect.objectContaining({
@@ -219,7 +258,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
   it('detects missing or unregistered tenant topology without mutating resources', () => {
     const manifest = release();
     const currentLock = lock();
-    delete currentLock.d1.TDB_PII_BOOTSTRAP_PII;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
 
     expect(
       inspectInitialControlPlaneTopology({
@@ -231,22 +270,22 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     ).toEqual([
       {
-        binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+        binding: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
         targetId: 'd1:default-id:d1-core',
       },
       {
-        binding: 'TDB_USERS_BOOTSTRAP_CORE',
+        binding: 'PROD_TDB_USERS_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
         targetId: 'd1:users-id:d1-core',
       },
-      { binding: 'TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
+      { binding: 'PROD_TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
     ]);
     expect(mocks.createD1Database).not.toHaveBeenCalled();
 
-    currentLock.d1.TDB_PII_BOOTSTRAP_PII = {
+    currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII = {
       id: 'pii-id',
-      name: 'authrim-prod-pii-bootstrap',
+      name: 'prod-authrim-tenant-pii-bootstrap-db',
     };
     const manifestChecksum = calculateReleaseManifestChecksum(manifest);
     currentLock.schemaTargets = {
@@ -487,6 +526,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
     const result = await publishInitialControlPlaneRuntimeSnapshot({
@@ -505,7 +545,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     const snapshot = JSON.parse(snapshotCall[2]) as Record<string, unknown>;
     expect(snapshot).toMatchObject({
       version: 4,
-      tenantId: "tenant-o'hara",
+      tenantId: 'tenant-ohara',
       backend: { provider: 'd1', resolver: 'control-plane' },
       placement: { isolationPolicy: 'tenant_exclusive', policyGeneration: 1 },
       metadata: {
@@ -537,17 +577,21 @@ describe('initial Control Plane bootstrap orchestration', () => {
           bindingRouteGeneration: 1,
           placementPolicyGeneration: 1,
           allocationScope: 'tenant_exclusive',
-          ownerTenantId: "tenant-o'hara",
+          ownerTenantId: 'tenant-ohara',
         }),
         expect.objectContaining({ dataRole: 'tenant_core/users' }),
         expect.objectContaining({ dataRole: 'tenant_pii' }),
       ])
     );
     expect(mocks.executeD1Command).toHaveBeenCalledWith(
-      'authrim-prod-default-bootstrap',
+      'prod-authrim-tenant-default-bootstrap-db',
       'INITIAL TENANT SQL'
     );
-    expect(mocks.queryD1Rows).toHaveBeenCalledTimes(3);
+    expect(mocks.executeD1Command).toHaveBeenCalledWith(
+      'lookup-db',
+      expect.stringContaining('INSERT INTO lookup_tenant_aliases')
+    );
+    expect(mocks.queryD1Rows).toHaveBeenCalledTimes(4);
   });
 
   it('does not publish a runtime route when the dedicated core tenant seed fails', async () => {
@@ -595,15 +639,18 @@ describe('initial Control Plane bootstrap orchestration', () => {
         DB_ADMIN: { id: 'admin-id', name: 'admin-db' },
         CONTROL_DB: { id: 'control-id', name: 'control-db' },
         LOOKUP_DB: { id: 'lookup-id', name: 'lookup-db' },
-        TDB_DEFAULT_BOOTSTRAP_CORE: {
+        PROD_TDB_DEFAULT_BOOTSTRAP_CORE: {
           id: 'default-id',
-          name: 'authrim-prod-default-bootstrap',
+          name: 'prod-authrim-tenant-default-bootstrap-db',
         },
-        TDB_USERS_BOOTSTRAP_CORE: {
+        PROD_TDB_USERS_BOOTSTRAP_CORE: {
           id: 'users-id',
-          name: 'authrim-prod-users-bootstrap',
+          name: 'prod-authrim-tenant-users-bootstrap-db',
         },
-        TDB_PII_BOOTSTRAP_PII: { id: 'pii-id', name: 'authrim-prod-pii-bootstrap' },
+        PROD_TDB_PII_BOOTSTRAP_PII: {
+          id: 'pii-id',
+          name: 'prod-authrim-tenant-pii-bootstrap-db',
+        },
       },
       kv: {
         AUTHRIM_CONFIG: { id: 'config-kv', title: 'config' },
@@ -631,6 +678,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 
@@ -682,6 +730,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 
@@ -720,6 +769,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
       if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
       if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
 

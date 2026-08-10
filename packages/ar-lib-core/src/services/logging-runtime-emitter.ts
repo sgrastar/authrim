@@ -2,13 +2,15 @@ import type { Queue } from '@cloudflare/workers-types';
 import {
   createLoggingId,
   formatUtcPartition,
-  writeLogChunkToR2,
   type LogPlane,
   type LogType,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
-import type { WriteLogChunkResult } from '@authrim/ar-lib-logging/chunks';
-import type { LogChunkEncryptionOptions } from '@authrim/ar-lib-logging/chunks';
+import {
+  writeLogChunkToR2,
+  type LogChunkEncryptionOptions,
+  type WriteLogChunkResult,
+} from '@authrim/ar-lib-logging/chunks';
 import {
   SqlLoggingDeliveryEventStore,
   type LoggingDeliveryLane,

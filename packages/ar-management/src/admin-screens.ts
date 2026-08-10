@@ -832,23 +832,6 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
     th: 'จัดการบัญชีของคุณ',
     vi: 'Quản lý tài khoản',
   },
-  'Review security settings': {
-    en: 'Review security settings',
-    ja: 'セキュリティ設定を確認',
-    'zh-CN': '查看安全设置',
-    'zh-TW': '查看安全設定',
-    es: 'Revisar la configuración de seguridad',
-    pt: 'Revisar configurações de segurança',
-    fr: 'Vérifier les paramètres de sécurité',
-    de: 'Sicherheitseinstellungen prüfen',
-    ko: '보안 설정 검토',
-    ru: 'Проверить настройки безопасности',
-    id: 'Tinjau pengaturan keamanan',
-    ar: 'مراجعة إعدادات الأمان',
-    it: 'Controlla le impostazioni di sicurezza',
-    th: 'ตรวจสอบการตั้งค่าความปลอดภัย',
-    vi: 'Xem lại cài đặt bảo mật',
-  },
   'User profile': {
     en: 'User profile',
     ja: 'ユーザー情報',
@@ -1031,7 +1014,7 @@ function defaultAuthenticationFields(screenKind: 'registration' | 'login'): Scre
           {
             field: 'email',
             label: 'Email',
-            required: true,
+            required: false,
             block_type: 'identity_field' as const,
             order: 15,
           },
@@ -1215,16 +1198,7 @@ const DEFAULT_SCREENS: Array<{
         label: 'Manage your account',
         required: false,
         block_type: 'heading',
-        text: 'Review your profile, sign-in methods, sessions, and consent information.',
         order: 10,
-      },
-      {
-        field: 'link.account_security',
-        label: 'Review security settings',
-        required: false,
-        block_type: 'link',
-        href: '#profile',
-        order: 20,
       },
     ],
   },
@@ -1246,14 +1220,14 @@ const DEFAULT_SCREENS: Array<{
   },
   {
     screen_key: 'account_devices',
-    display_name: 'Devices',
-    description: 'Show devices associated with the account.',
+    display_name: 'Connected apps and devices',
+    description: 'Show native apps and devices linked to the account.',
     screen_kind: 'account',
     settings: { canvas_layout: 'wide' },
     fields: [
       {
         field: 'account.devices',
-        label: 'Devices',
+        label: 'Connected apps and devices',
         required: false,
         block_type: 'account_device_list_widget',
         order: 10,
@@ -1262,14 +1236,14 @@ const DEFAULT_SCREENS: Array<{
   },
   {
     screen_key: 'account_sessions',
-    display_name: 'Sessions',
-    description: 'Review and revoke active account sessions.',
+    display_name: 'Signed-in devices',
+    description: 'Review and revoke browsers and devices currently signed in to the account.',
     screen_kind: 'account',
     settings: { canvas_layout: 'wide' },
     fields: [
       {
         field: 'account.sessions',
-        label: 'Sessions',
+        label: 'Signed-in devices',
         required: false,
         block_type: 'account_session_widget',
         order: 10,
@@ -1770,6 +1744,26 @@ function mergeDefaultScreenLocalizations(
     const existingFields = existing.fields ?? {};
     const mergedFields: NonNullable<ScreenLocalization['fields']> = { ...existingFields };
 
+    if (screen.screen_key === 'account_overview') {
+      for (const key of Object.keys(mergedFields)) {
+        if (key.startsWith('link.account_security-')) {
+          delete mergedFields[key];
+        }
+      }
+      const headingIndex = fields.findIndex((field) => field.field === 'heading.account_overview');
+      if (headingIndex >= 0) {
+        const heading = fields[headingIndex];
+        if (heading) {
+          const key = defaultLocalizationKey(heading, headingIndex);
+          const localization = mergedFields[key];
+          if (localization?.text !== undefined) {
+            const { text: _removedText, ...remaining } = localization;
+            mergedFields[key] = remaining;
+          }
+        }
+      }
+    }
+
     for (const [index, field] of fields.entries()) {
       const defaultField =
         screen.fields.find((candidate) => sameScreenField(candidate, field)) ??
@@ -1889,6 +1883,15 @@ function mergeDefaultScreenFieldMetadata(
         changed = true;
       }
     }
+  } else if (screen.screen_key === 'account_overview') {
+    working = fields
+      .filter((field) => field.field !== 'link.account_security')
+      .map((field) =>
+        field.field === 'heading.account_overview' && field.text !== undefined
+          ? { ...field, text: undefined }
+          : field
+      );
+    changed = serializeJson(working) !== serializeJson(fields);
   }
 
   const next = orderedScreenFields(working).map((field) => {

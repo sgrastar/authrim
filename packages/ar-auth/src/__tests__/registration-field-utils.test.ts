@@ -146,6 +146,37 @@ describe('registration-field-utils', () => {
     });
   });
 
+  it('keeps a required canonical email field mandatory for Passkey registration', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.query).mockResolvedValueOnce([
+      {
+        field_key: 'field.canonical.email',
+        display_label: 'Email',
+        field_type: 'string',
+        is_pii: 1,
+        registration_required: 1,
+        validation_rules: null,
+      },
+      {
+        field_key: 'department',
+        display_label: 'Department',
+        field_type: 'string',
+        is_pii: 0,
+        registration_required: 1,
+        validation_rules: null,
+      },
+    ]);
+
+    const result = await validateRegistrationFieldSubmission(adapter, 'tenant-1', {
+      department: 'Platform',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      missingRequiredFields: [expect.objectContaining({ fieldKey: 'field.canonical.email' })],
+    });
+  });
+
   it('accepts submitted signup base fields without persisting them as custom fields', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.query).mockResolvedValueOnce([

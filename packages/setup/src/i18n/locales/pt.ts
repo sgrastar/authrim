@@ -788,6 +788,68 @@ const pt: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Inicializa o plano de controle e os shards iniciais; a capacidade posterior é criada automaticamente.',
+  'web.db.controlPlaneWorkerDesc':
+    'Este recurso permite ao Authrim gerenciar os bancos de dados dos tenants. Os recursos de gerenciamento necessários são criados durante o setup.',
+  'web.db.controlPlaneTenantPlacement':
+    'O tenant inicial começa com seu próprio local de armazenamento. Ao adicionar tenants, você pode escolher um local para cada um.',
+  'web.db.controlPlaneResolverNote':
+    'O Authrim gerencia automaticamente a criação dos bancos e o roteamento das conexões.',
+  'web.db.automaticProvisioningTitle': 'Criação automática de bancos dos tenants',
+  'web.db.automaticProvisioningOn': 'Ativado (criar automaticamente)',
+  'web.db.automaticProvisioningOnDesc':
+    'Quando os tenants ou os dados aumentarem, o Authrim criará automaticamente os bancos necessários.',
+  'web.db.automaticProvisioningTokenNote':
+    'Um Control Worker dedicado armazena e usa o token de API do Cloudflare com permissões limitadas necessário para criar os bancos dos tenants.',
+  'web.db.automaticProvisioningOff': 'Desativado (criar pelo Setup)',
+  'web.db.automaticProvisioningOffDesc':
+    'Os bancos não serão criados automaticamente. Crie-os pela ferramenta Setup quando necessário.',
+  'web.db.automaticProvisioningNote':
+    'A separação de dados por tenant continua ativa quando desativado.',
+  'web.deploy.controlCredentialsTitle': 'Conexão com o Cloudflare',
+  'web.deploy.bootstrapTokenTitle': 'Token temporário do Cloudflare para configuração automática',
+  'web.deploy.cloudflareLoginNote':
+    'O login do Dashboard Cloudflare é separado do Wrangler OAuth e pode solicitar novo login.',
+  'web.deploy.createBootstrapToken': 'Criar token Cloudflare de uso único',
+  'web.deploy.bootstrapTokenLabel': 'Token temporário do Cloudflare',
+  'web.deploy.bootstrapTokenPlaceholder': 'Digite o token temporário do Cloudflare',
+  'web.deploy.bootstrapTokenHelp':
+    'Este token é usado uma vez e revogado após o registro dos tokens necessários.',
+  'web.deploy.bootstrapTokenDescription':
+    'Este token temporário permite que o Authrim crie automaticamente os bancos de dados dos tenants. Ele precisa de permissão para criar e editar tokens de API: Account API Tokens: Write/Edit para um token da conta ou API Tokens: Write/Edit para um token de usuário. O Setup o usa para criar, conforme necessário, tokens de API com escopo limitado para D1, Workers, KV e R2, registrá-los no Control Worker e revogar depois o token temporário.',
+  'web.deploy.manualDnsSectionTitle': 'Configurações de DNS',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Crie um token temporário no Dashboard Cloudflare e digite-o abaixo.',
+  'web.deploy.bootstrapPopupBlocked':
+    'O navegador bloqueou a nova aba. Permita pop-ups e selecione o botão novamente.',
+  'web.deploy.bootstrapTokenRequired':
+    'Crie e digite o token temporário do Cloudflare antes do deploy.',
+  'web.envDetail.automaticProvisioningTitle': 'Provisionamento automático',
+  'web.envDetail.automaticProvisioningChecking': 'Verificando...',
+  'web.envDetail.automaticProvisioningUnavailable': 'Indisponível',
+  'web.envDetail.createOneTimeCloudflareToken': 'Criar token Cloudflare de uso único',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap de uso único',
+  'web.envDetail.enableAutomaticProvisioning': 'Ativar',
+  'web.envDetail.enterOneTimeTokenThenEnable': 'Digite o token de uso único e selecione Ativar.',
+  'web.envDetail.bootstrapPopupBlocked': 'O navegador bloqueou a aba do Dashboard Cloudflare.',
+  'web.envDetail.enterOneTimeTokenFirst': 'Digite primeiro o token Cloudflare de uso único.',
+  'web.envDetail.preparingControlAuthority':
+    'Preparando a autoridade de provisionamento do Control...',
+  'web.envDetail.deployingControlWorker': 'Implantando a configuração do Control Worker...',
+  'web.envDetail.registeringScopedCredentials': 'Registrando credenciais com escopo...',
+  'web.envDetail.automaticProvisioningOn': 'Ativado',
+  'web.envDetail.automaticProvisioningOff': 'Desativado',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    'As credenciais com escopo do Control Worker estão registradas.',
+  'web.envDetail.automaticProvisioningBlocked': 'O provisionamento automático está bloqueado.',
+  'web.envDetail.automaticProvisioningMissing': '(ausente: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Digite um novo token de uso único para corrigir.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    'Revogue os tokens bootstrap e filhos do Authrim indicados no Dashboard Cloudflare antes de tentar novamente.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'O token bootstrap foi revogado, mas o estado pendente não pôde ser redefinido.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'O token bootstrap foi revogado e o provisionamento automático voltou a ser desativado.',
 
   // Web UI Email
   'web.email.title': 'Provedor de Email',
@@ -929,8 +991,8 @@ const pt: Translations = {
   'web.form.userIdFormat': 'Formato de ID de Usuário',
   'web.form.userIdNanoid': 'NanoID (recomendado)',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint':
-    'Formato para gerar IDs de usuário. Não pode ser alterado após a criação de usuários.',
+  'web.form.userIdExample': 'Exemplo:',
+  'web.form.userIdFormatHint': 'Não pode ser alterado após a criação de usuários.',
   'web.form.loginDomainPlaceholder': 'login.exemplo.com',
   'web.form.adminDomainPlaceholder': 'admin.exemplo.com',
 

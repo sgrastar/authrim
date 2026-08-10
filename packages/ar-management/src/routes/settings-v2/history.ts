@@ -690,7 +690,7 @@ export async function compareSettingsVersions(c: SettingsContext) {
     }
 
     // Calculate diff between the two snapshots
-    const { calculateChanges } = await import('@authrim/ar-lib-core');
+    const { calculateChanges } = await import('@authrim/ar-lib-core/services/settings-history');
     const diff = calculateChanges(fromEntry.snapshot, toEntry.snapshot);
 
     return c.json({

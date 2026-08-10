@@ -47,10 +47,16 @@ const de = createTranslation({
 	account_reauthEmailCodePlaceholder: '6-stelliger Code',
 	account_reauthVerifyEmailCode: 'Code bestätigen',
 	account_reauthNoMethods: 'Für die erneute Authentifizierung ist keine Methode verfügbar.',
-	account_devices: 'Geräte',
+	account_devices: 'Verknüpfte Apps und Geräte',
 	account_currentDevice: 'Aktuell',
-	account_sessions: 'Sitzungen',
-	account_currentSession: 'Aktuelle Sitzung',
+	account_connectedDevicesDescription: 'Mit Ihrem Konto verknüpfte Apps und Geräte.',
+	account_noConnectedDevices: 'Keine verknüpften Apps oder Geräte',
+	account_sessions: 'Angemeldete Geräte',
+	account_currentSession: 'Dieses Gerät',
+	account_sessionsDescription: 'Derzeit angemeldete Browser und Geräte.',
+	account_unknownDevice: 'Geräteinformationen fehlen',
+	account_sessionLocation: 'Standort: {country}',
+	account_signedInAt: 'Angemeldet am {time}',
 	account_logoutSession: 'Abmelden',
 	account_passkeyName: 'Passkey-Name',
 	account_addPasskey: 'Passkey hinzufügen',
@@ -58,6 +64,20 @@ const de = createTranslation({
 	account_empty: 'Keine Einträge',
 	account_planned: 'Geplant',
 	account_passkeyUnsupported: 'Dieser Browser unterstützt die Passkey-Registrierung nicht.',
+	account_passkeyRegistrationCancelled:
+		'Die Passkey-Registrierung wurde abgebrochen oder ist abgelaufen. Versuchen Sie es erneut.',
+	account_passkeyAlreadyRegistered:
+		'Dieser Authenticator ist für dieses Konto bereits registriert.',
+	account_passkeyRegistrationInterrupted:
+		'Die Passkey-Registrierung wurde unterbrochen. Versuchen Sie es erneut.',
+	account_passkeyAuthenticatorUnsupported:
+		'Dieser Authenticator erfüllt die Anforderungen für diesen Passkey nicht. Verwenden Sie einen anderen Authenticator.',
+	account_passkeyAuthenticatorUnavailable:
+		'Der Authenticator konnte die Passkey-Registrierung nicht abschließen. Versuchen Sie es erneut oder verwenden Sie einen anderen Authenticator.',
+	account_passkeyConfigurationError:
+		'Die Passkey-Registrierung ist für diese Website nicht verfügbar. Wenden Sie sich an den Support, wenn das Problem weiterhin besteht.',
+	account_passkeyRegistrationFailed:
+		'Die Passkey-Registrierung ist fehlgeschlagen. Versuchen Sie es erneut.',
 	account_totp: 'Authentifizierungs-Apps',
 	account_totpName: 'Name der Authentifizierungs-App',
 	account_totpDefaultName: 'Authentifizierungs-App',

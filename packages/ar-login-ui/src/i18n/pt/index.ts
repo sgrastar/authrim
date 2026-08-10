@@ -47,10 +47,16 @@ const pt = createTranslation({
 	account_reauthEmailCodePlaceholder: 'Código de 6 dígitos',
 	account_reauthVerifyEmailCode: 'Verificar código',
 	account_reauthNoMethods: 'Nenhum método está disponível para nova autenticação.',
-	account_devices: 'Dispositivos',
+	account_devices: 'Aplicativos e dispositivos vinculados',
 	account_currentDevice: 'Atual',
-	account_sessions: 'Sessões',
-	account_currentSession: 'Sessão atual',
+	account_connectedDevicesDescription: 'Aplicativos e dispositivos vinculados à sua conta.',
+	account_noConnectedDevices: 'Nenhum aplicativo ou dispositivo vinculado',
+	account_sessions: 'Dispositivos conectados',
+	account_currentSession: 'Este dispositivo',
+	account_sessionsDescription: 'Navegadores e dispositivos conectados.',
+	account_unknownDevice: 'Dados do dispositivo indisponíveis',
+	account_sessionLocation: 'Localização: {country}',
+	account_signedInAt: 'Login em {time}',
 	account_logoutSession: 'Sair',
 	account_passkeyName: 'Nome da Passkey',
 	account_addPasskey: 'Adicionar Passkey',
@@ -58,6 +64,18 @@ const pt = createTranslation({
 	account_empty: 'Nenhum item',
 	account_planned: 'Planejado',
 	account_passkeyUnsupported: 'Este navegador não permite registrar Passkeys.',
+	account_passkeyRegistrationCancelled:
+		'O registro da Passkey foi cancelado ou expirou. Tente novamente.',
+	account_passkeyAlreadyRegistered: 'Este autenticador já está registrado para esta conta.',
+	account_passkeyRegistrationInterrupted:
+		'O registro da Passkey foi interrompido. Tente novamente.',
+	account_passkeyAuthenticatorUnsupported:
+		'Este autenticador não atende aos requisitos desta Passkey. Tente outro autenticador.',
+	account_passkeyAuthenticatorUnavailable:
+		'O autenticador não conseguiu concluir o registro da Passkey. Tente novamente ou use outro autenticador.',
+	account_passkeyConfigurationError:
+		'O registro de Passkeys não está disponível para este site. Entre em contato com o suporte se o problema continuar.',
+	account_passkeyRegistrationFailed: 'Falha ao registrar a Passkey. Tente novamente.',
 	account_totp: 'Aplicativos autenticadores',
 	account_totpName: 'Nome do aplicativo autenticador',
 	account_totpDefaultName: 'Aplicativo autenticador',

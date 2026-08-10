@@ -102,7 +102,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-function createContext(authorization?: string) {
+function createContext(authorization?: string, tenantExclusive = false) {
   return {
     req: {
       header: vi.fn((name: string) => {
@@ -111,6 +111,13 @@ function createContext(authorization?: string) {
       }),
     },
     env: {},
+    get: vi.fn((key: string) => {
+      if (key === 'tenantId') return 'default';
+      if (key === 'tenantMetadataContext' && tenantExclusive) {
+        return { tenantId: 'default', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }),
     json: (payload: unknown, status = 200) =>
       new Response(JSON.stringify(payload), {
         status,
@@ -144,6 +151,7 @@ describe('Direct Auth session endpoint', () => {
     mocks.isShardedSessionId.mockClear();
     mocks.getTenantIdFromContext.mockClear();
     mocks.createAuthContextFromHono.mockClear();
+    mocks.resolveAccountDataContextFromHono.mockClear();
     mocks.createPIIContextFromHono.mockClear();
     mocks.hasPIIDatabase.mockReset().mockReturnValue(true);
     mocks.error.mockClear();
@@ -248,6 +256,30 @@ describe('Direct Auth session endpoint', () => {
     });
     expect(mocks.userPIIRepository.findById).not.toHaveBeenCalled();
   });
+
+  it('resolves the account-scoped user store for a tenant-exclusive session', async () => {
+    mocks.getCookie.mockReturnValue('0_session_123');
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      createdAt: 1700000000000,
+      expiresAt: Date.now() + 60_000,
+      data: {},
+    });
+    mocks.userCoreRepository.findById.mockResolvedValue({
+      id: 'user_123',
+      is_active: true,
+      created_at: 1700000000000,
+      updated_at: 1700000000000,
+    });
+    const context = createContext(undefined, true);
+    const { directSessionHandler } = await import('../direct-auth');
+
+    const response = await directSessionHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(context, 'user_123');
+  });
 });
 
 describe('Direct Auth authenticated passkey registration', () => {
@@ -257,6 +289,7 @@ describe('Direct Auth authenticated passkey registration', () => {
     mocks.getSessionStoreBySessionId.mockClear();
     mocks.isShardedSessionId.mockClear();
     mocks.getTenantIdFromContext.mockClear();
+    mocks.resolveAccountDataContextFromHono.mockClear();
     mocks.error.mockClear();
   });
 

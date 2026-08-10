@@ -51,7 +51,7 @@ import {
   loggingPoliciesRouter,
   notificationsRouter,
 } from '../routes/admin-management/logging-control';
-import { deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging';
+import { deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging/contract';
 import { encodeLogRecordBlocks, writeLogChunkToR2 } from '@authrim/ar-lib-logging/chunks';
 import { decodeLoggingCursor } from '@authrim/ar-lib-logging/delivery';
 

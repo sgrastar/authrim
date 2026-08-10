@@ -24,7 +24,7 @@ const PROJECTION = {
       dataRole: 'tenant_core/users' as const,
       residencyPartition: 'default',
       shardId: 'users-1',
-      bindingRef: 'TDB_USERS_0001_CORE',
+      bindingRef: 'TEST_TDB_USERS_0001_CORE',
       requiredBindingRouteGeneration: 8,
     },
   ],
@@ -44,7 +44,7 @@ const ALIAS_PROJECTION = {
     dataRole: 'tenant_core/default' as const,
     residencyPartition: 'default',
     shardId: 'default-1',
-    bindingRef: 'TDB_DEFAULT_0001',
+    bindingRef: 'TEST_TDB_DEFAULT_0001',
     requiredBindingRouteGeneration: 8,
   },
 };
@@ -284,7 +284,7 @@ describe('LookupRouteResolver', () => {
     const resolver = new LookupRouteResolver(
       {
         LOOKUP_SHARD_0001: lookup.binding,
-        TDB_USERS_0001_CORE: tenant.binding,
+        TEST_TDB_USERS_0001_CORE: tenant.binding,
       },
       provider(assignment())
     );
@@ -295,7 +295,7 @@ describe('LookupRouteResolver', () => {
         membership,
         dataRole: 'tenant_core/users',
         residencyPartition: 'default',
-        observedBindingRouteGenerations: { TDB_USERS_0001_CORE: 7 },
+        observedBindingRouteGenerations: { TEST_TDB_USERS_0001_CORE: 7 },
       })
     ).toThrow('lookup_route_binding_generation_stale');
 
@@ -304,7 +304,7 @@ describe('LookupRouteResolver', () => {
       membership,
       dataRole: 'tenant_core/users',
       residencyPartition: 'default',
-      observedBindingRouteGenerations: { TDB_USERS_0001_CORE: 8 },
+      observedBindingRouteGenerations: { TEST_TDB_USERS_0001_CORE: 8 },
       verifyAtDestination: verifier,
     });
     expect(verifier).toHaveBeenCalledTimes(1);
@@ -314,7 +314,7 @@ describe('LookupRouteResolver', () => {
         membership,
         dataRole: 'tenant_core/users',
         residencyPartition: 'default',
-        observedBindingRouteGenerations: { TDB_USERS_0001_CORE: 9 },
+        observedBindingRouteGenerations: { TEST_TDB_USERS_0001_CORE: 9 },
         verifyAtDestination: async () => false,
       })
     ).rejects.toThrow('lookup_destination_revalidation_failed');

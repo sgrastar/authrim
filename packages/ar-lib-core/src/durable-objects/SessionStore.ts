@@ -57,6 +57,8 @@ export interface SessionData {
   deviceName?: string;
   ipAddress?: string;
   userAgent?: string;
+  /** ISO 3166-1 alpha-2 country captured from trusted edge metadata, when available */
+  countryCode?: string;
 
   // Anonymous authentication (architecture-decisions.md §17)
   /** Whether this session belongs to an anonymous user */

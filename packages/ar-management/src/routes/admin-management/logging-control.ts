@@ -25,7 +25,7 @@ import {
   type ResidencyProfile,
   type TenantDatabaseRole,
 } from '@authrim/ar-lib-core';
-import { createLoggingId, deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging';
+import { createLoggingId, deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging/contract';
 import {
   DESTINATION_PROVIDER_SCHEMAS,
   getDefaultDestinationCapabilities,
@@ -86,7 +86,12 @@ import {
   buildAdminAuditCoverageStatusView,
   summarizeAdminAuditCoverage,
 } from '@authrim/ar-lib-logging/coverage';
-import { LOG_PLANES, LOG_TYPES, type LogPlane, type LogType } from '@authrim/ar-lib-logging';
+import {
+  LOG_PLANES,
+  LOG_TYPES,
+  type LogPlane,
+  type LogType,
+} from '@authrim/ar-lib-logging/contract';
 import { writeAdminAuditLog } from '../../admin-shared';
 import {
   adminActionEnvelope,

@@ -181,6 +181,14 @@
         {
           "path": "045_drop_legacy_session_clients.sql",
           "checksum": "adf8fa09e3196e1d991003617a1bcd2556adff1d525d4490bc713562a87d40b2"
+        },
+        {
+          "path": "046_allow_environment_prefixed_tenant_bindings.sql",
+          "checksum": "e0fad80f4b53ed5db70498b71770db46691869df24cb088978c13bc03d872bfd"
+        },
+        {
+          "path": "047_align_registration_email_requirement.sql",
+          "checksum": "7c4ba530a7f701dcbaa92bdab9c5ce4dc688f2f2cd6509444ce125ff37d196b7"
         }
       ]
     },
@@ -215,6 +223,10 @@
         {
           "path": "008_tenant_placement_migration_outbox.sql",
           "checksum": "30bedfd2714654eea121f22712a8ab4de64b51ee15778cab9dac31d1e944a44a"
+        },
+        {
+          "path": "009_allow_environment_prefixed_tenant_bindings.sql",
+          "checksum": "781a8c2fec31594729c737b52991f55845a0d5f2e2228392c04731fbf243af1a"
         }
       ]
     },

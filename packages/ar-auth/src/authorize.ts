@@ -18,6 +18,7 @@ import {
   buildDOInstanceName,
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   isShardedSessionId,
   parseShardedSessionId,
   getCachedUser,
@@ -5218,6 +5219,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         userId,
         3600, // 1 hour session
         {
+          ...getSessionClientMetadata(c.req.raw),
           clientId: metadata.client_id as string,
           authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
         },

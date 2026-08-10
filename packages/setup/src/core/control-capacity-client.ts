@@ -13,7 +13,7 @@ import { fetchWithTimeout, readResponseJsonWithLimit } from './http-limits.js';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_UNIT_KEY = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 const SAFE_DATABASE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/u;
-const SAFE_BINDING = /^TDB_[A-Z0-9_]{1,123}$/u;
+const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,123}$/u;
 const MAX_DATE_EPOCH_SECONDS = 8_640_000_000;
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {

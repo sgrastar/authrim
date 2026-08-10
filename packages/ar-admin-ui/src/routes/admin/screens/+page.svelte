@@ -16,6 +16,11 @@
 	} from '$lib/admin/screen-localizations';
 	import { shouldShowAuthWidgetEmailInput } from '$lib/admin/screen-auth-widget-layout';
 	import {
+		findMissingRequiredRegistrationFields,
+		normalizeRegistrationFieldKey,
+		type RegistrationSchemaFieldOption
+	} from '$lib/admin/screen-registration-requirements';
+	import {
 		adminScreensAPI,
 		type Screen,
 		type ScreenBlockType,
@@ -66,10 +71,7 @@
 	};
 
 	type ScreenEditorTab = 'items' | 'preview' | 'localization';
-	type IdentitySchemaOption = {
-		field: string;
-		label: string;
-		valueType: ScreenValueType;
+	type IdentitySchemaOption = RegistrationSchemaFieldOption & {
 		source: 'system' | 'custom';
 	};
 	type LayoutSection = {
@@ -308,14 +310,39 @@
 		...localizationLanguageLabels[code]
 	}));
 	const fallbackIdentitySchemaOptions: IdentitySchemaOption[] = [
-		{ field: 'email', label: 'Email', valueType: 'text', source: 'system' },
-		{ field: 'name', label: 'Name', valueType: 'text', source: 'system' },
-		{ field: 'given_name', label: 'Given name', valueType: 'text', source: 'system' },
-		{ field: 'family_name', label: 'Family name', valueType: 'text', source: 'system' },
+		{
+			field: 'email',
+			label: 'Email',
+			valueType: 'text',
+			registrationRequired: false,
+			source: 'system'
+		},
+		{
+			field: 'name',
+			label: 'Name',
+			valueType: 'text',
+			registrationRequired: false,
+			source: 'system'
+		},
+		{
+			field: 'given_name',
+			label: 'Given name',
+			valueType: 'text',
+			registrationRequired: false,
+			source: 'system'
+		},
+		{
+			field: 'family_name',
+			label: 'Family name',
+			valueType: 'text',
+			registrationRequired: false,
+			source: 'system'
+		},
 		{
 			field: 'preferred_username',
 			label: 'Preferred username',
 			valueType: 'text',
+			registrationRequired: false,
 			source: 'system'
 		}
 	];
@@ -348,6 +375,13 @@
 	const orderedDraftBlocks = $derived(
 		[...draft.fields].sort(
 			(a, b) => (a.order ?? Number.MAX_SAFE_INTEGER) - (b.order ?? Number.MAX_SAFE_INTEGER)
+		)
+	);
+	const missingRequiredRegistrationFields = $derived(
+		findMissingRequiredRegistrationFields(
+			draft.screen_kind,
+			orderedDraftBlocks,
+			identitySchemaOptions
 		)
 	);
 	const selectedBlock = $derived(orderedDraftBlocks[selectedBlockIndex] ?? null);
@@ -403,7 +437,7 @@
 				createBlock('identity_field', 15, {
 					field: 'email',
 					label: t('メールアドレス', 'Email'),
-					required: true
+					required: false
 				}),
 				createBlock('divider', 20, {
 					field: 'divider.or',
@@ -715,20 +749,45 @@
 	}
 
 	function selectedSchemaOption(field: string | undefined): IdentitySchemaOption | null {
-		return identitySchemaOptions.find((option) => option.field === field) ?? null;
+		if (!field) return null;
+		const normalizedField = normalizeRegistrationFieldKey(field);
+		return (
+			identitySchemaOptions.find(
+				(option) => normalizeRegistrationFieldKey(option.field) === normalizedField
+			) ?? null
+		);
+	}
+
+	function schemaControlsRegistrationRequirement(field: string | undefined): boolean {
+		return draft.screen_kind === 'registration' && Boolean(selectedSchemaOption(field)?.schemaId);
+	}
+
+	function synchronizeDraftRegistrationRequirements() {
+		if (draft.screen_kind !== 'registration') return;
+		draft = {
+			...draft,
+			fields: draft.fields.map((field) => {
+				if (getBlockType(field) !== 'identity_field') return field;
+				const option = selectedSchemaOption(field.field);
+				if (!option?.schemaId) return field;
+				return { ...field, required: option.registrationRequired };
+			})
+		};
 	}
 
 	function normalizeIdentitySchemaOptions(schemas: CustomClaimSchema[]): IdentitySchemaOption[] {
 		const options = new SvelteMap<string, IdentitySchemaOption>();
 		for (const option of fallbackIdentitySchemaOptions) {
-			options.set(option.field, option);
+			options.set(normalizeRegistrationFieldKey(option.field), option);
 		}
 		for (const schema of schemas) {
 			if (schema.is_active !== 1) continue;
-			options.set(schema.field_key, {
+			options.set(normalizeRegistrationFieldKey(schema.field_key), {
 				field: schema.field_key,
 				label: schema.display_label || schema.field_key,
 				valueType: valueTypeFromSchemaFieldType(schema.field_type),
+				registrationRequired: schema.registration_required === 1,
+				schemaId: schema.id,
 				source: schema.is_system === 1 ? 'system' : 'custom'
 			});
 		}
@@ -742,6 +801,7 @@
 		try {
 			const response = await adminCustomClaimsAPI.listSchemas({ limit: 500, is_active: '1' });
 			identitySchemaOptions = normalizeIdentitySchemaOptions(response.schemas);
+			synchronizeDraftRegistrationRequirements();
 		} catch {
 			identitySchemaOptions = fallbackIdentitySchemaOptions;
 		}
@@ -836,7 +896,11 @@
 		updateField(selectedBlockIndex, {
 			field,
 			label: option?.label ?? field,
-			value_type: option?.valueType ?? 'text'
+			value_type: option?.valueType ?? 'text',
+			required:
+				draft.screen_kind === 'registration' && option?.schemaId
+					? option.registrationRequired
+					: (selectedBlock?.required ?? false)
 		});
 	}
 
@@ -1303,6 +1367,7 @@
 			is_active: toBoolean(screen.is_active),
 			is_system: toBoolean(screen.is_system)
 		};
+		synchronizeDraftRegistrationRequirements();
 		selectedBlockIndex = 0;
 	}
 
@@ -1311,6 +1376,7 @@
 		viewMode = 'edit';
 		editorTab = 'items';
 		draft = createEmptyDraft();
+		synchronizeDraftRegistrationRequirements();
 		selectedBlockIndex = 0;
 		message = '';
 		error = '';
@@ -1355,6 +1421,12 @@
 				base_preset_version: 1
 			}
 		};
+		synchronizeDraftRegistrationRequirements();
+	}
+
+	function updateScreenKind(screenKind: ScreenKind) {
+		draft.screen_kind = screenKind;
+		synchronizeDraftRegistrationRequirements();
 	}
 
 	async function loadScreens() {
@@ -1401,7 +1473,11 @@
 					? {
 							field: firstSchema.field,
 							label: firstSchema.label,
-							value_type: firstSchema.valueType
+							value_type: firstSchema.valueType,
+							required:
+								draft.screen_kind === 'registration' && firstSchema.schemaId
+									? firstSchema.registrationRequired
+									: false
 						}
 					: {}),
 				...patch
@@ -1409,6 +1485,30 @@
 		);
 		draft.fields = normalizeOrders(next);
 		selectedBlockIndex = atIndex;
+		editorTab = 'items';
+	}
+
+	function addRequiredRegistrationFields(options: RegistrationSchemaFieldOption[]) {
+		if (options.length === 0) return;
+		const next = [...orderedDraftBlocks];
+		const firstDividerIndex = next.findIndex((field) => getBlockType(field) === 'divider');
+		const insertionIndex = firstDividerIndex >= 0 ? firstDividerIndex : next.length;
+
+		for (const [offset, option] of options.entries()) {
+			next.splice(
+				insertionIndex + offset,
+				0,
+				createBlock('identity_field', (insertionIndex + offset + 1) * 10, {
+					field: option.field,
+					label: option.label,
+					value_type: option.valueType,
+					required: true
+				})
+			);
+		}
+
+		draft.fields = normalizeOrders(next);
+		selectedBlockIndex = insertionIndex;
 		editorTab = 'items';
 	}
 
@@ -1882,6 +1982,76 @@
 
 							<div class="note">{$LL.admin_screens_schema_required_note()}</div>
 
+							{#if missingRequiredRegistrationFields.length > 0}
+								<div class="required-fields-warning" role="status">
+									<div class="required-fields-warning__heading">
+										<span class="i-ph-warning-circle" aria-hidden="true"></span>
+										<div>
+											<strong
+												>{t(
+													'登録に必要な入力項目が不足しています',
+													'Required registration fields are missing'
+												)}</strong
+											>
+											<p>
+												{t(
+													'Identity Schemaで登録時必須に設定されている項目を、このスクリーンに追加できます。',
+													'Add fields that Identity Schema marks as required during registration.'
+												)}
+											</p>
+										</div>
+									</div>
+									<div class="required-fields-warning__list">
+										{#each missingRequiredRegistrationFields as option (option.field)}
+											<div class="required-fields-warning__item">
+												<div>
+													<strong>{option.label}</strong>
+													<code>{option.field}</code>
+												</div>
+												<div class="required-fields-warning__actions">
+													<button
+														class="btn-secondary compact"
+														type="button"
+														onclick={() => addRequiredRegistrationFields([option])}
+													>
+														<span class="i-ph-plus" aria-hidden="true"></span>
+														{t('入力欄を追加', 'Add field')}
+													</button>
+													{#if option.schemaId}
+														<a
+															class="btn-secondary compact"
+															href={`/admin/custom-claims/${option.schemaId}`}
+															target="_blank"
+															rel="noreferrer"
+														>
+															{t('スキーマ設定', 'Schema settings')}
+														</a>
+													{/if}
+												</div>
+											</div>
+										{/each}
+									</div>
+									<div class="required-fields-warning__footer">
+										<p>
+											{t(
+												'この状態でも保存できます。先に保存してから、Identity Schemaで必須設定を外すこともできます。',
+												'You can still save now and turn off the requirement later in Identity Schema.'
+											)}
+										</p>
+										{#if missingRequiredRegistrationFields.length > 1}
+											<button
+												class="btn-primary compact"
+												type="button"
+												onclick={() =>
+													addRequiredRegistrationFields(missingRequiredRegistrationFields)}
+											>
+												{t('不足項目をすべて追加', 'Add all missing fields')}
+											</button>
+										{/if}
+									</div>
+								</div>
+							{/if}
+
 							<div class="grid two">
 								<label>
 									<span>{$LL.admin_screens_screen_key()}</span>
@@ -1892,7 +2062,10 @@
 								</label>
 								<label>
 									<span>{$LL.admin_screens_kind()}</span>
-									<select bind:value={draft.screen_kind}>
+									<select
+										value={draft.screen_kind}
+										onchange={(event) => updateScreenKind(event.currentTarget.value as ScreenKind)}
+									>
 										{#each kindOptions as kind (kind)}
 											<option value={kind}>{kindLabel(kind)}</option>
 										{/each}
@@ -2185,6 +2358,7 @@
 													<input
 														type="checkbox"
 														checked={selectedBlock.required}
+														disabled={schemaControlsRegistrationRequirement(selectedBlock.field)}
 														onchange={(event) =>
 															updateField(selectedBlockIndex, {
 																required: event.currentTarget.checked
@@ -2192,6 +2366,14 @@
 													/>
 													<span>{$LL.admin_screens_field_required()}</span>
 												</label>
+												{#if schemaControlsRegistrationRequirement(selectedBlock.field)}
+													<p class="note inspector-note">
+														{t(
+															'登録時の必須設定はIdentity Schemaで管理されています。',
+															'Registration requirements are managed in Identity Schema.'
+														)}
+													</p>
+												{/if}
 											{:else if blockType === 'auth_widget'}
 												<label>
 													<span>{t('認証方式', 'Auth method')}</span>
@@ -2725,6 +2907,68 @@
 	.muted,
 	.note {
 		color: var(--color-text-muted);
+	}
+	.required-fields-warning {
+		display: grid;
+		gap: 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--color-warning, #d59a2e) 58%, var(--color-border));
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--color-warning, #d59a2e) 8%, var(--color-surface));
+		padding: 1rem;
+	}
+	.required-fields-warning__heading,
+	.required-fields-warning__item,
+	.required-fields-warning__footer,
+	.required-fields-warning__actions {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+	.required-fields-warning__heading {
+		align-items: flex-start;
+	}
+	.required-fields-warning__heading > span {
+		flex: 0 0 auto;
+		margin-top: 0.15rem;
+		color: var(--color-warning, #b7791f);
+		font-size: 1.25rem;
+	}
+	.required-fields-warning p {
+		margin: 0.2rem 0 0;
+		color: var(--color-text-muted);
+		line-height: 1.5;
+	}
+	.required-fields-warning__list {
+		display: grid;
+		gap: 0.55rem;
+	}
+	.required-fields-warning__item {
+		justify-content: space-between;
+		border-top: 1px solid var(--color-border);
+		padding-top: 0.55rem;
+	}
+	.required-fields-warning__item > div:first-child {
+		display: grid;
+		gap: 0.15rem;
+	}
+	.required-fields-warning__item code {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
+	}
+	.required-fields-warning__footer {
+		justify-content: space-between;
+		align-items: flex-end;
+	}
+	.required-fields-warning .compact {
+		min-height: 2.1rem;
+		padding: 0.4rem 0.65rem;
+		font-size: 0.8rem;
+		white-space: nowrap;
+	}
+	.inspector-note {
+		margin: -0.25rem 0 0;
+		font-size: 0.8rem;
+		line-height: 1.45;
 	}
 	.detail-panel,
 	.editor {
@@ -3365,6 +3609,14 @@
 		}
 		.preview-layout-row {
 			grid-template-columns: 1fr !important;
+		}
+		.required-fields-warning__item,
+		.required-fields-warning__footer {
+			align-items: stretch;
+			flex-direction: column;
+		}
+		.required-fields-warning__actions {
+			flex-wrap: wrap;
 		}
 	}
 </style>

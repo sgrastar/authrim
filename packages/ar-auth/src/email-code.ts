@@ -18,6 +18,7 @@ import { setCookie, getCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getSessionStoreBySessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
@@ -781,6 +782,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
               user.id as string,
               sessionTtl.seconds,
               {
+                ...getSessionClientMetadata(c.req.raw),
                 email: user.email,
                 name: user.name,
                 amr: ['otp'],

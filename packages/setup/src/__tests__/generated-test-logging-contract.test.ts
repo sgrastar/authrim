@@ -100,9 +100,9 @@ describeGenerated('generated test environment logging and Control Plane contract
       expect.arrayContaining([
         'CONTROL_DB',
         'LOOKUP_DB',
-        'TDB_DEFAULT_BOOTSTRAP_CORE',
-        'TDB_USERS_BOOTSTRAP_CORE',
-        'TDB_PII_BOOTSTRAP_PII',
+        'TEST_TDB_DEFAULT_BOOTSTRAP_CORE',
+        'TEST_TDB_USERS_BOOTSTRAP_CORE',
+        'TEST_TDB_PII_BOOTSTRAP_PII',
       ])
     );
     expect(Object.keys(lock.r2 ?? {}).sort()).toEqual(

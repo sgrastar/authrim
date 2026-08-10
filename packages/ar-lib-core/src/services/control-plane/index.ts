@@ -14,3 +14,9 @@ export * from './provisioning-engine.js';
 export * from './release-artifact.js';
 export * from './runtime-smoke-rpc.js';
 export * from './worker-binding-engine.js';
+export {
+  TENANT_DATABASE_BINDING_PATTERN,
+  getTenantDatabaseBindingPrefix,
+  getTenantDatabaseBootstrapBinding,
+  getTenantDatabaseResourcePrefix,
+} from '../tenant-database-naming.js';

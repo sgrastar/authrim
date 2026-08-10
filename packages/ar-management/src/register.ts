@@ -1688,7 +1688,8 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     const subjectType = request.subject_type || 'public'; // Default to 'public'
     if (subjectType === 'pairwise' && request.redirect_uris.length > 1) {
       // Import pairwise utilities dynamically (to avoid circular dependencies)
-      const { validateSectorIdentifierConsistency } = await import('@authrim/ar-lib-core');
+      const { validateSectorIdentifierConsistency } =
+        await import('@authrim/ar-lib-core/utils/pairwise');
 
       const hasSameSector = validateSectorIdentifierConsistency(request.redirect_uris);
       if (!hasSameSector && !request.sector_identifier_uri) {

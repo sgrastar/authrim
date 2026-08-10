@@ -42,6 +42,7 @@ import {
   seedRuntimeProfiles,
   getWorkerDeployments,
   listR2Buckets,
+  hasControlManagedResourcesForEnvironment,
   type CloudflareAuth,
   findMigrationsRoot,
   getAccountId,
@@ -58,6 +59,7 @@ import {
 import {
   ensureSupplementalKeyFiles,
   generateAllSecrets,
+  loadKeysFromDirectory,
   saveKeysToDirectory,
   keysExistForEnvironment,
 } from '../core/keys.js';
@@ -101,6 +103,15 @@ import {
   inspectInitialControlPlaneTopology,
   publishInitialControlPlaneRuntimeSnapshot,
 } from '../core/control-plane-bootstrap.js';
+import {
+  initializeControlKeyState,
+  reconcileLocalControlKeyFiles,
+} from '../core/control-key-state.js';
+import {
+  loadControlGeneratedKeyState,
+  loadControlStagedSigningKeys,
+  projectControlGeneratedKeyState,
+} from '../core/control-generated-state.js';
 import {
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
@@ -2516,6 +2527,25 @@ export function createApiRoutes(): Hono {
         }
         config.cloudflare = { accountId: wranglerAccountId };
 
+        // The Web UI generates the key archive in a separate step. Keep the key ID in the
+        // environment config as well, so a first Web deployment can configure the Control
+        // Worker's SMOKE_RPC_SIGNING_ACTIVE_KID before it starts reconciling bindings.
+        const generatedKeys = await loadKeysFromDirectory({
+          baseDir: rootDir,
+          env,
+          keysBaseDir: process.cwd(),
+        });
+        if (!config.keys.keyId && generatedKeys.keyPair?.keyId) {
+          config.keys = {
+            ...config.keys,
+            keyId: generatedKeys.keyPair.keyId,
+            ...(generatedKeys.keyPair.publicKeyJwk
+              ? { publicKeyJwk: generatedKeys.keyPair.publicKeyJwk as Record<string, unknown> }
+              : {}),
+          };
+          addProgress(`Loaded generated key metadata: ${generatedKeys.keyPair.keyId}`);
+        }
+
         // Get workers subdomain and set auto-detected URLs
         const workersSubdomain = await getWorkersSubdomain();
         // Always set URLs - use workersSubdomain if available, otherwise use default workers.dev pattern
@@ -3130,7 +3160,7 @@ export function createApiRoutes(): Hono {
         // This keeps bindings such as send_email aligned even when setup logic evolves.
         if (!dryRun) {
           const { loadLockFileAuto } = await import('../core/lock.js');
-          const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+          let { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
 
           if (lock) {
             const { getWorkersSubdomain } = await import('../core/cloudflare.js');
@@ -3184,6 +3214,39 @@ export function createApiRoutes(): Hono {
                 `Initial Control Plane bootstrap failed: ${controlPlaneBootstrapResult.error || 'unknown error'}`
               );
             }
+
+            // Keep the Web initial-deploy path in parity with the CLI path. Control must know
+            // which smoke signing key is active before it can reconcile the first Worker
+            // bindings; otherwise it can create binding targets but cannot issue smoke RPCs.
+            const controlDatabaseId = controlDatabase.id;
+            await initializeControlKeyState({
+              controlDatabaseId,
+              environmentId: env,
+              keysDir,
+              actorId: 'setup:web-deploy',
+            });
+            const keyState = await loadControlGeneratedKeyState({
+              controlDatabaseName: controlDatabase.name,
+              environmentId: env,
+            });
+            if (!keyState) throw new Error('control_generated_key_state_missing');
+            const stagedSigningKeys = await loadControlStagedSigningKeys({
+              controlDatabaseName: controlDatabase.name,
+              environmentId: env,
+            });
+            await reconcileLocalControlKeyFiles({
+              keysDir,
+              controlKeyState: keyState,
+              stagedSigningKeys,
+            });
+            const keyProjection = projectControlGeneratedKeyState(lock, keyState);
+            lock = keyProjection.lock;
+            if (keyProjection.changed && lockPath) {
+              await saveLockFile(lock, lockPath);
+            }
+            addProgress(
+              `✓ Control signing key state ready (smoke key: ${keyState.smokeRpc.activeKeyId})`
+            );
             if (lockPath) {
               const tenantTargets = resolveReleaseMigrationTargets({ lock, config }).filter(
                 (target) => target.scope === 'tenant' && target.automatic
@@ -3550,6 +3613,9 @@ export function createApiRoutes(): Hono {
             environmentId: env,
             controlDatabaseName,
             deployments: summary.results,
+            allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
+              ? [`${env}-ar-control`]
+              : undefined,
           });
           addProgress(
             `Waiting for Control bootstrap verification of ${evidence.workerCount} Worker(s)...`
@@ -4658,6 +4724,39 @@ export function createApiRoutes(): Hono {
     }
   });
 
+  // Check whether an interrupted initial deployment can be resumed from the Web UI.
+  api.get('/deploy/recovery/:env', async (c) => {
+    try {
+      const envResult = EnvNameSchema.safeParse(c.req.param('env'));
+      if (!envResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+      const env = envResult.data;
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const resolved = resolvePaths({ baseDir, env });
+      const configPath =
+        resolved.type === 'new'
+          ? (resolved.paths as EnvironmentPaths).config
+          : (resolved.paths as LegacyPaths).config;
+      const { lock } = await loadLockFileAuto(baseDir, env);
+      const interruptedInitialRelease = Boolean(
+        lock &&
+        !lock.productVersion &&
+        lock.releaseUpdate !== undefined &&
+        lock.releaseUpdate.phase !== 'verified'
+      );
+
+      return c.json({
+        success: true,
+        env,
+        configExists: existsSync(configPath),
+        canResume: existsSync(configPath) && interruptedInitialRelease,
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
   api.get('/r2/:env/status', async (c) => {
     try {
       const envParam = c.req.param('env');
@@ -4843,9 +4942,25 @@ export function createApiRoutes(): Hono {
           env,
           operation: 'web-delete',
         });
+        let environmentObservedRemotely = Boolean(operationLock.lock);
+        if (!environmentObservedRemotely) {
+          try {
+            environmentObservedRemotely = (await detectEnvironments()).some(
+              (candidate) => candidate.env === env
+            );
+            if (!environmentObservedRemotely) {
+              environmentObservedRemotely = await hasControlManagedResourcesForEnvironment(env);
+            }
+          } catch {
+            // Without a local lock, only allow deletion recovery when remote resources can be
+            // confirmed. Authentication or inventory failures must not bypass this guard.
+            environmentObservedRemotely = false;
+          }
+        }
         const deleteDecision = evaluateEnvironmentOperation({
           operation: 'delete',
           lock: operationLock.lock,
+          environmentObservedRemotely,
         });
         if (!deleteDecision.allowed) {
           return c.json(
@@ -4892,6 +5007,7 @@ export function createApiRoutes(): Hono {
         return c.json({
           success: result.success,
           deleted: result.deleted,
+          manualR2: result.manualR2,
           errors: result.errors,
           progress: state.progress,
           logPath: state.logPath,

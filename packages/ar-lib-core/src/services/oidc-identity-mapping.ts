@@ -1,4 +1,5 @@
-import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';

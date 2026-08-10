@@ -10,11 +10,14 @@ Admin API modules, queues, network clients, storage adapters, or repository code
 
 ## Exports
 
-- `@authrim/ar-lib-field-mapping`: stable public types and pure functions.
+- `@authrim/ar-lib-field-mapping/contract`: stable domain types only.
+- `@authrim/ar-lib-field-mapping/runtime`: hot-path mapping execution and catalog lookup.
+- `@authrim/ar-lib-field-mapping/authoring`: validation, dry-run, policy merge, and CSV
+  authoring helpers.
 - `@authrim/ar-lib-field-mapping/experimental`: draft preview types.
 - `@authrim/ar-lib-field-mapping/test-support`: fixture builders and deterministic test helpers.
 
-Stable root APIs include:
+Stable authoring APIs include:
 
 - `resolveEffectiveFieldMappingSet()`
 - `validateMappingInput()`
@@ -31,7 +34,7 @@ Preview adapters are intentionally exported only from `./experimental`.
 ## Fixtures
 
 Static protocol and negative fixtures live in `fixtures/`. Runtime code should not import
-sample payloads from the root export. Tests and integration previews should use the
+sample payloads from a production subpath. Tests and integration previews should use the
 `./test-support` subpath when builder behavior is needed.
 
 Fixture coverage includes:
@@ -45,7 +48,7 @@ Fixture coverage includes:
 - conflict field mapping set shape
 
 `./test-support` provides fixture builders, deterministic ID helpers through the stable
-root API, a test-only fingerprint provider, and static fixture validation helpers.
+`./authoring` API, a test-only fingerprint provider, and static fixture validation helpers.
 
 ## Safety Contract
 
@@ -76,5 +79,5 @@ pnpm exec prettier --check 'packages/ar-lib-field-mapping/**/*.ts'
 
 ## Compatibility
 
-Breaking changes to reason codes, public root types, catalog bundle identity, or fixture
+Breaking changes to reason codes, public contract types, catalog bundle identity, or fixture
 contracts require a decision note, compatibility or registry test update, and PR changelog note.

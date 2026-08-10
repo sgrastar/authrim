@@ -185,8 +185,9 @@ release cannot be hidden by preparing another version.
 
 Release manifests describe logical schema streams rather than physical database names. During update,
 setup expands them to fixed platform databases, all Control-managed assignment bindings, and every shard binding
-such as `TDB_*_CORE_S1`. This keeps the release contract independent of tenant count and allows one
-tenant to span multiple D1 databases. Runtime-profile external database references are included in the
+such as `ENV_TDB_*_CORE_S1`. Legacy `TDB_*` environments must be recreated before applying the current
+binding contract. This keeps the release
+contract independent of tenant count and allows one tenant to span multiple D1 databases. Runtime-profile external database references are included in the
 plan, but must currently be applied with operator-managed PostgreSQL/MySQL tooling because Hyperdrive
 bindings do not expose database credentials to the local setup process.
 

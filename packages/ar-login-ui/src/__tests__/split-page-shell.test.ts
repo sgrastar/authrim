@@ -10,7 +10,7 @@ function expectPageShellOrder(pageSource: string) {
 	const headerIndex = pageSource.indexOf('class="auth-header"');
 	const mainIndex = pageSource.indexOf('class="auth-main"');
 	const panelIndex = pageSource.indexOf('class="auth-container"');
-	const footerIndex = pageSource.indexOf('class="auth-footer auth-page-footer"');
+	const footerIndex = pageSource.indexOf('<ConfiguredFooter class="auth-page-footer" />');
 
 	expect(headerIndex).toBeGreaterThan(-1);
 	expect(panelIndex).toBeGreaterThan(mainIndex);

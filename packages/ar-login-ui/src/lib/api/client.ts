@@ -423,6 +423,7 @@ interface AccountProvisioningAccepted {
 	provisioning_token: string;
 	status_endpoint: '/api/v1/auth/account-provisioning/status';
 	retry_after_ms: number;
+	resume_user_id?: string;
 }
 
 function isAccountProvisioningAccepted(value: unknown): value is AccountProvisioningAccepted {
@@ -435,6 +436,33 @@ function isAccountProvisioningAccepted(value: unknown): value is AccountProvisio
 		candidate.status_endpoint === '/api/v1/auth/account-provisioning/status' &&
 		typeof candidate.retry_after_ms === 'number'
 	);
+}
+
+function attachPasskeyProvisioningResume(
+	url: string,
+	body: HttpOptions['body'],
+	accepted: AccountProvisioningAccepted
+): HttpOptions['body'] {
+	if (!url.includes('/api/v1/auth/direct/passkey/signup/start')) return body;
+	if (!accepted.resume_user_id || typeof body !== 'string') {
+		throw new Error('Invalid passkey account provisioning response');
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		throw new Error('Invalid passkey signup request body');
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		throw new Error('Invalid passkey signup request body');
+	}
+
+	return JSON.stringify({
+		...(parsed as Record<string, unknown>),
+		provisioning_token: accepted.provisioning_token,
+		resume_user_id: accepted.resume_user_id
+	});
 }
 
 async function provisioningDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -468,12 +496,13 @@ const loginUiDirectAuthHttp: HttpClient = {
 		options.signal?.addEventListener('abort', abortFromCaller, { once: true });
 
 		try {
+			let requestBody = options.body;
 			let initial = await fetchWithTenantPlacementWriteFenceRetry(
 				url,
 				{
 					method: options.method,
 					headers: options.headers,
-					body: options.body,
+					body: requestBody,
 					signal: controller.signal
 				},
 				Date.now() + (options.timeout ?? DEFAULT_API_TIMEOUT)
@@ -512,7 +541,7 @@ const loginUiDirectAuthHttp: HttpClient = {
 								{
 									method: options.method,
 									headers: options.headers,
-									body: options.body,
+									body: (requestBody = attachPasskeyProvisioningResume(url, requestBody, accepted)),
 									signal: controller.signal
 								},
 								Date.now() + 120_000

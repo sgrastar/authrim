@@ -1,5 +1,9 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
+import {
+  buildTenantDatabaseBindingPlan,
+  TENANT_DATABASE_BINDING_PATTERN,
+} from '@authrim/ar-lib-core/services/tenant-database-naming';
 
 export type TenantDatabaseRole = 'tenant_core' | 'tenant_pii';
 export type TenantDatabaseDataRole = 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
@@ -198,47 +202,10 @@ export const DEFAULT_TENANT_ACCOUNT_STRONG_WARNING_THRESHOLD = 800_000;
 export const DEFAULT_TENANT_STORAGE_WARNING_RATIO = 0.7;
 export const DEFAULT_TENANT_STORAGE_STRONG_WARNING_RATIO = 0.8;
 export const DEFAULT_TENANT_STATS_STALE_AFTER_HOURS = 36;
-const ROLE_SUFFIX: Record<TenantDatabaseRole, string> = {
-  tenant_core: 'CORE',
-  tenant_pii: 'PII',
-};
-
-const ROLE_DATABASE_SUFFIX: Record<TenantDatabaseRole, string> = {
-  tenant_core: 'core',
-  tenant_pii: 'pii',
-};
-
 const BINDING_ROLE_SUFFIX: Record<string, TenantDatabaseRole> = {
   CORE: 'tenant_core',
   PII: 'tenant_pii',
 };
-
-function fnv1a32(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
-}
-
-function normalizeDatabasePart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized || fallback;
-}
-
-function normalizeBindingPart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || fallback;
-}
 
 function escapeSql(value: string): string {
   return value.replace(/'/g, "''");
@@ -248,22 +215,18 @@ export function buildTenantDatabaseProvisioningPlan(
   input: TenantDatabasePlanInput
 ): TenantDatabaseProvisioningPlan {
   const generation = input.generation ?? 1;
-  const env = normalizeDatabasePart(input.env, 'env');
-  const tenantName = normalizeDatabasePart(input.tenantSlug ?? input.tenantId, 'tenant').slice(
-    0,
-    40
-  );
-  const tenantBinding = normalizeBindingPart(input.tenantSlug ?? input.tenantId, 'TENANT').slice(
-    0,
-    32
-  );
   const resources: TenantDatabaseResourcePlan[] = (['tenant_core', 'tenant_pii'] as const).map(
     (role) => {
-      const hash = fnv1a32(`${env}:${input.tenantId}:${input.tenantSlug ?? ''}:${role}`);
+      const plan = buildTenantDatabaseBindingPlan({
+        environment: input.env,
+        tenantId: input.tenantId,
+        tenantSlug: input.tenantSlug,
+        role,
+      });
       return {
         role,
-        databaseName: `authrim-${env}-${tenantName}-${ROLE_DATABASE_SUFFIX[role]}`,
-        binding: `TDB_${tenantBinding}_${hash}_${ROLE_SUFFIX[role]}`,
+        databaseName: plan.databaseName,
+        binding: plan.bindingRef,
         generation,
       };
     }
@@ -278,11 +241,23 @@ export function buildTenantDatabaseProvisioningPlan(
 }
 
 export function isTenantDatabaseBinding(binding: string): boolean {
-  return /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/.test(binding);
+  const markerIndex = binding.indexOf('_TDB_');
+  if (markerIndex <= 0) return false;
+  const canonical = binding.slice(markerIndex + 1);
+  return (
+    TENANT_DATABASE_BINDING_PATTERN.test(binding) &&
+    /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/u.test(canonical)
+  );
 }
 
 export function isLookupDatabaseBinding(binding: string): boolean {
-  return /^TDB_LOOKUP_[A-Z0-9_]+_LOOKUP$/u.test(binding);
+  const markerIndex = binding.indexOf('_TDB_');
+  if (markerIndex <= 0) return false;
+  const canonical = binding.slice(markerIndex + 1);
+  return (
+    TENANT_DATABASE_BINDING_PATTERN.test(binding) &&
+    /^TDB_LOOKUP_[A-Z0-9_]+_LOOKUP$/u.test(canonical)
+  );
 }
 
 export function isControlGeneratedDatabaseBinding(binding: string): boolean {
@@ -298,13 +273,14 @@ export function getTenantDatabaseDataRoleFromBinding(
   binding: string
 ): TenantDatabaseDataRole | null {
   if (!isTenantDatabaseBinding(binding)) return null;
-  if (/^TDB_DEFAULT_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(binding)) {
+  const canonical = binding.slice(binding.indexOf('_TDB_') + 1);
+  if (/^TDB_DEFAULT_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(canonical)) {
     return 'tenant_core/default';
   }
-  if (/^TDB_USERS_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(binding)) {
+  if (/^TDB_USERS_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(canonical)) {
     return 'tenant_core/users';
   }
-  if (/^TDB_PII_[A-Z0-9_]*_PII(?:_S[0-9]+)?$/u.test(binding)) {
+  if (/^TDB_PII_[A-Z0-9_]*_PII(?:_S[0-9]+)?$/u.test(canonical)) {
     return 'tenant_pii';
   }
   return null;

@@ -1,11 +1,17 @@
 <script lang="ts">
 	import { Card } from '$lib/components';
+	import AccountSectionSkeleton from './AccountSectionSkeleton.svelte';
 	import type { AccountOperation } from '$lib/api/account';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { formatTimestamp } from '$lib/utils/date';
 
-	let { operations = [], title = '' } = $props<{
+	let {
+		operations = [],
+		loading = false,
+		title = ''
+	} = $props<{
 		operations?: AccountOperation[];
+		loading?: boolean;
 		title?: string;
 	}>();
 
@@ -28,9 +34,11 @@
 </script>
 
 <Card>
-	<section class="activity-panel">
+	<section class="activity-panel" aria-busy={loading}>
 		<h2>{title || $LL.account_activityTitle()}</h2>
-		{#if operations.length === 0}
+		{#if loading}
+			<AccountSectionSkeleton variant="activity" rows={3} />
+		{:else if operations.length === 0}
 			<p class="empty-text">{$LL.account_empty()}</p>
 		{:else}
 			<ul>

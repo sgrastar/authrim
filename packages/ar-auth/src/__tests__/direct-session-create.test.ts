@@ -92,9 +92,18 @@ async function s256Challenge(verifier: string): Promise<string> {
 
 function createContext(body: Record<string, unknown>, env: Record<string, unknown> = {}) {
   const headers = new Headers();
+  const request = new Request('https://auth.example.com/api/v1/auth/direct/session', {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 ' +
+        '(KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
+    },
+  }) as Request & { cf?: { country?: string } };
+  request.cf = { country: 'JP' };
   return {
     req: {
-      url: 'https://auth.example.com/api/v1/auth/direct/session',
+      url: request.url,
+      raw: request,
       json: vi.fn(async () => body),
     },
     env,
@@ -183,10 +192,46 @@ describe('managed Direct Auth browser session finish', () => {
         authTime: expect.any(Number),
         client_id: 'login-ui',
         direct_auth_channel: 'browser',
+        userAgent: expect.stringContaining('iPhone'),
+        countryCode: 'JP',
       }),
       'tenant_test'
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_session=sess_managed_browser');
+  }, 15000);
+
+  it('resolves the account-scoped user store for a tenant-exclusive artifact exchange', async () => {
+    const codeVerifier = 'verifier-for-tenant-exclusive-session';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: codeChallenge,
+      userId: 'user_123',
+      metadata: {
+        client_id: 'login-ui',
+        channel: 'browser',
+        method: 'passkey_signup',
+      },
+    });
+    const context = createContext({
+      direct_auth_artifact: 'artifact_tenant_exclusive',
+      client_id: 'login-ui',
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+
+    const { directSessionCreateHandler } = await import('../direct-auth');
+    const response = await directSessionCreateHandler(context as never);
+
+    expect(response.status).toBe(200);
+    const core = await import('@authrim/ar-lib-core');
+    expect(core.resolveAccountDataContextFromHono).toHaveBeenCalledWith(context, 'user_123');
   }, 15000);
 
   it('returns configured post-login redirect for direct Login UI sign-in', async () => {

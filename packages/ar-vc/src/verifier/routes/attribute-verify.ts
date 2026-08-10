@@ -30,7 +30,8 @@ import {
   getActiveAccessTokenProtectedResourceContext,
 } from '@authrim/ar-lib-core';
 import type { FlowRuntimeContract } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
 import {
   getVPRequestStoreById,

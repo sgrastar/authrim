@@ -18,7 +18,7 @@ const REQUEST: RuntimeSmokeRequestInput = {
   operationId: 'op_123',
   attempt: 2,
   targetWorker: 'test-ar-auth',
-  bindingRef: 'TDB_DEFAULT_1234_CORE',
+  bindingRef: 'TEST_TDB_DEFAULT_1234_CORE',
   expectedMigrationGeneration: 4,
   dataRole: 'tenant_core/default',
   residencyPartition: 'default',
@@ -69,11 +69,11 @@ describe('runtime smoke RPC JWS', () => {
       aud: 'test-ar-auth',
       iat: NOW,
       exp: NOW + 30,
-      jti: 'op_123:2:test-ar-auth:TDB_DEFAULT_1234_CORE',
+      jti: 'op_123:2:test-ar-auth:TEST_TDB_DEFAULT_1234_CORE',
       operationId: 'op_123',
       attempt: 2,
       targetWorker: 'test-ar-auth',
-      bindingRef: 'TDB_DEFAULT_1234_CORE',
+      bindingRef: 'TEST_TDB_DEFAULT_1234_CORE',
       expectedMigrationGeneration: 4,
       dataRole: 'tenant_core/default',
       residencyPartition: 'default',
@@ -246,7 +246,7 @@ describe('runtime smoke D1 inspection', () => {
   it('reads Lookup smoke metadata from the existing Lookup schema metadata table', async () => {
     const lookupClaims: RuntimeSmokeClaims = {
       ...claims(),
-      bindingRef: 'TDB_LOOKUP_1234_LOOKUP',
+      bindingRef: 'TEST_TDB_LOOKUP_1234_LOOKUP',
       dataRole: 'lookup',
     };
     const db = database({
@@ -274,7 +274,7 @@ describe('runtime smoke D1 inspection', () => {
   it('rejects Lookup metadata JSON with extra fields', async () => {
     const lookupClaims: RuntimeSmokeClaims = {
       ...claims(),
-      bindingRef: 'TDB_LOOKUP_1234_LOOKUP',
+      bindingRef: 'TEST_TDB_LOOKUP_1234_LOOKUP',
       dataRole: 'lookup',
     };
     const db = database({
@@ -301,7 +301,7 @@ describe('runtime smoke D1 inspection', () => {
     ['runtime_smoke_metadata_missing', database({ metadata: null }).value, null, VERSION],
     [
       'runtime_smoke_metadata_mismatch',
-      database({ metadata: { binding_ref: 'TDB_OTHER_CORE' } }).value,
+      database({ metadata: { binding_ref: 'TEST_TDB_OTHER_CORE' } }).value,
       null,
       VERSION,
     ],

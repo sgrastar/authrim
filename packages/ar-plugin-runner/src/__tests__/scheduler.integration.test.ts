@@ -311,7 +311,7 @@ describe('PluginRunnerScheduler integration', () => {
         shards: [
           {
             shardId: 'shard-a',
-            bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+            bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
             dataRole: 'tenant_core/default',
             residencyPartition: 'jp',
             routeGeneration: 1,
@@ -340,7 +340,7 @@ describe('PluginRunnerScheduler integration', () => {
       PLUGIN_ENCRYPTION_KEY: 'scheduler-test-plugin-encryption-key',
       NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A: JSON.stringify(notificationPrivateJwk),
       AUTHRIM_ENVIRONMENT_NAME: 'test',
-      TDB_DEFAULT_JP_0001_CORE: d1(tenantDatabase),
+      TEST_TDB_DEFAULT_JP_0001_CORE: d1(tenantDatabase),
     } as unknown as PluginRunnerEnv;
 
     await new PluginRunnerScheduler(env, () => 700_000, outbound as never).run();
@@ -357,7 +357,7 @@ describe('PluginRunnerScheduler integration', () => {
       requestId: `scope:${loaderGet.mock.calls[0]?.[0]}`,
       executionScope: {
         accountId: 'account-a',
-        bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
         dataRole: 'tenant_core/default',
         residencyPartition: 'jp',
       },
@@ -483,7 +483,7 @@ describe('PluginRunnerScheduler integration', () => {
         shards: [
           {
             shardId: 'shard-a',
-            bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+            bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
             dataRole: 'tenant_core/default',
             residencyPartition: 'jp',
             routeGeneration: 1,
@@ -523,7 +523,7 @@ describe('PluginRunnerScheduler integration', () => {
       PLUGIN_ENCRYPTION_KEY: 'scheduler-test-plugin-encryption-key',
       NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A: JSON.stringify(notificationPrivateJwk),
       AUTHRIM_ENVIRONMENT_NAME: 'test',
-      TDB_DEFAULT_JP_0001_CORE: d1(tenantDatabase),
+      TEST_TDB_DEFAULT_JP_0001_CORE: d1(tenantDatabase),
     } as unknown as PluginRunnerEnv;
 
     const deliveryResult = await new ImmediateNotificationDeliveryService(
@@ -535,7 +535,7 @@ describe('PluginRunnerScheduler integration', () => {
       intentId: 'intent-immediate',
       outboxId: 'outbox-immediate',
       pluginInstallationId: 'installation-a',
-      bindingRef: 'TDB_DEFAULT_JP_0001_CORE',
+      bindingRef: 'TEST_TDB_DEFAULT_JP_0001_CORE',
     });
     await Promise.all(codeLoads);
     expect({

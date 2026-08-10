@@ -96,7 +96,7 @@ const context: PluginEgressContext = {
   requestId: 'request-a',
   executionScope: {
     accountId: 'account-a',
-    bindingRef: 'TDB_USERS_JP_0001_CORE',
+    bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
     dataRole: 'tenant_core/users',
     residencyPartition: 'jp',
   },
@@ -173,7 +173,7 @@ describe('PluginAccountMetadataService', () => {
   function environment(loseNextBatchResponse = false): PluginRunnerEnv {
     return {
       PLUGIN_RUNNER_DB: d1(runnerDatabase),
-      TDB_USERS_JP_0001_CORE: d1(tenantDatabase, loseNextBatchResponse),
+      TEST_TDB_USERS_JP_0001_CORE: d1(tenantDatabase, loseNextBatchResponse),
       AUTHRIM_PLUGIN_EGRESS_CONTEXT: context,
       PLUGIN_ENCRYPTION_KEY: SECRET,
       PLUGIN_MUTATION_HMAC_KEY: SECRET,
@@ -307,7 +307,7 @@ describe('PluginAccountMetadataService', () => {
           ...context,
           executionScope: {
             accountId: 'account-a',
-            bindingRef: 'TDB_USERS_JP_0001_CORE',
+            bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
             dataRole: 'tenant_core/default',
             residencyPartition: 'jp',
           },
@@ -324,7 +324,7 @@ describe('PluginAccountMetadataService', () => {
           ...context,
           executionScope: {
             accountId: 'account-b',
-            bindingRef: 'TDB_USERS_JP_0001_CORE',
+            bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
             dataRole: 'tenant_core/users',
             residencyPartition: 'jp',
           },

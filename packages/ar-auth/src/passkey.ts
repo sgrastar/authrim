@@ -10,12 +10,14 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
   getTenantSettings,
   generateUserIdFromSettings,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
@@ -52,6 +54,7 @@ import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import {
   publishTenantD1PasskeyRoute,
   provisionTenantD1EmailAccount,
+  resolvePasskeyProvisioningResumeUserId,
   resolveTenantD1PasskeyAccountRoute,
   resolveTenantD1EmailAccountRoute,
   usesTenantD1AccountStorage,
@@ -82,9 +85,12 @@ type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
-  tenantId: string
+  tenantId: string,
+  options: { accountScoped?: boolean } = {}
 ): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = options.accountScoped
+    ? createAccountAuthContextFromHono(c, tenantId)
+    : createAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -236,22 +242,21 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
   const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
-      email: string;
+      email?: string;
       userId?: string;
       name?: string;
       custom_fields?: Record<string, unknown>;
+      provisioning_token?: string;
+      resume_user_id?: string;
     }>();
 
-    const { email, userId, name, custom_fields } = body;
-
-    if (!email) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'email' },
-      });
-    }
+    const { email, userId, name, custom_fields, provisioning_token, resume_user_id } = body;
     if (userId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
+
+    const normalizedEmail =
+      typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
@@ -268,13 +273,30 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const origin = originHeader;
 
     const tenantId = getTenantIdFromContext(c);
+    const hasProvisioningResumeFields =
+      provisioning_token !== undefined || resume_user_id !== undefined;
+    let resumedUserId: string | null = null;
+    if (hasProvisioningResumeFields) {
+      if (provisioning_token === undefined || resume_user_id === undefined) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      resumedUserId = await resolvePasskeyProvisioningResumeUserId(
+        c,
+        provisioning_token,
+        resume_user_id
+      );
+      if (!resumedUserId) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
       {
         ...(custom_fields ?? {}),
-        email,
-        'field.canonical.email': email,
+        ...(normalizedEmail
+          ? { email: normalizedEmail, 'field.canonical.email': normalizedEmail }
+          : {}),
         ...(name ? { name, 'field.canonical.name': name } : {}),
       }
     );
@@ -299,22 +321,27 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
 
     // Check if user exists in the canonical runtime user store.
     const tenantD1 = usesTenantD1AccountStorage(c);
-    const accountRoute = await resolveTenantD1EmailAccountRoute(c, email.toLowerCase());
-    let runtimeUsers: CanonicalRuntimeUserStore | null =
-      accountRoute === 'not_found' ? null : createCanonicalRuntimeUserStore(c, tenantId);
-    let user: { id: string; email: string; name: string | null } | null = null;
+    const accountRoute = normalizedEmail
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      : 'not_required';
+    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+      ? accountRoute === 'resolved'
+        ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
+        : null
+      : createCanonicalRuntimeUserStore(c, tenantId);
+    let user: { id: string; email: string | null; name: string | null } | null = null;
 
-    const normalizedEmail = email.toLowerCase();
-    const runtimeUser = await runtimeUsers?.findByEmail(normalizedEmail);
+    const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;
     if (runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
-      const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+      const newUserId =
+        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
       const defaultName = name || null;
-      const preferredUsername = email.split('@')[0];
+      const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
       const provisioningRuntimeUser = {
         active: true as const,
         emailVerified: false,
@@ -323,12 +350,12 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         sourceRef: 'auth:passkey',
         piiFields: {
           ...canonicalProfileFields.piiFields,
-          email: true,
+          ...(normalizedEmail ? { email: true } : {}),
           ...(defaultName ? { name: true } : {}),
         },
         sensitiveValues: {
           ...canonicalProfileFields.sensitiveValues,
-          email: normalizedEmail,
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
           ...(defaultName ? { name: defaultName } : {}),
         },
         customAttributesJson: JSON.stringify({ preferred_username: preferredUsername }),
@@ -345,11 +372,11 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
           });
           if (provisioned.status === 'pending') return provisioned.response;
           await resolveAccountDataContextFromHono(c, provisioned.accountId);
-          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true });
           user = {
             id: provisioned.userId,
             email: normalizedEmail,
-            name: defaultName || email.split('@')[0],
+            name: defaultName || normalizedEmail?.split('@')[0] || provisioned.userId,
           };
         } else {
           await runtimeUsers!.syncUser({
@@ -379,12 +406,15 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       user ??= {
         id: newUserId,
         email: normalizedEmail,
-        name: defaultName || email.split('@')[0],
+        name: defaultName || normalizedEmail?.split('@')[0] || newUserId,
       };
     }
 
     // Get user's existing passkeys via Repository
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const existingPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
 
     const excludeCredentials: Array<{
@@ -413,8 +443,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(user.id as string),
-      userName: normalizedEmail,
-      userDisplayName: (user.name as string) || normalizedEmail,
+      userName: normalizedEmail ?? user.id,
+      userDisplayName: (user.name as string) || normalizedEmail || user.id,
       excludeCredentials: excludeCredentials,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
@@ -439,7 +469,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userId: user.id as string,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      email: normalizedEmail,
+      email: normalizedEmail ?? undefined,
       metadata:
         Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
@@ -590,6 +620,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         userId,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
@@ -605,9 +636,12 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Store passkey via Repository
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    // Step 2: Store passkey via the routed account database when tenant-exclusive storage is used.
+    const accountScoped = usesTenantD1AccountStorage(c);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     await authCtx.repositories.passkey.create({
       id: passkeyId,
@@ -810,7 +844,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     } catch {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
 
     let passkey = await authCtx.repositories.passkey.findByCredentialId(credentialIDBase64URL);
 
@@ -932,7 +969,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const proofVerifiedAtMs = Date.now();
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
     const [accountAuthenticationRecord, responseUser] = await Promise.all([
       runtimeUsers.findAccountAuthenticationState(passkey.user_id),
       runtimeUsers.findAuthenticationResponseUser(passkey.user_id),
@@ -1009,6 +1046,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         passkey.user_id as string,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
           authTime,

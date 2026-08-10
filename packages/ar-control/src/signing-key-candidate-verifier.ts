@@ -1,4 +1,5 @@
 import { signRuntimeRegistrySnapshotPayloadJws } from '@authrim/ar-lib-core';
+import { getTenantDatabaseBindingPrefix } from '@authrim/ar-lib-core/services/tenant-database-naming';
 import { runtimeRegistryPrivateJwkForSlot } from './lookup-registry-publisher';
 import { signControlRuntimeSmokeRequestWithKey } from './runtime-smoke-signer';
 import type { ControlEnv, RuntimeSmokeServiceBinding } from './types';
@@ -6,6 +7,10 @@ import type { ControlEnv, RuntimeSmokeServiceBinding } from './types';
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_WORKER = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
 const SAFE_ERROR = /^(?:runtime|control|lookup)_[a-z0-9_]{1,119}$/u;
+
+function keyRotationTestBinding(environmentId: string): string {
+  return `${getTenantDatabaseBindingPrefix(environmentId)}_KEY_ROTATION_TEST`;
+}
 type RuntimeRegistryPrivateJwk = Exclude<
   Parameters<typeof signRuntimeRegistrySnapshotPayloadJws>[0]['privateJwk'],
   string
@@ -241,7 +246,7 @@ export class SigningKeyCandidateVerifier {
           operationId: `keyverify-${staged.slot.toLowerCase()}-${this.now()}`,
           attempt: 1,
           targetWorker: workerScriptName,
-          bindingRef: 'TDB_KEY_ROTATION_TEST',
+          bindingRef: keyRotationTestBinding(staged.environmentId),
           expectedMigrationGeneration: 1,
           dataRole: 'tenant_core/default',
           residencyPartition: 'default',

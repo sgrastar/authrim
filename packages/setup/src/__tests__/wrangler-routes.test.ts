@@ -829,7 +829,7 @@ describe('generateRoutes', () => {
         DB_ADMIN: { id: 'admin-id', name: 'tenantd1-authrim-admin-db' },
         CONTROL_DB: { id: 'control-id', name: 'tenantd1-authrim-control-db' },
         LOOKUP_DB: { id: 'lookup-id', name: 'tenantd1-authrim-lookup-db' },
-        TDB_LOOKUP_EXTRA_LOOKUP: {
+        TEST_TDB_LOOKUP_EXTRA_LOOKUP: {
           id: 'lookup-extra-id',
           name: 'authrim-tenantd1-lookup-extra',
         },
@@ -837,15 +837,15 @@ describe('generateRoutes', () => {
           id: 'plugin-runner-id',
           name: 'tenantd1-authrim-plugin-runner-db',
         },
-        TDB_DEFAULT_EXAMPLE_CORE: {
+        TEST_TDB_DEFAULT_EXAMPLE_CORE: {
           id: 'tenant-default-id',
           name: 'authrim-tenantd1-example-default',
         },
-        TDB_USERS_EXAMPLE_CORE: {
+        TEST_TDB_USERS_EXAMPLE_CORE: {
           id: 'tenant-users-id',
           name: 'authrim-tenantd1-example-users',
         },
-        TDB_PII_EXAMPLE_PII: {
+        TEST_TDB_PII_EXAMPLE_PII: {
           id: 'tenant-pii-id',
           name: 'authrim-tenantd1-example-pii',
         },
@@ -877,34 +877,36 @@ describe('generateRoutes', () => {
 
     expect(authConfig.d1_databases).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_USERS_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_PII_EXAMPLE_PII' }),
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
       ])
     );
     expect(discoveryConfig.d1_databases).toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' })])
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
     );
     expect(discoveryConfig.d1_databases).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
     );
     expect(discoveryConfig.d1_databases).not.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'TDB_USERS_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_PII_EXAMPLE_PII' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
         expect.objectContaining({ binding: 'LOOKUP_DB' }),
       ])
     );
     expect(authConfig.d1_databases).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ binding: 'LOOKUP_DB' }),
-        expect.objectContaining({ binding: 'TDB_LOOKUP_EXTRA_LOOKUP' }),
+        expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' }),
       ])
     );
     expect(managementConfig.d1_databases).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ binding: 'LOOKUP_DB' }),
-        expect.objectContaining({ binding: 'TDB_LOOKUP_EXTRA_LOOKUP' }),
+        expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' }),
       ])
     );
     expect(authConfig.d1_databases).not.toEqual(
@@ -987,10 +989,12 @@ describe('generateRoutes', () => {
     );
     expect(controlConfig.durable_objects).toBeUndefined();
     expect(controlConfig.d1_databases).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' })])
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
     );
     expect(controlConfig.d1_databases).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_LOOKUP_EXTRA_LOOKUP' })])
+      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' })])
     );
     expect(authConfig.kv_namespaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
@@ -1006,18 +1010,18 @@ describe('generateRoutes', () => {
     );
     expect(agentAccessConfig.d1_databases).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
       ])
     );
     expect(agentAccessConfig.d1_databases).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ binding: 'TDB_PII_EXAMPLE_PII' })])
+      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' })])
     );
     expect(asyncConfig.d1_databases).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'TDB_DEFAULT_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_USERS_EXAMPLE_CORE' }),
-        expect.objectContaining({ binding: 'TDB_PII_EXAMPLE_PII' }),
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
       ])
     );
     expect(asyncConfig.d1_databases).not.toEqual(

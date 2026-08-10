@@ -125,11 +125,11 @@ describe('PluginRunnerRegistryPublisher', () => {
          status, created_at, updated_at
        ) VALUES
          ('shard-a', 'test', 'tenant_core/default', 'default', 'jp', 1, 'default-1',
-          'TDB_DEFAULT_JP_0001_CORE', 'resource-a', 'active', 1, 1),
+          'TEST_TDB_DEFAULT_JP_0001_CORE', 'resource-a', 'active', 1, 1),
          ('shard-b', 'test', 'tenant_core/users', 'default', 'jp', 2, 'users-1',
-          'TDB_USERS_JP_0001_CORE', 'resource-b', 'active', 1, 1),
+          'TEST_TDB_USERS_JP_0001_CORE', 'resource-b', 'active', 1, 1),
          ('shard-c', 'test', 'tenant_pii', 'default', 'jp', 1, 'pii-1',
-          'TDB_USERS_JP_0001_PII', 'resource-c', 'active', 1, 1);`
+          'TEST_TDB_USERS_JP_0001_PII', 'resource-c', 'active', 1, 1);`
     );
   });
 

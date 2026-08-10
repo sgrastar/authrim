@@ -1392,7 +1392,7 @@ paths:
       summary: Start Direct Auth passkey signup.
       description:
         Creates WebAuthn registration options for Direct Auth signup after validating client,
-        channel, origin, and email policy.
+        channel, and origin. Email is optional and is not used for discoverable Passkey lookup.
       responses:
         '200':
           $ref: '#/components/responses/DirectPasskeyStart'
@@ -3492,6 +3492,7 @@ components:
       description: WebAuthn credential response from the browser.
     PasskeyRegisterOptionsRequest:
       type: object
+      description: Email is optional for discoverable Passkey registration.
       properties:
         email:
           type: string
@@ -3503,8 +3504,13 @@ components:
         custom_fields:
           type: object
           additionalProperties: true
-      required:
-        - email
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Continuation token returned by a previous asynchronous account provisioning response.
+        resume_user_id:
+          type: string
+          description: Continuation value paired with provisioning_token for a retried Passkey request.
     PasskeyRegisterOptionsResponse:
       type: object
       properties:
@@ -4991,6 +4997,7 @@ components:
         - expires_in
     DirectPasskeySignupStartRequest:
       type: object
+      description: Email is optional and is retained only as profile data when supplied.
       properties:
         client_id:
           type: string
@@ -5039,6 +5046,13 @@ components:
         custom_fields:
           type: object
           additionalProperties: true
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Internal Login UI continuation token returned by a previous 202 response.
+        resume_user_id:
+          type: string
+          description: Internal Login UI continuation value paired with provisioning_token.
       required:
         - client_id
         - code_challenge
@@ -5147,6 +5161,11 @@ components:
           type: integer
           minimum: 1
           maximum: 600
+        resume_user_id:
+          type: string
+          description: >
+            Present for passkey signup only. The Login UI sends this continuation value back with
+            the provisioning token so a retried request reuses the same account candidate.
     AccountProvisioningStatusRequest:
       type: object
       additionalProperties: false

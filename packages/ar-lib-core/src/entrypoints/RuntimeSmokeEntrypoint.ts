@@ -16,6 +16,7 @@ import {
   loadVerifiedLookupHmacKeyState,
   resolveLookupHmacKeys,
 } from '../services/lookup-directory/index.js';
+import { getTenantDatabaseBindingPrefix } from '../services/tenant-database-naming.js';
 
 const SAFE_ENVIRONMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_WORKER = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
@@ -24,8 +25,11 @@ const EXPOSED_KEY_VERIFICATION_ERROR = /^runtime_key_verification_[a-z0-9_]+$/u;
 const SAFE_KEY_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const MAX_TEST_PAYLOAD_BYTES = 1024;
 const LOOKUP_HMAC_TEST_VECTOR = 'authrim-control-lookup-hmac-v1';
-const LOOKUP_HMAC_TEST_BINDING = 'TDB_LOOKUP_HMAC_TEST';
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
+
+function lookupHmacTestBinding(environmentId: string): string {
+  return `${getTenantDatabaseBindingPrefix(environmentId)}_LOOKUP_HMAC_TEST`;
+}
 
 export interface RuntimeSmokeEntrypointEnv {
   AUTHRIM_ENVIRONMENT_NAME?: string;
@@ -287,7 +291,7 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
       const claims = await verifyRuntimeSmokeRequest(record.token, { ...context, publicJwks });
       if (
         claims.operationId !== record.operationId ||
-        claims.bindingRef !== LOOKUP_HMAC_TEST_BINDING ||
+        claims.bindingRef !== lookupHmacTestBinding(context.environmentId) ||
         claims.dataRole !== 'tenant_core/default' ||
         claims.residencyPartition !== 'default' ||
         claims.expectedMigrationGeneration !== 1
@@ -364,7 +368,7 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
       const claims = await verifyRuntimeSmokeRequest(record.token, { ...context, publicJwks });
       if (
         claims.operationId !== record.operationId ||
-        claims.bindingRef !== LOOKUP_HMAC_TEST_BINDING ||
+        claims.bindingRef !== lookupHmacTestBinding(context.environmentId) ||
         claims.dataRole !== 'tenant_core/default' ||
         claims.residencyPartition !== 'default' ||
         claims.expectedMigrationGeneration !== 1

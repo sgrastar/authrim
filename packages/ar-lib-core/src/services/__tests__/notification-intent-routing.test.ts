@@ -49,7 +49,7 @@ describe('notification intent routing', () => {
     const tenantDb = database();
     mocks.resolveTenant.mockResolvedValue({
       source: tenantDb,
-      bindingRef: 'TDB_TENANT_A_DEFAULT',
+      bindingRef: 'TEST_TDB_TENANT_A_DEFAULT',
     });
 
     await expect(
@@ -60,7 +60,7 @@ describe('notification intent routing', () => {
     ).resolves.toEqual({
       tenantId: 'tenant-a',
       db: tenantDb,
-      bindingRef: 'TDB_TENANT_A_DEFAULT',
+      bindingRef: 'TEST_TDB_TENANT_A_DEFAULT',
     });
     expect(mocks.resolveTenant).toHaveBeenCalledWith(
       expect.anything(),
@@ -90,7 +90,7 @@ describe('notification intent routing', () => {
 
     mocks.resolveTenant.mockResolvedValueOnce({
       source: { query: vi.fn() },
-      bindingRef: 'TDB_TENANT_A_DEFAULT',
+      bindingRef: 'TEST_TDB_TENANT_A_DEFAULT',
     });
     await expect(
       resolveNotificationIntentTarget({} as never, { owner: 'tenant', tenantId: 'tenant-a' })

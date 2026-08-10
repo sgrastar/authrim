@@ -205,6 +205,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getChallengeStoreByChallengeId: () => Promise.resolve(mockChallengeStoreStub),
     // Repository pattern mocks - return the pre-defined context objects
     createAuthContextFromHono: () => mockAuthContext,
+    createAccountAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
     resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
     getTenantIdFromContext: () => 'default',
@@ -578,7 +579,7 @@ describe('Passkey Handlers', () => {
   });
 
   describe('passkeyRegisterOptionsHandler', () => {
-    it('should require email parameter', async () => {
+    it('should allow discoverable registration without email', async () => {
       const c = createMockContext({
         body: {},
         headers: { origin: 'https://example.com' },
@@ -586,11 +587,13 @@ describe('Passkey Handlers', () => {
 
       const response = await passkeyRegisterOptionsHandler(c);
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { error: string; error_description?: string };
-      expect(body.error).toBe('invalid_request');
-      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD returns generic message
-      expect(body.error_description).toContain('required');
+      expect(response.status).toBe(200);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userName: expect.any(String),
+          userDisplayName: expect.any(String),
+        })
+      );
     });
 
     it('should reject unauthorized origins', async () => {

@@ -69,30 +69,44 @@ describe('Cloudflare environment deletion helpers', () => {
       filterControlManagedD1ForEnvironment('test', [
         { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
         { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+        { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
+        { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
         { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+        { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
         { name: 'authrim-test-unrelated-a1b2c3d4', uuid: 'unrelated' },
         { name: 'authrim-other-core-default-default-a1b2c3d4', uuid: 'other' },
       ])
     ).toEqual([
       { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
       { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+      { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
+      { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
       { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+      { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
     ]);
 
     expect(
       filterControlManagedKVForEnvironment('test', [
-        { title: `authrim-test-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
+        { title: `authrim-test-${'a'.repeat(32)}-kv`, id: 'legacy-plugin-kv' },
+        { title: `test-authrim-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
         { title: `authrim-other-${'b'.repeat(32)}-kv`, id: 'other-kv' },
         { title: 'authrim-test-not-owned-kv', id: 'unrelated-kv' },
       ])
-    ).toEqual([{ title: `authrim-test-${'b'.repeat(32)}-kv`, id: 'plugin-kv' }]);
+    ).toEqual([
+      { title: `authrim-test-${'a'.repeat(32)}-kv`, id: 'legacy-plugin-kv' },
+      { title: `test-authrim-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
+    ]);
 
     expect(
       filterControlManagedR2ForEnvironment('test', [
-        { name: `authrim-test-${'c'.repeat(32)}-r2` },
+        { name: `authrim-test-${'a'.repeat(32)}-r2` },
+        { name: `test-authrim-${'c'.repeat(32)}-r2` },
         { name: `authrim-other-${'c'.repeat(32)}-r2` },
         { name: 'authrim-test-not-owned-r2' },
       ])
-    ).toEqual([{ name: `authrim-test-${'c'.repeat(32)}-r2` }]);
+    ).toEqual([
+      { name: `authrim-test-${'a'.repeat(32)}-r2` },
+      { name: `test-authrim-${'c'.repeat(32)}-r2` },
+    ]);
   });
 });

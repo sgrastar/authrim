@@ -60,7 +60,7 @@ type RootTranslation = {
 	 */
 	dialog_close: string
 	/**
-	 * P​o​w​e​r​e​d​ ​b​y​ ​A​u​t​h​r​i​m
+	 * P​o​w​e​r​e​d​ ​b​y​ ​<​a​ ​h​r​e​f​=​"​h​t​t​p​s​:​/​/​a​u​t​h​r​i​m​.​c​o​m​/​"​>​A​u​t​h​r​i​m​<​/​a​>
 	 */
 	footer_stack: string
 	/**
@@ -266,7 +266,7 @@ type RootTranslation = {
 	 */
 	account_reauthNoMethods: string
 	/**
-	 * D​e​v​i​c​e​s
+	 * C​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s
 	 */
 	account_devices: string
 	/**
@@ -274,13 +274,39 @@ type RootTranslation = {
 	 */
 	account_currentDevice: string
 	/**
-	 * S​e​s​s​i​o​n​s
+	 * A​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_connectedDevicesDescription: string
+	/**
+	 * N​o​ ​c​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​o​r​ ​d​e​v​i​c​e​s
+	 */
+	account_noConnectedDevices: string
+	/**
+	 * S​i​g​n​e​d​-​i​n​ ​d​e​v​i​c​e​s
 	 */
 	account_sessions: string
 	/**
-	 * C​u​r​r​e​n​t​ ​s​e​s​s​i​o​n
+	 * T​h​i​s​ ​d​e​v​i​c​e
 	 */
 	account_currentSession: string
+	/**
+	 * B​r​o​w​s​e​r​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​c​u​r​r​e​n​t​l​y​ ​s​i​g​n​e​d​ ​i​n​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_sessionsDescription: string
+	/**
+	 * D​e​v​i​c​e​ ​d​e​t​a​i​l​s​ ​u​n​a​v​a​i​l​a​b​l​e
+	 */
+	account_unknownDevice: string
+	/**
+	 * L​o​c​a​t​i​o​n​:​ ​{​c​o​u​n​t​r​y​}
+	 * @param {string} country
+	 */
+	account_sessionLocation: RequiredParams<'country'>
+	/**
+	 * S​i​g​n​e​d​ ​i​n​ ​{​t​i​m​e​}
+	 * @param {string} time
+	 */
+	account_signedInAt: RequiredParams<'time'>
 	/**
 	 * L​o​g​ ​o​u​t
 	 */
@@ -309,6 +335,34 @@ type RootTranslation = {
 	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	account_passkeyUnsupported: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​ ​o​r​ ​t​i​m​e​d​ ​o​u​t​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationCancelled: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​r​e​g​i​s​t​e​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
+	 */
+	account_passkeyAlreadyRegistered: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​i​n​t​e​r​r​u​p​t​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationInterrupted: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​d​o​e​s​ ​n​o​t​ ​m​e​e​t​ ​t​h​e​ ​r​e​q​u​i​r​e​m​e​n​t​s​ ​f​o​r​ ​t​h​i​s​ ​P​a​s​s​k​e​y​.​ ​T​r​y​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnsupported: string
+	/**
+	 * T​h​e​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​ ​P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.​ ​T​r​y​ ​a​g​a​i​n​ ​o​r​ ​u​s​e​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnavailable: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​i​s​ ​s​i​t​e​.​ ​C​o​n​t​a​c​t​ ​s​u​p​p​o​r​t​ ​i​f​ ​t​h​e​ ​p​r​o​b​l​e​m​ ​c​o​n​t​i​n​u​e​s​.
+	 */
+	account_passkeyConfigurationError: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationFailed: string
 	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s
 	 */
@@ -1431,7 +1485,7 @@ export type TranslationFunctions = {
 	 */
 	dialog_close: () => LocalizedString
 	/**
-	 * Powered by Authrim
+	 * Powered by <a href="https://authrim.com/">Authrim</a>
 	 */
 	footer_stack: () => LocalizedString
 	/**
@@ -1635,7 +1689,7 @@ export type TranslationFunctions = {
 	 */
 	account_reauthNoMethods: () => LocalizedString
 	/**
-	 * Devices
+	 * Connected apps and devices
 	 */
 	account_devices: () => LocalizedString
 	/**
@@ -1643,13 +1697,37 @@ export type TranslationFunctions = {
 	 */
 	account_currentDevice: () => LocalizedString
 	/**
-	 * Sessions
+	 * Apps and devices linked to your account.
+	 */
+	account_connectedDevicesDescription: () => LocalizedString
+	/**
+	 * No connected apps or devices
+	 */
+	account_noConnectedDevices: () => LocalizedString
+	/**
+	 * Signed-in devices
 	 */
 	account_sessions: () => LocalizedString
 	/**
-	 * Current session
+	 * This device
 	 */
 	account_currentSession: () => LocalizedString
+	/**
+	 * Browsers and devices currently signed in to your account.
+	 */
+	account_sessionsDescription: () => LocalizedString
+	/**
+	 * Device details unavailable
+	 */
+	account_unknownDevice: () => LocalizedString
+	/**
+	 * Location: {country}
+	 */
+	account_sessionLocation: (arg: { country: string }) => LocalizedString
+	/**
+	 * Signed in {time}
+	 */
+	account_signedInAt: (arg: { time: string }) => LocalizedString
 	/**
 	 * Log out
 	 */
@@ -1678,6 +1756,34 @@ export type TranslationFunctions = {
 	 * This browser does not support passkey registration.
 	 */
 	account_passkeyUnsupported: () => LocalizedString
+	/**
+	 * Passkey registration was cancelled or timed out. Please try again.
+	 */
+	account_passkeyRegistrationCancelled: () => LocalizedString
+	/**
+	 * This authenticator is already registered for this account.
+	 */
+	account_passkeyAlreadyRegistered: () => LocalizedString
+	/**
+	 * Passkey registration was interrupted. Please try again.
+	 */
+	account_passkeyRegistrationInterrupted: () => LocalizedString
+	/**
+	 * This authenticator does not meet the requirements for this Passkey. Try another authenticator.
+	 */
+	account_passkeyAuthenticatorUnsupported: () => LocalizedString
+	/**
+	 * The authenticator could not complete Passkey registration. Try again or use another authenticator.
+	 */
+	account_passkeyAuthenticatorUnavailable: () => LocalizedString
+	/**
+	 * Passkey registration is not available for this site. Contact support if the problem continues.
+	 */
+	account_passkeyConfigurationError: () => LocalizedString
+	/**
+	 * Passkey registration failed. Please try again.
+	 */
+	account_passkeyRegistrationFailed: () => LocalizedString
 	/**
 	 * Authenticator apps
 	 */

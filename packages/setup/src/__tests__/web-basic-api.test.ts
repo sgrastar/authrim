@@ -1,10 +1,25 @@
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { acquireEnvironmentOperationLock } from '../core/lock.js';
 import { createApiRoutes, generateSessionToken, getSessionToken } from '../web/api.js';
+
+const cloudflareMocks = vi.hoisted(() => ({
+  detectEnvironments: vi.fn(),
+  hasControlManagedResourcesForEnvironment: vi.fn(),
+}));
+
+vi.mock('../core/cloudflare.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/cloudflare.js')>();
+  return {
+    ...actual,
+    detectEnvironments: cloudflareMocks.detectEnvironments,
+    hasControlManagedResourcesForEnvironment:
+      cloudflareMocks.hasControlManagedResourcesForEnvironment,
+  };
+});
 
 const originalCwd = process.cwd();
 let root: string;
@@ -48,6 +63,8 @@ async function writeDeployedLock(env: string): Promise<void> {
 
 describe('setup web basic API contracts', () => {
   beforeEach(async () => {
+    cloudflareMocks.detectEnvironments.mockReset().mockResolvedValue([]);
+    cloudflareMocks.hasControlManagedResourcesForEnvironment.mockReset().mockResolvedValue(false);
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-basic-')));
     process.chdir(root);
   });

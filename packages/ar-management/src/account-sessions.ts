@@ -3,6 +3,7 @@ import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   getLogger,
+  describeSessionClient,
   getSessionRevocationStore,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
@@ -17,14 +18,26 @@ function setNoStore(c: Context<{ Bindings: Env }>): void {
 }
 
 function toSessionItem(
-  session: Pick<Session, 'id' | 'createdAt' | 'expiresAt'>,
+  session: Pick<Session, 'id' | 'createdAt' | 'expiresAt' | 'data'>,
   currentSessionId: string
 ) {
+  const client = describeSessionClient(session.data?.userAgent);
+  const countryCode =
+    typeof session.data?.countryCode === 'string' &&
+    /^[A-Z]{2}$/.test(session.data.countryCode.toUpperCase()) &&
+    session.data.countryCode.toUpperCase() !== 'XX'
+      ? session.data.countryCode.toUpperCase()
+      : null;
+
   return {
     id: session.id,
     current: session.id === currentSessionId,
     created_at: session.createdAt,
     expires_at: session.expiresAt,
+    browser: client.browser,
+    os: client.os,
+    device_type: client.deviceType,
+    country_code: countryCode,
   };
 }
 
@@ -33,11 +46,17 @@ function currentSessionRow(accountSession: {
   userId: string;
   createdAt: number;
   expiresAt: number;
-}): Pick<Session, 'id' | 'createdAt' | 'expiresAt'> {
+  userAgent?: string;
+  countryCode?: string;
+}): Pick<Session, 'id' | 'createdAt' | 'expiresAt' | 'data'> {
   return {
     id: accountSession.sessionId,
     createdAt: accountSession.createdAt,
     expiresAt: accountSession.expiresAt,
+    data: {
+      ...(accountSession.userAgent ? { userAgent: accountSession.userAgent } : {}),
+      ...(accountSession.countryCode ? { countryCode: accountSession.countryCode } : {}),
+    },
   };
 }
 

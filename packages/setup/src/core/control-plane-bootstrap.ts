@@ -10,6 +10,10 @@ import {
   type RegionShardResidencyProjection,
 } from '@authrim/ar-lib-core/utils/region-sharding';
 import {
+  createLookupAliasIndex,
+  type LookupAliasIndex,
+} from '@authrim/ar-lib-core/services/lookup-directory/blind-index';
+import {
   RUNTIME_REGISTRY_SNAPSHOT_SIGNATURE_ALGORITHM,
   RUNTIME_REGISTRY_SNAPSHOT_VERSION,
   signRuntimeRegistrySnapshotPayloadJws,
@@ -17,6 +21,7 @@ import {
 } from '@authrim/ar-lib-core/services/tenant-runtime-registry-snapshot';
 import {
   deriveControlRegionShardAllowedRegions,
+  getTenantDatabaseBootstrapBinding,
   type ControlRegionShardJurisdiction,
   type ControlRegionShardLocationHint,
 } from '@authrim/ar-lib-core/control-plane';
@@ -50,6 +55,14 @@ import {
 const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
 const RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
+function isRecoverableInitialHandoffError(errorCode: unknown): boolean {
+  return (
+    typeof errorCode === 'string' &&
+    (errorCode === 'control_bootstrap_provider_capability_rejected' ||
+      /^control_bootstrap_worker_[a-z0-9_]+$/u.test(errorCode))
+  );
+}
+
 type InitialControlPlaneBootstrapResource = TenantDatabaseRegistryResourceInput & {
   databaseName: string;
   binding: string;
@@ -82,26 +95,28 @@ export interface InitialControlPlaneResourcePlan {
   migrationFiles: Array<{ path: string; checksum: string }>;
 }
 
-const INITIAL_TENANT_SHARD_DEFINITIONS = [
-  {
-    role: 'tenant_core/default',
-    binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
-    nameRole: 'default',
-    streamId: 'd1-core',
-  },
-  {
-    role: 'tenant_core/users',
-    binding: 'TDB_USERS_BOOTSTRAP_CORE',
-    nameRole: 'users',
-    streamId: 'd1-core',
-  },
-  {
-    role: 'tenant_pii',
-    binding: 'TDB_PII_BOOTSTRAP_PII',
-    nameRole: 'pii',
-    streamId: 'd1-pii',
-  },
-] as const;
+function initialTenantShardDefinitions(env: string) {
+  return [
+    {
+      role: 'tenant_core/default' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'default'),
+      nameRole: 'default',
+      streamId: 'd1-core' as const,
+    },
+    {
+      role: 'tenant_core/users' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'users'),
+      nameRole: 'users',
+      streamId: 'd1-core' as const,
+    },
+    {
+      role: 'tenant_pii' as const,
+      binding: getTenantDatabaseBootstrapBinding(env, 'pii'),
+      nameRole: 'pii',
+      streamId: 'd1-pii' as const,
+    },
+  ];
+}
 
 function bootstrapDigest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -114,7 +129,7 @@ function bootstrapDatabaseName(env: string, nameRole: string): string {
     .replace(/^-+|-+$/gu, '')
     .slice(0, 24);
   if (!normalizedEnv) throw new Error('initial_control_plane_environment_invalid');
-  return `authrim-${normalizedEnv}-${nameRole}-bootstrap`;
+  return `${normalizedEnv}-authrim-tenant-${nameRole}-bootstrap-db`;
 }
 
 export function buildInitialControlPlaneResourcePlans(input: {
@@ -139,7 +154,7 @@ export function buildInitialControlPlaneResourcePlans(input: {
       databaseName: input.lock.d1.LOOKUP_DB?.name ?? '',
       streamId: 'd1-lookup',
     },
-    ...INITIAL_TENANT_SHARD_DEFINITIONS.map((definition) => ({
+    ...initialTenantShardDefinitions(input.env).map((definition) => ({
       role: definition.role,
       binding: definition.binding,
       databaseName:
@@ -190,6 +205,12 @@ type RuntimeRegistryPrivateJwk = {
 
 interface CountRow extends Record<string, unknown> {
   count: number | string;
+}
+
+interface InitialTenantAliasBootstrap {
+  indexes: LookupAliasIndex[];
+  projectionJson: string;
+  sql: string;
 }
 
 export interface ControlPlaneBootstrapResult {
@@ -267,6 +288,65 @@ interface RuntimeSnapshot {
 
 function tenantIdForConfig(config: AuthrimConfig): string {
   return config.tenant?.name?.trim() || 'default';
+}
+
+export async function buildInitialTenantAliasBootstrap(input: {
+  environmentId: string;
+  tenantId: string;
+  tenantCode: string;
+  defaultStore: RuntimeSnapshotStore;
+  now?: number;
+}): Promise<InitialTenantAliasBootstrap> {
+  const bindingRef = input.defaultStore.bindingRef?.trim();
+  if (!bindingRef) throw new Error('initial_tenant_alias_binding_ref_missing');
+  const now = input.now ?? Math.floor(Date.now() / 1000);
+  if (!Number.isSafeInteger(now) || now < 1) {
+    throw new Error('initial_tenant_alias_timestamp_invalid');
+  }
+  const projection = {
+    schemaVersion: 1,
+    tenantRouteGeneration: input.defaultStore.bindingRouteGeneration,
+    residencyPolicyId: input.defaultStore.residencyPolicyId,
+    target: {
+      dataRole: 'tenant_core/default',
+      residencyPartition: input.defaultStore.residencyPartition,
+      shardId: input.defaultStore.shardId,
+      bindingRef,
+      requiredBindingRouteGeneration: input.defaultStore.bindingRouteGeneration,
+    },
+  };
+  const projectionJson = JSON.stringify(projection);
+  const indexes = await Promise.all([
+    createLookupAliasIndex('tenant_code', input.tenantCode),
+    createLookupAliasIndex('tenant_slug', input.tenantId),
+    createLookupAliasIndex('environment_tenant', input.environmentId),
+  ]);
+  const values = indexes
+    .map(
+      (index) =>
+        `(${index.virtualBucket}, ${sqlString(index.aliasKind)}, ${sqlString(index.digest)}, ` +
+        `${sqlString(input.tenantId)}, 1, ${sqlString(projectionJson)}, ` +
+        `'active', 'active', 'active', ${now}, ${now})`
+    )
+    .join(',\n');
+
+  return {
+    indexes,
+    projectionJson,
+    sql: `INSERT INTO lookup_tenant_aliases (
+      virtual_bucket, alias_kind, alias_sha256_digest, tenant_id,
+      route_schema_version, route_projection_json, tenant_lifecycle_state,
+      runtime_route_status, lifecycle_state, created_at, updated_at
+    ) VALUES
+    ${values}
+    ON CONFLICT(virtual_bucket, alias_kind, alias_sha256_digest, tenant_id) DO UPDATE SET
+      route_schema_version = excluded.route_schema_version,
+      route_projection_json = excluded.route_projection_json,
+      tenant_lifecycle_state = excluded.tenant_lifecycle_state,
+      runtime_route_status = excluded.runtime_route_status,
+      lifecycle_state = excluded.lifecycle_state,
+      updated_at = excluded.updated_at;`,
+  };
 }
 
 interface InitialTenantRegionPolicyRow extends Record<string, unknown> {
@@ -476,7 +556,7 @@ export function inspectInitialControlPlaneTopology(input: {
   const manifestChecksum = calculateReleaseManifestChecksum(input.manifest);
   const issues: ControlPlaneTopologyIssue[] = [];
 
-  for (const resource of INITIAL_TENANT_SHARD_DEFINITIONS) {
+  for (const resource of initialTenantShardDefinitions(input.env)) {
     const locked = input.lock.d1[resource.binding];
     if (!locked) {
       issues.push({ binding: resource.binding, reason: 'missing_binding' });
@@ -780,11 +860,13 @@ async function executeAdminSql(input: {
 
 async function verifyInitialControlPlaneBootstrap(input: {
   adminDbName: string;
+  lookupDatabaseName: string;
   runtimeRegistryNamespaceId: string;
   tenantId: string;
   coreDatabaseName: string;
   resources: readonly InitialControlPlaneBootstrapResource[];
   expectedSnapshot: RuntimeSnapshot;
+  expectedAliases: InitialTenantAliasBootstrap;
 }): Promise<void> {
   const tenantIdSql = sqlString(input.tenantId);
   const [pointerRow] = await queryD1Rows<CountRow>(
@@ -809,6 +891,29 @@ async function verifyInitialControlPlaneBootstrap(input: {
   );
   if (countValue(tenantRow) !== 1) {
     throw new Error('initial_control_plane_core_tenant_verification_failed');
+  }
+
+  const aliasPredicates = input.expectedAliases.indexes
+    .map(
+      (index) =>
+        `(virtual_bucket = ${index.virtualBucket} AND alias_kind = ${sqlString(index.aliasKind)} ` +
+        `AND alias_sha256_digest = ${sqlString(index.digest)})`
+    )
+    .join(' OR ');
+  const [aliasRow] = await queryD1Rows<CountRow>(
+    input.lookupDatabaseName,
+    `SELECT COUNT(*) AS count
+       FROM lookup_tenant_aliases
+      WHERE tenant_id = ${tenantIdSql}
+        AND route_schema_version = 1
+        AND route_projection_json = ${sqlString(input.expectedAliases.projectionJson)}
+        AND tenant_lifecycle_state = 'active'
+        AND runtime_route_status = 'active'
+        AND lifecycle_state = 'active'
+        AND (${aliasPredicates});`
+  );
+  if (countValue(aliasRow) !== input.expectedAliases.indexes.length) {
+    throw new Error('initial_control_plane_tenant_alias_verification_failed');
   }
 
   const snapshotText = await getKVKeyByNamespaceId(
@@ -910,19 +1015,24 @@ export async function ensureInitialControlPlaneResources(input: {
     if (!input.release) throw new Error('initial_control_plane_release_required');
     const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
     if (!controlDatabaseName) throw new Error('control_database_name_required');
-    const [handoff] = await queryD1Rows<{ state: string }>(
+    const [handoff] = await queryD1Rows<{ state: string; verification_error_code: string | null }>(
       controlDatabaseName,
-      `SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ${sqlString(input.env)}`
+      `SELECT state, verification_error_code
+         FROM control_bootstrap_handoffs
+        WHERE environment_id = ${sqlString(input.env)}`
     );
     if (handoff?.state === 'accepted') {
       return { success: true, skipped: true };
     }
-    if (handoff?.state === 'blocked') {
+    if (
+      handoff?.state === 'blocked' &&
+      !isRecoverableInitialHandoffError(handoff.verification_error_code)
+    ) {
       throw new Error(`initial_control_plane_handoff_${handoff.state}`);
     }
 
     input.onProgress?.('🔧 Ensuring initial Control-plane tenant shards exist (3 D1)...');
-    for (const definition of INITIAL_TENANT_SHARD_DEFINITIONS) {
+    for (const definition of initialTenantShardDefinitions(input.env)) {
       const existing = input.lock.d1[definition.binding];
       if (existing) {
         const expectedName = bootstrapDatabaseName(input.env, definition.nameRole);
@@ -1017,6 +1127,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   const tenantId = tenantIdForConfig(input.config);
   const adminDbName = input.lock.d1.DB_ADMIN?.name;
   const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
+  const lookupDatabaseName = input.lock.d1.LOOKUP_DB?.name;
   const configNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
   const runtimeRegistryNamespaceId = input.lock.kv.TENANT_RUNTIME_REGISTRY?.id;
   if (!adminDbName) {
@@ -1027,6 +1138,9 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   }
   if (!controlDatabaseName) {
     return { success: false, error: 'CONTROL_DB is missing from the lock file' };
+  }
+  if (!lookupDatabaseName) {
+    return { success: false, error: 'LOOKUP_DB is missing from the lock file' };
   }
   if (!configNamespaceId) {
     return { success: false, error: 'AUTHRIM_CONFIG KV is missing from the lock file' };
@@ -1142,14 +1256,29 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       { expirationTtl: RUNTIME_REGISTRY_GENERATION_TTL_SECONDS }
     );
 
+    const defaultStore = snapshot.stores.find(
+      (store) => store.role === 'tenant_core' && store.shardGroup === 'default'
+    );
+    if (!defaultStore) throw new Error('initial_tenant_alias_default_store_missing');
+    const aliases = await buildInitialTenantAliasBootstrap({
+      environmentId: input.env,
+      tenantId,
+      tenantCode: input.config.tenant.name,
+      defaultStore,
+    });
+    input.onProgress?.(`🔧 Ensuring initial tenant discovery aliases (${tenantId})...`);
+    await executeD1Command(lookupDatabaseName, aliases.sql);
+
     input.onProgress?.(`🔎 Verifying initial Control Plane bootstrap (${tenantId})...`);
     await verifyInitialControlPlaneBootstrap({
       adminDbName,
+      lookupDatabaseName,
       runtimeRegistryNamespaceId,
       tenantId,
       coreDatabaseName: defaultCoreResource.databaseName,
       resources,
       expectedSnapshot: snapshot,
+      expectedAliases: aliases,
     });
 
     input.onProgress?.(`  ✅ Initial Control Plane runtime snapshot published: ${tenantId}`);

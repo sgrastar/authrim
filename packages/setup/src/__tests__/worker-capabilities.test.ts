@@ -63,9 +63,9 @@ function maximalResourceIds() {
           { id: `id-${database.binding.toLowerCase()}`, name: `test-${database.dbType}` },
         ])
       ),
-      TDB_SLOT_0001_CORE: { id: 'id-tenant-core', name: 'test-tenant-core-1' },
-      TDB_SLOT_0001_PII: { id: 'id-tenant-pii', name: 'test-tenant-pii-1' },
-      TDB_LOOKUP_EXTRA_LOOKUP: { id: 'id-lookup-extra', name: 'test-lookup-extra' },
+      TEST_TDB_SLOT_0001_CORE: { id: 'id-tenant-core', name: 'test-tenant-core-1' },
+      TEST_TDB_SLOT_0001_PII: { id: 'id-tenant-pii', name: 'test-tenant-pii-1' },
+      TEST_TDB_LOOKUP_EXTRA_LOOKUP: { id: 'id-lookup-extra', name: 'test-lookup-extra' },
     },
     kv: Object.fromEntries(
       KV_NAMESPACES.map((binding) => [
@@ -374,18 +374,18 @@ describe('worker capability manifests', () => {
     ).toThrow('worker_capability_undeclared_secret:ar-control:CLOUDFLARE_WORKERS_API_TOKEN');
 
     validConfig.d1_databases?.push({
-      binding: 'TDB_USERS_JP_0001_CORE',
+      binding: 'TEST_TDB_USERS_JP_0001_CORE',
       database_name: 'strict-users-jp-0001',
       database_id: 'strict-users-jp-0001-id',
     });
     expect(() => validateGeneratedWorkerCapabilities({ compiled, config: validConfig })).toThrow(
-      'worker_capability_undeclared_tenant_data_role:ar-control:TDB_USERS_JP_0001_CORE:tenant_core/users'
+      'worker_capability_undeclared_tenant_data_role:ar-control:TEST_TDB_USERS_JP_0001_CORE:tenant_core/users'
     );
 
     const lookupConfig = generateWranglerConfig('ar-control', deploymentConfig('strict'), {
       d1: {
         CONTROL_DB: { id: 'control-id', name: 'strict-control' },
-        TDB_LOOKUP_EXTRA_LOOKUP: { id: 'lookup-extra-id', name: 'strict-lookup-extra' },
+        TEST_TDB_LOOKUP_EXTRA_LOOKUP: { id: 'lookup-extra-id', name: 'strict-lookup-extra' },
       },
       kv: {
         TENANT_RUNTIME_REGISTRY: { id: 'registry-id', name: 'strict-runtime-registry' },
@@ -393,12 +393,12 @@ describe('worker capability manifests', () => {
       r2: { MIGRATION_RELEASES: { name: 'strict-migration-releases' } },
     });
     lookupConfig.d1_databases?.push({
-      binding: 'TDB_LOOKUP_EXTRA_LOOKUP',
+      binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP',
       database_name: 'strict-lookup-extra',
       database_id: 'lookup-extra-id',
     });
     expect(() => validateGeneratedWorkerCapabilities({ compiled, config: lookupConfig })).toThrow(
-      'worker_capability_undeclared_tenant_data_role:ar-control:TDB_LOOKUP_EXTRA_LOOKUP:lookup'
+      'worker_capability_undeclared_tenant_data_role:ar-control:TEST_TDB_LOOKUP_EXTRA_LOOKUP:lookup'
     );
   });
 

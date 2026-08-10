@@ -118,14 +118,14 @@ describe('runtime route contracts', () => {
         dataRole: 'tenant_core/users' as const,
         residencyPartition: 'default',
         shardId: 'shard-core-1',
-        bindingRef: 'TDB_CORE_1',
+        bindingRef: 'TEST_TDB_CORE_1',
         requiredBindingRouteGeneration: 4,
       },
       {
         dataRole: 'tenant_pii' as const,
         residencyPartition: 'default',
         shardId: 'shard-pii-1',
-        bindingRef: 'TDB_PII_1',
+        bindingRef: 'TEST_TDB_PII_1',
         requiredBindingRouteGeneration: 4,
       },
     ],
@@ -151,7 +151,7 @@ describe('runtime route contracts', () => {
           dataRole: 'tenant_core/users' as const,
           residencyPartition: 'default',
           shardId: 'shard-core-1',
-          bindingRef: 'TDB_CORE_1',
+          bindingRef: 'TEST_TDB_CORE_1',
           routeGeneration: 4,
         },
         {
@@ -159,7 +159,7 @@ describe('runtime route contracts', () => {
           dataRole: 'tenant_pii' as const,
           residencyPartition: 'default',
           shardId: 'shard-pii-1',
-          bindingRef: 'TDB_PII_1',
+          bindingRef: 'TEST_TDB_PII_1',
           routeGeneration: 5,
         },
       ],
@@ -184,7 +184,7 @@ describe('runtime route contracts', () => {
       validateControlAccountRouteAllocationResult(
         {
           ...result,
-          targets: [result.targets[0], { ...result.targets[1], bindingRef: 'TDB_CORE_1' }],
+          targets: [result.targets[0], { ...result.targets[1], bindingRef: 'TEST_TDB_CORE_1' }],
         },
         expected
       )
@@ -334,7 +334,7 @@ describe('D1 ownership and consistency contracts', () => {
         dataRole: 'tenant_core/default' as const,
         residencyPartition: 'default',
         shardId: 'default-1',
-        bindingRef: 'TDB_DEFAULT_1',
+        bindingRef: 'TEST_TDB_DEFAULT_1',
         requiredBindingRouteGeneration: 4,
       },
     };

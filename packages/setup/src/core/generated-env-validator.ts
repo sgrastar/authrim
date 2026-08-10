@@ -27,6 +27,7 @@ import {
 } from './naming.js';
 import { listD1Databases, listKVNamespaces, listR2Buckets, queryD1Rows } from './cloudflare.js';
 import { SECRET_KEY_FILES } from './secrets.js';
+import { getTenantDatabaseBootstrapBinding } from '@authrim/ar-lib-core/services/tenant-database-naming';
 
 type ValidationStatus = 'pass' | 'warn' | 'fail';
 
@@ -124,16 +125,7 @@ const LOGGING_DELIVERY_PRODUCER_COMPONENTS: WorkerComponent[] = [
 ];
 
 const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
-  binding:
-    | 'DB'
-    | 'DB_PII'
-    | 'DB_ADMIN'
-    | 'CONTROL_DB'
-    | 'LOOKUP_DB'
-    | 'PLUGIN_RUNNER_DB'
-    | 'TDB_DEFAULT_BOOTSTRAP_CORE'
-    | 'TDB_USERS_BOOTSTRAP_CORE'
-    | 'TDB_PII_BOOTSTRAP_PII';
+  binding: string;
   label: string;
   tables: string[];
 }> = [
@@ -236,12 +228,12 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
     ],
   },
   {
-    binding: 'TDB_DEFAULT_BOOTSTRAP_CORE',
+    binding: '__BOOTSTRAP_DEFAULT__',
     label: 'tenant default assignment schema',
     tables: ['tenants', 'tenant_domain_mappings', 'oauth_clients', 'flows', 'profile_registry'],
   },
   {
-    binding: 'TDB_USERS_BOOTSTRAP_CORE',
+    binding: '__BOOTSTRAP_USERS__',
     label: 'tenant account assignment schema',
     tables: [
       'identity_subjects',
@@ -253,7 +245,7 @@ const LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS: Array<{
     ],
   },
   {
-    binding: 'TDB_PII_BOOTSTRAP_PII',
+    binding: '__BOOTSTRAP_PII__',
     label: 'tenant PII assignment schema',
     tables: ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'],
   },
@@ -369,11 +361,16 @@ function finishCheck(check: ValidationCheck, fallbackDetail: string): Validation
   return check;
 }
 
-const INITIAL_ASSIGNMENT_BINDINGS = [
-  'TDB_DEFAULT_BOOTSTRAP_CORE',
-  'TDB_USERS_BOOTSTRAP_CORE',
-  'TDB_PII_BOOTSTRAP_PII',
-] as const;
+function bootstrapBindingForRole(env: string, role: 'default' | 'users' | 'pii'): string {
+  return getTenantDatabaseBootstrapBinding(env, role);
+}
+
+function resolveBootstrapBinding(binding: string, env: string): string {
+  if (binding === '__BOOTSTRAP_DEFAULT__') return bootstrapBindingForRole(env, 'default');
+  if (binding === '__BOOTSTRAP_USERS__') return bootstrapBindingForRole(env, 'users');
+  if (binding === '__BOOTSTRAP_PII__') return bootstrapBindingForRole(env, 'pii');
+  return binding;
+}
 
 function sqlString(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
@@ -650,13 +647,17 @@ function validateRequiredD1Bindings(lock: AuthrimLock): ValidationCheck {
   return finishCheck(check, 'All required D1 bindings are present in lock.json');
 }
 
-function validatePiiPhysicalIsolation(lock: AuthrimLock): ValidationCheck {
+function validatePiiPhysicalIsolation(lock: AuthrimLock, env: string): ValidationCheck {
   const check = makeCheck(
     'pii-physical-isolation',
     'Core and PII bindings resolve to physically distinct D1 databases'
   );
-  const coreBindings = ['DB', 'TDB_DEFAULT_BOOTSTRAP_CORE', 'TDB_USERS_BOOTSTRAP_CORE'] as const;
-  const piiBindings = ['DB_PII', 'TDB_PII_BOOTSTRAP_PII'] as const;
+  const coreBindings = [
+    'DB',
+    bootstrapBindingForRole(env, 'default'),
+    bootstrapBindingForRole(env, 'users'),
+  ] as const;
+  const piiBindings = ['DB_PII', bootstrapBindingForRole(env, 'pii')] as const;
 
   for (const coreBinding of coreBindings) {
     const coreDatabase = lock.d1[coreBinding];
@@ -1289,7 +1290,8 @@ async function validateLiveControlPlaneBootstrap(
     'Initial Control Plane resources are accepted by the Control Worker'
   );
 
-  for (const binding of INITIAL_ASSIGNMENT_BINDINGS) {
+  for (const role of ['default', 'users', 'pii'] as const) {
+    const binding = bootstrapBindingForRole(config.environment.prefix, role);
     const database = lock.d1[binding];
     if (!database?.id || !database.name) {
       pushDetail(check, 'fail', `${binding}: missing from lock.json`);
@@ -1325,13 +1327,19 @@ async function validateLiveControlPlaneBootstrap(
   return finishCheck(check, 'Initial resources and Control Plane handoff are consistent');
 }
 
-async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<ValidationCheck> {
+async function validateLiveRuntimeD1Schema(
+  lock: AuthrimLock,
+  env: string
+): Promise<ValidationCheck> {
   const check = makeCheck(
     'live-runtime-d1-schema',
     'Live D1 databases contain runtime schema tables required by current workers'
   );
 
-  for (const requirement of LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS) {
+  for (const requirement of LIVE_RUNTIME_D1_SCHEMA_REQUIREMENTS.map((entry) => ({
+    ...entry,
+    binding: resolveBootstrapBinding(entry.binding, env),
+  }))) {
     const database = lock.d1[requirement.binding];
     if (!database?.name) {
       pushDetail(check, 'fail', `${requirement.binding}: missing from lock.json`);
@@ -1371,7 +1379,8 @@ async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<Validatio
     }
   }
 
-  const coreDatabase = lock.d1.TDB_USERS_BOOTSTRAP_CORE;
+  const usersBootstrapBinding = bootstrapBindingForRole(env, 'users');
+  const coreDatabase = lock.d1[usersBootstrapBinding];
   if (coreDatabase?.name) {
     try {
       const foreignKeys = await queryD1Rows<{ table?: string; from?: string; to?: string }>(
@@ -1385,20 +1394,20 @@ async function validateLiveRuntimeD1Schema(lock: AuthrimLock): Promise<Validatio
         pushDetail(
           check,
           'fail',
-          `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields still references legacy users_core(id)`
+          `${usersBootstrapBinding} (${coreDatabase.name}) user_custom_fields still references legacy users_core(id)`
         );
       } else {
         pushDetail(
           check,
           'pass',
-          `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields has no legacy users_core FK`
+          `${usersBootstrapBinding} (${coreDatabase.name}) user_custom_fields has no legacy users_core FK`
         );
       }
     } catch (error) {
       pushDetail(
         check,
         'fail',
-        `TDB_USERS_BOOTSTRAP_CORE (${coreDatabase.name}) user_custom_fields FK query failed: ${error instanceof Error ? error.message : String(error)}`
+        `${usersBootstrapBinding} (${coreDatabase.name}) user_custom_fields FK query failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -1474,7 +1483,7 @@ export async function validateGeneratedEnvironment(
     finishCheck(configCheck, 'config.json is readable'),
     finishCheck(lockCheck, 'lock.json is readable'),
     validateRequiredD1Bindings(lock),
-    validatePiiPhysicalIsolation(lock),
+    validatePiiPhysicalIsolation(lock, options.env),
     validateMigrationReleaseR2Binding(lock),
     validateLoggingR2Bindings(config, lock),
     validateLoggingQueueBindings(config, lock),
@@ -1515,7 +1524,7 @@ export async function validateGeneratedEnvironment(
       await validateLiveCloudflareD1(lock),
       await validateLiveCloudflareKV(lock),
       await validateLiveCloudflareR2(lock),
-      await validateLiveRuntimeD1Schema(lock),
+      await validateLiveRuntimeD1Schema(lock, options.env),
       await validateLiveControlPlaneBootstrap(config, lock)
     );
   }

@@ -18,18 +18,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn((c: { get?: (key: string) => unknown }) => {
       return (c.get?.('tenantId') as string | undefined) ?? 'default';
     }),
-    calculateChanges: vi.fn((from: Record<string, unknown>, to: Record<string, unknown>) => ({
-      changed: Object.keys({ ...from, ...to }).filter((key) => from[key] !== to[key]),
-    })),
   };
 });
 
-import {
-  calculateChanges,
-  createSettingsHistoryManager,
-  publishEvent,
-  SETTINGS_EVENTS,
-} from '@authrim/ar-lib-core';
+vi.mock('@authrim/ar-lib-core/services/settings-history', () => ({
+  calculateChanges: vi.fn((from: Record<string, unknown>, to: Record<string, unknown>) => ({
+    changed: Object.keys({ ...from, ...to }).filter((key) => from[key] !== to[key]),
+  })),
+}));
+
+import { createSettingsHistoryManager, publishEvent, SETTINGS_EVENTS } from '@authrim/ar-lib-core';
+import { calculateChanges } from '@authrim/ar-lib-core/services/settings-history';
 import {
   compareSettingsVersions,
   getCurrentSettings,

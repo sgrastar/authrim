@@ -170,12 +170,23 @@ function assertSmokeResult(input: {
 function smokeFailureCode(error: unknown, fallback: string): string {
   let current: unknown = error;
   for (let depth = 0; depth < 4; depth += 1) {
-    if (!(current instanceof Error)) break;
-    const code = current.message.match(
-      /(?:^|\b)((?:runtime_smoke|control_worker_smoke_result)_[a-z0-9_]+)(?:\b|$)/u
+    const messageValue =
+      current instanceof Error
+        ? current.message
+        : current && typeof current === 'object' && 'message' in current
+          ? (current as { message?: unknown }).message
+          : typeof current === 'string'
+            ? current
+            : undefined;
+    const message = typeof messageValue === 'string' ? messageValue : '';
+    const code = message.match(
+      /(?:^|\b)((?:runtime_smoke|control_smoke|control_worker_smoke_result)_[a-z0-9_]+)(?:\b|$)/u
     )?.[1];
     if (code) return code;
-    current = current.cause;
+    current =
+      current && typeof current === 'object' && 'cause' in current
+        ? (current as { cause?: unknown }).cause
+        : undefined;
   }
   return fallback;
 }

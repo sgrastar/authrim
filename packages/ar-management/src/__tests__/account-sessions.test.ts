@@ -117,6 +117,12 @@ describe('Account Page session management API', () => {
           userId: 'user-001',
           createdAt: 1_777_100_000_000,
           expiresAt: 1_777_200_000_000,
+          data: {
+            userAgent:
+              'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 ' +
+              '(KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
+            countryCode: 'JP',
+          },
         });
       }
       return Promise.resolve({
@@ -142,12 +148,20 @@ describe('Account Page session management API', () => {
         current: false,
         created_at: 1_777_100_000_000,
         expires_at: 1_777_200_000_000,
+        browser: 'Safari',
+        os: 'iOS',
+        device_type: 'mobile',
+        country_code: 'JP',
       },
       {
         id: 'g1:apac:3:session_current',
         current: true,
         created_at: 1_777_000_000_000,
         expires_at: Date.now() + 60_000,
+        browser: null,
+        os: null,
+        device_type: null,
+        country_code: null,
       },
     ]);
   });
@@ -204,8 +218,43 @@ describe('Account Page session management API', () => {
         current: true,
         created_at: 1_777_000_000_000,
         expires_at: Date.now() + 60_000,
+        browser: null,
+        os: null,
+        device_type: null,
+        country_code: null,
       },
     ]);
+  });
+
+  it('preserves client metadata for the current session while the index catches up', async () => {
+    mockSessionRevocationStore.listActiveSessionsRpc.mockResolvedValueOnce([]);
+    mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+      id: 'g1:apac:3:session_current',
+      tenantId: 'default',
+      userId: 'user-001',
+      createdAt: 1_777_000_000_000,
+      expiresAt: Date.now() + 60_000,
+      data: {
+        userAgent:
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+        countryCode: 'DE',
+      },
+    });
+
+    const response = await listAccountSessionsHandler(
+      createMockContext({ cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current' })
+    );
+    const body = (await response.json()) as { sessions: Array<Record<string, unknown>> };
+
+    expect(response.status).toBe(200);
+    expect(body.sessions[0]).toMatchObject({
+      current: true,
+      browser: 'Google Chrome',
+      os: 'Windows',
+      device_type: 'desktop',
+      country_code: 'DE',
+    });
   });
 
   it('clears authrim_session cookie when revoking the current session', async () => {

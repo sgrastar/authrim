@@ -782,6 +782,66 @@ const id: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Menginisialisasi Control Plane dan shard awal; kapasitas berikutnya dibuat otomatis saat diperlukan.',
+  'web.db.controlPlaneWorkerDesc':
+    'Fitur ini membantu Authrim mengelola database tenant. Resource pengelolaan yang diperlukan dibuat saat setup.',
+  'web.db.controlPlaneTenantPlacement':
+    'Tenant awal dimulai dengan lokasi penyimpanannya sendiri. Saat tenant bertambah, Anda dapat memilih lokasi untuk setiap tenant.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim mengelola pembuatan database dan routing koneksi secara otomatis.',
+  'web.db.automaticProvisioningTitle': 'Pembuatan database tenant otomatis',
+  'web.db.automaticProvisioningOn': 'Aktif (buat otomatis)',
+  'web.db.automaticProvisioningOnDesc':
+    'Saat jumlah tenant atau data bertambah, Authrim membuat database yang diperlukan secara otomatis.',
+  'web.db.automaticProvisioningTokenNote':
+    'Control Worker khusus menyimpan dan menggunakan token API Cloudflare dengan izin terbatas yang diperlukan untuk membuat database tenant.',
+  'web.db.automaticProvisioningOff': 'Nonaktif (buat dari Setup)',
+  'web.db.automaticProvisioningOffDesc':
+    'Database tidak dibuat secara otomatis. Buat dari alat Setup saat diperlukan.',
+  'web.db.automaticProvisioningNote': 'Pemisahan data tenant tetap berlaku saat opsi ini nonaktif.',
+  'web.deploy.controlCredentialsTitle': 'Koneksi Cloudflare',
+  'web.deploy.bootstrapTokenTitle': 'Token Cloudflare sementara untuk penyiapan otomatis',
+  'web.deploy.cloudflareLoginNote':
+    'Login Dashboard Cloudflare terpisah dari Wrangler OAuth dan mungkin meminta login lagi.',
+  'web.deploy.createBootstrapToken': 'Buat token Cloudflare sekali pakai',
+  'web.deploy.bootstrapTokenLabel': 'Token Cloudflare sementara',
+  'web.deploy.bootstrapTokenPlaceholder': 'Masukkan token Cloudflare sementara',
+  'web.deploy.bootstrapTokenHelp':
+    'Token ini digunakan sekali dan dicabut setelah token yang diperlukan didaftarkan.',
+  'web.deploy.bootstrapTokenDescription':
+    'Token sementara ini memungkinkan Authrim membuat database tenant secara otomatis. Token ini memerlukan izin untuk membuat dan mengedit token API: Account API Tokens: Write/Edit untuk token akun atau API Tokens: Write/Edit untuk token pengguna. Setup menggunakannya untuk membuat token API dengan cakupan terbatas untuk D1, Workers, KV, dan R2 sesuai kebutuhan, mendaftarkannya ke Control Worker, lalu mencabut token sementara.',
+  'web.deploy.manualDnsSectionTitle': 'Pengaturan DNS',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Buat token sementara di Cloudflare Dashboard, lalu masukkan di bawah.',
+  'web.deploy.bootstrapPopupBlocked':
+    'Browser memblokir tab baru. Izinkan popup lalu pilih tombol ini lagi.',
+  'web.deploy.bootstrapTokenRequired':
+    'Buat dan masukkan token Cloudflare sementara sebelum deployment.',
+  'web.envDetail.automaticProvisioningTitle': 'Provisi otomatis',
+  'web.envDetail.automaticProvisioningChecking': 'Memeriksa...',
+  'web.envDetail.automaticProvisioningUnavailable': 'Tidak tersedia',
+  'web.envDetail.createOneTimeCloudflareToken': 'Buat token Cloudflare sekali pakai',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap sekali pakai',
+  'web.envDetail.enableAutomaticProvisioning': 'Aktifkan',
+  'web.envDetail.enterOneTimeTokenThenEnable': 'Masukkan token sekali pakai, lalu pilih Aktifkan.',
+  'web.envDetail.bootstrapPopupBlocked': 'Browser memblokir tab Cloudflare Dashboard.',
+  'web.envDetail.enterOneTimeTokenFirst': 'Masukkan token Cloudflare sekali pakai terlebih dahulu.',
+  'web.envDetail.preparingControlAuthority': 'Menyiapkan otoritas provisi Control...',
+  'web.envDetail.deployingControlWorker': 'Mendeploy konfigurasi Control Worker...',
+  'web.envDetail.registeringScopedCredentials': 'Mendaftarkan kredensial terbatas...',
+  'web.envDetail.automaticProvisioningOn': 'Aktif',
+  'web.envDetail.automaticProvisioningOff': 'Nonaktif',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    'Kredensial Control Worker terbatas telah terdaftar.',
+  'web.envDetail.automaticProvisioningBlocked': 'Provisi otomatis diblokir.',
+  'web.envDetail.automaticProvisioningMissing': '(kurang: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Masukkan token sekali pakai baru untuk memperbaikinya.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    'Cabut token bootstrap dan token turunan Authrim yang disebutkan di Cloudflare Dashboard sebelum mencoba lagi.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'Token bootstrap telah dicabut, tetapi status tertunda tidak dapat direset.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'Token bootstrap telah dicabut dan provisi otomatis dikembalikan ke Nonaktif.',
 
   // Web UI Email
   'web.email.title': 'Penyedia Email',
@@ -920,8 +980,8 @@ const id: Translations = {
   'web.form.userIdFormat': 'Format ID Pengguna',
   'web.form.userIdNanoid': 'NanoID (disarankan)',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint':
-    'Format untuk membuat ID pengguna. Tidak dapat diubah setelah pengguna dibuat.',
+  'web.form.userIdExample': 'Contoh:',
+  'web.form.userIdFormatHint': 'Tidak dapat diubah setelah pengguna dibuat.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

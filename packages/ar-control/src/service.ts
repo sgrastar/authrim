@@ -23,6 +23,8 @@ import {
   type ControlTenantRuntimeRouteObservation,
   type ControlTenantRegionShardPolicy,
   deriveControlRegionShardAllowedRegions,
+  getTenantDatabaseBindingPrefix,
+  getTenantDatabaseResourcePrefix,
 } from '@authrim/ar-lib-core/control-plane';
 import type { ControlRepository } from './repository';
 import { ApiMigrationEngine, cloudflareMigrationExecutor } from './migration-engine';
@@ -553,8 +555,8 @@ async function buildPlan(
     residencyPolicyId: request.residencyPolicyId,
     residencyPartition: request.residencyPartition,
     logicalShardId,
-    databaseName: `authrim-${slug(environmentName)}-${slug(role)}-${slug(request.residencyPartition)}${request.ownerTenantId ? `-${slug(request.ownerTenantId)}` : ''}-${digest.slice(0, 8)}`,
-    bindingRef: `TDB_${bindingRole}_${digest.slice(0, 8).toUpperCase()}_${bindingSuffix}`,
+    databaseName: `${getTenantDatabaseResourcePrefix(environmentName)}-tenant-${slug(role)}-${slug(request.residencyPartition)}${request.ownerTenantId ? `-${slug(request.ownerTenantId)}` : ''}-db-${digest.slice(0, 8)}`,
+    bindingRef: `${getTenantDatabaseBindingPrefix(environmentName)}_${bindingRole}_${digest.slice(0, 8).toUpperCase()}_${bindingSuffix}`,
     ownershipFingerprint: digest,
     allocationScope: request.allocationScope ?? 'shared_pool',
     ownerTenantId: request.ownerTenantId ?? null,

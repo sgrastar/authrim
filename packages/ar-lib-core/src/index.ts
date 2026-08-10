@@ -92,6 +92,7 @@ export * from './utils/sd-jwt';
 export * from './utils/ec-keys';
 export * from './utils/session-state';
 export * from './utils/session-helper';
+export * from './utils/session-client';
 export * from './utils/authcode-helper';
 export * from './utils/tenant-context';
 export * from './utils/tenant-request-policy';

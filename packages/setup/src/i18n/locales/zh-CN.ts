@@ -764,6 +764,57 @@ const zhCN: Translations = {
   'web.db.regionAuto': '自动（最近）',
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc': '初始化控制平面和首批租户分片，后续容量将按需自动创建。',
+  'web.db.controlPlaneWorkerDesc':
+    '此功能用于帮助 Authrim 管理各租户的数据库。设置过程中会创建所需的管理资源。',
+  'web.db.controlPlaneTenantPlacement':
+    '初始租户从独立的存储位置开始。添加更多租户后，可以为每个租户选择存储位置。',
+  'web.db.controlPlaneResolverNote': 'Authrim 会自动管理数据库创建和连接路由。',
+  'web.db.automaticProvisioningTitle': '自动创建租户数据库',
+  'web.db.automaticProvisioningOn': '开启（自动创建）',
+  'web.db.automaticProvisioningOnDesc': '当租户或数据量增加时，Authrim 会自动创建所需的数据库。',
+  'web.db.automaticProvisioningTokenNote':
+    '专用的 Control Worker 会保存并使用创建租户数据库所需的、权限受限的 Cloudflare API token。',
+  'web.db.automaticProvisioningOff': '关闭（从 Setup 创建）',
+  'web.db.automaticProvisioningOffDesc': '不会自动创建数据库。需要时请从 Setup 工具创建。',
+  'web.db.automaticProvisioningNote': '关闭此选项后，租户之间的数据分离仍会保持。',
+  'web.deploy.controlCredentialsTitle': 'Cloudflare 连接信息',
+  'web.deploy.bootstrapTokenTitle': '用于自动设置的临时 Cloudflare token',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare Dashboard 登录独立于 Wrangler OAuth，可能需要再次登录。',
+  'web.deploy.createBootstrapToken': '创建一次性 Cloudflare token',
+  'web.deploy.bootstrapTokenLabel': '临时 Cloudflare token',
+  'web.deploy.bootstrapTokenPlaceholder': '输入临时 Cloudflare token',
+  'web.deploy.bootstrapTokenHelp': '此 token 只使用一次，并会在所需 token 注册后撤销。',
+  'web.deploy.bootstrapTokenDescription':
+    '此临时 token 允许 Authrim 自动创建租户数据库。它需要创建和编辑 API token 的权限：账户所有的 token 需要 Account API Tokens: Write/Edit，用户所有的 token 需要 API Tokens: Write/Edit。Setup 会按需创建 D1、Workers、KV 和 R2 的范围受限 API token，将其注册到 Control Worker，然后撤销临时 token。',
+  'web.deploy.manualDnsSectionTitle': 'DNS 设置',
+  'web.deploy.bootstrapTokenCreateStatus':
+    '请在 Cloudflare Dashboard 中创建临时 token，然后在下方输入。',
+  'web.deploy.bootstrapPopupBlocked': '浏览器阻止了新标签页。请允许弹出窗口后再次选择此按钮。',
+  'web.deploy.bootstrapTokenRequired': '部署前请创建并输入临时 Cloudflare token。',
+  'web.envDetail.automaticProvisioningTitle': '自动配置',
+  'web.envDetail.automaticProvisioningChecking': '检查中...',
+  'web.envDetail.automaticProvisioningUnavailable': '不可用',
+  'web.envDetail.createOneTimeCloudflareToken': '创建一次性 Cloudflare token',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '一次性 bootstrap token',
+  'web.envDetail.enableAutomaticProvisioning': '启用',
+  'web.envDetail.enterOneTimeTokenThenEnable': '输入一次性 token，然后选择“启用”。',
+  'web.envDetail.bootstrapPopupBlocked': '浏览器阻止了 Cloudflare Dashboard 标签页。',
+  'web.envDetail.enterOneTimeTokenFirst': '请先输入一次性 Cloudflare token。',
+  'web.envDetail.preparingControlAuthority': '正在准备 Control 配置权限...',
+  'web.envDetail.deployingControlWorker': '正在部署 Control Worker 配置...',
+  'web.envDetail.registeringScopedCredentials': '正在注册范围受限的凭据...',
+  'web.envDetail.automaticProvisioningOn': '开启',
+  'web.envDetail.automaticProvisioningOff': '关闭',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '范围受限的 Control Worker 凭据已注册。',
+  'web.envDetail.automaticProvisioningBlocked': '自动配置已被阻止。',
+  'web.envDetail.automaticProvisioningMissing': '（缺少：{{missing}}）',
+  'web.envDetail.automaticProvisioningRepairHint': '请输入新的一次性 token 进行修复。',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '重试前，请在 Cloudflare Dashboard 中撤销列出的 Authrim bootstrap token 和子 token。',
+  'web.envDetail.bootstrapRevokedPendingReset': 'Bootstrap token 已撤销，但无法重置待处理状态。',
+  'web.envDetail.bootstrapRevokedDisabled': 'Bootstrap token 已撤销，自动配置已恢复为关闭。',
 
   // Web UI Email
   'web.email.title': '邮件提供商',
@@ -896,7 +947,8 @@ const zhCN: Translations = {
   'web.form.userIdFormat': '用户 ID 格式',
   'web.form.userIdNanoid': 'NanoID（推荐）',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': '用户 ID 生成格式。创建用户后无法更改。',
+  'web.form.userIdExample': '示例：',
+  'web.form.userIdFormatHint': '创建用户后无法更改。',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

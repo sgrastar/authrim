@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping';
+import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
 import {
   buildSAMLAttributesForSP,
   buildSAMLAttributesForSPWithDiagnostics,

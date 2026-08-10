@@ -45,10 +45,17 @@ const ru = createTranslation({
 	account_reauthEmailCodePlaceholder: '6-значный код',
 	account_reauthVerifyEmailCode: 'Проверить код',
 	account_reauthNoMethods: 'Нет доступного способа повторной проверки.',
-	account_devices: 'Устройства',
+	account_devices: 'Подключённые приложения и устройства',
 	account_currentDevice: 'Текущее',
-	account_sessions: 'Сеансы',
-	account_currentSession: 'Текущий сеанс',
+	account_connectedDevicesDescription:
+		'Приложения и устройства, связанные с вашей учётной записью.',
+	account_noConnectedDevices: 'Нет подключённых приложений или устройств',
+	account_sessions: 'Устройства с активным входом',
+	account_currentSession: 'Это устройство',
+	account_sessionsDescription: 'Браузеры и устройства с активным входом.',
+	account_unknownDevice: 'Нет данных об устройстве',
+	account_sessionLocation: 'Местоположение: {country}',
+	account_signedInAt: 'Вход: {time}',
 	account_logoutSession: 'Выйти',
 	account_passkeyName: 'Название Passkey',
 	account_addPasskey: 'Добавить Passkey',
@@ -56,6 +63,18 @@ const ru = createTranslation({
 	account_empty: 'Нет элементов',
 	account_planned: 'Запланировано',
 	account_passkeyUnsupported: 'Этот браузер не поддерживает регистрацию Passkey.',
+	account_passkeyRegistrationCancelled:
+		'Регистрация Passkey была отменена или время ожидания истекло. Повторите попытку.',
+	account_passkeyAlreadyRegistered:
+		'Этот аутентификатор уже зарегистрирован для данной учётной записи.',
+	account_passkeyRegistrationInterrupted: 'Регистрация Passkey была прервана. Повторите попытку.',
+	account_passkeyAuthenticatorUnsupported:
+		'Этот аутентификатор не соответствует требованиям Passkey. Используйте другой аутентификатор.',
+	account_passkeyAuthenticatorUnavailable:
+		'Аутентификатор не смог завершить регистрацию Passkey. Повторите попытку или используйте другой аутентификатор.',
+	account_passkeyConfigurationError:
+		'Регистрация Passkey недоступна для этого сайта. Если проблема не исчезнет, обратитесь в службу поддержки.',
+	account_passkeyRegistrationFailed: 'Не удалось зарегистрировать Passkey. Повторите попытку.',
 	account_totp: 'Приложения-аутентификаторы',
 	account_totpName: 'Название приложения',
 	account_totpDefaultName: 'Приложение-аутентификатор',

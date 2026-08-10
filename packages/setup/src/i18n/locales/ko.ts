@@ -776,6 +776,63 @@ const ko: Translations = {
   'web.db.controlPlaneTitle': 'D1 Control Plane',
   'web.db.controlPlaneDesc':
     'Control Plane과 초기 tenant shard를 구성하며 이후 용량은 필요할 때 자동으로 생성됩니다.',
+  'web.db.controlPlaneWorkerDesc':
+    '이 기능은 Authrim이 tenant 데이터베이스를 관리하도록 합니다. 필요한 관리 리소스는 설정 중 생성됩니다.',
+  'web.db.controlPlaneTenantPlacement':
+    '초기 tenant는 자체 저장 위치로 시작합니다. tenant가 추가되면 각 tenant의 저장 위치를 선택할 수 있습니다.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim이 데이터베이스 생성과 연결 경로를 자동으로 관리합니다.',
+  'web.db.automaticProvisioningTitle': 'tenant 데이터베이스 자동 생성',
+  'web.db.automaticProvisioningOn': '켜짐 (자동 생성)',
+  'web.db.automaticProvisioningOnDesc':
+    'tenant 또는 데이터가 증가하면 Authrim이 필요한 데이터베이스를 자동으로 생성합니다.',
+  'web.db.automaticProvisioningTokenNote':
+    '전용 Control Worker가 tenant 데이터베이스 생성에 필요한 제한된 권한의 Cloudflare API token을 저장하고 사용합니다.',
+  'web.db.automaticProvisioningOff': '꺼짐 (Setup에서 생성)',
+  'web.db.automaticProvisioningOffDesc':
+    '데이터베이스를 자동으로 생성하지 않습니다. 필요할 때 Setup 도구에서 생성하세요.',
+  'web.db.automaticProvisioningNote': '이 옵션을 꺼도 tenant별 데이터 분리는 유지됩니다.',
+  'web.deploy.controlCredentialsTitle': 'Cloudflare 연결 정보',
+  'web.deploy.bootstrapTokenTitle': '자동 설정용 임시 Cloudflare 토큰',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare Dashboard 로그인은 Wrangler OAuth와 별개이며 다시 로그인을 요청할 수 있습니다.',
+  'web.deploy.createBootstrapToken': '일회용 Cloudflare 토큰 생성',
+  'web.deploy.bootstrapTokenLabel': '임시 Cloudflare 토큰',
+  'web.deploy.bootstrapTokenPlaceholder': '임시 Cloudflare 토큰 입력',
+  'web.deploy.bootstrapTokenHelp': '이 토큰은 한 번 사용되며 필요한 토큰을 등록한 후 폐기됩니다.',
+  'web.deploy.bootstrapTokenDescription':
+    '이 임시 토큰은 Authrim이 테넌트 데이터베이스를 자동으로 만들 수 있도록 합니다. 계정 소유 토큰에는 Account API Tokens: Write/Edit, 사용자 소유 토큰에는 API Tokens: Write/Edit 권한이 필요합니다. Setup은 필요에 따라 D1, Workers, KV, R2용 범위 제한 API 토큰을 만들고 Control Worker에 등록한 뒤 임시 토큰을 폐기합니다.',
+  'web.deploy.manualDnsSectionTitle': 'DNS 설정',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Cloudflare Dashboard에서 임시 토큰을 만든 후 아래에 입력하세요.',
+  'web.deploy.bootstrapPopupBlocked':
+    '브라우저가 새 탭을 차단했습니다. 팝업을 허용하고 버튼을 다시 선택하세요.',
+  'web.deploy.bootstrapTokenRequired': '배포 전에 임시 Cloudflare 토큰을 생성하고 입력하세요.',
+  'web.envDetail.automaticProvisioningTitle': '자동 프로비저닝',
+  'web.envDetail.automaticProvisioningChecking': '확인 중...',
+  'web.envDetail.automaticProvisioningUnavailable': '사용할 수 없음',
+  'web.envDetail.createOneTimeCloudflareToken': '일회용 Cloudflare 토큰 생성',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '일회용 bootstrap 토큰',
+  'web.envDetail.enableAutomaticProvisioning': '활성화',
+  'web.envDetail.enterOneTimeTokenThenEnable': '일회용 토큰을 입력한 후 활성화를 선택하세요.',
+  'web.envDetail.bootstrapPopupBlocked': '브라우저가 Cloudflare Dashboard 탭을 차단했습니다.',
+  'web.envDetail.enterOneTimeTokenFirst': '먼저 일회용 Cloudflare 토큰을 입력하세요.',
+  'web.envDetail.preparingControlAuthority': 'Control 프로비저닝 권한을 준비하는 중...',
+  'web.envDetail.deployingControlWorker': 'Control Worker 구성을 배포하는 중...',
+  'web.envDetail.registeringScopedCredentials': '범위 제한 자격 증명을 등록하는 중...',
+  'web.envDetail.automaticProvisioningOn': '켜짐',
+  'web.envDetail.automaticProvisioningOff': '꺼짐',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '범위 제한 Control Worker 자격 증명이 등록되었습니다.',
+  'web.envDetail.automaticProvisioningBlocked': '자동 프로비저닝이 차단되었습니다.',
+  'web.envDetail.automaticProvisioningMissing': '(누락: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint': '복구하려면 새 일회용 토큰을 입력하세요.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '재시도 전에 Cloudflare Dashboard에서 표시된 Authrim bootstrap 및 하위 토큰을 폐기하세요.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'Bootstrap 토큰은 폐기되었지만 대기 상태를 초기화하지 못했습니다.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'Bootstrap 토큰을 폐기하고 자동 프로비저닝을 꺼짐으로 되돌렸습니다.',
 
   // Web UI Email
   'web.email.title': '이메일 제공자',
@@ -911,7 +968,8 @@ const ko: Translations = {
   'web.form.userIdFormat': '사용자 ID 형식',
   'web.form.userIdNanoid': 'NanoID (권장)',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': '사용자 ID 생성 형식. 사용자 생성 후 변경할 수 없습니다.',
+  'web.form.userIdExample': '예:',
+  'web.form.userIdFormatHint': '사용자 생성 후 변경할 수 없습니다.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 

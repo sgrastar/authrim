@@ -77,12 +77,20 @@ const mocks = vi.hoisted(() => {
     resolveOtpAccountCoreDataContextByIdentifierFromHono: vi.fn(),
     resolveAccountDataContextByIdentifierFromHono: vi.fn(),
     resolveAccountDataContextFromHono: vi.fn(),
+    resolvePasskeyProvisioningResumeUserId: vi.fn(),
     provisionTenantD1EmailAccount: vi.fn(),
+    publishTenantD1PasskeyRoute: vi.fn(),
     findActiveInvitationByToken: vi.fn(),
     getCookie: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
     advancePasskeyCounterRpc: vi.fn(),
+    createPIIContextFromHono: vi.fn(() => ({
+      piiRepositories: {
+        userPII,
+      },
+    })),
+    createAccountAuthContextFromHono: vi.fn(),
   };
 });
 
@@ -124,7 +132,9 @@ vi.mock('../account-provisioning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../account-provisioning')>();
   return {
     ...actual,
+    resolvePasskeyProvisioningResumeUserId: mocks.resolvePasskeyProvisioningResumeUserId,
     provisionTenantD1EmailAccount: mocks.provisionTenantD1EmailAccount,
+    publishTenantD1PasskeyRoute: mocks.publishTenantD1PasskeyRoute,
   };
 });
 
@@ -265,11 +275,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         passkey: mocks.passkey,
       },
     })),
-    createPIIContextFromHono: vi.fn(() => ({
-      piiRepositories: {
-        userPII: mocks.userPII,
-      },
-    })),
+    createAccountAuthContextFromHono: mocks.createAccountAuthContextFromHono.mockImplementation(
+      () => ({
+        coreAdapter: mocks.coreAdapter,
+        repositories: {
+          userCore: mocks.userCore,
+          passkey: mocks.passkey,
+        },
+      })
+    ),
+    createPIIContextFromHono: mocks.createPIIContextFromHono,
     hasPIIDatabase: vi.fn(() => true),
     isShardedSessionId: vi.fn((sessionId: string) => /^\d+_session_/.test(sessionId)),
     getSessionStoreBySessionId: vi.fn(() => ({ stub: mocks.sessionStore })),
@@ -1036,6 +1051,150 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('starts passkey signup without email for a tenant-exclusive account', async () => {
+    mocks.getWebOriginRegistry.mockResolvedValueOnce({
+      origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
+    });
+    mocks.provisionTenantD1EmailAccount.mockResolvedValueOnce({
+      status: 'ready',
+      accountId: 'account:user_new',
+      userId: 'user_new',
+    });
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+
+    const context = createContext(
+      {
+        client_id: 'web-client',
+        code_challenge: 'signup-pkce-challenge',
+        code_challenge_method: 'S256',
+        channel: 'browser',
+      },
+      tenantProxyHeaders(),
+      'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
+    );
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+    context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+
+    const response = await directPasskeySignupStartHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.provisionTenantD1EmailAccount).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        flow: 'passkey',
+        email: null,
+        runtimeUser: expect.objectContaining({
+          piiFields: expect.not.objectContaining({ email: true }),
+          sensitiveValues: expect.not.objectContaining({ email: expect.anything() }),
+        }),
+      })
+    );
+    const provisioningCallOrder =
+      mocks.provisionTenantD1EmailAccount.mock.invocationCallOrder.at(-1);
+    const piiStoreCallOrder = mocks.createPIIContextFromHono.mock.invocationCallOrder.at(-1);
+    expect(provisioningCallOrder).toBeDefined();
+    expect(piiStoreCallOrder).toBeDefined();
+    expect(piiStoreCallOrder).toBeGreaterThan(provisioningCallOrder!);
+    expect(mocks.generateRegistrationOptions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userName: 'user_new',
+        userDisplayName: 'user_new',
+      })
+    );
+  });
+
+  it('reuses the same candidate user when an email-less tenant account resumes after 202', async () => {
+    mocks.generateUserIdFromSettings
+      .mockReset()
+      .mockResolvedValue('user_new')
+      .mockResolvedValueOnce('user_first')
+      .mockResolvedValueOnce('user_second');
+    mocks.getWebOriginRegistry.mockResolvedValue({
+      origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
+    });
+    mocks.provisionTenantD1EmailAccount
+      .mockReset()
+      .mockResolvedValue({
+        status: 'ready',
+        accountId: 'account:user_new',
+        userId: 'user_new',
+      })
+      .mockResolvedValueOnce({
+        status: 'pending',
+        response: Response.json(
+          {
+            status: 'provisioning',
+            provisioning_token: 'A'.repeat(43),
+            status_endpoint: '/api/v1/auth/account-provisioning/status',
+            retry_after_ms: 500,
+            resume_user_id: 'user_first',
+          },
+          { status: 202 }
+        ),
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        accountId: 'account:user_first',
+        userId: 'user_first',
+      });
+    mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    const request = {
+      client_id: 'web-client',
+      code_challenge: 'signup-pkce-challenge',
+      code_challenge_method: 'S256',
+      channel: 'browser',
+    };
+
+    const createContextForRequest = (body: Record<string, unknown>) => {
+      const context = createContext(
+        body,
+        tenantProxyHeaders(),
+        'https://test.authrim.com/api/v1/auth/direct/passkey/signup/start'
+      );
+      context.get = vi.fn((key: string) => {
+        if (key === 'tenantId') return 'tenant_test';
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+        }
+        return undefined;
+      }) as never;
+      context.env.ALLOWED_ORIGINS = 'https://login.test.authrim.com';
+      return context;
+    };
+
+    const firstResponse = await directPasskeySignupStartHandler(
+      createContextForRequest(request) as never
+    );
+    expect(firstResponse.status).toBe(202);
+
+    const resumedResponse = await directPasskeySignupStartHandler(
+      createContextForRequest({
+        ...request,
+        provisioning_token: 'A'.repeat(43),
+        resume_user_id: 'user_first',
+      }) as never
+    );
+    expect(resumedResponse.status).toBe(200);
+    expect(mocks.generateUserIdFromSettings).toHaveBeenCalledOnce();
+    expect(mocks.provisionTenantD1EmailAccount).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({ candidateUserId: 'user_first' })
+    );
+    expect(mocks.provisionTenantD1EmailAccount).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ candidateUserId: 'user_first' })
+    );
+  });
+
   it('rejects passkey signup start when the signup usage is disabled', async () => {
     const { directPasskeySignupStartHandler } = await import('../direct-auth');
     const context = createContext(
@@ -1152,6 +1311,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       is_active: true,
       created_at: Date.now(),
     });
+    mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
     const { directPasskeySignupFinishHandler } = await import('../direct-auth');
 
     const response = await directPasskeySignupFinishHandler(
@@ -1203,6 +1363,56 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         scope: 'openid email',
         codeChallenge,
       })
+    );
+  });
+
+  it('finishes tenant-exclusive passkey signup using the routed account database context', async () => {
+    const codeVerifier = 'tenant-passkey-signup-code-verifier';
+    const codeChallenge = await s256Challenge(codeVerifier);
+    mocks.challengeStore.getChallengeRpc.mockResolvedValue({ userId: 'user_new' });
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'tenant-passkey-signup-challenge',
+      metadata: {
+        code_challenge: codeChallenge,
+        client_id: 'web-client',
+        channel: 'browser',
+        origin: 'https://app.example.com',
+        rpID: 'app.example.com',
+      },
+    });
+    mocks.publishTenantD1PasskeyRoute.mockResolvedValue(201);
+    mocks.userCore.findById.mockResolvedValue({
+      id: 'user_new',
+      is_active: true,
+      created_at: Date.now(),
+    });
+    const context = createContext({
+      challenge_id: 'tenant_signup_challenge',
+      credential: {
+        id: 'tenant-new-credential',
+        rawId: 'tenant-new-credential',
+        response: { transports: ['internal'] },
+        type: 'public-key',
+      },
+      code_verifier: codeVerifier,
+      channel: 'browser',
+    });
+    context.get = vi.fn((key: string) => {
+      if (key === 'tenantId') return 'tenant_test';
+      if (key === 'tenantMetadataContext') {
+        return { tenantId: 'tenant_test', storageProfileId: 'builtin:storage:tenant-d1' };
+      }
+      return undefined;
+    }) as never;
+
+    const { directPasskeySignupFinishHandler } = await import('../direct-auth');
+    const response = await directPasskeySignupFinishHandler(context as never);
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveAccountDataContextFromHono).toHaveBeenCalledWith(context, 'user_new');
+    expect(mocks.createAccountAuthContextFromHono).toHaveBeenCalled();
+    expect(mocks.passkey.create).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user_new' })
     );
   });
 

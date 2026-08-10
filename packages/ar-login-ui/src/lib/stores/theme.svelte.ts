@@ -22,6 +22,7 @@ import {
 	LOGIN_UI_THEME_HINT_COOKIE,
 	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS
 } from '$lib/theme-bootstrap';
+import { syncLoginUIDocumentSurface } from '$lib/document-surface';
 
 // Theme types
 export type ThemeMode = 'light' | 'dark';
@@ -206,6 +207,7 @@ export function createThemeStore() {
 		const html = document.documentElement;
 		html.setAttribute('data-theme', mode);
 		html.setAttribute('data-variant', currentVariant);
+		syncLoginUIDocumentSurface();
 		writeThemeHintCookies(LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS);
 	}
 

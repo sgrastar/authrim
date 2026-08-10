@@ -128,6 +128,24 @@ describe('getHtmlTemplate', () => {
     }
   });
 
+  it('shows one description and one example for each user ID format', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('data-i18n="userId.nanoidDesc"');
+    expect(html).toContain('data-i18n="userId.uuidDesc"');
+    expect(html).toContain('V1StGXR8_Z5jdHi6B-myT');
+    expect(html).toContain('550e8400-e29b-41d4-a716-446655440000');
+    expect(html).toContain('id="user-id-format-description"');
+    expect(html).toContain('id="user-id-format-example-value"');
+    expect(html).toContain("descriptionKey = selected === 'uuid'");
+  });
+
   it('embeds multilingual API domain copy for dynamic tenant URL hints', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -276,7 +294,9 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain("className = 'e-st");
     expect(html).not.toContain('admin-badge');
     expect(html).toContain('if (response.adminSetupCompleted) {');
-    expect(html).toContain("section.classList.add('hidden');");
+    expect(html).toContain("section.className = 'alert ok';");
+    expect(html).toContain("heading.setAttribute('data-i18n', 'web.env.adminConfigured');");
+    expect(html).toContain("description.classList.add('hidden');");
     expect(html).not.toContain('If every administrator is locked out');
     expect(html).not.toContain('管理者が全員ロックアウト');
     expect(html).toContain('class="setup-recap"');
@@ -313,6 +333,12 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
     expect(html).toContain('class="twocol ui-update-grid"');
     expect(html).toContain('class="bigtable ui-update-card"');
+    expect(html).toContain('id="full-environment-deploy-card"');
+    expect(html).toContain('id="btn-deploy-full-environment"');
+    expect(html).toContain('id="full-environment-deploy-progress"');
+    expect(html).toContain('onlyChanged: false');
+    expect(html).toContain("'/deploy/component/' + encodeURIComponent(componentName)");
+    expect(html).toContain('getFullDeployUiComponents');
     expect(html).toContain("'theme-transition-to-dark'");
     expect(html).toContain("'theme-transition-to-light'");
     expect(SETUP_WEB_UI_STYLE).toContain('--paper: #f9f8f3');
@@ -327,6 +353,12 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).not.toContain('html.theme-transitioning .setup-hero-title');
     expect(SETUP_WEB_UI_STYLE).not.toContain('radial-gradient(circle at 18% 12%');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-hero.setup-enter .setup-hero-number');
+    expect(SETUP_WEB_UI_STYLE).toContain('body.env-management-mode .setup-hero-number');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-management-surface .tabpane.env-tab-enter');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-full-deploy-card');
+    expect(SETUP_WEB_UI_STYLE).toContain(
+      '.env-management-surface #env-control-automatic-provisioning:not(.hidden)'
+    );
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .row');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .modepanel:nth-child(3)');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-masthead');
@@ -340,6 +372,9 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .step-active');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .step-complete');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .checkitem.on:not(.lock) .sq');
+    expect(html).toContain("activePane.classList.add('env-tab-enter');");
+    expect(html).toContain("t('web.env.adminConfigured')");
+    expect(html).toContain("button.classList.add('hidden');");
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .radiocard.on .dot');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .switchline:has(input:checked) .sw');
     expect(SETUP_WEB_UI_STYLE).toContain('.region .dot::before');
@@ -460,7 +495,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain(
       'class="region auto-region"><input type="radio" name="db-pii-location" value="auto" checked>'
     );
-    expect(html).toContain('<h2>D1 Control Plane</h2>');
+    expect(html).toContain('<h2 data-i18n="web.db.controlPlaneTitle">D1 Control Plane</h2>');
     expect(html).toContain('name="automatic-provisioning" value="on" checked');
     expect(SETUP_WEB_UI_STYLE).toContain('.topo tr');
     expect(SETUP_WEB_UI_STYLE).toContain('.region.auto-region');
@@ -510,6 +545,24 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("setupLogCopyButton('provision-log-copy-btn', 'provision-output')");
     expect(html).toContain("setupLogCopyButton('deploy-log-copy-btn', 'deploy-output')");
     expect(html).toContain("setupLogCopyButton('delete-log-copy-btn', 'delete-output')");
+  });
+
+  it('starts the deployment screen in a clean ready state without mock progress data', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="deploy-ready-text" class="deploy-ready-card"');
+    expect(html).toContain('id="deploy-progress-ui" class="deploy-progress-panel hidden"');
+    expect(html).toContain('class="logbox hidden" id="deploy-log"');
+    expect(html).toContain('<span id="deploy-percent">0</span>');
+    expect(html).not.toContain('prod-ar-userinfo uploading...');
+    expect(html).not.toContain('bindings: D1(3) KV(9) DO(12)');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-ready-card');
   });
 
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
@@ -582,6 +635,8 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('function getWildcardDnsManualCopy()');
     expect(html).toContain('deploy-manual-wildcard-warning');
+    expect(html).toContain('<section class="row wide hidden" id="deploy-manual-wildcard-warning">');
+    expect(html).toContain('data-i18n="web.deploy.manualDnsSectionTitle"');
     expect(html).toContain('deploy-manual-wildcard-dashboard-link');
     expect(html).toContain('deploy-manual-wildcard-docs-link');
     expect(html).toContain('deploy-manual-wildcard-example-image');
@@ -631,6 +686,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('name="automatic-provisioning" value="on" checked');
     expect(html).toContain('name="automatic-provisioning" value="off"');
     expect(html).toContain('id="btn-create-control-bootstrap-token"');
+    expect(html).toContain('data-i18n="web.deploy.bootstrapTokenDescription"');
     expect(html).toMatch(/type="password"\s+id="control-bootstrap-token"\s+autocomplete="off"/u);
     expect(html).toContain("api('/cloudflare/control-token-template'");
     expect(html).toContain("bootstrapTokenInput.value = '';");

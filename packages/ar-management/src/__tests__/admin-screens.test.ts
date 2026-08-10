@@ -280,6 +280,18 @@ describe('admin screens', () => {
       display_name: 'Code input',
       is_system: 1,
     });
+    const overviewFields = screensByKey.get('account_overview')?.fields as Array<
+      Record<string, unknown>
+    >;
+    expect(overviewFields).toHaveLength(1);
+    expect(overviewFields[0]).toMatchObject({
+      field: 'heading.account_overview',
+      label: 'Manage your account',
+      required: false,
+      block_type: 'heading',
+      order: 10,
+    });
+    expect(overviewFields[0]).not.toHaveProperty('text');
     for (const screenKey of [
       'code_input',
       'consent',
@@ -309,7 +321,7 @@ describe('admin screens', () => {
         .map((field) => field.field)
     ).toEqual(loginFields.slice(1).map((field) => field.field));
     expect(registrationFields.find((field) => field.field === 'email')).toMatchObject({
-      required: true,
+      required: false,
       block_type: 'identity_field',
     });
     expect(
@@ -380,6 +392,67 @@ describe('admin screens', () => {
       'profile_completion',
       'registration',
     ]);
+  });
+
+  it('removes the retired account overview description and security link from existing defaults', async () => {
+    rows.push({
+      id: 'screen-account-overview-default',
+      tenant_id: 'tenant-1',
+      screen_key: 'account_overview',
+      display_name: 'Account overview',
+      description: 'Account page introduction and safe navigation guidance.',
+      screen_kind: 'account',
+      fields_json: JSON.stringify([
+        {
+          field: 'heading.account_overview',
+          label: 'Manage your account',
+          required: false,
+          block_type: 'heading',
+          text: 'Review your profile, sign-in methods, sessions, and consent information.',
+          order: 10,
+        },
+        {
+          field: 'link.account_security',
+          label: 'Review security settings',
+          required: false,
+          block_type: 'link',
+          href: '#profile',
+          order: 20,
+        },
+      ]),
+      localizations_json: JSON.stringify({
+        ja: {
+          fields: {
+            'heading.account_overview-0': {
+              label: 'アカウントを管理',
+              text: 'Review your profile, sign-in methods, sessions, and consent information.',
+            },
+            'link.account_security-1': { label: 'セキュリティ設定を確認' },
+          },
+        },
+      }),
+      settings_json: JSON.stringify({ canvas_layout: 'wide' }),
+      is_active: 1,
+      is_system: 1,
+    });
+
+    const response = await adminScreensListHandler(createContext());
+    const body = await readJson(response);
+    const overview = (body.screens as Array<Record<string, unknown>>).find(
+      (screen) => screen.screen_key === 'account_overview'
+    );
+    const fields = overview?.fields as Array<Record<string, unknown>>;
+    const jaFields = (overview?.localizations as Record<string, Record<string, unknown>>).ja
+      ?.fields as Record<string, Record<string, unknown>>;
+
+    expect(fields).toHaveLength(1);
+    expect(fields[0]).toMatchObject({
+      field: 'heading.account_overview',
+      label: 'Manage your account',
+    });
+    expect(fields[0]).not.toHaveProperty('text');
+    expect(jaFields['heading.account_overview-0']).toEqual({ label: 'アカウントを管理' });
+    expect(jaFields).not.toHaveProperty('link.account_security-1');
   });
 
   it('preserves email and name fields added to the registration system screen', async () => {

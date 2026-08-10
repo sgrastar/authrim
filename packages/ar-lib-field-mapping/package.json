@@ -2,13 +2,21 @@
   "name": "@authrim/ar-lib-field-mapping",
   "version": "0.4.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts",
-      "default": "./src/index.ts"
+    "./contract": {
+      "import": "./dist/contract.js",
+      "types": "./dist/contract.d.ts",
+      "default": "./src/contract.ts"
+    },
+    "./runtime": {
+      "import": "./dist/runtime.js",
+      "types": "./dist/runtime.d.ts",
+      "default": "./src/runtime.ts"
+    },
+    "./authoring": {
+      "import": "./dist/authoring.js",
+      "types": "./dist/authoring.d.ts",
+      "default": "./src/authoring.ts"
     },
     "./experimental": {
       "import": "./dist/experimental.js",
