@@ -18,7 +18,7 @@ export interface ResolvedNotificationIntentTarget {
 }
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
-const SAFE_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,120}$/u;
+const SAFE_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,120}$/u;
 
 function d1(value: unknown, errorCode: string): D1Database {
   const candidate = value as Partial<D1Database> | null | undefined;

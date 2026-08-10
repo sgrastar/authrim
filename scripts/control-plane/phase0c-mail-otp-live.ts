@@ -629,7 +629,7 @@ export function strictTenantUsersDatabaseNames(value: unknown): string[] {
     throw new Error('phase0c_mail_users_databases_missing');
   }
   const names = Object.entries(lock.d1)
-    .filter(([bindingRef]) => /^(?:[A-Z][A-Z0-9_]*_)?TDB_USERS_[A-Z0-9_]+_CORE$/u.test(bindingRef))
+    .filter(([bindingRef]) => /^[A-Z][A-Z0-9_]*_TDB_USERS_[A-Z0-9_]+_CORE$/u.test(bindingRef))
     .flatMap(([, resource]) =>
       typeof resource?.name === 'string' && /^[a-z0-9][a-z0-9-]{0,127}$/u.test(resource.name)
         ? [resource.name]
@@ -647,7 +647,7 @@ export function strictTenantPiiDatabaseNames(value: unknown): string[] {
     throw new Error('phase0c_mail_pii_databases_missing');
   }
   const names = Object.entries(lock.d1)
-    .filter(([bindingRef]) => /^(?:[A-Z][A-Z0-9_]*_)?TDB_PII_[A-Z0-9_]+_PII$/u.test(bindingRef))
+    .filter(([bindingRef]) => /^[A-Z][A-Z0-9_]*_TDB_PII_[A-Z0-9_]+_PII$/u.test(bindingRef))
     .flatMap(([, resource]) =>
       typeof resource?.name === 'string' && /^[a-z0-9][a-z0-9-]{0,127}$/u.test(resource.name)
         ? [resource.name]

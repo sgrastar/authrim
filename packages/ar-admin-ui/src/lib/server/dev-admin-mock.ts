@@ -10463,7 +10463,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			residencyPartition: 'jp',
 			logicalShardId: `${roleName}:jp:dev-${index + 1}`,
 			databaseName: `authrim-development-${roleName}-jp-dev-${index + 1}`,
-			bindingRef: `TDB_${roleName.toUpperCase()}_DEV_${index + 1}_CORE`,
+			bindingRef: `DEVELOPMENT_TDB_${roleName.toUpperCase()}_DEV_${index + 1}_CORE`,
 			readReplicationMode: 'disabled',
 			migrationStreamId: 'd1-core'
 		}));
@@ -10654,7 +10654,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			shardId: 'dev-retired-shard-ready',
 			dataRole: 'tenant_core/default',
 			residencyPartition: 'global',
-			bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+			bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
 			databaseId: 'dev-database-retired-ready',
 			databaseName: 'dev-tenant-core-retired-ready',
 			shardStatus: devControlPlaneCleanupApproved ? 'deleting' : 'retired',
@@ -10675,14 +10675,14 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				? [
 						{
 							workerScriptName: 'dev-ar-auth',
-							bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+							bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
 							state: 'removed',
 							lastErrorCode: null,
 							updatedAt: NOW_SECONDS
 						},
 						{
 							workerScriptName: 'dev-ar-token',
-							bindingRef: 'TDB_DEFAULT_DEV_RETIRED',
+							bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
 							state: 'removing',
 							lastErrorCode: null,
 							updatedAt: NOW_SECONDS
@@ -10698,7 +10698,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			shardId: 'dev-retired-shard-gated',
 			dataRole: 'tenant_pii',
 			residencyPartition: 'eu',
-			bindingRef: 'TDB_PII_DEV_RETIRED',
+			bindingRef: 'DEVELOPMENT_TDB_PII_DEV_RETIRED',
 			databaseId: 'dev-database-retired-gated',
 			databaseName: 'dev-tenant-pii-retired-gated',
 			shardStatus: 'retired',

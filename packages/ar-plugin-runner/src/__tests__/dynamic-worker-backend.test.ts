@@ -87,7 +87,7 @@ describe('DynamicWorkerPluginBackend', () => {
       code,
       outbound,
       {
-        bindingRef: 'TDB_USERS_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
         dataRole: 'tenant_core/users',
         residencyPartition: 'jp',
       }
@@ -107,7 +107,7 @@ describe('DynamicWorkerPluginBackend', () => {
       requestId: outboundScope?.requestId,
       executionScope: {
         accountId: 'account-a',
-        bindingRef: 'TDB_USERS_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
         dataRole: 'tenant_core/users',
         residencyPartition: 'jp',
       },
@@ -229,7 +229,7 @@ describe('DynamicWorkerPluginBackend', () => {
       code,
       outbound,
       {
-        bindingRef: 'TDB_USERS_JP_0001_CORE',
+        bindingRef: 'TEST_TDB_USERS_JP_0001_CORE',
         dataRole: 'tenant_core/users',
         residencyPartition: 'jp',
       }

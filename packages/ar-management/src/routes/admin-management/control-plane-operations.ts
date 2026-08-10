@@ -120,7 +120,7 @@ const LOOKUP_HMAC_STATES = new Set([
   'blocked',
 ]);
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
-const SAFE_D1_BINDING = /^(?:[A-Z][A-Z0-9_]*_)?TDB_[A-Z0-9_]{1,123}$/u;
+const SAFE_D1_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
 const SAFE_DATABASE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u;
 const SHARD_CLEANUP_KEYS = new Set([
   'environmentId',
