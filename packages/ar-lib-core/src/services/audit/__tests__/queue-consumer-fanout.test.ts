@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 import { processAuditQueue } from '../queue-consumer';
 import type { AuditQueueMessage } from '../types';
 

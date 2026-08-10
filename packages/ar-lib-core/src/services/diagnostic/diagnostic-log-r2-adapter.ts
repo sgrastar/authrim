@@ -13,7 +13,7 @@ import {
   createLoggingId,
   deriveTenantKeyFromTenantId,
   formatUtcPartition,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import type {
   DiagnosticLogEntry,
   DiagnosticLogWriteResult,

@@ -1,4 +1,4 @@
-import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping/runtime';
 import type {
   FieldCatalogBundle,
   FieldRef,
@@ -8,7 +8,7 @@ import type {
   ReasonCode,
   SourceValueEnvelope,
   ValidationRule,
-} from '@authrim/ar-lib-field-mapping';
+} from '@authrim/ar-lib-field-mapping/contract';
 import type {
   SAMLAttribute,
   SAMLAttributeValueType,

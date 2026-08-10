@@ -336,6 +336,34 @@ type RootTranslation = {
 	 */
 	account_passkeyUnsupported: string
 	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​ ​o​r​ ​t​i​m​e​d​ ​o​u​t​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationCancelled: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​r​e​g​i​s​t​e​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
+	 */
+	account_passkeyAlreadyRegistered: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​i​n​t​e​r​r​u​p​t​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationInterrupted: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​d​o​e​s​ ​n​o​t​ ​m​e​e​t​ ​t​h​e​ ​r​e​q​u​i​r​e​m​e​n​t​s​ ​f​o​r​ ​t​h​i​s​ ​P​a​s​s​k​e​y​.​ ​T​r​y​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnsupported: string
+	/**
+	 * T​h​e​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​ ​P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.​ ​T​r​y​ ​a​g​a​i​n​ ​o​r​ ​u​s​e​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnavailable: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​i​s​ ​s​i​t​e​.​ ​C​o​n​t​a​c​t​ ​s​u​p​p​o​r​t​ ​i​f​ ​t​h​e​ ​p​r​o​b​l​e​m​ ​c​o​n​t​i​n​u​e​s​.
+	 */
+	account_passkeyConfigurationError: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationFailed: string
+	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s
 	 */
 	account_totp: string
@@ -1728,6 +1756,34 @@ export type TranslationFunctions = {
 	 * This browser does not support passkey registration.
 	 */
 	account_passkeyUnsupported: () => LocalizedString
+	/**
+	 * Passkey registration was cancelled or timed out. Please try again.
+	 */
+	account_passkeyRegistrationCancelled: () => LocalizedString
+	/**
+	 * This authenticator is already registered for this account.
+	 */
+	account_passkeyAlreadyRegistered: () => LocalizedString
+	/**
+	 * Passkey registration was interrupted. Please try again.
+	 */
+	account_passkeyRegistrationInterrupted: () => LocalizedString
+	/**
+	 * This authenticator does not meet the requirements for this Passkey. Try another authenticator.
+	 */
+	account_passkeyAuthenticatorUnsupported: () => LocalizedString
+	/**
+	 * The authenticator could not complete Passkey registration. Try again or use another authenticator.
+	 */
+	account_passkeyAuthenticatorUnavailable: () => LocalizedString
+	/**
+	 * Passkey registration is not available for this site. Contact support if the problem continues.
+	 */
+	account_passkeyConfigurationError: () => LocalizedString
+	/**
+	 * Passkey registration failed. Please try again.
+	 */
+	account_passkeyRegistrationFailed: () => LocalizedString
 	/**
 	 * Authenticator apps
 	 */

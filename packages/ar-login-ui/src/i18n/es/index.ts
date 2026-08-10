@@ -64,6 +64,18 @@ const es = createTranslation({
 	account_empty: 'No hay elementos',
 	account_planned: 'Planificado',
 	account_passkeyUnsupported: 'Este navegador no permite registrar Passkeys.',
+	account_passkeyRegistrationCancelled:
+		'El registro de la Passkey se canceló o agotó el tiempo de espera. Inténtalo de nuevo.',
+	account_passkeyAlreadyRegistered: 'Este autenticador ya está registrado para esta cuenta.',
+	account_passkeyRegistrationInterrupted:
+		'El registro de la Passkey se interrumpió. Inténtalo de nuevo.',
+	account_passkeyAuthenticatorUnsupported:
+		'Este autenticador no cumple los requisitos de esta Passkey. Prueba con otro autenticador.',
+	account_passkeyAuthenticatorUnavailable:
+		'El autenticador no pudo completar el registro de la Passkey. Inténtalo de nuevo o usa otro autenticador.',
+	account_passkeyConfigurationError:
+		'El registro de Passkeys no está disponible para este sitio. Contacta con soporte si el problema continúa.',
+	account_passkeyRegistrationFailed: 'No se pudo registrar la Passkey. Inténtalo de nuevo.',
 	account_totp: 'Aplicaciones de autenticación',
 	account_totpName: 'Nombre de la aplicación',
 	account_totpDefaultName: 'Aplicación de autenticación',

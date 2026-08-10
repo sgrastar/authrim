@@ -78,6 +78,16 @@ const th = createTranslation({
 	account_empty: 'ไม่มีรายการ',
 	account_planned: 'วางแผนไว้',
 	account_passkeyUnsupported: 'เบราว์เซอร์นี้ไม่รองรับการลงทะเบียนพาสคีย์',
+	account_passkeyRegistrationCancelled: 'การลงทะเบียนพาสคีย์ถูกยกเลิกหรือหมดเวลา โปรดลองอีกครั้ง',
+	account_passkeyAlreadyRegistered: 'ตัวตรวจสอบสิทธิ์นี้ลงทะเบียนกับบัญชีนี้แล้ว',
+	account_passkeyRegistrationInterrupted: 'การลงทะเบียนพาสคีย์ถูกขัดจังหวะ โปรดลองอีกครั้ง',
+	account_passkeyAuthenticatorUnsupported:
+		'ตัวตรวจสอบสิทธิ์นี้ไม่ตรงตามข้อกำหนดของพาสคีย์ โปรดลองใช้ตัวตรวจสอบสิทธิ์อื่น',
+	account_passkeyAuthenticatorUnavailable:
+		'ตัวตรวจสอบสิทธิ์ไม่สามารถลงทะเบียนพาสคีย์ให้เสร็จได้ โปรดลองอีกครั้งหรือใช้ตัวตรวจสอบสิทธิ์อื่น',
+	account_passkeyConfigurationError:
+		'เว็บไซต์นี้ไม่พร้อมให้ลงทะเบียนพาสคีย์ โปรดติดต่อฝ่ายสนับสนุนหากปัญหายังคงอยู่',
+	account_passkeyRegistrationFailed: 'ลงทะเบียนพาสคีย์ไม่สำเร็จ โปรดลองอีกครั้ง',
 	account_totp: 'แอปยืนยันตัวตน',
 	account_totpName: 'ชื่อแอปยืนยันตัวตน',
 	account_totpDefaultName: 'แอปยืนยันตัวตน',

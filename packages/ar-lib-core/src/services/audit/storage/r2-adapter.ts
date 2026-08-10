@@ -12,7 +12,7 @@
 
 import type { EventLogEntry, PIILogEntry } from '../types';
 import { extractAuditEntryFromCanonicalPayload } from '../canonical-format';
-import { createLoggingId } from '@authrim/ar-lib-logging';
+import { createLoggingId } from '@authrim/ar-lib-logging/contract';
 import { resolveAuditTenantKey, type TenantKeyResolver } from '../tenant-key';
 import { readR2ObjectTextWithLimit } from '../../../utils/body-limits';
 import type {

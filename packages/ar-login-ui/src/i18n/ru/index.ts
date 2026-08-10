@@ -63,6 +63,18 @@ const ru = createTranslation({
 	account_empty: 'Нет элементов',
 	account_planned: 'Запланировано',
 	account_passkeyUnsupported: 'Этот браузер не поддерживает регистрацию Passkey.',
+	account_passkeyRegistrationCancelled:
+		'Регистрация Passkey была отменена или время ожидания истекло. Повторите попытку.',
+	account_passkeyAlreadyRegistered:
+		'Этот аутентификатор уже зарегистрирован для данной учётной записи.',
+	account_passkeyRegistrationInterrupted: 'Регистрация Passkey была прервана. Повторите попытку.',
+	account_passkeyAuthenticatorUnsupported:
+		'Этот аутентификатор не соответствует требованиям Passkey. Используйте другой аутентификатор.',
+	account_passkeyAuthenticatorUnavailable:
+		'Аутентификатор не смог завершить регистрацию Passkey. Повторите попытку или используйте другой аутентификатор.',
+	account_passkeyConfigurationError:
+		'Регистрация Passkey недоступна для этого сайта. Если проблема не исчезнет, обратитесь в службу поддержки.',
+	account_passkeyRegistrationFailed: 'Не удалось зарегистрировать Passkey. Повторите попытку.',
 	account_totp: 'Приложения-аутентификаторы',
 	account_totpName: 'Название приложения',
 	account_totpDefaultName: 'Приложение-аутентификатор',

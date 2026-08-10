@@ -39,4 +39,71 @@ describe('Account Page published composition', () => {
 		expect(source).toContain('attempt < 120 && generation === emailChangePollGeneration');
 		expect(source).toContain('emailChangePollGeneration += 1');
 	});
+
+	it('renders the account shell immediately and resolves account sections independently', () => {
+		expect(source).not.toContain('<Spinner size="lg" />');
+		expect(source).toContain('loading={profileLoading}');
+		expect(source).toContain("loadingAreas={initialLoadingAreas(['devices'])}");
+		expect(source).toContain('loading={consentsLoading}');
+		expect(source).toContain('loading={operationsLoading}');
+		expect(source).not.toContain('loading={profileLoading || consentsLoading}');
+		expect(source).not.toContain('loading={profileLoading || operationsLoading}');
+		expect(source).not.toContain('if (profileLoading) return areas;');
+		expect(source).toContain('aria-busy={profileLoading || capabilitiesLoading}');
+		expect(source).toContain('const profileRequest = accountAPI.getProfile()');
+		expect(source).toContain('.getDevices()');
+		expect(source).toContain('.getCapabilities()');
+		expect(source.indexOf('const accountLoadRequest = loadAccountPage()')).toBeLessThan(
+			source.indexOf('passkeySupported = await passkeySupportRequest')
+		);
+	});
+
+	it('scopes manual security refreshes to the widget that requested them', () => {
+		expect(source).toContain('async function refreshSecurity(areas?: SecurityArea[])');
+		expect(source).toContain(
+			"requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null"
+		);
+		expect(source).toContain("loading={securityAreasRefreshing(['passkeys'])}");
+		expect(source).not.toContain('loading={securityLoading}');
+	});
+
+	it('scopes security errors to the widget that owns the failed action', () => {
+		expect(source).toContain(
+			"setSecurityError('passkeys', localizedPasskeyRegistrationError(error))"
+		);
+		expect(source).toContain("error={securityErrorFor(['passkeys'])}");
+		expect(source).toContain("error={securityErrorFor(['sessions'])}");
+		expect(source).not.toContain('error={securityError}');
+	});
+
+	it('does not render skeleton boxes until their configured placement is known and visible', () => {
+		const compositionGate = source.indexOf('{#if capabilitiesLoading || !capabilitiesResolved}');
+		const configuredComposition = source.indexOf(
+			'{:else if accountCapabilities?.account_page}',
+			compositionGate
+		);
+		const fallbackComposition = source.indexOf(
+			'\n\t\t\t{:else}\n\t\t\t\t<AccountProfileSection',
+			configuredComposition
+		);
+
+		expect(compositionGate).toBeGreaterThan(-1);
+		expect(configuredComposition).toBeGreaterThan(compositionGate);
+		expect(fallbackComposition).toBeGreaterThan(configuredComposition);
+		expect(source).not.toContain(
+			'return authenticationMethodsLoading || Boolean(authenticationMethods?.passkey?.enabled);'
+		);
+		expect(source).not.toContain('return consentsLoading || consents.length > 0;');
+		expect(source).not.toContain('return sessionsLoading || sessions.length > 1;');
+	});
+
+	it('hydrates the published composition and condition inputs before the first widget render', () => {
+		expect(source).toContain('initialCapabilities?: AccountCapabilities | null;');
+		expect(source).toContain(
+			'initialAuthenticationMethods?: AuthenticationMethodsResponse | null;'
+		);
+		expect(source).toContain('initialPlacementConditions.consentRecordsAvailable');
+		expect(source).toContain('initialPlacementConditions.multipleSessions');
+		expect(source).toContain('capabilitiesLoading = $state(!embeddedCapabilitiesResolved)');
+	});
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button, Card, Input } from '$lib/components';
+	import AccountSectionSkeleton from './AccountSectionSkeleton.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { isTotpDeleteProofReady } from '$lib/account/totp-proof';
 	import type {
@@ -9,6 +10,7 @@
 		AccountTotpCredential
 	} from '$lib/api/account';
 	import { formatTimestamp } from '$lib/utils/date';
+	type SecurityArea = 'devices' | 'sessions' | 'passkeys' | 'totp' | 'social';
 
 	let {
 		devices = [],
@@ -18,6 +20,7 @@
 		totpBackupCodes = { total: 0, remaining: 0 },
 		totpEnrollment = null,
 		loading = false,
+		loadingAreas = [],
 		actionLoading = '',
 		error = '',
 		reauthNeeded = false,
@@ -49,15 +52,16 @@
 			backupCodes: string[];
 		} | null;
 		loading?: boolean;
+		loadingAreas?: SecurityArea[];
 		actionLoading?: string;
 		error?: string;
 		reauthNeeded?: boolean;
 		passkeySupported?: boolean;
 		totpManagementEnabled?: boolean;
-		areas?: Array<'devices' | 'sessions' | 'passkeys' | 'totp' | 'social'>;
+		areas?: SecurityArea[];
 		title?: string;
 		showSectionHeadings?: boolean;
-		onRefresh: () => void;
+		onRefresh: (areas: SecurityArea[]) => void | Promise<void>;
 		onRevokeSession: (id: string) => void;
 		onAddPasskey: (deviceName: string) => void;
 		onDeletePasskey: (id: string) => void;
@@ -69,8 +73,12 @@
 		onReauth: () => void;
 	}>();
 
-	function shows(area: 'devices' | 'sessions' | 'passkeys' | 'totp' | 'social'): boolean {
+	function shows(area: SecurityArea): boolean {
 		return areas.includes(area);
+	}
+
+	function areaLoading(area: SecurityArea): boolean {
+		return loadingAreas.includes(area);
 	}
 
 	function sessionTitle(session: AccountSession): string {
@@ -148,10 +156,15 @@
 </script>
 
 <Card>
-	<div class="account-panel">
+	<div class="account-panel" aria-busy={loading || loadingAreas.length > 0}>
 		<div class="panel-heading">
 			<h2>{title || $LL.account_securityTitle()}</h2>
-			<Button variant="ghost" size="sm" {loading} onclick={onRefresh}>
+			<Button
+				variant="ghost"
+				size="sm"
+				loading={loading || loadingAreas.length > 0}
+				onclick={() => onRefresh(areas)}
+			>
 				{$LL.account_refresh()}
 			</Button>
 		</div>
@@ -167,7 +180,9 @@
 			<section class="security-block">
 				{#if showSectionHeadings}<h3>{$LL.account_devices()}</h3>{/if}
 				<p class="section-description">{$LL.account_connectedDevicesDescription()}</p>
-				{#if devices.length === 0}
+				{#if areaLoading('devices')}
+					<AccountSectionSkeleton variant="list" rows={0} />
+				{:else if devices.length === 0}
 					<p class="empty-text">{$LL.account_noConnectedDevices()}</p>
 				{:else}
 					<ul class="item-list">
@@ -198,7 +213,9 @@
 			<section class="security-block">
 				{#if showSectionHeadings}<h3>{$LL.account_sessions()}</h3>{/if}
 				<p class="section-description">{$LL.account_sessionsDescription()}</p>
-				{#if sessions.length === 0}
+				{#if areaLoading('sessions')}
+					<AccountSectionSkeleton variant="list" rows={1} showAction />
+				{:else if sessions.length === 0}
 					<p class="empty-text">{$LL.account_empty()}</p>
 				{:else}
 					<ul class="item-list">
@@ -240,213 +257,233 @@
 		{#if shows('passkeys')}
 			<section class="security-block">
 				{#if showSectionHeadings}<h3>{$LL.account_passkeys()}</h3>{/if}
-				<form
-					class="add-passkey"
-					onsubmit={(event) => {
-						event.preventDefault();
-						addPasskey();
-					}}
-				>
-					<Input
-						label={$LL.account_passkeyName()}
-						bind:value={newPasskeyName}
-						disabled={!passkeySupported || actionLoading === 'passkey:add'}
-						maxlength={100}
-					/>
-					<Button
-						variant="primary"
-						type="submit"
-						loading={actionLoading === 'passkey:add'}
-						disabled={!passkeySupported}
-					>
-						{$LL.account_addPasskey()}
-					</Button>
-				</form>
-				{#if !passkeySupported}
-					<p class="muted">{$LL.account_passkeyUnsupported()}</p>
-				{/if}
-
-				{#if passkeys.length === 0}
-					<p class="empty-text">{$LL.account_empty()}</p>
+				{#if areaLoading('passkeys')}
+					<AccountSectionSkeleton variant="form-list" rows={1} showAction showIcon />
 				{:else}
-					<ul class="item-list">
-						{#each passkeys as passkey (passkey.id)}
-							<li>
-								<div>
-									<strong>{passkey.device_name ?? passkey.id}</strong>
-									{#if passkey.provider?.name || passkey.aaguid}
-										<span class="passkey-provider">
-											{#if passkey.provider?.icon_light}
-												<img src={passkey.provider.icon_light} alt="" loading="lazy" />
-											{/if}
-											{passkey.provider?.name ?? passkey.aaguid}
-										</span>
-									{/if}
-									<span
-										>{formatTimestamp(
-											passkey.last_used_at ?? passkey.created_at,
-											getLocale()
-										)}</span
-									>
-								</div>
-								<Button
-									variant="danger"
-									size="sm"
-									loading={actionLoading === `passkey:${passkey.id}`}
-									onclick={() => onDeletePasskey(passkey.id)}
-								>
-									{$LL.account_delete()}
-								</Button>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</section>
-		{/if}
-
-		{#if shows('totp') && (totpManagementEnabled || totpCredentials.length > 0 || totpEnrollment)}
-			<section class="security-block">
-				{#if showSectionHeadings}<h3>{$LL.account_totp()}</h3>{/if}
-				{#if totpManagementEnabled}
 					<form
 						class="add-passkey"
 						onsubmit={(event) => {
 							event.preventDefault();
-							startTotpEnrollment();
+							addPasskey();
 						}}
 					>
 						<Input
-							label={$LL.account_totpName()}
-							bind:value={newTotpLabel}
-							disabled={actionLoading === 'totp:add'}
+							label={$LL.account_passkeyName()}
+							bind:value={newPasskeyName}
+							disabled={!passkeySupported || actionLoading === 'passkey:add'}
 							maxlength={100}
 						/>
-						<Button variant="primary" type="submit" loading={actionLoading === 'totp:add'}>
-							{$LL.account_addTotp()}
+						<Button
+							variant="primary"
+							type="submit"
+							loading={actionLoading === 'passkey:add'}
+							disabled={!passkeySupported}
+						>
+							{$LL.account_addPasskey()}
 						</Button>
 					</form>
-				{/if}
+					{#if !passkeySupported}
+						<p class="muted">{$LL.account_passkeyUnsupported()}</p>
+					{/if}
 
-				{#if totpEnrollment}
-					<div class="totp-enrollment">
-						{#if totpEnrollment.backupCodes.length > 0}
-							<h4>{$LL.account_totpBackupCodes()}</h4>
-							<ul class="backup-code-list">
-								{#each totpEnrollment.backupCodes as backupCode (backupCode)}
-									<li><code>{backupCode}</code></li>
-								{/each}
-							</ul>
-							<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
-								{$LL.account_totpDone()}
-							</Button>
-						{:else}
-							<h4>{$LL.account_totpSetupTitle()}</h4>
-							{#if totpQrDataUrl}
-								<img class="totp-qr" src={totpQrDataUrl} alt={$LL.account_totpQrAlt()} />
-							{/if}
-							<div class="manual-key">
-								<span>{$LL.account_totpManualKey()}</span>
-								<code>{totpEnrollment.secret}</code>
-							</div>
-							<div class="totp-inline-action">
-								<input
-									class="totp-code-input"
-									autocomplete="one-time-code"
-									inputmode="numeric"
-									maxlength={8}
-									placeholder={$LL.account_totpActivationCode()}
-									bind:value={totpActivationCode}
-								/>
-								<Button
-									variant="primary"
-									size="sm"
-									loading={actionLoading === `totp:activate:${totpEnrollment.credentialId}`}
-									disabled={!/^\d{6}$|^\d{8}$/.test(totpActivationCode.trim())}
-									onclick={activateTotpEnrollment}
-								>
-									{$LL.account_totpActivate()}
-								</Button>
-								<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
-									{$LL.dialog_cancel()}
-								</Button>
-							</div>
-						{/if}
-					</div>
-				{/if}
-
-				{#if activeTotpCredentials.length > 0}
-					<p class="muted">
-						{$LL.account_totpBackupCodesRemaining({
-							remaining: totpBackupCodes.remaining,
-							total: totpBackupCodes.total
-						})}
-					</p>
-					<div class="totp-inline-action">
-						<input
-							class="totp-code-input"
-							autocomplete="one-time-code"
-							inputmode="numeric"
-							maxlength={8}
-							placeholder={$LL.account_totpCurrentCode()}
-							bind:value={totpRegenerateCode}
-						/>
-						<Button
-							variant="secondary"
-							size="sm"
-							loading={actionLoading === 'totp:backup-codes'}
-							disabled={!/^\d{6}$|^\d{8}$/.test(totpRegenerateCode.trim())}
-							onclick={regenerateTotpBackupCodes}
-						>
-							{$LL.account_totpRegenerateBackupCodes()}
-						</Button>
-					</div>
-				{/if}
-
-				{#if totpCredentials.length === 0}
-					<p class="empty-text">{$LL.account_empty()}</p>
-				{:else}
-					<ul class="item-list">
-						{#each totpCredentials as credential (credential.id)}
-							<li class="totp-list-item">
-								<div>
-									<strong>{credential.label || $LL.account_totpDefaultName()}</strong>
-									<span>
-										{credential.algorithm} / {credential.digits} / {credential.period}s
-										{#if credential.status !== 'active'}
-											<span class="inline-tag">{$LL.account_totpPending()}</span>
+					{#if passkeys.length === 0}
+						<p class="empty-text">{$LL.account_empty()}</p>
+					{:else}
+						<ul class="item-list">
+							{#each passkeys as passkey (passkey.id)}
+								<li class="passkey-row">
+									<div
+										class="passkey-summary"
+										class:has-provider-icon={Boolean(
+											passkey.provider?.icon_light || passkey.provider?.icon_dark
+										)}
+									>
+										{#if passkey.provider?.icon_light || passkey.provider?.icon_dark}
+											<span class="passkey-provider-icon" aria-hidden="true">
+												<img
+													class="passkey-provider-icon__light"
+													src={passkey.provider.icon_light ?? passkey.provider.icon_dark ?? ''}
+													alt=""
+													loading="lazy"
+												/>
+												<img
+													class="passkey-provider-icon__dark"
+													src={passkey.provider.icon_dark ?? passkey.provider.icon_light ?? ''}
+													alt=""
+													loading="lazy"
+												/>
+											</span>
 										{/if}
-									</span>
-									<span>
-										{credential.last_used_at
-											? $LL.account_totpLastUsed({
-													time: formatTimestamp(credential.last_used_at, getLocale())
-												})
-											: formatTimestamp(credential.created_at, getLocale())}
-									</span>
-								</div>
-								<div class="totp-delete">
-									<input
-										class="totp-code-input"
-										autocomplete="one-time-code"
-										inputmode="text"
-										maxlength={32}
-										placeholder={$LL.account_totpDeleteCode()}
-										value={totpDeleteCodes[credential.id] ?? ''}
-										oninput={(event) => updateTotpDeleteCode(credential.id, event)}
-									/>
+										<strong class="passkey-provider-name"
+											>{passkey.provider?.name ?? $LL.account_passkeys()}</strong
+										>
+										<span class="passkey-created-at"
+											>{formatTimestamp(passkey.created_at, getLocale())}</span
+										>
+									</div>
 									<Button
 										variant="danger"
 										size="sm"
-										loading={actionLoading === `totp:${credential.id}`}
-										disabled={!isTotpDeleteProofReady(totpDeleteCodes[credential.id] ?? '')}
-										onclick={() => deleteTotpCredential(credential.id)}
+										loading={actionLoading === `passkey:${passkey.id}`}
+										onclick={() => onDeletePasskey(passkey.id)}
 									>
 										{$LL.account_delete()}
 									</Button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/if}
+			</section>
+		{/if}
+
+		{#if shows('totp') && (areaLoading('totp') || totpManagementEnabled || totpCredentials.length > 0 || totpEnrollment)}
+			<section class="security-block">
+				{#if showSectionHeadings}<h3>{$LL.account_totp()}</h3>{/if}
+				{#if areaLoading('totp')}
+					<AccountSectionSkeleton variant="form-list" rows={1} showAction />
+				{:else}
+					{#if totpManagementEnabled}
+						<form
+							class="add-passkey"
+							onsubmit={(event) => {
+								event.preventDefault();
+								startTotpEnrollment();
+							}}
+						>
+							<Input
+								label={$LL.account_totpName()}
+								bind:value={newTotpLabel}
+								disabled={actionLoading === 'totp:add'}
+								maxlength={100}
+							/>
+							<Button variant="primary" type="submit" loading={actionLoading === 'totp:add'}>
+								{$LL.account_addTotp()}
+							</Button>
+						</form>
+					{/if}
+
+					{#if totpEnrollment}
+						<div class="totp-enrollment">
+							{#if totpEnrollment.backupCodes.length > 0}
+								<h4>{$LL.account_totpBackupCodes()}</h4>
+								<ul class="backup-code-list">
+									{#each totpEnrollment.backupCodes as backupCode (backupCode)}
+										<li><code>{backupCode}</code></li>
+									{/each}
+								</ul>
+								<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
+									{$LL.account_totpDone()}
+								</Button>
+							{:else}
+								<h4>{$LL.account_totpSetupTitle()}</h4>
+								{#if totpQrDataUrl}
+									<img class="totp-qr" src={totpQrDataUrl} alt={$LL.account_totpQrAlt()} />
+								{/if}
+								<div class="manual-key">
+									<span>{$LL.account_totpManualKey()}</span>
+									<code>{totpEnrollment.secret}</code>
 								</div>
-							</li>
-						{/each}
-					</ul>
+								<div class="totp-inline-action">
+									<input
+										class="totp-code-input"
+										autocomplete="one-time-code"
+										inputmode="numeric"
+										maxlength={8}
+										placeholder={$LL.account_totpActivationCode()}
+										bind:value={totpActivationCode}
+									/>
+									<Button
+										variant="primary"
+										size="sm"
+										loading={actionLoading === `totp:activate:${totpEnrollment.credentialId}`}
+										disabled={!/^\d{6}$|^\d{8}$/.test(totpActivationCode.trim())}
+										onclick={activateTotpEnrollment}
+									>
+										{$LL.account_totpActivate()}
+									</Button>
+									<Button variant="secondary" size="sm" onclick={onClearTotpEnrollment}>
+										{$LL.dialog_cancel()}
+									</Button>
+								</div>
+							{/if}
+						</div>
+					{/if}
+
+					{#if activeTotpCredentials.length > 0}
+						<p class="muted">
+							{$LL.account_totpBackupCodesRemaining({
+								remaining: totpBackupCodes.remaining,
+								total: totpBackupCodes.total
+							})}
+						</p>
+						<div class="totp-inline-action">
+							<input
+								class="totp-code-input"
+								autocomplete="one-time-code"
+								inputmode="numeric"
+								maxlength={8}
+								placeholder={$LL.account_totpCurrentCode()}
+								bind:value={totpRegenerateCode}
+							/>
+							<Button
+								variant="secondary"
+								size="sm"
+								loading={actionLoading === 'totp:backup-codes'}
+								disabled={!/^\d{6}$|^\d{8}$/.test(totpRegenerateCode.trim())}
+								onclick={regenerateTotpBackupCodes}
+							>
+								{$LL.account_totpRegenerateBackupCodes()}
+							</Button>
+						</div>
+					{/if}
+
+					{#if totpCredentials.length === 0}
+						<p class="empty-text">{$LL.account_empty()}</p>
+					{:else}
+						<ul class="item-list">
+							{#each totpCredentials as credential (credential.id)}
+								<li class="totp-list-item">
+									<div>
+										<strong>{credential.label || $LL.account_totpDefaultName()}</strong>
+										<span>
+											{credential.algorithm} / {credential.digits} / {credential.period}s
+											{#if credential.status !== 'active'}
+												<span class="inline-tag">{$LL.account_totpPending()}</span>
+											{/if}
+										</span>
+										<span>
+											{credential.last_used_at
+												? $LL.account_totpLastUsed({
+														time: formatTimestamp(credential.last_used_at, getLocale())
+													})
+												: formatTimestamp(credential.created_at, getLocale())}
+										</span>
+									</div>
+									<div class="totp-delete">
+										<input
+											class="totp-code-input"
+											autocomplete="one-time-code"
+											inputmode="text"
+											maxlength={32}
+											placeholder={$LL.account_totpDeleteCode()}
+											value={totpDeleteCodes[credential.id] ?? ''}
+											oninput={(event) => updateTotpDeleteCode(credential.id, event)}
+										/>
+										<Button
+											variant="danger"
+											size="sm"
+											loading={actionLoading === `totp:${credential.id}`}
+											disabled={!isTotpDeleteProofReady(totpDeleteCodes[credential.id] ?? '')}
+											onclick={() => deleteTotpCredential(credential.id)}
+										>
+											{$LL.account_delete()}
+										</Button>
+									</div>
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				{/if}
 			</section>
 		{/if}
@@ -454,7 +491,11 @@
 		{#if shows('social')}
 			<section class="security-block planned">
 				{#if showSectionHeadings}<h3>{$LL.account_socialAccounts()}</h3>{/if}
-				<p class="muted">{$LL.account_planned()}</p>
+				{#if areaLoading('social')}
+					<AccountSectionSkeleton variant="list" rows={1} />
+				{:else}
+					<p class="muted">{$LL.account_planned()}</p>
+				{/if}
 			</section>
 		{/if}
 	</div>
@@ -657,18 +698,63 @@
 		white-space: nowrap;
 	}
 
-	.passkey-provider {
-		display: inline-flex;
+	.item-list .passkey-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
-		gap: 6px;
-		margin-top: 3px;
 	}
 
-	.passkey-provider img {
-		width: 18px;
-		height: 18px;
-		border-radius: 4px;
+	.passkey-summary {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: auto auto;
+		column-gap: 10px;
+		row-gap: 2px;
+		align-items: center;
+		min-width: 0;
+	}
+
+	.passkey-summary.has-provider-icon {
+		grid-template-columns: 36px minmax(0, 1fr);
+	}
+
+	.passkey-provider-icon {
+		grid-column: 1;
+		grid-row: 1 / span 2;
+		display: grid !important;
+		place-items: center;
+		width: 36px;
+		height: 36px;
+	}
+
+	.passkey-provider-icon img {
+		grid-area: 1 / 1;
+		width: 34px;
+		height: 34px;
+		border-radius: 8px;
 		object-fit: contain;
+	}
+
+	.passkey-provider-icon__dark {
+		display: none !important;
+	}
+
+	:global([data-theme='dark']) .passkey-provider-icon__light {
+		display: none !important;
+	}
+
+	:global([data-theme='dark']) .passkey-provider-icon__dark {
+		display: block !important;
+	}
+
+	.passkey-provider-name,
+	.passkey-created-at {
+		grid-column: 1;
+	}
+
+	.passkey-summary.has-provider-icon .passkey-provider-name,
+	.passkey-summary.has-provider-icon .passkey-created-at {
+		grid-column: 2;
 	}
 
 	.panel-error {

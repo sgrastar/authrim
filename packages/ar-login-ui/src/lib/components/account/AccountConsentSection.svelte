@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { Card } from '$lib/components';
+	import AccountSectionSkeleton from './AccountSectionSkeleton.svelte';
 	import type { AccountConsent } from '$lib/api/account';
 	import { formatTimestamp } from '$lib/utils/date';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 
 	let {
 		consents = [],
+		loading = false,
 		error = '',
 		title = ''
 	} = $props<{
 		consents?: AccountConsent[];
+		loading?: boolean;
 		error?: string;
 		title?: string;
 	}>();
@@ -73,14 +76,16 @@
 </script>
 
 <Card>
-	<section class="consent-panel">
+	<section class="consent-panel" aria-busy={loading}>
 		<div class="panel-heading">
 			<h2>{title || $LL.account_consentTitle()}</h2>
-			<span class="count-badge">{consents.length}</span>
+			{#if !loading}<span class="count-badge">{consents.length}</span>{/if}
 		</div>
 		<p class="panel-description">{$LL.account_consentDescription()}</p>
 
-		{#if error}
+		{#if loading}
+			<AccountSectionSkeleton variant="list" />
+		{:else if error}
 			<p class="panel-error">{error}</p>
 		{:else if consents.length === 0}
 			<p class="empty-text">{$LL.account_consentEmpty()}</p>

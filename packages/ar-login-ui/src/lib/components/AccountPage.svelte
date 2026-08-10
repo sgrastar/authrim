@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-	import { Button, Spinner } from '$lib/components';
+	import { Button } from '$lib/components';
 	import {
 		accountAPI,
 		type AccountConsent,
@@ -25,7 +26,8 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import {
 		fetchAuthenticationMethods,
-		type AuthenticationMethods
+		type AuthenticationMethods,
+		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
 	import { auth } from '$lib/stores/auth';
 	import {
@@ -34,6 +36,7 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
 	} from '$lib/webauthn/signal';
+	import { classifyPasskeyRegistrationError } from '$lib/webauthn/passkey-registration-error';
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
 	import type { APIError } from '$lib/api/client';
@@ -42,10 +45,42 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 
-	const { brandingStore, languageStore, loginUIPageStore } = useLoginUIStores();
+	let {
+		initialCapabilities = null,
+		initialCapabilitiesResolved = false,
+		initialPlacementConditions = {
+			consentRecordsAvailable: null,
+			multipleSessions: null
+		},
+		initialAuthenticationMethods = null
+	} = $props<{
+		initialCapabilities?: AccountCapabilities | null;
+		initialCapabilitiesResolved?: boolean;
+		initialPlacementConditions?: {
+			consentRecordsAvailable: boolean | null;
+			multipleSessions: boolean | null;
+		};
+		initialAuthenticationMethods?: AuthenticationMethodsResponse | null;
+	}>();
+	const embeddedCapabilities = untrack(() => initialCapabilities);
+	const embeddedCapabilitiesResolved = untrack(() => initialCapabilitiesResolved);
+	const embeddedAuthenticationMethods = untrack(() => initialAuthenticationMethods);
 
-	let loading = $state(true);
+	const { brandingStore, languageStore, loginUIPageStore } = useLoginUIStores();
+	type SecurityArea = 'devices' | 'sessions' | 'passkeys' | 'totp' | 'social';
+	const ALL_SECURITY_AREAS: SecurityArea[] = ['devices', 'sessions', 'passkeys', 'totp', 'social'];
+
 	let logoutLoading = $state(false);
+	let profileLoading = $state(true);
+	let devicesLoading = $state(true);
+	let sessionsLoading = $state(true);
+	let passkeysLoading = $state(true);
+	let totpLoading = $state(true);
+	let operationsLoading = $state(true);
+	let consentsLoading = $state(true);
+	let capabilitiesLoading = $state(!embeddedCapabilitiesResolved);
+	let capabilitiesResolved = $state(embeddedCapabilitiesResolved);
+	let authenticationMethodsLoading = $state(!embeddedAuthenticationMethods);
 	let profile = $state<AccountProfile | null>(null);
 	let devices = $state<AccountDevice[]>([]);
 	let sessions = $state<AccountSession[]>([]);
@@ -60,8 +95,10 @@
 	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
 	let consents = $state<AccountConsent[]>([]);
-	let authenticationMethods = $state<AuthenticationMethods | null>(null);
-	let accountCapabilities = $state<AccountCapabilities | null>(null);
+	let authenticationMethods = $state<AuthenticationMethods | null>(
+		embeddedAuthenticationMethods?.methods ?? null
+	);
+	let accountCapabilities = $state<AccountCapabilities | null>(embeddedCapabilities);
 	let accountError = $state('');
 	let profileError = $state('');
 	let consentError = $state('');
@@ -73,9 +110,11 @@
 	let emailChangeChallengeId = $state('');
 	let emailChangeIdempotencyKey = $state('');
 	let emailChangePollGeneration = 0;
-	let securityError = $state('');
+	let consentLoadGeneration = 0;
+	let securityErrors = $state<Partial<Record<SecurityArea, string>>>({});
 	let reauthNeeded = $state(false);
-	let securityLoading = $state(false);
+	let securityRefreshingAreas = $state<SecurityArea[]>([]);
+	const securityRefreshCounts = new SvelteMap<SecurityArea, number>();
 	let actionLoading = $state('');
 	let passkeySupported = $state(false);
 	let currentLocale = $state<Locales>(getLocale());
@@ -116,12 +155,6 @@
 		}
 	}
 
-	function firstLocalizedApiError(
-		errors: Array<APIError | null | undefined>,
-		fallback: string
-	): string {
-		return localizeApiError(errors.find(Boolean), fallback);
-	}
 	let passkeyReauthAvailable = $derived(
 		Boolean(
 			passkeySupported &&
@@ -154,6 +187,88 @@
 				(authenticationMethods.totp.accountLinkEnabled ?? false))
 		)
 	);
+	function initialLoadingAreas(areas: SecurityArea[]): SecurityArea[] {
+		return areas.filter((area) => {
+			switch (area) {
+				case 'devices':
+					return devicesLoading;
+				case 'sessions':
+					return sessionsLoading;
+				case 'passkeys':
+					return passkeysLoading || authenticationMethodsLoading;
+				case 'totp':
+					return totpLoading || authenticationMethodsLoading;
+				case 'social':
+					return authenticationMethodsLoading;
+			}
+		});
+	}
+
+	function setSecurityError(area: SecurityArea, message: string) {
+		if (message) {
+			securityErrors = { ...securityErrors, [area]: message };
+			return;
+		}
+		const nextErrors = { ...securityErrors };
+		delete nextErrors[area];
+		securityErrors = nextErrors;
+	}
+
+	function clearSecurityErrors(areas: SecurityArea[] = ALL_SECURITY_AREAS) {
+		for (const area of areas) setSecurityError(area, '');
+	}
+
+	function securityErrorFor(areas: SecurityArea[]): string {
+		return areas.map((area) => securityErrors[area]).find(Boolean) ?? '';
+	}
+
+	function localizedPasskeyRegistrationError(error: unknown): string {
+		switch (classifyPasskeyRegistrationError(error)) {
+			case 'cancelled-or-timed-out':
+				return $LL.account_passkeyRegistrationCancelled();
+			case 'already-registered':
+				return $LL.account_passkeyAlreadyRegistered();
+			case 'interrupted':
+				return $LL.account_passkeyRegistrationInterrupted();
+			case 'authenticator-unsupported':
+				return $LL.account_passkeyAuthenticatorUnsupported();
+			case 'authenticator-unavailable':
+				return $LL.account_passkeyAuthenticatorUnavailable();
+			case 'configuration':
+				return $LL.account_passkeyConfigurationError();
+			case 'failed':
+				return $LL.account_passkeyRegistrationFailed();
+		}
+	}
+
+	function syncSecurityRefreshingAreas() {
+		securityRefreshingAreas = ALL_SECURITY_AREAS.filter(
+			(area) => (securityRefreshCounts.get(area) ?? 0) > 0
+		);
+	}
+
+	function beginSecurityRefresh(areas: SecurityArea[]) {
+		for (const area of areas) {
+			securityRefreshCounts.set(area, (securityRefreshCounts.get(area) ?? 0) + 1);
+		}
+		syncSecurityRefreshingAreas();
+	}
+
+	function endSecurityRefresh(areas: SecurityArea[]) {
+		for (const area of areas) {
+			const nextCount = (securityRefreshCounts.get(area) ?? 0) - 1;
+			if (nextCount > 0) {
+				securityRefreshCounts.set(area, nextCount);
+			} else {
+				securityRefreshCounts.delete(area);
+			}
+		}
+		syncSecurityRefreshingAreas();
+	}
+
+	function securityAreasRefreshing(areas: SecurityArea[]): boolean {
+		return areas.some((area) => securityRefreshingAreas.includes(area));
+	}
 
 	function configuredScreen(screenKey: string): AccountPageScreen | null {
 		return (
@@ -205,8 +320,14 @@
 			case 'external_idp_enabled':
 				return Boolean(authenticationMethods?.external?.enabled);
 			case 'consent_records_available':
+				if (consentsLoading && initialPlacementConditions.consentRecordsAvailable !== null) {
+					return initialPlacementConditions.consentRecordsAvailable;
+				}
 				return consents.length > 0;
 			case 'multiple_sessions':
+				if (sessionsLoading && initialPlacementConditions.multipleSessions !== null) {
+					return initialPlacementConditions.multipleSessions;
+				}
 				return sessions.length > 1;
 			default:
 				return true;
@@ -325,16 +446,24 @@
 			return;
 		}
 
-		const [methodsResult, accountLoadStatus] = await Promise.all([
-			fetchAuthenticationMethods(),
-			loadAccountPage()
-		]);
-		if (methodsResult.data?.ui.selfService?.accountPageEnabled !== true) {
-			window.location.href = '/';
-			return;
+		// Start account data immediately. WebAuthn capability detection can take noticeably
+		// longer in Safari and must not hold back the composition request or widget skeletons.
+		const accountLoadRequest = loadAccountPage();
+		const passkeySupportRequest = detectPasskeySupport();
+		const methodsRequest = embeddedAuthenticationMethods
+			? Promise.resolve({ data: embeddedAuthenticationMethods })
+			: fetchAuthenticationMethods();
+		if (!embeddedAuthenticationMethods) {
+			void methodsRequest
+				.then((methodsResult) => {
+					authenticationMethods = methodsResult.data?.methods ?? null;
+				})
+				.finally(() => {
+					authenticationMethodsLoading = false;
+				});
 		}
-		authenticationMethods = methodsResult.data.methods;
-		passkeySupported = await detectPasskeySupport();
+		passkeySupported = await passkeySupportRequest;
+		const accountLoadStatus = await accountLoadRequest;
 
 		if (accountLoadStatus === 'unauthorized') {
 			const returnTo = `${window.location.pathname}${window.location.search}`;
@@ -345,7 +474,12 @@
 				: '/login';
 			return;
 		}
-		loading = false;
+
+		const methodsResult = await methodsRequest;
+		if (methodsResult.data?.ui.selfService?.accountPageEnabled !== true) {
+			window.location.href = '/';
+			return;
+		}
 	});
 
 	onMount(() => {
@@ -362,6 +496,7 @@
 
 	onDestroy(() => {
 		emailChangePollGeneration += 1;
+		consentLoadGeneration += 1;
 	});
 
 	async function detectPasskeySupport(): Promise<boolean> {
@@ -384,119 +519,159 @@
 
 	async function loadAccountPage(): Promise<'ok' | 'unauthorized' | 'error'> {
 		accountError = '';
-		securityError = '';
+		securityErrors = {};
 		consentError = '';
 		reauthNeeded = false;
-		const [
-			profileResult,
-			devicesResult,
-			sessionsResult,
-			passkeysResult,
-			totpResult,
-			operationsResult,
-			consentsResult,
-			capabilitiesResult
-		] = await Promise.all([
-			accountAPI.getProfile(),
-			accountAPI.getDevices(),
-			accountAPI.getSessions(),
-			accountAPI.getPasskeys(),
-			accountAPI.getTotpCredentials(),
-			accountAPI.getOperations(),
-			accountAPI.getConsents(getLocale()),
-			accountAPI.getCapabilities()
-		]);
+		profileLoading = true;
+		devicesLoading = true;
+		sessionsLoading = true;
+		passkeysLoading = true;
+		totpLoading = true;
+		operationsLoading = true;
+		consentsLoading = true;
+		capabilitiesLoading = !embeddedCapabilitiesResolved;
+		const profileRequest = accountAPI.getProfile();
+		const passkeysRequest = accountAPI.getPasskeys();
+		const initialConsentGeneration = ++consentLoadGeneration;
+
+		void accountAPI
+			.getDevices()
+			.then((result) => {
+				devices = result.data?.devices ?? [];
+				recordSecurityLoadError('devices', result.error);
+			})
+			.finally(() => {
+				devicesLoading = false;
+			});
+		void accountAPI
+			.getSessions()
+			.then((result) => {
+				sessions = result.data?.sessions ?? [];
+				recordSecurityLoadError('sessions', result.error);
+			})
+			.finally(() => {
+				sessionsLoading = false;
+			});
+		void passkeysRequest
+			.then((result) => {
+				passkeys = result.data?.passkeys ?? [];
+				recordSecurityLoadError('passkeys', result.error);
+			})
+			.finally(() => {
+				passkeysLoading = false;
+			});
+		void accountAPI
+			.getTotpCredentials()
+			.then((result) => {
+				totpCredentials = result.data?.credentials ?? [];
+				totpBackupCodes = result.data?.backup_codes ?? { total: 0, remaining: 0 };
+				recordSecurityLoadError('totp', result.error);
+			})
+			.finally(() => {
+				totpLoading = false;
+			});
+		void accountAPI
+			.getOperations()
+			.then((result) => {
+				operations = result.data?.operations ?? [];
+			})
+			.finally(() => {
+				operationsLoading = false;
+			});
+		void accountAPI
+			.getConsents(getLocale())
+			.then((result) => {
+				if (initialConsentGeneration !== consentLoadGeneration) return;
+				consents = result.data?.consents ?? [];
+				consentError = result.error ? localizeApiError(result.error, $LL.account_loadFailed()) : '';
+			})
+			.finally(() => {
+				if (initialConsentGeneration === consentLoadGeneration) {
+					consentsLoading = false;
+				}
+			});
+		if (!embeddedCapabilitiesResolved) {
+			void accountAPI
+				.getCapabilities()
+				.then((result) => {
+					if (result.data) {
+						accountCapabilities = result.data;
+						capabilitiesResolved = true;
+					}
+				})
+				.finally(() => {
+					capabilitiesLoading = false;
+				});
+		}
+
+		const profileResult = await profileRequest;
 
 		if (profileResult.error) {
 			if (profileResult.error.error === 'unauthorized') {
 				return 'unauthorized';
 			}
+			profileLoading = false;
 			accountError = localizeApiError(profileResult.error, $LL.account_loadFailed());
 			return 'error';
 		}
+		profileLoading = false;
 		profile = profileResult.data?.profile ?? null;
 		if (profile && profileResult.data?.session) {
 			syncAuthFromAccountProfile(profile, profileResult.data.session);
 		}
-		devices = devicesResult.data?.devices ?? [];
-		sessions = sessionsResult.data?.sessions ?? [];
-		passkeys = passkeysResult.data?.passkeys ?? [];
-		totpCredentials = totpResult.data?.credentials ?? [];
-		totpBackupCodes = totpResult.data?.backup_codes ?? { total: 0, remaining: 0 };
-		operations = operationsResult.data?.operations ?? [];
-		consents = consentsResult.data?.consents ?? [];
-		accountCapabilities = capabilitiesResult.data ?? null;
-		await Promise.all([
-			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
-			signalCurrentUserDetails(profile)
-		]);
-		consentError = consentsResult.error
-			? localizeApiError(consentsResult.error, $LL.account_loadFailed())
-			: '';
-		if (
-			devicesResult.error ||
-			sessionsResult.error ||
-			passkeysResult.error ||
-			totpResult.error ||
-			operationsResult.error ||
-			capabilitiesResult.error
-		) {
-			securityError = firstLocalizedApiError(
-				[
-					devicesResult.error,
-					sessionsResult.error,
-					passkeysResult.error,
-					totpResult.error,
-					operationsResult.error,
-					capabilitiesResult.error
-				],
-				$LL.account_loadFailed()
-			);
-		}
+		void passkeysRequest
+			.then((result) => signalAllAcceptedCredentials(result.data?.webauthn_signal))
+			.catch(() => undefined);
+		void signalCurrentUserDetails(profile).catch(() => undefined);
 		return 'ok';
 	}
 
+	function recordSecurityLoadError(area: SecurityArea, error: APIError | null | undefined) {
+		setSecurityError(area, error ? localizeApiError(error, $LL.account_loadFailed()) : '');
+	}
+
 	async function refreshLocalizedAccountData(locale: string) {
+		const generation = ++consentLoadGeneration;
+		consentsLoading = true;
 		const result = await accountAPI.getConsents(locale);
+		if (generation !== consentLoadGeneration) return;
 		if (result.data) {
 			consents = result.data.consents;
 			consentError = '';
 		} else if (result.error) {
 			consentError = localizeApiError(result.error, $LL.account_loadFailed());
 		}
+		consentsLoading = false;
 	}
 
-	async function refreshSecurity() {
-		securityLoading = true;
+	async function refreshSecurity(areas?: SecurityArea[]) {
+		const requestedAreas = areas ? [...new Set(areas)] : [...ALL_SECURITY_AREAS];
+		const refreshAll = areas === undefined;
+		beginSecurityRefresh(requestedAreas);
 		try {
 			reauthNeeded = false;
 			const [devicesResult, sessionsResult, passkeysResult, totpResult, operationsResult] =
 				await Promise.all([
-					accountAPI.getDevices(),
-					accountAPI.getSessions(),
-					accountAPI.getPasskeys(),
-					accountAPI.getTotpCredentials(),
-					accountAPI.getOperations()
+					requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
+					requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
+					requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
+					requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
+					refreshAll ? accountAPI.getOperations() : null
 				]);
-			devices = devicesResult.data?.devices ?? devices;
-			sessions = sessionsResult.data?.sessions ?? sessions;
-			passkeys = passkeysResult.data?.passkeys ?? passkeys;
-			totpCredentials = totpResult.data?.credentials ?? totpCredentials;
-			totpBackupCodes = totpResult.data?.backup_codes ?? totpBackupCodes;
-			operations = operationsResult.data?.operations ?? operations;
-			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
-			const refreshErrors = [
-				devicesResult.error,
-				sessionsResult.error,
-				passkeysResult.error,
-				totpResult.error,
-				operationsResult.error
-			];
-			securityError = refreshErrors.some(Boolean)
-				? firstLocalizedApiError(refreshErrors, $LL.account_loadFailed())
-				: '';
+			devices = devicesResult?.data?.devices ?? devices;
+			sessions = sessionsResult?.data?.sessions ?? sessions;
+			passkeys = passkeysResult?.data?.passkeys ?? passkeys;
+			totpCredentials = totpResult?.data?.credentials ?? totpCredentials;
+			totpBackupCodes = totpResult?.data?.backup_codes ?? totpBackupCodes;
+			operations = operationsResult?.data?.operations ?? operations;
+			await signalAllAcceptedCredentials(passkeysResult?.data?.webauthn_signal);
+			if (devicesResult) recordSecurityLoadError('devices', devicesResult.error);
+			if (sessionsResult) recordSecurityLoadError('sessions', sessionsResult.error);
+			if (passkeysResult) recordSecurityLoadError('passkeys', passkeysResult.error);
+			if (totpResult) recordSecurityLoadError('totp', totpResult.error);
+			if (requestedAreas.includes('social')) setSecurityError('social', '');
 		} finally {
-			securityLoading = false;
+			endSecurityRefresh(requestedAreas);
 		}
 	}
 
@@ -514,7 +689,7 @@
 	async function finishReauth() {
 		await auth.refreshFromSession();
 		reauthNeeded = false;
-		securityError = '';
+		clearSecurityErrors();
 		reauthModalOpen = false;
 		emailReauthChallengeId = '';
 		emailReauthCode = '';
@@ -753,11 +928,11 @@
 
 	async function revokeSession(id: string) {
 		actionLoading = `session:${id}`;
-		securityError = '';
+		setSecurityError('sessions', '');
 		try {
 			const result = await accountAPI.revokeSession(id);
 			if (result.error) {
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('sessions', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			if (result.data?.session.current) {
@@ -774,22 +949,31 @@
 	async function addPasskey(deviceName: string) {
 		if (!passkeySupported) return;
 		actionLoading = 'passkey:add';
-		securityError = '';
+		setSecurityError('passkeys', '');
 		try {
 			const optionsResult = await accountAPI.createPasskeyOptions(deviceName.trim());
 			if (optionsResult.error) {
 				if (optionsResult.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('passkeys', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'add-passkey', deviceName });
 					return;
 				}
-				securityError = localizeApiError(optionsResult.error, $LL.account_actionFailed());
+				setSecurityError(
+					'passkeys',
+					localizeApiError(optionsResult.error, $LL.account_actionFailed())
+				);
 				return;
 			}
-			const credential = await startRegistration({
-				optionsJSON: optionsResult.data!.options
-			});
+			let credential: Awaited<ReturnType<typeof startRegistration>>;
+			try {
+				credential = await startRegistration({
+					optionsJSON: optionsResult.data!.options
+				});
+			} catch (error) {
+				setSecurityError('passkeys', localizedPasskeyRegistrationError(error));
+				return;
+			}
 			const completeResult = await accountAPI.completePasskeyRegistration(
 				optionsResult.data!.challenge_id,
 				credential,
@@ -799,13 +983,19 @@
 				if (shouldSignalUnknownCredentialAfterRegistrationFailure(completeResult.error)) {
 					await signalUnknownCredential(credential.id);
 				}
-				securityError = localizeApiError(completeResult.error, $LL.account_actionFailed());
+				setSecurityError(
+					'passkeys',
+					localizeApiError(completeResult.error, $LL.account_actionFailed())
+				);
 				return;
 			}
 			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
 			await refreshSecurity();
 		} catch (error) {
-			securityError = messageForCaughtError(error, $LL.account_actionFailed());
+			setSecurityError(
+				'passkeys',
+				messageForCaughtError(error, $LL.account_passkeyRegistrationFailed())
+			);
 		} finally {
 			actionLoading = '';
 		}
@@ -813,21 +1003,21 @@
 
 	async function deletePasskey(id: string) {
 		actionLoading = `passkey:${id}`;
-		securityError = '';
+		setSecurityError('passkeys', '');
 		try {
 			const result = await accountAPI.deletePasskey(id);
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('passkeys', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'delete-passkey', id });
 					return;
 				}
 				if (result.error.error === 'remaining_login_method_required') {
-					securityError = $LL.account_remainingLoginMethodRequired();
+					setSecurityError('passkeys', $LL.account_remainingLoginMethodRequired());
 					return;
 				}
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('passkeys', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			await signalAllAcceptedCredentials(result.data?.webauthn_signal);
@@ -839,17 +1029,17 @@
 
 	async function startTotpEnrollment(label: string) {
 		actionLoading = 'totp:add';
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.createTotpOptions(label.trim());
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'add-totp', label });
 					return;
 				}
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			if (!result.data) return;
@@ -868,14 +1058,14 @@
 	async function activateTotpEnrollment(code: string) {
 		if (!totpEnrollment) return;
 		actionLoading = `totp:activate:${totpEnrollment.credentialId}`;
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.activateTotpCredential(
 				totpEnrollment.credentialId,
 				code.trim()
 			);
 			if (result.error) {
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			totpEnrollment = {
@@ -890,21 +1080,21 @@
 
 	async function deleteTotpCredential(id: string, code: string) {
 		actionLoading = `totp:${id}`;
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.deleteTotpCredential(id, buildTotpDeleteProof(code));
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'delete-totp', id, code });
 					return;
 				}
 				if (result.error.error === 'remaining_login_method_required') {
-					securityError = $LL.account_remainingLoginMethodRequired();
+					setSecurityError('totp', $LL.account_remainingLoginMethodRequired());
 					return;
 				}
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			await refreshSecurity();
@@ -915,17 +1105,17 @@
 
 	async function regenerateTotpBackupCodes(code: string) {
 		actionLoading = 'totp:backup-codes';
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.regenerateTotpBackupCodes(code.trim() || undefined);
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'regenerate-totp-backup-codes', code });
 					return;
 				}
-				securityError = localizeApiError(result.error, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			totpEnrollment = {
@@ -960,289 +1150,284 @@
 </svelte:head>
 
 <div class="account-shell">
-	{#if loading}
-		<div class="account-loading">
-			<Spinner size="lg" />
-		</div>
-	{:else if accountError}
-		<div class="account-layout">
-			<header class="account-header">
-				<div>
-					<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
-					<h1>{localizedPageCopy().title}</h1>
-					{#if localizedPageCopy().description}
-						<p class="account-description">
-							{localizedPageCopy().description}
-						</p>
-					{/if}
-				</div>
-				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
-					{$LL.header_logout()}
-				</Button>
-			</header>
-			<p class="account-error">{accountError}</p>
-		</div>
-	{:else}
-		<div class="account-layout">
-			<header class="account-header">
-				<div>
-					<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
-					<h1>{localizedPageCopy().title}</h1>
-					{#if localizedPageCopy().description}<p class="account-description">
-							{localizedPageCopy().description}
-						</p>{/if}
-				</div>
-				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
-					{$LL.header_logout()}
-				</Button>
-			</header>
+	<div class="account-layout">
+		<header class="account-header">
+			<div>
+				<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
+				<h1>{localizedPageCopy().title}</h1>
+				{#if localizedPageCopy().description}<p class="account-description">
+						{localizedPageCopy().description}
+					</p>{/if}
+			</div>
+			<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
+				{$LL.header_logout()}
+			</Button>
+		</header>
 
-			<section class="account-grid">
-				{#if accountCapabilities?.account_page}
-					{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item.condition)) as placement (placement.id)}
-						{@const screen = configuredScreen(placement.screen_key)}
-						{#if screen}
-							<section
-								id={placement.id}
-								class="account-screen"
-								class:full={placement.width === 'full'}
-							>
-								{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
-									{#if field.block_type !== 'layout_row'}
-										<div
-											class="account-screen__block"
-											style={placement.width === 'full' &&
-											(field.layout_column === 1 || field.layout_column === 2)
-												? `grid-column: ${field.layout_column};`
-												: undefined}
-										>
-											{#if field.block_type === 'heading'}
-												<header class="account-screen__heading">
-													<h2>{field.label}</h2>
-													{#if field.text}<p>{field.text}</p>{/if}
-												</header>
-											{:else if field.block_type === 'text'}
-												<p class="account-screen__text">{field.text || field.label}</p>
-											{:else if field.block_type === 'link' && safeHref(field.href)}
-												<a class="account-screen__link" href={safeHref(field.href) ?? '#'}
-													>{field.label}</a
-												>
-											{:else if field.block_type === 'divider'}
-												<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
-											{:else if field.block_type === 'account_profile_widget'}
-												<AccountProfileSection
-													{profile}
-													title={accountWidgetTitle(field)}
-													saving={profileSaving}
-													error={profileError}
-													saved={profileSaved}
-													{emailChangeStage}
-													{emailChangeLoading}
-													{emailChangeError}
-													onSave={saveProfileName}
-													onStartEmailChange={startEmailChange}
-													onCompleteEmailChange={completeEmailChange}
-													onCancelEmailChange={cancelEmailChange}
-												/>
-											{:else if field.block_type === 'account_consent_widget'}
-												<AccountConsentSection
-													{consents}
-													title={accountWidgetTitle(field)}
-													error={consentError}
-												/>
-											{:else if field.block_type === 'account_activity_widget'}
-												<AccountActivitySection {operations} title={accountWidgetTitle(field)} />
-											{:else if field.block_type === 'account_device_list_widget'}
-												<AccountSecuritySection
-													{devices}
-													{sessions}
-													{passkeys}
-													{totpCredentials}
-													{totpBackupCodes}
-													{totpEnrollment}
-													areas={['devices']}
-													title={accountWidgetTitle(field)}
-													showSectionHeadings={false}
-													loading={securityLoading}
-													{actionLoading}
-													error={securityError}
-													{reauthNeeded}
-													{passkeySupported}
-													{totpManagementEnabled}
-													onRefresh={refreshSecurity}
-													onRevokeSession={revokeSession}
-													onAddPasskey={addPasskey}
-													onDeletePasskey={deletePasskey}
-													onStartTotpEnrollment={startTotpEnrollment}
-													onActivateTotpEnrollment={activateTotpEnrollment}
-													onDeleteTotpCredential={deleteTotpCredential}
-													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-													onClearTotpEnrollment={() => (totpEnrollment = null)}
-													onReauth={() => requestReauth()}
-												/>
-											{:else if field.block_type === 'account_session_widget'}
-												<AccountSecuritySection
-													{devices}
-													{sessions}
-													{passkeys}
-													{totpCredentials}
-													{totpBackupCodes}
-													{totpEnrollment}
-													areas={['sessions']}
-													title={accountWidgetTitle(field)}
-													showSectionHeadings={false}
-													loading={securityLoading}
-													{actionLoading}
-													error={securityError}
-													{reauthNeeded}
-													{passkeySupported}
-													{totpManagementEnabled}
-													onRefresh={refreshSecurity}
-													onRevokeSession={revokeSession}
-													onAddPasskey={addPasskey}
-													onDeletePasskey={deletePasskey}
-													onStartTotpEnrollment={startTotpEnrollment}
-													onActivateTotpEnrollment={activateTotpEnrollment}
-													onDeleteTotpCredential={deleteTotpCredential}
-													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-													onClearTotpEnrollment={() => (totpEnrollment = null)}
-													onReauth={() => requestReauth()}
-												/>
-											{:else if field.block_type === 'account_passkey_widget'}
-												<AccountSecuritySection
-													{devices}
-													{sessions}
-													{passkeys}
-													{totpCredentials}
-													{totpBackupCodes}
-													{totpEnrollment}
-													areas={['passkeys']}
-													title={accountWidgetTitle(field)}
-													showSectionHeadings={false}
-													loading={securityLoading}
-													{actionLoading}
-													error={securityError}
-													{reauthNeeded}
-													{passkeySupported}
-													{totpManagementEnabled}
-													onRefresh={refreshSecurity}
-													onRevokeSession={revokeSession}
-													onAddPasskey={addPasskey}
-													onDeletePasskey={deletePasskey}
-													onStartTotpEnrollment={startTotpEnrollment}
-													onActivateTotpEnrollment={activateTotpEnrollment}
-													onDeleteTotpCredential={deleteTotpCredential}
-													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-													onClearTotpEnrollment={() => (totpEnrollment = null)}
-													onReauth={() => requestReauth()}
-												/>
-											{:else if field.block_type === 'account_totp_widget'}
-												<AccountSecuritySection
-													{devices}
-													{sessions}
-													{passkeys}
-													{totpCredentials}
-													{totpBackupCodes}
-													{totpEnrollment}
-													areas={['totp']}
-													title={accountWidgetTitle(field)}
-													showSectionHeadings={false}
-													loading={securityLoading}
-													{actionLoading}
-													error={securityError}
-													{reauthNeeded}
-													{passkeySupported}
-													{totpManagementEnabled}
-													onRefresh={refreshSecurity}
-													onRevokeSession={revokeSession}
-													onAddPasskey={addPasskey}
-													onDeletePasskey={deletePasskey}
-													onStartTotpEnrollment={startTotpEnrollment}
-													onActivateTotpEnrollment={activateTotpEnrollment}
-													onDeleteTotpCredential={deleteTotpCredential}
-													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-													onClearTotpEnrollment={() => (totpEnrollment = null)}
-													onReauth={() => requestReauth()}
-												/>
-											{:else if field.block_type === 'account_social_account_widget'}
-												<AccountSecuritySection
-													{devices}
-													{sessions}
-													{passkeys}
-													{totpCredentials}
-													{totpBackupCodes}
-													{totpEnrollment}
-													areas={['social']}
-													title={accountWidgetTitle(field)}
-													showSectionHeadings={false}
-													loading={securityLoading}
-													{actionLoading}
-													error={securityError}
-													{reauthNeeded}
-													{passkeySupported}
-													{totpManagementEnabled}
-													onRefresh={refreshSecurity}
-													onRevokeSession={revokeSession}
-													onAddPasskey={addPasskey}
-													onDeletePasskey={deletePasskey}
-													onStartTotpEnrollment={startTotpEnrollment}
-													onActivateTotpEnrollment={activateTotpEnrollment}
-													onDeleteTotpCredential={deleteTotpCredential}
-													onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-													onClearTotpEnrollment={() => (totpEnrollment = null)}
-													onReauth={() => requestReauth()}
-												/>
-											{/if}
-										</div>
-									{/if}
-								{/each}
-							</section>
-						{/if}
-					{/each}
-				{:else}
-					<AccountProfileSection
-						{profile}
-						saving={profileSaving}
-						error={profileError}
-						saved={profileSaved}
-						{emailChangeStage}
-						{emailChangeLoading}
-						{emailChangeError}
-						onSave={saveProfileName}
-						onStartEmailChange={startEmailChange}
-						onCompleteEmailChange={completeEmailChange}
-						onCancelEmailChange={cancelEmailChange}
-					/>
-					<AccountSecuritySection
-						{devices}
-						{sessions}
-						{passkeys}
-						{totpCredentials}
-						{totpBackupCodes}
-						{totpEnrollment}
-						loading={securityLoading}
-						{actionLoading}
-						error={securityError}
-						{reauthNeeded}
-						{passkeySupported}
-						{totpManagementEnabled}
-						onRefresh={refreshSecurity}
-						onRevokeSession={revokeSession}
-						onAddPasskey={addPasskey}
-						onDeletePasskey={deletePasskey}
-						onStartTotpEnrollment={startTotpEnrollment}
-						onActivateTotpEnrollment={activateTotpEnrollment}
-						onDeleteTotpCredential={deleteTotpCredential}
-						onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
-						onClearTotpEnrollment={() => (totpEnrollment = null)}
-						onReauth={() => requestReauth()}
-					/>
-					<AccountConsentSection {consents} error={consentError} />
-					<AccountActivitySection {operations} />
-				{/if}
-			</section>
-		</div>
-	{/if}
+		{#if accountError}
+			<p class="account-error" role="alert">{accountError}</p>
+		{/if}
+
+		<section class="account-grid" aria-busy={profileLoading || capabilitiesLoading}>
+			{#if capabilitiesLoading || !capabilitiesResolved}
+				<!-- Wait for the published composition so unused widgets never flash as skeletons. -->
+			{:else if accountCapabilities?.account_page}
+				{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item.condition)) as placement (placement.id)}
+					{@const screen = configuredScreen(placement.screen_key)}
+					{#if screen}
+						<section
+							id={placement.id}
+							class="account-screen"
+							class:full={placement.width === 'full'}
+						>
+							{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
+								{#if field.block_type !== 'layout_row'}
+									<div
+										class="account-screen__block"
+										style={placement.width === 'full' &&
+										(field.layout_column === 1 || field.layout_column === 2)
+											? `grid-column: ${field.layout_column};`
+											: undefined}
+									>
+										{#if field.block_type === 'heading'}
+											<header class="account-screen__heading">
+												<h2>{field.label}</h2>
+												{#if field.text}<p>{field.text}</p>{/if}
+											</header>
+										{:else if field.block_type === 'text'}
+											<p class="account-screen__text">{field.text || field.label}</p>
+										{:else if field.block_type === 'link' && safeHref(field.href)}
+											<a class="account-screen__link" href={safeHref(field.href) ?? '#'}
+												>{field.label}</a
+											>
+										{:else if field.block_type === 'divider'}
+											<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
+										{:else if field.block_type === 'account_profile_widget'}
+											<AccountProfileSection
+												{profile}
+												loading={profileLoading}
+												title={accountWidgetTitle(field)}
+												saving={profileSaving}
+												error={profileError}
+												saved={profileSaved}
+												{emailChangeStage}
+												{emailChangeLoading}
+												{emailChangeError}
+												onSave={saveProfileName}
+												onStartEmailChange={startEmailChange}
+												onCompleteEmailChange={completeEmailChange}
+												onCancelEmailChange={cancelEmailChange}
+											/>
+										{:else if field.block_type === 'account_consent_widget'}
+											<AccountConsentSection
+												{consents}
+												loading={consentsLoading}
+												title={accountWidgetTitle(field)}
+												error={consentError}
+											/>
+										{:else if field.block_type === 'account_activity_widget'}
+											<AccountActivitySection
+												{operations}
+												loading={operationsLoading}
+												title={accountWidgetTitle(field)}
+											/>
+										{:else if field.block_type === 'account_device_list_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['devices']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['devices'])}
+												loadingAreas={initialLoadingAreas(['devices'])}
+												{actionLoading}
+												error={securityErrorFor(['devices'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_session_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['sessions']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['sessions'])}
+												loadingAreas={initialLoadingAreas(['sessions'])}
+												{actionLoading}
+												error={securityErrorFor(['sessions'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_passkey_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['passkeys']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['passkeys'])}
+												loadingAreas={initialLoadingAreas(['passkeys'])}
+												{actionLoading}
+												error={securityErrorFor(['passkeys'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_totp_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['totp']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['totp'])}
+												loadingAreas={initialLoadingAreas(['totp'])}
+												{actionLoading}
+												error={securityErrorFor(['totp'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_social_account_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['social']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['social'])}
+												loadingAreas={initialLoadingAreas(['social'])}
+												{actionLoading}
+												error={securityErrorFor(['social'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{/if}
+									</div>
+								{/if}
+							{/each}
+						</section>
+					{/if}
+				{/each}
+			{:else}
+				<AccountProfileSection
+					{profile}
+					loading={profileLoading}
+					saving={profileSaving}
+					error={profileError}
+					saved={profileSaved}
+					{emailChangeStage}
+					{emailChangeLoading}
+					{emailChangeError}
+					onSave={saveProfileName}
+					onStartEmailChange={startEmailChange}
+					onCompleteEmailChange={completeEmailChange}
+					onCancelEmailChange={cancelEmailChange}
+				/>
+				<AccountSecuritySection
+					{devices}
+					{sessions}
+					{passkeys}
+					{totpCredentials}
+					{totpBackupCodes}
+					{totpEnrollment}
+					loading={securityAreasRefreshing(ALL_SECURITY_AREAS)}
+					loadingAreas={initialLoadingAreas(['devices', 'sessions', 'passkeys', 'totp', 'social'])}
+					{actionLoading}
+					error={securityErrorFor(ALL_SECURITY_AREAS)}
+					{reauthNeeded}
+					{passkeySupported}
+					{totpManagementEnabled}
+					onRefresh={refreshSecurity}
+					onRevokeSession={revokeSession}
+					onAddPasskey={addPasskey}
+					onDeletePasskey={deletePasskey}
+					onStartTotpEnrollment={startTotpEnrollment}
+					onActivateTotpEnrollment={activateTotpEnrollment}
+					onDeleteTotpCredential={deleteTotpCredential}
+					onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+					onClearTotpEnrollment={() => (totpEnrollment = null)}
+					onReauth={() => requestReauth()}
+				/>
+				<AccountConsentSection {consents} loading={consentsLoading} error={consentError} />
+				<AccountActivitySection {operations} loading={operationsLoading} />
+			{/if}
+		</section>
+	</div>
 
 	{#if loginUIPageStore.showTopbar}
 		<div class="account-preferences" data-position={loginUIPageStore.topbarPosition}>
@@ -1491,12 +1676,6 @@
 
 	:global(.account-shell .account-footer p + p) {
 		margin-top: 6px;
-	}
-
-	.account-loading {
-		min-height: 60vh;
-		display: grid;
-		place-items: center;
 	}
 
 	.account-layout {

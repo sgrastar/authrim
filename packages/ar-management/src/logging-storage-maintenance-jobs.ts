@@ -17,7 +17,7 @@ import {
   type LogChunkCompression,
   type LogPlane,
   type LogType,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import {
   isArchiveLogRecordV1,
   projectArchiveLogRecordForExportV1,

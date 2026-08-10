@@ -45,7 +45,7 @@ import {
   type ResolvedLoggingPolicy,
 } from '@authrim/ar-lib-logging/policies';
 import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 
 const log = createLogger().module('AUDIT_LOG');
 const KV_KEY_ROUTING_RULES = 'audit_routing_rules';

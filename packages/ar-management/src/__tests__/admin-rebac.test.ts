@@ -14,9 +14,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     generateId: vi.fn(() => 'generated-id'),
     createAuditLogFromContext: mocks.audit,
-    ReBACService: vi.fn(function () {
-      return { check: mocks.check };
-    }),
     createErrorResponse: vi.fn((c, code, options) =>
       c.json(
         { error: code, ...options },
@@ -31,6 +28,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ),
   };
 });
+
+vi.mock('@authrim/ar-lib-core/rebac/rebac-service', () => ({
+  ReBACService: vi.fn(function () {
+    return { check: mocks.check };
+  }),
+}));
 
 import {
   adminObjectTypesListHandler,

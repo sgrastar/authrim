@@ -79,6 +79,18 @@ const vi = createTranslation({
 	account_empty: 'Không có mục nào',
 	account_planned: 'Đã lên kế hoạch',
 	account_passkeyUnsupported: 'Trình duyệt này không hỗ trợ đăng ký khoá truy cập.',
+	account_passkeyRegistrationCancelled:
+		'Quá trình đăng ký khoá truy cập đã bị huỷ hoặc hết thời gian. Vui lòng thử lại.',
+	account_passkeyAlreadyRegistered: 'Trình xác thực này đã được đăng ký cho tài khoản này.',
+	account_passkeyRegistrationInterrupted:
+		'Quá trình đăng ký khoá truy cập đã bị gián đoạn. Vui lòng thử lại.',
+	account_passkeyAuthenticatorUnsupported:
+		'Trình xác thực này không đáp ứng yêu cầu của khoá truy cập. Hãy thử trình xác thực khác.',
+	account_passkeyAuthenticatorUnavailable:
+		'Trình xác thực không thể hoàn tất đăng ký khoá truy cập. Hãy thử lại hoặc dùng trình xác thực khác.',
+	account_passkeyConfigurationError:
+		'Trang web này không hỗ trợ đăng ký khoá truy cập. Hãy liên hệ hỗ trợ nếu sự cố tiếp diễn.',
+	account_passkeyRegistrationFailed: 'Đăng ký khoá truy cập không thành công. Vui lòng thử lại.',
 	account_totp: 'Ứng dụng xác thực',
 	account_totpName: 'Tên ứng dụng xác thực',
 	account_totpDefaultName: 'Ứng dụng xác thực',

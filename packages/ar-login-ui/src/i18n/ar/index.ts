@@ -78,6 +78,17 @@ const ar = createTranslation({
 	account_empty: 'لا توجد عناصر',
 	account_planned: 'مخطط له',
 	account_passkeyUnsupported: 'هذا المتصفح لا يدعم تسجيل مفاتيح المرور.',
+	account_passkeyRegistrationCancelled:
+		'تم إلغاء تسجيل مفتاح المرور أو انتهت مهلته. حاول مرة أخرى.',
+	account_passkeyAlreadyRegistered: 'أداة المصادقة هذه مسجلة بالفعل لهذا الحساب.',
+	account_passkeyRegistrationInterrupted: 'تمت مقاطعة تسجيل مفتاح المرور. حاول مرة أخرى.',
+	account_passkeyAuthenticatorUnsupported:
+		'أداة المصادقة هذه لا تفي بمتطلبات مفتاح المرور. جرّب أداة مصادقة أخرى.',
+	account_passkeyAuthenticatorUnavailable:
+		'تعذر على أداة المصادقة إكمال تسجيل مفتاح المرور. حاول مرة أخرى أو استخدم أداة أخرى.',
+	account_passkeyConfigurationError:
+		'تسجيل مفتاح المرور غير متاح لهذا الموقع. اتصل بالدعم إذا استمرت المشكلة.',
+	account_passkeyRegistrationFailed: 'فشل تسجيل مفتاح المرور. حاول مرة أخرى.',
 	account_totp: 'تطبيقات المصادقة',
 	account_totpName: 'اسم تطبيق المصادقة',
 	account_totpDefaultName: 'تطبيق المصادقة',

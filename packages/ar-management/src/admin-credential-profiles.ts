@@ -19,7 +19,8 @@ import {
   resolveRuntimeIdentityMappingBinding,
   executeServerFlow,
 } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 
 type AdminContext = Context<{ Bindings: Env }>;

@@ -1,4 +1,9 @@
-import { LOG_PLANES, LOG_TYPES, type LogPlane, type LogType } from '@authrim/ar-lib-logging';
+import {
+  LOG_PLANES,
+  LOG_TYPES,
+  type LogPlane,
+  type LogType,
+} from '@authrim/ar-lib-logging/contract';
 import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,

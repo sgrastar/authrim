@@ -64,6 +64,18 @@ const fr = createTranslation({
 	account_empty: 'Aucun élément',
 	account_planned: 'Planifié',
 	account_passkeyUnsupported: 'Ce navigateur ne prend pas en charge l’enregistrement des Passkeys.',
+	account_passkeyRegistrationCancelled:
+		'L’enregistrement de la Passkey a été annulé ou a expiré. Réessayez.',
+	account_passkeyAlreadyRegistered: 'Cet authentificateur est déjà enregistré pour ce compte.',
+	account_passkeyRegistrationInterrupted:
+		'L’enregistrement de la Passkey a été interrompu. Réessayez.',
+	account_passkeyAuthenticatorUnsupported:
+		'Cet authentificateur ne répond pas aux exigences de cette Passkey. Essayez-en un autre.',
+	account_passkeyAuthenticatorUnavailable:
+		'L’authentificateur n’a pas pu terminer l’enregistrement de la Passkey. Réessayez ou utilisez-en un autre.',
+	account_passkeyConfigurationError:
+		'L’enregistrement des Passkeys n’est pas disponible pour ce site. Contactez le support si le problème persiste.',
+	account_passkeyRegistrationFailed: 'L’enregistrement de la Passkey a échoué. Réessayez.',
 	account_totp: 'Applications d’authentification',
 	account_totpName: 'Nom de l’application',
 	account_totpDefaultName: 'Application d’authentification',

@@ -10,7 +10,7 @@ import type {
   TransformOperation,
   ValidationRule,
   ValidationRuleKind,
-} from '@authrim/ar-lib-field-mapping';
+} from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 
 export type RuntimeIdentityMappingProtocol = 'saml' | 'oidc' | 'vc' | string;

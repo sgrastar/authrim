@@ -62,6 +62,17 @@ const ko = createTranslation({
 	account_empty: '항목 없음',
 	account_planned: '예정',
 	account_passkeyUnsupported: '이 브라우저는 Passkey 등록을 지원하지 않습니다.',
+	account_passkeyRegistrationCancelled:
+		'Passkey 등록이 취소되었거나 시간이 초과되었습니다. 다시 시도해 주세요.',
+	account_passkeyAlreadyRegistered: '이 인증기는 이미 이 계정에 등록되어 있습니다.',
+	account_passkeyRegistrationInterrupted: 'Passkey 등록이 중단되었습니다. 다시 시도해 주세요.',
+	account_passkeyAuthenticatorUnsupported:
+		'이 인증기는 Passkey 등록 요구 사항을 충족하지 않습니다. 다른 인증기를 사용해 주세요.',
+	account_passkeyAuthenticatorUnavailable:
+		'인증기에서 Passkey 등록을 완료하지 못했습니다. 다시 시도하거나 다른 인증기를 사용해 주세요.',
+	account_passkeyConfigurationError:
+		'이 사이트에서는 Passkey를 등록할 수 없습니다. 문제가 계속되면 지원팀에 문의해 주세요.',
+	account_passkeyRegistrationFailed: 'Passkey 등록에 실패했습니다. 다시 시도해 주세요.',
 	account_totp: '인증 앱',
 	account_totpName: '인증 앱 이름',
 	account_totpDefaultName: '인증 앱',

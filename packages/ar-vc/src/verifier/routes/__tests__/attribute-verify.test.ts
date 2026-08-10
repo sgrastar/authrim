@@ -49,8 +49,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('@authrim/ar-lib-field-mapping', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@authrim/ar-lib-field-mapping')>();
+vi.mock('@authrim/ar-lib-field-mapping/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-field-mapping/runtime')>();
   return { ...actual, executeRuntimeMapping: mocks.executeRuntimeMapping };
 });
 

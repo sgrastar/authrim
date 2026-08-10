@@ -62,6 +62,15 @@ const zhTW = createTranslation({
 	account_empty: '沒有項目',
 	account_planned: '規劃中',
 	account_passkeyUnsupported: '此瀏覽器不支援註冊 Passkey。',
+	account_passkeyRegistrationCancelled: 'Passkey 註冊已取消或逾時。請再試一次。',
+	account_passkeyAlreadyRegistered: '此驗證器已註冊至這個帳戶。',
+	account_passkeyRegistrationInterrupted: 'Passkey 註冊已中斷。請再試一次。',
+	account_passkeyAuthenticatorUnsupported: '此驗證器不符合 Passkey 註冊要求。請嘗試其他驗證器。',
+	account_passkeyAuthenticatorUnavailable:
+		'驗證器無法完成 Passkey 註冊。請再試一次或使用其他驗證器。',
+	account_passkeyConfigurationError:
+		'此網站目前無法註冊 Passkey。如果問題持續發生，請聯絡支援人員。',
+	account_passkeyRegistrationFailed: 'Passkey 註冊失敗。請再試一次。',
 	account_totp: '驗證器應用程式',
 	account_totpName: '驗證器應用程式名稱',
 	account_totpDefaultName: '驗證器應用程式',

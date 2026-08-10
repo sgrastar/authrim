@@ -1,7 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import { setLocale } from '$i18n/i18n-svelte';
 import AccountSecuritySection from './AccountSecuritySection.svelte';
+
+const source = readFileSync(
+	fileURLToPath(new URL('./AccountSecuritySection.svelte', import.meta.url)),
+	'utf8'
+);
 
 const handlers = {
 	onRefresh: () => undefined,
@@ -111,5 +118,67 @@ describe('AccountSecuritySection session inventory', () => {
 		expect(body).toContain('連携済みアプリ・端末');
 		expect(body).toContain('アカウントに連携したアプリと端末です');
 		expect(body).toContain('連携済みのアプリ・端末はありません');
+	});
+
+	it('shows a skeleton instead of a false empty state while an area is loading', () => {
+		setLocale('en');
+		const body = render(AccountSecuritySection, {
+			props: {
+				...handlers,
+				areas: ['sessions'],
+				loadingAreas: ['sessions'],
+				sessions: []
+			}
+		}).body;
+
+		expect(body).toContain('aria-busy="true"');
+		expect(body).toContain('account-section-skeleton');
+		expect(body).not.toContain('No items');
+	});
+
+	it('shows the authenticator provider and registration time without the technical device label', () => {
+		setLocale('en');
+		const body = render(AccountSecuritySection, {
+			props: {
+				...handlers,
+				areas: ['passkeys'],
+				passkeySupported: true,
+				passkeys: [
+					{
+						id: 'passkey-private-identifier',
+						device_name: 'Direct Auth Passkey',
+						aaguid: 'example-aaguid',
+						provider: {
+							aaguid: 'example-aaguid',
+							name: 'Apple Passwords',
+							icon_dark: 'https://example.com/apple-dark.png',
+							icon_light: 'https://example.com/apple-light.png',
+							known: true
+						},
+						created_at: Date.UTC(2026, 7, 9, 10, 30),
+						last_used_at: Date.UTC(2026, 7, 10, 10, 30)
+					}
+				]
+			}
+		}).body;
+
+		expect(body).toContain('Apple Passwords');
+		expect(body).toContain('passkey-provider-icon__light');
+		expect(body).toContain('passkey-provider-icon__dark');
+		expect(body).not.toContain('Direct Auth Passkey');
+		expect(body).not.toContain('passkey-private-identifier');
+		expect(body).toContain('8/9/2026');
+		expect(body).not.toContain('8/10/2026');
+	});
+
+	it('keeps the provider icon aligned to both passkey detail rows at the action height', () => {
+		expect(source).toContain('grid-template-columns: 36px minmax(0, 1fr)');
+		expect(source).toContain('grid-row: 1 / span 2');
+		expect(source).toContain('width: 36px;');
+		expect(source).toContain('height: 36px;');
+	});
+
+	it('refreshes only the security areas rendered by this widget', () => {
+		expect(source).toContain('onclick={() => onRefresh(areas)}');
 	});
 });

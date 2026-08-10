@@ -48,6 +48,11 @@
       "import": "./dist/services/*.js",
       "default": "./src/services/*.ts"
     },
+    "./rebac/rebac-service": {
+      "import": "./dist/rebac/rebac-service.js",
+      "types": "./dist/rebac/rebac-service.d.ts",
+      "default": "./src/rebac/rebac-service.ts"
+    },
     "./notifications": {
       "import": "./dist/notifications/index.js",
       "default": "./src/notifications/index.ts"

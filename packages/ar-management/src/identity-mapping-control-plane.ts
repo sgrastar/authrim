@@ -17,11 +17,12 @@ import {
   decideLifecycleSignalRevocation,
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
-import { parseCsvSourceProfile, validateCatalogBundle } from '@authrim/ar-lib-field-mapping';
-import type {
-  CsvSourceProfileParserOptions,
-  FieldCatalogEntry,
-} from '@authrim/ar-lib-field-mapping';
+import {
+  parseCsvSourceProfile,
+  validateCatalogBundle,
+} from '@authrim/ar-lib-field-mapping/authoring';
+import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mapping/authoring';
+import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
 
 type AdminContext = Context<{ Bindings: Env }>;
 

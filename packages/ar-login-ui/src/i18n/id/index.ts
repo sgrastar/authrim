@@ -64,6 +64,17 @@ const id = createTranslation({
 	account_empty: 'Tidak ada item',
 	account_planned: 'Direncanakan',
 	account_passkeyUnsupported: 'Browser ini tidak mendukung pendaftaran Passkey.',
+	account_passkeyRegistrationCancelled:
+		'Pendaftaran Passkey dibatalkan atau kehabisan waktu. Coba lagi.',
+	account_passkeyAlreadyRegistered: 'Autentikator ini sudah terdaftar untuk akun ini.',
+	account_passkeyRegistrationInterrupted: 'Pendaftaran Passkey terhenti. Coba lagi.',
+	account_passkeyAuthenticatorUnsupported:
+		'Autentikator ini tidak memenuhi persyaratan Passkey. Coba autentikator lain.',
+	account_passkeyAuthenticatorUnavailable:
+		'Autentikator tidak dapat menyelesaikan pendaftaran Passkey. Coba lagi atau gunakan autentikator lain.',
+	account_passkeyConfigurationError:
+		'Pendaftaran Passkey tidak tersedia untuk situs ini. Hubungi dukungan jika masalah berlanjut.',
+	account_passkeyRegistrationFailed: 'Pendaftaran Passkey gagal. Coba lagi.',
 	account_totp: 'Aplikasi autentikator',
 	account_totpName: 'Nama aplikasi autentikator',
 	account_totpDefaultName: 'Aplikasi autentikator',

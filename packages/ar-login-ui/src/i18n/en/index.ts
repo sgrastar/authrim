@@ -82,6 +82,17 @@ const en = {
 	account_empty: 'No items',
 	account_planned: 'Planned',
 	account_passkeyUnsupported: 'This browser does not support passkey registration.',
+	account_passkeyRegistrationCancelled:
+		'Passkey registration was cancelled or timed out. Please try again.',
+	account_passkeyAlreadyRegistered: 'This authenticator is already registered for this account.',
+	account_passkeyRegistrationInterrupted: 'Passkey registration was interrupted. Please try again.',
+	account_passkeyAuthenticatorUnsupported:
+		'This authenticator does not meet the requirements for this Passkey. Try another authenticator.',
+	account_passkeyAuthenticatorUnavailable:
+		'The authenticator could not complete Passkey registration. Try again or use another authenticator.',
+	account_passkeyConfigurationError:
+		'Passkey registration is not available for this site. Contact support if the problem continues.',
+	account_passkeyRegistrationFailed: 'Passkey registration failed. Please try again.',
 	account_totp: 'Authenticator apps',
 	account_totpName: 'Authenticator app name',
 	account_totpDefaultName: 'Authenticator app',

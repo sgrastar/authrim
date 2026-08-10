@@ -4,7 +4,7 @@ import {
   publishRuntimeLoggingPolicySnapshot,
 } from '@authrim/ar-lib-logging/policies';
 import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 import { emitRuntimeLogRecords } from '../logging-runtime-emitter';
 
 const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';

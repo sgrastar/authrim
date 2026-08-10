@@ -4174,7 +4174,7 @@ async function handleDeviceCodeGrant(
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast
     const { isDeviceFlowPollingTooFast, DEVICE_FLOW_CONSTANTS } =
-      await import('@authrim/ar-lib-core');
+      await import('@authrim/ar-lib-core/utils/device-flow');
 
     if (isDeviceFlowPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
       return c.json(
@@ -4784,7 +4784,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast (poll mode only)
     if (metadata.delivery_mode === 'poll') {
-      const { isPollingTooFast } = await import('@authrim/ar-lib-core');
+      const { isPollingTooFast } = await import('@authrim/ar-lib-core/utils/ciba');
 
       if (isPollingTooFast(metadata)) {
         return c.json(

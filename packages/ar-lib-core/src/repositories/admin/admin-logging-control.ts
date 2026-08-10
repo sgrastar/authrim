@@ -1,4 +1,4 @@
-import { createLoggingId } from '@authrim/ar-lib-logging';
+import { createLoggingId } from '@authrim/ar-lib-logging/contract';
 import {
   buildLogChunkManifestObjectKey,
   detectLogCatalogRepairFindings,

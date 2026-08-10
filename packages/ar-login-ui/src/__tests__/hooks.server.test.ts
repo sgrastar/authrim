@@ -494,6 +494,68 @@ describe('Login UI proxy hooks', () => {
 		expect(shouldPrefetchLoginUITheme('/discover')).toBe(false);
 	});
 
+	it('bootstraps the published account composition through the router binding', async () => {
+		const { fetchAccountPageInitialDataForPageRequest } = await import('../hooks.server');
+		const capabilities = {
+			capabilities: [],
+			sections: [],
+			theme: {
+				version: 1,
+				scope: 'account',
+				source: 'test',
+				account_page_overrides_supported: true,
+				planned_tokens: []
+			},
+			account_page: {
+				definition: {
+					schema_version: 'authrim.account_page.v1',
+					screens: [
+						{
+							id: 'profile-placement',
+							screen_key: 'account-profile',
+							width: 'half',
+							enabled: true,
+							condition: 'always'
+						}
+					]
+				},
+				screens: [],
+				version: 1,
+				published_at: '2026-08-09T00:00:00.000Z'
+			}
+		};
+		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>
+			Response.json(capabilities)
+		);
+		const url = new URL('https://first.test.authrim.com/account');
+		const event = {
+			request: new Request(url, {
+				headers: {
+					Cookie: 'authrim_session=session-1',
+					'Accept-Language': 'ja-JP'
+				}
+			}),
+			url,
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const result = await fetchAccountPageInitialDataForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(result.capabilitiesResolved).toBe(true);
+		expect(result.capabilities).toEqual(capabilities);
+		expect(fetch).toHaveBeenCalledTimes(1);
+		const [input, init] = fetch.mock.calls[0];
+		expect(input).toBe('https://first.test.authrim.com/api/account/capabilities');
+		const headers = new Headers(init?.headers);
+		expect(headers.get('cookie')).toBe('authrim_session=session-1');
+		expect(headers.get('accept-language')).toBe('ja-JP');
+		expect(headers.get('x-authrim-ui-proxy')).toBe('login-ui');
+	});
+
 	it('bootstraps the configured theme for plain login and signup documents', async () => {
 		const {
 			resolveInitialLoginUIAppearance,

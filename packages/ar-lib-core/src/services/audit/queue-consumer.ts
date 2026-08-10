@@ -10,16 +10,13 @@
 
 import type { MessageBatch, Message, Queue } from '@cloudflare/workers-types';
 import {
-  buildLogChunkObjectKey,
   createLoggingId,
-  defaultLogStorageShard,
   deriveTenantKeyFromTenantId,
   formatUtcPartition,
-  writeLogChunkToR2,
   type LogChunkCompression,
   type LogPlane,
   type LogType,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import {
   computeHttpSinkRetryDelayMs,
   deliverHttpSinkBatch,
@@ -47,7 +44,10 @@ import {
   type RewrapChunkPayload,
 } from '@authrim/ar-lib-logging/delivery';
 import {
+  buildLogChunkObjectKey,
+  defaultLogStorageShard,
   rewrapLogChunkObject,
+  writeLogChunkToR2,
   type LogChunkEncryptionOptions,
   type LogChunkRecord,
   type WriteLogChunkResult,

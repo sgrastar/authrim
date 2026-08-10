@@ -81,6 +81,17 @@ const ja = {
 	account_empty: '項目がありません',
 	account_planned: '今後対応予定',
 	account_passkeyUnsupported: 'このブラウザはPasskey登録に対応していません。',
+	account_passkeyRegistrationCancelled:
+		'Passkeyの登録がキャンセルされたか、時間切れになりました。もう一度お試しください。',
+	account_passkeyAlreadyRegistered: 'この認証器は、このアカウントにすでに登録されています。',
+	account_passkeyRegistrationInterrupted: 'Passkeyの登録が中断されました。もう一度お試しください。',
+	account_passkeyAuthenticatorUnsupported:
+		'この認証器はPasskeyの登録要件を満たしていません。別の認証器をお試しください。',
+	account_passkeyAuthenticatorUnavailable:
+		'認証器でPasskeyの登録を完了できませんでした。もう一度試すか、別の認証器をお使いください。',
+	account_passkeyConfigurationError:
+		'このサイトではPasskeyを登録できません。問題が続く場合はサポートへお問い合わせください。',
+	account_passkeyRegistrationFailed: 'Passkeyの登録に失敗しました。もう一度お試しください。',
 	account_totp: '認証アプリ',
 	account_totpName: '認証アプリ名',
 	account_totpDefaultName: '認証アプリ',
