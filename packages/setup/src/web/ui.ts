@@ -5425,7 +5425,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div id="env-initial-deploy-recovery" class="alert warn hidden">
           <div class="a-head" data-i18n="web.envDetail.initialDeployRecoveryTitle">Initial deployment incomplete</div>
           <p data-i18n="web.envDetail.initialDeployRecoveryDesc">The previous deployment stopped before verification. Existing resources will be reused when you resume.</p>
-          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</button>
+          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" aria-busy="false">
+            <span class="inline-action-spinner hidden" aria-hidden="true"></span>
+            <span data-resume-label data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</span>
+          </button>
         </div>
 
         <div class="sechead"><span class="idx">URL</span><h3 data-i18n="web.complete.endpoints">Endpoints</h3></div>
@@ -11079,7 +11082,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function resumeInitialDeploymentFromEnvironment() {
       if (!selectedEnvForDetail) return;
       const button = document.getElementById('btn-resume-initial-deploy');
+      const spinner = button.querySelector('.inline-action-spinner');
       button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      spinner?.classList.remove('hidden');
       try {
         const response = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
         if (!response.exists || !response.config) {
@@ -11096,6 +11102,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } catch (error) {
         alert(error instanceof Error ? error.message : String(error));
       } finally {
+        spinner?.classList.add('hidden');
+        button.setAttribute('aria-busy', 'false');
         button.disabled = false;
       }
     }

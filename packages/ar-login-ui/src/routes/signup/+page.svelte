@@ -3,6 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
+	import AuthSwitchLink from '$lib/components/AuthSwitchLink.svelte';
 	import RuntimeScreen from '$lib/components/RuntimeScreen.svelte';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { normalizeLoginUILocale } from '$lib/i18n/locales';
@@ -2378,9 +2379,11 @@
 			<!-- Sign In Link -->
 			{#if loginUIPageStore.authSwitchLinkEnabled}
 				<p class="auth-bottom-link">
-					<a href={loginHref} data-sveltekit-reload>
-						{$LL.register_alreadyHaveAccount()}
-					</a>
+					<AuthSwitchLink
+						href={loginHref}
+						label={$LL.register_alreadyHaveAccount()}
+						loadingLabel={$LL.common_loading()}
+					/>
 				</p>
 			{/if}
 		</div>

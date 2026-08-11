@@ -235,6 +235,9 @@ describe('getHtmlTemplate', () => {
     );
     expect(html).toContain("btn.textContent = t('web.envDetail.initialDeployRecoveryAction')");
     expect(html).toContain("t('web.envDetail.initialDeployRecoveryDesc')");
+    expect(html).toContain('class="inline-action-spinner hidden"');
+    expect(html).toContain("spinner?.classList.remove('hidden')");
+    expect(html).toContain("button.setAttribute('aria-busy', 'true')");
   });
 
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
