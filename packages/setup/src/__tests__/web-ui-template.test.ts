@@ -584,6 +584,83 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('.deploy-ready-card');
   });
 
+  it('dismisses setup guidance when provisioning or deployment starts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="provision-preflight-row" data-setup-progress-prelude');
+    expect(html).toContain('id="control-token-bootstrap-row" data-setup-progress-prelude');
+    expect(html).toContain('id="deploy-manual-wildcard-warning" data-setup-progress-prelude');
+    expect(html).toContain("dismissSetupProgressPreludes(['provision-preflight-row'])");
+    expect(html).toContain(
+      "'control-token-bootstrap-row',\n        'deploy-manual-wildcard-warning'"
+    );
+    expect(html).toContain("window.matchMedia('(prefers-reduced-motion: reduce)').matches");
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-prelude-exit');
+    expect(SETUP_WEB_UI_STYLE).toContain('authrim-prelude-exit 0.22s');
+  });
+
+  it('hides running-stage guidance and restores it after a failed attempt', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const transitionSource = html.match(
+      /const setupProgressPreludeHideTimers = new Map\(\);[\s\S]*?(?=\n\s{4}function showSection\(name\))/u
+    )?.[0];
+    expect(transitionSource).toBeTruthy();
+
+    const classes = new Set<string>();
+    const element = {
+      dataset: {} as Record<string, string>,
+      classList: {
+        add: (...names: string[]) => names.forEach((name) => classes.add(name)),
+        contains: (name: string) => classes.has(name),
+        remove: (...names: string[]) => names.forEach((name) => classes.delete(name)),
+      },
+    };
+    let finishTransition: (() => void) | undefined;
+    const context = vm.createContext({
+      clearTimeout: () => undefined,
+      document: {
+        getElementById: (id: string) => (id === 'prelude' ? element : null),
+      },
+      setTimeout: (callback: () => void) => {
+        finishTransition = callback;
+        return 1;
+      },
+      window: {
+        matchMedia: () => ({ matches: false }),
+      },
+    });
+
+    vm.runInContext(`${transitionSource}\ndismissSetupProgressPreludes(['prelude']);`, context);
+    expect(classes.has('setup-progress-prelude-exit')).toBe(true);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBe('true');
+
+    expect(finishTransition).toBeTypeOf('function');
+    finishTransition?.();
+    expect(classes.has('setup-progress-prelude-exit')).toBe(false);
+    expect(classes.has('hidden')).toBe(true);
+
+    vm.runInContext("restoreSetupProgressPreludes(['prelude']);", context);
+    expect(classes.has('hidden')).toBe(false);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBeUndefined();
+
+    expect(html).toContain('function restoreSetupProgressPreludes(ids)');
+    expect(html).toContain(
+      "restoreSetupProgressPreludes([\n          'control-token-bootstrap-row',"
+    );
+  });
+
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -694,7 +771,9 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('function getWildcardDnsManualCopy()');
     expect(html).toContain('deploy-manual-wildcard-warning');
-    expect(html).toContain('<section class="row wide hidden" id="deploy-manual-wildcard-warning">');
+    expect(html).toContain(
+      '<section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>'
+    );
     expect(html).toContain('data-i18n="web.deploy.manualDnsSectionTitle"');
     expect(html).toContain('deploy-manual-wildcard-dashboard-link');
     expect(html).toContain('deploy-manual-wildcard-docs-link');

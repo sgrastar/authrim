@@ -5138,7 +5138,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 7: Resource Provisioning -->
     <div id="section-provision" class="setup-provision-section hidden">
-      <section class="row">
+      <section class="row" id="provision-preflight-row" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.provision.resourcesToCreate">Resources to Create</h2>
         </div>
@@ -5249,7 +5249,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 8: Deployment -->
     <div id="section-deploy" class="hidden setup-step-surface">
-      <section class="row wide hidden" id="control-token-bootstrap-row">
+      <section class="row wide hidden" id="control-token-bootstrap-row" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.deploy.controlCredentialsTitle">Cloudflare connection</h2>
         </div>
@@ -5275,7 +5275,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
       </section>
 
-      <section class="row wide hidden" id="deploy-manual-wildcard-warning">
+      <section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.deploy.manualDnsSectionTitle">DNS settings</h2>
         </div>
@@ -6655,6 +6655,49 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         void section.offsetWidth;
         section.classList.add('setup-section-enter');
       }
+    }
+
+    const setupProgressPreludeHideTimers = new Map();
+
+    function dismissSetupProgressPreludes(ids) {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element || element.classList.contains('hidden')) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        element.dataset.setupProgressPreludeWasVisible = 'true';
+
+        if (reduceMotion) {
+          element.classList.add('hidden');
+          return;
+        }
+
+        element.classList.add('setup-progress-prelude-exit');
+        const timer = setTimeout(() => {
+          element.classList.remove('setup-progress-prelude-exit');
+          element.classList.add('hidden');
+          setupProgressPreludeHideTimers.delete(element);
+        }, 220);
+        setupProgressPreludeHideTimers.set(element, timer);
+      });
+    }
+
+    function restoreSetupProgressPreludes(ids) {
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        setupProgressPreludeHideTimers.delete(element);
+        element.classList.remove('setup-progress-prelude-exit');
+        if (element.dataset.setupProgressPreludeWasVisible === 'true') {
+          element.classList.remove('hidden');
+        }
+        delete element.dataset.setupProgressPreludeWasVisible;
+      });
     }
 
     function showSection(name) {
@@ -9668,6 +9711,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       status.textContent = t('web.provision.runningTasks', { current: 0, total: 5 });
       status.className = '';
       progressUI.classList.remove('hidden');
+      dismissSetupProgressPreludes(['provision-preflight-row']);
       setLogVisibility('provision-log-toggle', 'provision-log', true);
       resourcePreview.classList.remove('hidden');
       keysSavedInfo.classList.add('hidden');
@@ -9996,6 +10040,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       status.className = '';
       readyText.classList.add('hidden');
       progressUI.classList.remove('hidden');
+      dismissSetupProgressPreludes([
+        'control-token-bootstrap-row',
+        'deploy-manual-wildcard-warning',
+      ]);
       setLogVisibility('deploy-log-toggle', 'deploy-log', true);
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
@@ -10146,6 +10194,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           config.manualAction = result.manualAction;
           renderDeployManualWildcardWarning();
+          restoreSetupProgressPreludes([
+            'control-token-bootstrap-row',
+            'deploy-manual-wildcard-warning',
+          ]);
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
@@ -10168,6 +10220,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         bootstrapTokenInput.value = '';
+        restoreSetupProgressPreludes([
+          'control-token-bootstrap-row',
+          'deploy-manual-wildcard-warning',
+        ]);
         if (pollInterval) {
           clearInterval(pollInterval);
           pollInterval = null;
