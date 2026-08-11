@@ -96,6 +96,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build setup CLI and workspace dependencies
+        run: pnpm exec turbo run build --filter=@authrim/setup...
+
       - name: Restore generated environment from secrets
         env:
           AUTHRIM_ENV_CONFIG: ${{ secrets.AUTHRIM_TEST_CONFIG }}
@@ -105,7 +108,7 @@ jobs:
 
       - name: Deploy environment
         run: |
-          pnpm exec tsx packages/setup/src/index.ts update \
+          pnpm run setup update \
             --env "$AUTHRIM_ENV_NAME" \
             --allow-draft-manifest \
             --all \
