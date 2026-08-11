@@ -608,8 +608,13 @@ describe('CLI initial deployment', () => {
       })
     );
     expect(mocks.registerInitialControlTopology).toHaveBeenCalledOnce();
-    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     expect(mocks.waitForInitialBootstrapHandoff).toHaveBeenCalledOnce();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+    const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
+      | { refreshEvidence?: () => Promise<unknown> }
+      | undefined;
+    await handoffInput?.refreshEvidence?.();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     expect(mocks.deployAll).toHaveBeenCalledWith(expect.any(Object), CORE_WORKER_COMPONENTS);
     expect(mocks.resolveMissingUiWorkerBindingTargets).toHaveBeenCalledWith(expect.any(Object), {
       loginUi: false,
@@ -717,7 +722,7 @@ describe('CLI initial deployment', () => {
     expect(mocks.isInitialBootstrapHandoffAccepted).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: env })
     );
-    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledTimes(1);
+    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
   });
 
   it('rejects an incomplete or cross-environment handoff checkpoint', () => {

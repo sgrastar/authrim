@@ -192,7 +192,11 @@ vi.mock('../core/control-token-bootstrap-orchestrator.js', async (importOriginal
   };
 });
 
-import { createApiRoutes, generateSessionToken } from '../web/api.js';
+import {
+  buildWebInitialHandoffResumeSummary,
+  createApiRoutes,
+  generateSessionToken,
+} from '../web/api.js';
 
 const originalCwd = process.cwd();
 let tempDir: string | null = null;
@@ -811,6 +815,105 @@ describe('setup web worker update API', () => {
     });
   });
 
+  it('recovers legacy Web handoff evidence without redeploying Worker traffic', async () => {
+    const getDeployment = vi.fn(async (workerName: string) => ({
+      name: workerName,
+      exists: true,
+      lastDeployedAt: '2026-08-11T11:49:00.000Z',
+      author: 'setup@example.test',
+      versionId:
+        workerName === 'test-ar-auth'
+          ? '00000000-0000-4000-8000-000000000001'
+          : '00000000-0000-4000-8000-000000000002',
+    }));
+    const lock = JSON.parse(
+      JSON.stringify({
+        version: '1.0.0',
+        env: 'test',
+        createdAt: '2026-08-11T11:00:00.000Z',
+        updatedAt: '2026-08-11T11:49:00.000Z',
+        d1: {},
+        kv: {},
+        workers: {
+          'ar-auth': {
+            name: 'test-ar-auth',
+            deployedAt: '2026-08-11T11:48:00.000Z',
+            version: '0.4.0',
+          },
+          'ar-token': {
+            name: 'test-ar-token',
+            deployedAt: '2026-08-11T11:48:30.000Z',
+            version: '0.4.0',
+          },
+        },
+        releaseUpdate: {
+          targetVersion: '0.4.0',
+          phase: 'schema_applied',
+          manifestChecksum: 'a'.repeat(64),
+          startedAt: '2026-08-11T11:00:00.000Z',
+          updatedAt: '2026-08-11T11:30:00.000Z',
+          appliedTargets: [],
+          manualTargets: [],
+        },
+      })
+    );
+
+    const summary = await buildWebInitialHandoffResumeSummary({
+      lock,
+      components: ['ar-auth', 'ar-token'],
+      productVersion: '0.4.0',
+      getDeployment,
+      now: '2026-08-11T12:00:00.000Z',
+    });
+
+    expect(summary).toMatchObject({
+      successCount: 2,
+      failedCount: 0,
+      results: [
+        {
+          workerName: 'test-ar-auth',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+        },
+        {
+          workerName: 'test-ar-token',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000002',
+        },
+      ],
+    });
+    expect(getDeployment).toHaveBeenCalledTimes(2);
+
+    delete lock.workers['ar-token'];
+    await expect(
+      buildWebInitialHandoffResumeSummary({
+        lock,
+        components: ['ar-auth', 'ar-token'],
+        productVersion: '0.4.0',
+        getDeployment,
+      })
+    ).resolves.toBeNull();
+
+    lock.workers['ar-token'] = {
+      name: 'test-ar-token',
+      deployedAt: '2026-08-11T11:48:30.000Z',
+      version: '0.4.0',
+    };
+    getDeployment.mockResolvedValueOnce({
+      name: 'test-ar-auth',
+      exists: false,
+      lastDeployedAt: null,
+      author: null,
+      versionId: null,
+    });
+    await expect(
+      buildWebInitialHandoffResumeSummary({
+        lock,
+        components: ['ar-auth', 'ar-token'],
+        productVersion: '0.4.0',
+        getDeployment,
+      })
+    ).rejects.toThrow('initial_handoff_resume_remote_evidence_missing:ar-auth');
+  });
+
   it('acquires the environment lock before initial deployment build work begins', async () => {
     const env = 'test';
     await writeEnvironment(env);
@@ -901,10 +1004,11 @@ describe('setup web worker update API', () => {
     });
     deployAllMock.mockImplementation(async (_options, components) => {
       events.push('workers');
-      const results = components.map((component) => ({
+      const results = components.map((component, index) => ({
         component,
         workerName: `${env}-${component}`,
         version: '0.2.0',
+        cloudflareVersionId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
         deployedAt: '2026-07-22T01:00:00.000Z',
         success: true,
       }));
@@ -923,7 +1027,13 @@ describe('setup web worker update API', () => {
         controlVersionId: 'version-control',
       };
     });
-    waitForInitialBootstrapHandoffMock.mockImplementation(async () => {
+    waitForInitialBootstrapHandoffMock.mockImplementation(async (input) => {
+      const checkpoint = JSON.parse(
+        await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8')
+      );
+      expect(checkpoint.releaseUpdate?.phase).toBe('workers_deployed');
+      expect(checkpoint.workers['ar-auth']?.cloudflareVersionId).toMatch(/^[a-f0-9-]{36}$/u);
+      await input.refreshEvidence?.();
       events.push('acceptance');
       return { state: 'accepted', acceptedAt: 100 };
     });

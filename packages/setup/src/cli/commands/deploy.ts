@@ -2418,16 +2418,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           if (alreadyAccepted) {
             handoffSpinner.succeed('Initial D1 topology was already accepted by Control');
           } else {
-            const evidence = await recordInitialBootstrapWorkerEvidence({
-              environmentId: env,
-              controlDatabaseName,
-              deployments: summary.results,
-              allowSecretTriggeredVersionAdvanceFor:
-                config.controlPlane?.automaticProvisioning === true
-                  ? [`${env}-ar-control`]
-                  : undefined,
-            });
-            handoffSpinner.text = `Waiting for Control verification of ${evidence.workerCount} Worker(s)...`;
+            const deployedWorkerCount = new Set(
+              summary.results
+                .filter((result) => result.success || result.trafficCommitted)
+                .map((result) => result.workerName)
+            ).size;
+            handoffSpinner.text = `Waiting for Control verification of ${deployedWorkerCount} Worker(s)...`;
             await waitForInitialBootstrapHandoff({
               environmentId: env,
               controlDatabaseName,

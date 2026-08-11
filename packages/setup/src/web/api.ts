@@ -69,6 +69,7 @@ import {
   loadLockFileAuto,
   mergeLockFiles,
   saveLockFile,
+  type AuthrimLock,
 } from '../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -144,6 +145,7 @@ import {
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployResult,
+  type DeploymentSummary,
   type UiWorkerComponent,
 } from '../core/deploy.js';
 import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
@@ -269,6 +271,78 @@ export function generateSessionToken(): string {
  */
 export function getSessionToken(): string {
   return sessionToken;
+}
+
+/**
+ * Recover the exact Worker set from an interrupted initial Web deployment.
+ *
+ * Older setup versions persisted the deployed Worker names and timestamps but omitted the
+ * Cloudflare version IDs and the workers_deployed release checkpoint. Only recover that legacy
+ * state when every enabled Worker has exact environment/name/version evidence; otherwise the
+ * caller must perform a normal deployment.
+ */
+export async function buildWebInitialHandoffResumeSummary(input: {
+  lock: AuthrimLock;
+  components: readonly WorkerComponent[];
+  productVersion: string;
+  getDeployment?: typeof getWorkerDeployments;
+  now?: string;
+}): Promise<DeploymentSummary | null> {
+  const phase = input.lock.releaseUpdate?.phase;
+  if (phase !== 'schema_applied' && phase !== 'workers_deployed') return null;
+
+  const lockedWorkers = input.components.map((component) => ({
+    component,
+    worker: input.lock.workers?.[component],
+  }));
+  const hasCompleteLocalEvidence = lockedWorkers.every(
+    ({ component, worker }) =>
+      worker?.name === `${input.lock.env}-${component}` &&
+      worker.version === input.productVersion &&
+      Boolean(worker.deployedAt)
+  );
+  if (!hasCompleteLocalEvidence) {
+    if (phase === 'workers_deployed') {
+      throw new Error('initial_handoff_resume_worker_evidence_incomplete');
+    }
+    return null;
+  }
+
+  const getDeployment = input.getDeployment ?? getWorkerDeployments;
+  const recovered = await Promise.all(
+    lockedWorkers.map(async ({ component, worker }): Promise<DeployResult> => {
+      // The completeness check above narrows the operational state; retain this explicit guard so
+      // a future refactor cannot turn an incomplete checkpoint into a deployment fallback.
+      if (!worker?.deployedAt) {
+        throw new Error(`initial_handoff_resume_worker_evidence_incomplete:${component}`);
+      }
+      const remote = worker.cloudflareVersionId ? null : await getDeployment(worker.name);
+      const cloudflareVersionId = worker.cloudflareVersionId ?? remote?.versionId ?? undefined;
+      if (!cloudflareVersionId || (remote && !remote.exists)) {
+        throw new Error(`initial_handoff_resume_remote_evidence_missing:${component}`);
+      }
+      return {
+        component,
+        workerName: worker.name,
+        success: true,
+        deployedAt: worker.deployedAt,
+        version: worker.version,
+        cloudflareVersionId,
+      };
+    })
+  );
+
+  const completedAt = input.now ?? new Date().toISOString();
+  const results = recovered;
+  return {
+    totalComponents: results.length,
+    successCount: results.length,
+    failedCount: 0,
+    results,
+    startedAt: completedAt,
+    completedAt,
+    duration: 0,
+  };
 }
 
 // =============================================================================
@@ -3457,24 +3531,39 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        const summary = await deployAll(
-          {
-            env,
-            rootDir: resolve(rootDir),
-            dryRun,
-            concurrency: 2,
-            deploymentStrategy: 'auto',
-            existingComponents,
-            secrets: deploymentSecrets,
-            automaticProvisioning: automaticProvisioning && !bootstrapToken,
-            cleanupLegacyStaticSecrets: true,
-            onProgress: addProgress,
-            onError: (comp, error) => {
-              addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+        const resumeSummary =
+          !dryRun && deploymentLock
+            ? await buildWebInitialHandoffResumeSummary({
+                lock: deploymentLock,
+                components: enabledComponents,
+                productVersion,
+              })
+            : null;
+        const summary =
+          resumeSummary ??
+          (await deployAll(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              concurrency: 2,
+              deploymentStrategy: 'auto',
+              existingComponents,
+              secrets: deploymentSecrets,
+              automaticProvisioning: automaticProvisioning && !bootstrapToken,
+              cleanupLegacyStaticSecrets: true,
+              onProgress: addProgress,
+              onError: (comp, error) => {
+                addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+              },
             },
-          },
-          enabledComponents
-        );
+            enabledComponents
+          ));
+        if (resumeSummary) {
+          addProgress(
+            `Resuming initial Control handoff from ${resumeSummary.results.length} active Worker version(s); no Worker traffic was changed.`
+          );
+        }
 
         state.deployResults = summary.results;
 
@@ -3516,20 +3605,7 @@ export function createApiRoutes(): Hono {
           if (!currentLock || !lockPath) {
             throw new Error('Deployment lock disappeared before Worker evidence was recorded.');
           }
-          const now = new Date().toISOString();
-          const workers: Record<string, { name: string; deployedAt?: string; version?: string }> = {
-            ...currentLock.workers,
-          };
-          for (const result of summary.results) {
-            if (result.success && result.deployedAt) {
-              workers[result.component] = {
-                name: result.workerName,
-                deployedAt: result.deployedAt,
-                version: result.version,
-              };
-            }
-          }
-          await saveLockFile({ ...currentLock, workers, updatedAt: now }, lockPath);
+          await saveLockFile(updateLockWithDeployments(currentLock, summary.results), lockPath);
           addProgress('Lock file updated with deployment info');
         }
 
@@ -3550,6 +3626,23 @@ export function createApiRoutes(): Hono {
               `Worker deployments did not become visible: ${workerDeploymentResult.error || 'unknown verification error'}`
             );
           }
+
+          const { lock: checkpointLock, path: checkpointPath } = await loadLockFileAuto(
+            rootDir,
+            env
+          );
+          if (!checkpointLock || !checkpointPath) {
+            throw new Error('Deployment lock disappeared before the handoff checkpoint was saved.');
+          }
+          await saveLockFile(
+            withReleaseUpdateState(checkpointLock, {
+              targetVersion: productVersion,
+              phase: 'workers_deployed',
+              manifestChecksum: initialManifestChecksum,
+            }),
+            checkpointPath
+          );
+          addProgress('Saved initial Worker handoff checkpoint');
 
           if (bootstrapToken && bootstrapOwnership) {
             const accountId = releaseConfig.cloudflare?.accountId ?? (await getAccountId());
@@ -3610,16 +3703,13 @@ export function createApiRoutes(): Hono {
           if (!controlDatabaseName || !controlDatabaseId) {
             throw new Error('control_database_required');
           }
-          const evidence = await recordInitialBootstrapWorkerEvidence({
-            environmentId: env,
-            controlDatabaseName,
-            deployments: summary.results,
-            allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
-              ? [`${env}-ar-control`]
-              : undefined,
-          });
+          const deployedWorkerCount = new Set(
+            summary.results
+              .filter((result) => result.success || result.trafficCommitted)
+              .map((result) => result.workerName)
+          ).size;
           addProgress(
-            `Waiting for Control bootstrap verification of ${evidence.workerCount} Worker(s)...`
+            `Waiting for Control bootstrap verification of ${deployedWorkerCount} Worker(s)...`
           );
           await waitForInitialBootstrapHandoff({
             environmentId: env,
