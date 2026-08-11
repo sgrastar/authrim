@@ -221,6 +221,22 @@ describe('getHtmlTemplate', () => {
     });
   });
 
+  it('offers in-place initial deployment recovery after a failed deploy request', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain(
+      "const recovery = await api('/deploy/recovery/' + encodeURIComponent(config.env))"
+    );
+    expect(html).toContain("btn.textContent = t('web.envDetail.initialDeployRecoveryAction')");
+    expect(html).toContain("t('web.envDetail.initialDeployRecoveryDesc')");
+  });
+
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
     const html = getHtmlTemplate(
       'session-token',

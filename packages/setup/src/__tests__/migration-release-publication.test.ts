@@ -229,6 +229,77 @@ describe('migration release artifact publication', () => {
     expect(uploaded).toBe(2);
   });
 
+  it('retries a content-addressed R2 object after a transient Cloudflare 524', async () => {
+    const fixture = temporaryRelease();
+    const expectedArtifact = buildMigrationReleaseArtifactPlan(fixture);
+    const attempts = new Map<string, number>();
+    const delays: number[] = [];
+    const progress: string[] = [];
+    const database = controlDatabase();
+    try {
+      await expect(
+        publishAndActivateMigrationRelease({
+          ...fixture,
+          bucketName: 'test-migration-releases',
+          controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+          environmentId: 'env-test',
+          actorId: 'setup:test',
+          upload: async ({ objectKey }) => {
+            const attempt = (attempts.get(objectKey) ?? 0) + 1;
+            attempts.set(objectKey, attempt);
+            if (objectKey === expectedArtifact.objects[0]?.objectKey && attempt === 1) {
+              throw new Error('Failed to fetch /r2/object - 524: A timeout occurred');
+            }
+          },
+          executeBatch: sqliteBatchExecutor(database),
+          sleep: async (milliseconds) => {
+            delays.push(milliseconds);
+          },
+          onProgress: (message) => progress.push(message),
+        })
+      ).resolves.toMatchObject({ artifact: expectedArtifact });
+    } finally {
+      database.close();
+    }
+
+    expect(attempts.get(expectedArtifact.objects[0]!.objectKey)).toBe(2);
+    expect(
+      expectedArtifact.objects.slice(1).every((object) => attempts.get(object.objectKey) === 1)
+    ).toBe(true);
+    expect(delays).toEqual([1_000]);
+    expect(progress).toContain(
+      `Retrying migration release object ${expectedArtifact.objects[0]!.objectKey} (2/4)`
+    );
+  });
+
+  it('does not retry a deterministic R2 permission rejection', async () => {
+    const fixture = temporaryRelease();
+    let attempts = 0;
+    let catalogStarted = false;
+    await expect(
+      publishAndActivateMigrationRelease({
+        ...fixture,
+        bucketName: 'test-migration-releases',
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        environmentId: 'env-test',
+        actorId: 'setup:test',
+        upload: async () => {
+          attempts += 1;
+          throw new Error('Failed to fetch /r2/object - 403: forbidden');
+        },
+        executeBatch: async () => {
+          catalogStarted = true;
+          return [];
+        },
+        sleep: async () => {
+          throw new Error('sleep_must_not_run');
+        },
+      })
+    ).rejects.toThrow('403: forbidden');
+    expect(attempts).toBe(1);
+    expect(catalogStarted).toBe(false);
+  });
+
   it('retries an idempotent catalog batch after throttling or response loss', async () => {
     const fixture = temporaryRelease();
     const expectedArtifact = buildMigrationReleaseArtifactPlan(fixture);

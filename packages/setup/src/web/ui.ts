@@ -10170,11 +10170,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pollInterval = null;
         }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
-        scrollToBottom(log);
         status.textContent = t('web.status.error');
         status.className = '';
         btn.disabled = false;
-        btn.textContent = t('web.deploy.retryDeploy');
+        let canResumeInitialDeployment = false;
+        try {
+          const recovery = await api('/deploy/recovery/' + encodeURIComponent(config.env));
+          canResumeInitialDeployment = recovery.success === true && recovery.canResume === true;
+        } catch {
+          // Keep the ordinary retry action available if recovery status cannot be loaded.
+        }
+        if (canResumeInitialDeployment) {
+          btn.textContent = t('web.envDetail.initialDeployRecoveryAction');
+          output.textContent += '\\n' + t('web.envDetail.initialDeployRecoveryDesc') + '\\n';
+        } else {
+          btn.textContent = t('web.deploy.retryDeploy');
+        }
+        scrollToBottom(log);
         btn.classList.remove('hidden');
         btnBack.classList.remove('hidden');
         btnCancel.classList.add('hidden');
