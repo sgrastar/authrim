@@ -41,6 +41,8 @@ const publishAndActivateMigrationReleaseMock = vi.hoisted(() => vi.fn());
 const compileControlWorkerInventoryFromArtifactsMock = vi.hoisted(() => vi.fn());
 const registerControlWorkerInventoryMock = vi.hoisted(() => vi.fn());
 const registerInitialControlTopologyMock = vi.hoisted(() => vi.fn());
+const advanceInitialBootstrapWorkerBindingsAsOperatorMock = vi.hoisted(() => vi.fn());
+const reconcileInitialBootstrapHandoffAsOperatorMock = vi.hoisted(() => vi.fn());
 const recordInitialBootstrapWorkerEvidenceMock = vi.hoisted(() => vi.fn());
 const waitForInitialBootstrapHandoffMock = vi.hoisted(() => vi.fn());
 const discoverExternalCapabilitiesMock = vi.hoisted(() => vi.fn());
@@ -165,6 +167,9 @@ vi.mock('../core/control-worker-inventory.js', () => ({
 
 vi.mock('../core/control-bootstrap-handoff.js', () => ({
   registerInitialControlTopology: registerInitialControlTopologyMock,
+  advanceInitialBootstrapWorkerBindingsAsOperator:
+    advanceInitialBootstrapWorkerBindingsAsOperatorMock,
+  reconcileInitialBootstrapHandoffAsOperator: reconcileInitialBootstrapHandoffAsOperatorMock,
   recordInitialBootstrapWorkerEvidence: recordInitialBootstrapWorkerEvidenceMock,
   waitForInitialBootstrapHandoff: waitForInitialBootstrapHandoffMock,
 }));
@@ -443,6 +448,8 @@ describe('setup web worker update API', () => {
     compileControlWorkerInventoryFromArtifactsMock.mockReset();
     registerControlWorkerInventoryMock.mockReset();
     registerInitialControlTopologyMock.mockReset();
+    advanceInitialBootstrapWorkerBindingsAsOperatorMock.mockReset();
+    reconcileInitialBootstrapHandoffAsOperatorMock.mockReset();
     recordInitialBootstrapWorkerEvidenceMock.mockReset();
     waitForInitialBootstrapHandoffMock.mockReset();
     discoverExternalCapabilitiesMock.mockReset();
@@ -969,6 +976,22 @@ describe('setup web worker update API', () => {
         allowSecretTriggeredVersionAdvanceFor: [`${env}-ar-control`],
       })
     );
+    const handoffInput = waitForInitialBootstrapHandoffMock.mock.calls[0]?.[0] as
+      | {
+          advanceBindings?: () => Promise<unknown>;
+          refreshEvidence?: () => Promise<unknown>;
+          reconcile?: () => Promise<unknown>;
+        }
+      | undefined;
+    expect(handoffInput?.advanceBindings).toBeUndefined();
+    expect(handoffInput?.refreshEvidence).toEqual(expect.any(Function));
+    expect(handoffInput?.reconcile).toEqual(expect.any(Function));
+    await handoffInput?.refreshEvidence?.();
+    await handoffInput?.reconcile?.();
+    expect(reconcileInitialBootstrapHandoffAsOperatorMock).toHaveBeenCalledWith({
+      controlDatabaseId: 'control-id',
+      executeWorkerBindings: false,
+    });
 
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim', env, 'lock.json'), 'utf-8'));
     expect(lock.productVersion).toBe('0.2.0');

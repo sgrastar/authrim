@@ -5517,13 +5517,35 @@ export interface DeleteOptions {
   onProgress?: (message: string) => void;
 }
 
+const CONTROL_FIXED_D1_SUFFIX = /^(?:core|pii|admin|control|lookup|plugin-runner)-db$/u;
+const CONTROL_SHARD_D1_SUFFIX =
+  /^(?:(?:tenant-core-default|tenant-core-users|tenant-pii|tenant-lookup)-[a-z0-9-]+-db-[a-f0-9]{8}|(?:core-default|core-users|pii|lookup)-[a-z0-9-]+(?:-db)?-[a-f0-9]{8})$/u;
+const CONTROL_BOOTSTRAP_D1_SUFFIX = /^tenant-(?:default|users|pii)-bootstrap-db$/u;
+const CONTROL_PLUGIN_D1_SUFFIX = /^[a-f0-9]{32}-d1$/u;
+const CONTROL_PLUGIN_KV_SUFFIX = /^[a-f0-9]{32}-kv$/u;
+const CONTROL_PLUGIN_R2_SUFFIX = /^[a-f0-9]{32}-r2$/u;
+
+function controlManagedSuffix(env: string, name: string): string | null {
+  const prefixes = [`${env}-authrim-`, `authrim-${env}-`];
+  const prefix = prefixes.find((candidate) => name.startsWith(candidate));
+  return prefix ? name.slice(prefix.length) : null;
+}
+
+function isControlManagedD1NameForEnvironment(env: string, name: string): boolean {
+  const suffix = controlManagedSuffix(env, name);
+  return (
+    suffix !== null &&
+    (CONTROL_FIXED_D1_SUFFIX.test(suffix) ||
+      CONTROL_SHARD_D1_SUFFIX.test(suffix) ||
+      CONTROL_BOOTSTRAP_D1_SUFFIX.test(suffix) ||
+      CONTROL_PLUGIN_D1_SUFFIX.test(suffix))
+  );
+}
+
 export function filterKnownD1NamesForEnvironment(env: string, names: string[]): string[] {
+  validateEnvName(env);
   return Array.from(
-    new Set(
-      names.filter(
-        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
-      )
-    )
+    new Set(names.filter((name) => isControlManagedD1NameForEnvironment(env, name)))
   );
 }
 
@@ -5542,30 +5564,12 @@ export function filterKnownQueueNamesForEnvironment(env: string, names: string[]
   );
 }
 
-const CONTROL_SHARD_D1_SUFFIX =
-  /^(?:(?:tenant-core-default|tenant-core-users|tenant-pii|tenant-lookup)-[a-z0-9-]+-db-[a-f0-9]{8}|(?:core-default|core-users|pii|lookup)-[a-z0-9-]+(?:-db)?-[a-f0-9]{8})$/u;
-const CONTROL_PLUGIN_D1_SUFFIX = /^[a-f0-9]{32}-d1$/u;
-const CONTROL_PLUGIN_KV_SUFFIX = /^[a-f0-9]{32}-kv$/u;
-const CONTROL_PLUGIN_R2_SUFFIX = /^[a-f0-9]{32}-r2$/u;
-
-function controlManagedSuffix(env: string, name: string): string | null {
-  const prefixes = [`${env}-authrim-`, `authrim-${env}-`];
-  const prefix = prefixes.find((candidate) => name.startsWith(candidate));
-  return prefix ? name.slice(prefix.length) : null;
-}
-
 export function filterControlManagedD1ForEnvironment(
   env: string,
   databases: Array<{ name: string; uuid: string }>
 ): Array<{ name: string; uuid: string }> {
   validateEnvName(env);
-  return databases.filter((database) => {
-    const suffix = controlManagedSuffix(env, database.name);
-    return (
-      suffix !== null &&
-      (CONTROL_SHARD_D1_SUFFIX.test(suffix) || CONTROL_PLUGIN_D1_SUFFIX.test(suffix))
-    );
-  });
+  return databases.filter((database) => isControlManagedD1NameForEnvironment(env, database.name));
 }
 
 export function filterControlManagedKVForEnvironment(

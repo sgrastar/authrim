@@ -113,6 +113,7 @@ import {
   projectControlGeneratedKeyState,
 } from '../core/control-generated-state.js';
 import {
+  advanceInitialBootstrapWorkerBindingsAsOperator,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
@@ -3626,12 +3627,27 @@ export function createApiRoutes(): Hono {
             timeoutMs: 15 * 60_000,
             pollIntervalMs: 30_000,
             onProgress: addProgress,
+            advanceBindings: automaticProvisioning
+              ? undefined
+              : () =>
+                  advanceInitialBootstrapWorkerBindingsAsOperator({
+                    controlDatabaseId,
+                    controlDatabaseName,
+                    environmentId: env,
+                  }),
+            refreshEvidence: () =>
+              recordInitialBootstrapWorkerEvidence({
+                environmentId: env,
+                controlDatabaseName,
+                deployments: summary.results,
+                allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
+                  ? [`${env}-ar-control`]
+                  : undefined,
+              }),
             reconcile: () =>
               reconcileInitialBootstrapHandoffAsOperator({
                 controlDatabaseId,
-                controlDatabaseName,
-                environmentId: env,
-                executeWorkerBindings: !automaticProvisioning,
+                executeWorkerBindings: false,
               }),
           });
           addProgress('✓ Initial D1 topology accepted by Control');
@@ -4980,6 +4996,12 @@ export function createApiRoutes(): Hono {
           deleteQueues,
           deleteR2,
           deletePages,
+          knownD1Names: operationLock.lock
+            ? Object.values(operationLock.lock.d1).map((entry) => entry.name)
+            : [],
+          knownQueueNames: operationLock.lock?.queues
+            ? Object.values(operationLock.lock.queues).map((entry) => entry.name)
+            : [],
           onProgress: addProgress,
         });
 

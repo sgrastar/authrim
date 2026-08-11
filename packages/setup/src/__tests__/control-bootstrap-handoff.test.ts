@@ -717,6 +717,95 @@ describe('initial Control topology handoff registration', () => {
     ).rejects.toThrow('control_bootstrap_worker_version_mismatch:test-ar-control');
   });
 
+  it('accepts only an exact Worker deployment recorded by a succeeded binding reconciliation', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
+      lock: lock(),
+      release: release(),
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(plan.sql);
+    const execute = async (_name: string, sql: string) => {
+      db.exec(sql);
+      return { success: true } as never;
+    };
+    const query = async (_name: string, sql: string) => db.prepare(sql).all() as never;
+    const createClient = () => ({
+      getWorkerSettings: async () => ({ compatibility_date: '2026-07-30', bindings: [] }),
+      listWorkerDeployments: async (scriptName: string) => [
+        {
+          id: `${scriptName}-deployment-v1`,
+          created_on: '2026-07-30T00:00:00.000Z',
+          source: 'api',
+          strategy: 'percentage' as const,
+          versions: [
+            {
+              percentage: 100,
+              version_id: scriptName.endsWith('ar-control') ? 'control-v1' : 'management-v1',
+            },
+          ],
+        },
+        ...(scriptName.endsWith('ar-control')
+          ? [
+              {
+                id: 'test-ar-control-binding-deployment-v2',
+                created_on: '2026-07-30T00:01:00.000Z',
+                source: 'api',
+                strategy: 'percentage' as const,
+                versions: [{ percentage: 100, version_id: 'control-binding-v2' }],
+              },
+            ]
+          : []),
+      ],
+    });
+    const input = {
+      environmentId: 'test',
+      controlDatabaseName: 'control',
+      deployments: deploymentResults(),
+      now: 101,
+      accountId: 'account-id',
+      token: 'workers-token',
+      createClient,
+      execute,
+      query,
+    };
+
+    await expect(recordInitialBootstrapWorkerEvidence(input)).rejects.toThrow(
+      'control_bootstrap_worker_version_mismatch:test-ar-control'
+    );
+    db.exec(`
+      INSERT INTO control_worker_binding_reconciliations (
+        operation_id, environment_id, worker_script_name, shard_id, binding_ref,
+        data_role, residency_partition, migration_generation, provider_database_id,
+        state, expected_source_version_id, previous_deployment_id,
+        patch_result_version_id, patch_result_deployment_id, previous_restore_settings_json,
+        smoke_attempt_count, consecutive_smoke_successes, created_at, updated_at, completed_at
+      )
+      SELECT operation.operation_id, operation.environment_id, 'test-ar-control', shard.shard_id,
+             shard.binding_ref, shard.data_role, shard.residency_partition, shard.generation,
+             migration.provider_database_id, 'succeeded', 'control-v1',
+             'test-ar-control-deployment-v1', 'control-binding-v2',
+             'test-ar-control-binding-deployment-v2', '{}', 1, 3, 100, 101, 101
+        FROM control_operations operation
+        JOIN control_tenant_database_migration_state migration
+          ON migration.operation_id = operation.operation_id
+        JOIN control_tenant_shards shard
+          ON shard.d1_desired_resource_id = migration.desired_resource_id
+       WHERE operation.environment_id = 'test'
+         AND operation.operation_kind = 'provision_shard'
+       LIMIT 1;
+    `);
+
+    await expect(recordInitialBootstrapWorkerEvidence(input)).resolves.toMatchObject({
+      controlDeploymentId: 'test-ar-control-binding-deployment-v2',
+      controlVersionId: 'control-binding-v2',
+    });
+  });
+
   it('refreshes changed evidence before acceptance and rejects changes after acceptance', async () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
@@ -879,30 +968,81 @@ describe('initial Control topology handoff registration', () => {
     ).resolves.toBe(false);
   });
 
-  it('runs the operator reconciler before observing handoff state', async () => {
+  it('advances bindings first and verifies only after every binding succeeds', async () => {
     const events: string[] = [];
+    let time = 0;
+    const states = [
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 2,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+      {
+        state: 'accepted',
+        verification_error_code: null,
+        accepted_at: 200,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+    ];
 
     await expect(
       waitForInitialBootstrapHandoff({
         environmentId: 'test',
         controlDatabaseName: 'control',
+        advanceBindings: async () => {
+          events.push('advance');
+        },
+        refreshEvidence: async () => {
+          events.push('refresh');
+        },
         reconcile: async () => {
           events.push('reconcile');
         },
         query: async () => {
           events.push('query');
-          return [
-            {
-              state: 'accepted',
-              verification_error_code: null,
-              accepted_at: 200,
-              pending_bindings: 0,
-            },
-          ] as never;
+          return [states.shift()!] as never;
         },
+        now: () => time,
+        sleep: async (milliseconds) => {
+          events.push('sleep');
+          time += milliseconds;
+        },
+        timeoutMs: 1_000,
+        pollIntervalMs: 250,
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
-    expect(events).toEqual(['reconcile', 'query']);
+    expect(events).toEqual([
+      'advance',
+      'query',
+      'sleep',
+      'advance',
+      'query',
+      'sleep',
+      'advance',
+      'query',
+      'refresh',
+      'reconcile',
+      'sleep',
+      'advance',
+      'query',
+    ]);
   });
 
   it('uses the Wrangler OAuth operator client for handoff reconciliation without a direct token', async () => {

@@ -36,6 +36,8 @@ const mocks = vi.hoisted(() => ({
   registerControlWorkerInventory: vi.fn(),
   registerInitialControlTopology: vi.fn(),
   isInitialBootstrapHandoffAccepted: vi.fn(),
+  advanceInitialBootstrapWorkerBindingsAsOperator: vi.fn(),
+  reconcileInitialBootstrapHandoffAsOperator: vi.fn(),
   recordInitialBootstrapWorkerEvidence: vi.fn(),
   waitForInitialBootstrapHandoff: vi.fn(),
   initializeControlKeyState: vi.fn(),
@@ -151,6 +153,9 @@ vi.mock('../core/control-worker-inventory.js', () => ({
 vi.mock('../core/control-bootstrap-handoff.js', () => ({
   registerInitialControlTopology: mocks.registerInitialControlTopology,
   isInitialBootstrapHandoffAccepted: mocks.isInitialBootstrapHandoffAccepted,
+  advanceInitialBootstrapWorkerBindingsAsOperator:
+    mocks.advanceInitialBootstrapWorkerBindingsAsOperator,
+  reconcileInitialBootstrapHandoffAsOperator: mocks.reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence: mocks.recordInitialBootstrapWorkerEvidence,
   waitForInitialBootstrapHandoff: mocks.waitForInitialBootstrapHandoff,
 }));
@@ -638,6 +643,28 @@ describe('CLI initial deployment', () => {
     expect(mocks.publishAndActivateMigrationRelease).toHaveBeenCalledOnce();
     expect(mocks.deployUiWorkerBindingTargets).not.toHaveBeenCalled();
     expect(mocks.deployAll).toHaveBeenCalledOnce();
+    const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
+      | {
+          advanceBindings?: () => Promise<unknown>;
+          refreshEvidence?: () => Promise<unknown>;
+          reconcile?: () => Promise<unknown>;
+        }
+      | undefined;
+    expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
+    expect(handoffInput?.refreshEvidence).toEqual(expect.any(Function));
+    expect(handoffInput?.reconcile).toEqual(expect.any(Function));
+    await handoffInput?.advanceBindings?.();
+    await handoffInput?.refreshEvidence?.();
+    await handoffInput?.reconcile?.();
+    expect(mocks.advanceInitialBootstrapWorkerBindingsAsOperator).toHaveBeenCalledWith({
+      controlDatabaseId: 'control-id',
+      controlDatabaseName: 'headless-authrim-control-db',
+      environmentId: env,
+    });
+    expect(mocks.reconcileInitialBootstrapHandoffAsOperator).toHaveBeenCalledWith({
+      controlDatabaseId: 'control-id',
+      executeWorkerBindings: false,
+    });
   });
 
   it('keeps a fresh-install dry run mutation-free before the Control schema exists', async () => {

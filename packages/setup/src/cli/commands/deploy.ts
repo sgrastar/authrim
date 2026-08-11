@@ -144,6 +144,7 @@ import {
   publishInitialControlPlaneRuntimeSnapshot,
 } from '../../core/control-plane-bootstrap.js';
 import {
+  advanceInitialBootstrapWorkerBindingsAsOperator,
   isInitialBootstrapHandoffAccepted,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
@@ -2435,12 +2436,29 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               onProgress: (message) => {
                 handoffSpinner.text = message;
               },
+              advanceBindings:
+                config.controlPlane?.automaticProvisioning === true
+                  ? undefined
+                  : () =>
+                      advanceInitialBootstrapWorkerBindingsAsOperator({
+                        controlDatabaseId,
+                        controlDatabaseName,
+                        environmentId: env,
+                      }),
+              refreshEvidence: () =>
+                recordInitialBootstrapWorkerEvidence({
+                  environmentId: env,
+                  controlDatabaseName,
+                  deployments: summary.results,
+                  allowSecretTriggeredVersionAdvanceFor:
+                    config.controlPlane?.automaticProvisioning === true
+                      ? [`${env}-ar-control`]
+                      : undefined,
+                }),
               reconcile: () =>
                 reconcileInitialBootstrapHandoffAsOperator({
                   controlDatabaseId,
-                  controlDatabaseName,
-                  environmentId: env,
-                  executeWorkerBindings: config.controlPlane?.automaticProvisioning !== true,
+                  executeWorkerBindings: false,
                 }),
             });
             handoffSpinner.succeed('Initial D1 topology accepted by Control');

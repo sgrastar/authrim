@@ -8,6 +8,7 @@ import { createApiRoutes, generateSessionToken, getSessionToken } from '../web/a
 
 const cloudflareMocks = vi.hoisted(() => ({
   detectEnvironments: vi.fn(),
+  deleteEnvironment: vi.fn(),
   hasControlManagedResourcesForEnvironment: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   return {
     ...actual,
     detectEnvironments: cloudflareMocks.detectEnvironments,
+    deleteEnvironment: cloudflareMocks.deleteEnvironment,
     hasControlManagedResourcesForEnvironment:
       cloudflareMocks.hasControlManagedResourcesForEnvironment,
   };
@@ -35,7 +37,13 @@ function post(path: string, body: unknown, token?: string): globalThis.RequestIn
   };
 }
 
-async function writeDeployedLock(env: string): Promise<void> {
+async function writeDeployedLock(
+  env: string,
+  resources: {
+    d1?: Record<string, { id: string; name: string }>;
+    queues?: Record<string, { id: string; name: string }>;
+  } = {}
+): Promise<void> {
   const envDir = join(root, '.authrim', env);
   await mkdir(envDir, { recursive: true });
   await writeFile(
@@ -51,8 +59,9 @@ async function writeDeployedLock(env: string): Promise<void> {
         env,
         createdAt: '2026-07-21T00:00:00.000Z',
         updatedAt: '2026-07-21T00:00:00.000Z',
-        d1: {},
+        d1: resources.d1 ?? {},
         kv: {},
+        queues: resources.queues,
         workers: {},
       },
       null,
@@ -64,6 +73,12 @@ async function writeDeployedLock(env: string): Promise<void> {
 describe('setup web basic API contracts', () => {
   beforeEach(async () => {
     cloudflareMocks.detectEnvironments.mockReset().mockResolvedValue([]);
+    cloudflareMocks.deleteEnvironment.mockReset().mockResolvedValue({
+      success: true,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: [],
+    });
     cloudflareMocks.hasControlManagedResourcesForEnvironment.mockReset().mockResolvedValue(false);
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-basic-')));
     process.chdir(root);
@@ -150,6 +165,38 @@ describe('setup web basic API contracts', () => {
     } finally {
       await heldOperation.release();
     }
+  });
+
+  it('passes lock-recorded D1 and Queue names through the shared safe deletion core', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env, {
+      d1: {
+        CONTROL_DB: { id: 'control-id', name: 'prod-authrim-control-db' },
+        BOOTSTRAP_DB: {
+          id: 'bootstrap-id',
+          name: 'prod-authrim-tenant-default-bootstrap-db',
+        },
+      },
+      queues: {
+        AUDIT_QUEUE: { id: 'queue-id', name: 'prod-audit-queue' },
+      },
+    });
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+
+    const response = await app.request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, token)
+    );
+
+    expect(response.status).toBe(200);
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env,
+        knownD1Names: ['prod-authrim-control-db', 'prod-authrim-tenant-default-bootstrap-db'],
+        knownQueueNames: ['prod-audit-queue'],
+      })
+    );
   });
 
   it('returns read-only state, deploy status, and component inventory without a token', async () => {
