@@ -1716,9 +1716,11 @@ INSERT INTO screens (
       const tempDir = mkdtempSync(join(tmpdir(), 'authrim-flow-assignment-migration-'));
       const dbPath = join(tempDir, 'test.db');
       const extensionMigration = '020_flow_assignment_credential_profiles.sql';
-      const migrationsBeforeExtension = activeCoreMigrationFiles().filter(
-        (migrationFile) => migrationFile !== extensionMigration
-      );
+      const activeMigrations = activeCoreMigrationFiles();
+      const extensionMigrationIndex = activeMigrations.indexOf(extensionMigration);
+
+      expect(extensionMigrationIndex).toBeGreaterThan(0);
+      const migrationsBeforeExtension = activeMigrations.slice(0, extensionMigrationIndex);
 
       try {
         runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeExtension);
