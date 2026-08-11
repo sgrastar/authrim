@@ -28,6 +28,12 @@ describe('parseOAuthClientAuthenticationParams', () => {
         clientSecret: 'secret',
         clientAssertion: undefined,
         clientAssertionType: undefined,
+        presentation: {
+          basic: true,
+          clientSecretPost: false,
+          clientAssertion: false,
+          clientAssertionType: undefined,
+        },
       },
     });
   });

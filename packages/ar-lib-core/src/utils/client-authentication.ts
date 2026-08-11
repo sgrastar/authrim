@@ -131,6 +131,7 @@ export interface ParsedOAuthClientAuthentication {
   clientSecret?: string;
   clientAssertion?: string;
   clientAssertionType?: string;
+  presentation: ClientAuthenticationPresentation;
 }
 
 export type ParseOAuthClientAuthenticationResult =
@@ -140,6 +141,77 @@ export type ParseOAuthClientAuthenticationResult =
 export type ConfidentialOAuthClientAuthenticationResult =
   | { ok: true; method: 'client_secret' | 'client_assertion'; clientId: string }
   | { ok: false; error: 'invalid_client'; errorDescription: string };
+
+export interface ClientAuthenticationPresentation {
+  basic: boolean;
+  clientSecretPost: boolean;
+  clientAssertion: boolean;
+  clientAssertionType?: string;
+}
+
+export type ClientAuthenticationMethodValidationResult =
+  | { valid: true }
+  | { valid: false; errorDescription: string };
+
+/**
+ * Enforce the authentication method registered for a client.
+ *
+ * A valid secret is not interchangeable with a registered JWT key, and RFC 6749
+ * forbids using more than one client authentication mechanism in one request.
+ */
+export function validateRegisteredClientAuthenticationMethod(
+  client: ClientMetadata,
+  presentation: ClientAuthenticationPresentation
+): ClientAuthenticationMethodValidationResult {
+  const presentedCount =
+    Number(presentation.basic) +
+    Number(presentation.clientSecretPost) +
+    Number(presentation.clientAssertion);
+
+  if (presentedCount > 1) {
+    return {
+      valid: false,
+      errorDescription: 'Multiple client authentication methods are not allowed',
+    };
+  }
+
+  // Preserve compatibility for legacy records that predate explicit method metadata.
+  // Newly registered clients always have an explicit token_endpoint_auth_method.
+  const registeredMethod = client.token_endpoint_auth_method;
+  if (!registeredMethod) {
+    return { valid: true };
+  }
+
+  const hasJwtBearerAssertion =
+    presentation.clientAssertion &&
+    presentation.clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER;
+
+  switch (registeredMethod) {
+    case 'private_key_jwt':
+    case 'client_secret_jwt':
+      if (presentedCount === 1 && hasJwtBearerAssertion) return { valid: true };
+      break;
+    case 'client_secret_basic':
+      if (presentedCount === 1 && presentation.basic) return { valid: true };
+      break;
+    case 'client_secret_post':
+      if (presentedCount === 1 && presentation.clientSecretPost) return { valid: true };
+      break;
+    case 'none':
+      if (presentedCount === 0) return { valid: true };
+      break;
+    default:
+      return {
+        valid: false,
+        errorDescription: 'Client authentication configuration is invalid',
+      };
+  }
+
+  return {
+    valid: false,
+    errorDescription: `Client must authenticate using ${registeredMethod}`,
+  };
+}
 
 /**
  * Extract OAuth client authentication credentials from request parameters and Basic auth.
@@ -151,6 +223,8 @@ export function parseOAuthClientAuthenticationParams(
   let clientSecret = params.clientSecret;
   const clientAssertion = params.clientAssertion;
   const clientAssertionType = params.clientAssertionType;
+  const clientSecretPostPresented = params.clientSecret !== undefined;
+  const clientAssertionPresented = params.clientAssertion !== undefined;
 
   if (clientAssertion && clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER && !clientId) {
     try {
@@ -203,6 +277,12 @@ export function parseOAuthClientAuthenticationParams(
       clientSecret,
       clientAssertion,
       clientAssertionType,
+      presentation: {
+        basic: basicAuth.success,
+        clientSecretPost: clientSecretPostPresented,
+        clientAssertion: clientAssertionPresented,
+        clientAssertionType,
+      },
     },
   };
 }
@@ -218,6 +298,18 @@ export async function authenticateConfidentialOAuthClient(
   credentials: ParsedOAuthClientAuthentication,
   assertionOptions: ClientAssertionValidationOptions = {}
 ): Promise<ConfidentialOAuthClientAuthenticationResult> {
+  const methodValidation = validateRegisteredClientAuthenticationMethod(
+    client,
+    credentials.presentation
+  );
+  if (!methodValidation.valid) {
+    return {
+      ok: false,
+      error: 'invalid_client',
+      errorDescription: 'Client authentication failed',
+    };
+  }
+
   if (credentials.clientId && !timingSafeEqual(credentials.clientId, client.client_id)) {
     return {
       ok: false,

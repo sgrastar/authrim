@@ -19,6 +19,7 @@ import {
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
+  deriveOidcSid,
   isShardedSessionId,
   parseShardedSessionId,
   getCachedUser,
@@ -187,15 +188,6 @@ function isOidcCertificationRedirectUri(value: unknown): boolean {
 
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
   return splitScopes(responseType).includes('code');
-}
-
-async function deriveOidcSid(sessionId: string, clientId: string, issuer: string): Promise<string> {
-  const data = new TextEncoder().encode(`${issuer}\u0000${clientId}\u0000${sessionId}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
 }
 
 async function loadOIDCClaimsUser(
@@ -776,6 +768,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Custom Redirect URIs (Authrim Extension)
     error_uri = c.req.query('error_uri') ?? undefined;
     cancel_uri = c.req.query('cancel_uri') ?? undefined;
+  }
+
+  // RFC 9101 Section 5: request and request_uri are mutually exclusive.
+  // Reject before resolving either container so one protected request cannot
+  // silently override the other.
+  if (request && request_uri) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'request and request_uri must not be used together',
+      },
+      400
+    );
   }
 
   if (_confirmation_challenge) {
@@ -1500,6 +1505,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // Preserve the front-channel client identity. A Request Object may protect
+  // parameters for that client, but it must not switch the authorization
+  // transaction to another registered client after signature verification.
+  const outerRequestClientId = client_id;
+
   // RFC 9101 (JAR): If request parameter is present, parse JWT request object
   if (request) {
     try {
@@ -1753,6 +1763,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
       if (requestObjectClaims) {
+        if (
+          typeof requestObjectClaims.client_id !== 'string' ||
+          !outerRequestClientId ||
+          requestObjectClaims.client_id !== outerRequestClientId
+        ) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description:
+                'client_id in the request object must match the authorization request',
+            },
+            400
+          );
+        }
+
         // OIDC Core 6.1: redirect_uri is REQUIRED in the request object
         if (!requestObjectClaims.redirect_uri) {
           return c.json(
@@ -1780,7 +1805,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (requestObjectClaims.response_type)
           response_type = requestObjectClaims.response_type as string;
-        if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
+        client_id = requestObjectClaims.client_id;
         redirect_uri = requestObjectRedirectUri;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
@@ -2546,6 +2571,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       return sendError(
         'invalid_request',
         'response_mode=fragment is not compatible with response_type=code'
+      );
+    }
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices: credentials returned
+    // directly from the authorization endpoint must not be placed in the query,
+    // where they leak through browser history, server logs and Referer headers.
+    const responseTypes = response_type!.split(/\s+/);
+    if (
+      baseMode === 'query' &&
+      (responseTypes.includes('token') || responseTypes.includes('id_token'))
+    ) {
+      return sendError(
+        'invalid_request',
+        'response_mode=query is not compatible with token or id_token response types'
       );
     }
   }
@@ -3994,6 +4033,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           amr: sessionAmr,
           dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
           sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
+          sessionId, // Internal OP session key for logout target lookup
           authorizationDetails: authorization_details, // RFC 9396 RAR
         })
       );
@@ -4182,6 +4222,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const registrationInput = {
         session_id: sessionId,
         client_id: validClientId,
+        oidc_sid: oidcSid,
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
@@ -5027,7 +5068,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     <h1>Login Required</h1>
     <p>Please enter your credentials to continue.</p>
     <form method="POST" action="/flow/login">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Login</button>
@@ -5376,7 +5417,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
     <h1>Re-authentication Required</h1>
     <p>For security reasons, please re-enter your credentials.</p>
     <form method="POST" action="/flow/confirm">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Confirm</button>

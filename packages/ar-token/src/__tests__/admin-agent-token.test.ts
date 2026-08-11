@@ -2,6 +2,9 @@ import { Hono } from 'hono';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 const mocks = vi.hoisted(() => ({
   consumeCodeRpc: vi.fn(),
   getClientCached: vi.fn(),
@@ -354,6 +357,94 @@ describe('Admin Agent token endpoint', () => {
     });
     expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
   });
+
+  securityRegressionIt.each([
+    {
+      name: 'authorization code',
+      body: requestBody({ client_secret: 'ciba-secret' }),
+    },
+    {
+      name: 'refresh token',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: 'signed-refresh-token',
+        client_id: 'mcp-client',
+        client_secret: 'ciba-secret',
+        resource: 'https://tenant.example.com/mcp',
+      }),
+    },
+  ])(
+    '[security regression][AO-17] rejects a residual secret for a private_key_jwt client on $name Admin Agent exchange',
+    async ({ body }) => {
+      mocks.getClientCached.mockResolvedValue({
+        client_id: 'mcp-client',
+        redirect_uris: ['https://client.example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        client_secret_hash: '3269ad7c6e3e2fe0a25f942328a6099e42978ee9c3d4f55bc222f7520a40d044',
+        jwks: { keys: [] },
+        requestable_scopes: ['agent:read'],
+      });
+      const { app, env } = createApp(environment());
+
+      const response = await app.fetch(
+        new Request('https://tenant.example.com/oauth/admin-agent/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body,
+        }),
+        env
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+      expect(mocks.verifyToken).not.toHaveBeenCalled();
+      expect(mocks.createAccessToken).not.toHaveBeenCalled();
+    }
+  );
+
+  securityRegressionIt.each([
+    {
+      name: 'authorization code',
+      body: requestBody({ client_secret: 'unexpected-secret' }),
+    },
+    {
+      name: 'refresh token',
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: 'signed-refresh-token',
+        client_id: 'mcp-client',
+        client_secret: 'unexpected-secret',
+        resource: 'https://tenant.example.com/mcp',
+      }),
+    },
+  ])(
+    '[security regression][AO-17] rejects a client secret presented by a public client on $name Admin Agent exchange',
+    async ({ body }) => {
+      mocks.getClientCached.mockResolvedValue({
+        client_id: 'mcp-client',
+        redirect_uris: ['https://client.example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        requestable_scopes: ['agent:read'],
+      });
+      const { app, env } = createApp(environment());
+
+      const response = await app.fetch(
+        new Request('https://tenant.example.com/oauth/admin-agent/token', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body,
+        }),
+        env
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      expect(mocks.consumeCodeRpc).not.toHaveBeenCalled();
+      expect(mocks.verifyToken).not.toHaveBeenCalled();
+      expect(mocks.createAccessToken).not.toHaveBeenCalled();
+    }
+  );
 
   it('loads scalar Agent enablement from the legacy AUTHRIM_CONFIG binding', async () => {
     const { app, env } = createApp({

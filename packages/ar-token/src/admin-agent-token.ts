@@ -26,6 +26,7 @@ import {
   isTokenRevoked,
   parseTokenHeader,
   parseOAuthClientAuthenticationParams,
+  validateRegisteredClientAuthenticationMethod,
   requireDedicatedAdminDatabaseAdapter,
   revokeToken,
   validateClientId,
@@ -456,7 +457,15 @@ async function handleAdminAgentRefresh(
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
   const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
-  if (!publicClient) {
+  if (publicClient) {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(
+      client,
+      credentials.credentials.presentation
+    );
+    if (!methodValidation.valid) {
+      return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+    }
+  } else {
     const authenticated = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/token`,
@@ -1131,7 +1140,15 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     return errorResponse(c, credentials.error, credentials.errorDescription, 401);
   }
   const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
-  if (!publicClient) {
+  if (publicClient) {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(
+      client,
+      credentials.credentials.presentation
+    );
+    if (!methodValidation.valid) {
+      return errorResponse(c, 'invalid_client', 'Client authentication failed', 401);
+    }
+  } else {
     const result = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/token`,

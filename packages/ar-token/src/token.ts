@@ -101,6 +101,7 @@ import {
   validateClientAssertion,
   parseOAuthClientAuthenticationParams,
   authenticateConfidentialOAuthClient,
+  validateRegisteredClientAuthenticationMethod,
   parseTrustedIssuers,
   getIDTokenRBACClaims,
   getAccessTokenRBACClaims,
@@ -931,13 +932,28 @@ async function resolveTokenClientAuthenticationPolicy(
   c: Context<{ Bindings: Env }>,
   clientMetadata: ClientMetadata,
   clientAssertion: string | undefined,
-  clientAssertionType: string | undefined
+  clientAssertionType: string | undefined,
+  presentation: {
+    basic: boolean;
+    clientSecretPost: boolean;
+  }
 ): Promise<
   | { ok: true; assertionOptions: ClientAssertionValidationOptions | undefined }
   | { ok: false; response: Response }
 > {
   const assertionOptions = await resolveClientAssertionValidationOptions(c);
   if (!assertionOptions) {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+      ...presentation,
+      clientAssertion: Boolean(clientAssertion),
+      clientAssertionType,
+    });
+    if (!methodValidation.valid) {
+      return {
+        ok: false,
+        response: oauthError(c, 'invalid_client', methodValidation.errorDescription, 401),
+      };
+    }
     return { ok: true, assertionOptions };
   }
 
@@ -962,6 +978,18 @@ async function resolveTokenClientAuthenticationPolicy(
         'The active FAPI profile requires private_key_jwt client authentication',
         401
       ),
+    };
+  }
+
+  const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+    ...presentation,
+    clientAssertion: Boolean(clientAssertion),
+    clientAssertionType,
+  });
+  if (!methodValidation.valid) {
+    return {
+      ok: false,
+      response: oauthError(c, 'invalid_client', methodValidation.errorDescription, 401),
     };
   }
 
@@ -1200,6 +1228,7 @@ interface AuthCodeStoreResponse {
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
+  sessionId?: string; // Internal OP session storage key
   authorizationDetails?: string; // RFC 9396: Rich Authorization Requests (JSON string)
   // Present when replay attack is detected (RFC 6749 Section 4.1.2)
   replayAttack?: {
@@ -1762,7 +1791,11 @@ async function handleAuthorizationCodeGrant(
         c,
         clientMetadata as unknown as ClientMetadata,
         client_assertion,
-        client_assertion_type
+        client_assertion_type,
+        {
+          basic: basicAuth.success,
+          clientSecretPost: typeof formData.client_secret === 'string',
+        }
       )
   );
   if (!clientAuthenticationPolicy.ok) {
@@ -1790,7 +1823,10 @@ async function handleAuthorizationCodeGrant(
         401
       );
     }
-  } else if (clientMetadata.client_secret_hash) {
+  } else if (
+    clientMetadata.token_endpoint_auth_method !== 'none' &&
+    clientMetadata.client_secret_hash
+  ) {
     const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
     if (
       !client_secret ||
@@ -1867,6 +1903,9 @@ async function handleAuthorizationCodeGrant(
         codeVerifier: code_verifier,
         expectedAuthorizationServer: 'default',
         expectedSubjectType: 'end_user',
+        expectedRedirectUri: redirect_uri,
+        enforceDpopBinding: true,
+        expectedDpopJkt: dpopJkt,
       })
     )) as AuthCodeStoreResponse;
 
@@ -1942,6 +1981,7 @@ async function handleAuthorizationCodeGrant(
       claimsRequestProtected: consumedData.claimsRequestProtected === true,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
+      sessionId: consumedData.sessionId,
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
     };
   } catch (error) {
@@ -1968,6 +2008,33 @@ async function handleAuthorizationCodeGrant(
         c,
         'invalid_grant',
         'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+
+    if (errorMessage.includes('Redirect URI mismatch')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'redirect_uri does not match the one used in authorization request',
+        400
+      );
+    }
+
+    if (errorMessage.includes('DPoP proof required')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'DPoP proof required (authorization code is bound to DPoP key)',
+        400
+      );
+    }
+
+    if (errorMessage.includes('DPoP key mismatch')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'DPoP key mismatch (authorization code is bound to different key)',
         400
       );
     }
@@ -2929,7 +2996,7 @@ async function handleAuthorizationCodeGrant(
     dbPresent: !!authCtx.coreAdapter,
     action: 'Logout',
   });
-  if (authCodeData.sid) {
+  if (authCodeData.sessionId && authCodeData.sid) {
     try {
       log.debug('Attempting to register session-client', {
         sid: authCodeData.sid,
@@ -2937,8 +3004,9 @@ async function handleAuthorizationCodeGrant(
         action: 'Logout',
       });
       const registrationInput = {
-        session_id: authCodeData.sid,
+        session_id: authCodeData.sessionId,
         client_id: client_id,
+        oidc_sid: authCodeData.sid,
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
@@ -3190,7 +3258,11 @@ async function handleRefreshTokenGrant(
     c,
     typedClient,
     client_assertion,
-    client_assertion_type
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
   );
   if (!clientAuthenticationPolicy.ok) {
     return clientAuthenticationPolicy.response;
@@ -4066,7 +4138,17 @@ async function handleDeviceCodeGrant(
 ) {
   const log = getLogger(c).module('TOKEN');
   const deviceCode = formData.device_code;
-  const client_id = formData.client_id;
+  const clientAuth = parseOAuthClientAuthenticationParams({
+    clientId: formData.client_id,
+    clientSecret: formData.client_secret,
+    clientAssertion: formData.client_assertion,
+    clientAssertionType: formData.client_assertion_type,
+    authorizationHeader: c.req.header('Authorization') ?? undefined,
+  });
+  if (!clientAuth.ok) {
+    return oauthError(c, clientAuth.error, clientAuth.errorDescription, 401);
+  }
+  const client_id = clientAuth.credentials.clientId;
   const tenantId = getTenantIdFromContext(c);
   const internalHeaders = {
     'Content-Type': 'application/json',
@@ -4092,6 +4174,30 @@ async function handleDeviceCodeGrant(
       },
       400
     );
+  }
+
+  const clientMetadata = await getClientCached(c, c.env, client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  if (clientMetadata.token_endpoint_auth_method === 'none') {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(
+      clientMetadata as unknown as ClientMetadata,
+      clientAuth.credentials.presentation
+    );
+    if (!methodValidation.valid) {
+      return oauthError(c, 'invalid_client', methodValidation.errorDescription, 401);
+    }
+  } else {
+    const authenticated = await authenticateConfidentialOAuthClient(
+      clientMetadata as unknown as ClientMetadata,
+      `${getRequestIssuer(c)}/token`,
+      clientAuth.credentials
+    );
+    if (!authenticated.ok) {
+      return oauthError(c, authenticated.error, authenticated.errorDescription, 401);
+    }
   }
 
   // Get device code metadata from DeviceCodeStore
@@ -4233,11 +4339,6 @@ async function handleDeviceCodeGrant(
       },
       400
     );
-  }
-
-  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
-  if (!clientMetadata) {
-    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
   }
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -5594,7 +5695,11 @@ async function handleTokenExchangeGrant(
     c,
     typedClient,
     client_assertion,
-    client_assertion_type
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
   );
   if (!clientAuthenticationPolicy.ok) {
     return clientAuthenticationPolicy.response;
@@ -7414,7 +7519,11 @@ async function handleClientCredentialsGrant(
     c,
     typedClient,
     client_assertion,
-    client_assertion_type
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
   );
   if (!clientAuthenticationPolicy.ok) {
     return clientAuthenticationPolicy.response;

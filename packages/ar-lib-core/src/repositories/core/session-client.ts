@@ -15,6 +15,7 @@ export interface SessionClient {
   tenant_id: string;
   session_id: string;
   client_id: string;
+  oidc_sid?: string;
   first_token_at: number;
   last_token_at: number;
   last_seen_at: number | null;
@@ -23,6 +24,7 @@ export interface SessionClient {
 export interface CreateSessionClientInput {
   session_id: string;
   client_id: string;
+  oidc_sid?: string;
 }
 
 export interface SessionClientWithDetails extends SessionClient {
@@ -58,6 +60,23 @@ export class SessionClientRepository {
     tenantId: string
   ) {
     this.tenantId = requireTenantId(tenantId, 'SessionClientRepository');
+  }
+
+  async listLogoutCandidateClientIds(): Promise<string[]> {
+    const rows = await this.adapter.query<{ client_id: string }>(
+      `
+        SELECT client_id
+        FROM oauth_clients
+        WHERE tenant_id = ?
+          AND (
+            backchannel_logout_uri IS NOT NULL
+            OR frontchannel_logout_uri IS NOT NULL
+            OR logout_webhook_uri IS NOT NULL
+          )
+      `,
+      [this.tenantId]
+    );
+    return [...new Set(rows.map((row) => row.client_id).filter(Boolean))];
   }
 
   async hydrateLogoutTargetsFromSessionClients(
@@ -121,6 +140,7 @@ export class SessionClientRepository {
             id: client.id,
             session_id: client.session_id,
             client_id: client.client_id,
+            oidc_sid: client.oidc_sid,
             client_name: details.client_name,
             logout_webhook_uri: details.logout_webhook_uri,
             logout_webhook_secret_encrypted: details.logout_webhook_secret_encrypted,

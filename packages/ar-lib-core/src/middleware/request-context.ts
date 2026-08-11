@@ -505,12 +505,14 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       }
     }
 
+    // The legacy tenant subdomain is a platform-controlled alias, so it can be
+    // canonicalized before tenant-configured host binding is evaluated.
     if (
       isMultiTenantEnabled(c.env) &&
       tenantResult.success &&
       requestHost &&
-      !!c.env.BASE_DOMAIN &&
-      requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
+      c.env.BASE_DOMAIN &&
+      requestHost === `${tenantId}.${c.env.BASE_DOMAIN.toLowerCase()}`
     ) {
       const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
         getPrimaryTenantVanityDomain(
@@ -557,6 +559,37 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
           path: c.req.path,
         });
         return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+      }
+    }
+
+    // Every public protocol transaction for a tenant has exactly one issuer
+    // namespace. Validate that the incoming host is tenant-bound before
+    // canonicalizing it so an unapproved alias cannot disclose tenant routing.
+    if (isMultiTenantEnabled(c.env) && tenantResult.success && requestHost) {
+      const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
+        getPrimaryTenantVanityDomain(
+          {
+            AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG,
+            tenantCoreDb: tenantMetadataContext?.coreDb,
+          },
+          tenantId
+        )
+      );
+      if (primaryVanity && primaryVanity.hostname !== requestHost) {
+        const isBrowserNavigation =
+          ['GET', 'HEAD'].includes(c.req.method) &&
+          !c.req.path.startsWith('/api/') &&
+          (c.req.header('Accept') || '').includes('text/html');
+
+        if (isBrowserNavigation) {
+          const redirectUrl = new URL(c.req.url);
+          redirectUrl.hostname = primaryVanity.hostname;
+          return c.redirect(redirectUrl.toString(), 308);
+        }
+
+        if (requestClass === 'public_protocol_or_rest') {
+          return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+        }
       }
     }
 

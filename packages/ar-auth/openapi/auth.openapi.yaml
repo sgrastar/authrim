@@ -802,12 +802,46 @@ paths:
     get:
       tags:
         - Logout
-      summary: Start front-channel logout.
+      summary: Start front-channel logout confirmation.
+      description:
+        Renders a no-store confirmation form and sets a short-lived, HttpOnly confirmation cookie.
+        This request does not invalidate the browser session.
       responses:
         '200':
           $ref: '#/components/responses/Any'
         '302':
           description: Redirect response.
+    post:
+      tags:
+        - Logout
+      summary: Start or confirm front-channel logout.
+      description:
+        A direct RP-initiated POST renders the same confirmation interaction as GET. A follow-up POST
+        validates the form confirmation token against the short-lived confirmation cookie, then
+        invalidates the selected session and performs configured logout propagation.
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                confirmation_token:
+                  type: string
+                id_token_hint:
+                  type: string
+                post_logout_redirect_uri:
+                  type: string
+                  format: uri
+                state:
+                  type: string
+                logout_scope:
+                  type: string
+      responses:
+        '302':
+          description: Redirect after successful logout.
+        '400':
+          $ref: '#/components/responses/Error'
   /logout/backchannel:
     post:
       tags:

@@ -42,6 +42,8 @@ import {
   isSigningJWK,
   getTenantSystemSettings,
   FAPI2_MESSAGE_SIGNING_ALGS,
+  parseBasicAuth,
+  validateRegisteredClientAuthenticationMethod,
 } from '@authrim/ar-lib-core';
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
@@ -263,9 +265,24 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Extract client authentication parameters
-    const client_secret = formData.client_secret as string | undefined;
+    let client_secret = formData.client_secret as string | undefined;
     const client_assertion = formData.client_assertion as string | undefined;
     const client_assertion_type = formData.client_assertion_type as string | undefined;
+
+    const basicAuth = parseBasicAuth(c.req.header('Authorization'));
+    if (
+      !basicAuth.success &&
+      (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error')
+    ) {
+      throw new RFCError('invalid_client', 401, 'Invalid Authorization header format');
+    }
+    if (basicAuth.success) {
+      if (formData.client_id && formData.client_id !== basicAuth.credentials.username) {
+        throw new RFCError('invalid_client', 401, 'Client authentication failed');
+      }
+      formData.client_id = basicAuth.credentials.username;
+      client_secret = basicAuth.credentials.password;
+    }
 
     // RFC 9126 permits authenticated clients to omit the outer client_id. private_key_jwt
     // identifies the client through the assertion issuer; its signature is verified below.
@@ -332,6 +349,22 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // P0: Client Authentication (RFC 9126 Section 2.1)
     // The authorization server MUST authenticate the client.
     // =========================================================================
+    const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+      clientAssertion: Boolean(client_assertion),
+      clientAssertionType: client_assertion_type,
+    });
+    if (!methodValidation.valid) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: methodValidation.errorDescription,
+        },
+        401
+      );
+    }
+
     if (
       client_assertion &&
       client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -362,7 +395,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           401
         );
       }
-    } else if (clientMetadata.client_secret_hash) {
+    } else if (
+      clientMetadata.token_endpoint_auth_method !== 'none' &&
+      clientMetadata.client_secret_hash
+    ) {
       // client_secret_basic or client_secret_post authentication
       // SV-015: Verify client secret against stored SHA-256 hash
       if (

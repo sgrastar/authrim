@@ -33,6 +33,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   safeFetchJson,
   validateClientId,
+  validateRegisteredClientAuthenticationMethod,
   validateRedirectUri,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
@@ -729,7 +730,15 @@ export async function adminAgentParHandler(c: Context<{ Bindings: Env }>): Promi
   // A private_key_jwt client normally has no secret hash; absence of a secret is therefore not
   // evidence that a client is public. Only an explicit `none` registration is public.
   const publicClient = (client.token_endpoint_auth_method as string | undefined) === 'none';
-  if (!publicClient) {
+  if (publicClient) {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(
+      client,
+      credentials.credentials.presentation
+    );
+    if (!methodValidation.valid) {
+      return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+    }
+  } else {
     const authenticated = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/par`,

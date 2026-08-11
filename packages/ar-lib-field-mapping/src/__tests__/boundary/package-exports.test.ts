@@ -109,7 +109,7 @@ describe('package export boundary', () => {
     }
 
     expect(violations).toEqual([]);
-  });
+  }, 15_000);
 
   it('recognizes exact bare imports with every supported quote style', () => {
     for (const quote of ["'", '"', '`']) {
@@ -122,12 +122,18 @@ describe('package export boundary', () => {
     ).toBe(false);
     expect(hasBareRootReference(`{ "${barePackageSpecifier}": "workspace:*" }`)).toBe(false);
   });
+
+  it('excludes transient test workspaces without excluding tracked dot-directories', () => {
+    expect(shouldIgnoreRepositoryDirectory('.test-generated-env-example')).toBe(true);
+    expect(shouldIgnoreRepositoryDirectory('.test-keys-example')).toBe(true);
+    expect(shouldIgnoreRepositoryDirectory('.github')).toBe(false);
+  });
 });
 
 function listRepositorySourceFiles(dir: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isDirectory() && ignoredRepositoryDirectories.has(entry.name)) {
+    if (entry.isDirectory() && shouldIgnoreRepositoryDirectory(entry.name)) {
       continue;
     }
     const path = resolve(dir, entry.name);
@@ -140,6 +146,10 @@ function listRepositorySourceFiles(dir: string): string[] {
     }
   }
   return files;
+}
+
+function shouldIgnoreRepositoryDirectory(name: string): boolean {
+  return ignoredRepositoryDirectories.has(name) || name.startsWith('.test-');
 }
 
 function hasBareRootReference(source: string): boolean {

@@ -15,6 +15,9 @@ import { cibaAuthorizationHandler } from '../ciba-authorization';
 import { cibaApproveHandler } from '../ciba-approve';
 import { cibaDenyHandler } from '../ciba-deny';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 // Mock getClient and logger at module level
 const mockGetClient = vi.hoisted(() => vi.fn());
 const mockLogger = vi.hoisted(() => ({
@@ -67,6 +70,7 @@ function createCIBAClientMetadata(overrides: Record<string, any> = {}): Record<s
     grant_types: ['urn:openid:params:grant-type:ciba'],
     backchannel_token_delivery_mode: 'poll',
     client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+    token_endpoint_auth_method: 'client_secret_post',
     ...overrides,
   };
 }
@@ -315,6 +319,31 @@ describe('CIBA Integration', () => {
       expect(Object.keys(body).sort()).toEqual(['error', 'error_description']);
       expect(storedCIBARequests.size).toBe(0);
     });
+
+    securityRegressionIt(
+      '[security regression][AO-17] rejects a residual client secret for a private_key_jwt client before storing CIBA state',
+      async () => {
+        mockGetClient.mockResolvedValue(
+          createCIBAClientMetadata({
+            token_endpoint_auth_method: 'private_key_jwt',
+            jwks: { keys: [] },
+          })
+        );
+        const ctx = createMockContext(
+          withCIBAClientSecret({
+            client_id: 'ciba-client',
+            scope: 'openid',
+            login_hint: 'user@example.com',
+          })
+        );
+
+        const response = await cibaAuthorizationHandler(ctx);
+
+        expect(response.status).toBe(401);
+        expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+        expect(storedCIBARequests.size).toBe(0);
+      }
+    );
 
     it('should reject request without client_id', async () => {
       const ctx = createMockContext({

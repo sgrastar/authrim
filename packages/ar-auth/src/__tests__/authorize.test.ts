@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import { SignJWT, exportJWK, exportPKCS8, generateKeyPair } from 'jose';
 import { authorizeConfirmHandler, authorizeHandler, authorizeLoginHandler } from '../authorize';
 import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
   residency: {
@@ -801,6 +805,78 @@ describe('Authorization Handler', () => {
       expect(redirect.searchParams.get('state')).toBe('test-state');
     });
 
+    securityRegressionIt(
+      '[security regression][AO-07] rejects simultaneous request and request_uri parameters',
+      async () => {
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const publicJwk = {
+          ...(await exportJWK(keyPair.publicKey)),
+          kid: 'par-jar-override-key',
+          alg: 'RS256',
+          use: 'sig',
+        };
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          client_secret_hash: 'confidential-client-secret-hash',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          scope: 'openid profile',
+          token_endpoint_auth_method: 'private_key_jwt',
+          jwks: { keys: [publicJwk] },
+        });
+        await (env.SETTINGS as unknown as MockKVNamespace).put(
+          'system_settings',
+          JSON.stringify({ fapi: { enabled: true } })
+        );
+        await configureClientSettings(env, { 'client.sso_enabled': true });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'par-jar-user');
+
+        const requestUri = 'urn:ietf:params:oauth:request_uri:par_integrity_boundary';
+        const parStore = createMockPARRequestStore({
+          client_id: 'test-client',
+          response_type: 'code',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          state: 'state-protected-by-par',
+          code_challenge: 'P'.repeat(43),
+          code_challenge_method: 'S256',
+        });
+        env.PAR_REQUEST_STORE = parStore as unknown as Env['PAR_REQUEST_STORE'];
+
+        const requestObject = await new SignJWT({
+          client_id: 'test-client',
+          response_type: 'code',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile',
+          state: 'state-overridden-by-direct-jar',
+          code_challenge: 'J'.repeat(43),
+          code_challenge_method: 'S256',
+        })
+          .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+          .setIssuer('test-client')
+          .setAudience('https://test.example.com')
+          .setIssuedAt()
+          .setExpirationTime('5m')
+          .sign(keyPair.privateKey);
+
+        const response = await app.request(
+          `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}&request=${encodeURIComponent(requestObject)}`,
+          {
+            method: 'GET',
+            headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+          },
+          env
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: 'invalid_request' });
+        expect(parStore._consumeRequestRpc).not.toHaveBeenCalled();
+        expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+      }
+    );
+
     it('resumes a server-side PAR authorization transaction after login without reusing request_uri', async () => {
       configureClientTrustPolicy(env);
       await (env.SETTINGS as unknown as MockKVNamespace).put(
@@ -1543,6 +1619,139 @@ describe('Authorization Handler', () => {
       );
     });
 
+    it('does not reissue a code from id_token_hint without an active browser session', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      configureClientTrustPolicy(env);
+
+      const now = Math.floor(Date.now() / 1000);
+      const keyPair = await generateKeyPair('RS256', { extractable: true });
+      const publicJwk = await exportJWK(keyPair.publicKey);
+      publicJwk.kid = 'id-token-hint-poc';
+      publicJwk.alg = 'RS256';
+      env.KEY_MANAGER = {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+        get: vi.fn().mockReturnValue({
+          getAllPublicKeysRpc: vi.fn().mockResolvedValue([publicJwk]),
+        }),
+      } as unknown as Env['KEY_MANAGER'];
+
+      const idTokenHint = await new SignJWT({
+        sub: 'id-token-only-user',
+        auth_time: now - 60,
+        acr: 'urn:authrim:acr:pwd',
+        amr: ['pwd'],
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: publicJwk.kid })
+        .setIssuer('https://test.example.com')
+        .setAudience('test-client')
+        .setIssuedAt(now - 60)
+        .setExpirationTime(now + 3600)
+        .sign(keyPair.privateKey);
+
+      const unauthenticatedResponse = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=no-hint&prompt=none',
+        { method: 'GET' },
+        env
+      );
+      const unauthenticatedRedirect = new URL(unauthenticatedResponse.headers.get('Location')!);
+      expect(unauthenticatedRedirect.searchParams.get('error')).toBe('login_required');
+      expect(unauthenticatedRedirect.searchParams.get('code')).toBeNull();
+
+      const response = await app.request(
+        `/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=id-token-hint-poc&prompt=none&id_token_hint=${encodeURIComponent(idTokenHint)}`,
+        { method: 'GET' },
+        env
+      );
+
+      expect(getSessionMap(env).size).toBe(0);
+      expect(response.status).toBe(302);
+      const redirect = new URL(response.headers.get('Location')!);
+      expect(redirect.origin + redirect.pathname).toBe('https://example.com/callback');
+      expect(redirect.searchParams.get('error')).toBe('login_required');
+      expect(redirect.searchParams.get('code')).toBeNull();
+      expect(redirect.searchParams.get('state')).toBe('id-token-hint-poc');
+      expect(getAuthCodeStore(env).storeCodeRpc).not.toHaveBeenCalled();
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-06] rejects query response mode for implicit and hybrid tokens',
+      async () => {
+        mockGetClient.mockResolvedValue({
+          client_id: 'test-client',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['implicit', 'authorization_code'],
+          response_types: ['id_token token', 'code id_token token'],
+          scope: 'openid profile',
+          token_endpoint_auth_method: 'none',
+        });
+        await configureClientSettings(env, {
+          'client.sso_enabled': true,
+        });
+        configureClientTrustPolicy(env);
+        seedSession(env, 'query-token-user');
+
+        const keyPair = await generateKeyPair('RS256', { extractable: true });
+        const privatePEM = await exportPKCS8(keyPair.privateKey);
+        env.KEY_MANAGER = {
+          idFromName: vi.fn().mockReturnValue({ toString: () => 'default-v3' }),
+          get: vi.fn().mockReturnValue({
+            getActiveOIDCSigningKeyWithPrivateRpc: vi.fn().mockResolvedValue({
+              kid: 'query-token-signing-key',
+              privatePEM,
+            }),
+          }),
+        } as unknown as Env['KEY_MANAGER'];
+
+        const baseRequest =
+          '/authorize?response_type=id_token%20token&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20profile&state=query-token-poc&nonce=query-token-nonce';
+        const requestInit = {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        };
+
+        const defaultResponse = await app.request(baseRequest, requestInit, env);
+        const defaultRedirect = new URL(defaultResponse.headers.get('Location')!);
+        expect(defaultRedirect.searchParams.get('access_token')).toBeNull();
+        expect(defaultRedirect.searchParams.get('id_token')).toBeNull();
+        const defaultFragment = new URLSearchParams(defaultRedirect.hash.slice(1));
+        expect(defaultFragment.get('access_token')).toBeTruthy();
+        expect(defaultFragment.get('id_token')).toBeTruthy();
+
+        const response = await app.request(`${baseRequest}&response_mode=query`, requestInit, env);
+
+        expect(response.status).toBe(302);
+        const redirect = new URL(response.headers.get('Location')!);
+        expect(redirect.origin + redirect.pathname).toBe('https://example.com/callback');
+        expect(redirect.hash).toBe('');
+        expect(redirect.searchParams.get('error')).toBe('invalid_request');
+        expect(redirect.searchParams.get('access_token')).toBeNull();
+        expect(redirect.searchParams.get('id_token')).toBeNull();
+        expect(redirect.searchParams.get('token_type')).toBeNull();
+        expect(redirect.searchParams.get('state')).toBe('query-token-poc');
+
+        const hybridRequest = baseRequest
+          .replace('response_type=id_token%20token', 'response_type=code%20id_token%20token')
+          .replace('state=query-token-poc', 'state=hybrid-query-token-poc');
+        const hybridResponse = await app.request(
+          `${hybridRequest}&code_challenge=${'H'.repeat(43)}&code_challenge_method=S256&response_mode=query`,
+          requestInit,
+          env
+        );
+
+        expect(hybridResponse.status).toBe(302);
+        const hybridRedirect = new URL(hybridResponse.headers.get('Location')!);
+        expect(hybridRedirect.hash).toBe('');
+        expect(hybridRedirect.searchParams.get('error')).toBe('invalid_request');
+        expect(hybridRedirect.searchParams.get('code')).toBeNull();
+        expect(hybridRedirect.searchParams.get('access_token')).toBeNull();
+        expect(hybridRedirect.searchParams.get('id_token')).toBeNull();
+        expect(hybridRedirect.searchParams.get('token_type')).toBeNull();
+        expect(hybridRedirect.searchParams.get('state')).toBe('hybrid-query-token-poc');
+      }
+    );
+
     it('inherits an explicit tenant SSO setting when the client has no explicit override', async () => {
       await configureTenantOauthSettings(env, {
         'oauth.sso_enabled': true,
@@ -2026,6 +2235,25 @@ describe('Authorization Handler', () => {
       expect(html).not.toContain('<img src="javascript:');
       expect(html).not.toContain('href="javascript:');
     });
+
+    securityRegressionIt.each(['/flow/login', '/flow/confirm'])(
+      '[security regression][AO-15] escapes attacker-controlled challenge_id in the %s form',
+      async (path) => {
+        const payload = '"><script data-authrim-xss>globalThis.__authrimXss=1</script>';
+        const response = await app.request(
+          `${path}?challenge_id=${encodeURIComponent(payload)}`,
+          { method: 'GET' },
+          env
+        );
+        const html = await response.text();
+
+        expect(response.status).toBe(200);
+        expect(html).not.toContain(payload);
+        expect(html).toContain(
+          '&quot;&gt;&lt;script data-authrim-xss&gt;globalThis.__authrimXss=1&lt;/script&gt;'
+        );
+      }
+    );
 
     it('processes built-in login by creating a session and restoring the authorization request', async () => {
       env.ENABLE_TEST_ENDPOINTS = 'true';

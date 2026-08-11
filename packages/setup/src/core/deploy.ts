@@ -51,6 +51,10 @@ export {
   type SecretName,
 } from './secrets.js';
 
+// Keep deploy-time optimization independent from wrangler.toml so local `wrangler dev`
+// remains debuggable and stale generated configs cannot silently disable production minification.
+const WORKER_BUNDLE_UPLOAD_ARGS = ['--minify', '--upload-source-maps'] as const;
+
 // =============================================================================
 // Validation Helpers
 // =============================================================================
@@ -1121,6 +1125,7 @@ async function deployWorkerDirect(
               'exec',
               'wrangler',
               'deploy',
+              ...WORKER_BUNDLE_UPLOAD_ARGS,
               ...getConfigArgs(options),
               '--env',
               options.env,
@@ -1223,6 +1228,7 @@ async function uploadWorkerVersion(
               'wrangler',
               'versions',
               'upload',
+              ...WORKER_BUNDLE_UPLOAD_ARGS,
               ...getConfigArgs(options),
               '--env',
               options.env,
@@ -3113,6 +3119,33 @@ export interface UiWorkerDeployOptions extends DeployOptions {
   adminUiBffSecrets?: AdminUiBffWorkerSecrets;
 }
 
+function assertNoPublicUiSourceMaps(uiDir: string): void {
+  const publicAssetsDir = join(uiDir, '.svelte-kit', 'cloudflare');
+  if (!existsSync(publicAssetsDir)) {
+    return;
+  }
+
+  const pending = [publicAssetsDir];
+  let sourceMapCount = 0;
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) {
+      continue;
+    }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        pending.push(join(directory, entry.name));
+      } else if (entry.isFile() && entry.name.endsWith('.map')) {
+        sourceMapCount += 1;
+      }
+    }
+  }
+
+  if (sourceMapCount > 0) {
+    throw new Error(`ui_public_source_maps_forbidden:${sourceMapCount}`);
+  }
+}
+
 /**
  * Deploy a single UI package to Cloudflare Workers static assets.
  *
@@ -3259,6 +3292,10 @@ export async function deployUiWorkerComponent(
           await cleanupPackageEnv(uiDir);
         }
       }
+
+      // Browser source maps are intentionally disabled. Fail closed if stale or
+      // misconfigured build output would publish source through Static Assets.
+      assertNoPublicUiSourceMaps(uiDir);
     }
 
     onProgress?.('Deploying UI Worker...');
@@ -3307,6 +3344,7 @@ export async function deployUiWorkerComponent(
                 'exec',
                 'wrangler',
                 'deploy',
+                ...WORKER_BUNDLE_UPLOAD_ARGS,
                 '--config',
                 'wrangler.toml',
                 ...(uiSecretFile ? ['--secrets-file', uiSecretFile.path] : []),
@@ -3341,6 +3379,7 @@ export async function deployUiWorkerComponent(
                 'wrangler',
                 'versions',
                 'upload',
+                ...WORKER_BUNDLE_UPLOAD_ARGS,
                 '--config',
                 'wrangler.toml',
                 ...(uiSecretFile ? ['--secrets-file', uiSecretFile.path] : []),

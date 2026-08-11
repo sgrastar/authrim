@@ -72,6 +72,9 @@ describe('generated approvals smoke', () => {
       }
 
       if (url.endsWith('/api/admin/users') && method === 'POST') {
+        expect(init?.headers).toMatchObject({
+          'idempotency-key': expect.stringMatching(/^approval-smoke-user-\d+$/u),
+        });
         return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
           status: 201,
           headers: { 'content-type': 'application/json' },
@@ -325,6 +328,9 @@ describe('generated approvals smoke', () => {
       }
 
       if (url.endsWith('/api/admin/users') && method === 'POST') {
+        expect(init?.headers).toMatchObject({
+          'idempotency-key': expect.stringMatching(/^approval-smoke-user-\d+$/u),
+        });
         return new Response(JSON.stringify({ user: { id: 'user-1' } }), {
           status: 201,
           headers: { 'content-type': 'application/json' },

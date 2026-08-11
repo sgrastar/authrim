@@ -32,6 +32,8 @@ import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   resolveLogoutTargetsFromSessionClientStore,
+  resolveSessionIdFromOidcSidStore,
+  resolveLegacyLogoutTargetsFromOidcSidStore,
   createBackchannelLogoutOrchestrator,
   DEFAULT_LOGOUT_CONFIG,
   LOGOUT_SETTINGS_KEY,
@@ -82,6 +84,49 @@ import type { JSONWebKeySet, CryptoKey, JWTPayload } from 'jose';
  */
 interface BackchannelLogoutEvents {
   'http://schemas.openid.net/event/backchannel-logout': Record<string, never>;
+}
+
+const LOGOUT_CONFIRMATION_COOKIE_NAME = 'authrim_logout_confirmation';
+const LOGOUT_CONFIRMATION_TTL_SECONDS = 300;
+
+function escapeLogoutHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderLogoutConfirmationForm(
+  confirmationToken: string,
+  params: {
+    idTokenHint?: string;
+    postLogoutRedirectUri?: string;
+    state?: string;
+    logoutScope?: string;
+  }
+): string {
+  const hidden = (name: string, value: string | undefined) =>
+    value ? `<input type="hidden" name="${name}" value="${escapeLogoutHtml(value)}">` : '';
+  return `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Confirm logout</title></head>
+<body>
+  <main>
+    <h1>Confirm logout</h1>
+    <p>Continue to sign out of this browser session.</p>
+    <form method="post" action="/logout">
+      <input type="hidden" name="confirmation_token" value="${escapeLogoutHtml(confirmationToken)}">
+      ${hidden('id_token_hint', params.idTokenHint)}
+      ${hidden('post_logout_redirect_uri', params.postLogoutRedirectUri)}
+      ${hidden('state', params.state)}
+      ${hidden('logout_scope', params.logoutScope)}
+      <button type="submit">Log out</button>
+    </form>
+  </main>
+</body>
+</html>`;
 }
 
 /**
@@ -144,13 +189,14 @@ async function getLogoutConfig(env: Env): Promise<LogoutConfig> {
 
 /**
  * Front-channel Logout
- * GET /logout
+ * GET/POST /logout
  *
- * Handles browser-initiated logout requests.
- * Invalidates the user's session and redirects to the post-logout URI.
+ * GET renders a CSRF-protected confirmation form. POST validates the double-submit confirmation
+ * token, invalidates the user's session, and redirects to the post-logout URI.
  *
  * Per OIDC RP-Initiated Logout 1.0:
- * - Session is ALWAYS invalidated when user visits logout endpoint (if session exists)
+ * - Ambient browser credentials on a cross-site GET are not sufficient to invalidate a session
+ * - A confirmed POST invalidates the session (if it exists)
  * - Redirect to post_logout_redirect_uri only if validation passes
  * - Otherwise redirect to default /logged-out page
  *
@@ -163,11 +209,83 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGOUT');
   const issuer = getRequestIssuer(c);
   try {
-    // Get query parameters
-    const idTokenHint = c.req.query('id_token_hint');
-    const postLogoutRedirectUri = c.req.query('post_logout_redirect_uri');
-    const state = c.req.query('state');
-    const logoutScope = normalizeDeviceSecretLogoutScope(c.req.query('logout_scope'));
+    const browserSessionId = getCookie(c, 'authrim_session');
+    let idTokenHint: string | undefined;
+    let postLogoutRedirectUri: string | undefined;
+    let state: string | undefined;
+    let requestedLogoutScope: string | undefined;
+
+    const showLogoutConfirmation = () => {
+      const confirmationToken = crypto.randomUUID();
+      setCookie(c, LOGOUT_CONFIRMATION_COOKIE_NAME, confirmationToken, {
+        path: '/logout',
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Strict',
+        maxAge: LOGOUT_CONFIRMATION_TTL_SECONDS,
+      });
+      return c.body(
+        renderLogoutConfirmationForm(confirmationToken, {
+          idTokenHint,
+          postLogoutRedirectUri,
+          state,
+          logoutScope: requestedLogoutScope,
+        }),
+        200,
+        {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Content-Security-Policy':
+            "default-src 'none'; form-action 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+          'X-Content-Type-Options': 'nosniff',
+        }
+      );
+    };
+
+    if (c.req.method === 'POST') {
+      const body = await c.req.parseBody();
+      const bodyString = (name: string) =>
+        typeof body[name] === 'string' ? (body[name] as string) : undefined;
+      const confirmationToken = bodyString('confirmation_token');
+      idTokenHint = bodyString('id_token_hint');
+      postLogoutRedirectUri = bodyString('post_logout_redirect_uri');
+      state = bodyString('state');
+      requestedLogoutScope = bodyString('logout_scope');
+
+      // OIDC RP-Initiated Logout also permits POST. A direct RP POST starts the
+      // same confirmation interaction; only the follow-up POST carrying the
+      // double-submit token may mutate ambient browser session state.
+      if (!confirmationToken) {
+        if (!browserSessionId && !idTokenHint) {
+          return c.redirect(`${issuer}/logged-out`, 302);
+        }
+        return showLogoutConfirmation();
+      }
+
+      const confirmationCookie = getCookie(c, LOGOUT_CONFIRMATION_COOKIE_NAME);
+      if (!confirmationCookie || !timingSafeEqual(confirmationToken, confirmationCookie)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Logout confirmation is missing or expired',
+          },
+          400
+        );
+      }
+    } else {
+      idTokenHint = c.req.query('id_token_hint');
+      postLogoutRedirectUri = c.req.query('post_logout_redirect_uri');
+      state = c.req.query('state');
+      requestedLogoutScope = c.req.query('logout_scope');
+
+      if (!browserSessionId && !idTokenHint) {
+        return c.redirect(`${issuer}/logged-out`, 302);
+      }
+
+      return showLogoutConfirmation();
+    }
+
+    const logoutScope = normalizeDeviceSecretLogoutScope(requestedLogoutScope);
 
     let userId: string | undefined;
     let clientId: string | undefined;
@@ -247,7 +365,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     // We delete sessions from:
     // 1. Cookie (always - this is the browser's session)
     // 2. sid from validated id_token_hint (if valid - for server-to-server logout)
-    const sessionId = getCookie(c, 'authrim_session');
+    const sessionId = browserSessionId;
     const deletedSessions: string[] = [];
 
     // Get context for repository access
@@ -281,7 +399,8 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           c.env,
           tenantId,
           sessId,
-          authCtx.repositories.sessionClient
+          authCtx.repositories.sessionClient,
+          issuer
         ).catch((error) => {
           log.warn('Failed to load logout clients from SessionClientStore', {
             sessionId: sessId,
@@ -356,29 +475,80 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    // Also delete session by sid from id_token_hint (only if signature was verified)
+    // Resolve the RP-specific OIDC sid to the internal OP session key. The two
+    // identifiers deliberately occupy different namespaces.
+    let hintedSessionId: string | null = null;
+    if (idTokenValid && sid) {
+      hintedSessionId = isShardedSessionId(sid)
+        ? sid // Compatibility for ID tokens issued before RP-specific sid derivation.
+        : await resolveSessionIdFromOidcSidStore(c.env, tenantId, sid).catch((error) => {
+            log.warn('Failed to resolve OIDC sid alias', {
+              error: (error as Error).message,
+              action: 'Logout',
+            });
+            return null;
+          });
+    }
+
+    // Before the SID namespace migration, code-flow associations were stored in
+    // a DO named directly from the RP-specific sid and did not retain the raw OP
+    // session key. A validated hint can still recover the exact RP notification
+    // target without treating that sid as an internal session identifier.
+    if (idTokenValid && sid && clientId && !hintedSessionId) {
+      const legacyTargets = await resolveLegacyLogoutTargetsFromOidcSidStore(
+        c.env,
+        tenantId,
+        sid,
+        clientId,
+        authCtx.repositories.sessionClient
+      ).catch((error) => {
+        log.warn('Failed to load legacy OIDC sid logout target', {
+          error: (error as Error).message,
+          action: 'Logout',
+        });
+        return null;
+      });
+      if (legacyTargets) {
+        const { backchannelClients, frontchannelClients, webhookClients } = legacyTargets;
+        if (
+          backchannelClients.length > 0 ||
+          frontchannelClients.length > 0 ||
+          webhookClients.length > 0
+        ) {
+          sessionsToNotify.push({
+            sessionId: `legacy-oidc-sid:${sid}`,
+            userId: userId ?? '',
+            backchannelClients,
+            frontchannelClients,
+            webhookClients,
+          });
+        }
+      }
+    }
+
+    // Also delete session by the resolved sid from id_token_hint (only if signature was verified)
     // This ensures logout works even when called without browser cookies
     // Security: We only trust sid from verified tokens to prevent DoS attacks
     if (
       idTokenValid &&
-      sid &&
-      sid !== sessionId &&
-      !deletedSessions.includes(sid) &&
-      isShardedSessionId(sid)
+      hintedSessionId &&
+      hintedSessionId !== sessionId &&
+      !deletedSessions.includes(hintedSessionId) &&
+      isShardedSessionId(hintedSessionId)
     ) {
       try {
         // Collect session info before deletion (pass userId from id_token_hint as fallback)
-        if (!sessionsToNotify.some((s) => s.sessionId === sid)) {
-          log.info('Collecting session data for sid', { sid: sid.substring(0, 30) });
-          await collectSessionData(sid, userId);
+        if (!sessionsToNotify.some((s) => s.sessionId === hintedSessionId)) {
+          log.info('Collecting session data for sid', { sid: sid?.substring(0, 30) });
+          await collectSessionData(hintedSessionId, userId);
         }
 
-        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sid, tenantId);
-        const deleted = await sessionStore.invalidateSessionRpc(sid);
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, hintedSessionId, tenantId);
+        const deleted = await sessionStore.invalidateSessionRpc(hintedSessionId);
 
         if (deleted) {
-          deletedSessions.push(sid);
-          log.info('Session from sid deleted', { sid: sid.substring(0, 30) });
+          deletedSessions.push(hintedSessionId);
+          log.info('Session from sid deleted', { sid: sid?.substring(0, 30) });
         } else {
           // Session might not exist or already deleted - this is OK
           log.debug('Session from id_token_hint not found or already deleted', { sid });
@@ -723,6 +893,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       sameSite: getBrowserStateCookieSameSite(c.env),
       maxAge: 0,
     });
+    setCookie(c, LOGOUT_CONFIRMATION_COOKIE_NAME, '', {
+      path: '/logout',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Strict',
+      maxAge: 0,
+    });
 
     // ========================================
     // Step 4: Validate parameters for redirect
@@ -843,9 +1020,6 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     if (logoutConfig.frontchannel.enabled && sessionsToNotify.length > 0) {
       // Collect all frontchannel logout clients from sessions
       const frontchannelClients = [];
-      // Use session from sessionsToNotify (may include sessions not in deletedSessions)
-      const primarySessionId = sessionsToNotify[0]?.sessionId || deletedSessions[0] || sid || '';
-
       for (const { frontchannelClients: clients } of sessionsToNotify) {
         frontchannelClients.push(...clients);
       }
@@ -867,11 +1041,7 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         // Build iframe configurations
-        const iframes = buildFrontchannelLogoutIframes(
-          frontchannelClients,
-          issuer,
-          primarySessionId
-        );
+        const iframes = buildFrontchannelLogoutIframes(frontchannelClients, issuer);
 
         // Log generated iframe URLs for debugging
         for (const iframe of iframes) {
@@ -906,6 +1076,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           'Set-Cookie',
           `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=${browserStateSameSite}; Max-Age=0`
         );
+        responseHeaders.append(
+          'Set-Cookie',
+          `${LOGOUT_CONFIRMATION_COOKIE_NAME}=; Path=/logout; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
+        );
         return new Response(html, {
           status: 200,
           headers: responseHeaders,
@@ -931,6 +1105,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     headers.append(
       'Set-Cookie',
       `${BROWSER_STATE_COOKIE_NAME}=; Path=/; Secure; SameSite=${browserStateSameSiteRedirect}; Max-Age=0`
+    );
+    headers.append(
+      'Set-Cookie',
+      `${LOGOUT_CONFIRMATION_COOKIE_NAME}=; Path=/logout; HttpOnly; Secure; SameSite=Strict; Max-Age=0`
     );
 
     return new Response(response.body, {

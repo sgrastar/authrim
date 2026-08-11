@@ -24,7 +24,7 @@ import {
   type MockEnv,
 } from './helpers/mocks';
 import {
-  createConfidentialClient,
+  createConfidentialClient as createConfidentialClientFixture,
   createM2MClient,
   createPublicClient,
   createFAPIClient,
@@ -44,6 +44,15 @@ import {
   OAuthErrors,
   type TestAuthCodeData,
 } from './helpers/fixtures';
+
+function createConfidentialClient(
+  overrides?: Parameters<typeof createConfidentialClientFixture>[0]
+) {
+  return createConfidentialClientFixture({
+    token_endpoint_auth_method: 'client_secret_post',
+    ...overrides,
+  });
+}
 
 // ============================================================================
 // Module Mock Setup
@@ -2387,7 +2396,9 @@ describe('Security-Critical Tests', () => {
       });
 
       it('should accept correct client secret via Basic auth', async () => {
-        const client = createConfidentialClient();
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_basic',
+        });
         const authCodeData = createAuthCodeData();
 
         mocks.mockGetClientCached.mockResolvedValue(client);
@@ -2611,6 +2622,7 @@ describe('Security-Critical Tests', () => {
             code: 'valid-auth-code',
             redirect_uri: 'https://app.example.com/callback',
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });

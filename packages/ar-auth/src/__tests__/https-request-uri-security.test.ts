@@ -7,8 +7,19 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { Hono } from 'hono';
+import {
+  CompactEncrypt,
+  SignJWT,
+  compactDecrypt,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+} from 'jose';
 import { authorizeHandler } from '../authorize';
 import type { Env } from '@authrim/ar-lib-core/types/env';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 /** Error response type for authorization endpoint */
 interface ErrorResponse {
@@ -609,6 +620,140 @@ describe('HTTPS Request URI Security', () => {
   });
 
   describe('Request Object Fetching', () => {
+    it('does not accept an encrypted unsigned JSON Request Object as authenticated input', async () => {
+      const encryptionKeyPair = await generateKeyPair('RSA-OAEP', {
+        extractable: true,
+        modulusLength: 2048,
+      });
+      const directJsonClaims = {
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        state: 'unsigned-encrypted-state',
+      };
+      const jwe = await new CompactEncrypt(
+        new TextEncoder().encode(JSON.stringify(directJsonClaims))
+      )
+        .setProtectedHeader({ alg: 'RSA-OAEP', enc: 'A256GCM' })
+        .encrypt(encryptionKeyPair.publicKey);
+
+      // Negative control: the JWE and key are valid when the key retains its RSA-OAEP usage.
+      const locallyDecrypted = await compactDecrypt(jwe, encryptionKeyPair.privateKey);
+      expect(JSON.parse(new TextDecoder().decode(locallyDecrypted.plaintext))).toEqual(
+        directJsonClaims
+      );
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request=${encodeURIComponent(jwe)}`,
+        { method: 'GET' },
+        {
+          ...mockEnv,
+          PRIVATE_KEY_PEM: await exportPKCS8(encryptionKeyPair.privateKey),
+        }
+      );
+
+      // Current code imports PRIVATE_KEY_PEM for RS256 signing, producing a CryptoKey that
+      // cannot perform RSA-OAEP decryption. The unsigned JSON branch is therefore unreachable.
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: 'invalid_request_object',
+        error_description: 'Failed to decrypt request object',
+      });
+      expect(
+        (mockEnv.CHALLENGE_STORE as unknown as ReturnType<typeof createMockChallengeStore>)
+          ._challenges.size
+      ).toBe(0);
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-03] rejects a JAR whose signed client_id differs from the outer client',
+      async () => {
+        const clientAKeyPair = await generateKeyPair('RS256', { extractable: true });
+        const clientAPublicJwk = {
+          ...(await exportJWK(clientAKeyPair.publicKey)),
+          kid: 'client-a-signing-key',
+          alg: 'RS256',
+          use: 'sig',
+        };
+
+        mockGetClient.mockImplementation(
+          async (_context: unknown, _env: unknown, requestedClientId: string) => {
+            if (requestedClientId === 'client-a') {
+              return {
+                client_id: 'client-a',
+                redirect_uris: ['https://client-a.example.com/callback'],
+                response_types: ['code'],
+                jwks: { keys: [clientAPublicJwk] },
+              };
+            }
+            if (requestedClientId === 'client-b') {
+              return {
+                client_id: 'client-b',
+                client_name: 'Victim Client B',
+                redirect_uris: ['https://client-b.example.com/callback'],
+                grant_types: ['authorization_code'],
+                response_types: ['code'],
+              };
+            }
+            return null;
+          }
+        );
+
+        // The JWT issuer/signature belongs to A, while client_id and redirect_uri target B.
+        const requestObject = await new SignJWT({
+          client_id: 'client-b',
+          response_type: 'code',
+          redirect_uri: 'https://client-b.example.com/callback',
+          scope: 'openid',
+          state: 'signed-by-a-for-b',
+          code_challenge: 'A'.repeat(43),
+          code_challenge_method: 'S256',
+        })
+          .setProtectedHeader({
+            alg: 'RS256',
+            typ: 'oauth-authz-req+jwt',
+            kid: 'client-a-signing-key',
+          })
+          .setIssuer('client-a')
+          .setAudience('https://auth.example.com')
+          .setIssuedAt()
+          .setExpirationTime('5m')
+          .sign(clientAKeyPair.privateKey);
+
+        const response = await app.request(
+          `/authorize?client_id=client-a&request=${encodeURIComponent(requestObject)}`,
+          { method: 'GET' },
+          {
+            ...mockEnv,
+            ENABLE_CONFORMANCE_MODE: 'true',
+          }
+        );
+
+        const location = response.headers.get('location');
+        const challengeId = location
+          ? new URL(location, 'https://auth.example.com').searchParams.get('challenge_id')
+          : null;
+
+        const challenges = (
+          mockEnv.CHALLENGE_STORE as unknown as ReturnType<typeof createMockChallengeStore>
+        )._challenges;
+
+        expect(challengeId).toBeNull();
+        expect([...challenges.values()]).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: 'login',
+              metadata: expect.objectContaining({
+                client_id: 'client-b',
+                redirect_uri: 'https://client-b.example.com/callback',
+              }),
+            }),
+          ])
+        );
+      }
+    );
+
     it('should reject alg=none request objects in production even when test settings allow them', async () => {
       const requestObject = createUnsignedRequestObject({
         response_type: 'code',
@@ -862,7 +1007,7 @@ describe('HTTPS Request URI Security', () => {
       };
 
       const response = await app.request(
-        '/authorize?request_uri=https%3A%2F%2Ftrusted.com%2Frequest.jwt',
+        '/authorize?client_id=test-client&request_uri=https%3A%2F%2Ftrusted.com%2Frequest.jwt',
         { method: 'GET' },
         envWithFeature
       );

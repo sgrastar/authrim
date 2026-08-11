@@ -12,6 +12,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 // Mock jose module
 vi.mock('jose', () => ({
   jwtVerify: vi.fn(),
@@ -132,8 +135,12 @@ function createMockContext(options: {
     req: {
       query: (name: string) => options.query?.[name],
       header: (name: string) => options.headers?.[name],
-      method: options.method || 'GET',
-      parseBody: vi.fn().mockResolvedValue(options.body || {}),
+      method: options.method || 'POST',
+      parseBody: vi
+        .fn()
+        .mockResolvedValue(
+          options.body || { confirmation_token: 'session-123', ...(options.query ?? {}) }
+        ),
     },
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
@@ -222,6 +229,7 @@ describe('Front-channel Logout', () => {
     it('should invalidate session in SessionStore (sharded format)', async () => {
       const { c } = createMockContext({
         query: {},
+        body: { confirmation_token: '0_session_123' },
       });
 
       // Reset mock for sharded session store
@@ -237,9 +245,53 @@ describe('Front-channel Logout', () => {
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
     });
 
+    securityRegressionIt(
+      '[security regression][AO-16] requires explicit intent before an ambient GET logs out the browser session',
+      async () => {
+        const { c } = createMockContext({
+          method: 'GET',
+          query: {},
+        });
+
+        mockShardedSessionStore.invalidateSessionRpc.mockReset();
+        mockShardedSessionStore.invalidateSessionRpc.mockResolvedValue(true);
+        vi.mocked(getCookie).mockReturnValue('0_session_csrf_victim');
+
+        await frontChannelLogoutHandler(c);
+
+        expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+        expect(setCookie).not.toHaveBeenCalledWith(c, 'authrim_session', '', expect.anything());
+      }
+    );
+
+    it('starts confirmation without invalidating a session for a direct RP-initiated POST', async () => {
+      const { c } = createMockContext({
+        method: 'POST',
+        body: {
+          id_token_hint: 'valid.id.token',
+          post_logout_redirect_uri: 'https://rp.example.com/logged-out',
+          state: 'rp-state',
+        },
+      });
+
+      mockShardedSessionStore.invalidateSessionRpc.mockReset();
+      vi.mocked(getCookie).mockReturnValue('0_session_rp_post');
+
+      const response = await frontChannelLogoutHandler(c);
+      const html = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(html).toContain('Confirm logout');
+      expect(html).toContain('name="id_token_hint" value="valid.id.token"');
+      expect(html).toContain('name="state" value="rp-state"');
+      expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+      expect(setCookie).not.toHaveBeenCalledWith(c, 'authrim_session', '', expect.anything());
+    });
+
     it('should render front-channel logout iframes for clients linked to the session', async () => {
       const { c } = createMockContext({
         query: {},
+        body: { confirmation_token: '0_session_123' },
       });
 
       mockShardedSessionStore.invalidateSessionRpc.mockReset();
@@ -250,6 +302,7 @@ describe('Front-channel Logout', () => {
         frontchannelClients: [
           {
             client_id: 'rp-client',
+            oidc_sid: 'rp-session-123',
             frontchannel_logout_uri: 'https://rp.example.com/logout',
             frontchannel_logout_session_required: true,
           },
@@ -265,12 +318,14 @@ describe('Front-channel Logout', () => {
       expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
       expect(html).toContain('https://rp.example.com/logout');
       expect(html).toContain('iss=https%3A%2F%2Fop.example.com');
-      expect(html).toContain('sid=0_session_123');
+      expect(html).toContain('sid=rp-session-123');
+      expect(html).not.toContain('sid=0_session_123');
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
     });
 
     it('should handle logout when no session exists', async () => {
       const { c } = createMockContext({
+        method: 'GET',
         query: {},
       });
 

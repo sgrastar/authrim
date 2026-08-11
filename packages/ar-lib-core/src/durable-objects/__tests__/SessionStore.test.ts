@@ -3,8 +3,11 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SessionStore, type Session } from '../SessionStore.ts';
+import { SESSION_CLIENT_NAMESPACE_VERSION, SessionStore, type Session } from '../SessionStore.ts';
 import type { Env } from '../../types/env';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 const runtimeDataContextMocks = vi.hoisted(() => ({
   resolveAccountCoreDataContext: vi.fn(),
@@ -188,6 +191,36 @@ describe('SessionStore', () => {
       expect(body).toHaveProperty('expiresAt');
       expect(body).toHaveProperty('createdAt');
     });
+
+    securityRegressionIt(
+      '[security regression][AO-19] revokes a stored session that predates the RP-specific SID namespace',
+      async () => {
+        const sessionId = '0_session_legacy_sid_namespace';
+        const current = await sessionStore.createSessionRpc(
+          sessionId,
+          'user_legacy',
+          3600,
+          undefined,
+          'default'
+        );
+        expect(current.sessionClientNamespaceVersion).toBe(SESSION_CLIENT_NAMESPACE_VERSION);
+        const { sessionClientNamespaceVersion: _version, ...legacySession } = current;
+        await mockState.storage.put(`session:${sessionId}`, legacySession);
+
+        // Reconstruct the actor so the persisted predeployment shape, rather than
+        // the in-memory current record, is authoritative.
+        sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
+
+        await expect(sessionStore.getSessionRpc(sessionId)).resolves.toBeNull();
+        await expect(mockState.storage.get(`session:${sessionId}`)).resolves.toBeUndefined();
+        expect(sessionRevocationStub.unregisterSessionRpc).toHaveBeenCalledWith(
+          'default',
+          'user_legacy',
+          'account:user_legacy',
+          sessionId
+        );
+      }
+    );
 
     it('compensates the revocation index when authoritative session storage fails', async () => {
       mockState.rejectNextSessionWrite();

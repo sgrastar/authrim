@@ -45,6 +45,8 @@ export interface Session {
   createdAt: number;
   revocationAuthority: typeof SESSION_REVOCATION_AUTHORITY;
   revocationBoundAtMs: number;
+  /** Version 2 separates the internal OP session key from every RP-facing OIDC sid. */
+  sessionClientNamespaceVersion?: number;
   data?: SessionData;
 }
 
@@ -101,6 +103,7 @@ export interface SessionResponse {
 const SESSION_KEY_PREFIX = 'session:';
 const SESSION_STORE_TENANT_CONTEXT_KEY = 'meta:tenant-context';
 const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+export const SESSION_CLIENT_NAMESPACE_VERSION = 2;
 
 /**
  * SessionStore Durable Object
@@ -349,6 +352,15 @@ export class SessionStore extends DurableObject<Env> {
     await this.actorCtx.storage.delete(this.buildSessionKey(session.id));
   }
 
+  private async dropLegacySessionClientNamespace(session: Session): Promise<void> {
+    await this.dropRevokedSession(session);
+    this.unregisterSessionIndex(session);
+  }
+
+  private usesCurrentSessionClientNamespace(session: Session): boolean {
+    return session.sessionClientNamespaceVersion === SESSION_CLIENT_NAMESPACE_VERSION;
+  }
+
   private async persistSession(session: Session): Promise<void> {
     await this.actorCtx.storage.put(this.buildSessionKey(session.id), session);
   }
@@ -381,6 +393,10 @@ export class SessionStore extends DurableObject<Env> {
     let session = this.sessionCache.get(sessionId);
     if (session) {
       await this.validateStoredSessionBinding(sessionId, session);
+      if (!this.usesCurrentSessionClientNamespace(session)) {
+        await this.dropLegacySessionClientNamespace(session);
+        return null;
+      }
       if (await this.isRevokedByUserEpoch(session)) {
         await this.dropRevokedSession(session);
         return null;
@@ -398,6 +414,10 @@ export class SessionStore extends DurableObject<Env> {
     const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
     if (storedSession) {
       await this.validateStoredSessionBinding(sessionId, storedSession);
+      if (!this.usesCurrentSessionClientNamespace(storedSession)) {
+        await this.dropLegacySessionClientNamespace(storedSession);
+        return null;
+      }
       if (await this.isRevokedByUserEpoch(storedSession)) {
         await this.dropRevokedSession(storedSession);
         return null;
@@ -454,6 +474,7 @@ export class SessionStore extends DurableObject<Env> {
       createdAt,
       revocationAuthority: SESSION_REVOCATION_AUTHORITY,
       revocationBoundAtMs: registration.revocationBoundAtMs,
+      sessionClientNamespaceVersion: SESSION_CLIENT_NAMESPACE_VERSION,
       data,
     };
 
@@ -558,6 +579,10 @@ export class SessionStore extends DurableObject<Env> {
 
     for (const [, session] of storedSessions) {
       await this.validateStoredSessionBinding(session.id, session);
+      if (!this.usesCurrentSessionClientNamespace(session)) {
+        await this.dropLegacySessionClientNamespace(session);
+        continue;
+      }
       if (
         session.userId === userId &&
         session.expiresAt > now &&
