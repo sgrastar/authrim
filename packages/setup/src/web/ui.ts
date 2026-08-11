@@ -6870,6 +6870,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
+      let completed = false;
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -6885,7 +6886,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function handle(message) {
+        if (completed) return;
         if (message.includes('Provisioning complete')) {
+          completed = true;
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -6909,6 +6912,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function complete() {
+        completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
       }
 

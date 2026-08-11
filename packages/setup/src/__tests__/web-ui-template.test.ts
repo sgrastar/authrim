@@ -581,6 +581,46 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('totalComponents = Math.max');
   });
 
+  it('keeps provisioning progress complete after trailing log messages and polling races', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const trackerSource = html.match(
+      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}function createDeployProgressTracker\(\))/u
+    )?.[0];
+    expect(trackerSource).toBeTruthy();
+    const progressUpdates: Array<{ current: number; total: number; task: string }> = [];
+    const context = vm.createContext({
+      updateProgressUI: (_prefix: string, current: number, total: number, task: string) => {
+        progressUpdates.push({ current, total, task });
+      },
+      parseProgressMessage: () => null,
+      t: (key: string) => key,
+    });
+    vm.runInContext(
+      `${trackerSource}
+       const tracker = createProvisionProgressTracker(8);
+       tracker.handle('D1 Databases (6/6) ✓');
+       tracker.handle('Provisioning complete!');
+       tracker.handle('Config saved: /tmp/config.json');
+       tracker.complete();
+       tracker.handle('Log: Progress log saved');`,
+      context
+    );
+
+    expect(progressUpdates.at(-1)).toEqual({
+      current: 8,
+      total: 8,
+      task: 'web.status.complete',
+    });
+    expect(progressUpdates.filter((update) => update.current === 8)).toHaveLength(2);
+    expect(progressUpdates.at(-1)?.current).not.toBe(4);
+  });
+
   it('renders prerequisite capability list styles and client-side renderer', () => {
     const html = getHtmlTemplate(
       'session-token',
