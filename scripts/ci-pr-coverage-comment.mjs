@@ -368,14 +368,13 @@ function buildComment({ packages, totals, repositorySuites }) {
       formatPct(coverage?.statements?.pct),
     ];
   });
-  const repositorySuiteRows = repositorySuites.map(({ name, result }) => [
+  const repositorySuiteRows = repositorySuites.map(({ name, purpose, evidence, result }) => [
     name,
     result.reported ? (result.success ? 'passed' : 'failed') : 'not reported',
     result.total ?? '-',
+    purpose,
+    evidence,
   ]);
-  const repositorySuiteDetails = repositorySuites.map(({ name, purpose, evidence }) =>
-    [`- **${name}** — ${purpose}`, `  - Combination coverage: ${evidence}`].join('\n')
-  );
 
   return `${MARKER}
 ## Coverage Summary
@@ -397,13 +396,9 @@ ${packageRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
 
 ### Repository Test Suites
 
-| Suite | status | Cases |
-| --- | --- | ---: |
+| Suite | status | Cases | Tests | Combinations |
+| --- | --- | ---: | --- | --- |
 ${repositorySuiteRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
-
-#### Scope and combination coverage
-
-${repositorySuiteDetails.join('\n')}
 
 _Updated at ${generatedAt}._
 `;
