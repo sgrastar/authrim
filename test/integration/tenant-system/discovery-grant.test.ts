@@ -84,7 +84,15 @@ describe('tenant-system discovery grant matrix', () => {
       env
     );
     const issued = (await issueResponse.json()) as { grant: string };
-    const tamperedGrant = `${issued.grant.slice(0, -1)}x`;
+    const [header, payload, signature] = issued.grant.split('.');
+    const tamperIndex = Math.floor(payload.length / 2);
+    const replacement = payload[tamperIndex] === 'A' ? 'B' : 'A';
+    const tamperedPayload = `${payload.slice(0, tamperIndex)}${replacement}${payload.slice(
+      tamperIndex + 1
+    )}`;
+    const tamperedGrant = `${header}.${tamperedPayload}.${signature}`;
+
+    expect(tamperedPayload).not.toBe(payload);
 
     const response = await app.request(
       makeTenantRequest(tenantHost, '/api/auth/discovery/grant/verify', {
