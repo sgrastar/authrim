@@ -141,8 +141,127 @@ function toMissingRequiredRegistrationField(
 
 function isBlank(value: unknown): boolean {
   return (
-    value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && value.trim() === '') ||
+    (Array.isArray(value) && value.length === 0)
   );
+}
+
+function validateScalarRegistrationValue(
+  schema: RegistrationFieldSchemaRow,
+  rawValue: unknown,
+  rules: Record<string, unknown>
+): { ok: true; value: string } | { ok: false; error: string } {
+  const label = schema.display_label || schema.field_key;
+  if (schema.field_type === 'boolean') {
+    if (typeof rawValue === 'boolean') return { ok: true, value: rawValue ? 'true' : 'false' };
+    if (rawValue === 'true' || rawValue === 'false') return { ok: true, value: rawValue };
+    return { ok: false, error: `${label} must be true or false` };
+  }
+
+  if (rawValue === null || typeof rawValue === 'object') {
+    return { ok: false, error: `${label} contains an invalid value` };
+  }
+  const stringValue = String(rawValue);
+  const trimmedValue = stringValue.trim();
+  switch (schema.field_type) {
+    case 'number': {
+      const numberValue = Number(trimmedValue);
+      if (!Number.isFinite(numberValue)) {
+        return { ok: false, error: `${label} must be a valid number` };
+      }
+      if (typeof rules.min === 'number' && numberValue < rules.min) {
+        return { ok: false, error: `${label} must be at least ${rules.min}` };
+      }
+      if (typeof rules.max === 'number' && numberValue > rules.max) {
+        return { ok: false, error: `${label} must be at most ${rules.max}` };
+      }
+      return { ok: true, value: trimmedValue };
+    }
+    case 'enum': {
+      const enumValues = Array.isArray(rules.enum_values)
+        ? rules.enum_values.filter((value): value is string => typeof value === 'string')
+        : [];
+      if (enumValues.length > 0 && !enumValues.includes(trimmedValue)) {
+        return { ok: false, error: `${label} must be one of the configured options` };
+      }
+      return { ok: true, value: trimmedValue };
+    }
+    case 'date': {
+      const timestamp = Date.parse(trimmedValue);
+      if (Number.isNaN(timestamp)) {
+        return { ok: false, error: `${label} must be a valid date` };
+      }
+      if (typeof rules.min_date === 'string') {
+        const minTimestamp = Date.parse(rules.min_date);
+        if (!Number.isNaN(minTimestamp) && timestamp < minTimestamp) {
+          return { ok: false, error: `${label} must be on or after ${rules.min_date}` };
+        }
+      }
+      if (typeof rules.max_date === 'string') {
+        const maxTimestamp = Date.parse(rules.max_date);
+        if (!Number.isNaN(maxTimestamp) && timestamp > maxTimestamp) {
+          return { ok: false, error: `${label} must be on or before ${rules.max_date}` };
+        }
+      }
+      return { ok: true, value: trimmedValue };
+    }
+    case 'string':
+    default: {
+      if (typeof rules.min_length === 'number' && trimmedValue.length < rules.min_length) {
+        return { ok: false, error: `${label} must be at least ${rules.min_length} characters` };
+      }
+      if (typeof rules.max_length === 'number' && trimmedValue.length > rules.max_length) {
+        return { ok: false, error: `${label} must be at most ${rules.max_length} characters` };
+      }
+      if (typeof rules.pattern === 'string') {
+        try {
+          if (!new RegExp(rules.pattern).test(trimmedValue)) {
+            return { ok: false, error: `${label} is in an invalid format` };
+          }
+        } catch {
+          // Ignore invalid patterns already accepted in admin settings.
+        }
+      }
+      return { ok: true, value: stringValue };
+    }
+  }
+}
+
+function validateRegistrationValue(
+  schema: RegistrationFieldSchemaRow,
+  rawValue: unknown,
+  rules: Record<string, unknown>
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (schema.cardinality !== 'multi') {
+    return validateScalarRegistrationValue(schema, rawValue, rules);
+  }
+  const label = schema.display_label || schema.field_key;
+  if (!Array.isArray(rawValue)) return { ok: false, error: `${label} must be an array` };
+  if (rawValue.length > 100) {
+    return { ok: false, error: `${label} must have at most 100 values` };
+  }
+  const values: string[] = [];
+  for (const item of rawValue) {
+    const validated = validateScalarRegistrationValue(schema, item, rules);
+    if (!validated.ok) return validated;
+    if (!values.includes(validated.value)) values.push(validated.value);
+  }
+  return { ok: true, value: JSON.stringify(values) };
+}
+
+function serializeRegistrationValue(schema: RegistrationFieldSchemaRow, value: unknown): string {
+  if (schema.cardinality !== 'multi') return String(value);
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (typeof value === 'string') {
+    try {
+      if (Array.isArray(JSON.parse(value))) return value;
+    } catch {
+      // Fall through to the explicit invariant error below.
+    }
+  }
+  throw new Error(`registration_multi_value_not_serialized:${schema.field_key}`);
 }
 
 export async function validateRegistrationFieldSubmission(
@@ -172,7 +291,6 @@ export async function validateRegistrationFieldSubmission(
 
   for (const schema of schemas) {
     const rawValue = input[schema.field_key];
-    const label = schema.display_label || schema.field_key;
 
     if (isBlank(rawValue)) {
       continue;
@@ -190,92 +308,9 @@ export async function validateRegistrationFieldSubmission(
       }
     }
 
-    if (schema.field_type === 'boolean') {
-      if (typeof rawValue === 'boolean') {
-        values[schema.field_key] = rawValue ? 'true' : 'false';
-        continue;
-      }
-
-      if (rawValue === 'true' || rawValue === 'false') {
-        values[schema.field_key] = rawValue;
-        continue;
-      }
-
-      return { ok: false, error: `${label} must be true or false` };
-    }
-
-    const stringValue = String(rawValue);
-    const trimmedValue = stringValue.trim();
-
-    switch (schema.field_type) {
-      case 'number': {
-        const numberValue = Number(trimmedValue);
-        if (!Number.isFinite(numberValue)) {
-          return { ok: false, error: `${label} must be a valid number` };
-        }
-        if (typeof rules.min === 'number' && numberValue < rules.min) {
-          return { ok: false, error: `${label} must be at least ${rules.min}` };
-        }
-        if (typeof rules.max === 'number' && numberValue > rules.max) {
-          return { ok: false, error: `${label} must be at most ${rules.max}` };
-        }
-        values[schema.field_key] = trimmedValue;
-        break;
-      }
-      case 'enum': {
-        const enumValues = Array.isArray(rules.enum_values)
-          ? rules.enum_values.filter((value): value is string => typeof value === 'string')
-          : [];
-        if (enumValues.length > 0 && !enumValues.includes(trimmedValue)) {
-          return { ok: false, error: `${label} must be one of the configured options` };
-        }
-        values[schema.field_key] = trimmedValue;
-        break;
-      }
-      case 'date': {
-        const timestamp = Date.parse(trimmedValue);
-        if (Number.isNaN(timestamp)) {
-          return { ok: false, error: `${label} must be a valid date` };
-        }
-
-        if (typeof rules.min_date === 'string') {
-          const minTimestamp = Date.parse(rules.min_date);
-          if (!Number.isNaN(minTimestamp) && timestamp < minTimestamp) {
-            return { ok: false, error: `${label} must be on or after ${rules.min_date}` };
-          }
-        }
-
-        if (typeof rules.max_date === 'string') {
-          const maxTimestamp = Date.parse(rules.max_date);
-          if (!Number.isNaN(maxTimestamp) && timestamp > maxTimestamp) {
-            return { ok: false, error: `${label} must be on or before ${rules.max_date}` };
-          }
-        }
-
-        values[schema.field_key] = trimmedValue;
-        break;
-      }
-      case 'string':
-      default: {
-        if (typeof rules.min_length === 'number' && trimmedValue.length < rules.min_length) {
-          return { ok: false, error: `${label} must be at least ${rules.min_length} characters` };
-        }
-        if (typeof rules.max_length === 'number' && trimmedValue.length > rules.max_length) {
-          return { ok: false, error: `${label} must be at most ${rules.max_length} characters` };
-        }
-        if (typeof rules.pattern === 'string') {
-          try {
-            if (!new RegExp(rules.pattern).test(trimmedValue)) {
-              return { ok: false, error: `${label} is in an invalid format` };
-            }
-          } catch {
-            // Ignore invalid patterns already accepted in admin settings.
-          }
-        }
-        values[schema.field_key] = stringValue;
-        break;
-      }
-    }
+    const validated = validateRegistrationValue(schema, rawValue, rules);
+    if (!validated.ok) return validated;
+    values[schema.field_key] = validated.value;
   }
 
   return {
@@ -290,13 +325,14 @@ export async function persistRegistrationFieldValues(
   dbPii: DatabaseSource | null | undefined,
   tenantId: string,
   userId: string,
-  values: Record<string, unknown> | undefined
+  values: Record<string, unknown> | undefined,
+  schemaDb: DatabaseSource = db
 ): Promise<void> {
   if (!values || typeof values !== 'object') {
     return;
   }
 
-  const schemas = await listRegistrationFieldSchemas(db, tenantId, {
+  const schemas = await listRegistrationFieldSchemas(schemaDb, tenantId, {
     includeRequiredHidden: true,
   });
   const customSchemas = filterCustomRegistrationFieldSchemas(schemas);
@@ -314,10 +350,11 @@ export async function persistRegistrationFieldValues(
       continue;
     }
 
+    const serializedValue = serializeRegistrationValue(schema, fieldValue);
     if (schema.is_pii === 1) {
-      piiValues[fieldKey] = String(fieldValue);
+      piiValues[fieldKey] = serializedValue;
     } else {
-      nonPiiValues[fieldKey] = String(fieldValue);
+      nonPiiValues[fieldKey] = serializedValue;
     }
   }
 
@@ -356,6 +393,7 @@ export async function persistRegistrationFieldValues(
   await persistCustomClaimWrite({
     db,
     dbPii,
+    schemaDb,
     tenantId,
     userId,
     validation,
@@ -383,5 +421,12 @@ export async function persistRegistrationFieldValuesFromEnv(
   if (!sources.nonPiiDb || !sources.piiDb) {
     throw new Error('registration_field_account_route_incomplete');
   }
-  await persistRegistrationFieldValues(sources.nonPiiDb, sources.piiDb, tenantId, userId, values);
+  await persistRegistrationFieldValues(
+    sources.nonPiiDb,
+    sources.piiDb,
+    tenantId,
+    userId,
+    values,
+    sources.schemaDb
+  );
 }

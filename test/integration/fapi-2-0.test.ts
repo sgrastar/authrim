@@ -24,10 +24,10 @@ import {
   buildTokenRequestBody,
   parseAuthorizationResponse,
 } from './fixtures';
-import { authorizeHandler } from '../../packages/op-auth/src/authorize';
-import { parHandler } from '../../packages/op-auth/src/par';
-import { tokenHandler } from '../../packages/op-token/src/token';
-import { discoveryHandler } from '../../packages/op-discovery/src/discovery';
+import { authorizeHandler } from '../../packages/ar-auth/src/authorize';
+import { parHandler } from '../../packages/ar-auth/src/par';
+import { tokenHandler } from '../../packages/ar-token/src/token';
+import { discoveryHandler } from '../../packages/ar-discovery/src/discovery';
 import {
   generateKeyPair,
   exportJWK,

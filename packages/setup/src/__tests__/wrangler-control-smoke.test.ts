@@ -152,6 +152,10 @@ describe('Control runtime smoke wrangler topology', () => {
       const generated = generateWranglerConfig(component, smokeConfig(), { d1: {}, kv: {} });
       expect(generated.version_metadata).toBeUndefined();
       expect(generated.vars.AUTHRIM_WORKER_SCRIPT_NAME).toBeUndefined();
+      expect(generated.services).toContainEqual({
+        binding: 'OP_CONTROL',
+        service: 'smoke-test-ar-control',
+      });
     }
   });
 

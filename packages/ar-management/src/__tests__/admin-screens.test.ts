@@ -310,7 +310,6 @@ describe('admin screens', () => {
     expect(registrationFields.map((field) => field.field)).toEqual([
       'heading.registration',
       'auth.passkey',
-      'email',
       ...expectedDefaultAuthFieldNames.slice(1),
     ]);
     const loginFields = screensByKey.get('login')?.fields as Array<Record<string, unknown>>;
@@ -320,10 +319,7 @@ describe('admin screens', () => {
         .filter((field) => field.block_type !== 'identity_field')
         .map((field) => field.field)
     ).toEqual(loginFields.slice(1).map((field) => field.field));
-    expect(registrationFields.find((field) => field.field === 'email')).toMatchObject({
-      required: false,
-      block_type: 'identity_field',
-    });
+    expect(registrationFields.find((field) => field.field === 'email')).toBeUndefined();
     expect(
       registrationFields.find((field) => field.field === 'preferred_username')
     ).toBeUndefined();
@@ -346,9 +342,8 @@ describe('admin screens', () => {
     ).ja?.fields as Record<string, Record<string, unknown>>;
     expect(registrationJaFields?.['heading.registration-0']?.label).toBe('アカウントを作成');
     expect(registrationJaFields?.['auth.passkey-1']?.label).toBe('Passkeyでアカウント作成');
-    expect(registrationJaFields?.['email-2']?.label).toBe('メールアドレス');
-    expect(registrationJaFields?.['auth.mail_otp-4']?.label).toBe('認証コードをメール送信');
-    expect(registrationJaFields?.['auth.totp-5']?.label).toBe('認証アプリで新規登録');
+    expect(registrationJaFields?.['auth.mail_otp-3']?.label).toBe('認証コードをメール送信');
+    expect(registrationJaFields?.['auth.totp-4']?.label).toBe('認証アプリで新規登録');
     const loginJaFields = (
       screensByKey.get('login')?.localizations as Record<string, Record<string, unknown>>
     ).ja?.fields as Record<string, Record<string, unknown>>;
@@ -576,30 +571,95 @@ describe('admin screens', () => {
     expect(fields.map((field) => field.field)).toEqual([
       'heading.registration',
       'auth.passkey',
-      'email',
       ...expectedDefaultAuthFieldNames.slice(1),
     ]);
   });
 
-  it('keeps the email-only uncustomized registration default', async () => {
+  it('removes optional email from the uncustomized registration default', async () => {
     const emailOnlyDefaultFields = [
-      ['heading.registration', 'heading', 0],
-      ['auth.passkey', 'auth_widget', 10],
-      ['email', 'identity_field', 15],
-      ['divider.or', 'divider', 20],
-      ['auth.mail_otp', 'auth_widget', 30],
-      ['auth.totp', 'auth_widget', 35],
-      ['divider.other_accounts', 'divider', 40],
-      ['auth.external_idp', 'auth_widget', 50],
-      ['divider.directory_password', 'divider', 55],
-      ['auth.directory_password', 'auth_widget', 60],
-    ].map(([field, blockType, order]) => ({
-      field,
-      label: field,
-      required: field === 'email',
-      block_type: blockType,
-      order,
-    }));
+      {
+        field: 'heading.registration',
+        label: 'Create your account',
+        required: false,
+        block_type: 'heading',
+        order: 0,
+      },
+      {
+        field: 'auth.passkey',
+        label: 'Create Account with Passkey',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'passkey',
+        order: 10,
+      },
+      {
+        field: 'email',
+        label: 'Email',
+        required: false,
+        block_type: 'identity_field',
+        order: 15,
+      },
+      {
+        field: 'divider.or',
+        label: 'or',
+        required: false,
+        block_type: 'divider',
+        text: 'or',
+        display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+        order: 20,
+      },
+      {
+        field: 'auth.mail_otp',
+        label: 'Send code by email',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'mail_otp',
+        order: 30,
+      },
+      {
+        field: 'auth.totp',
+        label: 'Create account with authenticator app',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'totp',
+        order: 35,
+      },
+      {
+        field: 'divider.other_accounts',
+        label: 'Continue with another account',
+        required: false,
+        block_type: 'divider',
+        text: 'Continue with another account',
+        display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
+        order: 40,
+      },
+      {
+        field: 'auth.external_idp',
+        label: 'Ext. IdP',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'external_idp',
+        external_idp_show_action_text: false,
+        order: 50,
+      },
+      {
+        field: 'divider.directory_password',
+        label: 'or',
+        required: false,
+        block_type: 'divider',
+        text: 'or',
+        display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
+        order: 55,
+      },
+      {
+        field: 'auth.directory_password',
+        label: 'Sign in with directory password',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'directory_password',
+        order: 60,
+      },
+    ];
     rows.push({
       id: 'screen-registration-default',
       tenant_id: 'tenant-1',
@@ -627,7 +687,6 @@ describe('admin screens', () => {
     expect(fields.map((field) => field.field)).toEqual([
       'heading.registration',
       'auth.passkey',
-      'email',
       ...expectedDefaultAuthFieldNames.slice(1),
     ]);
   });
@@ -679,7 +738,6 @@ describe('admin screens', () => {
     expect(fields.map((field) => field.field)).toEqual([
       'heading.registration',
       'auth.passkey',
-      'email',
       ...expectedDefaultAuthFieldNames.slice(1),
     ]);
   });
@@ -743,7 +801,6 @@ describe('admin screens', () => {
     expect(fields.map((field) => field.field)).toEqual([
       'heading.registration',
       'auth.passkey',
-      'email',
       ...expectedDefaultAuthFieldNames.slice(1),
     ]);
   });

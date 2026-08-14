@@ -5,14 +5,13 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, safeFetchJson, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
+import { decodeBase64Url, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
 
 const MAX_VCI_ACCESS_TOKEN_SIZE = 8 * 1024;
 const MAX_VCI_PROOF_JWT_SIZE = 8 * 1024;
-const MAX_EXTERNAL_JWKS_SIZE = 256 * 1024;
 
 function requireTenantId(tenantId: string | undefined, context: string): string {
   const normalized = tenantId?.trim();
@@ -187,14 +186,7 @@ export async function validateVCIAccessToken(
       return { valid: false, error: 'Invalid tenant' };
     }
 
-    const signatureValid = await verifyTokenSignature(
-      env,
-      accessToken,
-      header,
-      payload,
-      expectedIssuer,
-      tenantId
-    );
+    const signatureValid = await verifyTokenSignature(env, accessToken, header, tenantId);
     if (!signatureValid) {
       return { valid: false, error: 'Invalid signature' };
     }
@@ -232,59 +224,29 @@ async function verifyTokenSignature(
   env: Env,
   token: string,
   header: JWTHeader,
-  payload: VCIAccessTokenPayload,
-  expectedIssuerOverride: string | undefined,
   expectedTenantId: string
 ): Promise<boolean> {
   try {
-    // For self-issued tokens (iss = our identifier), use our own keys
-    const expectedIssuer = resolveExpectedIssuerIdentifier(
-      env,
-      expectedTenantId,
-      expectedIssuerOverride
-    );
+    // validateVCIAccessToken accepts only the expected Authrim issuer. Keep key resolution tenant-
+    // local so this helper cannot later turn an untrusted JWT iss claim into a JWKS fetch target.
+    const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
+    const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
+    const stub = env.KEY_MANAGER.get(doId);
 
-    if (payload.iss === expectedIssuer) {
-      // Get public key from KeyManager
-      const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
-      const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-      const stub = env.KEY_MANAGER.get(doId);
-
-      const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
-      if (!jwksResponse.ok) {
-        log.error('Failed to get JWKS from KeyManager', {});
-        return false;
-      }
-
-      const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
-
-      // Find the key by kid or use the first one
-      const key = header.kid
-        ? jwks.keys.find((k) => k.kid === header.kid)
-        : jwks.keys.find((k) => k.kty === 'EC');
-
-      if (!key) {
-        log.error('Signing key not found in JWKS', {});
-        return false;
-      }
-
-      // Import and verify
-      const cryptoKey = await importJWKForVerify(key, header.alg);
-      return await verifyJWTSignature(token, cryptoKey, header.alg);
+    const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
+    if (!jwksResponse.ok) {
+      log.error('Failed to get JWKS from KeyManager', {});
+      return false;
     }
 
-    // For external issuers, fetch their JWKS
-    // This is a simplified implementation - production should cache JWKS
-    const jwksUri = `${payload.iss}/.well-known/jwks.json`;
-    const jwks = await safeFetchJson<{ keys: Array<{ kid?: string; kty: string }> }>(jwksUri, {
-      headers: { Accept: 'application/json' },
-      requireHttps: true,
-      timeoutMs: 10000,
-      maxResponseSize: MAX_EXTERNAL_JWKS_SIZE,
-    });
-    const key = header.kid ? jwks.keys.find((k) => k.kid === header.kid) : jwks.keys[0];
+    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
+
+    const key = header.kid
+      ? jwks.keys.find((k) => k.kid === header.kid)
+      : jwks.keys.find((k) => k.kty === 'EC');
 
     if (!key) {
+      log.error('Signing key not found in JWKS', {});
       return false;
     }
 

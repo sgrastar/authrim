@@ -240,7 +240,11 @@ function shouldResolveTenantDataContexts(
     return false;
   }
 
-  return requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest';
+  return (
+    requestClass === 'tenant_scoped_admin' ||
+    requestClass === 'discovery_ui' ||
+    requestClass === 'public_protocol_or_rest'
+  );
 }
 
 async function validateTenantExistsWithIsolateCache(

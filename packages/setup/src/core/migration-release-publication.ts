@@ -8,7 +8,9 @@ import {
   type D1BatchStatement,
 } from './cloudflare.js';
 import {
+  calculateReleaseManifestChecksum,
   ReleaseMigrationManifestSchema,
+  serializeReleaseMigrationManifest,
   streamDirectory,
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
@@ -167,12 +169,15 @@ export function buildMigrationReleaseArtifactPlan(input: {
   if (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES) {
     throw new Error('migration_release_manifest_size_invalid');
   }
-  const manifestBytes = new Uint8Array(manifestBuffer);
-  const manifest = decodeManifest(manifestBytes);
+  const manifest = decodeManifest(new Uint8Array(manifestBuffer));
+  const manifestBytes = new TextEncoder().encode(serializeReleaseMigrationManifest(manifest));
+  if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
+    throw new Error('migration_release_manifest_size_invalid');
+  }
   if (manifest.streams.length > MAX_STREAMS) {
     throw new Error('migration_release_stream_limit_exceeded');
   }
-  const manifestDigest = sha256(manifestBytes);
+  const manifestDigest = calculateReleaseManifestChecksum(manifest);
   const releaseId =
     basename(input.manifestPath) === 'release-manifest.draft.json'
       ? `${manifest.productVersion}-draft.${manifestDigest.slice(0, 12)}`

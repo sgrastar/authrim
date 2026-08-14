@@ -16,6 +16,7 @@ import {
   getR2BucketDashboardUrl,
   getWorkerDeployments,
   getR2ObjectBytes,
+  listR2Objects,
   listR2Buckets,
   putR2Object,
   provisionR2Buckets,
@@ -80,6 +81,58 @@ describe('Cloudflare R2 helpers', () => {
     });
 
     await expect(createR2Bucket('prod-authrim-avatars')).rejects.toThrow(/missing permission/);
+  });
+
+  it('lists R2 objects through the REST API with prefix and cursor pagination', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [
+            {
+              key: 'logs/v1/first.jsonl.gz',
+              size: 123,
+              last_modified: '2026-08-15T00:00:00Z',
+              etag: 'etag-first',
+            },
+          ],
+          result_info: { is_truncated: true, cursor: 'next-page' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ key: 'logs/v1/second.jsonl.gz', size: 456 }],
+          result_info: { is_truncated: false },
+        }),
+      });
+
+    await expect(
+      listR2Objects({ bucketName: 'test-audit-archive', prefix: 'logs/v1/' })
+    ).resolves.toEqual([
+      {
+        key: 'logs/v1/first.jsonl.gz',
+        size: 123,
+        lastModified: '2026-08-15T00:00:00Z',
+        etag: 'etag-first',
+      },
+      {
+        key: 'logs/v1/second.jsonl.gz',
+        size: 456,
+        lastModified: null,
+        etag: null,
+      },
+    ]);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('prefix=logs%2Fv1%2F');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('cursor=next-page');
+    expect(execaMock).not.toHaveBeenCalled();
   });
 
   it('accepts an already-existing R2 bucket conflict as idempotent success', async () => {
@@ -303,6 +356,7 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
       lastDeployedAt: '2026-05-18T07:36:06.414Z',
       author: 'new@example.com',
       versionId: '22222222-2222-4222-8222-222222222222',
+      source: 'Upload',
     });
   });
 

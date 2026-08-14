@@ -19,6 +19,8 @@ import {
 } from '../client-authentication';
 import type { ClientMetadata } from '../../types/oidc';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+import { createMockEnv } from '../../test/fixtures';
+import { buildPolicyConstrainedRegionShardConfig } from '../region-sharding';
 
 // Mock fetch for JWKS URI tests
 const mockFetch = vi.fn();
@@ -182,6 +184,59 @@ describe('Client Authentication', () => {
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
+    });
+
+    it('atomically rejects reuse of an otherwise valid client assertion', async () => {
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, {
+        jti: 'single-use-client-assertion',
+      });
+      const env = await createMockEnv();
+      const tenantId = 'client-assertion-replay-tenant';
+      const regionConfig = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'client-assertion-test',
+          residencyPartition: 'default',
+          policyGeneration: 1,
+          allowedRegions: ['apac'],
+          jurisdiction: null,
+        },
+        totalShards: 1,
+      });
+      env.AUTHRIM_CONFIG = {
+        get: vi.fn().mockResolvedValue(regionConfig),
+      } as unknown as KVNamespace;
+
+      const first = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        replayProtection: { env, tenantId },
+      });
+      const replay = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        replayProtection: { env, tenantId },
+      });
+
+      expect(first.valid).toBe(true);
+      expect(replay).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion replay detected',
+      });
+    });
+
+    it('rejects client assertions whose validity extends more than five minutes', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, {
+        iat: now,
+        exp: now + 301,
+      });
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result).toMatchObject({
+        valid: false,
+        error_description: 'Client assertion lifetime exceeds 5 minutes',
+      });
     });
 
     it('accepts the explicit issuer audience when validating at the PAR endpoint', async () => {
@@ -612,6 +667,7 @@ describe('Client Authentication', () => {
           sub: clientId,
           aud: [],
           exp: Math.floor(Date.now() / 1000) + 300,
+          jti: 'empty-audience-test',
         })
       )
         .replace(/\+/g, '-')

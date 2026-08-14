@@ -1124,6 +1124,27 @@ const ru: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Детали окружения',
+  'web.envDetail.initialDeployRecoveryTitle': 'Первичное развертывание не завершено',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'Предыдущее развертывание остановилось до проверки. При возобновлении созданные ресурсы будут использованы повторно.',
+  'web.envDetail.initialDeployRecoveryAction': 'Возобновить первичное развертывание',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Состояние Cloudflare проверено. Завершено: {{completed}}. Возобновление начнется с этапа «{{stage}}».',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'проверка миграций базы данных',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'подготовки первичного развертывания',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'развертывание Workers',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'проверка после развертывания',
+  'web.envDetail.initialDeployRecoveryResources': 'создание ресурсов',
+  'web.envDetail.initialDeployRecoverySchema': 'миграции базы данных',
+  'web.envDetail.initialDeployRecoveryWorkers': 'развертывание Workers',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'Сохраненная контрольная точка не соответствует состоянию Cloudflare. Возобновление отключено. Удалите это незавершенное окружение и создайте его заново.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'После начала первичного развертывания определение draft-миграций изменилось. Сохраненное состояние развертывания может больше не соответствовать базам данных, поэтому возобновление отключено. Удалите это незавершенное окружение и создайте его заново.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'Текущее состояние не удалось проверить, поэтому возобновление отключено. Проверьте подключение к Cloudflare и повторите проверку окружения. Если проверка по-прежнему не проходит, удалите незавершенное окружение и создайте его заново.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Учетные данные развертывания необходимо обновить; будет запрошен новый одноразовый token Cloudflare.',
   'web.envDetail.adminNotConfigured': 'Администратор не настроен',
   'web.envDetail.adminNotConfiguredDesc':
     'Начальный администратор не настроен для этого окружения.',

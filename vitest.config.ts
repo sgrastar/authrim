@@ -18,6 +18,8 @@ export default defineConfig({
       '**/node_modules/**',
       // E2E tests are run separately with Playwright
       'test-e2e/**',
+      // High-volume security matrices use their dedicated deterministic runner.
+      'test/security-matrices/**',
     ],
     coverage: {
       provider: 'v8',

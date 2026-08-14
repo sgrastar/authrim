@@ -10,6 +10,7 @@ import {
   generateSecureRandomString,
   generateCodeChallenge,
 } from '@authrim/ar-lib-core/utils/crypto';
+import { buildPolicyConstrainedRegionShardConfig } from '@authrim/ar-lib-core/utils/region-sharding';
 
 /**
  * Shared key set for all tests in the suite.
@@ -143,7 +144,7 @@ export async function createMockEnv(): Promise<Env> {
   class MockKVNamespace implements KVNamespace {
     private store: Map<string, { value: string; expiration?: number }> = new Map();
 
-    async get(key: string): Promise<string | null> {
+    async get<T = string>(key: string, options?: { type?: string }): Promise<T | null> {
       const entry = this.store.get(key);
       if (!entry) return null;
 
@@ -152,7 +153,7 @@ export async function createMockEnv(): Promise<Env> {
         return null;
       }
 
-      return entry.value;
+      return (options?.type === 'json' ? JSON.parse(entry.value) : entry.value) as T;
     }
 
     async put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void> {
@@ -232,10 +233,73 @@ export async function createMockEnv(): Promise<Env> {
         authTime?: number;
         acr?: string;
         dpopJkt?: string;
+        resource?: string;
+        audience?: string;
+        tenantId?: string;
+        authorizationServer?: string;
+        subjectType?: string;
         used: boolean;
         expiresAt: number;
       }
     > = new Map();
+
+    async consumeCodeRpc(input: {
+      code: string;
+      tenantId: string;
+      clientId: string;
+      codeVerifier?: string;
+      expectedRedirectUri?: string;
+      expectedResource?: string;
+      expectedAuthorizationServer?: string;
+      expectedSubjectType?: string;
+    }) {
+      const record = this.codes.get(input.code);
+      if (!record || record.expiresAt <= Date.now())
+        throw new Error('Authorization code not found');
+      if (record.used) throw new Error('Authorization code already consumed');
+      if (record.clientId !== input.clientId) throw new Error('Client ID mismatch');
+      if (record.tenantId && record.tenantId !== input.tenantId) throw new Error('Tenant mismatch');
+      if (input.expectedRedirectUri && record.redirectUri !== input.expectedRedirectUri) {
+        throw new Error('Redirect URI mismatch');
+      }
+      if (input.expectedResource && record.resource !== input.expectedResource) {
+        throw new Error('Resource mismatch');
+      }
+      if (
+        input.expectedAuthorizationServer &&
+        record.authorizationServer !== input.expectedAuthorizationServer
+      ) {
+        throw new Error('Authorization server mismatch');
+      }
+      if (input.expectedSubjectType && record.subjectType !== input.expectedSubjectType) {
+        throw new Error('Subject type mismatch');
+      }
+      if (record.codeChallenge) {
+        if (!input.codeVerifier) throw new Error('code_verifier required');
+        const expectedChallenge =
+          record.codeChallengeMethod === 'plain'
+            ? input.codeVerifier
+            : await generateCodeChallenge(input.codeVerifier);
+        if (expectedChallenge !== record.codeChallenge) throw new Error('Invalid code_verifier');
+      }
+
+      record.used = true;
+      return {
+        userId: record.userId,
+        scope: record.scope,
+        redirectUri: record.redirectUri,
+        nonce: record.nonce,
+        state: record.state,
+        claims: record.claims,
+        authTime: record.authTime ?? Math.floor(Date.now() / 1000),
+        acr: record.acr,
+        dpopJkt: record.dpopJkt,
+      };
+    }
+
+    async registerIssuedTokensRpc(): Promise<boolean> {
+      return true;
+    }
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -321,6 +385,8 @@ export async function createMockEnv(): Promise<Env> {
           authTime: record.authTime ?? Math.floor(Date.now() / 1000),
           acr: record.acr,
           dpopJkt: record.dpopJkt,
+          resource: record.resource,
+          audience: record.audience,
         });
       }
 
@@ -417,6 +483,22 @@ export async function createMockEnv(): Promise<Env> {
       this.publicJWK = publicJWK;
     }
 
+    async getActiveKeyWithPrivateRpc() {
+      return this.getKey();
+    }
+
+    async getActiveOIDCSigningKeyWithPrivateRpc() {
+      return this.getKey();
+    }
+
+    async rotateKeysWithPrivateRpc() {
+      return this.getKey();
+    }
+
+    async getAllPublicKeysRpc() {
+      return [this.publicJWK];
+    }
+
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
       const request = input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
@@ -445,6 +527,28 @@ export async function createMockEnv(): Promise<Env> {
       string,
       { token: string; userId: string; clientId: string; scope: string; expiresAt: number }
     >();
+
+    async createFamilyRpc(request: {
+      jti: string;
+      userId: string;
+      clientId: string;
+      scope: string;
+      ttl: number;
+    }) {
+      this.families.set(request.jti, {
+        token: request.jti,
+        userId: request.userId,
+        clientId: request.clientId,
+        scope: request.scope,
+        expiresAt: Date.now() + request.ttl * 1000,
+      });
+      return {
+        version: 1,
+        newJti: request.jti,
+        expiresIn: request.ttl,
+        allowedScope: request.scope,
+      };
+    }
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -972,6 +1076,26 @@ export async function createMockEnv(): Promise<Env> {
     }
   }
 
+  class MockSessionRevocationStore {
+    async getAccountStateRpc() {
+      return {
+        revokedAfterMs: null,
+        lastLoginAtMs: null,
+        lifecycle: 'active' as const,
+        lifecycleVersionMs: Date.now(),
+        lifecycleOperationId: 'integration-fixture',
+      };
+    }
+
+    async initializeAccountStateRpc() {
+      return this.getAccountStateRpc();
+    }
+
+    async fetch(): Promise<Response> {
+      return jsonResponse({ error: 'not_found' }, 404);
+    }
+  }
+
   // Mock D1 Database implementation
   class MockD1Database {
     private clientsKV: MockKVNamespace;
@@ -990,54 +1114,18 @@ export async function createMockEnv(): Promise<Env> {
         },
         run: async () => {
           if (sql.includes('INSERT INTO oauth_clients')) {
-            // Parse column names from SQL to properly map bound parameters
-            const hasSecret = sql.includes('client_secret');
-            const hasDpopFlag = sql.includes('dpop_bound_access_tokens');
-            const hasClaimsFlag = sql.includes('allow_claims_without_scope');
-
-            // Build client data object by parsing SQL columns and bound params
-            // This is a simplified parser that handles our test SQL patterns
-            let paramIndex = 0;
-            const client_id = boundParams[paramIndex++];
-            const client_secret = hasSecret ? boundParams[paramIndex++] : undefined;
-            const redirect_uris = boundParams[paramIndex++];
-            const grant_types = boundParams[paramIndex++];
-            const response_types = boundParams[paramIndex++];
-            const scope = boundParams[paramIndex++];
-
-            // Optional flags
-            let allow_claims_without_scope: number | undefined;
-            let dpop_bound_access_tokens: number | undefined;
-
-            if (hasClaimsFlag) {
-              allow_claims_without_scope = boundParams[paramIndex++];
-            }
-            if (hasDpopFlag) {
-              dpop_bound_access_tokens = boundParams[paramIndex++];
+            const columns = sql
+              .match(/INSERT\s+INTO\s+oauth_clients\s*\(([^)]+)\)/i)?.[1]
+              ?.split(',')
+              .map((column) => column.trim());
+            if (!columns || columns.length !== boundParams.length) {
+              throw new Error('Unsupported oauth_clients INSERT in integration fixture');
             }
 
-            // Store data in D1-compatible format (JSON strings for arrays)
-            // The getClient function in kv.ts will JSON.parse these fields
-            const clientData: Record<string, unknown> = {
-              client_id,
-              client_secret,
-              redirect_uris, // Keep as JSON string (like real D1)
-              grant_types, // Keep as JSON string (like real D1)
-              response_types, // Keep as JSON string (like real D1)
-              scope,
-            };
-
-            // Add optional fields if present
-            // Store as numbers (0/1) to match real D1 behavior
-            // getClient() in kv.ts checks `result.allow_claims_without_scope === 1`
-            if (allow_claims_without_scope !== undefined) {
-              clientData.allow_claims_without_scope = allow_claims_without_scope;
-            }
-            if (dpop_bound_access_tokens !== undefined) {
-              clientData.dpop_bound_access_tokens = dpop_bound_access_tokens;
-            }
-
-            await this.clientsKV.put(client_id as string, JSON.stringify(clientData));
+            const clientData = Object.fromEntries(
+              columns.map((column, index) => [column, boundParams[index]])
+            );
+            await this.clientsKV.put(String(clientData.client_id), JSON.stringify(clientData));
             return { success: true };
           }
 
@@ -1045,7 +1133,7 @@ export async function createMockEnv(): Promise<Env> {
         },
         first: async () => {
           if (sql.includes('SELECT') && sql.includes('oauth_clients')) {
-            const clientId = boundParams[0];
+            const clientId = boundParams.at(-1);
             const stored = clientId ? await this.clientsKV.get(clientId) : null;
             return stored ? JSON.parse(stored) : null;
           }
@@ -1094,6 +1182,23 @@ export async function createMockEnv(): Promise<Env> {
   const revokedKV = new MockKVNamespace();
   const refreshKV = new MockKVNamespace();
   const settingsKV = new MockKVNamespace();
+  const authrimConfigKV = new MockKVNamespace();
+  await authrimConfigKV.put(
+    'region_shard_config:default',
+    JSON.stringify(
+      buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'integration-default',
+          residencyPartition: 'default',
+          jurisdiction: null,
+          allowedRegions: ['apac', 'enam', 'weur', 'wnam'],
+          policyGeneration: 1,
+        },
+        totalShards: 4,
+      })
+    )
+  );
 
   const env: Env = {
     AUTH_CODES: authCodesKV as unknown as KVNamespace,
@@ -1104,6 +1209,7 @@ export async function createMockEnv(): Promise<Env> {
     REVOKED_TOKENS: revokedKV as unknown as KVNamespace,
     REFRESH_TOKENS: refreshKV as unknown as KVNamespace,
     SETTINGS: settingsKV as unknown as KVNamespace,
+    AUTHRIM_CONFIG: authrimConfigKV as unknown as KVNamespace,
     DB: new MockD1Database(clientsKV) as any,
     ISSUER_URL: 'http://localhost:8787',
     TOKEN_EXPIRY: '3600',
@@ -1111,6 +1217,7 @@ export async function createMockEnv(): Promise<Env> {
     CODE_EXPIRY: '120',
     STATE_EXPIRY: '300',
     NONCE_EXPIRY: '300',
+    REGION_SHARD_TOTAL_SHARDS: '4',
     KEY_ID: keySet.kid,
     PRIVATE_KEY_PEM: keySet.privatePEM,
     PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
@@ -1132,6 +1239,7 @@ export async function createMockEnv(): Promise<Env> {
     RATE_LIMITER: createDurableObjectNamespace(() => new MockRateLimiter()),
     USER_CODE_RATE_LIMITER: createDurableObjectNamespace(() => new MockRateLimiter()),
     TOKEN_REVOCATION_STORE: createDurableObjectNamespace(() => new MockTokenRevocationStore()),
+    SESSION_REVOCATION_STORE: createDurableObjectNamespace(() => new MockSessionRevocationStore()),
     DEVICE_CODE_STORE: createDurableObjectNamespace(() => new MockDeviceCodeStore()),
     CIBA_REQUEST_STORE: createDurableObjectNamespace(() => new MockAuthorizationCodeStore()),
   };

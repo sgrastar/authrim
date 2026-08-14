@@ -93,6 +93,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
         // CIBA clients in the ecosystem commonly use the token endpoint URL as the RFC 7523
         // audience for assertions sent to other authenticated AS endpoints.
         additionalAudiences: [`${requestIssuer}/token`],
+        replayProtection: { env: c.env, tenantId },
       }
     );
 

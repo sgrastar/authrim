@@ -46,6 +46,7 @@ const ReleaseUpdateStateSchema = z.object({
   updatedAt: z.string().datetime(),
   appliedTargets: z.array(z.string()).default([]),
   manualTargets: z.array(z.string()).default([]),
+  initialWorkerRedeployRequired: z.boolean().optional(),
 });
 
 const SchemaTargetStateSchema = z.object({

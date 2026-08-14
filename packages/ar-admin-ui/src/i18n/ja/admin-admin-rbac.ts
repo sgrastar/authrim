@@ -30,7 +30,6 @@ const adminAdminRbac = {
 	admin_admin_rbac_cancel: 'キャンセル',
 	admin_admin_rbac_saving: '保存中...',
 	admin_admin_rbac_save: '保存',
-	admin_admin_rbac_back_to_roles: '管理者ロールへ戻る',
 	admin_admin_rbac_create_title: 'カスタム管理者ロールを作成',
 	admin_admin_rbac_create_description:
 		'Admin Operator向けに特定の権限を持つ新しいカスタムロールを作成します。',
@@ -55,7 +54,6 @@ const adminAdminRbac = {
 	admin_admin_rbac_create_button: 'ロールを作成',
 	admin_admin_rbac_detail_loading: 'ロールを読み込んでいます...',
 	admin_admin_rbac_back_to_list: '一覧へ戻る',
-	admin_admin_rbac_admin_rbac: 'Admin RBAC',
 	admin_admin_rbac_role_information: '基本情報',
 	admin_admin_rbac_role_type: 'ロール種別',
 	admin_admin_rbac_hierarchy_level: '階層レベル',

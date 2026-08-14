@@ -1,22 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
 
-const { resolveBinding, executeMapping, filterClaims } = vi.hoisted(() => ({
+const {
+  resolveBinding,
+  executeMapping,
+  filterClaims,
+  filterBaselineClaims,
+  loadDescriptor,
+  assertReleaseSafety,
+} = vi.hoisted(() => ({
   resolveBinding: vi.fn(),
   executeMapping: vi.fn(),
   filterClaims: vi.fn(async (input: { claims: Record<string, unknown> }) => input.claims),
+  filterBaselineClaims: vi.fn((claims: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(claims).filter(
+        ([key]) => key === 'sub' || key === 'iss' || key === 'email' || key.startsWith('::')
+      )
+    )
+  ),
+  loadDescriptor: vi.fn(),
+  assertReleaseSafety: vi.fn(),
 }));
 
 vi.mock('../identity-mapping-runtime-resolver', () => ({
   resolveRuntimeIdentityMappingBinding: resolveBinding,
+  assertRuntimeIdentityMappingReleaseSafety: assertReleaseSafety,
 }));
 
 vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
   executeRuntimeMapping: executeMapping,
 }));
 
-vi.mock('../destination-profile-consent', () => ({
+vi.mock('../destination-profile-consent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../destination-profile-consent')>()),
   filterOidcClaimsByDestinationConsent: filterClaims,
+  filterOidcClaimsWithoutDestinationProfile: filterBaselineClaims,
+  loadDestinationProfileConsentDescriptor: loadDescriptor,
 }));
 
 import {
@@ -41,7 +61,7 @@ const binding = {
   destinationNamespace: 'oidc.claim',
   destinationProfileId: 'destination-profile-oidc',
   destinationProfileIds: ['destination-profile-oidc'],
-  catalog: {},
+  catalog: { entries: [] },
   edges: [],
   transforms: [],
   validationRules: [],
@@ -53,11 +73,21 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     vi.clearAllMocks();
     resolveBinding.mockResolvedValue(binding);
     executeMapping.mockReturnValue({ status: 'success', values: [] });
+    loadDescriptor.mockResolvedValue({ destinationType: 'oidc', fields: [] });
   });
 
-  it('preserves claims when no policy selected a mapping and no binding exists', async () => {
+  it('keeps standard claims but fails closed for extensions when no mapping or profile exists', async () => {
     resolveBinding.mockResolvedValue(null);
-    const claims = { sub: 'user-1', email: 'user@example.com' };
+    const claims = {
+      iss: 'https://issuer.example',
+      sub: 'user-1',
+      email: 'user@example.com',
+      '::age_over_18': true,
+      authrim_roles: ['admin'],
+      user_type: 'anonymous',
+      upgrade_eligible: true,
+      department: 'Finance',
+    };
 
     await expect(
       applyOIDCIdentityMapping({
@@ -66,7 +96,15 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         clientId: 'client-a',
         claims,
       })
-    ).resolves.toEqual({ claims, binding: null });
+    ).resolves.toEqual({
+      claims: {
+        iss: 'https://issuer.example',
+        sub: 'user-1',
+        email: 'user@example.com',
+        '::age_over_18': true,
+      },
+      binding: null,
+    });
   });
 
   it('resolves control-plane mappings from the dedicated Admin database when configured', async () => {
@@ -168,6 +206,111 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
         },
       })
     );
+  });
+
+  it('preserves authorization-server protocol claims while allowing mapped profile claims', async () => {
+    executeMapping.mockReturnValue({
+      status: 'success',
+      values: [
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'acr' },
+          value: 'urn:attacker:gold',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'amr' },
+          value: ['hwk'],
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'aud' },
+          value: 'other-client',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sid' },
+          value: 'other-session',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'cnf' },
+          value: { jkt: 'attacker-thumbprint' },
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'sub' },
+          value: 'pairwise-user-1',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+          value: 'mapped@example.com',
+        },
+      ],
+    });
+
+    const result = await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: {
+        sub: 'user-1',
+        acr: 'urn:authrim:silver',
+        amr: ['pwd'],
+        aud: 'client-a',
+        sid: 'session-1',
+        cnf: { jkt: 'legitimate-thumbprint' },
+        email: 'original@example.com',
+      },
+    });
+
+    expect(result.claims).toMatchObject({
+      sub: 'pairwise-user-1',
+      acr: 'urn:authrim:silver',
+      amr: ['pwd'],
+      aud: 'client-a',
+      sid: 'session-1',
+      cnf: { jkt: 'legitimate-thumbprint' },
+      email: 'mapped@example.com',
+    });
+  });
+
+  it('protects protocol claims when a tenant selects a custom destination namespace', async () => {
+    resolveBinding.mockResolvedValue({ ...binding, destinationNamespace: 'custom' });
+    executeMapping.mockReturnValue({
+      status: 'success',
+      values: [
+        {
+          sourceRef: { side: 'destination', namespace: 'custom', path: 'acr' },
+          value: 'urn:attacker:gold',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'custom', path: 'aud' },
+          value: 'other-client',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'custom', path: 'sub' },
+          value: 'pairwise-user-1',
+        },
+        {
+          sourceRef: { side: 'destination', namespace: 'custom', path: 'email' },
+          value: 'mapped@example.com',
+        },
+      ],
+    });
+
+    const result = await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: {
+        sub: 'user-1',
+        acr: 'urn:authrim:silver',
+        aud: 'client-a',
+        email: 'original@example.com',
+      },
+    });
+
+    expect(result.claims).toMatchObject({
+      sub: 'pairwise-user-1',
+      acr: 'urn:authrim:silver',
+      aud: 'client-a',
+      email: 'mapped@example.com',
+    });
   });
 
   it('converts runtime validation failure into a stable policy error', async () => {

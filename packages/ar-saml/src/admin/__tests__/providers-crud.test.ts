@@ -309,6 +309,41 @@ describe('SAML provider CRUD boundaries', () => {
     expect(response.status).toBe(201);
     expect((await responseBody<{ enabled: boolean }>(response)).enabled).toBe(enabled);
     expect(mocks.adapter!.execute).toHaveBeenCalled();
+    if (providerType === 'saml_sp') {
+      const persistedConfig = JSON.parse(String(mocks.adapter!.execute.mock.calls[0]?.[1]?.[4]));
+      expect(persistedConfig).toMatchObject({
+        signAssertions: false,
+        signResponses: true,
+      });
+    }
+  });
+
+  it('rejects an explicitly unsigned SP configuration', async () => {
+    const response = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Unsigned SP',
+          providerType: 'saml_sp',
+          config: {
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            signAssertions: false,
+            signResponses: false,
+            identityMapping: {
+              fieldMappingSetId: 'saml-sp',
+              destinationFieldPolicies: {
+                mail: 'optional',
+                displayName: 'optional',
+                eduPersonAffiliation: 'optional',
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 
   it('validates and persists per-SP destination field release policies', async () => {
@@ -611,6 +646,8 @@ describe('SAML provider CRUD boundaries', () => {
     ]);
     expect(await getSPConfig({} as never, 'tenant-a', 'target')).toMatchObject({
       entityId: 'target',
+      signAssertions: false,
+      signResponses: true,
     });
     expect(await getSPConfig({} as never, 'tenant-a', 'missing')).toBeNull();
 

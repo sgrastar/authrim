@@ -464,6 +464,61 @@ describe('Admin Provider API', () => {
       );
     });
 
+    it('should keep Facebook template email auto-linking disabled by default', async () => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'facebook-provider-id',
+        name: 'Facebook',
+        providerType: 'oauth2',
+        clientSecretEncrypted: 'encrypted',
+      } as never);
+
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Facebook',
+          client_id: 'facebook-client-id',
+          client_secret: 'facebook-secret',
+          template: 'facebook',
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          autoLinkEmail: false,
+        })
+      );
+    });
+
+    it('should preserve an explicit Facebook email auto-linking opt-in', async () => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'facebook-provider-id',
+        name: 'Facebook',
+        providerType: 'oauth2',
+        clientSecretEncrypted: 'encrypted',
+      } as never);
+
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Facebook',
+          client_id: 'facebook-client-id',
+          client_secret: 'facebook-secret',
+          template: 'facebook',
+          auto_link_email: true,
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          autoLinkEmail: true,
+        })
+      );
+    });
+
     it('should apply Microsoft template defaults with common tenant', async () => {
       const mockCreatedProvider = {
         id: 'microsoft-provider-id',

@@ -7,6 +7,7 @@ import { validateGoogleConfig } from '../providers/google';
 import { validateLinkedInConfig } from '../providers/linkedin';
 import { createAppleConfig, isAppleProvider, validateAppleConfig } from '../providers/apple';
 import {
+  FACEBOOK_DEFAULT_CONFIG,
   createFacebookConfig,
   generateAppSecretProof,
   getFacebookEffectiveEndpoints,
@@ -19,6 +20,11 @@ import {
 } from '../providers/twitter';
 
 describe('built-in provider configuration security', () => {
+  it('keeps Facebook email auto-linking disabled without a verified-email claim', () => {
+    expect(FACEBOOK_DEFAULT_CONFIG.autoLinkEmail).toBe(false);
+    expect(createFacebookConfig().autoLinkEmail).toBe(false);
+  });
+
   it.each([
     ['Google', validateGoogleConfig],
     ['LinkedIn', validateLinkedInConfig],

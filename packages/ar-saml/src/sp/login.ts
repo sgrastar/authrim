@@ -39,6 +39,7 @@ import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
+import { buildSAMLRequestBindingCookie } from './request-browser-binding';
 
 function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
   return (
@@ -127,11 +128,11 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     assertSAMLRelayStateSize(relayState);
 
     // Redirect to IdP based on preferred binding
-    if (outboundIdpConfig.allowedBindings.includes('redirect')) {
-      return await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState);
-    } else {
-      return postToIdP(outboundIdpConfig, authnRequestXml, relayState);
-    }
+    const response = outboundIdpConfig.allowedBindings.includes('redirect')
+      ? await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState)
+      : postToIdP(outboundIdpConfig, authnRequestXml, relayState);
+    response.headers.append('Set-Cookie', buildSAMLRequestBindingCookie(requestId));
+    return response;
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

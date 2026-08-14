@@ -14,6 +14,14 @@ function createTenantStore() {
 	let singleTenantMode = $state(false);
 	let singleTenantReason = $state<string | null>(null);
 
+	async function fetchTenants() {
+		const response = await adminTenantsAPI.list();
+		tenants = response.tenants;
+		singleTenantMode = response.single_tenant_mode ?? false;
+		singleTenantReason = response.single_tenant_reason ?? null;
+		loaded = true;
+	}
+
 	return {
 		get tenants() {
 			return tenants;
@@ -42,11 +50,7 @@ function createTenantStore() {
 		/** Fetch the full tenant list from the API */
 		async load() {
 			try {
-				const response = await adminTenantsAPI.list();
-				tenants = response.tenants;
-				singleTenantMode = response.single_tenant_mode ?? false;
-				singleTenantReason = response.single_tenant_reason ?? null;
-				loaded = true;
+				await fetchTenants();
 			} catch {
 				// Non-critical: selector simply won't appear
 			}
@@ -54,7 +58,9 @@ function createTenantStore() {
 
 		/** Reload the tenant list (e.g. after create/update/delete operations) */
 		async reload() {
-			await this.load();
+			// Management pages need the failure so they do not present a failed
+			// request as a valid empty tenant inventory.
+			await fetchTenants();
 		},
 
 		/** Optimistically update a single tenant in the list */

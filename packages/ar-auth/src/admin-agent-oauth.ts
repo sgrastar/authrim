@@ -742,7 +742,8 @@ export async function adminAgentParHandler(c: Context<{ Bindings: Env }>): Promi
     const authenticated = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/par`,
-      credentials.credentials
+      credentials.credentials,
+      { replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) } }
     );
     if (!authenticated.ok) {
       return oauthError(c, authenticated.error, authenticated.errorDescription, 401);

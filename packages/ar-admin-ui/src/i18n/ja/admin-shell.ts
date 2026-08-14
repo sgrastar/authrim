@@ -6,7 +6,6 @@ const adminShell = {
 	admin_header_breadcrumb: 'パンくずリスト',
 	admin_header_tenant: 'テナント:',
 	admin_header_admin_fallback: '管理者',
-	admin_header_last_login: '最終ログイン: {time}',
 	admin_header_theme: 'テーマ',
 	admin_header_light_mode: 'ライトモード',
 	admin_header_dark_mode: 'ダークモード',
@@ -16,19 +15,12 @@ const adminShell = {
 	admin_tabs_page_sections: 'ページセクション',
 	admin_nav_main_navigation: 'メインナビゲーション',
 	admin_nav_dashboard: 'ダッシュボード',
-	admin_nav_section_end_user: 'エンドユーザー',
-	admin_nav_section_client: 'クライアント',
-	admin_nav_section_tenant: 'テナント',
-	admin_nav_section_platform: 'プラットフォーム',
 	admin_nav_group_identity: 'ID管理',
 	admin_nav_group_monitoring: '監視',
 	admin_nav_group_applications: 'アプリケーション',
 	admin_nav_group_login_experience: 'ログイン体験',
 	admin_nav_group_federation_directory: '連携とディレクトリ',
-	admin_nav_group_authentication: '認証',
 	admin_nav_group_schema_settings: 'スキーマ設定',
-	admin_nav_group_branding: 'ブランディング',
-	admin_nav_group_configuration: '構成',
 	admin_nav_group_tenant_settings: 'テナント設定',
 	admin_nav_group_tenant_management: 'テナント管理',
 	admin_nav_group_security_compliance: 'セキュリティとコンプライアンス',
@@ -154,19 +146,7 @@ const adminShell = {
 	admin_tenant_domain_mappings_confirm_verify: '検証を確定',
 	admin_tenant_domain_mappings_close: '閉じる',
 	admin_nav_footer_environment: 'env: {env}',
-	admin_nav_footer_tenant: 'tenant: {tenant}',
-	admin_sidebar_dashboard: 'ダッシュボード',
-	admin_sidebar_users: 'ユーザー',
-	admin_sidebar_clients: 'クライアント',
-	admin_sidebar_sessions: 'セッション',
-	admin_sidebar_audit_log: '監査ログ',
-	admin_sidebar_settings: '設定',
-	admin_sidebar_scim_tokens: 'SCIMトークン',
-	admin_sidebar_identity_providers: '外部IDプロバイダー',
-	// Policy Settings
-	admin_sidebar_policy: 'ポリシー',
-	// Consent Statement Management
-	admin_sidebar_consent_statements: '同意文'
+	admin_nav_footer_tenant: 'tenant: {tenant}'
 } as const;
 
 export default adminShell;

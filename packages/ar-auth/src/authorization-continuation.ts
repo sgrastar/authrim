@@ -26,6 +26,8 @@ const AUTHORIZATION_REQUEST_STRING_FIELDS = [
   'cancel_uri',
 ] as const;
 
+export const CONSENT_CONFIRMATION_COOKIE_NAME = 'authrim_consent_confirmation';
+
 type AuthorizationRequestStringField = (typeof AUTHORIZATION_REQUEST_STRING_FIELDS)[number];
 
 export type AuthorizationRequestSource = 'frontchannel' | 'par';

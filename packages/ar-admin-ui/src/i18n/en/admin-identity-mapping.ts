@@ -1,12 +1,9 @@
 const adminIdentityMapping = {
 	admin_identity_mapping_title: 'Field Mapping',
-	admin_identity_mapping_head_title: 'Field Mapping - Authrim Admin',
 	admin_identity_mapping_overview_title: 'Overview',
 	admin_identity_mapping_overview_head_title: 'Field Mapping Overview',
 	admin_identity_mapping_description:
 		'Review source profiles, canonical identity targets, and destination projections without changing the graph.',
-	admin_identity_mapping_shell_description:
-		'Preview source profiles, canonical identity targets, and destination projections from one control-plane view.',
 	admin_identity_mapping_back: 'Back to Field Mapping',
 	admin_identity_mapping_back_to_policies: 'Back to Field Mapping Sets',
 	admin_identity_mapping_refresh: 'Refresh',
@@ -16,11 +13,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_destination_profile: 'Destination profile',
 	admin_identity_mapping_source_profiles: 'Source profiles',
 	admin_identity_mapping_destination_profiles: 'Destination profiles',
-	admin_identity_mapping_source_policy: 'Source Field Mapping Set',
-	admin_identity_mapping_destination_policy: 'Destination Field Mapping Set',
-	admin_identity_mapping_source_profile_count: '{count:number} source profile{plural:string}',
-	admin_identity_mapping_destination_profile_count:
-		'{count:number} destination profile{plural:string}',
 	admin_identity_mapping_present: 'present',
 	admin_identity_mapping_missing: 'missing',
 	admin_identity_mapping_service_adapter: 'service / adapter',
@@ -34,8 +26,6 @@ const adminIdentityMapping = {
 		'Edit source mappings and destination release projections against registered source and destination profiles.',
 	admin_identity_mapping_editor_save_draft: 'Save',
 	admin_identity_mapping_editor_saving: 'Saving...',
-	admin_identity_mapping_editor_compile_draft: 'Compile draft',
-	admin_identity_mapping_editor_compiling: 'Compiling...',
 	admin_identity_mapping_editor_profile_selector_aria: 'Mapping edit profile selector',
 	admin_identity_mapping_editor_profile_side: 'Profile side',
 	admin_identity_mapping_editor_source_mapping: 'Source mapping',
@@ -47,12 +37,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_exists:
 		'{name:string} already exists. Choose a different field mapping set name.',
 	admin_identity_mapping_editor_no_policy_selected: 'No Field Mapping Set selected',
-	admin_identity_mapping_editor_policy_version: 'Version',
-	admin_identity_mapping_editor_no_version_selected: 'No version selected',
 	admin_identity_mapping_editor_activate: 'Activate',
-	admin_identity_mapping_editor_publish: 'Publish',
-	admin_identity_mapping_editor_request_rollback: 'Request Rollback',
-	admin_identity_mapping_editor_confirm_rollback: 'Confirm Rollback',
 	admin_identity_mapping_editor_delete: 'Delete',
 	admin_identity_mapping_editor_confirm_delete: 'Confirm Delete',
 	admin_identity_mapping_editor_side_not_selected: 'side not selected',
@@ -68,17 +53,10 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_default_name: 'Field Mapping UI Draft',
 	admin_identity_mapping_editor_destination_profile_fallback: 'Destination profile',
 	admin_identity_mapping_editor_policy_default_suffix: 'Field Mapping Set',
-	admin_identity_mapping_editor_policy_published: 'Saved field mapping set',
 	admin_identity_mapping_editor_policy_activated: 'Activated field mapping set',
-	admin_identity_mapping_editor_policy_deactivated: 'Deactivated field mapping set',
-	admin_identity_mapping_editor_no_active_catalog:
-		'No active catalog version is available to prepare this field mapping set',
 	admin_identity_mapping_editor_publish_before_activation:
 		'Save this field mapping set before activation',
 	admin_identity_mapping_editor_select_policy_version_first: 'Select a Field Mapping Set first',
-	admin_identity_mapping_editor_confirm_rollback_status: 'Confirm rollback to continue',
-	admin_identity_mapping_editor_rollback_requested: 'Rollback requested',
-	admin_identity_mapping_editor_rollback_failed: 'Rollback failed',
 	admin_identity_mapping_editor_confirm_delete_status:
 		'Confirm delete to remove this field mapping set',
 	admin_identity_mapping_editor_policy_delete_failed: 'Field mapping set delete failed',
@@ -96,7 +74,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
 	admin_identity_mapping_profiles_title: 'Source & Destination Profiles',
 	admin_identity_mapping_profiles_description:
-		'Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. SAML, SCIM, OIDC, VC, DID, MCP, A2A, and client-credential sources will use this same surface as their adapters are added.',
+		'Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. The built-in SCIM 2.0 User source is ready for inbound provisioning mappings; other protocol adapters will appear here as they are added.',
 	admin_identity_mapping_profiles_inventory: 'Profile inventory',
 	admin_identity_mapping_profiles_lists_title: 'Source and destination profile lists',
 	admin_identity_mapping_profiles_loading: 'Loading source and destination profiles.',
@@ -146,7 +124,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_policies_lists_title: 'Source and destination Field Mapping Sets',
 	admin_identity_mapping_policies_loading: 'Loading field mapping sets.',
 	admin_identity_mapping_policies_load_failed: 'Failed to load field mapping sets',
-	admin_identity_mapping_policies_empty: 'No field mapping sets are registered yet.',
 	admin_identity_mapping_policies_source_title: 'Source Field Mapping Sets',
 	admin_identity_mapping_policies_destination_title: 'Destination Field Mapping Sets',
 	admin_identity_mapping_policies_create_source: 'Create Source Field Mapping Set',
@@ -267,8 +244,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_trust_load_entities: 'Load entities',
 	admin_identity_mapping_trust_preview_required: 'Enter a SAML aggregate preview ID first.',
 	admin_identity_mapping_trust_entities_load_failed: 'Failed to load aggregate entities',
-
-	admin_identity_mapping_profile_edit_back: 'Back to profiles',
 	admin_identity_mapping_profile_edit_source_title: 'Source Profile',
 	admin_identity_mapping_profile_edit_destination_title: 'Destination Profile',
 	admin_identity_mapping_profile_edit_source_description:
@@ -409,30 +384,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_attributes_count: '{count:number} attributes',
 	admin_identity_mapping_profile_edit_columns_count: '{count:number} columns',
 	admin_identity_mapping_profile_edit_blocking_warnings: '{count:number} blocking warning(s)',
-	admin_identity_mapping_profile_edit_configure_release_consent: 'Configure Release Consent',
 	admin_identity_mapping_profile_edit_save_destination_draft: 'Save destination draft',
-	admin_identity_mapping_profile_edit_destination_consent_aria: 'Destination consent settings',
-	admin_identity_mapping_profile_edit_destination_consent_settings: 'Destination Consent Settings',
-	admin_identity_mapping_profile_edit_release_consent: 'Release consent',
-	admin_identity_mapping_profile_edit_scope: 'Scope',
-	admin_identity_mapping_profile_edit_tenant_default: 'Tenant default',
-	admin_identity_mapping_profile_edit_destination_override: 'Destination override',
-	admin_identity_mapping_profile_edit_consent_mode: 'Consent mode',
-	admin_identity_mapping_profile_edit_once: 'Once',
-	admin_identity_mapping_profile_edit_every_time: 'Every time',
-	admin_identity_mapping_profile_edit_until_attributes_change: 'Until attributes change',
-	admin_identity_mapping_profile_edit_require_purpose_guard:
-		'Require purpose guard for regulated attributes',
-	admin_identity_mapping_profile_edit_raw_values_remain:
-		'Raw attribute values remain {display:string}.',
-	admin_identity_mapping_profile_edit_raw_value_hidden: 'hidden',
-	admin_identity_mapping_profile_edit_consent_summary:
-		'{scope:string}: {legalBasis:string}, {mode:string}, {purpose:string}, {challenge:string}, {guard:string}',
-	admin_identity_mapping_profile_edit_client_override: 'client override {clientId:string}',
-	admin_identity_mapping_profile_edit_login_flow_challenge: 'login flow challenge',
-	admin_identity_mapping_profile_edit_step_up_challenge: 'step-up challenge',
-	admin_identity_mapping_profile_edit_purpose_guard_enabled: 'purpose guard enabled',
-	admin_identity_mapping_profile_edit_purpose_guard_off: 'purpose guard off',
 	admin_identity_mapping_profile_edit_attribute_registry: 'Attribute Registry',
 	admin_identity_mapping_profile_edit_groups_and_fields: 'Groups and fields',
 	admin_identity_mapping_profile_edit_attribute_group: 'Attribute group',
@@ -585,18 +537,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_sample_evaluation: 'Sample Evaluation',
 	admin_identity_mapping_flow_input: 'Input',
 	admin_identity_mapping_flow_output: 'Output',
-	admin_identity_mapping_flow_consent_status: 'Consent status',
-	admin_identity_mapping_flow_legal_basis: 'Legal basis',
-	admin_identity_mapping_flow_purpose: 'Purpose',
-	admin_identity_mapping_flow_attribute_set: 'Attribute set',
-	admin_identity_mapping_flow_challenge_mode: 'Challenge mode',
-	admin_identity_mapping_flow_release_policy: 'Release policy',
-	admin_identity_mapping_flow_terms: 'Terms',
-	admin_identity_mapping_flow_privacy_policy: 'Privacy Policy',
-	admin_identity_mapping_flow_deny_reason: 'Deny reason',
-	admin_identity_mapping_flow_runtime_exposure: 'Runtime exposure',
-	admin_identity_mapping_flow_conflict_policy: 'Conflict policy',
-	admin_identity_mapping_flow_trace_disclosure: 'Trace disclosure',
 	admin_identity_mapping_flow_unsaved_leave_confirm:
 		'You have unsaved mapping draft changes. Leave this page and discard them?',
 	admin_identity_mapping_flow_no_auto_map: 'No confident auto-mapping candidates were found.',
@@ -733,7 +673,15 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_select_node_trace: 'Select a mapping node to inspect rule behavior.',
 	admin_identity_mapping_flow_draft_only_node: 'Draft-only node',
 	admin_identity_mapping_flow_draft_only_node_diff:
-		'This node exists only in the local draft preview.'
+		'This node exists only in the local draft preview.',
+	admin_identity_mapping_profile_edit_resource_server: 'Resource Server',
+	admin_identity_mapping_profile_edit_resource_server_display_placeholder:
+		'Payments API introspection',
+	admin_identity_mapping_profile_edit_resource_server_client_id: 'Resource Server client_id',
+	admin_identity_mapping_profile_edit_resource_server_client_id_placeholder: 'payments-api',
+	admin_identity_mapping_profile_edit_resource_server_note:
+		'The active profile controls extension claims returned to this authenticated Resource Server by Introspection.',
+	admin_identity_mapping_profile_edit_introspection_surface: 'introspection'
 } as const;
 
 export default adminIdentityMapping;

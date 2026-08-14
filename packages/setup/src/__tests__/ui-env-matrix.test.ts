@@ -13,7 +13,7 @@ import {
   SCENARIOS,
   buildAuthrimConfig,
   scenarioLabel,
-} from '../../../../test/fixtures/deployment-matrix.js';
+} from '../../../../test/shared-fixtures/deployment-topology-matrix.js';
 
 // =============================================================================
 // Serialization tests

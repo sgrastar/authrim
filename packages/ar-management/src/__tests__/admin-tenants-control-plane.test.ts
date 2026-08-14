@@ -65,6 +65,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   createAuthContextFromHono: vi.fn((_c: unknown, tenantId: string) => ({
     coreAdapter: adapters.tenantAdapters.get(tenantId) ?? adapters.defaultAdapter,
   })),
+  createD1Adapter: vi.fn(() => adapters.defaultAdapter),
   createAuditLogFromContext: vi.fn(async () => {}),
   createErrorResponse: vi.fn((_c: unknown, code: string, details?: unknown) => {
     const status =

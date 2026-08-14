@@ -54,7 +54,6 @@ const adminSaml = {
 	admin_saml_local_settings_updated: 'SAML設定を更新しました',
 	admin_saml_local_certificate_settings_updated: 'SAML署名証明書の設定を更新しました',
 	admin_saml_local_copy: 'コピー',
-	admin_saml_local_download: 'ダウンロード',
 	admin_saml_local_download_xml: 'メタデータ',
 	admin_saml_local_copy_pem: 'コピー',
 	admin_saml_local_download_pem: 'PEM',
@@ -216,9 +215,7 @@ const adminSaml = {
 		'切り替え後、メタデータのキャッシュ期間中に一時的に残しておく証明書です。',
 	admin_saml_local_rollover_status_default_active: '既定の現在使用中証明書',
 	admin_saml_local_rollover_status_not_configured: '未設定',
-	admin_saml_local_rollover_status_signing_published: '使用中',
 	admin_saml_local_rollover_status_signing: '使用中',
-	admin_saml_local_rollover_status_stored_published: '保存済み',
 	admin_saml_local_rollover_status_stored_only: '保存済み',
 	admin_saml_local_yes: 'はい',
 	admin_saml_local_no: 'いいえ',
@@ -278,8 +275,6 @@ const adminSaml = {
 		'PEMまたはbase64 DER形式のX.509証明書を受け付けます。通常はメタデータimportで自動入力されます。',
 	admin_saml_detail_checking: '確認中...',
 	admin_saml_detail_validate_certificate: '証明書を検証',
-	admin_saml_detail_attribute_mapping_json: 'Attribute Mapping JSON',
-	admin_saml_detail_mapping_object_error: 'Attribute mappingはJSON objectである必要があります',
 	admin_saml_detail_allowed_bindings: '許可するSAML Bindings',
 	admin_saml_detail_allowed_bindings_hint:
 		'このproviderがSSO/SLOメッセージで使えるSAML protocol bindingを制御します。',
@@ -314,21 +309,11 @@ const adminSaml = {
 		'出版社・図書館系SP向けにStrict相当の既定値を使います。Assertion署名、AuthnRequest/Logout署名必須、Persistent NameIDを設定します。SPがmail、displayName、eduPersonScopedAffiliation、eduPersonEntitlementを求める場合は属性マッピングも合わせて設定してください。',
 	admin_saml_detail_profile_hint_legacy:
 		'Legacyは古いSPとの互換性が必要な場合だけ使う緩和設定です。',
-	admin_saml_detail_attribute_preset: 'Attribute Preset',
-	admin_saml_detail_none: 'なし',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: '選択してください',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
-	admin_saml_detail_attribute_release_consent: '属性提供の同意',
-	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
-	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',
-	admin_saml_detail_attribute_release_consent_every_time: 'SSOのたびに確認する',
-	admin_saml_detail_attribute_release_consent_until_attributes_change:
-		'提供する属性が変わった時に再確認する',
-	admin_saml_detail_attribute_release_consent_hint:
-		'このSPへSAML assertionを送信する前に、Authrimが属性提供の確認を必須にするかを制御します。同じpolicy形状をOIDC clientにも再利用できます。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
 	admin_saml_detail_authn_request_signature_hint:
 		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',

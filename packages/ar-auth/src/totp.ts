@@ -724,7 +724,7 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (authorizationChallengeId && body.defer_authorization_continuation !== true) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         authorizationChallengeId,
         runtimeUser.id,
@@ -1176,7 +1176,7 @@ export async function totpLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
       if (authorizationChallengeId && !deferAuthorizationContinuation) {
         const continuation = await consumeAuthorizationChallengeContinuation(
-          c.env,
+          c,
           tenantId,
           authorizationChallengeId,
           userId,

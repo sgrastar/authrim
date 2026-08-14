@@ -67,6 +67,7 @@ export interface AuthorizationCode {
   // Token JTIs for replay attack revocation (RFC 6749 Section 4.1.2)
   issuedAccessTokenJti?: string;
   issuedRefreshTokenJti?: string;
+  replayDetectedBeforeTokenRegistration?: boolean;
 }
 
 /**
@@ -682,6 +683,25 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         );
       }
 
+      // Validate PKCE before treating a used code as an authenticated replay. Otherwise an
+      // interceptor who only observed the code could omit/guess the verifier and trigger
+      // revocation of the legitimate client's tokens.
+      if (stored.codeChallenge) {
+        if (!request.codeVerifier) {
+          throw new Error('invalid_grant: code_verifier required for PKCE');
+        }
+        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(request.codeVerifier)) {
+          throw new Error('invalid_grant: Invalid code_verifier format');
+        }
+        const challenge = await this.generateCodeChallenge(
+          request.codeVerifier,
+          stored.codeChallengeMethod || 'S256'
+        );
+        if (challenge !== stored.codeChallenge) {
+          throw new Error('invalid_grant: Invalid code_verifier (PKCE validation failed)');
+        }
+      }
+
       // CRITICAL: Check if already used (replay attack detection)
       if (stored.used) {
         this.log.error('SECURITY: Replay attack detected', {
@@ -701,6 +721,12 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
             accessTokenJti: stored.issuedAccessTokenJti,
             refreshTokenJti: stored.issuedRefreshTokenJti,
           });
+        } else if (!stored.replayDetectedBeforeTokenRegistration) {
+          // A valid replay raced token issuance. Persist this before responding so the first
+          // request cannot publish tokens after registering their JTIs.
+          stored = { ...stored, replayDetectedBeforeTokenRegistration: true };
+          await this.actorCtx.storage.put(this.buildCodeKey(request.code), stored);
+          this.codes.set(request.code, stored);
         }
 
         // Return response with replayAttack field containing JTIs to revoke
@@ -732,29 +758,6 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
             refreshTokenJti: stored.issuedRefreshTokenJti,
           },
         };
-      }
-
-      // Validate PKCE (if code_challenge was provided)
-      if (stored.codeChallenge) {
-        if (!request.codeVerifier) {
-          throw new Error('invalid_grant: code_verifier required for PKCE');
-        }
-
-        // RFC 7636 Section 4.1: 43-128 characters from the unreserved URI set.
-        // Validate before hashing so a weak verifier cannot turn PKCE into a
-        // low-entropy shared secret even when its challenge matches.
-        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(request.codeVerifier)) {
-          throw new Error('invalid_grant: Invalid code_verifier format');
-        }
-
-        const challenge = await this.generateCodeChallenge(
-          request.codeVerifier,
-          stored.codeChallengeMethod || 'S256'
-        );
-
-        if (challenge !== stored.codeChallenge) {
-          throw new Error('invalid_grant: Invalid code_verifier (PKCE validation failed)');
-        }
       }
 
       // Commit the consumed state while the code-specific guard is held. Durable
@@ -848,6 +851,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       return false;
     }
 
+    const replayDetected = stored.replayDetectedBeforeTokenRegistration === true;
+
     stored.issuedAccessTokenJti = accessTokenJti;
     if (refreshTokenJti) {
       stored.issuedRefreshTokenJti = refreshTokenJti;
@@ -858,7 +863,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     await this.actorCtx.storage.put(this.buildCodeKey(code), stored);
 
     this.log.info('Registered token JTIs for code', { code: code.substring(0, 8) + '...' });
-    return true;
+    return !replayDetected;
   }
 
   /**

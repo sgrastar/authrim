@@ -9,6 +9,8 @@ import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import { createDiagnosticLogR2Adapter, getTenantIdFromContext } from '@authrim/ar-lib-core';
 
+const DIAGNOSTIC_LOG_R2_BINDING = 'DIAGNOSTIC_LOGS';
+
 /**
  * Test R2 connection for diagnostic logging
  *
@@ -36,11 +38,22 @@ export async function testDiagnosticLogR2Connection(c: Context<{ Bindings: Env }
     }>();
 
     const tenantId = getTenantIdFromContext(c);
-    const bindingName = body.r2BucketBinding ?? 'DIAGNOSTIC_LOGS';
+    const bindingName = body.r2BucketBinding ?? DIAGNOSTIC_LOG_R2_BINDING;
     const pathPrefix = body.pathPrefix ?? 'diagnostic-logs';
 
+    if (bindingName !== DIAGNOSTIC_LOG_R2_BINDING) {
+      return c.json(
+        {
+          success: false,
+          error: 'invalid_r2_binding',
+          message: 'Diagnostic logging connection tests only support the configured log bucket.',
+        },
+        400
+      );
+    }
+
     // Get R2 bucket
-    const bucket = c.env[bindingName as keyof Env] as R2Bucket | undefined;
+    const bucket = c.env.DIAGNOSTIC_LOGS;
 
     if (!bucket) {
       return c.json(

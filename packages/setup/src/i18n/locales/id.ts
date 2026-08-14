@@ -1122,6 +1122,27 @@ const id: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Detail Environment',
+  'web.envDetail.initialDeployRecoveryTitle': 'Deployment awal belum selesai',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'Deployment sebelumnya berhenti sebelum verifikasi. Resource yang sudah dibuat akan digunakan kembali saat dilanjutkan.',
+  'web.envDetail.initialDeployRecoveryAction': 'Lanjutkan deployment awal',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Status Cloudflare telah diverifikasi. Selesai: {{completed}}. Proses akan dilanjutkan dari {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'verifikasi migrasi database',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'persiapan deployment awal',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'deployment Worker',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'verifikasi setelah deployment',
+  'web.envDetail.initialDeployRecoveryResources': 'provisioning resource',
+  'web.envDetail.initialDeployRecoverySchema': 'migrasi database',
+  'web.envDetail.initialDeployRecoveryWorkers': 'deployment Worker',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'Checkpoint tersimpan tidak cocok dengan status di Cloudflare. Melanjutkan proses telah dinonaktifkan. Hapus environment yang belum selesai ini lalu buat ulang.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'Definisi draft migration berubah setelah deployment awal dimulai. Status deployment yang tersimpan mungkin tidak lagi cocok dengan database, sehingga proses tidak dapat dilanjutkan. Hapus environment yang belum selesai ini lalu buat ulang.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'Status saat ini tidak dapat diverifikasi, sehingga proses tidak dapat dilanjutkan. Periksa koneksi Cloudflare lalu periksa kembali environment ini. Jika verifikasi tetap gagal, hapus environment yang belum selesai lalu buat ulang.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Kredensial deployment perlu diperbarui; token Cloudflare sekali pakai yang baru akan diminta.',
   'web.envDetail.adminNotConfigured': 'Akun Admin Belum Dikonfigurasi',
   'web.envDetail.adminNotConfiguredDesc':
     'Administrator awal belum disiapkan untuk environment ini.',

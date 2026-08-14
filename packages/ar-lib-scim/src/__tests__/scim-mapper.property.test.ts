@@ -12,7 +12,6 @@ import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import {
   userToScim,
-  scimToUser,
   groupToScim,
   scimToGroup,
   applyPatchOperations,
@@ -26,7 +25,6 @@ import {
   internalUserArb,
   minimalInternalUserArb,
   internalGroupArb,
-  partialScimUserArb,
   partialScimGroupArb,
   validPatchOpArb,
   prototypePollutionPatchOpArb,
@@ -109,86 +107,6 @@ describe('SCIM Mapper Property Tests', () => {
           const scimUser = userToScim(userWithActive, context);
 
           expect(scimUser.active).toBe(Boolean(active));
-        }),
-        { numRuns: 100 }
-      );
-    });
-  });
-
-  // =============================================================================
-  // SCIM to User Mapping Properties
-  // =============================================================================
-
-  describe('SCIM to User Mapping Properties', () => {
-    it('∀ partial SCIM User: scimToUser extracts correct fields', () => {
-      fc.assert(
-        fc.property(partialScimUserArb, (scimUser) => {
-          const user = scimToUser(scimUser);
-
-          // userName -> preferred_username
-          if (scimUser.userName) {
-            expect(user.preferred_username).toBe(scimUser.userName);
-          }
-
-          // externalId -> external_id
-          if (scimUser.externalId) {
-            expect(user.external_id).toBe(scimUser.externalId);
-          }
-
-          // active -> active (0 or 1)
-          if (scimUser.active !== undefined) {
-            expect(user.active).toBe(scimUser.active ? 1 : 0);
-          }
-
-          // name fields
-          if (scimUser.name?.givenName) {
-            expect(user.given_name).toBe(scimUser.name.givenName);
-          }
-          if (scimUser.name?.familyName) {
-            expect(user.family_name).toBe(scimUser.name.familyName);
-          }
-
-          // primary email
-          if (scimUser.emails && scimUser.emails.length > 0) {
-            const primaryEmail = scimUser.emails.find((e) => e.primary) || scimUser.emails[0];
-            expect(user.email).toBe(primaryEmail.value);
-          }
-
-          expect(user.password_hash).toBeUndefined();
-        }),
-        { numRuns: 200 }
-      );
-    });
-
-    it('∀ SCIM User with enterprise extension: scimToUser extracts custom attributes', () => {
-      const scimUserWithEnterpriseArb = fc.record({
-        userName: emailArb,
-        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': fc.record({
-          employeeNumber: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
-          department: fc.option(nameArb, { nil: undefined }),
-          organization: fc.option(nameArb, { nil: undefined }),
-        }),
-      });
-
-      fc.assert(
-        fc.property(scimUserWithEnterpriseArb, (scimUser) => {
-          const user = scimToUser(scimUser);
-          const ext = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
-
-          if (ext?.employeeNumber || ext?.department || ext?.organization) {
-            expect(user.custom_attributes_json).toBeDefined();
-            const customAttrs = JSON.parse(user.custom_attributes_json!);
-
-            if (ext.employeeNumber) {
-              expect(customAttrs.employeeNumber).toBe(ext.employeeNumber);
-            }
-            if (ext.department) {
-              expect(customAttrs.department).toBe(ext.department);
-            }
-            if (ext.organization) {
-              expect(customAttrs.organization).toBe(ext.organization);
-            }
-          }
         }),
         { numRuns: 100 }
       );
@@ -372,7 +290,7 @@ describe('SCIM Mapper Property Tests', () => {
       );
     });
 
-    it('∀ SCIM User without emails: validateScimUser returns error', () => {
+    it('∀ SCIM User with userName and without emails: validateScimUser returns valid', () => {
       fc.assert(
         fc.property(
           fc.record({
@@ -380,8 +298,8 @@ describe('SCIM Mapper Property Tests', () => {
           }),
           (scimUser) => {
             const result = validateScimUser(scimUser);
-            expect(result.valid).toBe(false);
-            expect(result.errors).toContain('At least one email is required');
+            expect(result.valid).toBe(true);
+            expect(result.errors).toHaveLength(0);
           }
         ),
         { numRuns: 100 }

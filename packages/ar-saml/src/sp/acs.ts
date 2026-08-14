@@ -57,6 +57,10 @@ import { verifyXmlSignature, hasSignature } from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
+import {
+  buildSAMLRequestBindingClearCookie,
+  hasSAMLRequestBrowserBinding,
+} from './request-browser-binding';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
@@ -120,6 +124,10 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     // Validate InResponseTo (if we sent an AuthnRequest)
     let validatedRequest: SAMLRequestData | null = null;
     if (inResponseTo) {
+      if (!hasSAMLRequestBrowserBinding(c.req.header('Cookie'), inResponseTo)) {
+        log.error('SAML Response browser binding validation failed', { inResponseTo });
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
       validatedRequest = await consumeInResponseTo(env, tenantId, inResponseTo, issuer);
       if (!validatedRequest) {
         log.error('InResponseTo validation failed', { inResponseTo });
@@ -233,16 +241,24 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       returnUrl
     );
     if (handoffResponse) {
+      if (inResponseTo) {
+        handoffResponse.headers.append(
+          'Set-Cookie',
+          buildSAMLRequestBindingClearCookie(inResponseTo)
+        );
+      }
       return handoffResponse;
     }
 
     // Set session cookie and redirect
+    const headers = new Headers({ Location: returnUrl });
+    headers.append('Set-Cookie', buildSessionCookie(sessionId));
+    if (inResponseTo) {
+      headers.append('Set-Cookie', buildSAMLRequestBindingClearCookie(inResponseTo));
+    }
     return new Response(null, {
       status: 302,
-      headers: {
-        Location: returnUrl,
-        'Set-Cookie': buildSessionCookie(sessionId),
-      },
+      headers,
     });
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
@@ -943,55 +959,32 @@ async function checkAndRecordBearerAssertionUse(
   assertionId: string,
   notOnOrAfter?: string
 ): Promise<boolean> {
-  // Use NONCE_STORE KV for tracking used assertions
-  const kvStore = env.NONCE_STORE;
-  const key = buildOneTimeUseAssertionReplayKey(tenantId, idpEntityId, assertionId);
+  try {
+    const assertionExpiresAt = notOnOrAfter
+      ? parseSAMLDateTimeMs(notOnOrAfter, 'SubjectConfirmationData NotOnOrAfter') +
+        DEFAULTS.CLOCK_SKEW_SECONDS * 1000
+      : Date.now() + 5 * 60 * 1000;
+    const storeId = env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
+    );
+    const store = env.SAML_REQUEST_STORE.get(storeId);
+    const response = await store.fetch('https://saml-request-store/assertion/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assertionId, expiresAt: assertionExpiresAt }),
+    });
 
-  // Check if assertion ID has been used
-  const existingEntry = await kvStore.get(key);
-  if (existingEntry) {
-    const log = createLogger().module('SAML-SP-ACS');
-    log.warn('Bearer assertion already used', { assertionId });
+    if (response.status === 409) {
+      createLogger().module('SAML-SP-ACS').warn('Bearer assertion already used', { assertionId });
+      return false;
+    }
+    return response.ok;
+  } catch (error) {
+    createLogger()
+      .module('SAML-SP-ACS')
+      .error('Bearer assertion replay validation unavailable', { assertionId }, error as Error);
     return false;
   }
-
-  // Calculate TTL based on SubjectConfirmationData NotOnOrAfter.
-  let expirationTtl = 300; // Default 5 minutes
-  if (notOnOrAfter) {
-    const notOnOrAfterTime = parseSAMLDateTimeMs(
-      notOnOrAfter,
-      'SubjectConfirmationData NotOnOrAfter'
-    );
-    const now = Date.now();
-    const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-    // Keep the record until after the assertion would have expired anyway
-    expirationTtl = Math.max(
-      60, // Minimum 1 minute
-      Math.ceil((notOnOrAfterTime + clockSkewMs - now) / 1000)
-    );
-  }
-
-  // Record the assertion ID with TTL
-  await kvStore.put(key, Date.now().toString(), { expirationTtl });
-
-  return true;
-}
-
-function buildOneTimeUseAssertionReplayKey(
-  tenantId: string,
-  idpEntityId: string,
-  assertionId: string
-): string {
-  // Assertion IDs are issuer-controlled, so replay markers must be scoped by tenant and IdP.
-  return [
-    'saml:assertion',
-    'tenant',
-    encodeURIComponent(tenantId),
-    'idp',
-    encodeURIComponent(idpEntityId),
-    'id',
-    encodeURIComponent(assertionId),
-  ].join(':');
 }
 
 /**
@@ -1017,7 +1010,7 @@ async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
     return envValue.toLowerCase() === 'true';
   }
 
-  // Return default (false for backward compatibility)
+  // Return the secure default. IdP-initiated SSO requires an explicit compatibility opt-out.
   return DEFAULTS.STRICT_INRESPONSETO;
 }
 
@@ -1679,6 +1672,7 @@ async function provisionSamlJitAccount(
   await persistCustomClaimWrite({
     db: account.coreDb,
     dbPii: account.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId: input.tenantId,
     userId: account.legacyUserId,
     validation: customClaimValidation,

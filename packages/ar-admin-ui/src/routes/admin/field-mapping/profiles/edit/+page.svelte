@@ -217,14 +217,7 @@
 	let newScopeDisplayName = $state('');
 	let creatingScope = $state(false);
 	let oidcClaims = $state<OidcClaimDraft[]>([
-		createOidcClaimDraft(
-			'sub',
-			'Subject',
-			'string',
-			'internal',
-			['id_token', 'userinfo'],
-			'openid'
-		),
+		createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 		createOidcClaimDraft('email', 'Email', 'email', 'pii', ['userinfo'], 'email')
 	]);
 	let csvDestinationEncoding = $state('utf-8');
@@ -273,12 +266,17 @@
 			Boolean(destinationProfileKey.trim()) &&
 			(destinationKind === 'oidc'
 				? oidcClaims.some((claim) => claim.claimName.trim() === 'sub')
-				: destinationKind === 'saml'
-					? Boolean(selectedSamlNameIdFormat().trim()) &&
-						Boolean(selectedSamlNameIdValue().trim()) &&
-						samlAttributes.length > 0
-					: csvDestinationColumns.length > 0) &&
-			(destinationBlockingWarningCount === 0 || destinationBlockingWarningsConfirmed)
+				: destinationKind === 'resource_server'
+					? oidcClaims.some((claim) => claim.claimName.trim() === 'active') &&
+						Boolean(destinationOwnerScopeId.trim())
+					: destinationKind === 'saml'
+						? Boolean(selectedSamlNameIdFormat().trim()) &&
+							Boolean(selectedSamlNameIdValue().trim()) &&
+							samlAttributes.length > 0
+						: csvDestinationColumns.length > 0) &&
+			(destinationBlockingWarningCount === 0 ||
+				(!['oidc', 'resource_server'].includes(destinationKind) &&
+					destinationBlockingWarningsConfirmed))
 	);
 	const canSaveCsvDraft = $derived(canSaveCsv && canSaveDraft(sourceProfileVersionState));
 	const canReviewCsvDraft = $derived(
@@ -572,9 +570,11 @@
 			const schema =
 				destinationKind === 'oidc'
 					? buildOidcDestinationSchema()
-					: destinationKind === 'saml'
-						? buildSamlDestinationSchema()
-						: buildCsvDestinationSchema();
+					: destinationKind === 'resource_server'
+						? buildResourceServerDestinationSchema()
+						: destinationKind === 'saml'
+							? buildSamlDestinationSchema()
+							: buildCsvDestinationSchema();
 			const request = {
 				destinationType: destinationKind,
 				profileKey: destinationProfileKey.trim(),
@@ -940,6 +940,16 @@
 
 	function setDestinationKind(kind: IdentityMappingDestinationType) {
 		destinationKind = kind;
+		if (kind === 'resource_server') {
+			destinationOwnerScopeType = 'client';
+			oidcClaims = [
+				createOidcClaimDraft('active', 'Active', 'boolean', 'internal', ['userinfo'], '')
+			];
+		} else if (oidcClaims.some((claim) => claim.claimName === 'active')) {
+			oidcClaims = [
+				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], '')
+			];
+		}
 		destinationAdvancedSettings = false;
 		selectedExistingDestinationId = '';
 		selectedTemplateCategory = '';
@@ -1218,6 +1228,28 @@
 		};
 	}
 
+	function buildResourceServerDestinationSchema(): Record<string, unknown> {
+		return {
+			destinationType: 'resource_server',
+			claims: oidcClaims.map((claim) => ({
+				claimName: claim.claimName.trim(),
+				label: claim.label.trim() || claim.claimName.trim(),
+				valueType: claim.valueType,
+				allowedValues: splitCsv(claim.allowedValues),
+				valueMultiplicity: claim.valueMultiplicity,
+				required: claim.claimName === 'active' ? true : claim.required,
+				nullable: claim.claimName === 'active' ? false : claim.nullable,
+				classification: claim.classification,
+				requiredScopes: claim.claimName === 'active' ? [] : splitCsv(claim.requiredScopes),
+				releasePolicy: {
+					legalBasis: claim.legalBasis,
+					purpose: claim.purpose.trim() || 'attribute_release'
+				},
+				formatter: claim.formatter.trim() ? { operation: claim.formatter.trim() } : undefined
+			}))
+		};
+	}
+
 	function buildCsvDestinationSchema(): Record<string, unknown> {
 		return {
 			destinationType: 'csv',
@@ -1286,6 +1318,37 @@
 
 	function loadDestinationSchemaDraft(schema: Record<string, unknown>) {
 		destinationProtocolSchemaRef = getProtocolSchemaRef(schema);
+		if (schema.destinationType === 'resource_server') {
+			oidcClaims = Array.isArray(schema.claims)
+				? schema.claims.filter(isRecord).map((claim) => {
+						const releasePolicy = isRecord(claim.releasePolicy) ? claim.releasePolicy : {};
+						return {
+							...createOidcClaimDraft(
+								String(claim.claimName ?? ''),
+								String(claim.label ?? claim.claimName ?? ''),
+								String(claim.valueType ?? 'string'),
+								String(claim.classification ?? 'internal'),
+								['userinfo'],
+								Array.isArray(claim.requiredScopes)
+									? claim.requiredScopes.map(String).join(',')
+									: ''
+							),
+							valueMultiplicity: claim.valueMultiplicity === 'multi' ? 'multi' : 'single',
+							required: claim.required === true || claim.claimName === 'active',
+							nullable: claim.claimName === 'active' ? false : Boolean(claim.nullable),
+							legalBasis: String(releasePolicy.legalBasis ?? 'legitimate_interest'),
+							purpose: String(releasePolicy.purpose ?? 'attribute_release')
+						};
+					})
+				: [];
+			if (!oidcClaims.some((claim) => claim.claimName === 'active')) {
+				oidcClaims = [
+					createOidcClaimDraft('active', 'Active', 'boolean', 'internal', ['userinfo'], ''),
+					...oidcClaims
+				];
+			}
+			return;
+		}
 		if (schema.destinationType === 'csv') {
 			const defaults = isRecord(schema.defaults) ? schema.defaults : {};
 			csvDestinationEncoding = String(defaults.encoding ?? 'utf-8');
@@ -1396,18 +1459,11 @@
 					};
 				})
 			: [
-					createOidcClaimDraft(
-						'sub',
-						'Subject',
-						'string',
-						'internal',
-						['id_token', 'userinfo'],
-						'openid'
-					)
+					createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], '')
 				];
 		if (!oidcClaims.some((claim) => claim.claimName === 'sub')) {
 			oidcClaims = [
-				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token'], 'openid'),
+				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 				...oidcClaims
 			];
 		}
@@ -1426,7 +1482,7 @@
 	}
 
 	function getDestinationBlockingWarningCount(): number {
-		if (destinationKind === 'oidc') {
+		if (destinationKind === 'oidc' || destinationKind === 'resource_server') {
 			return oidcClaims.filter(
 				(claim) =>
 					['pii', 'regulated'].includes(claim.classification) &&
@@ -1479,14 +1535,7 @@
 		destinationProfileVersionState = null;
 		oidcClaimsParameterJson = '';
 		oidcClaims = [
-			createOidcClaimDraft(
-				'sub',
-				'Subject',
-				'string',
-				'internal',
-				['id_token', 'userinfo'],
-				'openid'
-			),
+			createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 			createOidcClaimDraft('email', 'Email', 'email', 'pii', ['userinfo'], 'email')
 		];
 		csvDestinationColumns = [createCsvDestinationColumnDraft('email', 'Email', 1, 'email', 'pii')];
@@ -1671,6 +1720,12 @@
 						type="button"
 						class:active={destinationKind === 'saml'}
 						onclick={() => setDestinationKind('saml')}>SAML</button
+					>
+					<button
+						type="button"
+						class:active={destinationKind === 'resource_server'}
+						onclick={() => setDestinationKind('resource_server')}
+						>{$LL.admin_identity_mapping_profile_edit_resource_server()}</button
 					>
 					<button
 						type="button"
@@ -2162,9 +2217,11 @@
 							value={destinationDisplayName}
 							placeholder={destinationKind === 'oidc'
 								? $LL.admin_identity_mapping_profile_edit_oidc_display_placeholder()
-								: destinationKind === 'saml'
-									? $LL.admin_identity_mapping_profile_edit_saml_display_placeholder()
-									: $LL.admin_identity_mapping_profile_edit_csv_destination_display_placeholder()}
+								: destinationKind === 'resource_server'
+									? $LL.admin_identity_mapping_profile_edit_resource_server_display_placeholder()
+									: destinationKind === 'saml'
+										? $LL.admin_identity_mapping_profile_edit_saml_display_placeholder()
+										: $LL.admin_identity_mapping_profile_edit_csv_destination_display_placeholder()}
 							oninput={(event) => {
 								destinationDisplayName = getInputValue(event);
 								if (!destinationProfileKey.trim())
@@ -2172,11 +2229,23 @@
 							}}
 						/>
 					</label>
+					{#if destinationKind === 'resource_server'}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_resource_server_client_id()}</span>
+							<input
+								value={destinationOwnerScopeId}
+								placeholder={$LL.admin_identity_mapping_profile_edit_resource_server_client_id_placeholder()}
+								oninput={(event) => (destinationOwnerScopeId = getInputValue(event))}
+							/>
+						</label>
+					{/if}
 				</div>
 
-				{#if destinationKind === 'oidc'}
+				{#if destinationKind === 'oidc' || destinationKind === 'resource_server'}
 					<p class="profile-note">
-						{$LL.admin_identity_mapping_profile_edit_oidc_note()}
+						{destinationKind === 'resource_server'
+							? $LL.admin_identity_mapping_profile_edit_resource_server_note()
+							: $LL.admin_identity_mapping_profile_edit_oidc_note()}
 					</p>
 					<div class="table-toolbar">
 						<span></span>
@@ -2242,7 +2311,7 @@
 									<input
 										type="checkbox"
 										checked={claim.required}
-										disabled={claim.claimName === 'sub'}
+										disabled={claim.claimName === 'sub' || claim.claimName === 'active'}
 										onchange={(event) =>
 											updateOidcClaim(index, 'required', getCheckboxValue(event))}
 									/>
@@ -2265,17 +2334,21 @@
 										>{/each}
 								</select>
 								<div class="surface-checks">
-									{#each oidcSurfaceOptions as surface (surface)}
-										<label class="mini-check">
-											<input
-												type="checkbox"
-												checked={claim.surfaces.includes(surface)}
-												onchange={(event) =>
-													toggleOidcClaimSurface(index, surface, getCheckboxValue(event))}
-											/>
-											<span>{surface}</span>
-										</label>
-									{/each}
+									{#if destinationKind === 'resource_server'}
+										<span>{$LL.admin_identity_mapping_profile_edit_introspection_surface()}</span>
+									{:else}
+										{#each oidcSurfaceOptions as surface (surface)}
+											<label class="mini-check">
+												<input
+													type="checkbox"
+													checked={claim.surfaces.includes(surface)}
+													onchange={(event) =>
+														toggleOidcClaimSurface(index, surface, getCheckboxValue(event))}
+												/>
+												<span>{surface}</span>
+											</label>
+										{/each}
+									{/if}
 								</div>
 								<details class="scope-picker">
 									<summary>
@@ -2323,7 +2396,7 @@
 								<button
 									type="button"
 									onclick={() => removeOidcClaim(index)}
-									disabled={claim.claimName === 'sub'}
+									disabled={claim.claimName === 'sub' || claim.claimName === 'active'}
 									>{$LL.admin_identity_mapping_profile_edit_remove()}</button
 								>
 							</div>
@@ -2361,14 +2434,16 @@
 							>{$LL.admin_identity_mapping_profile_edit_add_claim()}</button
 						>
 					</div>
-					<label>
-						<span>{$LL.admin_identity_mapping_profile_edit_claims_parameter_policy_json()}</span>
-						<textarea
-							rows="4"
-							value={oidcClaimsParameterJson}
-							oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
-						></textarea>
-					</label>
+					{#if destinationKind === 'oidc'}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_claims_parameter_policy_json()}</span>
+							<textarea
+								rows="4"
+								value={oidcClaimsParameterJson}
+								oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
+							></textarea>
+						</label>
+					{/if}
 				{:else if destinationKind === 'csv'}
 					<div class="settings-grid">
 						<label>
@@ -2681,7 +2756,7 @@
 				<div class="impact-preview">
 					<span>{$LL.admin_identity_mapping_profile_edit_release_impact()}</span>
 					<strong>
-						{#if destinationKind === 'oidc'}
+						{#if destinationKind === 'oidc' || destinationKind === 'resource_server'}
 							{$LL.admin_identity_mapping_profile_edit_claims_count({
 								count: oidcClaims.length
 							})}

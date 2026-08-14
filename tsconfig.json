@@ -8,7 +8,7 @@
       "@authrim/ar-lib-core/*": ["./packages/ar-lib-core/src/*"]
     }
   },
-  "include": ["packages/ar-*/src/**/*", "test/setup.ts", "test/environment-validation/**/*.ts"],
+  "include": ["packages/ar-*/src/**/*", "test/setup.ts", "test/generated-environment/**/*.ts"],
   "exclude": [
     "node_modules",
     "dist",

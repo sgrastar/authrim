@@ -116,24 +116,24 @@ jobs:
 
       - name: Validate generated environment
         run: |
-          pnpm exec tsx test/environment-validation/validate-generated-env.ts \
+          pnpm exec tsx test/generated-environment/validate-generated-env.ts \
             --env "$AUTHRIM_ENV_NAME" \
             --keys-base-dir "$GITHUB_WORKSPACE"
 
       - name: Run public API smoke
-        run: pnpm exec tsx test/environment-validation/smoke-generated-api.ts --env "$AUTHRIM_ENV_NAME"
+        run: pnpm exec tsx test/generated-environment/smoke-generated-api.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run Admin API smoke
-        run: pnpm exec tsx test/environment-validation/smoke-generated-admin-api.ts --env "$AUTHRIM_ENV_NAME"
+        run: pnpm exec tsx test/generated-environment/smoke-generated-admin-api.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run auth flow smoke
-        run: pnpm exec tsx test/environment-validation/smoke-generated-auth-flow.ts --env "$AUTHRIM_ENV_NAME"
+        run: pnpm exec tsx test/generated-environment/smoke-generated-auth-flow.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run approval and protected-resource smoke
-        run: pnpm exec tsx test/environment-validation/smoke-generated-approvals.ts --env "$AUTHRIM_ENV_NAME"
+        run: pnpm exec tsx test/generated-environment/smoke-generated-approvals.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Run server-surface smoke
-        run: pnpm exec tsx test/environment-validation/smoke-generated-server-surfaces.ts --env "$AUTHRIM_ENV_NAME"
+        run: pnpm exec tsx test/generated-environment/smoke-generated-server-surfaces.ts --env "$AUTHRIM_ENV_NAME"
 
       - name: Deployment summary
         if: success()

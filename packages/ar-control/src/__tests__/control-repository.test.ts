@@ -11,6 +11,11 @@ type SqliteValue = string | number | null | Uint8Array;
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('required_test_value_missing');
+  return value;
+}
+
 function sqliteValues(values: unknown[]): SqliteValue[] {
   return values.map((value) => {
     if (
@@ -2546,7 +2551,7 @@ describe('D1ControlRepository lease and budget integration', () => {
     };
     await bindingRepository.adoptSupersedingSmokeDeployment({
       target: smokeTarget,
-      lease: recoveredAlreadySatisfiedLease!,
+      lease: required(recoveredAlreadySatisfiedLease),
       versionId: 'version-superseding',
       deploymentId: 'deployment-superseding',
       now: 136,

@@ -20,6 +20,7 @@ import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-l
 type SamlTestEnv = Partial<Env> & {
   TDB_TEST_CORE?: D1Database;
   TDB_TEST_PII?: D1Database;
+  SAML_STRICT_INRESPONSETO?: string;
 };
 
 const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
@@ -173,6 +174,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 // Import after mocks
 import { handleSPACS } from '../acs';
+import { buildSAMLRequestBindingCookie } from '../request-browser-binding';
 
 // Helper to create SAML Response with configurable SubjectConfirmation
 function createSAMLResponseWithSubjectConfirmation(options: {
@@ -290,6 +292,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
+      SAML_STRICT_INRESPONSETO: 'false',
       AUTHRIM_CONFIG: createTestConfigKv(),
       TDB_TEST_CORE: {
         prepare: vi.fn().mockImplementation(function () {
@@ -352,7 +355,7 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
   /**
    * Helper to create request and call ACS
    */
-  async function callACS(samlResponse: string): Promise<Response> {
+  async function callACS(samlResponse: string, cookieHeader?: string): Promise<Response> {
     const formData = new FormData();
     formData.append('SAMLResponse', samlResponse);
 
@@ -361,7 +364,9 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       env: mockEnv,
       req: {
         formData: async () => formData,
-        header: vi.fn().mockReturnValue(undefined), // Mock header() for IP/UA extraction
+        header: vi.fn((name: string) =>
+          name.toLowerCase() === 'cookie' ? cookieHeader : undefined
+        ),
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
       get: vi.fn().mockReturnValue('default'), // Mock Hono's c.get() for tenantId
@@ -526,7 +531,55 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       expect(res.status).toBe(302);
     });
 
+    it('rejects an unsolicited response by default', async () => {
+      mockEnv.SAML_STRICT_INRESPONSETO = undefined;
+      const samlResponse = createSAMLResponseWithSubjectConfirmation({
+        inResponseTo: undefined,
+      });
+
+      const res = await callACS(samlResponse);
+
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects a stored request that is not bound to the posting browser', async () => {
+      const requestId = `_${'a'.repeat(32)}`;
+      const storeFetch = vi.fn();
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn().mockReturnValue('mock-store-id'),
+        get: vi.fn().mockReturnValue({ fetch: storeFetch }),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      const samlResponse = createSAMLResponseWithSubjectConfirmation({ inResponseTo: requestId });
+
+      const res = await callACS(samlResponse);
+
+      expect(res.status).toBe(400);
+      expect(storeFetch).not.toHaveBeenCalled();
+    });
+
+    it('accepts and clears a request bound to the posting browser', async () => {
+      const requestId = `_${'b'.repeat(32)}`;
+      const storeFetch = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes(`/consume/${requestId}`)) {
+          return Response.json({ requestId, relayState: 'https://ui.example.com/' });
+        }
+        return Response.json({ success: true });
+      });
+      mockEnv.SAML_REQUEST_STORE = {
+        idFromName: vi.fn().mockReturnValue('mock-store-id'),
+        get: vi.fn().mockReturnValue({ fetch: storeFetch }),
+      } as unknown as Env['SAML_REQUEST_STORE'];
+      const samlResponse = createSAMLResponseWithSubjectConfirmation({ inResponseTo: requestId });
+
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('Set-Cookie')).toContain(`__Host-authrim_saml_request_${requestId}=;`);
+      expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    });
+
     it('should reject when InResponseTo does not match stored request (strict mode)', async () => {
+      const requestId = `_${'c'.repeat(32)}`;
       // Enable strict mode via AUTHRIM_CONFIG KV
       mockEnv.AUTHRIM_CONFIG = {
         get: vi.fn().mockResolvedValue('true'),
@@ -543,16 +596,17 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       // In strict mode, InResponseTo MUST match a stored AuthnRequest ID
       // This prevents assertion theft/injection attacks
       const samlResponse = createSAMLResponseWithSubjectConfirmation({
-        inResponseTo: '_nonexistent_request_id',
+        inResponseTo: requestId,
       });
 
-      const res = await callACS(samlResponse);
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
 
       // Strict mode: InResponseTo validation failure should return error
       expect(res.status).toBe(400);
     });
 
     it('should reject when InResponseTo does not match stored request', async () => {
+      const requestId = `_${'d'.repeat(32)}`;
       mockEnv.AUTHRIM_CONFIG = {
         get: vi.fn().mockResolvedValue('false'),
       } as unknown as Env['AUTHRIM_CONFIG'];
@@ -566,10 +620,10 @@ describe('SubjectConfirmation Validation - SAML 2.0 Core Section 2.4.1', () => {
       } as unknown as Env['SAML_REQUEST_STORE'];
 
       const samlResponse = createSAMLResponseWithSubjectConfirmation({
-        inResponseTo: '_nonexistent_request_id',
+        inResponseTo: requestId,
       });
 
-      const res = await callACS(samlResponse);
+      const res = await callACS(samlResponse, buildSAMLRequestBindingCookie(requestId));
 
       expect(res.status).toBe(400);
     });

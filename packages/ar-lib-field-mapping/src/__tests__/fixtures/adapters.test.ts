@@ -34,11 +34,40 @@ describe('preview adapters', () => {
   it('converts SCIM, SAML, and OIDC preview shapes', () => {
     expect(
       adaptScimUserPreview({
-        user: { userName: 'user@example.test', active: true },
+        user: {
+          userName: 'user@example.test',
+          active: true,
+          emails: [{ value: 'primary@example.test', primary: true }],
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+            employeeNumber: 'E-001',
+            costCenter: 'CC-42',
+          },
+        },
         catalog: TEST_CATALOG,
         edges: [emailEdge],
       }).input?.sourceValues.map((item) => item.sourceRef.namespace)
-    ).toContain('scim.user');
+    ).toContain('scim.attribute');
+
+    const scimValues = adaptScimUserPreview({
+      user: {
+        emails: [{ value: 'primary@example.test', primary: true }],
+        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
+          employeeNumber: 'E-001',
+          costCenter: 'CC-42',
+        },
+      },
+      catalog: TEST_CATALOG,
+      edges: [emailEdge],
+    }).input?.sourceValues;
+    expect(scimValues?.find((item) => item.sourceRef.path === 'emails.value')?.value).toBe(
+      'primary@example.test'
+    );
+    expect(
+      scimValues?.find((item) => item.sourceRef.path === 'enterprise.employeeNumber')?.value
+    ).toBe('E-001');
+    expect(scimValues?.find((item) => item.sourceRef.path === 'enterprise.costCenter')?.value).toBe(
+      'CC-42'
+    );
 
     expect(
       adaptSamlAttributesPreview({

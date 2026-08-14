@@ -6,7 +6,6 @@ import {
   introspectTokenFromContext,
   getClientCached,
   createPIIContextFromHono,
-  resolveCustomClaimRuntimeSourcesFromHono,
   encryptJWT,
   isUserInfoEncryptionRequired,
   getClientPublicKey,
@@ -17,8 +16,6 @@ import {
   getTenantIdFromContext,
   type JWEAlgorithm,
   type JWEEncryption,
-  loadFeatureConfig,
-  createCustomClaimSchemaResolverFromSources,
   parseClaimsRequest,
   evaluateClaimsForTarget,
   buildStandardUserClaims,
@@ -282,28 +279,6 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
-
-  // Custom Claim Schema: add custom claims from schema resolver
-  try {
-    const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
-    if (ccFeatureConfig.enabled) {
-      const tenantId = getTenantIdFromContext(c);
-      const ccSources = await resolveCustomClaimRuntimeSourcesFromHono(c, tenantId);
-      const ccResolver = createCustomClaimSchemaResolverFromSources({
-        schemaDb: ccSources.schemaDb,
-        nonPiiDb: ccSources.nonPiiDb,
-        piiDb: ccSources.piiDb,
-        cache: c.env.AUTHRIM_CONFIG || null,
-        featureConfig: ccFeatureConfig,
-      });
-      const ccResult = await ccResolver.resolveClaimsForTarget(tenantId, sub, scopes, 'userinfo');
-      for (const [key, value] of Object.entries(ccResult.claims)) {
-        if (!(key in userClaims)) userClaims[key] = value; // Prevent overwriting standard claims
-      }
-    }
-  } catch (ccError) {
-    log.error('Failed to resolve custom claims for userinfo', {}, ccError as Error);
-  }
 
   if (client_id && clientMetadata) {
     try {

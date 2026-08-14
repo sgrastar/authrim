@@ -1189,7 +1189,7 @@
 			<p>{$LL.admin_saml_loading()}</p>
 		</div>
 	{:else}
-		{#if !tenantInfo?.components.saml}
+		{#if tenantInfo && !tenantInfo.components.saml}
 			<AdminSection
 				title={$LL.admin_saml_local_metadata_title()}
 				description={$LL.admin_saml_local_metadata_desc()}

@@ -265,6 +265,57 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
   };
 });
 
+vi.mock('../scim-identity-mapping', () => {
+  return {
+    applyScimInboundIdentityMapping: vi.fn(async ({ user }: { user: any }) => {
+      const primaryEmail = user.emails?.find((item: any) => item.primary) ?? user.emails?.[0];
+      const primaryPhone =
+        user.phoneNumbers?.find((item: any) => item.primary) ?? user.phoneNumbers?.[0];
+      const enterprise = user['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'] ?? {};
+      const customAttributes = Object.fromEntries(
+        Object.entries(enterprise).filter(([, value]) => value !== undefined)
+      );
+      return {
+        external_id: user.externalId,
+        preferred_username: user.userName,
+        active: user.active === undefined ? undefined : user.active ? 1 : 0,
+        name: user.displayName ?? user.name?.formatted,
+        given_name: user.name?.givenName,
+        family_name: user.name?.familyName,
+        middle_name: user.name?.middleName,
+        nickname: user.nickName,
+        profile: user.profileUrl,
+        locale: user.preferredLanguage,
+        zoneinfo: user.timezone,
+        email: primaryEmail?.value,
+        phone_number: primaryPhone?.value,
+        custom_attributes_json:
+          Object.keys(customAttributes).length > 0 ? JSON.stringify(customAttributes) : undefined,
+      };
+    }),
+    ScimIdentityMappingError: class extends Error {
+      constructor(
+        message: string,
+        readonly code: string
+      ) {
+        super(message);
+      }
+    },
+  };
+});
+
+vi.mock('../scim-settings', () => ({
+  getScimInboundSettings: vi.fn(async () => ({
+    enabled: true,
+    usersEnabled: true,
+    groupsEnabled: true,
+    bulkEnabled: true,
+    mappingSetId: 'test-scim-mapping',
+    bulkMaxOperations: 100,
+    bulkMaxPayloadSize: 1_048_576,
+  })),
+}));
+
 // Mock shared utilities
 vi.mock('@authrim/ar-lib-core/utils/id', () => ({
   generateUserId: vi
@@ -637,6 +688,15 @@ describe('SCIM 2.0 Endpoints', () => {
                     }));
                   return { results };
                 }
+                if (sql.includes('FROM user_roles ur')) {
+                  const userId = args[1];
+                  const results = [...mockUserRoles.entries()].flatMap(([roleId, members]) => {
+                    if (!members.some((member) => member.user_id === userId)) return [];
+                    const role = mockGroups.get(roleId);
+                    return role ? [{ id: role.id, name: role.name }] : [];
+                  });
+                  return { results };
+                }
                 if (sql.includes('SELECT * FROM roles')) {
                   return { results: Array.from(mockGroups.values()) };
                 }
@@ -760,7 +820,9 @@ describe('SCIM 2.0 Endpoints', () => {
             })),
           };
         }),
-        batch: vi.fn(),
+        batch: vi.fn(async (statements: Array<{ run: () => Promise<unknown> }>) =>
+          Promise.all(statements.map((statement) => statement.run()))
+        ),
       } as any,
       // DB_PII mock for PII/Non-PII DB separation
       DB_PII: {
@@ -945,7 +1007,9 @@ describe('SCIM 2.0 Endpoints', () => {
             })),
           };
         }),
-        batch: vi.fn(),
+        batch: vi.fn(async (statements: Array<{ run: () => Promise<unknown> }>) =>
+          Promise.all(statements.map((statement) => statement.run()))
+        ),
       } as any,
       INITIAL_ACCESS_TOKENS: {
         get: vi.fn().mockResolvedValue(JSON.stringify({ enabled: true })),
@@ -1181,6 +1245,69 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User']?.department).toBe(
         'Engineering'
       );
+    });
+
+    it('returns direct group memberships for the user', async () => {
+      mockUserRoles.set('group-001', [{ user_id: 'user-001', email: 'john.doe@example.com' }]);
+
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        groups: [
+          {
+            value: 'group-001',
+            display: 'Administrators',
+            type: 'direct',
+            $ref: expect.stringContaining('/scim/v2/Groups/group-001'),
+          },
+        ],
+      });
+    });
+
+    it('projects requested attributes while preserving always-returned fields', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001?attributes=userName,name.givenName'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body).toMatchObject({
+        id: 'user-001',
+        userName: expect.any(String),
+        name: { givenName: expect.any(String) },
+        schemas: expect.any(Array),
+        meta: expect.any(Object),
+      });
+      expect(body.emails).toBeUndefined();
+      expect(body.active).toBeUndefined();
+    });
+
+    it('rejects attributes together with excludedAttributes', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001?attributes=userName&excludedAttributes=emails'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ scimType: 'invalidValue' });
+    });
+
+    it('preserves always-returned fields when excludedAttributes requests them', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001?excludedAttributes=id,schemas,meta,emails'),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body).toMatchObject({
+        id: 'user-001',
+        schemas: expect.any(Array),
+        meta: expect.any(Object),
+      });
+      expect(body.emails).toBeUndefined();
     });
 
     it('should return 404 for non-existent user', async () => {

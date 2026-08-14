@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { resolveRuntimeIdentityMappingBinding } from '../identity-mapping-runtime-resolver';
+import {
+  assertRuntimeIdentityMappingReleaseSafety,
+  resolveRuntimeIdentityMappingBinding,
+} from '../identity-mapping-runtime-resolver';
 import type {
   DatabaseAdapter,
   ExecuteResult,
@@ -9,6 +12,50 @@ import type {
 } from '../../db/adapter';
 
 describe('resolveRuntimeIdentityMappingBinding', () => {
+  it('rejects runtime release when a PII source is downgraded or loses scope protection', () => {
+    const runtimeBinding = {
+      catalog: {
+        entries: [
+          {
+            id: 'field.profile.email',
+            namespace: 'authrim.profile',
+            path: 'email',
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+          },
+        ],
+      },
+      edges: [
+        {
+          id: 'edge_email',
+          sourceRef: {
+            side: 'source',
+            namespace: 'authrim.profile',
+            path: 'email',
+            catalogEntryId: 'field.profile.email',
+          },
+          targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+        },
+      ],
+    } as unknown as Parameters<typeof assertRuntimeIdentityMappingReleaseSafety>[0];
+
+    expect(() =>
+      assertRuntimeIdentityMappingReleaseSafety(
+        runtimeBinding,
+        [{ key: 'email', classification: 'internal', requiredScopes: ['email'] }],
+        true
+      )
+    ).toThrow(/cannot lower sensitive classification/i);
+    expect(() =>
+      assertRuntimeIdentityMappingReleaseSafety(
+        runtimeBinding,
+        [{ key: 'email', classification: 'pii', requiredScopes: [] }],
+        true
+      )
+    ).toThrow(/must require at least one scope/i);
+  });
+
   it('selects a partner-specific activation before tenant default', async () => {
     const adapter = new ResolverAdapter({
       activations: [
@@ -165,11 +212,48 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
 
     expect(binding?.id).toBe('activation-issuance');
   });
+
+  it('selects the activation whose graph references the requested destination profile', async () => {
+    const adapter = new ResolverAdapter({
+      activations: [
+        activationRow('activation-first', {
+          kind: 'tenant',
+          id: 'tenant_a',
+          protocol: 'introspection',
+          role: 'authorization_server',
+        }),
+        activationRow('activation-second', {
+          kind: 'tenant',
+          id: 'tenant_a',
+          protocol: 'introspection',
+          role: 'authorization_server',
+        }),
+      ],
+      destinationProfilesByVersion: {
+        version_default: 'destination-profile-other',
+        version_second: 'destination-profile-profile_rs',
+      },
+    });
+
+    const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
+      tenantId: 'tenant_a',
+      protocol: 'introspection',
+      role: 'authorization_server',
+      destinationProfileId: 'profile_rs',
+    });
+
+    expect(binding).toMatchObject({
+      id: 'activation-second',
+      fieldMappingVersionId: 'version_second',
+      destinationProfileId: 'profile_rs',
+    });
+  });
 });
 
 interface ResolverAdapterInput {
   activations: Record<string, unknown>[];
   edgeKind?: string;
+  destinationProfilesByVersion?: Record<string, string>;
 }
 
 class ResolverAdapter implements DatabaseAdapter {
@@ -211,6 +295,8 @@ class ResolverAdapter implements DatabaseAdapter {
       ] as T[];
     }
     if (sql.includes('JOIN mapping_rule_edges')) {
+      const destinationProfileId =
+        this.input.destinationProfilesByVersion?.[String(params[1])] ?? 'destination-profile-saml';
       return [
         {
           id: 'edge_email',
@@ -222,7 +308,7 @@ class ResolverAdapter implements DatabaseAdapter {
           }),
           target_ref_json: JSON.stringify({
             side: 'destination',
-            profileId: 'destination-profile-saml',
+            profileId: destinationProfileId,
             namespace: 'saml.attribute',
             path: 'urn:oid:0.9.2342.19200300.100.1.3',
             catalogEntryId: 'field.saml.mail',
@@ -288,9 +374,18 @@ function activationRow(
 ) {
   const fieldMappingSetId =
     options.fieldMappingSetId ??
-    (id === 'activation-sp' ? 'field_mapping_sp' : 'field_mapping_default');
+    (id === 'activation-sp'
+      ? 'field_mapping_sp'
+      : id === 'activation-second'
+        ? 'field_mapping_second'
+        : 'field_mapping_default');
   const fieldMappingVersionId =
-    options.fieldMappingVersionId ?? (id === 'activation-sp' ? 'version_sp' : 'version_default');
+    options.fieldMappingVersionId ??
+    (id === 'activation-sp'
+      ? 'version_sp'
+      : id === 'activation-second'
+        ? 'version_second'
+        : 'version_default');
   return {
     activation_id: id,
     tenant_id: 'tenant_a',

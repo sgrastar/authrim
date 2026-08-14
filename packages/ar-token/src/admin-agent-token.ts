@@ -469,7 +469,8 @@ async function handleAdminAgentRefresh(
     const authenticated = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/token`,
-      credentials.credentials
+      credentials.credentials,
+      { replayProtection: { env: c.env, tenantId } }
     );
     if (!authenticated.ok) {
       return errorResponse(c, authenticated.error, authenticated.errorDescription, 401);
@@ -1152,7 +1153,8 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
     const result = await authenticateConfidentialOAuthClient(
       client,
       `${baseIssuer}/oauth/admin-agent/token`,
-      credentials.credentials
+      credentials.credentials,
+      { replayProtection: { env: c.env, tenantId } }
     );
     if (!result.ok) return errorResponse(c, result.error, result.errorDescription, 401);
   }
@@ -1195,6 +1197,9 @@ export async function adminAgentTokenHandler(c: Context<{ Bindings: Env }>): Pro
       expectedAuthorizationServer: 'admin_agent',
       expectedSubjectType: 'admin_user',
       expectedResource: resource,
+      expectedRedirectUri: form.redirect_uri,
+      enforceDpopBinding: true,
+      expectedDpopJkt: dpopJkt,
       accessTokenJti,
     });
   } catch {

@@ -27,9 +27,7 @@ export function applySAMLResponseSigningPolicy(
   signingMaterial: SAMLSigningMaterial,
   signer: XmlSigner = signXml
 ): string {
-  if (!spConfig.signAssertions && !spConfig.signResponses) {
-    return xml;
-  }
+  assertSAMLResponseSigningPolicy(spConfig);
 
   const ids = extractSAMLResponseIds(xml);
   let signedXml = xml;
@@ -68,9 +66,7 @@ export function applySAMLErrorResponseSigningPolicy(
   signingMaterial: SAMLSigningMaterial,
   signer: XmlSigner = signXml
 ): string {
-  if (!spConfig.signAssertions && !spConfig.signResponses) {
-    return xml;
-  }
+  assertSAMLResponseSigningPolicy(spConfig);
 
   const ids = extractSAMLResponseIds(xml);
   return signer(xml, {
@@ -81,6 +77,14 @@ export function applySAMLErrorResponseSigningPolicy(
     signatureInsertionXPath: issuerInsertionXPath(ids.responseId),
     includeKeyInfo: true,
   });
+}
+
+export function assertSAMLResponseSigningPolicy(
+  spConfig: Pick<SAMLSPConfig, 'signAssertions' | 'signResponses'>
+): void {
+  if (!spConfig.signAssertions && !spConfig.signResponses) {
+    throw new Error('SAML Response signing is required');
+  }
 }
 
 export function extractSAMLResponseIds(xml: string): { responseId: string; assertionId?: string } {

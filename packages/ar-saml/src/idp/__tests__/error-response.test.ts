@@ -34,6 +34,16 @@ describe('SAML IdP error response', () => {
     expect(findElement(doc, 'urn:oasis:names:tc:SAML:2.0:assertion', 'Assertion')).toBeNull();
   });
 
+  it('does not emit an unsigned error response for a configured SP', () => {
+    expect(() =>
+      buildSAMLIdPErrorResponse({
+        issuer: 'https://idp.example.com/saml/idp',
+        destination: 'https://sp.example.com/acs',
+        spConfig: { signAssertions: false, signResponses: false },
+      })
+    ).toThrow('SAML Response signing is required');
+  });
+
   it('uses generic required attribute failure messages by default', () => {
     expect(
       getSAMLAttributeReleaseFailureStatusMessage({}, [

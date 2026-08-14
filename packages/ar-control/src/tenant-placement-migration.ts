@@ -487,7 +487,11 @@ export class TenantPlacementMigrationService {
     }
     const now = this.now();
     for (const source of sources.results) {
-      const result = await this.dependencies.sourceD1!.queryD1(
+      const sourceD1 = this.dependencies.sourceD1;
+      if (!sourceD1) {
+        throw new Error('control_tenant_placement_migration_cancel_cleanup_unavailable');
+      }
+      const result = await sourceD1.queryD1(
         source.provider_resource_id,
         `UPDATE tenant_placement_migration_captures
             SET capture_state = 'canceled', canceled_at = ?, updated_at = ?

@@ -71,6 +71,9 @@ export interface MockDurableObjectStub {
   consumeCodeRpc?: Mock<
     (params: { code: string; clientId: string; codeVerifier?: string }) => Promise<object>
   >;
+  registerIssuedTokensRpc?: Mock<
+    (code: string, accessTokenJti: string, refreshTokenJti?: string) => Promise<boolean>
+  >;
   // RPC methods for RefreshTokenRotator
   rotateTokenRpc?: Mock<(params: object) => Promise<object>>;
   createFamilyRpc?: Mock<
@@ -239,6 +242,8 @@ export function createMockDurableObjectStub(options?: {
     getAllPublicKeysRpc: options?.rpcMethods?.getAllPublicKeysRpc ?? vi.fn().mockResolvedValue([]),
     consumeCodeRpc:
       options?.rpcMethods?.consumeCodeRpc ?? vi.fn().mockRejectedValue(new Error('Code not found')),
+    registerIssuedTokensRpc:
+      options?.rpcMethods?.registerIssuedTokensRpc ?? vi.fn().mockResolvedValue(true),
     rotateTokenRpc:
       options?.rpcMethods?.rotateTokenRpc ??
       vi.fn().mockRejectedValue(new Error('Token not found')),

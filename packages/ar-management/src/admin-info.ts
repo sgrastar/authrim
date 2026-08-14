@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import type { AuditProfile, Env, ResidencyProfile } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
+  createD1Adapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
@@ -69,7 +69,10 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    // /api/admin/tenants/:id/info is a tenant-inventory route and therefore
+    // deliberately has no request-scoped tenant metadata context. Read the
+    // platform tenant directory through the deployment Core binding.
+    const adapter = createD1Adapter(c.env.DB, 'tenant-info');
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string; name: string }>(

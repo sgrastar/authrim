@@ -1,8 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   CloudflareControlApiClient,
   calculateControlBootstrapOwnershipFingerprint,
   digestCloudflareWorkerSettings,
+  signBootstrapAcceleratorProof,
   type CloudflareWorkerDeployment,
   type ControlBootstrapOwnershipResource,
 } from '@authrim/ar-lib-core/control-plane';
@@ -34,6 +37,7 @@ import {
 import type { ReleaseMigrationManifest } from './release-migrations.js';
 import type { DeployResult } from './deploy.js';
 import { isValidTenantId } from './tenant-id.js';
+import { fetchWithTimeout } from './http-limits.js';
 
 function sqlString(value: string): string {
   return `'${value.replace(/'/gu, "''")}'`;
@@ -786,6 +790,32 @@ function workerDeploymentIdentity(
   return `${workerScriptName}\0${deploymentId}\0${versionId}`;
 }
 
+export function workerVersionIdentity(workerScriptName: string, versionId: string): string {
+  return `${workerScriptName}\0${versionId}`;
+}
+
+export async function listInitialBootstrapReconciledWorkerVersions(input: {
+  environmentId: string;
+  controlDatabaseName: string;
+  query?: typeof queryD1Rows;
+}): Promise<Set<string>> {
+  const query = input.query ?? queryD1Rows;
+  const rows = await query<{
+    worker_script_name: string;
+    patch_result_version_id: string;
+  }>(
+    input.controlDatabaseName,
+    `SELECT DISTINCT worker_script_name, patch_result_version_id
+       FROM control_worker_binding_reconciliations
+      WHERE environment_id = ${sqlString(input.environmentId)}
+        AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing', 'succeeded')
+        AND patch_result_version_id IS NOT NULL`
+  );
+  return new Set(
+    rows.map((row) => workerVersionIdentity(row.worker_script_name, row.patch_result_version_id))
+  );
+}
+
 export async function recordInitialBootstrapWorkerEvidence(input: {
   environmentId: string;
   controlDatabaseName: string;
@@ -1029,10 +1059,51 @@ export async function isInitialBootstrapHandoffAccepted(input: {
   return row?.state === 'accepted';
 }
 
+export async function requestInitialBootstrapAcceleration(input: {
+  apiBaseUrl: string;
+  environmentId: string;
+  keysDir: string;
+  activeSlot: 'A' | 'B';
+  activeKeyId: string;
+  fetch?: typeof fetch;
+}): Promise<'accepted' | 'inactive'> {
+  const privateJwk = JSON.parse(
+    await readFile(
+      join(
+        input.keysDir,
+        `smoke_rpc_signing_jwk_slot_${input.activeSlot.toLowerCase()}.private.jwk.json`
+      ),
+      'utf8'
+    )
+  ) as Record<string, unknown>;
+  const proof = await signBootstrapAcceleratorProof({
+    environmentId: input.environmentId,
+    jti: `setup-${randomBytes(18).toString('base64url')}`,
+    privateJwk,
+    keyId: input.activeKeyId,
+  });
+  const response = await (input.fetch ?? fetchWithTimeout)(
+    `${input.apiBaseUrl.replace(/\/+$/u, '')}/api/internal/control/bootstrap/advance`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${proof}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    }
+  );
+  if (response.status === 202) return 'accepted';
+  if (response.status === 404) return 'inactive';
+  throw new Error(`control_bootstrap_accelerator_http_${response.status}`);
+}
+
 export async function waitForInitialBootstrapHandoff(input: {
   environmentId: string;
   controlDatabaseName: string;
   timeoutMs?: number;
+  stallTimeoutMs?: number;
   pollIntervalMs?: number;
   query?: typeof queryD1Rows;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -1042,13 +1113,17 @@ export async function waitForInitialBootstrapHandoff(input: {
   refreshEvidence?: () => Promise<unknown>;
   reconcile?: () => Promise<unknown>;
 }): Promise<{ state: 'accepted'; acceptedAt: number }> {
-  const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 5 * 60_000, 15 * 60_000));
+  const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 5 * 60_000, 30 * 60_000));
+  const stallTimeoutMs = Math.max(1_000, Math.min(input.stallTimeoutMs ?? timeoutMs, timeoutMs));
   const pollIntervalMs = Math.max(250, Math.min(input.pollIntervalMs ?? 5_000, 30_000));
   const query = input.query ?? queryD1Rows;
   const sleep =
     input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const now = input.now ?? Date.now;
-  const deadline = now() + timeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  let stallDeadline = startedAt + stallTimeoutMs;
+  let lastProgressIdentity = '';
   let completedBindingCountAwaitingConfirmation: number | null = null;
   while (now() <= deadline) {
     await input.advanceBindings?.();
@@ -1058,6 +1133,9 @@ export async function waitForInitialBootstrapHandoff(input: {
       accepted_at: number | string | null;
       total_bindings: number | string;
       pending_bindings: number | string;
+      failed_bindings: number | string;
+      failed_binding_error_code: string | null;
+      latest_binding_update: number | string | null;
     }>(
       input.controlDatabaseName,
       `SELECT handoff.state, handoff.verification_error_code, handoff.accepted_at,
@@ -1065,7 +1143,20 @@ export async function waitForInitialBootstrapHandoff(input: {
                 WHERE reconciliation.environment_id = handoff.environment_id) AS total_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
-                  AND reconciliation.state <> 'succeeded') AS pending_bindings
+                  AND reconciliation.state NOT IN ('succeeded', 'blocked', 'rolled_back'))
+                AS pending_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state IN ('blocked', 'rolled_back')) AS failed_bindings,
+              (SELECT reconciliation.last_error_code
+                 FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state IN ('blocked', 'rolled_back')
+                ORDER BY reconciliation.updated_at DESC LIMIT 1) AS failed_binding_error_code,
+              (SELECT MAX(reconciliation.updated_at)
+                 FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id)
+                AS latest_binding_update
          FROM control_bootstrap_handoffs handoff
         WHERE handoff.environment_id = ${sqlString(input.environmentId)}`
     );
@@ -1082,6 +1173,13 @@ export async function waitForInitialBootstrapHandoff(input: {
         `control_bootstrap_handoff_blocked:${row.verification_error_code ?? 'unknown'}`
       );
     }
+    const failedBindings = Math.max(0, Number(row.failed_bindings) || 0);
+    if (failedBindings > 0) {
+      const safeError = /^control_[a-z0-9_]{1,128}$/u.test(row.failed_binding_error_code ?? '')
+        ? row.failed_binding_error_code
+        : 'control_worker_binding_reconciliation_failed';
+      throw new Error(`control_bootstrap_binding_blocked:${safeError}`);
+    }
     const pendingBindings = Math.max(0, Number(row.pending_bindings));
     const queriedTotalBindings = Number(row.total_bindings);
     const totalBindings =
@@ -1089,6 +1187,13 @@ export async function waitForInitialBootstrapHandoff(input: {
         ? queriedTotalBindings
         : pendingBindings;
     const completedBindings = Math.max(0, totalBindings - pendingBindings);
+    const progressIdentity = `${totalBindings}:${completedBindings}:${String(
+      row.latest_binding_update ?? ''
+    )}`;
+    if (progressIdentity !== lastProgressIdentity) {
+      lastProgressIdentity = progressIdentity;
+      stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
+    }
     input.onProgress?.(
       `Control bootstrap verification progress: ${completedBindings}/${totalBindings} binding checks complete (${pendingBindings} remaining)...`
     );
@@ -1103,6 +1208,9 @@ export async function waitForInitialBootstrapHandoff(input: {
       await input.reconcile?.();
     }
     await sleep(pollIntervalMs);
+    if (now() > stallDeadline && now() <= deadline) {
+      throw new Error('control_bootstrap_handoff_stalled');
+    }
   }
   throw new Error('control_bootstrap_handoff_timeout');
 }

@@ -402,7 +402,7 @@
 				}
 				await adminIdentityMappingAPI.activateFieldMappingVersion(policyId, version.id, {
 					snapshotId,
-					activationScope: { kind: 'tenant' }
+					activationScope: activationScopeForRules(version.rules ?? [])
 				});
 			}
 		);
@@ -562,7 +562,7 @@
 			const snapshotId = snapshot.result.id;
 			await adminIdentityMappingAPI.activateFieldMappingVersion(policy.id, version.result.id, {
 				snapshotId,
-				activationScope: { kind: 'tenant' }
+				activationScope: activationScopeForRules(draft.rules)
 			});
 			fieldMappingSetSummaries = fieldMappingSetSummaries.map((candidate) =>
 				candidate.id === policy.id ? { ...candidate, lifecycleState: 'active' } : candidate
@@ -573,6 +573,18 @@
 		selectedPolicySide = editSide;
 		await refreshSelectedFieldMappingVersions();
 		editorHasUnsavedDraftChanges = false;
+	}
+
+	function activationScopeForRules(
+		rules: Array<{ edges?: Array<{ sourceRef?: Record<string, unknown> }> }>
+	): Record<string, unknown> {
+		const namespaces = rules.flatMap((rule) =>
+			(rule.edges ?? []).map((edge) => String(edge.sourceRef?.namespace ?? ''))
+		);
+		if (namespaces.some((namespace) => namespace === 'scim.attribute')) {
+			return { kind: 'tenant', protocol: 'scim', role: 'receiver' };
+		}
+		return { kind: 'tenant' };
 	}
 
 	function fieldMappingKeyFromDisplayName(value: string): string {

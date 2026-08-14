@@ -14,6 +14,7 @@ export interface ReleaseDeploymentGuardResult {
     | 'unknown_product_version'
     | 'initial_deploy_required'
     | 'release_update_in_progress'
+    | 'initial_manifest_changed'
     | 'topology_update_in_progress'
     | 'release_update_required';
 }
@@ -27,7 +28,9 @@ export function evaluateReleaseDeploymentGuard(
   lock: AuthrimLock,
   targetVersion: string,
   operation: Exclude<EnvironmentOperationKind, 'provision' | 'delete' | 'release_update'>,
-  options: { releaseManifestChecksum?: string } = {}
+  options: {
+    releaseManifestChecksum?: string;
+  } = {}
 ): ReleaseDeploymentGuardResult {
   const decision = evaluateEnvironmentOperation({
     operation,
@@ -39,31 +42,33 @@ export function evaluateReleaseDeploymentGuard(
   const reason =
     decision.reason === 'release_update_in_progress'
       ? 'release_update_in_progress'
-      : decision.reason === 'topology_update_in_progress'
-        ? 'topology_update_in_progress'
-        : decision.reason === 'release_update_required'
-          ? 'release_update_required'
-          : decision.reason === 'initial_deploy_required'
-            ? 'initial_deploy_required'
-            : decision.reason === 'legacy_reconciliation_required'
-              ? Object.values(lock.workers ?? {}).some((worker) => !worker.version)
-                ? 'unknown_worker_version'
-                : new Set(
-                      Object.values(lock.workers ?? {}).flatMap((worker) =>
-                        worker.version ? [worker.version] : []
-                      )
-                    ).size > 1
-                  ? 'mixed_worker_versions'
-                  : [
-                        ...new Set(
-                          Object.values(lock.workers ?? {}).flatMap((worker) =>
-                            worker.version ? [worker.version] : []
-                          )
-                        ),
-                      ][0] !== targetVersion
-                    ? 'release_update_required'
-                    : 'unknown_product_version'
-              : 'unknown_product_version';
+      : decision.reason === 'initial_manifest_changed'
+        ? 'initial_manifest_changed'
+        : decision.reason === 'topology_update_in_progress'
+          ? 'topology_update_in_progress'
+          : decision.reason === 'release_update_required'
+            ? 'release_update_required'
+            : decision.reason === 'initial_deploy_required'
+              ? 'initial_deploy_required'
+              : decision.reason === 'legacy_reconciliation_required'
+                ? Object.values(lock.workers ?? {}).some((worker) => !worker.version)
+                  ? 'unknown_worker_version'
+                  : new Set(
+                        Object.values(lock.workers ?? {}).flatMap((worker) =>
+                          worker.version ? [worker.version] : []
+                        )
+                      ).size > 1
+                    ? 'mixed_worker_versions'
+                    : [
+                          ...new Set(
+                            Object.values(lock.workers ?? {}).flatMap((worker) =>
+                              worker.version ? [worker.version] : []
+                            )
+                          ),
+                        ][0] !== targetVersion
+                      ? 'release_update_required'
+                      : 'unknown_product_version'
+                : 'unknown_product_version';
   return { allowed: false, currentVersion: decision.currentVersion, reason };
 }
 
@@ -79,6 +84,9 @@ export function releaseDeploymentGuardMessage(
   }
   if (result.reason === 'release_update_in_progress') {
     return 'A release update is incomplete; resume it with authrim-setup update before any direct deployment.';
+  }
+  if (result.reason === 'initial_manifest_changed') {
+    return 'The draft migration manifest changed during initial deployment. Resume is disabled because the saved deployment state may no longer match the databases. Delete this incomplete environment and create it again.';
   }
   if (result.reason === 'topology_update_in_progress') {
     return 'A topology update is incomplete; resume its dedicated topology command before any other deployment.';

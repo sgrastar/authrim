@@ -5,6 +5,7 @@ import type {
   ExecuteResult,
   Env,
   HealthStatus,
+  PreparedStatement,
   TransactionContext,
 } from '@authrim/ar-lib-core';
 import {
@@ -34,9 +35,14 @@ function createAdapter(options: {
   queryRows?: Record<string, unknown>[];
   queryRowSets?: Record<string, unknown>[][];
   queryOneRows?: Array<Record<string, unknown> | null>;
-}): DatabaseAdapter & { executes: RecordedExecute[]; queries: RecordedQuery[] } {
+}): DatabaseAdapter & {
+  executes: RecordedExecute[];
+  queries: RecordedQuery[];
+  batches: PreparedStatement[][];
+} {
   const executes: RecordedExecute[] = [];
   const queries: RecordedQuery[] = [];
+  const batches: PreparedStatement[][] = [];
   const queryRows = [...(options.queryRows ?? [])];
   const queryRowSets = [...(options.queryRowSets ?? [])];
   const queryOneRows = [...(options.queryOneRows ?? [])];
@@ -44,6 +50,7 @@ function createAdapter(options: {
   return {
     executes,
     queries,
+    batches,
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       queries.push({ sql, params });
       if (queryRowSets.length > 0) {
@@ -61,8 +68,11 @@ function createAdapter(options: {
     async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
       return fn(this);
     },
-    async batch(): Promise<ExecuteResult[]> {
-      return [];
+    async batch(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
+      batches.push(statements);
+      return Promise.all(
+        statements.map((statement) => this.execute(statement.sql, statement.params ?? []))
+      );
     },
     async isHealthy(): Promise<HealthStatus> {
       return { healthy: true, latencyMs: 1, type: 'test' };
@@ -160,6 +170,32 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
             customKey: 'field.canonical.email',
             displayName: 'Email Shadow',
             valueType: 'string',
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects OIDC catalog entries for authorization-server protocol claims', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createCatalog('tenant_a', {
+        catalogKey: 'unsafe-oidc',
+        displayName: 'Unsafe OIDC Catalog',
+        versionLabel: 'v1',
+        entries: [
+          {
+            ...catalogEntry,
+            id: 'field.oidc.acr',
+            namespace: 'oidc.claim',
+            path: 'acr',
+            targetType: 'destination-only',
           },
         ],
       })
@@ -772,6 +808,25 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         {
           tenant_id: 'tenant_a',
           lifecycle_state: 'reviewed',
+          destination_type: 'oidc',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          schema_json: JSON.stringify({
+            destinationType: 'oidc',
+            claims: [
+              {
+                claimName: 'sub',
+                required: true,
+                surfaces: ['id_token', 'userinfo'],
+              },
+              {
+                claimName: 'library_card',
+                classification: 'pii',
+                surfaces: ['userinfo'],
+                requiredScopes: ['library'],
+              },
+            ],
+          }),
         },
       ],
     });
@@ -841,6 +896,8 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('UPDATE destination_profile_versions'),
       expect.stringContaining('UPDATE destination_profiles'),
     ]);
+    expect(adapter.batches).toHaveLength(1);
+    expect(adapter.batches[0]).toHaveLength(3);
     expect(created.version.releaseImpact).toMatchObject({
       destinationType: 'oidc',
       claimCount: 2,
@@ -876,6 +933,75 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       status: 400,
       code: 'invalid_request',
     });
+  });
+
+  it('rejects activation when a stored OIDC profile releases PII without a scope', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          tenant_id: 'tenant_a',
+          lifecycle_state: 'reviewed',
+          destination_type: 'oidc',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          schema_json: JSON.stringify({
+            destinationType: 'oidc',
+            claims: [
+              {
+                claimName: 'sub',
+                required: true,
+                surfaces: ['id_token', 'userinfo'],
+              },
+              {
+                claimName: 'email',
+                classification: 'pii',
+                surfaces: ['userinfo'],
+                requiredScopes: [],
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateDestinationProfileVersion('tenant_a', 'profile_1', 'version_1')
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('email must require at least one scope'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects activating a second Resource Server profile for the same client', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          tenant_id: 'tenant_a',
+          lifecycle_state: 'reviewed',
+          destination_type: 'resource_server',
+          owner_scope_type: 'client',
+          owner_scope_id: 'payments-api',
+          schema_json: JSON.stringify({
+            destinationType: 'resource_server',
+            claims: [{ claimName: 'active', required: true }],
+          }),
+        },
+        { id: 'profile_already_active' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateDestinationProfileVersion('tenant_a', 'profile_2', 'version_2')
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+      message: expect.stringContaining('already owns this client'),
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('rejects an OIDC destination profile that makes sub optional', async () => {
@@ -1084,6 +1210,74 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('INSERT INTO destination_profiles'),
       expect.stringContaining('INSERT INTO destination_profile_versions'),
     ]);
+  });
+
+  it('requires a client-owned Resource Server profile and scoped sensitive claims', async () => {
+    const repository = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'resource_server',
+        profileKey: 'payments_introspection',
+        displayName: 'Payments Introspection',
+        ownerScopeType: 'tenant',
+        schema: {
+          destinationType: 'resource_server',
+          claims: [{ claimName: 'active', required: true }],
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'resource_server',
+        profileKey: 'payments_introspection',
+        displayName: 'Payments Introspection',
+        ownerScopeType: 'client',
+        ownerScopeId: 'payments-api',
+        schema: {
+          destinationType: 'resource_server',
+          claims: [
+            { claimName: 'active', required: true },
+            { claimName: 'employee_number', classification: 'pii' },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    const adapter = createAdapter({});
+    const validRepository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const created = await validRepository.createDestinationProfile('tenant_a', {
+      destinationType: 'resource_server',
+      profileKey: 'payments_introspection',
+      displayName: 'Payments Introspection',
+      ownerScopeType: 'client',
+      ownerScopeId: 'payments-api',
+      schema: {
+        destinationType: 'resource_server',
+        claims: [
+          { claimName: 'active', required: true },
+          {
+            claimName: 'employee_number',
+            classification: 'pii',
+            requiredScopes: ['employee'],
+          },
+        ],
+      },
+    });
+
+    expect(created).toMatchObject({
+      destinationType: 'resource_server',
+      ownerScopeType: 'client',
+      ownerScopeId: 'payments-api',
+      version: {
+        releaseImpact: {
+          destinationType: 'resource_server',
+          claimCount: 2,
+          piiClaimCount: 1,
+        },
+      },
+    });
   });
 
   it('rejects required flags on SAML Destination Profile attributes', async () => {
@@ -1298,6 +1492,26 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository policy activation', () => {
+  const sensitiveCatalogRow = {
+    id: 'schema_email',
+    field_key: 'email',
+    active_field_key: 'email',
+    display_label: 'Email',
+    field_type: 'string',
+    cardinality: 'single',
+    is_pii: 1,
+    is_required: 0,
+    validation_rules: '{}',
+    description: 'Email address',
+    display_order: 10,
+    ui_group_key: 'profile',
+    ui_group_label: 'Profile',
+    ui_group_order: 10,
+    ui_field_order: 10,
+    examples_json: '[]',
+    schema_version: 1,
+  };
+
   it('lists policy versions with latest compiled snapshot for operations UI', async () => {
     const adapter = createAdapter({
       queryRowSets: [
@@ -1558,6 +1772,136 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('rejects activation when a PII source is downgraded to an unscoped internal claim', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'email',
+              catalogEntryId: 'field.canonical.email',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'oidc.claim',
+              path: 'email',
+              profileId: 'destination-profile-profile_oidc',
+            }),
+          },
+        ],
+        [
+          {
+            id: 'profile_oidc',
+            tenant_id: 'tenant_a',
+            destination_type: 'oidc',
+            lifecycle_state: 'active',
+            schema_json: JSON.stringify({
+              destinationType: 'oidc',
+              claims: [{ claimName: 'email', classification: 'internal', requiredScopes: [] }],
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant', id: 'tenant_a' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('cannot lower classification'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('allows activation when a PII source remains PII and requires a scope', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'email',
+              catalogEntryId: 'field.canonical.email',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'oidc.claim',
+              path: 'email',
+              profileId: 'destination-profile-profile_oidc',
+            }),
+          },
+        ],
+        [
+          {
+            id: 'profile_oidc',
+            tenant_id: 'tenant_a',
+            destination_type: 'oidc',
+            lifecycle_state: 'active',
+            schema_json: JSON.stringify({
+              destinationType: 'oidc',
+              claims: [{ claimName: 'email', classification: 'pii', requiredScopes: ['email'] }],
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant', id: 'tenant_a' },
+      })
+    ).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
   it('deactivates an active field mapping set version', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1698,6 +2042,34 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                   namespace: 'authrim.profile',
                   path: 'email',
                 },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects mapping edges that target OIDC protocol claims', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ruleKey: 'unsafe-acr-destination',
+            ruleKind: 'mapping',
+            action: 'allow',
+            edges: [
+              {
+                sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'assurance' },
+                targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'acr' },
               },
             ],
           },
@@ -3157,9 +3529,17 @@ describe('identity mapping control plane Admin API handlers', () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      protocolSchemas: [
-        {
+    const body = (await response.json()) as { protocolSchemas: Array<Record<string, unknown>> };
+    expect(body.protocolSchemas).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'builtin_scim_user_schema',
+          tenantId: 'tenant_a',
+          protocol: 'scim',
+          schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
+          lifecycleState: 'active',
+        }),
+        expect.objectContaining({
           id: 'protocol_schema_1',
           tenantId: 'tenant_a',
           protocol: 'scim',
@@ -3167,9 +3547,9 @@ describe('identity mapping control plane Admin API handlers', () => {
           schemaVersion: '2.0',
           schema: { attributes: [{ name: 'userName' }] },
           lifecycleState: 'active',
-        },
-      ],
-    });
+        }),
+      ])
+    );
   });
 
   it('rejects tenant admins creating platform-scoped destination profiles', async () => {

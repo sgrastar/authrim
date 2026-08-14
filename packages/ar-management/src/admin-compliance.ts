@@ -27,6 +27,8 @@ import {
   createAuditLogFromContext,
   getLogger,
   getNestedValue,
+  getTenantSystemSettings,
+  requireAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import {
@@ -152,21 +154,6 @@ function determineOverallStatus(statuses: ComplianceStatus[]): ComplianceStatus 
   return 'compliant';
 }
 
-function parseSettingsObject(settingsJson: string | null | undefined): Record<string, unknown> {
-  if (!settingsJson) {
-    return {};
-  }
-
-  try {
-    const parsed = JSON.parse(settingsJson) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
 function getBooleanSetting(
   settings: Record<string, unknown>,
   path: string,
@@ -206,6 +193,17 @@ function getNumberSetting(
   return fallback;
 }
 
+async function loadComplianceSettings(
+  env: Env,
+  tenantId: string
+): Promise<Record<string, unknown>> {
+  return (
+    (await getTenantSystemSettings(env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) ?? {}
+  );
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -233,22 +231,27 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
     const thirtyDaysAgo = nowTs - 30 * 24 * 60 * 60;
 
-    // 1. Get tenant settings for compliance configuration
-    const tenantSettingsRow = await adapter.queryOne<{ settings: string | null }>(
-      'SELECT settings FROM tenants WHERE id = ?',
-      [tenantId]
-    );
-    const tenantSettingsObject = parseSettingsObject(tenantSettingsRow?.settings);
+    // 1. Tenant settings are stored in KV. The tenants table intentionally
+    // contains lifecycle metadata only and has no settings column.
+    const tenantSettingsObject = await loadComplianceSettings(c.env, tenantId);
     const tenantSettings = {
       data_retention_enabled: getBooleanSetting(
         tenantSettingsObject,
-        'data_retention.enabled',
-        false
+        'compliance.data_retention_enabled',
+        getBooleanSetting(tenantSettingsObject, 'data_retention.enabled', false)
       ),
-      data_retention_days: getNumberSetting(tenantSettingsObject, 'data_retention.days', null),
+      data_retention_days: getNumberSetting(
+        tenantSettingsObject,
+        'compliance.data_retention_days',
+        getNumberSetting(tenantSettingsObject, 'data_retention.days', null)
+      ),
       mfa_enforced: getBooleanSetting(tenantSettingsObject, 'security.mfa_enforced', false),
       audit_log_retention_days:
-        getNumberSetting(tenantSettingsObject, 'audit.retention_days', 90) ?? 90,
+        getNumberSetting(
+          tenantSettingsObject,
+          'logging.audit_log_retention_days',
+          getNumberSetting(tenantSettingsObject, 'audit.retention_days', 90)
+        ) ?? 90,
     };
 
     // 2. Get audit log statistics
@@ -273,7 +276,8 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     }
 
     // 3. Get MFA status
-    const mfaStats = await adapter.queryOne<{
+    const adminAdapter = requireAdminDatabaseAdapter(c.env, 'admin-compliance-mfa');
+    const mfaStats = await adminAdapter.queryOne<{
       users_with_mfa: number;
       users_without_mfa: number;
     }>(
@@ -292,7 +296,7 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     }>(
       `SELECT
         (SELECT COUNT(DISTINCT id) FROM roles WHERE tenant_id = ?) as active_roles,
-        (SELECT COUNT(DISTINCT user_id) FROM user_roles WHERE tenant_id = ?) as users_with_roles`,
+        (SELECT COUNT(DISTINCT subject_id) FROM role_assignments WHERE tenant_id = ?) as users_with_roles`,
       [tenantId, tenantId]
     );
 
@@ -305,11 +309,6 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
     );
     // Note: last_cleanup would require PII DB access, set to null for now
     const lastCleanup: number | null = null;
-
-    // 6. Get signing key status for encryption info
-    const keyStats = await adapter.queryOne<{
-      last_rotation: number | null;
-    }>('SELECT MAX(created_at) as last_rotation FROM signing_keys WHERE tenant_id = ?', [tenantId]);
 
     // Calculate MFA coverage
     const totalUsers = (mfaStats?.users_with_mfa || 0) + (mfaStats?.users_without_mfa || 0);
@@ -428,7 +427,10 @@ export async function adminComplianceStatusHandler(c: Context<{ Bindings: Env }>
         data_at_rest: true, // D1/R2 provide encryption at rest
         data_in_transit: true, // HTTPS enforced
         key_rotation_enabled: true,
-        last_key_rotation: toISOString(keyStats?.last_rotation ?? null),
+        // Signing keys are managed by KeyManager Durable Objects, not a
+        // relational signing_keys table. Rotation history is not exposed by
+        // this summary endpoint yet.
+        last_key_rotation: null,
       },
       access_control: {
         rbac_enabled: true, // Always enabled
@@ -1051,23 +1053,23 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
     const nowTs = Math.floor(Date.now() / 1000);
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId);
 
-    // Get tenant retention settings
-    const tenantSettingsRow = await adapter.queryOne<{ settings: string | null }>(
-      'SELECT settings FROM tenants WHERE id = ?',
-      [tenantId]
-    );
-    const tenantSettingsObject = parseSettingsObject(tenantSettingsRow?.settings);
+    // Retention configuration is stored in KV, not on the tenants row.
+    const tenantSettingsObject = await loadComplianceSettings(c.env, tenantId);
     const tenantSettings = {
       data_retention_enabled: getBooleanSetting(
         tenantSettingsObject,
-        'data_retention.enabled',
-        false
+        'compliance.data_retention_enabled',
+        getBooleanSetting(tenantSettingsObject, 'data_retention.enabled', false)
       ),
-      data_retention_days: getNumberSetting(tenantSettingsObject, 'data_retention.days', null),
+      data_retention_days: getNumberSetting(
+        tenantSettingsObject,
+        'compliance.data_retention_days',
+        getNumberSetting(tenantSettingsObject, 'data_retention.days', null)
+      ),
       audit_log_retention_days: getNumberSetting(
         tenantSettingsObject,
-        'audit.retention_days',
-        null
+        'logging.audit_log_retention_days',
+        getNumberSetting(tenantSettingsObject, 'audit.retention_days', null)
       ),
       session_retention_days: getNumberSetting(
         tenantSettingsObject,
@@ -1158,7 +1160,8 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
       records_deleted_last_30_days: 0,
     });
 
-    // Tombstones statistics (for GDPR tracking)
+    // Deleted identity accounts are the current Core lifecycle tombstones.
+    // There is no standalone `tombstones` table in the current schema.
     const tombstoneStats = await adapter.queryOne<{
       total: number;
       oldest_date: number | null;
@@ -1166,8 +1169,8 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
       `SELECT
         COUNT(*) as total,
         MIN(deleted_at) as oldest_date
-      FROM tombstones
-      WHERE tenant_id = ?`,
+      FROM identity_accounts
+      WHERE tenant_id = ? AND lifecycle_state = 'deleted'`,
       [tenantId]
     );
 

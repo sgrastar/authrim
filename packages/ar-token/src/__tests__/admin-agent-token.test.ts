@@ -666,6 +666,9 @@ describe('Admin Agent token endpoint', () => {
         expectedAuthorizationServer: 'admin_agent',
         expectedSubjectType: 'admin_user',
         expectedResource: 'https://tenant.example.com/mcp',
+        expectedRedirectUri: 'https://client.example.com/callback',
+        enforceDpopBinding: true,
+        expectedDpopJkt: undefined,
         accessTokenJti: expect.any(String),
       })
     );

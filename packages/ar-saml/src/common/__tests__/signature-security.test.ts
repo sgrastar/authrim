@@ -14,7 +14,7 @@
  * @see https://www.w3.org/TR/xmldsig-core/
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   signXml,
   verifyXmlSignature,
@@ -169,6 +169,29 @@ describe('XML Signature Security - SAML 2.0 Core Section 5', () => {
   });
 
   describe('5.4.2 Signature Algorithm Validation', () => {
+    it('rejects an otherwise valid XML signature after the pinned certificate expires', () => {
+      const xml = createTestSAMLResponse();
+      const signedXml = signXml(xml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_test_response_123',
+      });
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2036-01-01T00:00:00Z'));
+      try {
+        expect(() =>
+          verifyXmlSignature(signedXml, {
+            certificateOrKey: testCertificate,
+            expectedId: '_test_response_123',
+            strictXswProtection: true,
+          })
+        ).toThrow('SAML signing certificate has expired');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should reject SHA-1 signature algorithm', async () => {
       // Create XML with SHA-1 signature (manually constructed)
       // Note: The actual signature value is fake, so verification will fail,

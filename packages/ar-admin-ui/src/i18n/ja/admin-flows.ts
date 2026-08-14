@@ -171,7 +171,6 @@ const adminFlows = {
 	admin_flows_cancel: 'キャンセル',
 	admin_flows_apply: '反映',
 	admin_flows_node_settings_aria: '{title} の設定',
-	admin_flows_node_description_aria: '{title} の説明',
 	admin_flows_node_outputs_aria: '{title} outputs',
 	admin_flows_template_saml_attribute_release_title: 'SAML Attribute Release',
 	admin_flows_template_saml_attribute_release_subtitle: 'SAML SPへの属性送信確認',
@@ -444,7 +443,6 @@ const adminFlows = {
 	admin_flows_output_complete: 'Complete',
 	admin_flows_output_matched: 'Matched',
 	admin_flows_output_otherwise: 'Otherwise',
-	admin_flows_editor_start_description: 'リクエスト、直リンク、LoginUIの入口を受け取ります。',
 	admin_flows_editor_registration_request_description:
 		'新規登録リクエストまたはLoginUIの新規登録入口を受け取り、アプリケーション文脈を解決します。',
 	admin_flows_editor_login_request_description:
@@ -460,7 +458,6 @@ const adminFlows = {
 		'Flowを完了し、結果となるセッション、レスポンス、リダイレクトへ接続します。',
 	admin_flows_editor_setting_prompt_create: 'prompt=create',
 	admin_flows_editor_setting_signup_entry: 'signup entry',
-	admin_flows_editor_setting_default_profile: 'Default profile',
 	admin_flows_editor_setting_basic_profile: 'Basic profile',
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',

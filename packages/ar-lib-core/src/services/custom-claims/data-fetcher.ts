@@ -3,18 +3,23 @@
  *
  * Fetches user custom field values from both PII and non-PII databases.
  * - Non-PII: user_custom_fields table (D1_CORE)
- * - PII: identity_sensitive_values.value_json (D1_PII)
+ * - PII: field-level identity_sensitive_values rows (D1_PII)
  */
 
 import type { DatabaseAdapter, DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
 import { createLogger } from '../../utils/logger';
 import type { CustomClaimSchema } from './resolver';
+import {
+  customAttributeFieldKey,
+  customAttributeValueKey,
+  deserializeCustomAttributeValue,
+} from './pii-field-storage';
 
 const log = createLogger().module('CUSTOM-CLAIMS-DATA-FETCHER');
 
-/** Maximum non-PII field keys per query (D1 bind parameter limit defense) */
-const MAX_NON_PII_FIELDS = 200;
+/** Maximum field keys per query (D1 bind parameter limit defense) */
+const MAX_FIELDS_PER_QUERY = 200;
 
 export class UserCustomDataFetcher {
   private coreAdapter: DatabaseAdapter;
@@ -42,13 +47,13 @@ export class UserCustomDataFetcher {
     // Fetch non-PII data
     if (nonPiiKeys.length > 0) {
       const keysToFetch =
-        nonPiiKeys.length > MAX_NON_PII_FIELDS
+        nonPiiKeys.length > MAX_FIELDS_PER_QUERY
           ? (log.info('Non-PII field keys truncated', {
               total: nonPiiKeys.length,
-              max: MAX_NON_PII_FIELDS,
+              max: MAX_FIELDS_PER_QUERY,
               tenantId,
             }),
-            nonPiiKeys.slice(0, MAX_NON_PII_FIELDS))
+            nonPiiKeys.slice(0, MAX_FIELDS_PER_QUERY))
           : nonPiiKeys;
 
       try {
@@ -73,30 +78,36 @@ export class UserCustomDataFetcher {
 
     // Fetch PII data
     if (piiKeys.length > 0 && this.piiAdapter) {
+      const keysToFetch =
+        piiKeys.length > MAX_FIELDS_PER_QUERY
+          ? (log.info('PII field keys truncated', {
+              total: piiKeys.length,
+              max: MAX_FIELDS_PER_QUERY,
+              tenantId,
+            }),
+            piiKeys.slice(0, MAX_FIELDS_PER_QUERY))
+          : piiKeys;
       try {
-        const row = await this.piiAdapter.queryOne<{ value_json: string | null }>(
-          `SELECT value_json
+        const valueKeys = keysToFetch.map(customAttributeValueKey);
+        const placeholders = valueKeys.map(() => '?').join(', ');
+        const rows = await this.piiAdapter.query<{
+          value_key: string;
+          value_json: unknown;
+        }>(
+          `SELECT value_key, value_json
              FROM identity_sensitive_values
             WHERE tenant_id = ?
               AND owner_type = 'runtime_user'
               AND owner_id = ?
-              AND value_key = 'custom_attributes_json'
+              AND value_key IN (${placeholders})
               AND lifecycle_state = 'active'
-            LIMIT 1`,
-          [tenantId, userId]
+            ORDER BY value_key ASC`,
+          [tenantId, userId, ...valueKeys]
         );
-        if (row?.value_json) {
-          const parsed = JSON.parse(row.value_json);
-          const attrs =
-            parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-              ? (parsed as Record<string, unknown>)
-              : {};
-          const piiKeySet = new Set(piiKeys);
-          for (const [key, value] of Object.entries(attrs)) {
-            if (piiKeySet.has(key) && value !== null && value !== undefined) {
-              result.set(key, String(value));
-            }
-          }
+        for (const row of rows) {
+          const fieldKey = customAttributeFieldKey(row.value_key);
+          const value = deserializeCustomAttributeValue(row.value_json);
+          if (fieldKey && value !== null) result.set(fieldKey, value);
         }
       } catch (error) {
         log.error('Failed to fetch PII custom data', { tenantId }, error as Error);

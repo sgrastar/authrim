@@ -519,7 +519,7 @@ interface DevCustomClaimSchema {
 	registration_required: boolean;
 	registration_order: number;
 	registration_placeholder: string | null;
-	operation_status: 'active' | 'renaming' | 'deleting' | 'error';
+	operation_status: 'active' | 'renaming' | 'deleting' | 'reconfiguring' | 'error';
 	operation_detail: string | null;
 	schema_version: number;
 	user_count: number;
@@ -1128,6 +1128,16 @@ interface DevSignInConfirmationPolicy {
 
 const fieldMappingSets = [
 	{
+		id: 'field-mapping-scim-inbound',
+		tenantId: TENANT_ID,
+		fieldMappingKey: 'scim-inbound',
+		displayName: 'SCIM inbound user mapping',
+		description: 'Dev mock inbound SCIM mapping set.',
+		lifecycleState: 'active',
+		createdAt: NOW - 86_400_000,
+		updatedAt: NOW
+	},
+	{
 		id: 'field-mapping-gakunin-basic',
 		tenantId: TENANT_ID,
 		fieldMappingKey: 'gakunin-basic',
@@ -1251,8 +1261,8 @@ const customClaimSchemas: DevCustomClaimSchema[] = [
 		is_system: false,
 		description: 'Stable employee identifier released to selected client applications.',
 		validation_rules: { pattern: '^[A-Z0-9-]{4,32}$' },
-		include_in_id_token: true,
-		include_in_userinfo: true,
+		include_in_id_token: false,
+		include_in_userinfo: false,
 		include_in_introspection: false,
 		required_scopes: ['profile'],
 		scope_mode: 'any',
@@ -1290,7 +1300,7 @@ const customClaimSchemas: DevCustomClaimSchema[] = [
 		description: 'Consent flag used by research applications.',
 		validation_rules: null,
 		include_in_id_token: false,
-		include_in_userinfo: true,
+		include_in_userinfo: false,
 		include_in_introspection: false,
 		required_scopes: ['research'],
 		scope_mode: 'all',
@@ -7218,6 +7228,23 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 function sampleProtocolSchemas() {
 	return [
 		{
+			id: 'schema-scim-user',
+			tenantId: TENANT_ID,
+			protocol: 'scim',
+			schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
+			displayName: 'SCIM 2.0 User (inbound)',
+			schemaVersion: '2.0',
+			lifecycleState: 'active',
+			schema: {
+				attributes: [
+					{ name: 'userName', label: 'User name', type: 'string', required: true },
+					{ name: 'emails.value', label: 'Primary email', type: 'string', required: true },
+					{ name: 'enterprise.employeeNumber', label: 'Employee number', type: 'string' },
+					{ name: 'enterprise.costCenter', label: 'Cost center', type: 'string' }
+				]
+			}
+		},
+		{
 			id: 'schema-oidc-core',
 			tenantId: TENANT_ID,
 			protocol: 'oidc',
@@ -7460,16 +7487,77 @@ async function handleCustomClaims(
 		return json({
 			presets: [
 				{
-					id: 'dev-standard-profile',
-					label: 'Standard profile',
-					description: 'Dev mock preset for common profile claims.',
+					id: 'oidc_standard',
+					label: 'OIDC Standard Claims',
+					description: 'Standard OIDC profile, email, phone, and address claim fields.',
 					fields: [
 						{
 							field_key: 'department',
 							display_label: 'Department',
 							field_type: 'string',
+							cardinality: 'single',
 							is_pii: false,
 							description: 'Department name'
+						}
+					]
+				},
+				{
+					id: 'scim_core_user',
+					label: 'SCIM Core User',
+					description: 'Common scalar SCIM 2.0 User fields, roles, and group identifiers.',
+					fields: [
+						{
+							field_key: 'scim_roles',
+							display_label: 'SCIM Roles',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'SCIM role values'
+						}
+					]
+				},
+				{
+					id: 'scim_enterprise_user',
+					label: 'SCIM Enterprise User',
+					description: 'Workforce fields from the SCIM Enterprise User extension.',
+					fields: [
+						{
+							field_key: 'employee_number',
+							display_label: 'Employee Number',
+							field_type: 'string',
+							cardinality: 'single',
+							is_pii: true,
+							description: 'Enterprise employee number'
+						}
+					]
+				},
+				{
+					id: 'saml_eduperson',
+					label: 'SAML eduPerson',
+					description: 'Common higher-education identity and authorization source fields.',
+					fields: [
+						{
+							field_key: 'edu_person_affiliation',
+							display_label: 'eduPersonAffiliation',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'eduPerson affiliations'
+						}
+					]
+				},
+				{
+					id: 'authorization_context',
+					label: 'Authorization Context',
+					description: 'Common multi-valued roles, groups, and permissions source fields.',
+					fields: [
+						{
+							field_key: 'roles',
+							display_label: 'Roles',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'Application-independent roles'
 						}
 					]
 				}
@@ -12775,8 +12863,28 @@ export async function handleDevAdminMock(
 		.split('/')
 		.filter(Boolean)
 		.map(decodeURIComponent);
+	const method = event.request.method;
 
 	if (segments.length === 0) return json({ ok: true, mode: 'dev-admin-mock' });
+	if (segments[0] === 'scim-tokens' && method === 'GET') {
+		return json({ tokens: [], total: 0 });
+	}
+	if (segments[0] === 'scim-settings' && method === 'GET') {
+		return json({
+			settings: {
+				enabled: true,
+				usersEnabled: true,
+				groupsEnabled: true,
+				bulkEnabled: true,
+				mappingSetId: 'field-mapping-scim-inbound',
+				bulkMaxOperations: 100,
+				bulkMaxPayloadSize: 1048576
+			}
+		});
+	}
+	if (segments[0] === 'scim-settings' && method === 'PUT') {
+		return json({ settings: await readJson(event.request) });
+	}
 	if (segments[0] === 'me' && segments[1] === 'session') {
 		return json({
 			active: true,

@@ -334,13 +334,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_TOKEN_ENDPOINT_AUTH_METHOD',
     label: 'Token Endpoint Auth Method',
     description: 'Client authentication method for token endpoint',
-    enum: [
-      'none',
-      'client_secret_basic',
-      'client_secret_post',
-      'client_secret_jwt',
-      'private_key_jwt',
-    ],
+    enum: ['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt'],
     visibility: 'public',
   },
 
@@ -810,7 +804,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     default: 'RS256',
     envKey: 'CLIENT_TOKEN_ENDPOINT_AUTH_SIGNING_ALG',
     label: 'Token Auth Signing Alg',
-    description: 'Signing algorithm for private_key_jwt/client_secret_jwt authentication',
+    description: 'Signing algorithm for private_key_jwt authentication',
     enum: ['RS256', 'ES256', 'PS256', 'EdDSA'],
     visibility: 'admin',
   },

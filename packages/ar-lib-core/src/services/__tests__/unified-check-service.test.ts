@@ -285,6 +285,85 @@ describe('UnifiedCheckService', () => {
 
       expect(mockKV.put).toHaveBeenCalled();
     });
+
+    it('does not let resource context poison the cache for a later request', async () => {
+      const cached = new Map<string, string>();
+      const cache = {
+        get: vi.fn(async (key: string) => cached.get(key) ?? null),
+        put: vi.fn(async (key: string, value: string) => {
+          cached.set(key, value);
+        }),
+      };
+      const cacheService = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        cache: cache as unknown as KVNamespace,
+      });
+
+      const allowed = await cacheService.check({
+        subject_id: 'user_123',
+        permission: 'documents:read',
+        tenant_id: 'default',
+        resource_context: { owner_id: 'user_123' },
+      });
+      const denied = await cacheService.check({
+        subject_id: 'user_123',
+        permission: 'documents:read',
+        tenant_id: 'default',
+        resource_context: { owner_id: 'other_user' },
+      });
+
+      expect(allowed.allowed).toBe(true);
+      expect(allowed.cache_ttl).toBe(0);
+      expect(denied.allowed).toBe(false);
+      expect(cache.get).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('does not let contextual ReBAC tuples poison a later relationship check', async () => {
+      const cached = new Map<string, string>();
+      const cache = {
+        get: vi.fn(async (key: string) => cached.get(key) ?? null),
+        put: vi.fn(async (key: string, value: string) => {
+          cached.set(key, value);
+        }),
+      };
+      const rebacService = {
+        check: vi.fn(async (request: { context?: { contextual_tuples?: unknown[] } }) => ({
+          allowed: Boolean(request.context?.contextual_tuples?.length),
+        })),
+      };
+      const cacheService = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        cache: cache as unknown as KVNamespace,
+        rebacService: rebacService as never,
+      });
+
+      const allowed = await cacheService.check({
+        subject_id: 'user_123',
+        permission: 'documents:read',
+        tenant_id: 'default',
+        rebac: {
+          relation: 'viewer',
+          object: 'document:secret',
+          contextual_tuples: [
+            { user_id: 'user_123', relation: 'viewer', object: 'document:secret' },
+          ],
+        },
+      });
+      const denied = await cacheService.check({
+        subject_id: 'user_123',
+        permission: 'documents:read',
+        tenant_id: 'default',
+        rebac: { relation: 'viewer', object: 'document:secret' },
+      });
+
+      expect(allowed.allowed).toBe(true);
+      expect(allowed.cache_ttl).toBe(0);
+      expect(denied.allowed).toBe(false);
+      expect(rebacService.check).toHaveBeenCalledTimes(2);
+      expect(cache.get).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+    });
   });
 
   describe('check - Role-Based Permission (RBAC)', () => {

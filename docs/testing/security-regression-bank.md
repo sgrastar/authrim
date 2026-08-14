@@ -88,7 +88,8 @@ touched.
 - Add a new bank item when a security review, bug, customer concern, or test
   gap reveals a reusable regression pattern.
 - Prefer turning bank items into tests near the owning package first.
-- Keep cross-package or topology behavior under `test/integration`.
+- Keep focused cross-package flows under `test/integration`; use `test/security-matrices` for
+  high-volume protocol, topology, and state-transition combinations.
 - Keep browser-visible behavior under Playwright or UI-specific suites.
 - Remove or mark an item as covered only when the automated test is stable and
   named clearly enough to explain the risk.

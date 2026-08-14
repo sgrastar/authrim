@@ -1,26 +1,29 @@
 /**
  * Client Authentication Utilities
- * Implements private_key_jwt and client_secret_jwt authentication methods
+ * Implements private_key_jwt authentication and fail-closed handling for legacy methods
  * RFC 7523: JSON Web Token (JWT) Profile for OAuth 2.0 Client Authentication
  */
 
 import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
+import type { Env } from '../types/env';
 import { isInternalUrl, safeFetchJson } from './url-security';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 import { timingSafeEqual, verifyClientSecretHash } from './crypto';
 import { createLogger } from './logger';
 import { parseBasicAuth } from './basic-auth';
 import { parseToken } from './jwt';
+import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
 
 const log = createLogger().module('CLIENT_AUTH');
 const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
 const MAX_CLIENT_ASSERTION_SEGMENT_SIZE_BYTES = 8 * 1024;
 const CLIENT_ASSERTION_TYPE_JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+const MAX_CLIENT_ASSERTION_LIFETIME_SECONDS = 5 * 60;
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
- * Used for private_key_jwt and client_secret_jwt authentication
+ * Used for private_key_jwt authentication
  */
 export interface ClientAssertionClaims {
   iss: string; // Issuer - MUST be the client_id
@@ -70,6 +73,8 @@ export interface ClientAssertionValidationOptions {
    * FAPI callers use this to exclude RS256 and other algorithms that are valid in generic OIDC.
    */
   allowedAlgorithms?: readonly string[];
+  /** Atomic single-use enforcement for OIDC private_key_jwt assertions. */
+  replayProtection?: { env: Env; tenantId: string };
 }
 
 function isVerificationKeyForAlgorithm(key: JWK, algorithm: string): boolean {
@@ -188,9 +193,16 @@ export function validateRegisteredClientAuthenticationMethod(
 
   switch (registeredMethod) {
     case 'private_key_jwt':
-    case 'client_secret_jwt':
       if (presentedCount === 1 && hasJwtBearerAssertion) return { valid: true };
       break;
+    case 'client_secret_jwt':
+      // Legacy rows may still contain this method. Authrim stores only a one-way
+      // client_secret_hash, which cannot serve as the OIDC Core section 9 HMAC key.
+      // Fail closed before assertion validation instead of treating the hash as a secret.
+      return {
+        valid: false,
+        errorDescription: 'Client authentication configuration is invalid',
+      };
     case 'client_secret_basic':
       if (presentedCount === 1 && presentation.basic) return { valid: true };
       break;
@@ -360,7 +372,7 @@ export async function authenticateConfidentialOAuthClient(
 /**
  * Validate Client Assertion JWT
  *
- * Validates private_key_jwt or client_secret_jwt authentication
+ * Validates private_key_jwt authentication
  * per RFC 7523 Section 3
  *
  * @param assertion - JWT assertion string
@@ -471,11 +483,19 @@ export async function validateClientAssertion(
     const claims = JSON.parse(payloadJson) as ClientAssertionClaims;
 
     // Step 2: Verify required claims exist
-    if (!claims.iss || !claims.sub || !claims.aud || !claims.exp) {
+    if (
+      !claims.iss ||
+      !claims.sub ||
+      !claims.aud ||
+      typeof claims.exp !== 'number' ||
+      !Number.isFinite(claims.exp) ||
+      typeof claims.jti !== 'string' ||
+      claims.jti.length === 0
+    ) {
       return {
         valid: false,
         error: 'invalid_client',
-        error_description: 'Client assertion is missing required claims (iss, sub, aud, exp)',
+        error_description: 'Client assertion is missing required claims (iss, sub, aud, exp, jti)',
       };
     }
 
@@ -560,6 +580,29 @@ export async function validateClientAssertion(
         error: 'invalid_client',
         error_description: 'Client assertion has expired',
       };
+    }
+    if (claims.exp > now + MAX_CLIENT_ASSERTION_LIFETIME_SECONDS + Math.max(0, clockSkewSeconds)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion lifetime exceeds 5 minutes',
+      };
+    }
+    if (claims.iat !== undefined) {
+      if (claims.iat > now + Math.max(0, clockSkewSeconds)) {
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Client assertion was issued in the future',
+        };
+      }
+      if (claims.exp - claims.iat > MAX_CLIENT_ASSERTION_LIFETIME_SECONDS) {
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Client assertion lifetime exceeds 5 minutes',
+        };
+      }
     }
 
     // Step 6: Verify not before time (if present)
@@ -665,6 +708,36 @@ export async function validateClientAssertion(
       algorithms: [...allowedAlgorithms],
       clockTolerance: Math.max(0, clockSkewSeconds),
     });
+
+    if (options.replayProtection) {
+      const { env, tenantId } = options.replayProtection;
+      const { stub } = await getDPoPJTIStoreForNewJTI(
+        env,
+        tenantId,
+        client.client_id,
+        `client-assertion:${claims.jti}`
+      );
+      const replayResponse = await stub.fetch('https://jti-store/check-and-store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jti: `client-assertion:${claims.jti}`,
+          client_id: client.client_id,
+          iat: claims.iat ?? now,
+          ttl: Math.max(1, claims.exp - now + Math.max(0, clockSkewSeconds)),
+        }),
+      });
+      if (!replayResponse.ok) {
+        return {
+          valid: false,
+          error: replayResponse.status === 400 ? 'invalid_client' : 'server_error',
+          error_description:
+            replayResponse.status === 400
+              ? 'Client assertion replay detected'
+              : 'Client assertion replay protection unavailable',
+        };
+      }
+    }
 
     // All validations passed
     return {

@@ -10,11 +10,11 @@ import {
 
 function createMockAdapter(): DatabaseAdapter {
   return {
-    query: vi.fn(),
+    query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn(),
     execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 }),
     transaction: vi.fn(),
-    batch: vi.fn(),
+    batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn(),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn(),
@@ -432,7 +432,7 @@ describe('registration-field-utils', () => {
 
   it('persists only configured registration field values', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.query).mockResolvedValueOnce([
+    vi.mocked(adapter.query).mockResolvedValue([
       {
         field_key: 'department',
         display_label: 'Department',
@@ -458,7 +458,7 @@ describe('registration-field-utils', () => {
     const coreAdapter = createMockAdapter();
     const piiAdapter = createMockAdapter();
 
-    vi.mocked(coreAdapter.query).mockResolvedValueOnce([
+    vi.mocked(coreAdapter.query).mockResolvedValue([
       {
         field_key: 'department',
         display_label: 'Department',
@@ -476,9 +476,7 @@ describe('registration-field-utils', () => {
         validation_rules: null,
       },
     ]);
-    vi.mocked(piiAdapter.queryOne).mockResolvedValueOnce({
-      custom_attributes_json: '{}',
-    });
+    vi.mocked(piiAdapter.queryOne).mockResolvedValueOnce({ value_json: '{}' });
 
     await persistRegistrationFieldValues(coreAdapter, piiAdapter, 'tenant-1', 'user-1', {
       department: 'Sales',
@@ -489,16 +487,54 @@ describe('registration-field-utils', () => {
       expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
       ['Sales', 'string', 'tenant-1', 'user-1', 'department']
     );
-    expect(piiAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO identity_sensitive_values'),
-      [
-        'sensitive-value:user-1:custom_attributes_json',
-        'tenant-1',
-        'user-1',
-        JSON.stringify({ ssn: '123-45-6789' }),
-        expect.any(Number),
-        expect.any(Number),
-      ]
+    const piiStatements = vi.mocked(piiAdapter.batch).mock.calls[0]?.[0] ?? [];
+    expect(piiStatements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO identity_sensitive_values'),
+          params: expect.arrayContaining([
+            'sensitive-value:user-1:custom_attributes_json',
+            'tenant-1',
+            'user-1',
+            JSON.stringify({ ssn: '123-45-6789' }),
+          ]),
+        }),
+      ])
+    );
+  });
+
+  it('validates and persists multi-valued registration fields as JSON arrays', async () => {
+    const adapter = createMockAdapter();
+    const schemas = [
+      {
+        field_key: 'roles',
+        display_label: 'Roles',
+        field_type: 'enum',
+        cardinality: 'multi',
+        is_pii: 0,
+        registration_required: 0,
+        validation_rules: JSON.stringify({ enum_values: ['admin', 'auditor'] }),
+      },
+    ];
+    vi.mocked(adapter.query).mockResolvedValue(schemas);
+
+    await expect(
+      validateRegistrationFieldSubmission(adapter, 'tenant-1', {
+        roles: ['admin', 'auditor', 'admin'],
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ ok: true, values: { roles: '["admin","auditor"]' } })
+    );
+    await expect(
+      validateRegistrationFieldSubmission(adapter, 'tenant-1', { roles: 'admin' })
+    ).resolves.toEqual({ ok: false, error: 'Roles must be an array' });
+
+    await persistRegistrationFieldValues(adapter, null, 'tenant-1', 'user-1', {
+      roles: ['admin', 'auditor'],
+    });
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE user_custom_fields SET field_value = ?'),
+      ['["admin","auditor"]', 'enum', 'tenant-1', 'user-1', 'roles']
     );
   });
 });

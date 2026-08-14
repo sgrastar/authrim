@@ -482,6 +482,8 @@ describe('Discovery Handler', () => {
       expect(metadata.token_endpoint_auth_methods_supported).toContain('client_secret_post');
       expect(metadata.token_endpoint_auth_methods_supported).toContain('client_secret_basic');
       expect(metadata.token_endpoint_auth_methods_supported).toContain('none');
+      expect(metadata.token_endpoint_auth_methods_supported).toContain('private_key_jwt');
+      expect(metadata.token_endpoint_auth_methods_supported).not.toContain('client_secret_jwt');
     });
   });
 

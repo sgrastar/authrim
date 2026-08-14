@@ -23,7 +23,7 @@ describe('OIDC Session Management', () => {
 
   describe('Discovery Metadata', () => {
     it('should include check_session_iframe in discovery document', async () => {
-      const app = (await import('../../packages/op-discovery/src/index')).default;
+      const app = (await import('../../packages/ar-discovery/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/.well-known/openid-configuration`);
       const res = await app.fetch(req, env);
@@ -36,7 +36,7 @@ describe('OIDC Session Management', () => {
     });
 
     it('should have valid issuer in discovery document', async () => {
-      const app = (await import('../../packages/op-discovery/src/index')).default;
+      const app = (await import('../../packages/ar-discovery/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/.well-known/openid-configuration`);
       const res = await app.fetch(req, env);
@@ -51,7 +51,7 @@ describe('OIDC Session Management', () => {
 
   describe('Check Session Iframe Endpoint', () => {
     it('should return HTML page for check_session_iframe', async () => {
-      const app = (await import('../../packages/op-auth/src/index')).default;
+      const app = (await import('../../packages/ar-auth/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/session/check`);
       const res = await app.fetch(req, env);
@@ -68,7 +68,7 @@ describe('OIDC Session Management', () => {
     });
 
     it('should have proper headers for iframe embedding', async () => {
-      const app = (await import('../../packages/op-auth/src/index')).default;
+      const app = (await import('../../packages/ar-auth/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/session/check`);
       const res = await app.fetch(req, env);
@@ -86,7 +86,7 @@ describe('OIDC Session Management', () => {
     });
 
     it('should have cache control headers', async () => {
-      const app = (await import('../../packages/op-auth/src/index')).default;
+      const app = (await import('../../packages/ar-auth/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/session/check`);
       const res = await app.fetch(req, env);
@@ -99,7 +99,7 @@ describe('OIDC Session Management', () => {
     });
 
     it('should contain session state validation logic', async () => {
-      const app = (await import('../../packages/op-auth/src/index')).default;
+      const app = (await import('../../packages/ar-auth/src/index')).default;
 
       const req = new Request(`${env.ISSUER_URL}/session/check`);
       const res = await app.fetch(req, env);

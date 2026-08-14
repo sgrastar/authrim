@@ -58,7 +58,6 @@ export default {
 	admin_agent_access_active_grants: 'Active connections',
 	admin_agent_access_suspended_grants: 'Suspended connections',
 	admin_agent_access_revoked_grants: 'Revoked connections',
-	admin_agent_access_open_grants: 'Manage Agent Grants',
 	admin_agent_access_open_settings: 'Review policy settings',
 	admin_agent_access_grants_title: 'Agent Grants',
 	admin_agent_access_grants_description:
@@ -118,12 +117,6 @@ export default {
 	admin_agent_access_no_eligible_permissions:
 		'No Phase 1 capability remains within the selected participant permission ceilings.',
 	admin_agent_access_eligibility_error: 'Failed to resolve eligible Agent capabilities.',
-	admin_agent_access_permission_no_longer_eligible:
-		'This capability is outside the current participant permission ceilings. Remove it before saving.',
-	admin_agent_access_permission_users: 'Read masked users',
-	admin_agent_access_permission_clients: 'Read OAuth clients',
-	admin_agent_access_permission_audit: 'Read sanitized Admin audit events',
-	admin_agent_access_permission_settings: 'Read Agent Access settings',
 	admin_agent_access_purpose: 'Purpose',
 	admin_agent_access_purpose_placeholder: 'Describe why this client needs delegated access.',
 	admin_agent_access_expiration: 'Recertification deadline (required, maximum 90 days)',

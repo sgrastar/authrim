@@ -61,7 +61,8 @@ export class SqlLoggingDlqItemStore implements LoggingDlqItemStore {
       `INSERT INTO logging_dlq_items (
         id, tenant_key, payload_type, schema_version, lane, destination_id,
         payload_object_ref, error_class, attempt_count, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING`,
       [
         record.id,
         record.tenantKey,

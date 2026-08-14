@@ -178,6 +178,8 @@ function parseDesiredSpec(resource: BootstrapResource): BootstrapDesiredSpec {
   const files = record.migration_files;
   if (
     record.bootstrap !== true ||
+    !resource.migrationStreamId ||
+    !resource.migrationReleaseId ||
     record.bootstrap_role !== resource.role ||
     record.migration_stream_id !== resource.migrationStreamId ||
     record.release_id !== resource.migrationReleaseId ||
@@ -226,8 +228,8 @@ function parseDesiredSpec(resource: BootstrapResource): BootstrapDesiredSpec {
   return {
     bootstrap: true,
     bootstrap_role: resource.role,
-    migration_stream_id: resource.migrationStreamId!,
-    release_id: resource.migrationReleaseId!,
+    migration_stream_id: resource.migrationStreamId,
+    release_id: resource.migrationReleaseId,
     manifest_digest: resource.manifestDigest,
     migration_files: migrationFiles,
     data_role: record.data_role as ControlBootstrapResourceRole,

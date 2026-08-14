@@ -71,6 +71,8 @@ import {
   CrossShardAccountListService,
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
+import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './scim-identity-mapping';
+import { getScimInboundSettings } from './scim-settings';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -421,6 +423,7 @@ async function persistScimCustomClaimWrite(
   await persistCustomClaimWrite({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId,
     userId,
     validation,
@@ -493,8 +496,8 @@ async function executeScimAccountCreation(
     createAuthContextFromHono(c, tenantId).coreAdapter
   );
   const externalId =
-    typeof scimUser.externalId === 'string' && scimUser.externalId.trim()
-      ? scimUser.externalId.trim()
+    typeof internalUser.external_id === 'string' && internalUser.external_id.trim()
+      ? internalUser.external_id.trim()
       : null;
 
   return executeDurableInitialAccountDirectoryWrite(
@@ -525,6 +528,7 @@ async function executeScimAccountCreation(
         await persistCustomClaimWrite({
           db: context.tenantCoreUsers,
           dbPii: context.tenantPii,
+          schemaDb: customClaimSources.schemaDb,
           tenantId,
           userId,
           validation: customFieldValidation,
@@ -681,6 +685,28 @@ async function fetchGroupMembersWithPII(
   });
 }
 
+async function fetchUserGroups(
+  coreAdapter: DatabaseAdapter,
+  userId: string,
+  tenantId: string,
+  baseUrl: string
+): Promise<NonNullable<ScimUser['groups']>> {
+  const roles = await coreAdapter.query<{ id: string; name: string }>(
+    `SELECT r.id, r.name
+       FROM user_roles ur
+       INNER JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+      WHERE ur.tenant_id = ? AND ur.user_id = ?
+      ORDER BY r.name ASC`,
+    [tenantId, userId]
+  );
+  return roles.map((role) => ({
+    value: role.id,
+    $ref: `${baseUrl}/scim/v2/Groups/${encodeURIComponent(role.id)}`,
+    display: role.name,
+    type: 'direct',
+  }));
+}
+
 async function findMissingTenantUserIds(
   env: Env,
   tenantId: string,
@@ -759,7 +785,6 @@ import {
   type BulkOperationConfig,
   // Mapper utilities
   userToScim,
-  scimToUser,
   groupToScim,
   scimToGroup,
   generateEtag,
@@ -872,6 +897,23 @@ app.use('*', async (c, next) => {
   return scimAuthMiddleware(c, next);
 });
 
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (isScimDiscoveryRequest(c.req.method, path)) return next();
+  const settings = await getScimInboundSettings(c.env, getTenantIdFromContext(c));
+  if (!settings.enabled) return scimError(c, 403, 'SCIM inbound provisioning is disabled');
+  if (path.includes('/Users') && !settings.usersEnabled) {
+    return scimError(c, 403, 'SCIM User provisioning is disabled');
+  }
+  if (path.includes('/Groups') && !settings.groupsEnabled) {
+    return scimError(c, 403, 'SCIM Group provisioning is disabled');
+  }
+  if (path.endsWith('/Bulk') && !settings.bulkEnabled) {
+    return scimError(c, 403, 'SCIM Bulk operations are disabled');
+  }
+  return next();
+});
+
 /**
  * SCIM Context type alias
  */
@@ -910,6 +952,11 @@ function scimError(
   }
 
   return c.json(error, status);
+}
+
+function scimMappingError(c: ScimContext, error: unknown): Response | null {
+  if (!(error instanceof ScimIdentityMappingError)) return null;
+  return scimError(c, 503, error.message, 'invalidValue', { code: error.code });
 }
 
 const SCIM_PASSWORD_UNSUPPORTED_DETAIL =
@@ -1030,6 +1077,75 @@ function parseQueryParams(c: ScimContext): ScimQueryParams {
   return params;
 }
 
+function projectScimResource<T extends object>(
+  resource: T,
+  params: Pick<ScimQueryParams, 'attributes' | 'excludedAttributes'>
+): T {
+  const source = resource as Record<string, unknown>;
+  let projected: Record<string, unknown> = structuredClone(source);
+  if (params.attributes?.length) {
+    projected = {};
+    for (const alwaysReturned of ['schemas', 'id', 'meta']) {
+      if (alwaysReturned in source)
+        projected[alwaysReturned] = structuredClone(source[alwaysReturned]);
+    }
+    for (const path of params.attributes) copyScimPath(source, projected, path);
+  }
+  for (const path of params.excludedAttributes ?? []) {
+    const [topLevel] = scimPathParts(path);
+    if (topLevel && ['schemas', 'id', 'meta'].includes(topLevel)) continue;
+    deleteScimPath(projected, path);
+  }
+  return projected as T;
+}
+
+function scimPathParts(path: string): string[] {
+  const enterprisePrefix = `${SCIM_SCHEMAS.ENTERPRISE_USER}:`;
+  if (path.startsWith(enterprisePrefix)) {
+    return [SCIM_SCHEMAS.ENTERPRISE_USER, ...path.slice(enterprisePrefix.length).split('.')];
+  }
+  return path.split('.').filter(Boolean);
+}
+
+function copyScimPath(
+  source: Record<string, unknown>,
+  destination: Record<string, unknown>,
+  path: string
+): void {
+  const parts = scimPathParts(path);
+  let sourceCursor: unknown = source;
+  let destinationCursor = destination;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (!sourceCursor || typeof sourceCursor !== 'object' || !(part in sourceCursor)) return;
+    const value = (sourceCursor as Record<string, unknown>)[part];
+    if (index === parts.length - 1) {
+      destinationCursor[part] = structuredClone(value);
+      return;
+    }
+    if (!destinationCursor[part] || typeof destinationCursor[part] !== 'object') {
+      destinationCursor[part] = {};
+    }
+    destinationCursor = destinationCursor[part] as Record<string, unknown>;
+    sourceCursor = value;
+  }
+}
+
+function deleteScimPath(resource: Record<string, unknown>, path: string): void {
+  const parts = scimPathParts(path);
+  let cursor = resource;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const next = cursor[parts[index]!];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return;
+    cursor = next as Record<string, unknown>;
+  }
+  delete cursor[parts.at(-1)!];
+}
+
+function invalidProjectionParameters(params: ScimQueryParams): boolean {
+  return Boolean(params.attributes?.length && params.excludedAttributes?.length);
+}
+
 // ============================================================================
 // SCIM Discovery Endpoints (RFC 7644 Section 4)
 // ============================================================================
@@ -1038,8 +1154,9 @@ function parseQueryParams(c: ScimContext): ScimQueryParams {
  * GET /scim/v2/ServiceProviderConfig - Service Provider Configuration
  * RFC 7644 Section 4 - REQUIRED endpoint
  */
-app.get('/ServiceProviderConfig', (c) => {
+app.get('/ServiceProviderConfig', async (c) => {
   const baseUrl = getBaseUrl(c);
+  const settings = await getScimInboundSettings(c.env, getTenantIdFromContext(c));
 
   const config: ScimServiceProviderConfig = {
     schemas: [SCIM_SCHEMAS.SERVICE_PROVIDER_CONFIG],
@@ -1048,9 +1165,9 @@ app.get('/ServiceProviderConfig', (c) => {
       supported: true,
     },
     bulk: {
-      supported: true,
-      maxOperations: 100, // Configurable via KV: SCIM_BULK_MAX_OPERATIONS
-      maxPayloadSize: 1048576, // 1MB, configurable via KV: SCIM_BULK_MAX_PAYLOAD_SIZE
+      supported: settings.enabled && settings.bulkEnabled,
+      maxOperations: settings.bulkMaxOperations,
+      maxPayloadSize: settings.bulkMaxPayloadSize,
     },
     filter: {
       supported: true,
@@ -1077,8 +1194,6 @@ app.get('/ServiceProviderConfig', (c) => {
     meta: {
       location: `${baseUrl}/scim/v2/ServiceProviderConfig`,
       resourceType: 'ServiceProviderConfig',
-      created: '2024-01-01T00:00:00Z',
-      lastModified: '2024-12-22T00:00:00Z',
     },
   };
 
@@ -1185,7 +1300,7 @@ app.get('/ResourceTypes/:name', (c) => {
 app.get('/Schemas', (c) => {
   const baseUrl = getBaseUrl(c);
 
-  // Simplified schema definitions - full SCIM Core Schema
+  // Supported SCIM Core and Enterprise User schema definitions.
   const schemas = {
     schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
     totalResults: 3,
@@ -1207,6 +1322,16 @@ app.get('/Schemas', (c) => {
             uniqueness: 'server',
           },
           {
+            name: 'externalId',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            caseExact: true,
+            mutability: 'readWrite',
+            returned: 'default',
+            uniqueness: 'none',
+          },
+          {
             name: 'name',
             type: 'complex',
             multiValued: false,
@@ -1224,6 +1349,63 @@ app.get('/Schemas', (c) => {
           },
           {
             name: 'displayName',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'nickName',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'profileUrl',
+            type: 'reference',
+            referenceTypes: ['external'],
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'title',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'userType',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'preferredLanguage',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'locale',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'timezone',
             type: 'string',
             multiValued: false,
             required: false,
@@ -1252,6 +1434,24 @@ app.get('/Schemas', (c) => {
             returned: 'default',
             subAttributes: [
               { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: 'type', type: 'string', multiValued: false, required: false },
+              { name: 'primary', type: 'boolean', multiValued: false, required: false },
+            ],
+          },
+          {
+            name: 'addresses',
+            type: 'complex',
+            multiValued: true,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'formatted', type: 'string', multiValued: false, required: false },
+              { name: 'streetAddress', type: 'string', multiValued: false, required: false },
+              { name: 'locality', type: 'string', multiValued: false, required: false },
+              { name: 'region', type: 'string', multiValued: false, required: false },
+              { name: 'postalCode', type: 'string', multiValued: false, required: false },
+              { name: 'country', type: 'string', multiValued: false, required: false },
               { name: 'type', type: 'string', multiValued: false, required: false },
               { name: 'primary', type: 'boolean', multiValued: false, required: false },
             ],
@@ -1318,6 +1518,14 @@ app.get('/Schemas', (c) => {
             returned: 'default',
           },
           {
+            name: 'costCenter',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
             name: 'organization',
             type: 'string',
             multiValued: false,
@@ -1332,6 +1540,27 @@ app.get('/Schemas', (c) => {
             required: false,
             mutability: 'readWrite',
             returned: 'default',
+          },
+          {
+            name: 'division',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'manager',
+            type: 'complex',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: '$ref', type: 'reference', multiValued: false, required: false },
+              { name: 'displayName', type: 'string', multiValued: false, required: false },
+            ],
           },
         ],
         meta: {
@@ -1371,6 +1600,16 @@ app.get('/Schemas/:id', (c) => {
           uniqueness: 'server',
         },
         {
+          name: 'externalId',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          caseExact: true,
+          mutability: 'readWrite',
+          returned: 'default',
+          uniqueness: 'none',
+        },
+        {
           name: 'name',
           type: 'complex',
           multiValued: false,
@@ -1388,6 +1627,63 @@ app.get('/Schemas/:id', (c) => {
         },
         {
           name: 'displayName',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'nickName',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'profileUrl',
+          type: 'reference',
+          referenceTypes: ['external'],
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'title',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'userType',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'preferredLanguage',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'locale',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'timezone',
           type: 'string',
           multiValued: false,
           required: false,
@@ -1416,6 +1712,24 @@ app.get('/Schemas/:id', (c) => {
           returned: 'default',
           subAttributes: [
             { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: 'type', type: 'string', multiValued: false, required: false },
+            { name: 'primary', type: 'boolean', multiValued: false, required: false },
+          ],
+        },
+        {
+          name: 'addresses',
+          type: 'complex',
+          multiValued: true,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'formatted', type: 'string', multiValued: false, required: false },
+            { name: 'streetAddress', type: 'string', multiValued: false, required: false },
+            { name: 'locality', type: 'string', multiValued: false, required: false },
+            { name: 'region', type: 'string', multiValued: false, required: false },
+            { name: 'postalCode', type: 'string', multiValued: false, required: false },
+            { name: 'country', type: 'string', multiValued: false, required: false },
             { name: 'type', type: 'string', multiValued: false, required: false },
             { name: 'primary', type: 'boolean', multiValued: false, required: false },
           ],
@@ -1488,6 +1802,14 @@ app.get('/Schemas/:id', (c) => {
           returned: 'default',
         },
         {
+          name: 'costCenter',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
           name: 'organization',
           type: 'string',
           multiValued: false,
@@ -1502,6 +1824,27 @@ app.get('/Schemas/:id', (c) => {
           required: false,
           mutability: 'readWrite',
           returned: 'default',
+        },
+        {
+          name: 'division',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'manager',
+          type: 'complex',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: '$ref', type: 'reference', multiValued: false, required: false },
+            { name: 'displayName', type: 'string', multiValued: false, required: false },
+          ],
         },
       ],
       meta: {
@@ -1527,6 +1870,14 @@ app.get('/Users', async (c) => {
     const tenantId = getTenantIdFromContext(c);
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
 
     // Pagination defaults
     const startIndex = params.startIndex || 1; // SCIM uses 1-based indexing
@@ -1575,7 +1926,9 @@ app.get('/Users', async (c) => {
     const pageUsers = users.slice(offset, offset + count);
 
     // Convert to SCIM format
-    const scimUsers = pageUsers.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
+    const scimUsers = pageUsers.map((user) =>
+      projectScimResource(userToScim(user, { baseUrl, includeGroups: false }), params)
+    );
 
     const response: ScimListResponse<ScimUser> = {
       schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
@@ -1601,6 +1954,15 @@ app.get('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
+    const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
     const tenantId = getTenantIdFromContext(c);
     const adapters = await resolveScimAccountAdaptersFromContext(c, userId);
     if (!adapters) {
@@ -1629,12 +1991,18 @@ app.get('/Users/:id', async (c) => {
       }
     }
 
-    const scimUser = userToScim(user, { baseUrl, includeGroups: true });
+    const groups = await fetchUserGroups(
+      createTenantMetadataAdapterFromContext(c),
+      userId,
+      tenantId,
+      baseUrl
+    );
+    const scimUser = userToScim(user, { baseUrl, includeGroups: true, groups });
 
     // Set ETag header
     c.header('ETag', scimUser.meta.version || '');
 
-    return c.json(scimUser);
+    return c.json(projectScimResource(scimUser, params));
   } catch (error) {
     const log = getLogger(c).module('SCIM');
     log.error('SCIM get user error', { action: 'get_user' }, error as Error);
@@ -1699,7 +2067,11 @@ app.post('/Users', async (c) => {
     }
 
     // Convert SCIM user to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
     if (!customFieldValidation.ok) {
       return scimError(
@@ -1766,6 +2138,8 @@ app.post('/Users', async (c) => {
 
     return c.json(responseUser, 201);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
     const log = getLogger(c).module('SCIM');
     log.error('SCIM create user error', { action: 'create_user' }, error as Error);
     if (error instanceof Error) {
@@ -1839,7 +2213,11 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Convert SCIM user to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
       userId,
       mergeExistingValues: false,
@@ -1884,6 +2262,8 @@ app.put('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
     const log = getLogger(c).module('SCIM');
     log.error('SCIM replace user error', { action: 'replace_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -1944,7 +2324,11 @@ app.patch('/Users/:id', async (c) => {
     }
 
     // Convert back to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
       userId,
       mergeExistingValues: true,
@@ -1988,6 +2372,8 @@ app.patch('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
     const log = getLogger(c).module('SCIM');
     log.error('SCIM patch user error', { action: 'patch_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -2098,6 +2484,14 @@ app.delete('/Users/:id', async (c) => {
 app.get('/Groups', async (c) => {
   try {
     const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
@@ -2172,7 +2566,9 @@ app.get('/Groups', async (c) => {
         tenantId
       );
 
-      scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members));
+      scimGroups.push(
+        projectScimResource(groupToScim(group, { baseUrl, includeMembers: true }, members), params)
+      );
     }
 
     const response: ScimListResponse<ScimGroup> = {
@@ -2198,6 +2594,15 @@ app.get('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
+    const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
     const tenantId = getTenantIdFromContext(c);
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
@@ -2227,7 +2632,7 @@ app.get('/Groups/:id', async (c) => {
     // Set ETag header
     c.header('ETag', scimGroup.meta.version || '');
 
-    return c.json(scimGroup);
+    return c.json(projectScimResource(scimGroup, params));
   } catch (error) {
     const log = getLogger(c).module('SCIM');
     log.error('SCIM get group error', { action: 'get_group' }, error as Error);
@@ -2599,43 +3004,6 @@ app.delete('/Groups/:id', async (c) => {
 // ============================================================================
 
 /**
- * Default bulk operation limits
- */
-const DEFAULT_BULK_MAX_OPERATIONS = 100;
-const DEFAULT_BULK_MAX_PAYLOAD_SIZE = 1048576; // 1MB
-
-/**
- * Get bulk operation config from KV with defaults
- */
-async function getBulkConfig(env: Env): Promise<BulkOperationConfig> {
-  let maxOperations = DEFAULT_BULK_MAX_OPERATIONS;
-  let maxPayloadSize = DEFAULT_BULK_MAX_PAYLOAD_SIZE;
-
-  if (env.KV) {
-    try {
-      const maxOpsStr = await env.KV.get('SCIM_BULK_MAX_OPERATIONS');
-      if (maxOpsStr) {
-        const parsed = parseInt(maxOpsStr, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          maxOperations = parsed;
-        }
-      }
-      const maxSizeStr = await env.KV.get('SCIM_BULK_MAX_PAYLOAD_SIZE');
-      if (maxSizeStr) {
-        const parsed = parseInt(maxSizeStr, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          maxPayloadSize = parsed;
-        }
-      }
-    } catch {
-      // Use defaults on error
-    }
-  }
-
-  return { maxOperations, maxPayloadSize };
-}
-
-/**
  * Resolve bulkId references in request data
  *
  * Replaces "bulkId:xyz" references with actual created resource IDs
@@ -2690,7 +3058,11 @@ app.post('/Bulk', async (c) => {
     const metadataAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Get bulk config from KV
-    const bulkConfig = await getBulkConfig(c.env);
+    const inboundSettings = await getScimInboundSettings(c.env, tenantId);
+    const bulkConfig: BulkOperationConfig = {
+      maxOperations: inboundSettings.bulkMaxOperations,
+      maxPayloadSize: inboundSettings.bulkMaxPayloadSize,
+    };
 
     // Check Content-Length if available
     const contentLength = c.req.header('Content-Length');
@@ -2706,10 +3078,19 @@ app.post('/Bulk', async (c) => {
       }
     }
 
-    // Parse request body
+    // Measure the actual body too. Content-Length can be absent or inaccurate.
     let bulkRequest: ScimBulkRequest;
     try {
-      bulkRequest = await c.req.json<ScimBulkRequest>();
+      const body = await c.req.text();
+      if (new TextEncoder().encode(body).byteLength > bulkConfig.maxPayloadSize) {
+        return scimError(
+          c,
+          413,
+          `Request payload exceeds maximum size of ${bulkConfig.maxPayloadSize} bytes`,
+          'tooMany'
+        );
+      }
+      bulkRequest = JSON.parse(body) as ScimBulkRequest;
     } catch {
       return scimError(c, 400, 'Invalid JSON request body', 'invalidSyntax');
     }
@@ -2757,7 +3138,11 @@ app.post('/Bulk', async (c) => {
         tenantId,
         baseUrl,
         metadataAdapter,
-        c
+        c,
+        {
+          usersEnabled: inboundSettings.usersEnabled,
+          groupsEnabled: inboundSettings.groupsEnabled,
+        }
       );
 
       results.push(result);
@@ -2799,7 +3184,8 @@ async function processOperation(
   tenantId: string,
   baseUrl: string,
   metadataAdapter: DatabaseAdapter,
-  c: Context<{ Bindings: Env }>
+  c: Context<{ Bindings: Env }>,
+  permissions: { usersEnabled: boolean; groupsEnabled: boolean }
 ): Promise<ScimBulkOperationResponse> {
   const { method, path, bulkId, version, data } = operation;
 
@@ -2820,6 +3206,22 @@ async function processOperation(
 
   const resourceType = pathMatch[1] as 'Users' | 'Groups';
   const resourceId = pathMatch[3]; // May be undefined for POST
+
+  if (
+    (resourceType === 'Users' && !permissions.usersEnabled) ||
+    (resourceType === 'Groups' && !permissions.groupsEnabled)
+  ) {
+    return {
+      method,
+      bulkId,
+      status: '403',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '403',
+        detail: `SCIM ${resourceType} provisioning is disabled`,
+      },
+    };
+  }
 
   // Validate method requirements
   if (method === 'POST' && resourceId) {
@@ -2919,14 +3321,16 @@ async function processOperation(
       { action: 'bulk_operation', method, path },
       error as Error
     );
+    const mappingError = error instanceof ScimIdentityMappingError ? error : null;
     return {
       method,
       bulkId,
-      status: '500',
+      status: mappingError ? '503' : '500',
       response: {
         schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Internal server error processing operation',
+        status: mappingError ? '503' : '500',
+        detail: mappingError?.message ?? 'Internal server error processing operation',
+        ...(mappingError ? { code: mappingError.code } : {}),
       },
     };
   }
@@ -2969,7 +3373,11 @@ async function processUserOperation(
       }
 
       // Convert and create
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
       if (!customFieldValidation.ok) {
         return {
@@ -3151,7 +3559,11 @@ async function processUserOperation(
         return scimPasswordUnsupportedBulkResponse('PUT');
       }
 
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
         userId: resourceId,
         mergeExistingValues: false,
@@ -3272,7 +3684,11 @@ async function processUserOperation(
         return scimPasswordUnsupportedBulkResponse('PATCH');
       }
 
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
         userId: resourceId,
         mergeExistingValues: true,

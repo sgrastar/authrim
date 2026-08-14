@@ -382,6 +382,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             fapiConfig.clientAssertionAudience === 'issuer' ? [] : [`${issuer}/token`],
           clockSkewSeconds: 60,
           ...(fapiConfig.enabled ? { allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS] } : {}),
+          replayProtection: {
+            env: c.env,
+            tenantId: getTenantIdFromContext(c),
+          },
         }
       );
 
@@ -799,8 +803,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             params.response_mode = requestObjectClaims.response_mode as string;
           if (requestObjectClaims.prompt) params.prompt = requestObjectClaims.prompt as string;
           if (requestObjectClaims.display) params.display = requestObjectClaims.display as string;
-          if (requestObjectClaims.max_age)
-            params.max_age = String(requestObjectClaims.max_age) as string;
+          if (requestObjectClaims.max_age !== undefined)
+            params.max_age = String(requestObjectClaims.max_age);
           if (requestObjectClaims.ui_locales)
             params.ui_locales = requestObjectClaims.ui_locales as string;
           if (requestObjectClaims.id_token_hint)
@@ -1039,7 +1043,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       response_mode: params.response_mode,
       prompt: params.prompt,
       display: params.display,
-      max_age: params.max_age ? parseInt(params.max_age, 10) : undefined,
+      max_age: params.max_age === undefined ? undefined : parseInt(params.max_age, 10),
       ui_locales: params.ui_locales,
       id_token_hint: params.id_token_hint,
       login_hint: params.login_hint,

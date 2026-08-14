@@ -5,6 +5,7 @@ export interface RegistrationFieldSchemaRow {
   field_key: string;
   display_label: string;
   field_type: string;
+  cardinality?: 'single' | 'multi';
   is_pii: number;
   registration_required: number;
   registration_order: number;
@@ -16,6 +17,7 @@ export interface RegistrationFieldDefinition {
   field_key: string;
   display_label: string;
   field_type: string;
+  cardinality: 'single' | 'multi';
   required: boolean;
   order: number;
   placeholder: string | null;
@@ -26,6 +28,7 @@ export interface SeedCustomClaimSchemaInput {
   field_key: string;
   display_label: string;
   field_type: string;
+  cardinality?: 'single' | 'multi';
   is_pii: number;
   is_required?: number;
   is_system?: number;
@@ -60,7 +63,7 @@ export async function listRegistrationFieldSchemas(
     ? '(show_on_registration = 1 OR registration_required = 1)'
     : 'show_on_registration = 1';
   return getAdapter(db).query<RegistrationFieldSchemaRow>(
-    `SELECT field_key, display_label, field_type, is_pii, registration_required,
+    `SELECT field_key, display_label, field_type, cardinality, is_pii, registration_required,
             registration_order, registration_placeholder, validation_rules
      FROM custom_claim_schemas
      WHERE tenant_id = ? AND ${visibilityFilter} AND is_active = 1
@@ -89,6 +92,7 @@ export function parseRegistrationFieldDefinitions(
       field_key: row.field_key,
       display_label: row.display_label,
       field_type: row.field_type,
+      cardinality: row.cardinality ?? 'single',
       required: row.registration_required === 1,
       order: row.registration_order,
       placeholder: row.registration_placeholder,
@@ -125,14 +129,14 @@ export async function seedCustomClaimSchemas({
 
     await adapter.execute(
       `INSERT INTO custom_claim_schemas (
-        id, tenant_id, field_key, active_field_key, display_label, field_type,
+        id, tenant_id, field_key, active_field_key, display_label, field_type, cardinality,
         is_pii, is_required, is_active, is_system,
         is_searchable, is_exportable, is_vc_claim,
         include_in_id_token, include_in_userinfo, include_in_introspection,
         scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
         examples_json, schema_version, operation_status,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, 0, 0, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         idFactory(),
         tenantId,
@@ -140,6 +144,7 @@ export async function seedCustomClaimSchemas({
         schema.field_key,
         schema.display_label,
         schema.field_type,
+        schema.cardinality ?? 'single',
         schema.is_pii,
         schema.is_required ?? 0,
         schema.is_system ?? 1,

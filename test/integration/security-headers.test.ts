@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import app from '../../packages/op-discovery/src/index';
+import app from '../../packages/ar-discovery/src/index';
 
 // Mock environment
 const mockEnv: Env = {

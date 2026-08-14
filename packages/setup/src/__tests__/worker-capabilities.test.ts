@@ -234,6 +234,21 @@ describe('worker capability manifests', () => {
     }
   });
 
+  it('declares the Admin database required by Bridge admin-session authentication', async () => {
+    const [bridge] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-bridge'],
+    });
+
+    expect(bridge?.manifest.bindings).toContainEqual(
+      expect.objectContaining({
+        name: 'DB_ADMIN',
+        kind: 'd1',
+        required: true,
+      })
+    );
+  });
+
   it('declares the signed Runtime Registry contract for every tenant-routed Worker', async () => {
     const manifests = await loadWorkerCapabilityManifests({
       baseDir: ROOT_DIR,

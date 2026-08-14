@@ -408,13 +408,7 @@ function validateRegistrationRequest(
 
   // Validate token_endpoint_auth_method
   if (data.token_endpoint_auth_method !== undefined) {
-    const validMethods = [
-      'client_secret_basic',
-      'client_secret_post',
-      'client_secret_jwt',
-      'private_key_jwt',
-      'none',
-    ];
+    const validMethods = ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'];
     if (!validMethods.includes(data.token_endpoint_auth_method)) {
       return {
         valid: false,

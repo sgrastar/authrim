@@ -128,8 +128,29 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
+      - name: Check canonical test quality
+        run: node scripts/check-test-quality.mjs
+
       - name: Run API tests with coverage
-        run: pnpm run test:coverage:api
+        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:coverage:api
+
+      - name: Run canonical integration tests
+        env:
+          AUTHRIM_TEST_REPORT: ${{ runner.temp }}/authrim-integration-tests.json
+        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:integration
+
+      - name: Run OAuth and OIDC regression gate
+        env:
+          AUTHRIM_TEST_REPORT: ${{ runner.temp }}/authrim-oauth-oidc-regressions.json
+        run: pnpm run test:oauth-oidc-regressions
+
+      - name: Type-check security matrices
+        run: pnpm run test:security-matrices:typecheck
+
+      - name: Run security matrices
+        env:
+          AUTHRIM_TEST_REPORT: ${{ runner.temp }}/authrim-security-matrices.json
+        run: pnpm run test:security-matrices
 
       - name: Comment coverage summary
         if: ${{ github.event_name == 'pull_request' && success() }}
@@ -138,6 +159,9 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHRIM_INTEGRATION_REPORT: ${{ runner.temp }}/authrim-integration-tests.json
+          AUTHRIM_OAUTH_OIDC_REPORT: ${{ runner.temp }}/authrim-oauth-oidc-regressions.json
+          AUTHRIM_SECURITY_MATRICES_REPORT: ${{ runner.temp }}/authrim-security-matrices.json
         run: node scripts/ci-pr-coverage-comment.mjs
 
   ui-tests:

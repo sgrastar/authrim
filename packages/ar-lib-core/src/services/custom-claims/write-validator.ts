@@ -2,6 +2,11 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
 import type { CustomClaimSchema } from './resolver';
+import {
+  customAttributeSensitiveValueId,
+  customAttributeValueKey,
+  serializeCustomAttributeValue,
+} from './pii-field-storage';
 import { SchemaLoader } from './schema-loader';
 import { UserCustomDataFetcher } from './data-fetcher';
 import { upsertUserCustomFieldValue } from './non-pii-storage';
@@ -43,6 +48,7 @@ export type CustomClaimWriteValidationResult =
 export interface PersistCustomClaimWriteParams {
   db: DatabaseSource;
   dbPii?: DatabaseSource | null;
+  schemaDb?: DatabaseSource;
   tenantId: string;
   userId: string;
   validation: ValidatedCustomClaimWriteResult;
@@ -64,9 +70,15 @@ export interface GetMissingRequiredCustomClaimsParams {
 }
 
 function isBlank(value: unknown): boolean {
-  return (
-    value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
-  );
+  if (value === undefined || value === null) return true;
+  if (typeof value !== 'string') return false;
+  if (value.trim() === '') return true;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length === 0;
+  } catch {
+    return false;
+  }
 }
 
 function getRequiredFieldError(label: string): string {
@@ -110,7 +122,7 @@ function parseValidationRules(raw: string | null): Record<string, unknown> {
   return {};
 }
 
-function validateValue(
+function validateScalarValue(
   schema: CustomClaimSchema,
   rawValue: unknown
 ): { ok: true; value: string } | { ok: false; error: string } {
@@ -199,6 +211,111 @@ function validateValue(
   }
 }
 
+function validateValue(
+  schema: CustomClaimSchema,
+  rawValue: unknown
+): { ok: true; value: string } | { ok: false; error: string } {
+  if (schema.cardinality !== 'multi') {
+    return validateScalarValue(schema, rawValue);
+  }
+
+  if (!Array.isArray(rawValue)) {
+    return { ok: false, error: `${getSchemaLabel(schema)} must be an array` };
+  }
+  if (rawValue.length > 100) {
+    return { ok: false, error: `${getSchemaLabel(schema)} must have at most 100 values` };
+  }
+
+  const values: string[] = [];
+  const singleSchema = { ...schema, cardinality: 'single' as const };
+  for (const item of rawValue) {
+    if (item === null || typeof item === 'object') {
+      return { ok: false, error: `${getSchemaLabel(schema)} contains an invalid value` };
+    }
+    const validated = validateScalarValue(singleSchema, item);
+    if (!validated.ok) return validated;
+    if (!values.includes(validated.value)) values.push(validated.value);
+  }
+
+  return { ok: true, value: JSON.stringify(values) };
+}
+
+async function findUnavailableSubmittedSchema(
+  schemaDb: DatabaseSource,
+  tenantId: string,
+  fieldKeys: string[]
+): Promise<{ field_key: string; display_label: string | null } | null> {
+  if (fieldKeys.length === 0) return null;
+  const adapter = ensureDatabaseAdapter(schemaDb, 'custom-claims-write-schema-state');
+  const uniqueKeys = [...new Set(fieldKeys)];
+  const chunkSize = 50;
+  for (let offset = 0; offset < uniqueKeys.length; offset += chunkSize) {
+    const chunk = uniqueKeys.slice(offset, offset + chunkSize);
+    const row = await adapter.queryOne<{ field_key: string; display_label: string | null }>(
+      `SELECT field_key, display_label
+         FROM custom_claim_schemas
+        WHERE tenant_id = ?
+          AND field_key IN (${chunk.map(() => '?').join(', ')})
+          AND operation_status <> 'active'
+        LIMIT 1`,
+      [tenantId, ...chunk]
+    );
+    if (row) return row;
+  }
+  return null;
+}
+
+async function assertSchemasStillWritable(
+  schemaDb: DatabaseSource,
+  tenantId: string,
+  validation: ValidatedCustomClaimWriteResult
+): Promise<void> {
+  const changedKeys = [
+    ...Object.keys(validation.nonPiiValues),
+    ...Object.keys(validation.piiValues),
+    ...validation.nonPiiKeysToDelete,
+    ...validation.piiKeysToDelete,
+  ];
+  if (changedKeys.length === 0) return;
+
+  const expectedSchemas = new Map(
+    validation.schemas.map((schema) => [schema.field_key, schema] as const)
+  );
+  const uniqueKeys = [...new Set(changedKeys)];
+  const adapter = ensureDatabaseAdapter(schemaDb, 'custom-claims-persist-schema-state');
+  const currentSchemas = new Map<
+    string,
+    {
+      field_key: string;
+      cardinality: 'single' | 'multi';
+    }
+  >();
+  const chunkSize = 50;
+  for (let offset = 0; offset < uniqueKeys.length; offset += chunkSize) {
+    const chunk = uniqueKeys.slice(offset, offset + chunkSize);
+    const rows = await adapter.query<{
+      field_key: string;
+      cardinality: 'single' | 'multi';
+    }>(
+      `SELECT field_key, cardinality
+         FROM custom_claim_schemas
+        WHERE tenant_id = ?
+          AND field_key IN (${chunk.map(() => '?').join(', ')})
+          AND is_active = 1
+          AND operation_status = 'active'`,
+      [tenantId, ...chunk]
+    );
+    for (const row of rows) currentSchemas.set(row.field_key, row);
+  }
+  for (const fieldKey of uniqueKeys) {
+    const expected = expectedSchemas.get(fieldKey);
+    const current = currentSchemas.get(fieldKey);
+    if (!expected || !current || current.cardinality !== expected.cardinality) {
+      throw new Error(`custom_claim_schema_changed_during_write:${fieldKey}`);
+    }
+  }
+}
+
 export async function validateCustomClaimWrite(
   params: ValidateCustomClaimWriteParams
 ): Promise<CustomClaimWriteValidationResult> {
@@ -207,7 +324,6 @@ export async function validateCustomClaimWrite(
     dbPii = null,
     piiStorageAvailable = false,
     schemaDb = db,
-    cache = null,
     tenantId,
     userId,
     submitted,
@@ -219,7 +335,9 @@ export async function validateCustomClaimWrite(
     throw new Error('custom_claim_pii_availability_requires_unpersisted_user');
   }
 
-  const schemas = await new SchemaLoader(schemaDb, cache).loadActiveSchemas(tenantId);
+  // Writes must use authoritative schema state. A cached active schema could otherwise allow a
+  // value through while a cardinality change or another two-phase operation is in progress.
+  const schemas = await new SchemaLoader(schemaDb, null).loadActiveSchemas(tenantId);
   const schemaMap = new Map(schemas.map((schema) => [schema.field_key, schema] as const));
   const input =
     submitted && typeof submitted === 'object' && !Array.isArray(submitted) ? submitted : {};
@@ -228,6 +346,18 @@ export async function validateCustomClaimWrite(
   const piiValues: Record<string, string> = {};
   const nonPiiKeysToDelete: string[] = [];
   const piiKeysToDelete: string[] = [];
+
+  const unavailableSchema = await findUnavailableSubmittedSchema(
+    schemaDb,
+    tenantId,
+    Object.keys(input).filter((fieldKey) => !schemaMap.has(fieldKey))
+  );
+  if (unavailableSchema) {
+    return {
+      ok: false,
+      error: `${unavailableSchema.display_label || unavailableSchema.field_key} is temporarily unavailable while its schema is being modified`,
+    };
+  }
 
   const mergedValues = new Map<string, string>();
   let existingValues = new Map<string, string>();
@@ -337,7 +467,8 @@ export async function getMissingRequiredCustomClaims(
 export async function persistCustomClaimWrite(
   params: PersistCustomClaimWriteParams
 ): Promise<void> {
-  const { db, dbPii = null, tenantId, userId, validation } = params;
+  const { db, dbPii = null, schemaDb = db, tenantId, userId, validation } = params;
+  await assertSchemasStillWritable(schemaDb, tenantId, validation);
   const coreAdapter = ensureDatabaseAdapter(db, 'custom-claims-write-core');
   const piiAdapter = ensureOptionalDatabaseAdapter(dbPii, 'custom-claims-write-pii');
   const schemaMap = new Map(
@@ -375,7 +506,7 @@ export async function persistCustomClaimWrite(
     throw new Error('PII storage is not available');
   }
 
-  const currentRow = await piiAdapter.queryOne<{ value_json: string | null }>(
+  const currentRow = await piiAdapter.queryOne<{ value_json: unknown }>(
     `SELECT value_json
        FROM identity_sensitive_values
       WHERE tenant_id = ?
@@ -389,13 +520,16 @@ export async function persistCustomClaimWrite(
 
   let attributes: Record<string, unknown> = {};
   if (currentRow?.value_json) {
-    try {
-      const parsed = JSON.parse(currentRow.value_json);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        attributes = parsed as Record<string, unknown>;
+    const parsed = (() => {
+      if (typeof currentRow.value_json !== 'string') return currentRow.value_json;
+      try {
+        return JSON.parse(currentRow.value_json) as unknown;
+      } catch {
+        return null;
       }
-    } catch {
-      attributes = {};
+    })();
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      attributes = parsed as Record<string, unknown>;
     }
   }
 
@@ -409,17 +543,53 @@ export async function persistCustomClaimWrite(
 
   const serialized = Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : '{}';
   const now = Date.now();
-
-  await piiAdapter.execute(
-    `INSERT INTO identity_sensitive_values (
-      id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
-      classification, lifecycle_state, created_at, updated_at
-    ) VALUES (?, ?, 'runtime_user', ?, 'custom_attributes_json', ?, NULL, 'sensitive', 'active', ?, ?)
-    ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
-      value_json = excluded.value_json,
-      classification = excluded.classification,
-      lifecycle_state = excluded.lifecycle_state,
-      updated_at = excluded.updated_at`,
-    [`sensitive-value:${userId}:custom_attributes_json`, tenantId, userId, serialized, now, now]
-  );
+  await piiAdapter.batch([
+    ...validation.piiKeysToDelete.map((fieldKey) => ({
+      sql: `DELETE FROM identity_sensitive_values
+             WHERE tenant_id = ?
+               AND owner_type = 'runtime_user'
+               AND owner_id = ?
+               AND value_key = ?`,
+      params: [tenantId, userId, customAttributeValueKey(fieldKey)],
+    })),
+    ...Object.entries(validation.piiValues).map(([fieldKey, fieldValue]) => ({
+      sql: `INSERT INTO identity_sensitive_values (
+              id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
+              classification, lifecycle_state, created_at, updated_at
+            ) VALUES (?, ?, 'runtime_user', ?, ?, ?, NULL, 'sensitive', 'active', ?, ?)
+            ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
+              value_json = excluded.value_json,
+              classification = excluded.classification,
+              lifecycle_state = excluded.lifecycle_state,
+              updated_at = excluded.updated_at`,
+      params: [
+        customAttributeSensitiveValueId(userId, fieldKey),
+        tenantId,
+        userId,
+        customAttributeValueKey(fieldKey),
+        serializeCustomAttributeValue(fieldValue),
+        now,
+        now,
+      ],
+    })),
+    {
+      sql: `INSERT INTO identity_sensitive_values (
+              id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
+              classification, lifecycle_state, created_at, updated_at
+            ) VALUES (?, ?, 'runtime_user', ?, 'custom_attributes_json', ?, NULL, 'sensitive', 'active', ?, ?)
+            ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
+              value_json = excluded.value_json,
+              classification = excluded.classification,
+              lifecycle_state = excluded.lifecycle_state,
+              updated_at = excluded.updated_at`,
+      params: [
+        `sensitive-value:${userId}:custom_attributes_json`,
+        tenantId,
+        userId,
+        serialized,
+        now,
+        now,
+      ],
+    },
+  ]);
 }

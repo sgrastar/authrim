@@ -1129,6 +1129,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
           await persistCustomClaimWrite({
             db: context.tenantCoreUsers,
             dbPii: context.tenantPii,
+            schemaDb: customClaimSources.schemaDb,
             tenantId,
             userId,
             validation: customFieldValidation,
@@ -1384,6 +1385,7 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       await persistCustomClaimWrite({
         db: customClaimSources.nonPiiDb,
         dbPii: customClaimSources.piiDb,
+        schemaDb: customClaimSources.schemaDb,
         tenantId,
         userId,
         validation: customFieldValidation,

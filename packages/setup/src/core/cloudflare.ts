@@ -44,6 +44,7 @@ import {
 } from './admin-machine-access.js';
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
+const D1_MIGRATION_AUTH_MAX_ATTEMPTS = 8;
 const QUEUE_PROVISIONING_DEFINITIONS = [
   { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
   { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
@@ -1394,7 +1395,12 @@ interface CloudflareDnsMutationResponse {
 
 interface CloudflareR2ObjectListResponse {
   success?: boolean;
-  result?: Array<{ key?: string }>;
+  result?: Array<{
+    key?: string;
+    size?: number;
+    last_modified?: string;
+    etag?: string;
+  }>;
   result_info?: {
     cursor?: string;
     is_truncated?: boolean;
@@ -2209,6 +2215,7 @@ export async function executeD1Migration(
   const isTransientD1MigrationError = (message: string): boolean => {
     const normalized = message.toLowerCase();
     return (
+      (normalized.includes('authentication error') && normalized.includes('code: 10000')) ||
       normalized.includes('file could not be uploaded') ||
       normalized.includes('internalerror') ||
       normalized.includes('please retry') ||
@@ -2228,7 +2235,12 @@ export async function executeD1Migration(
     if (process.env.NODE_ENV === 'test') {
       return 0;
     }
-    return Math.min(2_000 * 2 ** (attempt - 1), 15_000);
+    return Math.min(2_000 * 2 ** (attempt - 1), 30_000);
+  };
+
+  const isD1AuthenticationError = (message: string): boolean => {
+    const normalized = message.toLowerCase();
+    return normalized.includes('authentication error') && normalized.includes('code: 10000');
   };
 
   try {
@@ -2244,7 +2256,7 @@ export async function executeD1Migration(
     );
     await writeFile(tempSqlPath, transactionSql, 'utf-8');
     try {
-      for (let attempt = 1; attempt <= D1_MIGRATION_MAX_ATTEMPTS; attempt++) {
+      for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
         try {
           await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes'], {
             timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS,
@@ -2253,29 +2265,61 @@ export async function executeD1Migration(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (options.verifyCommitted) {
-            try {
-              if (await options.verifyCommitted()) return { success: true };
-            } catch (verificationError) {
-              return {
-                success: false,
-                error:
-                  `${message}; could not determine whether the migration committed: ` +
-                  (verificationError instanceof Error
+            for (
+              let verificationAttempt = 1;
+              verificationAttempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS;
+              verificationAttempt++
+            ) {
+              try {
+                if (await options.verifyCommitted()) return { success: true };
+                break;
+              } catch (verificationError) {
+                const verificationErrorMessage =
+                  verificationError instanceof Error
                     ? verificationError.message
-                    : String(verificationError)),
-              };
+                    : String(verificationError);
+                const verificationMaxAttempts = isD1AuthenticationError(verificationErrorMessage)
+                  ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+                  : D1_MIGRATION_MAX_ATTEMPTS;
+                const canRetryVerification =
+                  verificationAttempt < verificationMaxAttempts &&
+                  isTransientD1MigrationError(verificationErrorMessage);
+                if (!canRetryVerification) {
+                  return {
+                    success: false,
+                    error:
+                      `${message}; could not determine whether the migration committed: ` +
+                      verificationErrorMessage,
+                  };
+                }
+
+                const verificationDelayMs = retryDelayMs(verificationAttempt);
+                onProgress?.(
+                  `  ⚠️ Transient D1 commit verification failure for ${basename(sqlFilePath)} ` +
+                    `(attempt ${verificationAttempt}/${verificationMaxAttempts}); ` +
+                    `retrying verification in ${Math.round(verificationDelayMs / 1000)}s`
+                );
+                if (verificationDelayMs > 0) {
+                  await sleep(verificationDelayMs);
+                }
+              }
             }
           }
-          const canRetry =
-            attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
+          const maxAttempts = isD1AuthenticationError(message)
+            ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+            : D1_MIGRATION_MAX_ATTEMPTS;
+          const canRetry = attempt < maxAttempts && isTransientD1MigrationError(message);
           if (!canRetry) {
             return { success: false, error: message };
           }
 
           const delayMs = retryDelayMs(attempt);
+          const failureKind = isD1AuthenticationError(message)
+            ? 'Transient Cloudflare D1 authentication failure'
+            : 'Transient D1 migration failure';
           onProgress?.(
-            `  ⚠️ Transient D1 migration failure for ${basename(sqlFilePath)} ` +
-              `(attempt ${attempt}/${D1_MIGRATION_MAX_ATTEMPTS}); retrying in ${Math.round(delayMs / 1000)}s`
+            `  ⚠️ ${failureKind} for ${basename(sqlFilePath)} ` +
+              `(attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delayMs / 1000)}s`
           );
           if (delayMs > 0) {
             await sleep(delayMs);
@@ -6073,12 +6117,14 @@ export interface WorkerDeploymentInfo {
   lastDeployedAt: string | null;
   author: string | null;
   versionId: string | null;
+  source?: string | null;
 }
 
 function parseLatestWorkerDeployment(stdout: string): {
   createdAt: string | null;
   author: string | null;
   versionId: string | null;
+  source: string | null;
 } {
   const deploymentStarts = Array.from(
     stdout.matchAll(/^Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s*$/gm)
@@ -6112,16 +6158,19 @@ function parseLatestWorkerDeployment(stdout: string): {
       createdAt: null,
       author: null,
       versionId: null,
+      source: null,
     };
   }
 
   const block = stdout.slice(latest.index, latest.nextIndex);
   const authorMatch = block.match(/^Author:\s+(\S+)/m);
+  const sourceMatch = block.match(/^Source:\s+(.+)$/m);
   const versionMatch = block.match(/^Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/m);
   return {
     createdAt: latest.createdAt,
     author: authorMatch?.[1] || null,
     versionId: versionMatch?.[1] || null,
+    source: sourceMatch?.[1]?.trim() || null,
   };
 }
 
@@ -6137,6 +6186,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
         lastDeployedAt: null,
         author: null,
         versionId: null,
+        source: null,
       };
     }
 
@@ -6150,6 +6200,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       lastDeployedAt: deployment.createdAt,
       author: deployment.author,
       versionId: deployment.versionId,
+      source: deployment.source,
     };
   } catch {
     return {
@@ -6158,6 +6209,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       lastDeployedAt: null,
       author: null,
       versionId: null,
+      source: null,
     };
   }
 }
@@ -6328,6 +6380,53 @@ async function getR2ApiCredentials(): Promise<{ accountId: string; token: string
     readToken: getCloudflareApiToken,
     inferSingleAccountId: getSingleAccountIdViaApi,
   });
+}
+
+export interface R2ObjectMetadata {
+  key: string;
+  size: number | null;
+  lastModified: string | null;
+  etag: string | null;
+}
+
+/**
+ * List R2 objects through Cloudflare's REST API. Wrangler does not expose an object-list command,
+ * while the REST API provides cursor pagination and prefix filtering.
+ */
+export async function listR2Objects(input: {
+  bucketName: string;
+  prefix?: string;
+}): Promise<R2ObjectMetadata[]> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  if (input.prefix && (input.prefix.startsWith('/') || input.prefix.includes('\\'))) {
+    throw new Error('invalid_r2_object_prefix');
+  }
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) throw new Error('cloudflare_r2_api_credentials_unavailable');
+
+  const objects: R2ObjectMetadata[] = [];
+  let cursor: string | undefined;
+  do {
+    const params = new URLSearchParams({ per_page: '1000' });
+    if (input.prefix) params.set('prefix', input.prefix);
+    if (cursor) params.set('cursor', cursor);
+    const { data } = await requestR2Api<CloudflareR2ObjectListResponse>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(input.bucketName)}/objects?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${credentials.token}` } },
+      'Cloudflare R2 object list'
+    );
+    for (const object of data.result ?? []) {
+      if (typeof object.key !== 'string') continue;
+      objects.push({
+        key: object.key,
+        size: typeof object.size === 'number' && Number.isFinite(object.size) ? object.size : null,
+        lastModified: typeof object.last_modified === 'string' ? object.last_modified : null,
+        etag: typeof object.etag === 'string' ? object.etag : null,
+      });
+    }
+    cursor = data.result_info?.is_truncated ? data.result_info.cursor : undefined;
+  } while (cursor);
+  return objects;
 }
 
 async function getSingleAccountIdViaApi(token: string): Promise<string | null> {

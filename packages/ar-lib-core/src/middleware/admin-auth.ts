@@ -181,9 +181,6 @@ export function adminAuthContextHasTenantScope(
   authContext: AdminAuthContext,
   tenantId: string
 ): boolean {
-  if (!authContext.tenantScope && authContext.authMethod !== 'machine_access_token') {
-    return true;
-  }
   const tenantScope = authContext.tenantScope ?? [];
   return tenantScope.includes('*') || tenantScope.includes(tenantId);
 }

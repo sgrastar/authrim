@@ -26,6 +26,7 @@ export type EnvironmentOperationBlockReason =
   | 'initial_deploy_required'
   | 'release_update_required'
   | 'release_update_in_progress'
+  | 'initial_manifest_changed'
   | 'topology_update_in_progress'
   | 'legacy_reconciliation_required'
   | 'inconsistent_release_state'
@@ -135,6 +136,18 @@ export function evaluateEnvironmentOperation(input: {
   if (lifecycle === 'updating') {
     const workers = Object.values(lock?.workers ?? {});
     const release = lock?.releaseUpdate;
+    const initialManifestChanged =
+      operation === 'initial_deploy' &&
+      !currentVersion &&
+      Boolean(targetVersion) &&
+      Boolean(releaseManifestChecksum) &&
+      release?.targetVersion === targetVersion &&
+      (release?.manifestChecksum !== releaseManifestChecksum ||
+        release?.initialWorkerRedeployRequired === true) &&
+      release?.phase !== 'verified';
+    if (initialManifestChanged) {
+      return denied(operation, lifecycle, 'initial_manifest_changed');
+    }
     const resumableInitialDeploy =
       operation === 'initial_deploy' &&
       !currentVersion &&
@@ -204,6 +217,8 @@ export function environmentOperationBlockMessage(
       return `Product update ${decision.currentVersion ?? 'unknown'} -> ${targetVersion ?? 'unknown'} requires authrim-setup update so database schemas are applied first.`;
     case 'release_update_in_progress':
       return 'A release update is incomplete; resume it with authrim-setup update before another environment operation.';
+    case 'initial_manifest_changed':
+      return 'The draft migration manifest changed during initial deployment. Resume is disabled because the saved deployment state may no longer match the databases. Delete this incomplete environment and create it again.';
     case 'topology_update_in_progress':
       return 'A topology update is incomplete; resume its dedicated topology command before another environment operation.';
     case 'legacy_reconciliation_required':

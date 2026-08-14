@@ -2,7 +2,7 @@
  * Wrangler URL / Env Vars Matrix Tests v2
  *
  * Tests generateEnvVars() and deriveAllowedOrigins() across 27 representative scenarios.
- * All expected values are hardcoded in deployment-matrix.ts — no calculation here.
+ * All expected values are hardcoded in deployment-topology-matrix.ts — no calculation here.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,7 +15,7 @@ import {
   buildAuthrimConfig,
   scenarioLabel,
   WORKERS_SUBDOMAIN,
-} from '../../../../test/fixtures/deployment-matrix.js';
+} from '../../../../test/shared-fixtures/deployment-topology-matrix.js';
 
 function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
   if (!config.tenant?.multiTenant || !config.tenant.baseDomain) {

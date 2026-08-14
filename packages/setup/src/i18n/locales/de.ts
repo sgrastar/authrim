@@ -1136,6 +1136,27 @@ const de: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Umgebungsdetails',
+  'web.envDetail.initialDeployRecoveryTitle': 'Die erste Bereitstellung ist unvollständig',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'Die vorherige Bereitstellung wurde vor der Prüfung beendet. Beim Fortsetzen werden die erstellten Ressourcen wiederverwendet.',
+  'web.envDetail.initialDeployRecoveryAction': 'Erste Bereitstellung fortsetzen',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare-Status geprüft. Abgeschlossen: {{completed}}. Fortsetzung ab {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'der Prüfung der Datenbankmigrationen',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'der Vorbereitung der Erstbereitstellung',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'der Worker-Bereitstellung',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'der Prüfung nach der Bereitstellung',
+  'web.envDetail.initialDeployRecoveryResources': 'Ressourcenbereitstellung',
+  'web.envDetail.initialDeployRecoverySchema': 'Datenbankmigrationen',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker-Bereitstellung',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'Der gespeicherte Prüfpunkt stimmt nicht mit dem Cloudflare-Status überein. Das Fortsetzen wurde deaktiviert. Löschen Sie diese unvollständige Umgebung und erstellen Sie sie neu.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'Die draft-Migrationsdefinition wurde nach Beginn der ersten Bereitstellung geändert. Der gespeicherte Bereitstellungsstatus stimmt möglicherweise nicht mehr mit den Datenbanken überein; daher wurde das Fortsetzen deaktiviert. Löschen Sie diese unvollständige Umgebung und erstellen Sie sie neu.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'Der aktuelle Status konnte nicht geprüft werden; daher wurde das Fortsetzen deaktiviert. Prüfen Sie die Cloudflare-Verbindung und diese Umgebung erneut. Falls die Prüfung weiterhin fehlschlägt, löschen Sie die unvollständige Umgebung und erstellen Sie sie neu.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Die Bereitstellungs-Anmeldedaten müssen aktualisiert werden; ein neues einmaliges Cloudflare-Token wird angefordert.',
   'web.envDetail.adminNotConfigured': 'Admin-Konto nicht konfiguriert',
   'web.envDetail.adminNotConfiguredDesc':
     'Der erste Administrator wurde für diese Umgebung noch nicht eingerichtet.',

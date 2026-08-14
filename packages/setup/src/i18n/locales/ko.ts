@@ -1106,6 +1106,27 @@ const ko: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '환경 세부 정보',
+  'web.envDetail.initialDeployRecoveryTitle': '초기 배포가 완료되지 않았습니다',
+  'web.envDetail.initialDeployRecoveryDesc':
+    '이전 배포가 검증 전에 중지되었습니다. 재개할 때 생성된 리소스를 재사용합니다.',
+  'web.envDetail.initialDeployRecoveryAction': '초기 배포 재개',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare 상태를 확인했습니다. 완료: {{completed}}. {{stage}}부터 재개합니다.',
+  'web.envDetail.initialDeployRecoveryStageMigrations': '데이터베이스 마이그레이션 검증',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '초기 배포 준비',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker 배포',
+  'web.envDetail.initialDeployRecoveryStageVerification': '배포 후 검증',
+  'web.envDetail.initialDeployRecoveryResources': '리소스 프로비저닝',
+  'web.envDetail.initialDeployRecoverySchema': '데이터베이스 마이그레이션',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker 배포',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '저장된 체크포인트가 Cloudflare 상태와 일치하지 않아 재개를 비활성화했습니다. 이 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '초기 배포를 시작한 후 draft migration 정의가 변경되었습니다. 저장된 배포 상태가 데이터베이스와 더 이상 일치하지 않을 수 있어 재개를 비활성화했습니다. 이 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '현재 상태를 확인할 수 없어 재개를 비활성화했습니다. Cloudflare 연결을 확인하고 환경을 다시 검사하세요. 계속 확인할 수 없다면 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' 배포 자격 증명을 갱신해야 하며 새 일회용 Cloudflare token을 요청합니다.',
   'web.envDetail.adminNotConfigured': '관리자 계정 미구성',
   'web.envDetail.adminNotConfiguredDesc': '이 환경에 초기 관리자가 설정되지 않았습니다.',
   'web.envDetail.startPasskey': 'Passkey로 관리자 계정 설정 시작',

@@ -231,13 +231,56 @@ describe('getHtmlTemplate', () => {
     );
 
     expect(html).toContain(
-      "const recovery = await api('/deploy/recovery/' + encodeURIComponent(config.env))"
+      "recoveryStatus = await api('/deploy/recovery/' + encodeURIComponent(config.env))"
     );
     expect(html).toContain("btn.textContent = t('web.envDetail.initialDeployRecoveryAction')");
-    expect(html).toContain("t('web.envDetail.initialDeployRecoveryDesc')");
+    expect(html).toContain('describeInitialDeploymentRecovery(recoveryStatus)');
+    expect(html).toContain("result?.status === 'recreate_required'");
+    expect(html).toContain("result.reasonCode === 'initial_manifest_changed'");
+    expect(html).toContain('Delete this incomplete environment and create it again.');
+    expect(html).toContain(
+      "document.getElementById('btn-resume-initial-deploy')?.classList.add('hidden')"
+    );
     expect(html).toContain('class="inline-action-spinner hidden"');
     expect(html).toContain("spinner?.classList.remove('hidden')");
     expect(html).toContain("button.setAttribute('aria-busy', 'true')");
+    expect(html).toContain('recoveryStatus.requiresBootstrapToken !== true');
+    expect(html).toContain('!resumeControlBootstrapReady');
+  });
+
+  it('does not label endpoint URLs as verified before initial deployment verification completes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="detail-url-deployment-status"');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentChecking')");
+    expect(html).toContain("result.status === 'complete'");
+    expect(html).toContain('result.completedSteps?.verificationComplete === true');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentIncomplete')");
+    expect(html).toContain("status.dataset.state = 'incomplete'");
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentStatusUnknown')");
+    expect(html).toContain('デプロイ未完了');
+    expect(html).not.toContain('<em data-i18n="web.envDetail.verified">verified ✓</em>');
+  });
+
+  it('keeps setup prelude sections dismissed after deployment starts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
+    expect(html).not.toContain(
+      "restoreSetupProgressPreludes([\n          'control-token-bootstrap-row'"
+    );
   });
 
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
@@ -605,7 +648,7 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('authrim-prelude-exit 0.22s');
   });
 
-  it('hides running-stage guidance and restores it after a failed attempt', () => {
+  it('hides running-stage guidance and restores only explicitly requested manual guidance', () => {
     const html = getHtmlTemplate(
       'session-token',
       false,
@@ -656,9 +699,7 @@ describe('getHtmlTemplate', () => {
     expect(element.dataset.setupProgressPreludeWasVisible).toBeUndefined();
 
     expect(html).toContain('function restoreSetupProgressPreludes(ids)');
-    expect(html).toContain(
-      "restoreSetupProgressPreludes([\n          'control-token-bootstrap-row',"
-    );
+    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
   });
 
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {

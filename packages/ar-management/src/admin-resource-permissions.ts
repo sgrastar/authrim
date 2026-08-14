@@ -197,6 +197,7 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/signing-keys/*', securityCredentialPermission);
   app.use('/api/admin/scim-tokens', securityCredentialPermission);
   app.use('/api/admin/scim-tokens/*', securityCredentialPermission);
+  app.use('/api/admin/scim-settings', securityCredentialPermission);
   app.use('/api/admin/check-api-keys', securityCredentialPermission);
   app.use('/api/admin/check-api-keys/*', securityCredentialPermission);
   app.use('/api/admin/iat-tokens', clientRegistrationTokenPermission);

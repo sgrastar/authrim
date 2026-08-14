@@ -31,7 +31,6 @@ const adminJobs = {
 	admin_jobs_details: '詳細',
 	admin_jobs_cancel: 'キャンセル',
 	admin_jobs_creating: '作成中...',
-	admin_jobs_create_request: 'Requestを作成',
 	admin_jobs_csv_file: 'CSV File',
 	admin_jobs_expected_headers: 'Expected headers:',
 	admin_jobs_custom_claim_keys_suffix: '加えて任意のcustom claim keys。',

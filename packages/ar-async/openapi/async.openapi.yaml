@@ -143,6 +143,23 @@ paths:
           description: Action completed.
         '401':
           description: Capability is invalid or expired.
+  /api/ciba/test:
+    get:
+      tags:
+        - CIBA
+      summary: Render the built-in CIBA test console.
+      description: >-
+        Available only when test endpoints or built-in conformance forms are explicitly enabled.
+        Returns 404 in normal production mode.
+      responses:
+        '200':
+          description: HTML CIBA test console.
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Test endpoints and built-in conformance forms are disabled.
 components:
   securitySchemes:
     sessionCookie:

@@ -326,11 +326,11 @@ function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
 		.map((schema) =>
 			canonicalTargetNode({
 				id: schema.id,
-				stableFieldId: `custom-claim.${schema.field_key}`,
+				stableFieldId: `field.canonical.${schema.field_key}`,
 				path: schema.field_key,
 				label: schema.display_label || schema.field_key,
 				valueType: schema.field_type,
-				cardinality: 'single',
+				cardinality: schema.cardinality ?? 'single',
 				classification: schema.is_pii ? 'pii' : 'internal',
 				storageTarget: schema.is_pii ? 'PII attribute' : 'Profile attribute',
 				uiGroupKey: schema.ui_group_key ?? 'custom',
@@ -340,7 +340,7 @@ function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
 				examples: examplesFromCustomClaim(schema),
 				note: schema.description,
 				allowedValues: allowedValuesFromCustomClaim(schema),
-				valueMultiplicity: 'single',
+				valueMultiplicity: schema.cardinality === 'multi' ? 'multi' : 'single',
 				nullable: schema.is_required ? false : null,
 				required: Boolean(schema.is_required)
 			})
@@ -441,7 +441,7 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 					}
 				];
 
-	return extractedFields.slice(0, 24).map((field, index) => {
+	return extractedFields.slice(0, 64).map((field, index) => {
 		const nodeKey = `${role}-${slug(profile.id)}-${slug(field.key, `field-${index + 1}`)}-${index}`;
 		return {
 			id: nodeKey,

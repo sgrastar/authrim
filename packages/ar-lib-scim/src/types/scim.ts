@@ -350,6 +350,7 @@ export interface ScimQueryParams {
 export interface UserToScimContext {
   baseUrl: string;
   includeGroups?: boolean;
+  groups?: ScimUser['groups'];
 }
 
 /**

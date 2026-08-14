@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import app from '../index';
+import app, { LoginUiBackendEntrypoint } from '../index';
 
 // Mock fetcher that tracks which service binding was called
 const createMockFetcher = (name: string) => ({
@@ -42,6 +42,17 @@ const createMockCache = () => {
   };
 };
 
+function createLoginUiBackendEntrypoint(env: ReturnType<typeof createMockEnv>) {
+  return new LoginUiBackendEntrypoint(
+    {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext,
+    env as never
+  );
+}
+
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
@@ -50,6 +61,7 @@ const createMockEnv = () => ({
   OP_TOKEN: createMockFetcher('OP_TOKEN'),
   OP_USERINFO: createMockFetcher('OP_USERINFO'),
   OP_MANAGEMENT: createMockFetcher('OP_MANAGEMENT'),
+  OP_CONTROL: createMockFetcher('OP_CONTROL'),
   OP_AGENT_ACCESS: createMockFetcher('OP_AGENT_ACCESS'),
   OP_ASYNC: createMockFetcher('OP_ASYNC'),
   OP_SAML: createMockFetcher('OP_SAML'),
@@ -621,6 +633,44 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('routes only the diagnostic log ingest endpoint to OP_MANAGEMENT', async () => {
+        const ingestResponse = await app.fetch(
+          new Request('https://example.com/api/v1/diagnostic-logs/ingest', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer client-credential' },
+          }),
+          mockEnv
+        );
+
+        expect(ingestResponse.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+
+        vi.clearAllMocks();
+        const adminAliasResponse = await app.fetch(
+          new Request('https://example.com/api/v1/diagnostic-logs/test-connection', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer x' },
+          }),
+          mockEnv
+        );
+
+        expect(adminAliasResponse.status).toBe(404);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('routes the proof-bearing bootstrap accelerator request only to Control', async () => {
+        const req = new Request('https://example.com/api/internal/control/bootstrap/advance', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer header.payload.signature' },
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_CONTROL.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+        const forwarded = mockEnv.OP_CONTROL.fetch.mock.calls[0]?.[0] as Request;
+        expect(forwarded.headers.get('Authorization')).toBe('Bearer header.payload.signature');
       });
 
       it('should route /api/approval-artifacts/* to OP_MANAGEMENT', async () => {
@@ -1235,6 +1285,30 @@ describe('Router Worker', () => {
       );
     });
 
+    it('should overwrite spoofed forwarded host hints when the Login UI marker is supplied', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Ui-Proxy': 'login-ui',
+          'X-Authrim-Forwarded-Host': 'victim.multi-tenant.authrim.com',
+          'X-Authrim-Original-Host': 'victim.multi-tenant.authrim.com',
+          'X-Authrim-Browser-Origin': 'https://victim-ui.example.com',
+        },
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).host).toBe('first.multi-tenant.authrim.com');
+      expect(forwardedRequest.headers.get('Host')).toBe('first.multi-tenant.authrim.com');
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Authrim-Ui-Proxy')).toBeNull();
+      expect(forwardedRequest.headers.get('X-Authrim-Original-Host')).toBeNull();
+      expect(forwardedRequest.headers.get('X-Authrim-Browser-Origin')).toBeNull();
+    });
+
     it('should allow POST from tenant subdomain origin in multi-tenant mode', async () => {
       const mtEnv = {
         ...mockEnv,
@@ -1747,15 +1821,17 @@ describe('Router Worker', () => {
         SETTINGS: createMockKV(),
       };
       const request = () =>
-        new Request('https://login.example.com/api/auth/authentication-methods?client_id=a', {
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a', {
           headers: {
             'X-Authrim-Ui-Proxy': 'login-ui',
             'X-Authrim-Forwarded-Host': 'first.example.com',
+            'X-Authrim-Original-Host': 'first.example.com',
           },
         });
+      const loginUiBackend = createLoginUiBackendEntrypoint(envWithCache);
 
-      const first = await app.fetch(request(), envWithCache);
-      const second = await app.fetch(request(), envWithCache);
+      const first = await loginUiBackend.fetch(request());
+      const second = await loginUiBackend.fetch(request());
 
       expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
       expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
@@ -1825,13 +1901,15 @@ describe('Router Worker', () => {
         LOGIN_UI_WORKER: loginUiWorker,
       };
 
-      const req = new Request('https://login.example.com/auth/login-challenge?challenge_id=test', {
+      const req = new Request('https://first.example.com/auth/login-challenge?challenge_id=test', {
         headers: {
           'X-Authrim-Ui-Proxy': 'login-ui',
           'X-Authrim-Forwarded-Host': 'first.example.com',
+          'X-Authrim-Original-Host': 'first.example.com',
+          'X-Authrim-Browser-Origin': 'https://login.example.com',
         },
       });
-      const res = await app.fetch(req, envWithSeparateLoginUiHost);
+      const res = await createLoginUiBackendEntrypoint(envWithSeparateLoginUiHost).fetch(req);
 
       expect(res.status).toBe(200);
       expect(loginUiWorker.fetch).not.toHaveBeenCalled();
@@ -1841,6 +1919,41 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('Host')).toBe('first.example.com');
       expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe('first.example.com');
       expect(proxiedRequest.headers.get('X-Forwarded-Host')).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('X-Authrim-Ui-Proxy')).toBe('login-ui');
+      expect(proxiedRequest.headers.get('X-Authrim-Browser-Origin')).toBe(
+        'https://login.example.com'
+      );
+    });
+
+    it('rejects inconsistent tenant host hints on the private Login UI entrypoint', async () => {
+      const req = new Request('https://first.example.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Ui-Proxy': 'login-ui',
+          'X-Authrim-Forwarded-Host': 'victim.example.com',
+          'X-Authrim-Original-Host': 'victim.example.com',
+        },
+      });
+
+      const response = await createLoginUiBackendEntrypoint(mockEnv).fetch(req);
+
+      expect(response.status).toBe(403);
+      expect(mockEnv.OP_TOKEN.fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects requests without the Login UI marker on the private entrypoint', async () => {
+      const req = new Request('https://first.example.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Forwarded-Host': 'first.example.com',
+          'X-Authrim-Original-Host': 'first.example.com',
+        },
+      });
+
+      const response = await createLoginUiBackendEntrypoint(mockEnv).fetch(req);
+
+      expect(response.status).toBe(403);
+      expect(mockEnv.OP_TOKEN.fetch).not.toHaveBeenCalled();
     });
 
     it('should fast-redirect anonymous tenant root requests to /login when configured', async () => {

@@ -4,7 +4,7 @@ const adminCustomClaims = {
 	admin_custom_claims_schema_fallback: 'Schema',
 	admin_custom_claims_title: 'Schema Settings',
 	admin_custom_claims_description:
-		'ユーザーのclaim fieldを定義・管理します。field type、validation rule、OIDC tokenへのclaim mappingを制御します。',
+		'保存するuser field、value type、cardinality、validation ruleを定義します。protocolへのreleaseはSchema MappingとDestination Profileで別に設定します。',
 	admin_custom_claims_add_from_preset: 'Presetから追加',
 	admin_custom_claims_add_schema: 'Schemaを追加',
 	admin_custom_claims_retry: '再試行',
@@ -37,9 +37,6 @@ const adminCustomClaims = {
 	admin_custom_claims_operation_errors_title: '操作エラーがあります',
 	admin_custom_claims_operation_errors_description:
 		'{count}件のschemaで対応が必要な操作エラーがあります。"Error" statusで絞り込み、確認して再試行してください。',
-	admin_custom_claims_system_note_title: 'System schema field',
-	admin_custom_claims_system_note_description:
-		'email、name、phone、addressなどの標準OIDC fieldはpresetとして利用できます。このtenantに必要なgroupだけ適用してください。custom fieldは手動で管理します。',
 	admin_custom_claims_search_placeholder: 'field key、label、descriptionを検索...',
 	admin_custom_claims_all_types: 'すべてのType',
 	admin_custom_claims_all_pii: 'すべて（PII/Non-PII）',
@@ -52,7 +49,6 @@ const adminCustomClaims = {
 	admin_custom_claims_label: 'Label',
 	admin_custom_claims_display_label: 'Display Label',
 	admin_custom_claims_type: 'Type',
-	admin_custom_claims_token: 'Token',
 	admin_custom_claims_required: 'Required',
 	admin_custom_claims_status: 'Status',
 	admin_custom_claims_required_badge: 'Required',
@@ -73,6 +69,14 @@ const adminCustomClaims = {
 	admin_custom_claims_field_key_required: 'Field Key *',
 	admin_custom_claims_display_label_required: 'Display Label *',
 	admin_custom_claims_field_type: 'Field Type',
+	admin_custom_claims_cardinality: 'Cardinality',
+	admin_custom_claims_cardinality_single: '単一値',
+	admin_custom_claims_cardinality_multi: '複数値',
+	admin_custom_claims_cardinality_hint:
+		'複数値は検証済みJSON arrayとして保存し、mappingでもarrayとして扱います。',
+	admin_custom_claims_release_mapping_title: 'Attribute Release',
+	admin_custom_claims_release_mapping_hint:
+		'このschemaは保存dataだけを定義します。出力名、必要scope、ID Token・UserInfo・IntrospectionへのreleaseはSchema MappingとactiveなDestination Profileで決定します。',
 	admin_custom_claims_field_key_placeholder: '例: employee_id',
 	admin_custom_claims_display_label_placeholder: '例: Employee ID',
 	admin_custom_claims_field_key_hint:
@@ -89,20 +93,6 @@ const adminCustomClaims = {
 	admin_custom_claims_validation_placeholder: '例: min_length / max_length のJSON object',
 	admin_custom_claims_validation_hint:
 		'String: min_length、max_length、pattern。Number: min、max。Enum: enum_values（array）。Date: min_date、max_date（ISO 8601）。',
-	admin_custom_claims_token_integration: 'Token / Endpoint Integration',
-	admin_custom_claims_introspection_disabled:
-		'Introspection responseへのcustom claim埋め込みは現在無効です。',
-	admin_custom_claims_introspection_disabled_use_userinfo:
-		'Introspection responseへのcustom claim埋め込みは現在無効です。代わりにUserInfo endpointを使用してください。',
-	admin_custom_claims_required_scopes: 'Required Scopes（comma-separated）',
-	admin_custom_claims_required_scopes_placeholder: '例: profile, employee',
-	admin_custom_claims_required_scopes_hint:
-		'token flagが設定されている場合に常に含めるなら空のままにします。',
-	admin_custom_claims_scope_mode: 'Scope Mode',
-	admin_custom_claims_scope_mode_any: 'Any（1つのscopeで許可）',
-	admin_custom_claims_scope_mode_all: 'All（すべてのscopeが必要）',
-	admin_custom_claims_claim_namespace: 'Claim Namespace（任意）',
-	admin_custom_claims_claim_namespace_placeholder: '例: https://example.com/claims/',
 	admin_custom_claims_delete_title: 'Custom Claim Schemaを削除',
 	admin_custom_claims_warning_label: '警告:',
 	admin_custom_claims_delete_warning:
@@ -125,9 +115,9 @@ const adminCustomClaims = {
 	admin_custom_claims_rename_step_delete: '古いschemaを削除する',
 	admin_custom_claims_direct_rename_warning_label: '直接renameの警告:',
 	admin_custom_claims_direct_rename_warning:
-		'RenameするとAPI responseとtoken内のclaim nameが変わります。古いclaim nameを期待するRelying Party（RP）integrationが壊れる可能性があります。',
+		'Renameするとcanonical source keyが変わります。古いkeyを参照するSchema Mappingの更新が必要です。',
 	admin_custom_claims_rename_warning:
-		'RenameするとAPI responseとtoken内のclaim nameが変わります。古いclaim nameを期待するRelying Party（RP）integrationが壊れる可能性があります。',
+		'Renameするとcanonical source keyが変わります。古いkeyを参照するSchema Mappingの更新が必要です。',
 	admin_custom_claims_current_field_key: '現在のField Key',
 	admin_custom_claims_current_key: '現在のkey',
 	admin_custom_claims_new_field_key: '新しいField Key',
@@ -144,9 +134,6 @@ const adminCustomClaims = {
 	admin_custom_claims_non_pii_storage_badge: 'Non-PII - core databaseに保存',
 	admin_custom_claims_cannot_change_after_creation: '作成後は変更できません。',
 	admin_custom_claims_display_order: 'Display Order',
-	admin_custom_claims_token_endpoint_inclusion: 'Token & Endpoint Inclusion',
-	admin_custom_claims_token_endpoint_description:
-		'このclaimをdefaultで含めるtokenとendpointを制御します。',
 	admin_custom_claims_advanced: 'Advanced',
 	admin_custom_claims_searchable: 'Searchable',
 	admin_custom_claims_exportable: 'Exportable',
@@ -161,7 +148,7 @@ const adminCustomClaims = {
 		'"Signup formに表示"を有効にすると、必須、順序、placeholder設定を編集できます。',
 	admin_custom_claims_danger_zone: 'Danger Zone',
 	admin_custom_claims_rename_description:
-		'API responseとtoken内のclaim nameを変更します。RP integrationが壊れる可能性があります。',
+		'Canonical source keyを変更するため、既存のSchema Mappingが壊れる可能性があります。',
 	admin_custom_claims_rename: 'Rename',
 	admin_custom_claims_system_rename_disabled: 'System claimはrenameできません',
 	admin_custom_claims_delete_schema: 'Schemaを削除',
@@ -192,6 +179,7 @@ const adminCustomClaims = {
 	admin_custom_claims_field_type_enum: 'Enum',
 	admin_custom_claims_status_renaming: 'Renaming...',
 	admin_custom_claims_status_deleting: 'Deleting...',
+	admin_custom_claims_status_reconfiguring: '再構成中...',
 	admin_custom_claims_status_error: 'Error'
 } as const;
 

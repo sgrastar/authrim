@@ -36,10 +36,7 @@ describe('Authentication Parameters', () => {
         const hasNone = values.includes('none');
         const hasOthers = values.length > 1;
 
-        if (hasNone && hasOthers) {
-          // This should trigger an error
-          expect(true).toBe(true);
-        }
+        expect(hasNone && hasOthers).toBe(true);
       });
     });
 
@@ -225,9 +222,7 @@ describe('Authentication Parameters', () => {
       const promptValues = prompt.split(' ');
       if (promptValues.includes('none') && hasSession) {
         const timeSinceAuth = currentTime - authTime;
-        if (timeSinceAuth <= maxAge) {
-          expect(true).toBe(true); // Should succeed
-        }
+        expect(timeSinceAuth).toBeLessThanOrEqual(maxAge);
       }
     });
   });
@@ -298,9 +293,9 @@ describe('Consent Flow', () => {
       const hasSession = true;
       const consentRequired = false; // Consent already granted
 
-      if (prompt === 'none' && hasSession && !consentRequired) {
-        expect(true).toBe(true); // Should succeed
-      }
+      expect(prompt).toBe('none');
+      expect(hasSession).toBe(true);
+      expect(consentRequired).toBe(false);
     });
   });
 

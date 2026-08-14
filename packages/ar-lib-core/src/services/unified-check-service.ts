@@ -345,7 +345,7 @@ export class UnifiedCheckService {
 
       // Try cache first
       const cacheKey = this.buildCacheKey(context);
-      if (this.cache) {
+      if (this.cache && cacheKey) {
         const cached = await this.getCachedResult(cacheKey);
         if (cached) {
           // Log audit for cached result too
@@ -358,10 +358,10 @@ export class UnifiedCheckService {
       const result = await this.evaluate(context);
 
       // Build response
-      const response = this.buildResponse(result, startTime);
+      const response = this.buildResponse(result, startTime, cacheKey ? this.cacheTTL : 0);
 
       // Cache result
-      if (this.cache) {
+      if (this.cache && cacheKey) {
         await this.cacheResult(cacheKey, response);
       }
 
@@ -755,7 +755,14 @@ export class UnifiedCheckService {
   /**
    * Build cache key for check result
    */
-  private buildCacheKey(context: CheckContext): string {
+  private buildCacheKey(context: CheckContext): string | null {
+    // resource_context and ReBAC parameters are request-specific authorization inputs. Keeping
+    // them out of the shared cache is safer than attempting to normalize attacker-controlled
+    // nested objects and prevents a contextual allow from being reused by a different request.
+    if (context.resourceContext !== undefined || context.rebacParams !== undefined) {
+      return null;
+    }
+
     const permStr = formatPermission(context.parsed);
     return `${CHECK_CACHE_PREFIX}${context.tenantId}:${context.subjectId}:${permStr}`;
   }
@@ -796,14 +803,18 @@ export class UnifiedCheckService {
   /**
    * Build final response
    */
-  private buildResponse(result: InternalCheckResult, startTime: number): CheckApiResponse {
+  private buildResponse(
+    result: InternalCheckResult,
+    startTime: number,
+    cacheTTL: number
+  ): CheckApiResponse {
     const evaluationTime = performance.now() - startTime;
 
     const response: CheckApiResponse = {
       allowed: result.allowed,
       resolved_via: result.resolvedVia,
       final_decision: result.allowed ? 'allow' : 'deny',
-      cache_ttl: this.cacheTTL,
+      cache_ttl: cacheTTL,
     };
 
     if (!result.allowed && result.reason) {

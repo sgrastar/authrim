@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { tenantSystemProfiles } from '../../fixtures/tenant-system/profiles';
+import { tenantSystemProfiles } from './fixtures/profiles';
 import {
   applyLoginEntryProfile,
   buildEnvForTopology,
   createTenantSystemDiscoveryApp,
-  loadMatrixCsv,
   makeCommonHost,
   postDiscoveryRequest,
   seedTenantDataset,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface DiscoveryInputDataMatrixRow {
   case_id: string;
@@ -30,10 +30,28 @@ describe('tenant-system discovery resolution matrix', () => {
   });
 
   it.each([
-    ['DI-001', 'P00', { mode: 'email', value: 'first.user@example.test' }, 'resolved', 'first'],
-    ['DI-002', 'P00', { mode: 'email', value: 'shared.user@example.test' }, 'multiple', null],
-    ['DI-003', 'P00', { mode: 'email', value: 'person@first.example.test' }, 'resolved', 'first'],
-    ['DI-004', 'P00', { mode: 'email', value: 'person@shared.example.test' }, 'multiple', null],
+    ['DI-001', 'P00', { mode: 'email', value: 'first.user@example.test' }, 'manual_required', null],
+    [
+      'DI-002',
+      'P00',
+      { mode: 'email', value: 'shared.user@example.test' },
+      'manual_required',
+      null,
+    ],
+    [
+      'DI-003',
+      'P00',
+      { mode: 'email', value: 'person@first.example.test' },
+      'manual_required',
+      null,
+    ],
+    [
+      'DI-004',
+      'P00',
+      { mode: 'email', value: 'person@shared.example.test' },
+      'manual_required',
+      null,
+    ],
     [
       'DI-005',
       'P00',
@@ -49,8 +67,14 @@ describe('tenant-system discovery resolution matrix', () => {
       null,
     ],
     ['DI-007', 'P00', { mode: 'email', value: 'missing@example.test' }, 'manual_required', null],
-    ['DI-008', 'P08', { mode: 'email', value: 'missing@example.test' }, 'not_found', null],
-    ['DI-009', 'P02', { mode: 'email', value: 'person@first.example.test' }, 'not_found', null],
+    ['DI-008', 'P08', { mode: 'email', value: 'missing@example.test' }, 'manual_required', null],
+    [
+      'DI-009',
+      'P02',
+      { mode: 'email', value: 'person@first.example.test' },
+      'manual_required',
+      null,
+    ],
     ['DI-010', 'P03', { mode: 'email', value: 'first.user@example.test' }, 'manual_required', null],
     ['DI-011', 'P04', { mode: 'tenant_code', value: 'first' }, 'resolved', 'first'],
     ['DI-012', 'P04', { mode: 'tenant_code', value: 'inactive-code' }, 'not_found', null],

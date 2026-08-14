@@ -1146,6 +1146,28 @@ const fr: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': "Détails de l'Environnement",
+  'web.envDetail.initialDeployRecoveryTitle': 'Le déploiement initial est incomplet',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'Le déploiement précédent s’est arrêté avant la vérification. Les ressources créées seront réutilisées lors de la reprise.',
+  'web.envDetail.initialDeployRecoveryAction': 'Reprendre le déploiement initial',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'État Cloudflare vérifié. Terminé : {{completed}}. La reprise commencera à {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations':
+    'la vérification des migrations de base de données',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'la préparation du déploiement initial',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'le déploiement des Workers',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'la vérification après déploiement',
+  'web.envDetail.initialDeployRecoveryResources': 'le provisionnement des ressources',
+  'web.envDetail.initialDeployRecoverySchema': 'les migrations de base de données',
+  'web.envDetail.initialDeployRecoveryWorkers': 'le déploiement des Workers',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'Le point de contrôle enregistré ne correspond pas à l’état dans Cloudflare. La reprise est désactivée. Supprimez cet environnement incomplet et recréez-le.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'La définition draft des migrations a changé après le début du déploiement initial. L’état enregistré peut ne plus correspondre aux bases de données ; la reprise est donc désactivée. Supprimez cet environnement incomplet et recréez-le.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'L’état actuel n’a pas pu être vérifié ; la reprise est donc désactivée. Vérifiez la connexion Cloudflare et contrôlez à nouveau cet environnement. Si la vérification échoue toujours, supprimez l’environnement incomplet et recréez-le.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Les identifiants de déploiement doivent être actualisés ; un nouveau token Cloudflare à usage unique sera demandé.',
   'web.envDetail.adminNotConfigured': 'Compte Admin Non Configuré',
   'web.envDetail.adminNotConfiguredDesc':
     "L'administrateur initial n'a pas été configuré pour cet environnement.",

@@ -337,10 +337,10 @@ async function createGeneratedValidationMachineAccess(options: {
       principalId,
       principalType: 'ci',
       displayName: 'Authrim Generated Environment Validation',
-      description: 'Temporary machine principal created by environment-validation smoke tests.',
+      description: 'Temporary machine principal created by generated-environment smoke tests.',
       permissions,
       tokenTtlSeconds: 600,
-      createdByActorId: 'environment-validation',
+      createdByActorId: 'generated-environment',
     });
     await executeGeneratedValidationMachineSql(options.env, bootstrapSql);
     const token = await requestAdminMachineAccessToken({

@@ -118,7 +118,7 @@ describe('release deployment guard', () => {
       evaluateReleaseDeploymentGuard(interrupted, '1.1.0', 'initial_deploy', {
         releaseManifestChecksum: 'b'.repeat(64),
       }).reason
-    ).toBe('release_update_in_progress');
+    ).toBe('initial_manifest_changed');
     expect(
       evaluateReleaseDeploymentGuard(
         lock({ workerVersions: ['1.1.0'], releaseUpdatePhase: 'schema_applied' }),

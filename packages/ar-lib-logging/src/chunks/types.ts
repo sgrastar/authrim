@@ -125,6 +125,9 @@ export interface WriteLogChunkInput {
   compression?: LogChunkCompression;
   shard?: string;
   now?: number;
+  /** Stable identifiers supplied by idempotent queue consumers on redelivery. */
+  chunkId?: string;
+  objectCatalogId?: string;
   catalogStore?: LogChunkCatalogStore;
   encryption?: LogChunkEncryptionOptions;
   /**

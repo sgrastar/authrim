@@ -41,6 +41,12 @@ const mockCountUsersWithNonPiiFieldData = vi.fn(
     return rows[0]?.count || 0;
   }
 );
+const mockCountUsersWithPiiFieldData = vi.fn(
+  async (_db: unknown, _tenantId: string, fieldKey: string) => {
+    const rows = await mockPiiQuery('COUNT_PII_FIELD_USERS', fieldKey);
+    return rows[0]?.count || 0;
+  }
+);
 const mockDeleteStoredCustomClaimData = vi.fn(
   async ({ fieldKey, isPii }: { fieldKey: string; isPii: boolean }) => {
     if (!isPii) {
@@ -174,6 +180,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listNonPiiFieldUsage: (db: unknown, tenantId: string) => mockListNonPiiFieldUsage(db, tenantId),
     countUsersWithNonPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
       mockCountUsersWithNonPiiFieldData(db, tenantId, fieldKey),
+    countUsersWithPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
+      mockCountUsersWithPiiFieldData(db, tenantId, fieldKey),
     deleteStoredCustomClaimData: (params: {
       db: unknown;
       dbPii?: unknown;
@@ -346,6 +354,7 @@ function createSchemaRow(
     field_key: 'employee_id',
     display_label: 'Employee ID',
     field_type: 'string',
+    cardinality: 'single',
     is_pii: 0,
     is_required: 0,
     is_active: 1,
@@ -380,8 +389,10 @@ describe('Custom Claims Admin API', () => {
     vi.clearAllMocks();
     mockDbQuery.mockReset();
     mockDbExecute.mockReset();
+    mockDbExecute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mockPiiQuery.mockReset();
     mockPiiExecute.mockReset();
+    mockPiiExecute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mockGenerateId.mockReturnValue('test-id-123');
     mockSchemaHistoryRecordChange.mockReset();
     mockSchemaHistoryRecordChange.mockResolvedValue(undefined);
@@ -453,6 +464,8 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.presets[0]).toEqual(expect.objectContaining({ label: expect.any(String) }));
+      expect(body.presets[0]).not.toHaveProperty('name');
       expect(body.presets[0].fields).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -462,6 +475,19 @@ describe('Custom Claims Admin API', () => {
           }),
         ])
       );
+      expect(body.presets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'scim_core_user' }),
+          expect.objectContaining({ id: 'scim_enterprise_user' }),
+          expect.objectContaining({ id: 'saml_eduperson' }),
+          expect.objectContaining({ id: 'authorization_context' }),
+        ])
+      );
+      expect(
+        body.presets
+          .find((preset: { id: string }) => preset.id === 'authorization_context')
+          ?.fields.find((field: { field_key: string }) => field.field_key === 'roles')
+      ).toMatchObject({ cardinality: 'multi' });
       expect(body.existing_field_keys).toEqual(['email']);
     });
   });
@@ -491,6 +517,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.skipped_field_keys).toEqual(['email']);
       expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
       expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
+      expect(mockDbExecute.mock.calls[0][0]).toContain("0, 0, 0, 'any'");
     });
 
     it('should reject unknown preset field keys', async () => {
@@ -1166,6 +1193,68 @@ describe('Custom Claims Admin API', () => {
       const { status } = await getResponseData(res);
 
       expect(status).toBe(400);
+    });
+
+    it('should reject a cardinality change when non-PII values exist', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]).mockResolvedValueOnce([{ count: 3 }]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(409);
+      expect(body.error_code).toBe('AR060005');
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+      expect(mockDbExecute.mock.calls[0][0]).toContain("operation_status = 'reconfiguring'");
+      expect(mockDbExecute.mock.calls[1][1]).toEqual(
+        expect.arrayContaining(['active', null, 'schema-1', 'test-tenant', 'reconfiguring'])
+      );
+    });
+
+    it('should reject a cardinality change when PII values exist', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 1 })]);
+      mockPiiQuery.mockResolvedValueOnce([{ count: 2 }]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(409);
+      expect(mockPiiQuery).toHaveBeenCalledWith('COUNT_PII_FIELD_USERS', 'employee_id');
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    });
+
+    it('fences writes while changing cardinality and restores the active state on success', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([createSchemaRow()])
+        .mockResolvedValueOnce([{ count: 0 }])
+        .mockResolvedValueOnce([createSchemaRow({ cardinality: 'multi' })]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+      expect(mockDbExecute.mock.calls[0][0]).toContain("operation_status = 'reconfiguring'");
+      expect(mockDbExecute.mock.calls[1][1]).toEqual(
+        expect.arrayContaining(['multi', 'active', null, 'reconfiguring'])
+      );
     });
 
     it('should reject examples_json larger than the storage budget on update', async () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   createIDToken,
   createAccessToken,
+  createRefreshToken,
   verifyToken,
   parseToken,
   importPrivateKeyFromPEM,
@@ -149,6 +150,44 @@ describe('JWT Utilities', () => {
 
       expect(parsed.scope).toBe('openid profile email');
       expect(parsed.jti).toBe(result.jti);
+      expect(parsed.token_use).toBe('access');
+    });
+
+    it('should preserve a narrower internal token-use discriminator', async () => {
+      const result = await createAccessToken(
+        {
+          iss: issuer,
+          sub: 'user123',
+          aud: clientId,
+          scope: 'elevation:use',
+          client_id: clientId,
+          token_use: 'elevation_grant_subject',
+        },
+        privateKey,
+        kid
+      );
+
+      expect(parseToken(result.token).token_use).toBe('elevation_grant_subject');
+    });
+  });
+
+  describe('createRefreshToken', () => {
+    it('should include the refresh token-use discriminator', async () => {
+      const result = await createRefreshToken(
+        {
+          iss: issuer,
+          sub: 'user123',
+          aud: clientId,
+          scope: 'openid offline_access',
+          client_id: clientId,
+        },
+        privateKey,
+        kid
+      );
+
+      const parsed = parseToken(result.token);
+
+      expect(parsed.token_use).toBe('refresh');
     });
   });
 

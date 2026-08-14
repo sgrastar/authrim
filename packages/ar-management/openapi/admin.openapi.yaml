@@ -8937,7 +8937,8 @@ paths:
       summary: Create a field catalog.
       description: >-
         Creates a field catalog and initial catalog version from catalog entries and optional custom
-        entries. The mutation is idempotency-aware through `Idempotency-Key`.
+        entries. Destination-only entries cannot use claims reserved by an OIDC or introspection
+        protocol envelope. The mutation is idempotency-aware through `Idempotency-Key`.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -9617,7 +9618,8 @@ paths:
       summary: Create a field mapping version.
       description: >-
         Creates a draft version for a field mapping set with rules, edges, transforms, validation
-        rules, release rules, and conflict rules.
+        rules, release rules, and conflict rules. Mapping edges cannot target claims owned by an OIDC
+        or introspection protocol envelope.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingVersionMutation'
@@ -17268,6 +17270,49 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters: []
+  /api/admin/scim-settings:
+    get:
+      tags:
+        - Admin Miscellaneous
+      operationId: getApiAdminScimSettings
+      summary: Get inbound SCIM settings
+      description: Returns tenant-scoped inbound SCIM enablement, Mapping Set selection, and Bulk limits.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminScimSettings'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Admin Miscellaneous
+      operationId: putApiAdminScimSettings
+      summary: Update inbound SCIM settings
+      description: Selects the active Mapping Set used by inbound SCIM writes and updates tenant Bulk limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminScimInboundSettings'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminScimSettings'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/scim-tokens/{tokenHash}':
     delete:
       tags:
@@ -31022,10 +31067,6 @@ components:
             display_label: Department
             field_type: string
             is_pii: false
-            include_in_id_token: true
-            include_in_userinfo: true
-            required_scopes:
-              - profile
     CustomClaimUpdate:
       required: true
       content:
@@ -31034,7 +31075,6 @@ components:
             $ref: '#/components/schemas/CustomClaimUpdateRequest'
           example:
             display_label: Department Name
-            include_in_userinfo: true
             is_searchable: true
     CustomClaimRename:
       required: true
@@ -36810,6 +36850,18 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminScimTokenRevokeResponse'
+    AdminScimSettings:
+      description: Tenant inbound SCIM settings response.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+              - settings
+            properties:
+              settings:
+                $ref: '#/components/schemas/AdminScimInboundSettings'
     AdminSecurityAlertList:
       description: Security alert list response.
       content:
@@ -44486,7 +44538,6 @@ components:
             - none
             - client_secret_basic
             - client_secret_post
-            - client_secret_jwt
             - private_key_jwt
         subject_type:
           type: string
@@ -51465,6 +51516,7 @@ components:
         - active
         - deleting
         - renaming
+        - reconfiguring
         - error
     CustomClaimSchema:
       type: object
@@ -51475,6 +51527,7 @@ components:
         - field_key
         - display_label
         - field_type
+        - cardinality
         - is_pii
         - is_active
         - created_at
@@ -51490,6 +51543,12 @@ components:
           type: string
         field_type:
           $ref: '#/components/schemas/CustomClaimFieldType'
+        cardinality:
+          type: string
+          enum:
+            - single
+            - multi
+          description: Whether the stored field contains one value or a validated JSON array.
         is_pii:
           type: integer
           enum:
@@ -51613,6 +51672,11 @@ components:
           maxLength: 255
         field_type:
           $ref: '#/components/schemas/CustomClaimFieldType'
+        cardinality:
+          type: string
+          enum:
+            - single
+            - multi
         is_pii:
           type: boolean
         required_scopes:
@@ -51620,6 +51684,8 @@ components:
           maxItems: 50
           items:
             type: string
+          deprecated: true
+          description: Legacy schema-level release metadata. Active Schema Mapping and Destination Profiles authorize release.
     CustomClaimUpdateRequest:
       type: object
       additionalProperties: true
@@ -51630,15 +51696,14 @@ components:
           maxLength: 255
         field_type:
           $ref: '#/components/schemas/CustomClaimFieldType'
+        cardinality:
+          type: string
+          enum:
+            - single
+            - multi
         is_required:
           type: boolean
         is_active:
-          type: boolean
-        include_in_id_token:
-          type: boolean
-        include_in_userinfo:
-          type: boolean
-        include_in_introspection:
           type: boolean
         required_scopes:
           type:
@@ -51647,6 +51712,7 @@ components:
           maxItems: 50
           items:
             type: string
+          deprecated: true
     CustomClaimRenameRequest:
       type: object
       additionalProperties: false
@@ -51670,17 +51736,22 @@ components:
           type: string
         field_type:
           $ref: '#/components/schemas/CustomClaimFieldType'
+        cardinality:
+          type: string
+          enum:
+            - single
+            - multi
     CustomClaimPreset:
       type: object
       additionalProperties: true
       required:
         - id
-        - name
+        - label
         - fields
       properties:
         id:
           type: string
-        name:
+        label:
           type: string
         description:
           type: string
@@ -52918,6 +52989,7 @@ components:
             - oidc
             - csv
             - saml
+            - resource_server
         profileKey:
           type: string
         displayName:
@@ -52971,6 +53043,7 @@ components:
             - oidc
             - csv
             - saml
+            - resource_server
         profileKey:
           type: string
         displayName:
@@ -58815,6 +58888,38 @@ components:
           type: string
       example:
         message: Token revoked successfully
+    AdminScimInboundSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+        - usersEnabled
+        - groupsEnabled
+        - bulkEnabled
+        - mappingSetId
+        - bulkMaxOperations
+        - bulkMaxPayloadSize
+      properties:
+        enabled:
+          type: boolean
+        usersEnabled:
+          type: boolean
+        groupsEnabled:
+          type: boolean
+        bulkEnabled:
+          type: boolean
+        mappingSetId:
+          type:
+            - string
+            - 'null'
+        bulkMaxOperations:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        bulkMaxPayloadSize:
+          type: integer
+          minimum: 1024
+          maximum: 10485760
     AdminSecurityCursorPagination:
       type: object
       additionalProperties: false

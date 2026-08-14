@@ -49,6 +49,99 @@ function createProtectedApp(tenantId?: string) {
 }
 
 describe('SCIM tenant-bound authentication', () => {
+  it('does not count successful requests as failed authentication attempts', async () => {
+    const limiter = {
+      getStatusRpc: vi.fn(async () => null),
+      incrementRpc: vi.fn(),
+      resetRpc: vi.fn(async () => true),
+    };
+    const env = createEnv({
+      ENABLE_SCIM_AUTH_RATE_LIMIT: 'true',
+      RATE_LIMITER: {
+        idFromName: vi.fn(() => ({ toString: () => 'rate-id' })),
+        get: vi.fn(() => limiter),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const { token } = await generateScimToken(env, { tenantId: 'default' });
+    const app = createProtectedApp('default');
+
+    for (let request = 0; request < 7; request += 1) {
+      const response = await app.request(
+        '/Users',
+        { headers: { Authorization: `Bearer ${token}` } },
+        env
+      );
+      expect(response.status).toBe(200);
+    }
+
+    expect(limiter.incrementRpc).not.toHaveBeenCalled();
+    expect(limiter.resetRpc).toHaveBeenCalledTimes(14);
+  });
+
+  it('uses the configured lockout duration after the failed-attempt threshold', async () => {
+    const records = new Map<string, { count: number; resetAt: number; firstRequestAt: number }>();
+    const limiter = {
+      getStatusRpc: vi.fn(async (key: string) => records.get(key) ?? null),
+      incrementRpc: vi.fn(
+        async (key: string, config: { windowSeconds: number; maxRequests: number }) => {
+          const now = Math.floor(Date.now() / 1000);
+          const existing = records.get(key);
+          const record =
+            existing && now < existing.resetAt
+              ? { ...existing, count: existing.count + 1 }
+              : { count: 1, resetAt: now + config.windowSeconds, firstRequestAt: now };
+          records.set(key, record);
+          return {
+            allowed: record.count <= config.maxRequests,
+            current: record.count,
+            limit: config.maxRequests,
+            resetAt: record.resetAt,
+            retryAfter: Math.max(0, record.resetAt - now),
+          };
+        }
+      ),
+      resetRpc: vi.fn(async (key: string) => records.delete(key)),
+    };
+    const env = createEnv({
+      ENABLE_SCIM_AUTH_RATE_LIMIT: 'true',
+      SCIM_AUTH_MAX_FAILED_ATTEMPTS: '2',
+      SCIM_AUTH_WINDOW_SECONDS: '30',
+      SCIM_AUTH_LOCKOUT_SECONDS: '600',
+      SCIM_AUTH_FAILURE_DELAY_MS: '1',
+      RATE_LIMITER: {
+        idFromName: vi.fn(() => ({ toString: () => 'rate-id' })),
+        get: vi.fn(() => limiter),
+      } as unknown as Env['RATE_LIMITER'],
+    });
+    const app = createProtectedApp('default');
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await app.request(
+        '/Users',
+        { headers: { Authorization: 'Bearer invalid-token' } },
+        env
+      );
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ detail: 'Authentication failed' });
+    }
+
+    const lockedResponse = await app.request(
+      '/Users',
+      { headers: { Authorization: 'Bearer invalid-token' } },
+      env
+    );
+
+    expect(lockedResponse.status).toBe(401);
+    expect(Number(lockedResponse.headers.get('Retry-After'))).toBeGreaterThanOrEqual(599);
+    await expect(lockedResponse.json()).resolves.toMatchObject({
+      detail: expect.stringContaining('Too many failed authentication attempts'),
+    });
+    expect(limiter.incrementRpc).toHaveBeenCalledWith('unknown:lockout', {
+      windowSeconds: 600,
+      maxRequests: 0,
+    });
+  });
+
   it('accepts a token only for its bound tenant', async () => {
     const env = createEnv({ BASE_DOMAIN: 'example.com' });
     const { token } = await generateScimToken(env, { tenantId: 'tenant-a' });

@@ -339,6 +339,7 @@ describe('managed Direct Auth browser session finish', () => {
         type: 'reauth',
         metadata: expect.objectContaining({
           purpose: 'authorize_confirmation',
+          browserBinding: expect.any(String),
           authorization_request: expect.objectContaining({
             source: 'par',
             authorization_server: 'default',
@@ -349,6 +350,7 @@ describe('managed Direct Auth browser session finish', () => {
         }),
       })
     );
+    expect(response.headers.get('set-cookie')).toContain('authrim_authorize_confirmation=');
   });
 
   it('can resume an OAuth login challenge from artifact metadata when the request omits it', async () => {

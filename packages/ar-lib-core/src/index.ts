@@ -148,6 +148,7 @@ export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
+export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
@@ -399,6 +400,7 @@ export * from './services/control-plane/control-plane-contracts';
 export * from './services/control-plane/migration-history-contract';
 export * from './services/control-plane/plugin-hook-outbox-retention';
 export * from './services/control-plane/runtime-smoke-rpc';
+export * from './services/control-plane/bootstrap-accelerator-proof';
 export * from './services/refresh-token-family-store';
 
 // Repositories

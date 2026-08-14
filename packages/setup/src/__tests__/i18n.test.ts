@@ -118,4 +118,37 @@ describe('setup i18n locale contracts', () => {
     expect(Object.keys(french).length).toBeGreaterThan(100);
     expect(getTranslationsForWeb('ru')['banner.title']).toBe('Authrim Setup');
   });
+
+  it('provides localized initial deployment recovery guidance for every supported locale', async () => {
+    const keys = [
+      'web.envDetail.initialDeployRecoveryTitle',
+      'web.envDetail.initialDeployRecoveryDesc',
+      'web.envDetail.initialDeployRecoveryAction',
+      'web.envDetail.initialDeployRecoveryVerified',
+      'web.envDetail.initialDeployRecoveryStageMigrations',
+      'web.envDetail.initialDeployRecoveryStageControlPlane',
+      'web.envDetail.initialDeployRecoveryStageWorkers',
+      'web.envDetail.initialDeployRecoveryStageVerification',
+      'web.envDetail.initialDeployRecoveryResources',
+      'web.envDetail.initialDeployRecoverySchema',
+      'web.envDetail.initialDeployRecoveryWorkers',
+      'web.envDetail.initialDeployRecoveryRecreate',
+      'web.envDetail.initialDeployRecoveryManifestChanged',
+      'web.envDetail.initialDeployRecoveryBlocked',
+      'web.envDetail.initialDeployRecoveryTokenRequired',
+    ] as const;
+    const english = await loadTranslations('en');
+
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      for (const key of keys) {
+        expect(translations[key], `${locale.code}:${key}`).toBeTruthy();
+      }
+      if (locale.code !== 'en') {
+        expect(translations['web.envDetail.initialDeployRecoveryManifestChanged']).not.toBe(
+          english['web.envDetail.initialDeployRecoveryManifestChanged']
+        );
+      }
+    }
+  });
 });

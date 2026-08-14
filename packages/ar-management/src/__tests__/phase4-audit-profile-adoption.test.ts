@@ -205,6 +205,7 @@ describe('Phase 4 audit profile adoption', () => {
 
     const envOverrides = {
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
+      DB_ADMIN: mockDB,
     } as Partial<Env>;
 
     const complianceResponse = await adminComplianceStatusHandler(

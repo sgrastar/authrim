@@ -35,6 +35,7 @@ import {
   buildDOKey,
   buildDOInstanceName,
   getTenantSettings,
+  generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
@@ -512,13 +513,14 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
 }
 
 export async function consumeAuthorizationChallengeContinuation(
-  env: Env,
+  c: Context<{ Bindings: Env }>,
   tenantId: string,
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
   fallbackIssuer: string
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
+  const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
   let challengeData: AuthorizationChallengeData;
   let type: AuthorizationChallengeType;
@@ -577,6 +579,7 @@ export async function consumeAuthorizationChallengeContinuation(
   }
 
   const confirmationId = crypto.randomUUID();
+  const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
@@ -589,9 +592,15 @@ export async function consumeAuthorizationChallengeContinuation(
       purpose: 'authorize_confirmation',
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
+      browserBinding,
       authorization_request: createAuthorizationRequestContinuation(metadata),
     },
   });
+  c.header(
+    'Set-Cookie',
+    `authrim_authorize_confirmation=${encodeURIComponent(browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(env)}; Secure; Max-Age=120`,
+    { append: true }
+  );
 
   return {
     type,
@@ -2998,7 +3007,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (effectiveAuthorizationChallengeId) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         effectiveAuthorizationChallengeId,
         artifactData.userId,

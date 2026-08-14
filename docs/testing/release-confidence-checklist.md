@@ -59,7 +59,7 @@ Recommended checks:
 
 - `pnpm --filter @authrim/ar-discovery test`
 - `pnpm --filter @authrim/ar-router test`
-- relevant `test/integration` topology tests
+- `pnpm test:security-matrices` for topology and forwarded-host combinations
 - contract tests for metadata and JWKS shape
 - CSRF/origin decision-table cases
 - host and forwarded-header spoofing cases
@@ -72,8 +72,10 @@ generated environment files, service bindings, migrations.
 Recommended checks:
 
 - package tests for the owning setup/core/management package
-- `pnpm exec vitest run test/integration`
-- generated environment validation for the target environment
+- `pnpm test:integration`
+- `pnpm test:security-matrices` for topology and tenant-boundary combinations
+- generated environment validation for the target environment, for example
+  `pnpm setup:validate-generated-env -- --env test`
 - topology matrix cases for single-tenant, multi-tenant, single/multi-shard assignments,
   `shared_pool`/`tenant_exclusive` coexistence,
   and external DB paths where relevant

@@ -1141,6 +1141,30 @@ const es: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Detalles del Entorno',
+  'web.envDetail.initialDeployRecoveryTitle': 'La implementación inicial está incompleta',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'La implementación anterior se detuvo antes de la verificación. Al reanudar, se reutilizarán los recursos creados.',
+  'web.envDetail.initialDeployRecoveryAction': 'Reanudar implementación inicial',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Estado de Cloudflare verificado. Completado: {{completed}}. Se reanudará desde {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations':
+    'la verificación de migraciones de base de datos',
+  'web.envDetail.initialDeployRecoveryStageControlPlane':
+    'la preparación de la implementación inicial',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'la implementación de Workers',
+  'web.envDetail.initialDeployRecoveryStageVerification':
+    'la verificación posterior a la implementación',
+  'web.envDetail.initialDeployRecoveryResources': 'aprovisionamiento de recursos',
+  'web.envDetail.initialDeployRecoverySchema': 'migraciones de base de datos',
+  'web.envDetail.initialDeployRecoveryWorkers': 'implementación de Workers',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'El punto de control guardado no coincide con Cloudflare. Se deshabilitó la reanudación. Elimine este entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'La definición draft de migraciones cambió después de iniciar la implementación inicial. Es posible que el estado guardado ya no coincida con las bases de datos, por lo que se deshabilitó la reanudación. Elimine este entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'No se pudo verificar el estado actual, por lo que se deshabilitó la reanudación. Compruebe la conexión con Cloudflare y vuelva a revisar el entorno. Si la verificación sigue fallando, elimine el entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Las credenciales de implementación deben actualizarse; se solicitará un nuevo token de Cloudflare de un solo uso.',
   'web.envDetail.adminNotConfigured': 'Cuenta de Admin No Configurada',
   'web.envDetail.adminNotConfiguredDesc':
     'El administrador inicial no ha sido configurado para este entorno.',

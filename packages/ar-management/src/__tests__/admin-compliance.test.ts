@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   core: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
+  admin: { queryOne: vi.fn() },
   auditDb: { queryOne: vi.fn() },
+  settings: vi.fn(),
   hotSupport: vi.fn(),
   audit: vi.fn(),
   logger: { error: vi.fn() },
@@ -14,6 +16,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.core })),
+    getTenantSystemSettings: mocks.settings,
+    requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code, options) =>
       c.json({ error: code, ...options }, code === actual.AR_ERROR_CODES.INTERNAL_ERROR ? 500 : 400)
@@ -54,7 +58,7 @@ function context(
         ? vi.fn().mockRejectedValue(new SyntaxError('bad json'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: {},
+    env: { SETTINGS: {} },
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -105,45 +109,50 @@ describe('admin compliance APIs', () => {
     mocks.core.query.mockReset();
     mocks.core.queryOne.mockReset();
     mocks.core.execute.mockReset();
+    mocks.admin.queryOne.mockReset();
     mocks.auditDb.queryOne.mockReset();
+    mocks.settings.mockReset();
     mocks.hotSupport.mockReset();
     mocks.core.query.mockResolvedValue([]);
     mocks.core.queryOne.mockResolvedValue(null);
     mocks.core.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.admin.queryOne.mockResolvedValue(null);
     mocks.auditDb.queryOne.mockResolvedValue(null);
+    mocks.settings.mockResolvedValue({});
     mocks.hotSupport.mockResolvedValue({ supported: false, status: 'not_supported' });
     mocks.audit.mockResolvedValue(undefined);
   });
 
   it.each([
     [null, false, 0],
-    ['{', false, 0],
-    ['[]', false, 0],
+    [{}, false, 0],
     [
-      JSON.stringify({
-        data_retention: { enabled: 'true', days: '30' },
+      {
+        compliance: { data_retention_enabled: 'true', data_retention_days: '30' },
         security: { mfa_enforced: 1 },
-        audit: { retention_days: '180' },
-      }),
+        logging: { audit_log_retention_days: '180' },
+      },
       true,
       100,
     ],
     [
-      JSON.stringify({
+      {
         data_retention: { enabled: 'false', days: 'invalid' },
         security: { mfa_enforced: '0' },
         audit: { retention_days: Number.NaN },
-      }),
+      },
       false,
       50,
     ],
   ])('builds compliance status from tenant settings %#', async (settings, enabled, mfaCoverage) => {
+    mocks.settings.mockResolvedValueOnce(settings);
+    mocks.admin.queryOne.mockResolvedValueOnce({
+      users_with_mfa: mfaCoverage,
+      users_without_mfa: 100 - mfaCoverage,
+    });
     mocks.core.queryOne
-      .mockResolvedValueOnce(settings === null ? null : { settings })
-      .mockResolvedValueOnce({ users_with_mfa: mfaCoverage, users_without_mfa: 100 - mfaCoverage })
       .mockResolvedValueOnce({ active_roles: enabled ? 2 : 0, users_with_roles: 2 })
-      .mockResolvedValueOnce({ pending_deletions: 3 })
-      .mockResolvedValueOnce({ last_rotation: 100 });
+      .mockResolvedValueOnce({ pending_deletions: 3 });
     const body = (await (await adminComplianceStatusHandler(context())).json()) as {
       data_retention: { policy_enabled: boolean };
       mfa_status: { mfa_coverage_percent: number };
@@ -152,6 +161,10 @@ describe('admin compliance APIs', () => {
     expect(body.data_retention.policy_enabled).toBe(enabled);
     expect(body.mfa_status.mfa_coverage_percent).toBe(mfaCoverage);
     expect(body.audit_log.hot_query_status).toBe('not_supported');
+    expect(mocks.admin.queryOne.mock.calls[0]?.[0]).toContain('FROM admin_users');
+    const coreSql = mocks.core.queryOne.mock.calls.map(([sql]) => String(sql)).join('\n');
+    expect(coreSql).toContain('FROM role_assignments');
+    expect(coreSql).not.toMatch(/tenants\s+WHERE|user_roles|signing_keys|tombstones/u);
   });
 
   it('uses supported audit storage and reports compliant frameworks', async () => {
@@ -160,12 +173,13 @@ describe('admin compliance APIs', () => {
       context: { adapter: mocks.auditDb, createdAtUnit: 'seconds' },
     });
     mocks.auditDb.queryOne.mockResolvedValueOnce({ total: 10, last_30_days: 4 });
+    mocks.settings.mockResolvedValueOnce({
+      compliance: { data_retention_enabled: true, data_retention_days: 30 },
+    });
+    mocks.admin.queryOne.mockResolvedValueOnce({ users_with_mfa: 8, users_without_mfa: 2 });
     mocks.core.queryOne
-      .mockResolvedValueOnce({ settings: '{"data_retention":{"enabled":true,"days":30}}' })
-      .mockResolvedValueOnce({ users_with_mfa: 8, users_without_mfa: 2 })
       .mockResolvedValueOnce({ active_roles: 2, users_with_roles: 8 })
-      .mockResolvedValueOnce({ pending_deletions: 0 })
-      .mockResolvedValueOnce({ last_rotation: 1_700_000_000_000 });
+      .mockResolvedValueOnce({ pending_deletions: 0 });
     const body = (await (await adminComplianceStatusHandler(context())).json()) as {
       overall_status: string;
       audit_log: { total_entries: number; hot_query_status: string };
@@ -177,7 +191,7 @@ describe('admin compliance APIs', () => {
   });
 
   it('returns internal_error when compliance status storage fails', async () => {
-    mocks.core.queryOne.mockRejectedValueOnce(new Error('failure'));
+    mocks.settings.mockRejectedValueOnce(new Error('failure'));
     expect((await adminComplianceStatusHandler(context())).status).toBe(500);
   });
 
@@ -329,20 +343,23 @@ describe('admin compliance APIs', () => {
 
   it.each([
     [null, false],
-    ['{', false],
+    [{}, false],
     [
-      JSON.stringify({
-        data_retention: { enabled: true, days: 30, last_cleanup_at: 100, next_cleanup_at: 200 },
-        audit: { retention_days: 60 },
+      {
+        compliance: {
+          data_retention_enabled: true,
+          data_retention_days: 30,
+          tombstone_retention_days: 3650,
+        },
+        data_retention: { last_cleanup_at: 100, next_cleanup_at: 200 },
+        logging: { audit_log_retention_days: 60 },
         session: { retention_days: 14 },
-        compliance: { tombstone_retention_days: 3650 },
-      }),
+      },
       true,
     ],
   ])('builds data retention status from settings %#', async (settings, enabled) => {
+    mocks.settings.mockResolvedValueOnce(settings);
     mocks.core.queryOne
-      .mockResolvedValueOnce(settings === null ? null : { settings })
-      .mockResolvedValueOnce({ total: 10, expired: 2, oldest_date: 100 })
       .mockResolvedValueOnce({ total: 3, oldest_date: 100 })
       .mockResolvedValueOnce({ pending: 1 });
     const body = (await (await adminDataRetentionStatusHandler(context())).json()) as {
@@ -350,7 +367,10 @@ describe('admin compliance APIs', () => {
       summary: { total_records: number; records_pending_deletion: number };
     };
     expect(body.policy.enabled).toBe(enabled);
-    expect(body.summary).toMatchObject({ total_records: 10, records_pending_deletion: 0 });
+    expect(body.summary).toMatchObject({ total_records: 3, records_pending_deletion: 0 });
+    const coreSql = mocks.core.queryOne.mock.calls.map(([sql]) => String(sql)).join('\n');
+    expect(coreSql).toContain('FROM identity_accounts');
+    expect(coreSql).not.toMatch(/FROM\s+tombstones|SELECT\s+settings\s+FROM\s+tenants/u);
   });
 
   it('includes audit retention statistics when hot query is supported', async () => {
@@ -375,7 +395,7 @@ describe('admin compliance APIs', () => {
   });
 
   it('handles data-retention storage failures', async () => {
-    mocks.core.queryOne.mockRejectedValueOnce(new Error('failure'));
+    mocks.settings.mockRejectedValueOnce(new Error('failure'));
     expect((await adminDataRetentionStatusHandler(context())).status).toBe(500);
   });
 });

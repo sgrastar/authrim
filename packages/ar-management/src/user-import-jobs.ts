@@ -671,6 +671,7 @@ async function createImportedUser(
     await persistCustomClaimWrite({
       db: runtime.customClaimSources.nonPiiDb,
       dbPii: runtime.customClaimSources.piiDb,
+      schemaDb: runtime.customClaimSources.schemaDb,
       tenantId: runtime.tenantId,
       userId,
       validation: customFieldValidation,
@@ -821,6 +822,7 @@ async function updateImportedUser(
     await persistCustomClaimWrite({
       db: runtime.customClaimSources.nonPiiDb,
       dbPii: runtime.customClaimSources.piiDb,
+      schemaDb: runtime.customClaimSources.schemaDb,
       tenantId: runtime.tenantId,
       userId,
       validation: customFieldValidation,

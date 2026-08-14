@@ -15,6 +15,7 @@
 		type ScreenLocalizationLanguage
 	} from '$lib/admin/screen-localizations';
 	import { shouldShowAuthWidgetEmailInput } from '$lib/admin/screen-auth-widget-layout';
+	import { createDefaultRegistrationScreenFields } from '$lib/admin/screen-default-drafts';
 	import {
 		findMissingRequiredRegistrationFields,
 		normalizeRegistrationFieldKey,
@@ -424,61 +425,7 @@
 			display_name: '',
 			description: '',
 			screen_kind: 'registration',
-			fields: [
-				createBlock('heading', 0, {
-					field: 'heading.registration',
-					label: t('アカウントを作成', 'Create your account')
-				}),
-				createBlock('auth_widget', 10, {
-					field: 'auth.passkey',
-					label: t('Passkeyでアカウント作成', 'Create Account with Passkey'),
-					auth_method: 'passkey'
-				}),
-				createBlock('identity_field', 15, {
-					field: 'email',
-					label: t('メールアドレス', 'Email'),
-					required: false
-				}),
-				createBlock('divider', 20, {
-					field: 'divider.or',
-					label: t('または', 'or'),
-					text: t('または', 'or'),
-					display_condition: { mode: 'feature_enabled', feature: 'mail_otp' }
-				}),
-				createBlock('auth_widget', 30, {
-					field: 'auth.mail_otp',
-					label: t('認証コードをメール送信', 'Send code by email'),
-					auth_method: 'mail_otp'
-				}),
-				createBlock('auth_widget', 35, {
-					field: 'auth.totp',
-					label: t('認証アプリで新規登録', 'Create account with authenticator app'),
-					auth_method: 'totp'
-				}),
-				createBlock('divider', 40, {
-					field: 'divider.other_accounts',
-					label: t('他のアカウントで続行', 'Continue with another account'),
-					text: t('他のアカウントで続行', 'Continue with another account'),
-					display_condition: { mode: 'feature_enabled', feature: 'external_idp' }
-				}),
-				createBlock('auth_widget', 50, {
-					field: 'auth.external_idp',
-					label: 'Ext. IdP',
-					auth_method: 'external_idp',
-					external_idp_show_action_text: false
-				}),
-				createBlock('divider', 55, {
-					field: 'divider.directory_password',
-					label: t('または', 'or'),
-					text: t('または', 'or'),
-					display_condition: { mode: 'feature_enabled', feature: 'directory_password' }
-				}),
-				createBlock('auth_widget', 60, {
-					field: 'auth.directory_password',
-					label: t('ディレクトリパスワードでサインイン', 'Sign in with directory password'),
-					auth_method: 'directory_password'
-				})
-			],
+			fields: normalizeBlocks(createDefaultRegistrationScreenFields(t)),
 			localizations: {},
 			settings: { canvas_layout: 'narrow' },
 			is_active: true,

@@ -1626,6 +1626,45 @@ describe('PAR Handler', () => {
     );
   });
 
+  it('preserves max_age=0 from a PAR request object', async () => {
+    mockGetTokenFormat.mockReturnValueOnce('jwt');
+    mockParseTokenHeader.mockReturnValue({ alg: 'none' });
+    mockParseToken.mockReturnValue({
+      client_id: 'client-123',
+      response_type: 'code',
+      redirect_uri: 'https://client.example.com/callback',
+      scope: 'openid',
+      max_age: 0,
+    });
+    const c = createMockContext({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid',
+        request: 'unsigned.request.object',
+      },
+      env: {
+        ENVIRONMENT: 'development',
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockResolvedValue(
+              JSON.stringify({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } })
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ max_age: 0 }) })
+    );
+  });
+
   it.each([
     ['production', undefined, 'not permitted in production'],
     ['development', false, 'not allowed in this environment'],

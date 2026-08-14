@@ -13,6 +13,7 @@ export function withReleaseUpdateState(
     manifestChecksum: string;
     appliedTargets?: string[];
     manualTargets?: string[];
+    initialWorkerRedeployRequired?: boolean;
   }
 ): AuthrimLock {
   const now = new Date().toISOString();
@@ -21,6 +22,8 @@ export function withReleaseUpdateState(
     lock.releaseUpdate.manifestChecksum === input.manifestChecksum
       ? lock.releaseUpdate
       : undefined;
+  const initialWorkerRedeployRequired =
+    input.initialWorkerRedeployRequired ?? existing?.initialWorkerRedeployRequired ?? false;
   return {
     ...lock,
     ...(input.phase === 'verified' ? { productVersion: input.targetVersion } : {}),
@@ -35,6 +38,7 @@ export function withReleaseUpdateState(
       updatedAt: now,
       appliedTargets: input.appliedTargets ?? existing?.appliedTargets ?? [],
       manualTargets: input.manualTargets ?? existing?.manualTargets ?? [],
+      ...(initialWorkerRedeployRequired ? { initialWorkerRedeployRequired: true } : {}),
     },
     updatedAt: now,
   };
@@ -140,5 +144,6 @@ export function withVerifiedInitialReleaseState(
     manifestChecksum: input.manifestChecksum,
     appliedTargets: targetIds,
     manualTargets: [...manualTargetIds],
+    initialWorkerRedeployRequired: false,
   });
 }

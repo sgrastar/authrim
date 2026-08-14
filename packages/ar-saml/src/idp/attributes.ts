@@ -256,7 +256,7 @@ function buildSAMLAttributesFromIdentityMapping(
   };
 }
 
-function resolveSAMLIdentityMappingFieldMappingBinding(
+export function resolveSAMLIdentityMappingFieldMappingBinding(
   config: SAMLIdentityMappingReleaseConfig,
   context: SAMLIdentityMappingRuntimeContext
 ): SAMLIdentityMappingFieldMappingBinding {

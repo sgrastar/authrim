@@ -905,6 +905,83 @@ describe('downstream elevation grant token exchange', () => {
       );
     });
 
+    it.each([
+      {
+        name: 'the requested, subject, and client scope intersection is empty',
+        subjectScope: 'openid',
+        allowedScopes: ['profile'],
+        requestedScope: 'profile',
+      },
+      {
+        name: 'both subject and client scope constraints are absent',
+        subjectScope: undefined,
+        allowedScopes: undefined,
+        requestedScope: 'admin:write',
+      },
+    ])(
+      'rejects token exchange when $name',
+      async ({ subjectScope, allowedScopes, requestedScope }) => {
+        const env = await createVerificationEnv();
+        mocks.mockGetClientCached.mockResolvedValue({
+          client_id: 'service-client-1',
+          tenant_id: 'tenant-a',
+          client_secret_hash: 'hashed-secret',
+          token_exchange_allowed: true,
+          token_endpoint_auth_method: 'client_secret_post',
+          delegation_mode: 'delegation',
+          allowed_scopes: allowedScopes,
+          allowed_token_exchange_resources: ['https://service.example.com'],
+          allowed_subject_token_clients: [],
+        });
+        mocks.mockParseToken.mockReturnValue({
+          sub: 'user-1',
+          aud: 'service-client-1',
+          scope: subjectScope,
+        });
+
+        await expectOAuthError(
+          request({ scope: requestedScope }, env),
+          400,
+          'invalid_scope',
+          'Requested scope is not permitted for this token exchange'
+        );
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      }
+    );
+
+    it('uses the subject scope as the ceiling when the client has no scope policy', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockGetClientCached.mockResolvedValue({
+        client_id: 'service-client-1',
+        tenant_id: 'tenant-a',
+        client_secret_hash: 'hashed-secret',
+        token_exchange_allowed: true,
+        token_endpoint_auth_method: 'client_secret_post',
+        delegation_mode: 'delegation',
+        allowed_scopes: undefined,
+        allowed_token_exchange_resources: ['https://service.example.com'],
+        allowed_subject_token_clients: [],
+      });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        scope: 'read:data profile',
+      });
+
+      const response = await request({ scope: 'read:data admin:write' }, env);
+      const body = await parseJsonResponse<{ scope: string }>(response);
+
+      expect(response.status).toBe(200);
+      expect(body.scope).toBe('read:data');
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ scope: 'read:data' }),
+        expect.anything(),
+        expect.any(String),
+        expect.any(Number),
+        'region-jti-1'
+      );
+    });
+
     it('supports resource-only and combined resource/audience targets', async () => {
       const env = await createVerificationEnv();
       mocks.mockGetClientCached.mockResolvedValue({

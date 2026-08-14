@@ -74,6 +74,11 @@ import { PluginResourceBindingReconciler } from './plugin-resource-binding-recon
 import { PluginResourceCleanupService } from './plugin-resource-cleanup';
 import { handoffPluginResourceOperationsToSetup } from './plugin-resource-operator-handoff';
 import { TenantDisasterRecoveryService } from './tenant-disaster-recovery';
+import {
+  admitInitialBootstrapAcceleration,
+  advanceInitialBootstrap,
+  releaseInitialBootstrapAcceleration,
+} from './bootstrap-accelerator';
 
 function service(env: ControlEnv): ControlService {
   return new ControlService({
@@ -955,7 +960,58 @@ function tenantPlacementMigrationMutation(
 }
 
 export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlRpcProps> {
-  async fetch(): Promise<Response> {
+  async fetch(request?: Request): Promise<Response> {
+    if (!request) {
+      return new Response('Not Found', {
+        status: 404,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/plain; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      });
+    }
+    const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/api/internal/control/bootstrap/advance') {
+      const authorization = request.headers.get('Authorization');
+      const match = authorization?.match(
+        /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/u
+      );
+      if (!match) {
+        return new Response(null, {
+          status: 401,
+          headers: { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer' },
+        });
+      }
+      const admission = await admitInitialBootstrapAcceleration({
+        env: this.env,
+        proof: match[1],
+      }).catch(() => null);
+      if (!admission) {
+        return new Response(null, {
+          status: 401,
+          headers: { 'Cache-Control': 'no-store', 'WWW-Authenticate': 'Bearer' },
+        });
+      }
+      if (admission.state === 'inactive') {
+        return new Response(null, { status: 404, headers: { 'Cache-Control': 'no-store' } });
+      }
+      if (admission.state === 'acquired') {
+        try {
+          // Keep the authenticated request open until this bounded batch finishes. Returning first
+          // made overlapping polls contend on the accelerator lease and hid execution failures.
+          await advanceInitialBootstrap({ env: this.env });
+        } catch {
+          return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+        } finally {
+          await releaseInitialBootstrapAcceleration({
+            env: this.env,
+            claims: admission.claims,
+          });
+        }
+      }
+      return new Response(null, { status: 202, headers: { 'Cache-Control': 'no-store' } });
+    }
     return new Response('Not Found', {
       status: 404,
       headers: {

@@ -418,6 +418,146 @@ describe('AuthorizationCodeStore', () => {
       expect(body._replayAttack.refreshTokenJti).toBe('rt_jti_67890');
     });
 
+    securityRegressionIt(
+      '[security regression] requires the PKCE verifier before returning replay revocation metadata',
+      async () => {
+        const code = 'auth_code_replay_pkce_binding';
+        const codeVerifier = 'p'.repeat(43);
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'victim_user',
+          scope: 'openid',
+          codeChallenge: await generateCodeChallenge(codeVerifier),
+          codeChallengeMethod: 'S256',
+        });
+        await codeStore.consumeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          codeVerifier,
+          accessTokenJti: 'victim_access_jti',
+          refreshTokenJti: 'victim_refresh_jti',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+          })
+        ).rejects.toThrow('code_verifier required');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+            codeVerifier: 'x'.repeat(43),
+          })
+        ).rejects.toThrow('PKCE validation failed');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+            codeVerifier,
+          })
+        ).resolves.toMatchObject({
+          replayAttack: {
+            accessTokenJti: 'victim_access_jti',
+            refreshTokenJti: 'victim_refresh_jti',
+          },
+        });
+      }
+    );
+
+    securityRegressionIt(
+      '[security regression] rejects token registration after a valid replay races issuance',
+      async () => {
+        const code = 'auth_code_replay_registration_race';
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'victim_user',
+          scope: 'openid',
+        });
+        await codeStore.consumeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+          })
+        ).resolves.toMatchObject({ replayAttack: {} });
+        await expect(
+          codeStore.registerIssuedTokensRpc(code, 'late_access_jti', 'late_refresh_jti')
+        ).resolves.toBe(false);
+      }
+    );
+
+    securityRegressionIt(
+      '[security regression] validates redirect and DPoP bindings before consuming the code',
+      async () => {
+        const code = 'admin_agent_binding_preservation';
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'admin_agent_client',
+          tenantId: 'default',
+          redirectUri: 'https://client.example.com/callback',
+          userId: 'admin_user:admin-1',
+          scope: 'agent:read',
+          dpopJkt: 'legitimate-dpop-jkt',
+          authorizationServer: 'admin_agent',
+          subjectType: 'admin_user',
+          resource: 'https://tenant.example.com/mcp',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://attacker.example/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'legitimate-dpop-jkt',
+          })
+        ).rejects.toThrow('Redirect URI mismatch');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://client.example.com/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'attacker-dpop-jkt',
+          })
+        ).rejects.toThrow('DPoP key mismatch');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://client.example.com/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'legitimate-dpop-jkt',
+          })
+        ).resolves.toMatchObject({ userId: 'admin_user:admin-1' });
+      }
+    );
+
     it('should fail on non-existent code', async () => {
       const request = new Request('http://localhost/code/consume', {
         method: 'POST',

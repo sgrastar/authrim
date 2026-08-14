@@ -26,6 +26,7 @@ export interface AccessTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier for revocation)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  token_use?: string; // Authrim token-purpose discriminator or narrower internal token purpose
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
   claims_request_protected?: boolean; // Whether claims came from PAR or signed JAR
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
@@ -121,6 +122,8 @@ export async function createAccessToken(
 
   const token = await new SignJWT({
     ...claims,
+    // Preserve narrower internal token purposes while marking ordinary OAuth access tokens.
+    token_use: claims.token_use ?? 'access',
     iat: now,
     exp: now + expiresIn,
     jti,
@@ -386,6 +389,7 @@ export interface RefreshTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  token_use?: 'refresh'; // Authrim token-purpose discriminator
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
   rtv?: number; // Refresh Token Version (V2) - for theft detection
 }
@@ -418,6 +422,7 @@ export async function createRefreshToken(
 
   const token = await new SignJWT({
     ...claims,
+    token_use: claims.token_use ?? 'refresh',
     iat: now,
     exp: now + expiresIn,
     jti,

@@ -67,6 +67,7 @@ type WorkerBindingStateRepository = Pick<
 const STABILIZATION_SECONDS = 30;
 const RETRY_SECONDS = 15;
 const WORKER_DEPLOYMENT_LEASE_SECONDS = 15 * 60;
+const MAX_PARALLEL_WORKER_RECONCILIATIONS = 5;
 const CORE_SMOKE_BINDINGS: Readonly<Record<string, keyof ControlEnv>> = {
   'ar-lib-core': 'SMOKE_AR_LIB_CORE',
   'ar-discovery': 'SMOKE_AR_DISCOVERY',
@@ -225,9 +226,32 @@ export class WorkerBindingReconciler {
       deferred: 0,
       blocked: handedOffOperations.size,
     };
+    const targetsByWorker = new Map<string, WorkerBindingTarget[]>();
     for (const target of targets) {
-      const outcome = await this.reconcileTarget(target);
-      result[outcome] += 1;
+      const workerTargets = targetsByWorker.get(target.workerScriptName) ?? [];
+      workerTargets.push(target);
+      targetsByWorker.set(target.workerScriptName, workerTargets);
+    }
+    const workerGroups = [...targetsByWorker.values()];
+    for (
+      let offset = 0;
+      offset < workerGroups.length;
+      offset += MAX_PARALLEL_WORKER_RECONCILIATIONS
+    ) {
+      const outcomes = await Promise.all(
+        workerGroups
+          .slice(offset, offset + MAX_PARALLEL_WORKER_RECONCILIATIONS)
+          .map(async (workerTargets) => {
+            const workerOutcomes: Array<'succeeded' | 'deferred' | 'blocked'> = [];
+            // A Worker deployment lease protects one script at a time. Keep targets for the same
+            // Worker ordered while allowing unrelated Workers to make progress concurrently.
+            for (const target of workerTargets) {
+              workerOutcomes.push(await this.reconcileTarget(target));
+            }
+            return workerOutcomes;
+          })
+      );
+      for (const outcome of outcomes.flat()) result[outcome] += 1;
     }
     return result;
   }

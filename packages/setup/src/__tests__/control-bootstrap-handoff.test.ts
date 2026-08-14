@@ -1,15 +1,20 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { verifyBootstrapAcceleratorProof } from '@authrim/ar-lib-core/control-plane';
 import {
   assertInitialBootstrapBindingExecutionCanContinue,
   buildInitialControlTopologyRegistration,
   isInitialBootstrapHandoffAccepted,
+  listInitialBootstrapReconciledWorkerVersions,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
+  requestInitialBootstrapAcceleration,
   waitForInitialBootstrapHandoff,
 } from '../core/control-bootstrap-handoff.js';
 import type { DeployResult } from '../core/deploy.js';
@@ -946,6 +951,74 @@ describe('initial Control topology handoff registration', () => {
     );
   });
 
+  it('surfaces a failed binding immediately instead of waiting for the handoff timeout', async () => {
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query: async () =>
+          [
+            {
+              state: 'creating',
+              verification_error_code: null,
+              accepted_at: null,
+              total_bindings: 102,
+              pending_bindings: 3,
+              failed_bindings: 1,
+              failed_binding_error_code: 'control_worker_settings_request_rejected',
+              latest_binding_update: 200,
+            },
+          ] as never,
+      })
+    ).rejects.toThrow('control_bootstrap_binding_blocked:control_worker_settings_request_rejected');
+  });
+
+  it('extends a bounded wait while retryable binding work is still changing', async () => {
+    let time = 0;
+    let update = 1;
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        timeoutMs: 2_000,
+        stallTimeoutMs: 500,
+        pollIntervalMs: 250,
+        now: () => time,
+        sleep: async (milliseconds) => {
+          time += milliseconds;
+          update += 1;
+        },
+        advanceBindings: async () => undefined,
+        query: async () =>
+          time < 1_250
+            ? ([
+                {
+                  state: 'creating',
+                  verification_error_code: null,
+                  accepted_at: null,
+                  total_bindings: 102,
+                  pending_bindings: 3,
+                  failed_bindings: 0,
+                  failed_binding_error_code: null,
+                  latest_binding_update: update,
+                },
+              ] as never)
+            : ([
+                {
+                  state: 'accepted',
+                  verification_error_code: null,
+                  accepted_at: 300,
+                  total_bindings: 102,
+                  pending_bindings: 0,
+                  failed_bindings: 0,
+                  failed_binding_error_code: null,
+                  latest_binding_update: update,
+                },
+              ] as never),
+      })
+    ).resolves.toEqual({ state: 'accepted', acceptedAt: 300 });
+  });
+
   it('detects an already accepted handoff without mutating its evidence', async () => {
     const query = vi
       .fn()
@@ -966,6 +1039,28 @@ describe('initial Control topology handoff registration', () => {
         query,
       })
     ).resolves.toBe(false);
+  });
+
+  it('loads only Control-recorded binding reconciliation Worker versions', async () => {
+    const query = vi.fn(async (_databaseName: string, sql: string) => {
+      expect(sql).toContain(
+        "state IN ('settings_patched', 'smoke_verifying', 'stabilizing', 'succeeded')"
+      );
+      return [
+        {
+          worker_script_name: 'test-ar-auth',
+          patch_result_version_id: 'version-reconciled',
+        },
+      ];
+    });
+
+    await expect(
+      listInitialBootstrapReconciledWorkerVersions({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query,
+      })
+    ).resolves.toEqual(new Set(['test-ar-auth\0version-reconciled']));
   });
 
   it('advances bindings first and verifies only after every binding succeeds', async () => {
@@ -1061,5 +1156,62 @@ describe('initial Control topology handoff registration', () => {
       })
     ).resolves.toEqual({ attempted: 0, accepted: 0, blocked: 0, retrying: 0 });
     expect(createClient).toHaveBeenCalledOnce();
+  });
+
+  it('sends a short-lived environment-bound proof to the internal accelerator route', async () => {
+    const keysDir = await mkdtemp(join(tmpdir(), 'authrim-bootstrap-accelerator-'));
+    try {
+      const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+      if (!('privateKey' in pair)) throw new Error('expected_key_pair');
+      const privateJwk = {
+        ...(await crypto.subtle.exportKey('jwk', pair.privateKey)),
+        kid: 'smoke-a',
+        alg: 'EdDSA',
+        use: 'sig',
+      };
+      const publicJwk = {
+        ...(await crypto.subtle.exportKey('jwk', pair.publicKey)),
+        kid: 'smoke-a',
+        alg: 'EdDSA',
+        use: 'sig',
+      };
+      await writeFile(
+        join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+        JSON.stringify(privateJwk),
+        'utf8'
+      );
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        expect(String(input)).toBe(
+          'https://test.example.com/api/internal/control/bootstrap/advance'
+        );
+        expect(init?.method).toBe('POST');
+        const authorization = new Headers(init?.headers).get('Authorization');
+        expect(authorization).toMatch(/^Bearer /u);
+        await expect(
+          verifyBootstrapAcceleratorProof(authorization!.slice('Bearer '.length), {
+            environmentId: 'test',
+            publicJwk,
+          })
+        ).resolves.toMatchObject({
+          purpose: 'initial_bootstrap_advance',
+          environmentId: 'test',
+        });
+        return new Response(null, { status: 202 });
+      });
+
+      await expect(
+        requestInitialBootstrapAcceleration({
+          apiBaseUrl: 'https://test.example.com/',
+          environmentId: 'test',
+          keysDir,
+          activeSlot: 'A',
+          activeKeyId: 'smoke-a',
+          fetch: fetcher,
+        })
+      ).resolves.toBe('accepted');
+      expect(fetcher).toHaveBeenCalledOnce();
+    } finally {
+      await rm(keysDir, { recursive: true, force: true });
+    }
   });
 });

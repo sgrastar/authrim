@@ -8,6 +8,11 @@ import { LookupBucketMigrationService } from '../lookup-bucket-migration';
 type SqlValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('required_test_value_missing');
+  return value;
+}
+
 class BoundStatement {
   constructor(
     private readonly statement: StatementSync,
@@ -554,7 +559,7 @@ describe('LookupBucketMigrationService', () => {
       })
     ).rejects.toThrow('control_lookup_bucket_migration_grace_active');
 
-    now = migration.graceExpiresAt! + 1;
+    now = required(migration.graceExpiresAt) + 1;
     migration = await service.claim('test', {
       operationId: migration.operationId,
       ownerId: 'management-run-3',

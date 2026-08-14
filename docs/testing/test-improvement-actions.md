@@ -20,22 +20,22 @@ changes.
 | Release confidence       | Use the checklist to choose package, integration, environment, or browser checks | `docs/testing/release-confidence-checklist.md`            |
 | Change habits            | Apply the testing rules for every security-sensitive change                      | `AGENTS.md`, this document                                |
 | Coverage discipline      | Treat coverage as a working signal and review uncovered critical paths           | package coverage reports                                  |
-| Runtime topology         | Keep topology/storage matrices broader than tenant-only behavior                 | `test/integration`, `test/environment-validation`         |
+| Runtime topology         | Keep topology/storage matrices broader than tenant-only behavior                 | `test/security-matrices`, `test/generated-environment`    |
 
 ## 2. Tests to Add When Related Code Is Touched
 
-| Concern                     | Add tests for                                                                                            | Preferred location                                          |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Redirect and origin abuse   | lookalike redirect URIs, wrong scheme, spoofed forwarded host, foreign origin, missing/invalid Referer   | `ar-auth`, `ar-router`, `ar-lib-core`                       |
-| Token and key validation    | wrong issuer/audience, expired token, wrong `kid`, unexpected `alg`, malformed JWT payload, JWKS refresh | `ar-token`, `ar-discovery`, `ar-lib-core`                   |
-| Client authentication       | missing secret, invalid assertion, unsupported auth method, tenant/client mismatch                       | `ar-token`, `ar-management`                                 |
-| Session lifecycle           | stale challenge, principal change, replayed refresh family, revoked session, backchannel logout          | `ar-auth`, `test/integration`                               |
-| Async lifecycle             | device/CIBA pending, approved, denied, expired, replayed, polled too fast                                | `ar-async`, `ar-token`                                      |
-| Runtime storage topology    | single/multi-shard, mixed placement, external adapter, missing binding, wrong owner, fallback confusion | `setup`, `ar-lib-core`, `ar-management`, `test/integration` |
-| Logging and audit           | redaction, audit event presence, settings history, queue payload, DLQ metadata                           | `ar-lib-core`, `ar-lib-logging`, `ar-management`            |
-| Webhooks and delivery       | payload shape, signature, retry, failed delivery, fake endpoint assertions                               | `ar-management`, `ar-lib-core`                              |
-| External IdP and federation | upstream timeout, callback mismatch, JIT/linking failure, backchannel logout                             | `ar-bridge`, `test/integration`                             |
-| UI-visible flows            | login, consent, passkey/WebAuthn, admin setting changes, accessibility                                   | UI package tests, Playwright                                |
+| Concern                     | Add tests for                                                                                            | Preferred location                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Redirect and origin abuse   | lookalike redirect URIs, wrong scheme, spoofed forwarded host, foreign origin, missing/invalid Referer   | `ar-auth`, `ar-router`, `ar-lib-core`                             |
+| Token and key validation    | wrong issuer/audience, expired token, wrong `kid`, unexpected `alg`, malformed JWT payload, JWKS refresh | `ar-token`, `ar-discovery`, `ar-lib-core`                         |
+| Client authentication       | missing secret, invalid assertion, unsupported auth method, tenant/client mismatch                       | `ar-token`, `ar-management`                                       |
+| Session lifecycle           | stale challenge, principal change, replayed refresh family, revoked session, backchannel logout          | `ar-auth`, `test/integration`                                     |
+| Async lifecycle             | device/CIBA pending, approved, denied, expired, replayed, polled too fast                                | `ar-async`, `ar-token`                                            |
+| Runtime storage topology    | single/multi-shard, mixed placement, external adapter, missing binding, wrong owner, fallback confusion  | `setup`, `ar-lib-core`, `ar-management`, `test/security-matrices` |
+| Logging and audit           | redaction, audit event presence, settings history, queue payload, DLQ metadata                           | `ar-lib-core`, `ar-lib-logging`, `ar-management`                  |
+| Webhooks and delivery       | payload shape, signature, retry, failed delivery, fake endpoint assertions                               | `ar-management`, `ar-lib-core`                                    |
+| External IdP and federation | upstream timeout, callback mismatch, JIT/linking failure, backchannel logout                             | `ar-bridge`, `test/integration`                                   |
+| UI-visible flows            | login, consent, passkey/WebAuthn, admin setting changes, accessibility                                   | UI package tests, Playwright                                      |
 
 ## 3. Habits to Apply During Implementation
 

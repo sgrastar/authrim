@@ -51,6 +51,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('[[services]]');
       expect(result).toContain('binding = "AR_ROUTER"');
       expect(result).toContain('service = "test-ar-router"');
+      expect(result).toContain('entrypoint = "LoginUiBackendEntrypoint"');
     });
 
     it('generates [[services]] section for ar-admin-ui', () => {
@@ -64,6 +65,7 @@ describe('generateUiWorkersWranglerConfig', () => {
       expect(result).toContain('[[services]]');
       expect(result).toContain('binding = "AR_ROUTER"');
       expect(result).toContain('service = "test-ar-router"');
+      expect(result).not.toContain('entrypoint = "LoginUiBackendEntrypoint"');
     });
 
     it('uses env-prefixed worker name in service binding', () => {

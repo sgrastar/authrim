@@ -15,89 +15,13 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
-	 * A​u​t​h​r​i​m
-	 */
-	app_title: string
-	/**
-	 * O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r​ ​o​n​ ​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s
-	 */
-	app_subtitle: string
-	/**
-	 * F​r​o​n​t​e​n​d​ ​S​t​a​c​k​ ​T​e​s​t
-	 */
-	test_title: string
-	/**
-	 * T​e​s​t​ ​M​e​l​t​ ​U​I​ ​(​H​e​a​d​l​e​s​s​ ​C​o​m​p​o​n​e​n​t​s​)​:
-	 */
-	test_meltui: string
-	/**
-	 * P​r​i​m​a​r​y​ ​B​u​t​t​o​n
-	 */
-	button_primary: string
-	/**
-	 * S​e​c​o​n​d​a​r​y​ ​B​u​t​t​o​n
-	 */
-	button_secondary: string
-	/**
-	 * G​h​o​s​t​ ​B​u​t​t​o​n
-	 */
-	button_ghost: string
-	/**
-	 * O​p​e​n​ ​D​i​a​l​o​g
-	 */
-	button_openDialog: string
-	/**
-	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
-	 */
-	form_email: string
-	/**
-	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m
-	 */
-	form_emailPlaceholder: string
-	/**
-	 * S​u​c​c​e​s​s
-	 */
-	badge_success: string
-	/**
-	 * W​a​r​n​i​n​g
-	 */
-	badge_warning: string
-	/**
-	 * E​r​r​o​r
-	 */
-	badge_error: string
-	/**
-	 * I​n​f​o
-	 */
-	badge_info: string
-	/**
-	 * M​e​l​t​ ​U​I​ ​D​i​a​l​o​g
-	 */
-	dialog_title: string
-	/**
-	 * T​h​i​s​ ​i​s​ ​a​ ​t​e​s​t​ ​d​i​a​l​o​g​ ​u​s​i​n​g​ ​M​e​l​t​ ​U​I​,​ ​a​ ​h​e​a​d​l​e​s​s​,​ ​a​c​c​e​s​s​i​b​l​e​ ​c​o​m​p​o​n​e​n​t​ ​l​i​b​r​a​r​y​ ​f​o​r​ ​S​v​e​l​t​e​.
-	 */
-	dialog_description: string
-	/**
 	 * C​a​n​c​e​l
 	 */
 	dialog_cancel: string
 	/**
-	 * C​o​n​f​i​r​m
-	 */
-	dialog_confirm: string
-	/**
 	 * C​l​o​s​e
 	 */
 	dialog_close: string
-	/**
-	 * P​o​w​e​r​e​d​ ​b​y​ ​A​u​t​h​r​i​m
-	 */
-	footer_stack: string
-	/**
-	 * S​w​i​t​c​h​ ​L​a​n​g​u​a​g​e
-	 */
-	language_switch: string
 	/**
 	 * E​n​g​l​i​s​h
 	 */
@@ -115,25 +39,9 @@ type RootTranslation = {
 	 */
 	language_switch_error: string
 	/**
-	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
-	 */
-	common_email: string
-	/**
-	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m
-	 */
-	common_emailPlaceholder: string
-	/**
-	 * F​u​l​l​ ​n​a​m​e
-	 */
-	common_name: string
-	/**
 	 * J​o​h​n​ ​D​o​e
 	 */
 	common_namePlaceholder: string
-	/**
-	 * C​o​n​t​i​n​u​e
-	 */
-	common_continue: string
 	/**
 	 * C​o​n​f​i​r​m
 	 */
@@ -159,29 +67,9 @@ type RootTranslation = {
 	 */
 	common_next: string
 	/**
-	 * B​a​c​k​ ​t​o​ ​l​o​g​i​n
-	 */
-	common_backToLogin: string
-	/**
-	 * o​r
-	 */
-	common_or: string
-	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
 	common_loading: string
-	/**
-	 * N​o​ ​r​e​s​u​l​t​s​ ​f​o​u​n​d
-	 */
-	common_empty_state: string
-	/**
-	 * S​o​m​e​t​h​i​n​g​ ​w​e​n​t​ ​w​r​o​n​g
-	 */
-	common_error_state: string
-	/**
-	 * T​r​y​ ​a​g​a​i​n
-	 */
-	common_try_again: string
 	/**
 	 * S​e​a​r​c​h​.​.​.
 	 */
@@ -258,338 +146,10 @@ type RootTranslation = {
 	 */
 	common_status_neutral: string
 	/**
-	 * W​e​l​c​o​m​e​ ​b​a​c​k
-	 */
-	login_title: string
-	/**
-	 * S​i​g​n​ ​i​n​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t
-	 */
-	login_subtitle: string
-	/**
-	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​P​a​s​s​k​e​y
-	 */
-	login_continueWithPasskey: string
-	/**
-	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​P​a​s​s​k​e​y
-	 */
-	login_signInWithPasskey: string
-	/**
-	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
-	 */
-	login_sendCode: string
-	/**
-	 * D​o​n​'​t​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​C​r​e​a​t​e​ ​o​n​e
-	 */
-	login_createAccount: string
-	/**
-	 * E​m​a​i​l​ ​a​d​d​r​e​s​s​ ​i​s​ ​r​e​q​u​i​r​e​d
-	 */
-	login_errorEmailRequired: string
-	/**
-	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​a​ ​v​a​l​i​d​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s
-	 */
-	login_errorEmailInvalid: string
-	/**
-	 * O​r​ ​c​o​n​t​i​n​u​e​ ​w​i​t​h
-	 */
-	login_orContinueWith: string
-	/**
 	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​{​p​r​o​v​i​d​e​r​}
 	 * @param {string} provider
 	 */
 	login_continueWith: RequiredParams<'provider'>
-	/**
-	 * S​i​g​n​ ​U​p
-	 */
-	header_signUp: string
-	/**
-	 * L​o​g​i​n
-	 */
-	header_login: string
-	/**
-	 * L​o​g​o​u​t
-	 */
-	header_logout: string
-	/**
-	 * C​r​e​a​t​e​ ​y​o​u​r​ ​a​c​c​o​u​n​t
-	 */
-	register_title: string
-	/**
-	 * G​e​t​ ​s​t​a​r​t​e​d​ ​w​i​t​h​ ​A​u​t​h​r​i​m
-	 */
-	register_subtitle: string
-	/**
-	 * C​r​e​a​t​e​ ​A​c​c​o​u​n​t​ ​w​i​t​h​ ​P​a​s​s​k​e​y
-	 */
-	register_createWithPasskey: string
-	/**
-	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
-	 */
-	register_sendCode: string
-	/**
-	 * A​l​r​e​a​d​y​ ​h​a​v​e​ ​a​n​ ​a​c​c​o​u​n​t​?​ ​S​i​g​n​ ​i​n
-	 */
-	register_alreadyHaveAccount: string
-	/**
-	 * B​y​ ​c​r​e​a​t​i​n​g​ ​a​n​ ​a​c​c​o​u​n​t​,​ ​y​o​u​ ​a​g​r​e​e​ ​t​o​ ​o​u​r​ ​T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e​ ​a​n​d​ ​P​r​i​v​a​c​y​ ​P​o​l​i​c​y
-	 */
-	register_termsAgreement: string
-	/**
-	 * N​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
-	 */
-	register_errorNameRequired: string
-	/**
-	 * C​h​e​c​k​ ​y​o​u​r​ ​e​m​a​i​l
-	 */
-	emailCode_title: string
-	/**
-	 * W​e​'​v​e​ ​s​e​n​t​ ​a​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e​ ​t​o
-	 */
-	emailCode_subtitle: string
-	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​6​-​d​i​g​i​t​ ​c​o​d​e​ ​f​r​o​m​ ​y​o​u​r​ ​e​m​a​i​l​.​ ​T​h​e​ ​c​o​d​e​ ​w​i​l​l​ ​e​x​p​i​r​e​ ​i​n​ ​5​ ​m​i​n​u​t​e​s​.
-	 */
-	emailCode_instructions: string
-	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
-	 */
-	emailCode_codeLabel: string
-	/**
-	 * V​e​r​i​f​y
-	 */
-	emailCode_verifyButton: string
-	/**
-	 * R​e​s​e​n​d​ ​c​o​d​e
-	 */
-	emailCode_resendButton: string
-	/**
-	 * R​e​s​e​n​d​ ​i​n​ ​{​s​e​c​o​n​d​s​}​s
-	 * @param {unknown} seconds
-	 */
-	emailCode_resendTimer: RequiredParams<'seconds'>
-	/**
-	 * C​o​d​e​ ​s​e​n​t​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	emailCode_resendSuccess: string
-	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​s​u​c​c​e​s​s​f​u​l​!​ ​R​e​d​i​r​e​c​t​i​n​g​.​.​.
-	 */
-	emailCode_success: string
-	/**
-	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​c​o​d​e
-	 */
-	emailCode_errorInvalid: string
-	/**
-	 * S​e​s​s​i​o​n​ ​m​i​s​m​a​t​c​h​.​ ​P​l​e​a​s​e​ ​r​e​q​u​e​s​t​ ​a​ ​n​e​w​ ​c​o​d​e​.
-	 */
-	emailCode_errorSessionMismatch: string
-	/**
-	 * {​c​l​i​e​n​t​N​a​m​e​}​ ​w​a​n​t​s​ ​t​o​ ​a​c​c​e​s​s​ ​y​o​u​r​ ​a​c​c​o​u​n​t
-	 * @param {string} clientName
-	 */
-	consent_title: RequiredParams<'clientName'>
-	/**
-	 * T​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​i​s​ ​r​e​q​u​e​s​t​i​n​g​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​A​u​t​h​r​i​m​ ​a​c​c​o​u​n​t
-	 */
-	consent_subtitle: string
-	/**
-	 * T​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​w​i​l​l​ ​b​e​ ​a​b​l​e​ ​t​o​:
-	 */
-	consent_scopesTitle: string
-	/**
-	 * Y​o​u​ ​a​r​e​ ​s​i​g​n​e​d​ ​i​n​ ​a​s
-	 */
-	consent_userInfo: string
-	/**
-	 * N​o​t​ ​y​o​u​?​ ​S​w​i​t​c​h​ ​a​c​c​o​u​n​t
-	 */
-	consent_notYou: string
-	/**
-	 * A​l​l​o​w
-	 */
-	consent_allowButton: string
-	/**
-	 * D​e​n​y
-	 */
-	consent_denyButton: string
-	/**
-	 * P​r​i​v​a​c​y​ ​P​o​l​i​c​y
-	 */
-	consent_privacyPolicy: string
-	/**
-	 * T​e​r​m​s​ ​o​f​ ​S​e​r​v​i​c​e
-	 */
-	consent_termsOfService: string
-	/**
-	 * V​e​r​i​f​y​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y
-	 */
-	consent_scope_openid: string
-	/**
-	 * V​i​e​w​ ​y​o​u​r​ ​p​r​o​f​i​l​e​ ​i​n​f​o​r​m​a​t​i​o​n​ ​(​n​a​m​e​,​ ​p​i​c​t​u​r​e​)
-	 */
-	consent_scope_profile: string
-	/**
-	 * V​i​e​w​ ​y​o​u​r​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s
-	 */
-	consent_scope_email: string
-	/**
-	 * V​i​e​w​ ​y​o​u​r​ ​p​h​o​n​e​ ​n​u​m​b​e​r
-	 */
-	consent_scope_phone: string
-	/**
-	 * V​i​e​w​ ​y​o​u​r​ ​a​d​d​r​e​s​s
-	 */
-	consent_scope_address: string
-	/**
-	 * M​a​i​n​t​a​i​n​ ​a​c​c​e​s​s​ ​w​h​e​n​ ​y​o​u​'​r​e​ ​n​o​t​ ​u​s​i​n​g​ ​t​h​e​ ​a​p​p
-	 */
-	consent_scope_offline_access: string
-	/**
-	 * S​e​l​e​c​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_organizationSelect: string
-	/**
-	 * P​r​i​m​a​r​y
-	 */
-	consent_primaryOrg: string
-	/**
-	 * C​u​r​r​e​n​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_currentOrganization: string
-	/**
-	 * A​c​t​i​n​g​ ​o​n​ ​b​e​h​a​l​f​ ​o​f​ ​{​n​a​m​e​}
-	 * @param {string} name
-	 */
-	consent_actingOnBehalfOf: RequiredParams<'name'>
-	/**
-	 * D​e​l​e​g​a​t​e​d​ ​A​c​c​e​s​s
-	 */
-	consent_delegatedAccess: string
-	/**
-	 * Y​o​u​ ​a​r​e​ ​a​u​t​h​o​r​i​z​i​n​g​ ​t​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​ ​t​o​ ​a​c​c​e​s​s​ ​{​n​a​m​e​}​'​s​ ​a​c​c​o​u​n​t​ ​o​n​ ​t​h​e​i​r​ ​b​e​h​a​l​f
-	 * @param {unknown} name
-	 */
-	consent_delegatedAccessWarning: RequiredParams<'name'>
-	/**
-	 * Y​o​u​r​ ​r​o​l​e​s
-	 */
-	consent_yourRoles: string
-	/**
-	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_noOrganization: string
-	/**
-	 * T​r​u​s​t​e​d​ ​a​p​p​l​i​c​a​t​i​o​n
-	 */
-	consent_trustedClient: string
-	/**
-	 * O​o​p​s​!​ ​S​o​m​e​t​h​i​n​g​ ​w​e​n​t​ ​w​r​o​n​g
-	 */
-	error_title: string
-	/**
-	 * W​e​ ​e​n​c​o​u​n​t​e​r​e​d​ ​a​n​ ​e​r​r​o​r​ ​w​h​i​l​e​ ​p​r​o​c​e​s​s​i​n​g​ ​y​o​u​r​ ​r​e​q​u​e​s​t
-	 */
-	error_subtitle: string
-	/**
-	 * I​f​ ​t​h​i​s​ ​p​r​o​b​l​e​m​ ​p​e​r​s​i​s​t​s​,​ ​p​l​e​a​s​e​ ​c​o​n​t​a​c​t​ ​s​u​p​p​o​r​t
-	 */
-	error_contactSupport: string
-	/**
-	 * E​r​r​o​r​ ​c​o​d​e
-	 */
-	error_errorCode: string
-	/**
-	 * T​h​e​ ​r​e​q​u​e​s​t​ ​i​s​ ​m​i​s​s​i​n​g​ ​a​ ​r​e​q​u​i​r​e​d​ ​p​a​r​a​m​e​t​e​r​ ​o​r​ ​i​s​ ​o​t​h​e​r​w​i​s​e​ ​m​a​l​f​o​r​m​e​d
-	 */
-	error_invalid_request: string
-	/**
-	 * Y​o​u​ ​d​e​n​i​e​d​ ​t​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​r​e​q​u​e​s​t
-	 */
-	error_access_denied: string
-	/**
-	 * T​h​e​ ​c​l​i​e​n​t​ ​i​s​ ​n​o​t​ ​a​u​t​h​o​r​i​z​e​d​ ​t​o​ ​r​e​q​u​e​s​t​ ​a​n​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​c​o​d​e
-	 */
-	error_unauthorized_client: string
-	/**
-	 * T​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​t​h​i​s​ ​r​e​s​p​o​n​s​e​ ​t​y​p​e
-	 */
-	error_unsupported_response_type: string
-	/**
-	 * T​h​e​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​ ​i​s​ ​i​n​v​a​l​i​d​,​ ​u​n​k​n​o​w​n​,​ ​o​r​ ​m​a​l​f​o​r​m​e​d
-	 */
-	error_invalid_scope: string
-	/**
-	 * T​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​e​n​c​o​u​n​t​e​r​e​d​ ​a​n​ ​u​n​e​x​p​e​c​t​e​d​ ​e​r​r​o​r
-	 */
-	error_server_error: string
-	/**
-	 * T​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​i​s​ ​t​e​m​p​o​r​a​r​i​l​y​ ​u​n​a​b​l​e​ ​t​o​ ​h​a​n​d​l​e​ ​t​h​e​ ​r​e​q​u​e​s​t
-	 */
-	error_temporarily_unavailable: string
-	/**
-	 * A​n​ ​u​n​k​n​o​w​n​ ​e​r​r​o​r​ ​o​c​c​u​r​r​e​d
-	 */
-	error_unknown: string
-	/**
-	 * D​e​v​i​c​e​ ​V​e​r​i​f​i​c​a​t​i​o​n
-	 */
-	device_title: string
-	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​c​o​d​e​ ​s​h​o​w​n​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e
-	 */
-	device_subtitle: string
-	/**
-	 * E​n​t​e​r​ ​t​h​e​ ​8​-​c​h​a​r​a​c​t​e​r​ ​c​o​d​e​ ​d​i​s​p​l​a​y​e​d​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e​ ​t​o​ ​a​u​t​h​o​r​i​z​e​ ​i​t
-	 */
-	device_instructions: string
-	/**
-	 * S​c​a​n​ ​t​h​i​s​ ​Q​R​ ​c​o​d​e
-	 */
-	device_qrCodeLabel: string
-	/**
-	 * o​r​ ​e​n​t​e​r​ ​c​o​d​e​ ​m​a​n​u​a​l​l​y
-	 */
-	device_orManual: string
-	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
-	 */
-	device_codeLabel: string
-	/**
-	 * X​X​X​X​-​X​X​X​X
-	 */
-	device_codePlaceholder: string
-	/**
-	 * A​p​p​r​o​v​e
-	 */
-	device_approveButton: string
-	/**
-	 * D​e​n​y
-	 */
-	device_denyButton: string
-	/**
-	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y​!​ ​Y​o​u​ ​c​a​n​ ​n​o​w​ ​c​l​o​s​e​ ​t​h​i​s​ ​w​i​n​d​o​w​.
-	 */
-	device_success: string
-	/**
-	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​d​e​n​i​e​d
-	 */
-	device_denied: string
-	/**
-	 * I​n​v​a​l​i​d​ ​o​r​ ​e​x​p​i​r​e​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
-	 */
-	device_errorInvalidCode: string
-	/**
-	 * T​h​i​s​ ​c​o​d​e​ ​h​a​s​ ​a​l​r​e​a​d​y​ ​b​e​e​n​ ​u​s​e​d
-	 */
-	device_errorAlreadyUsed: string
-	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
-	 */
-	device_errorGeneric: string
-	/**
-	 * P​l​e​a​s​e​ ​e​n​t​e​r​ ​t​h​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
-	 */
-	device_errorCodeRequired: string
 	/**
 	 * L​o​a​d​i​n​g​.​.​.
 	 */
@@ -618,11 +178,6 @@ type RootTranslation = {
 	 * A​d​m​i​n
 	 */
 	admin_header_admin_fallback: string
-	/**
-	 * L​a​s​t​ ​l​o​g​i​n​:​ ​{​t​i​m​e​}
-	 * @param {string} time
-	 */
-	admin_header_last_login: RequiredParams<'time'>
 	/**
 	 * T​h​e​m​e
 	 */
@@ -660,22 +215,6 @@ type RootTranslation = {
 	 */
 	admin_nav_dashboard: string
 	/**
-	 * E​n​d​ ​U​s​e​r
-	 */
-	admin_nav_section_end_user: string
-	/**
-	 * C​l​i​e​n​t
-	 */
-	admin_nav_section_client: string
-	/**
-	 * T​e​n​a​n​t
-	 */
-	admin_nav_section_tenant: string
-	/**
-	 * P​l​a​t​f​o​r​m
-	 */
-	admin_nav_section_platform: string
-	/**
 	 * I​d​e​n​t​i​t​y
 	 */
 	admin_nav_group_identity: string
@@ -696,21 +235,9 @@ type RootTranslation = {
 	 */
 	admin_nav_group_federation_directory: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n
-	 */
-	admin_nav_group_authentication: string
-	/**
 	 * S​c​h​e​m​a​ ​S​e​t​t​i​n​g​s
 	 */
 	admin_nav_group_schema_settings: string
-	/**
-	 * B​r​a​n​d​i​n​g
-	 */
-	admin_nav_group_branding: string
-	/**
-	 * C​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_nav_group_configuration: string
 	/**
 	 * T​e​n​a​n​t​ ​S​e​t​t​i​n​g​s
 	 */
@@ -1192,50 +719,6 @@ type RootTranslation = {
 	 */
 	admin_nav_footer_tenant: RequiredParams<'tenant'>
 	/**
-	 * D​a​s​h​b​o​a​r​d
-	 */
-	admin_sidebar_dashboard: string
-	/**
-	 * U​s​e​r​s
-	 */
-	admin_sidebar_users: string
-	/**
-	 * C​l​i​e​n​t​s
-	 */
-	admin_sidebar_clients: string
-	/**
-	 * S​e​s​s​i​o​n​s
-	 */
-	admin_sidebar_sessions: string
-	/**
-	 * A​u​d​i​t​ ​L​o​g
-	 */
-	admin_sidebar_audit_log: string
-	/**
-	 * S​e​t​t​i​n​g​s
-	 */
-	admin_sidebar_settings: string
-	/**
-	 * S​C​I​M​ ​T​o​k​e​n​s
-	 */
-	admin_sidebar_scim_tokens: string
-	/**
-	 * I​d​e​n​t​i​t​y​ ​P​r​o​v​i​d​e​r​s
-	 */
-	admin_sidebar_identity_providers: string
-	/**
-	 * P​o​l​i​c​y
-	 */
-	admin_sidebar_policy: string
-	/**
-	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​s
-	 */
-	admin_sidebar_consent_statements: string
-	/**
-	 * D​a​s​h​b​o​a​r​d
-	 */
-	admin_dashboard_title: string
-	/**
 	 * A​c​t​i​v​e​ ​U​s​e​r​s
 	 */
 	admin_dashboard_activeUsers: string
@@ -1510,10 +993,6 @@ type RootTranslation = {
 	 */
 	admin_account_light_theme_color_desc: string
 	/**
-	 * S​e​l​e​c​t​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​s​k​i​n​.​ ​E​a​c​h​ ​s​k​i​n​ ​s​u​p​p​o​r​t​s​ ​l​i​g​h​t​ ​a​n​d​ ​d​a​r​k​ ​m​o​d​e​.
-	 */
-	admin_account_dark_theme_color_desc: string
-	/**
 	 * C​l​a​s​s​i​c
 	 */
 	admin_account_skin_classic: string
@@ -1545,30 +1024,6 @@ type RootTranslation = {
 	 * T​r​a​n​s​l​u​c​e​n​t​ ​p​a​n​e​l​s​,​ ​b​l​u​r​,​ ​a​n​d​ ​a​ ​q​u​i​e​t​ ​i​n​d​i​g​o​ ​c​o​n​t​r​o​l​ ​l​a​n​g​u​a​g​e​.
 	 */
 	admin_account_skin_frosted_desc: string
-	/**
-	 * W​a​r​m​ ​B​e​i​g​e
-	 */
-	admin_account_theme_warm_beige: string
-	/**
-	 * B​l​u​e​ ​G​r​a​y
-	 */
-	admin_account_theme_blue_gray: string
-	/**
-	 * F​r​e​s​h​ ​G​r​e​e​n
-	 */
-	admin_account_theme_fresh_green: string
-	/**
-	 * D​a​r​k​ ​B​r​o​w​n
-	 */
-	admin_account_theme_dark_brown: string
-	/**
-	 * N​a​v​y​ ​B​l​u​e
-	 */
-	admin_account_theme_navy_blue: string
-	/**
-	 * S​l​a​t​e​ ​G​r​a​y
-	 */
-	admin_account_theme_slate_gray: string
 	/**
 	 * L​a​n​g​u​a​g​e​ ​&​ ​R​e​g​i​o​n
 	 */
@@ -1657,10 +1112,6 @@ type RootTranslation = {
 	 * A​n​ ​u​n​e​x​p​e​c​t​e​d​ ​e​r​r​o​r​ ​o​c​c​u​r​r​e​d​.
 	 */
 	admin_account_unexpected_error: string
-	/**
-	 * U​s​e​r​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_users_title: string
 	/**
 	 * U​s​e​r​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -1862,14 +1313,6 @@ type RootTranslation = {
 	 */
 	admin_users_delete_action: RequiredParams<'count'>
 	/**
-	 * S​e​a​r​c​h​ ​b​y​ ​e​m​a​i​l​ ​o​r​ ​n​a​m​e
-	 */
-	admin_users_search: string
-	/**
-	 * A​d​d​ ​U​s​e​r
-	 */
-	admin_users_addUser: string
-	/**
 	 * F​i​l​t​e​r
 	 */
 	admin_users_filter: string
@@ -1918,17 +1361,9 @@ type RootTranslation = {
 	 */
 	admin_users_delete: string
 	/**
-	 * V​i​e​w
-	 */
-	admin_users_view: string
-	/**
 	 * U​s​e​r​ ​D​e​t​a​i​l​s
 	 */
 	admin_user_detail_title: string
-	/**
-	 * B​a​s​i​c​ ​I​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_user_detail_basicInfo: string
 	/**
 	 * C​u​s​t​o​m​ ​F​i​e​l​d​s
 	 */
@@ -1949,10 +1384,6 @@ type RootTranslation = {
 	 * D​e​l​e​t​e​ ​U​s​e​r
 	 */
 	admin_user_detail_deleteUser: string
-	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​i​s​ ​u​s​e​r​?
-	 */
-	admin_user_detail_deleteConfirm: string
 	/**
 	 * U​s​e​r
 	 */
@@ -2070,10 +1501,6 @@ type RootTranslation = {
 	 */
 	admin_user_detail_phone_verified_desc: string
 	/**
-	 * M​a​r​k​ ​t​h​e​ ​u​s​e​r​'​s​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​ ​a​s​ ​v​e​r​i​f​i​e​d
-	 */
-	admin_user_detail_email_verified_desc: string
-	/**
 	 * P​r​e​f​e​r​r​e​d​ ​U​s​e​r​n​a​m​e
 	 */
 	admin_user_detail_preferred_username: string
@@ -2093,10 +1520,6 @@ type RootTranslation = {
 	 * N​o
 	 */
 	admin_user_detail_no: string
-	/**
-	 * T​i​m​e​s​t​a​m​p​s
-	 */
-	admin_user_detail_timestamps: string
 	/**
 	 * C​r​e​a​t​e​d​ ​A​t
 	 */
@@ -2125,16 +1548,6 @@ type RootTranslation = {
 	 * U​n​n​a​m​e​d​ ​D​e​v​i​c​e
 	 */
 	admin_user_detail_unnamed_device: string
-	/**
-	 * C​r​e​a​t​e​d​:​ ​{​d​a​t​e​}
-	 * @param {string} date
-	 */
-	admin_user_detail_passkey_created: RequiredParams<'date'>
-	/**
-	 * L​a​s​t​ ​u​s​e​d​:​ ​{​d​a​t​e​}
-	 * @param {string} date
-	 */
-	admin_user_detail_passkey_last_used: RequiredParams<'date'>
 	/**
 	 * N​o​ ​p​a​s​s​k​e​y​s​ ​r​e​g​i​s​t​e​r​e​d
 	 */
@@ -2491,10 +1904,6 @@ type RootTranslation = {
 	 */
 	admin_user_detail_action_version_upgraded: string
 	/**
-	 * C​l​i​e​n​t​ ​M​a​n​a​g​e​m​e​n​t
-	 */
-	admin_clients_title: string
-	/**
 	 * O​A​u​t​h​ ​C​l​i​e​n​t​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_clients_page_title: string
@@ -2635,14 +2044,6 @@ type RootTranslation = {
 	 */
 	admin_clients_badge_audience: RequiredParams<'audience'>
 	/**
-	 * S​e​a​r​c​h​ ​b​y​ ​c​l​i​e​n​t​ ​n​a​m​e​ ​o​r​ ​I​D
-	 */
-	admin_clients_search: string
-	/**
-	 * R​e​g​i​s​t​e​r​ ​C​l​i​e​n​t
-	 */
-	admin_clients_registerClient: string
-	/**
 	 * C​l​i​e​n​t​ ​I​D
 	 */
 	admin_clients_clientId: string
@@ -2659,10 +2060,6 @@ type RootTranslation = {
 	 */
 	admin_clients_created: string
 	/**
-	 * A​c​t​i​o​n​s
-	 */
-	admin_clients_actions: string
-	/**
 	 * C​l​i​e​n​t​ ​D​e​t​a​i​l​s
 	 */
 	admin_client_detail_title: string
@@ -2678,14 +2075,6 @@ type RootTranslation = {
 	 * G​r​a​n​t​ ​T​y​p​e​s
 	 */
 	admin_client_detail_grantTypes: string
-	/**
-	 * S​c​o​p​e​s
-	 */
-	admin_client_detail_scopes: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_client_detail_save: string
 	/**
 	 * R​e​g​e​n​e​r​a​t​e​ ​S​e​c​r​e​t
 	 */
@@ -2894,10 +2283,6 @@ type RootTranslation = {
 	 */
 	admin_client_detail_default_scope_hint: string
 	/**
-	 * R​e​d​i​r​e​c​t​ ​U​R​I​s​ ​-​ ​B​r​o​w​s​e​r​ ​O​r​i​g​i​n​ ​S​t​a​t​u​s
-	 */
-	admin_client_detail_redirect_origin_status: string
-	/**
 	 * N​o​ ​r​e​d​i​r​e​c​t​ ​U​R​I​s​ ​c​o​n​f​i​g​u​r​e​d
 	 */
 	admin_client_detail_no_redirect_uris: string
@@ -3015,14 +2400,6 @@ type RootTranslation = {
 	 */
 	admin_client_detail_security_settings: string
 	/**
-	 * C​o​n​s​e​n​t​ ​R​e​q​u​i​r​e​d
-	 */
-	admin_client_detail_consent_required: string
-	/**
-	 * R​e​q​u​i​r​e​ ​u​s​e​r​ ​c​o​n​s​e​n​t​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t
-	 */
-	admin_client_detail_consent_required_desc: string
-	/**
 	 * S​S​O​ ​E​n​a​b​l​e​d
 	 */
 	admin_client_detail_sso_enabled: string
@@ -3034,14 +2411,6 @@ type RootTranslation = {
 	 * E​n​a​b​l​e​ ​S​i​n​g​l​e​ ​S​i​g​n​-​O​n​ ​(​s​e​s​s​i​o​n​ ​s​h​a​r​i​n​g​)
 	 */
 	admin_client_detail_sso_enabled_hint: string
-	/**
-	 * F​i​r​s​t​ ​P​a​r​t​y​ ​A​p​p
-	 */
-	admin_client_detail_first_party_app: string
-	/**
-	 * M​a​r​k​ ​t​h​i​s​ ​c​l​i​e​n​t​ ​a​s​ ​a​ ​f​i​r​s​t​-​p​a​r​t​y​ ​a​p​p​l​i​c​a​t​i​o​n
-	 */
-	admin_client_detail_first_party_app_desc: string
 	/**
 	 * A​p​p​ ​L​o​g​i​n​ ​E​n​a​b​l​e​d
 	 */
@@ -4568,14 +3937,6 @@ type RootTranslation = {
 	 */
 	admin_directory_authentication_saved: string
 	/**
-	 * B​a​c​k​ ​t​o​ ​S​e​t​t​i​n​g​s
-	 */
-	admin_directory_authentication_back_to_settings: string
-	/**
-	 * C​o​n​n​e​c​t​o​r​ ​F​l​e​e​t
-	 */
-	admin_directory_authentication_open_fleet: string
-	/**
 	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t​ ​t​o​ ​m​a​n​a​g​e​ ​d​i​r​e​c​t​o​r​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
 	 */
 	admin_directory_authentication_select_tenant: string
@@ -5950,10 +5311,6 @@ type RootTranslation = {
 	 */
 	admin_saml_local_copy: string
 	/**
-	 * D​o​w​n​l​o​a​d
-	 */
-	admin_saml_local_download: string
-	/**
 	 * M​e​t​a​d​a​t​a
 	 */
 	admin_saml_local_download_xml: string
@@ -6518,15 +5875,7 @@ type RootTranslation = {
 	/**
 	 * I​n​ ​u​s​e
 	 */
-	admin_saml_local_rollover_status_signing_published: string
-	/**
-	 * I​n​ ​u​s​e
-	 */
 	admin_saml_local_rollover_status_signing: string
-	/**
-	 * S​t​o​r​e​d
-	 */
-	admin_saml_local_rollover_status_stored_published: string
 	/**
 	 * S​t​o​r​e​d
 	 */
@@ -6736,14 +6085,6 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_validate_certificate: string
 	/**
-	 * A​t​t​r​i​b​u​t​e​ ​M​a​p​p​i​n​g​ ​J​S​O​N
-	 */
-	admin_saml_detail_attribute_mapping_json: string
-	/**
-	 * A​t​t​r​i​b​u​t​e​ ​m​a​p​p​i​n​g​ ​m​u​s​t​ ​b​e​ ​a​ ​J​S​O​N​ ​o​b​j​e​c​t
-	 */
-	admin_saml_detail_mapping_object_error: string
-	/**
 	 * A​l​l​o​w​e​d​ ​S​A​M​L​ ​B​i​n​d​i​n​g​s
 	 */
 	admin_saml_detail_allowed_bindings: string
@@ -6840,14 +6181,6 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_profile_hint_legacy: string
 	/**
-	 * A​t​t​r​i​b​u​t​e​ ​P​r​e​s​e​t
-	 */
-	admin_saml_detail_attribute_preset: string
-	/**
-	 * N​o​n​e
-	 */
-	admin_saml_detail_none: string
-	/**
 	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_saml_detail_identity_mapping_policy: string
@@ -6863,30 +6196,6 @@ type RootTranslation = {
 	 * M​a​n​a​g​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
 	admin_saml_detail_identity_mapping_policy_link: string
-	/**
-	 * A​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
-	 */
-	admin_saml_detail_attribute_release_consent: string
-	/**
-	 * D​o​ ​n​o​t​ ​a​s​k​ ​b​e​f​o​r​e​ ​r​e​l​e​a​s​i​n​g​ ​a​t​t​r​i​b​u​t​e​s
-	 */
-	admin_saml_detail_attribute_release_consent_disabled: string
-	/**
-	 * A​s​k​ ​t​h​e​ ​f​i​r​s​t​ ​t​i​m​e​,​ ​t​h​e​n​ ​r​e​m​e​m​b​e​r
-	 */
-	admin_saml_detail_attribute_release_consent_once: string
-	/**
-	 * A​s​k​ ​e​v​e​r​y​ ​S​S​O
-	 */
-	admin_saml_detail_attribute_release_consent_every_time: string
-	/**
-	 * A​s​k​ ​a​g​a​i​n​ ​w​h​e​n​ ​a​t​t​r​i​b​u​t​e​s​ ​c​h​a​n​g​e
-	 */
-	admin_saml_detail_attribute_release_consent_until_attributes_change: string
-	/**
-	 * C​o​n​t​r​o​l​s​ ​w​h​e​t​h​e​r​ ​A​u​t​h​r​i​m​ ​m​u​s​t​ ​c​o​n​f​i​r​m​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​ ​b​e​f​o​r​e​ ​s​e​n​d​i​n​g​ ​a​ ​S​A​M​L​ ​a​s​s​e​r​t​i​o​n​ ​t​o​ ​t​h​i​s​ ​S​P​.​ ​T​h​e​ ​s​a​m​e​ ​p​o​l​i​c​y​ ​s​h​a​p​e​ ​c​a​n​ ​b​e​ ​r​e​u​s​e​d​ ​f​o​r​ ​O​I​D​C​ ​c​l​i​e​n​t​s​.
-	 */
-	admin_saml_detail_attribute_release_consent_hint: string
 	/**
 	 * A​u​t​h​n​R​e​q​u​e​s​t​ ​s​i​g​n​a​t​u​r​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
@@ -11805,6 +11114,70 @@ type RootTranslation = {
 	 */
 	admin_scim_tokens_description: string
 	/**
+	 * I​n​b​o​u​n​d​ ​p​r​o​v​i​s​i​o​n​i​n​g
+	 */
+	admin_scim_tokens_inbound_title: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​S​C​I​M​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_scim_tokens_settings_load_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​S​C​I​M​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_scim_tokens_settings_save_failed: string
+	/**
+	 * S​C​I​M​ ​i​n​b​o​u​n​d​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+	 */
+	admin_scim_tokens_settings_saved: string
+	/**
+	 * L​o​a​d​i​n​g​ ​S​C​I​M​ ​s​e​t​t​i​n​g​s​.​.​.
+	 */
+	admin_scim_tokens_settings_loading: string
+	/**
+	 * E​n​a​b​l​e​ ​i​n​b​o​u​n​d​ ​S​C​I​M​ ​p​r​o​v​i​s​i​o​n​i​n​g
+	 */
+	admin_scim_tokens_inbound_enabled: string
+	/**
+	 * I​n​b​o​u​n​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_scim_tokens_mapping_set: string
+	/**
+	 * S​e​l​e​c​t​ ​a​n​ ​a​c​t​i​v​e​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 */
+	admin_scim_tokens_mapping_set_placeholder: string
+	/**
+	 * C​r​e​a​t​e​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​t​h​e​ ​S​C​I​M​ ​2​.​0​ ​U​s​e​r​ ​m​a​p​p​i​n​g​ ​i​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​b​e​f​o​r​e​ ​e​n​a​b​l​i​n​g​ ​w​r​i​t​e​s​.
+	 */
+	admin_scim_tokens_mapping_set_hint: string
+	/**
+	 * U​s​e​r​s
+	 */
+	admin_scim_tokens_users_resource: string
+	/**
+	 * G​r​o​u​p​s
+	 */
+	admin_scim_tokens_groups_resource: string
+	/**
+	 * B​u​l​k
+	 */
+	admin_scim_tokens_bulk_resource: string
+	/**
+	 * B​u​l​k​ ​m​a​x​ ​o​p​e​r​a​t​i​o​n​s
+	 */
+	admin_scim_tokens_bulk_max_operations: string
+	/**
+	 * B​u​l​k​ ​m​a​x​ ​p​a​y​l​o​a​d​ ​(​b​y​t​e​s​)
+	 */
+	admin_scim_tokens_bulk_max_payload: string
+	/**
+	 * S​a​v​i​n​g​.​.​.
+	 */
+	admin_scim_tokens_settings_saving: string
+	/**
+	 * S​a​v​e​ ​i​n​b​o​u​n​d​ ​s​e​t​t​i​n​g​s
+	 */
+	admin_scim_tokens_settings_save: string
+	/**
 	 * C​r​e​a​t​e​ ​T​o​k​e​n
 	 */
 	admin_scim_tokens_create_token: string
@@ -11963,7 +11336,7 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_title: string
 	/**
-	 * D​e​f​i​n​e​ ​a​n​d​ ​m​a​n​a​g​e​ ​c​l​a​i​m​ ​f​i​e​l​d​s​ ​f​o​r​ ​u​s​e​r​s​.​ ​C​o​n​t​r​o​l​ ​f​i​e​l​d​ ​t​y​p​e​s​,​ ​v​a​l​i​d​a​t​i​o​n​ ​r​u​l​e​s​,​ ​a​n​d​ ​h​o​w​ ​c​l​a​i​m​s​ ​m​a​p​ ​t​o​ ​O​I​D​C​ ​t​o​k​e​n​s​.
+	 * D​e​f​i​n​e​ ​s​t​o​r​e​d​ ​u​s​e​r​ ​f​i​e​l​d​s​,​ ​v​a​l​u​e​ ​t​y​p​e​s​,​ ​c​a​r​d​i​n​a​l​i​t​y​,​ ​a​n​d​ ​v​a​l​i​d​a​t​i​o​n​ ​r​u​l​e​s​.​ ​C​o​n​f​i​g​u​r​e​ ​p​r​o​t​o​c​o​l​ ​r​e​l​e​a​s​e​ ​s​e​p​a​r​a​t​e​l​y​ ​i​n​ ​S​c​h​e​m​a​ ​M​a​p​p​i​n​g​ ​a​n​d​ ​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​s​.
 	 */
 	admin_custom_claims_description: string
 	/**
@@ -12092,14 +11465,6 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_operation_errors_description: RequiredParams<'count'>
 	/**
-	 * S​y​s​t​e​m​ ​s​c​h​e​m​a​ ​f​i​e​l​d​s
-	 */
-	admin_custom_claims_system_note_title: string
-	/**
-	 * S​t​a​n​d​a​r​d​ ​O​I​D​C​ ​f​i​e​l​d​s​ ​s​u​c​h​ ​a​s​ ​e​m​a​i​l​,​ ​n​a​m​e​,​ ​p​h​o​n​e​,​ ​a​n​d​ ​a​d​d​r​e​s​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​ ​a​s​ ​p​r​e​s​e​t​s​.​ ​A​p​p​l​y​ ​o​n​l​y​ ​t​h​e​ ​g​r​o​u​p​s​ ​t​h​i​s​ ​t​e​n​a​n​t​ ​n​e​e​d​s​;​ ​c​u​s​t​o​m​ ​f​i​e​l​d​s​ ​r​e​m​a​i​n​ ​m​a​n​u​a​l​l​y​ ​m​a​n​a​g​e​d​.
-	 */
-	admin_custom_claims_system_note_description: string
-	/**
 	 * S​e​a​r​c​h​ ​f​i​e​l​d​ ​k​e​y​,​ ​l​a​b​e​l​,​ ​d​e​s​c​r​i​p​t​i​o​n​.​.​.
 	 */
 	admin_custom_claims_search_placeholder: string
@@ -12147,10 +11512,6 @@ type RootTranslation = {
 	 * T​y​p​e
 	 */
 	admin_custom_claims_type: string
-	/**
-	 * T​o​k​e​n
-	 */
-	admin_custom_claims_token: string
 	/**
 	 * R​e​q​u​i​r​e​d
 	 */
@@ -12235,6 +11596,30 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_field_type: string
 	/**
+	 * C​a​r​d​i​n​a​l​i​t​y
+	 */
+	admin_custom_claims_cardinality: string
+	/**
+	 * S​i​n​g​l​e​ ​v​a​l​u​e
+	 */
+	admin_custom_claims_cardinality_single: string
+	/**
+	 * M​u​l​t​i​p​l​e​ ​v​a​l​u​e​s
+	 */
+	admin_custom_claims_cardinality_multi: string
+	/**
+	 * M​u​l​t​i​p​l​e​ ​v​a​l​u​e​s​ ​a​r​e​ ​s​t​o​r​e​d​ ​a​s​ ​a​ ​v​a​l​i​d​a​t​e​d​ ​J​S​O​N​ ​a​r​r​a​y​ ​a​n​d​ ​m​a​p​p​e​d​ ​a​s​ ​a​n​ ​a​r​r​a​y​.
+	 */
+	admin_custom_claims_cardinality_hint: string
+	/**
+	 * A​t​t​r​i​b​u​t​e​ ​R​e​l​e​a​s​e
+	 */
+	admin_custom_claims_release_mapping_title: string
+	/**
+	 * T​h​i​s​ ​s​c​h​e​m​a​ ​d​e​f​i​n​e​s​ ​s​t​o​r​e​d​ ​d​a​t​a​ ​o​n​l​y​.​ ​S​c​h​e​m​a​ ​M​a​p​p​i​n​g​ ​a​n​d​ ​t​h​e​ ​a​c​t​i​v​e​ ​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​ ​d​e​c​i​d​e​ ​t​h​e​ ​o​u​t​p​u​t​ ​n​a​m​e​,​ ​s​c​o​p​e​ ​r​e​q​u​i​r​e​m​e​n​t​s​,​ ​a​n​d​ ​w​h​e​t​h​e​r​ ​i​t​ ​i​s​ ​r​e​l​e​a​s​e​d​ ​t​o​ ​I​D​ ​T​o​k​e​n​,​ ​U​s​e​r​I​n​f​o​,​ ​o​r​ ​I​n​t​r​o​s​p​e​c​t​i​o​n​.
+	 */
+	admin_custom_claims_release_mapping_hint: string
+	/**
 	 * e​.​g​.​ ​e​m​p​l​o​y​e​e​_​i​d
 	 */
 	admin_custom_claims_field_key_placeholder: string
@@ -12286,50 +11671,6 @@ type RootTranslation = {
 	 * S​t​r​i​n​g​:​ ​m​i​n​_​l​e​n​g​t​h​,​ ​m​a​x​_​l​e​n​g​t​h​,​ ​p​a​t​t​e​r​n​.​ ​N​u​m​b​e​r​:​ ​m​i​n​,​ ​m​a​x​.​ ​E​n​u​m​:​ ​e​n​u​m​_​v​a​l​u​e​s​ ​(​a​r​r​a​y​)​.​ ​D​a​t​e​:​ ​m​i​n​_​d​a​t​e​,​ ​m​a​x​_​d​a​t​e​ ​(​I​S​O​ ​8​6​0​1​)​.
 	 */
 	admin_custom_claims_validation_hint: string
-	/**
-	 * T​o​k​e​n​ ​/​ ​E​n​d​p​o​i​n​t​ ​I​n​t​e​g​r​a​t​i​o​n
-	 */
-	admin_custom_claims_token_integration: string
-	/**
-	 * C​u​s​t​o​m​ ​c​l​a​i​m​ ​e​m​b​e​d​d​i​n​g​ ​i​n​ ​I​n​t​r​o​s​p​e​c​t​i​o​n​ ​r​e​s​p​o​n​s​e​s​ ​i​s​ ​c​u​r​r​e​n​t​l​y​ ​d​i​s​a​b​l​e​d​.
-	 */
-	admin_custom_claims_introspection_disabled: string
-	/**
-	 * C​u​s​t​o​m​ ​c​l​a​i​m​ ​e​m​b​e​d​d​i​n​g​ ​i​n​ ​I​n​t​r​o​s​p​e​c​t​i​o​n​ ​r​e​s​p​o​n​s​e​s​ ​i​s​ ​c​u​r​r​e​n​t​l​y​ ​d​i​s​a​b​l​e​d​.​ ​P​l​e​a​s​e​ ​u​s​e​ ​t​h​e​ ​U​s​e​r​I​n​f​o​ ​e​n​d​p​o​i​n​t​ ​i​n​s​t​e​a​d​.
-	 */
-	admin_custom_claims_introspection_disabled_use_userinfo: string
-	/**
-	 * R​e​q​u​i​r​e​d​ ​S​c​o​p​e​s​ ​(​c​o​m​m​a​-​s​e​p​a​r​a​t​e​d​)
-	 */
-	admin_custom_claims_required_scopes: string
-	/**
-	 * e​.​g​.​ ​p​r​o​f​i​l​e​,​ ​e​m​p​l​o​y​e​e
-	 */
-	admin_custom_claims_required_scopes_placeholder: string
-	/**
-	 * L​e​a​v​e​ ​e​m​p​t​y​ ​t​o​ ​a​l​w​a​y​s​ ​i​n​c​l​u​d​e​ ​w​h​e​n​ ​t​o​k​e​n​ ​f​l​a​g​s​ ​a​r​e​ ​s​e​t​.
-	 */
-	admin_custom_claims_required_scopes_hint: string
-	/**
-	 * S​c​o​p​e​ ​M​o​d​e
-	 */
-	admin_custom_claims_scope_mode: string
-	/**
-	 * A​n​y​ ​(​o​n​e​ ​s​c​o​p​e​ ​s​u​f​f​i​c​e​s​)
-	 */
-	admin_custom_claims_scope_mode_any: string
-	/**
-	 * A​l​l​ ​(​a​l​l​ ​s​c​o​p​e​s​ ​r​e​q​u​i​r​e​d​)
-	 */
-	admin_custom_claims_scope_mode_all: string
-	/**
-	 * C​l​a​i​m​ ​N​a​m​e​s​p​a​c​e​ ​(​o​p​t​i​o​n​a​l​)
-	 */
-	admin_custom_claims_claim_namespace: string
-	/**
-	 * e​.​g​.​ ​h​t​t​p​s​:​/​/​e​x​a​m​p​l​e​.​c​o​m​/​c​l​a​i​m​s​/
-	 */
-	admin_custom_claims_claim_namespace_placeholder: string
 	/**
 	 * D​e​l​e​t​e​ ​C​u​s​t​o​m​ ​C​l​a​i​m​ ​S​c​h​e​m​a
 	 */
@@ -12410,11 +11751,11 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_direct_rename_warning_label: string
 	/**
-	 * R​e​n​a​m​i​n​g​ ​c​h​a​n​g​e​s​ ​t​h​e​ ​c​l​a​i​m​ ​n​a​m​e​ ​i​n​ ​A​P​I​ ​r​e​s​p​o​n​s​e​s​ ​a​n​d​ ​t​o​k​e​n​s​.​ ​T​h​i​s​ ​m​a​y​ ​b​r​e​a​k​ ​i​n​t​e​g​r​a​t​i​o​n​s​ ​w​i​t​h​ ​R​e​l​y​i​n​g​ ​P​a​r​t​i​e​s​ ​(​R​P​)​ ​t​h​a​t​ ​e​x​p​e​c​t​ ​t​h​e​ ​o​l​d​ ​c​l​a​i​m​ ​n​a​m​e​.
+	 * R​e​n​a​m​i​n​g​ ​c​h​a​n​g​e​s​ ​t​h​e​ ​c​a​n​o​n​i​c​a​l​ ​s​o​u​r​c​e​ ​k​e​y​.​ ​E​x​i​s​t​i​n​g​ ​S​c​h​e​m​a​ ​M​a​p​p​i​n​g​s​ ​t​h​a​t​ ​r​e​f​e​r​e​n​c​e​ ​t​h​e​ ​o​l​d​ ​k​e​y​ ​m​u​s​t​ ​b​e​ ​u​p​d​a​t​e​d​.
 	 */
 	admin_custom_claims_direct_rename_warning: string
 	/**
-	 * R​e​n​a​m​i​n​g​ ​c​h​a​n​g​e​s​ ​t​h​e​ ​c​l​a​i​m​ ​n​a​m​e​ ​i​n​ ​A​P​I​ ​r​e​s​p​o​n​s​e​s​ ​a​n​d​ ​t​o​k​e​n​s​.​ ​T​h​i​s​ ​m​a​y​ ​b​r​e​a​k​ ​i​n​t​e​g​r​a​t​i​o​n​s​ ​w​i​t​h​ ​R​e​l​y​i​n​g​ ​P​a​r​t​i​e​s​ ​(​R​P​)​ ​e​x​p​e​c​t​i​n​g​ ​t​h​e​ ​o​l​d​ ​c​l​a​i​m​ ​n​a​m​e​.
+	 * R​e​n​a​m​i​n​g​ ​c​h​a​n​g​e​s​ ​t​h​e​ ​c​a​n​o​n​i​c​a​l​ ​s​o​u​r​c​e​ ​k​e​y​.​ ​E​x​i​s​t​i​n​g​ ​S​c​h​e​m​a​ ​M​a​p​p​i​n​g​s​ ​t​h​a​t​ ​r​e​f​e​r​e​n​c​e​ ​t​h​e​ ​o​l​d​ ​k​e​y​ ​m​u​s​t​ ​b​e​ ​u​p​d​a​t​e​d​.
 	 */
 	admin_custom_claims_rename_warning: string
 	/**
@@ -12478,14 +11819,6 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_display_order: string
 	/**
-	 * T​o​k​e​n​ ​&​ ​E​n​d​p​o​i​n​t​ ​I​n​c​l​u​s​i​o​n
-	 */
-	admin_custom_claims_token_endpoint_inclusion: string
-	/**
-	 * C​o​n​t​r​o​l​s​ ​w​h​i​c​h​ ​t​o​k​e​n​s​ ​a​n​d​ ​e​n​d​p​o​i​n​t​s​ ​i​n​c​l​u​d​e​ ​t​h​i​s​ ​c​l​a​i​m​ ​b​y​ ​d​e​f​a​u​l​t​.
-	 */
-	admin_custom_claims_token_endpoint_description: string
-	/**
 	 * A​d​v​a​n​c​e​d
 	 */
 	admin_custom_claims_advanced: string
@@ -12534,7 +11867,7 @@ type RootTranslation = {
 	 */
 	admin_custom_claims_danger_zone: string
 	/**
-	 * C​h​a​n​g​e​s​ ​t​h​e​ ​c​l​a​i​m​ ​n​a​m​e​ ​i​n​ ​A​P​I​ ​r​e​s​p​o​n​s​e​s​ ​a​n​d​ ​t​o​k​e​n​s​.​ ​M​a​y​ ​b​r​e​a​k​ ​R​P​ ​i​n​t​e​g​r​a​t​i​o​n​s​.
+	 * C​h​a​n​g​e​s​ ​t​h​e​ ​c​a​n​o​n​i​c​a​l​ ​s​o​u​r​c​e​ ​k​e​y​ ​a​n​d​ ​m​a​y​ ​b​r​e​a​k​ ​e​x​i​s​t​i​n​g​ ​S​c​h​e​m​a​ ​M​a​p​p​i​n​g​s​.
 	 */
 	admin_custom_claims_rename_description: string
 	/**
@@ -12655,6 +11988,10 @@ type RootTranslation = {
 	 * D​e​l​e​t​i​n​g​.​.​.
 	 */
 	admin_custom_claims_status_deleting: string
+	/**
+	 * R​e​c​o​n​f​i​g​u​r​i​n​g​.​.​.
+	 */
+	admin_custom_claims_status_reconfiguring: string
 	/**
 	 * E​r​r​o​r
 	 */
@@ -12851,50 +12188,6 @@ type RootTranslation = {
 	 * @param {string} sample
 	 */
 	admin_tenant_discovery_example: RequiredParams<'sample'>
-	/**
-	 * E​m​a​i​l​ ​R​e​s​o​l​u​t​i​o​n
-	 */
-	admin_tenant_discovery_email_resolution: string
-	/**
-	 * E​x​a​c​t​ ​e​m​a​i​l​,​ ​t​h​e​n​ ​e​m​a​i​l​-​d​o​m​a​i​n​ ​f​a​l​l​b​a​c​k
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain: string
-	/**
-	 * E​x​a​c​t​ ​e​m​a​i​l​ ​o​n​l​y
-	 */
-	admin_tenant_discovery_email_resolution_exact_only: string
-	/**
-	 * E​m​a​i​l​-​b​a​s​e​d​ ​d​i​s​c​o​v​e​r​y​ ​i​s​ ​c​u​r​r​e​n​t​l​y​ ​d​i​s​a​b​l​e​d​.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_description: string
-	/**
-	 * E​n​a​b​l​e​ ​E​m​a​i​l​ ​a​d​d​r​e​s​s​ ​b​e​l​o​w​ ​t​o​ ​u​s​e​ ​t​h​i​s​ ​p​o​l​i​c​y​.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_sample: string
-	/**
-	 * R​e​s​o​l​v​e​ ​t​h​e​ ​t​e​n​a​n​t​ ​o​n​l​y​ ​w​h​e​n​ ​t​h​e​ ​f​u​l​l​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​ ​i​s​ ​e​x​p​l​i​c​i​t​l​y​ ​m​a​p​p​e​d​.
-	 */
-	admin_tenant_discovery_email_resolution_exact_only_description: string
-	/**
-	 * a​l​i​c​e​@​e​x​a​m​p​l​e​.​e​d​u​ ​m​u​s​t​ ​h​a​v​e​ ​i​t​s​ ​o​w​n​ ​m​a​p​p​i​n​g​.
-	 */
-	admin_tenant_discovery_email_resolution_exact_only_sample: string
-	/**
-	 * T​r​y​ ​a​n​ ​e​x​a​c​t​ ​e​m​a​i​l​ ​m​a​p​p​i​n​g​ ​f​i​r​s​t​,​ ​t​h​e​n​ ​f​a​l​l​ ​b​a​c​k​ ​t​o​ ​t​h​e​ ​e​m​a​i​l​ ​d​o​m​a​i​n​ ​i​f​ ​n​o​ ​e​x​a​c​t​ ​m​a​t​c​h​ ​e​x​i​s​t​s​.
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain_description: string
-	/**
-	 * a​l​i​c​e​@​e​x​a​m​p​l​e​.​e​d​u​ ​f​a​l​l​s​ ​b​a​c​k​ ​t​o​ ​e​x​a​m​p​l​e​.​e​d​u​.
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain_sample: string
-	/**
-	 * D​o​ ​n​o​t​ ​r​e​s​o​l​v​e​ ​t​e​n​a​n​t​s​ ​f​r​o​m​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​e​s​.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_policy_description: string
-	/**
-	 * U​s​e​r​s​ ​m​u​s​t​ ​u​s​e​ ​a​n​o​t​h​e​r​ ​e​n​a​b​l​e​d​ ​d​i​s​c​o​v​e​r​y​ ​m​e​t​h​o​d​.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_policy_sample: string
 	/**
 	 * S​e​l​e​c​t​i​o​n​ ​P​o​l​i​c​y
 	 */
@@ -14046,30 +13339,6 @@ type RootTranslation = {
 	 */
 	admin_tenants_create_failed: string
 	/**
-	 * R​e​s​e​r​v​e
-	 */
-	admin_tenants_step_reserve: string
-	/**
-	 * S​e​e​d
-	 */
-	admin_tenants_step_seed: string
-	/**
-	 * R​e​g​i​s​t​r​y
-	 */
-	admin_tenants_step_registry: string
-	/**
-	 * S​n​a​p​s​h​o​t
-	 */
-	admin_tenants_step_snapshot: string
-	/**
-	 * S​m​o​k​e​ ​t​e​s​t
-	 */
-	admin_tenants_step_smoke: string
-	/**
-	 * A​c​t​i​v​a​t​e
-	 */
-	admin_tenants_step_activate: string
-	/**
 	 * e​.​g​.​ ​a​c​m​e​-​c​o​r​p
 	 */
 	admin_tenants_id_placeholder: string
@@ -14367,14 +13636,6 @@ type RootTranslation = {
 	 */
 	admin_tenants_placement_migration_step_complete: string
 	/**
-	 * L​a​s​t​ ​E​r​r​o​r
-	 */
-	admin_tenants_last_error: string
-	/**
-	 * N​o​ ​e​r​r​o​r​ ​d​e​t​a​i​l​ ​w​a​s​ ​r​e​c​o​r​d​e​d​.
-	 */
-	admin_tenants_no_error_detail: string
-	/**
 	 * U​p​d​a​t​e​d
 	 */
 	admin_tenants_updated: string
@@ -14406,26 +13667,6 @@ type RootTranslation = {
 	 * U​s​e​d​ ​f​o​r​ ​d​i​s​c​o​v​e​r​y​.​ ​L​o​w​e​r​c​a​s​e​ ​l​e​t​t​e​r​s​,​ ​n​u​m​b​e​r​s​,​ ​h​y​p​h​e​n​s​.
 	 */
 	admin_tenants_code_edit_hint: string
-	/**
-	 * L​i​f​e​c​y​c​l​e​ ​S​t​a​t​e
-	 */
-	admin_tenants_lifecycle_state: string
-	/**
-	 * C​a​n​n​o​t​ ​b​e​ ​c​h​a​n​g​e​d​ ​i​n​ ​s​i​n​g​l​e​-​t​e​n​a​n​t​ ​m​o​d​e​.
-	 */
-	admin_tenants_lifecycle_single_tenant_hint: string
-	/**
-	 * T​h​e​ ​d​e​f​a​u​l​t​ ​t​e​n​a​n​t​ ​m​u​s​t​ ​r​e​m​a​i​n​ ​a​c​t​i​v​e​.
-	 */
-	admin_tenants_lifecycle_default_hint: string
-	/**
-	 * T​h​i​s​ ​l​i​f​e​c​y​c​l​e​ ​s​t​a​t​e​ ​r​e​q​u​i​r​e​s​ ​a​ ​d​e​d​i​c​a​t​e​d​ ​o​p​e​r​a​t​i​o​n​.
-	 */
-	admin_tenants_lifecycle_dedicated_operation_hint: string
-	/**
-	 * T​h​e​ ​i​n​i​t​i​a​l​ ​t​e​n​a​n​t​ ​m​u​s​t​ ​r​e​m​a​i​n​ ​a​c​t​i​v​e​ ​i​n​ ​s​i​n​g​l​e​-​t​e​n​a​n​t​ ​m​o​d​e​.
-	 */
-	admin_tenants_initial_active_required: string
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e
 	 */
@@ -15280,10 +14521,6 @@ type RootTranslation = {
 	 */
 	admin_admins_detail_title_fallback: string
 	/**
-	 * L​o​a​d​i​n​g​.​.​.
-	 */
-	admin_admins_detail_loading_fallback: string
-	/**
 	 * A​d​m​i​n​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d
 	 */
 	admin_admins_id_required: string
@@ -15291,10 +14528,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​a​d​m​i​n​ ​u​s​e​r
 	 */
 	admin_admins_detail_load_failed: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​r​o​l​e​s
-	 */
-	admin_admins_roles_load_failed: string
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​a​d​m​i​n​ ​u​s​e​r
 	 */
@@ -15827,10 +15060,6 @@ type RootTranslation = {
 	 */
 	admin_admin_rbac_save: string
 	/**
-	 * B​a​c​k​ ​t​o​ ​A​d​m​i​n​ ​R​o​l​e​s
-	 */
-	admin_admin_rbac_back_to_roles: string
-	/**
 	 * C​r​e​a​t​e​ ​C​u​s​t​o​m​ ​A​d​m​i​n​ ​R​o​l​e
 	 */
 	admin_admin_rbac_create_title: string
@@ -15907,10 +15136,6 @@ type RootTranslation = {
 	 * B​a​c​k​ ​t​o​ ​L​i​s​t
 	 */
 	admin_admin_rbac_back_to_list: string
-	/**
-	 * A​d​m​i​n​ ​R​B​A​C
-	 */
-	admin_admin_rbac_admin_rbac: string
 	/**
 	 * B​a​s​i​c​ ​I​n​f​o​r​m​a​t​i​o​n
 	 */
@@ -16632,10 +15857,6 @@ type RootTranslation = {
 	 */
 	admin_admin_rebac_tuples_head_title: string
 	/**
-	 * T​u​p​l​e​s
-	 */
-	admin_admin_rebac_tuples_breadcrumb: string
-	/**
 	 * M​a​n​a​g​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​i​n​s​t​a​n​c​e​s​ ​b​e​t​w​e​e​n​ ​A​d​m​i​n​ ​u​s​e​r​s
 	 */
 	admin_admin_rebac_tuples_description: string
@@ -16686,10 +15907,6 @@ type RootTranslation = {
 	 */
 	admin_admin_rebac_details: string
 	/**
-	 * C​l​o​s​e​ ​c​r​e​a​t​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​d​i​a​l​o​g
-	 */
-	admin_admin_rebac_close_create_relationship_dialog: string
-	/**
 	 * R​e​l​a​t​i​o​n​s​h​i​p​ ​T​y​p​e
 	 */
 	admin_admin_rebac_relationship_type: string
@@ -16738,10 +15955,6 @@ type RootTranslation = {
 	 */
 	admin_admin_rebac_bidirectional_help: string
 	/**
-	 * C​l​o​s​e​ ​d​e​l​e​t​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​d​i​a​l​o​g
-	 */
-	admin_admin_rebac_close_delete_relationship_dialog: string
-	/**
 	 * D​e​l​e​t​e​ ​R​e​l​a​t​i​o​n​s​h​i​p
 	 */
 	admin_admin_rebac_delete_relationship: string
@@ -16761,10 +15974,6 @@ type RootTranslation = {
 	 * R​e​l​a​t​i​o​n​s​h​i​p​ ​D​e​f​i​n​i​t​i​o​n​s​ ​-​ ​A​d​m​i​n​ ​R​e​B​A​C​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_admin_rebac_definitions_head_title: string
-	/**
-	 * D​e​f​i​n​i​t​i​o​n​s
-	 */
-	admin_admin_rebac_definitions_breadcrumb: string
 	/**
 	 * D​e​f​i​n​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​t​y​p​e​s​ ​f​o​r​ ​A​d​m​i​n​ ​R​e​B​A​C
 	 */
@@ -16801,18 +16010,6 @@ type RootTranslation = {
 	 * D​e​l​e​t​e​ ​R​e​l​a​t​i​o​n​s​h​i​p​ ​D​e​f​i​n​i​t​i​o​n
 	 */
 	admin_admin_rebac_delete_relationship_definition: string
-	/**
-	 * C​l​o​s​e​ ​c​r​e​a​t​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​d​e​f​i​n​i​t​i​o​n​ ​d​i​a​l​o​g
-	 */
-	admin_admin_rebac_close_create_definition_dialog: string
-	/**
-	 * C​l​o​s​e​ ​e​d​i​t​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​d​e​f​i​n​i​t​i​o​n​ ​d​i​a​l​o​g
-	 */
-	admin_admin_rebac_close_edit_definition_dialog: string
-	/**
-	 * C​l​o​s​e​ ​d​e​l​e​t​e​ ​r​e​l​a​t​i​o​n​s​h​i​p​ ​d​e​f​i​n​i​t​i​o​n​ ​d​i​a​l​o​g
-	 */
-	admin_admin_rebac_close_delete_definition_dialog: string
 	/**
 	 * R​e​l​a​t​i​o​n​ ​N​a​m​e
 	 */
@@ -16878,10 +16075,6 @@ type RootTranslation = {
 	 * A​d​m​i​n​ ​P​o​l​i​c​i​e​s​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_admin_policies_head_title: string
-	/**
-	 * A​d​m​i​n​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l
-	 */
-	admin_admin_policies_access_control: string
 	/**
 	 * P​o​l​i​c​i​e​s
 	 */
@@ -16983,10 +16176,6 @@ type RootTranslation = {
 	 */
 	admin_admin_policies_system_protected: string
 	/**
-	 * C​l​o​s​e​ ​c​r​e​a​t​e​ ​p​o​l​i​c​y​ ​d​i​a​l​o​g
-	 */
-	admin_admin_policies_close_create_dialog: string
-	/**
 	 * C​r​e​a​t​e​ ​P​o​l​i​c​y
 	 */
 	admin_admin_policies_create_title: string
@@ -17026,10 +16215,6 @@ type RootTranslation = {
 	 * C​r​e​a​t​i​n​g​.​.​.
 	 */
 	admin_admin_policies_creating: string
-	/**
-	 * C​l​o​s​e​ ​p​o​l​i​c​y​ ​s​i​m​u​l​a​t​i​o​n​ ​d​i​a​l​o​g
-	 */
-	admin_admin_policies_close_simulation_dialog: string
 	/**
 	 * P​o​l​i​c​y​ ​S​i​m​u​l​a​t​i​o​n
 	 */
@@ -18572,10 +17757,6 @@ type RootTranslation = {
 	 */
 	admin_agent_access_revoked_grants: string
 	/**
-	 * M​a​n​a​g​e​ ​A​g​e​n​t​ ​G​r​a​n​t​s
-	 */
-	admin_agent_access_open_grants: string
-	/**
 	 * R​e​v​i​e​w​ ​p​o​l​i​c​y​ ​s​e​t​t​i​n​g​s
 	 */
 	admin_agent_access_open_settings: string
@@ -18759,26 +17940,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​o​l​v​e​ ​e​l​i​g​i​b​l​e​ ​A​g​e​n​t​ ​c​a​p​a​b​i​l​i​t​i​e​s​.
 	 */
 	admin_agent_access_eligibility_error: string
-	/**
-	 * T​h​i​s​ ​c​a​p​a​b​i​l​i​t​y​ ​i​s​ ​o​u​t​s​i​d​e​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​p​a​r​t​i​c​i​p​a​n​t​ ​p​e​r​m​i​s​s​i​o​n​ ​c​e​i​l​i​n​g​s​.​ ​R​e​m​o​v​e​ ​i​t​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
-	 */
-	admin_agent_access_permission_no_longer_eligible: string
-	/**
-	 * R​e​a​d​ ​m​a​s​k​e​d​ ​u​s​e​r​s
-	 */
-	admin_agent_access_permission_users: string
-	/**
-	 * R​e​a​d​ ​O​A​u​t​h​ ​c​l​i​e​n​t​s
-	 */
-	admin_agent_access_permission_clients: string
-	/**
-	 * R​e​a​d​ ​s​a​n​i​t​i​z​e​d​ ​A​d​m​i​n​ ​a​u​d​i​t​ ​e​v​e​n​t​s
-	 */
-	admin_agent_access_permission_audit: string
-	/**
-	 * R​e​a​d​ ​A​g​e​n​t​ ​A​c​c​e​s​s​ ​s​e​t​t​i​n​g​s
-	 */
-	admin_agent_access_permission_settings: string
 	/**
 	 * P​u​r​p​o​s​e
 	 */
@@ -22848,10 +22009,6 @@ type RootTranslation = {
 	 */
 	admin_jobs_creating: string
 	/**
-	 * C​r​e​a​t​e​ ​R​e​q​u​e​s​t
-	 */
-	admin_jobs_create_request: string
-	/**
 	 * C​S​V​ ​F​i​l​e
 	 */
 	admin_jobs_csv_file: string
@@ -25227,10 +24384,6 @@ type RootTranslation = {
 	 */
 	admin_external_token_refresh_status_running: string
 	/**
-	 * P​e​n​d​i​n​g
-	 */
-	admin_external_token_refresh_status_pending: string
-	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​t​o​k​e​n​ ​r​e​f​r​e​s​h​ ​s​e​t​t​i​n​g​s
 	 */
 	admin_external_token_refresh_load_failed: string
@@ -25461,10 +24614,6 @@ type RootTranslation = {
 	 * D​i​s​a​b​l​e​d
 	 */
 	admin_plugins_disabled: string
-	/**
-	 * A​p​p​l​y
-	 */
-	admin_plugins_apply: string
 	/**
 	 * C​l​e​a​r
 	 */
@@ -25786,34 +24935,6 @@ type RootTranslation = {
 	 */
 	admin_plugins_category_compliance: string
 	/**
-	 * o​f​f​i​c​i​a​l
-	 */
-	admin_plugins_trust_official: string
-	/**
-	 * v​e​r​i​f​i​e​d
-	 */
-	admin_plugins_trust_verified: string
-	/**
-	 * c​o​m​m​u​n​i​t​y
-	 */
-	admin_plugins_trust_community: string
-	/**
-	 * s​t​a​b​l​e
-	 */
-	admin_plugins_stability_stable: string
-	/**
-	 * b​e​t​a
-	 */
-	admin_plugins_stability_beta: string
-	/**
-	 * a​l​p​h​a
-	 */
-	admin_plugins_stability_alpha: string
-	/**
-	 * e​x​p​e​r​i​m​e​n​t​a​l
-	 */
-	admin_plugins_stability_experimental: string
-	/**
 	 * h​e​a​l​t​h​y
 	 */
 	admin_plugins_health_healthy: string
@@ -25834,10 +24955,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_title: string
 	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
-	 */
-	admin_identity_mapping_head_title: string
-	/**
 	 * O​v​e​r​v​i​e​w
 	 */
 	admin_identity_mapping_overview_title: string
@@ -25849,10 +24966,6 @@ type RootTranslation = {
 	 * R​e​v​i​e​w​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​,​ ​c​a​n​o​n​i​c​a​l​ ​i​d​e​n​t​i​t​y​ ​t​a​r​g​e​t​s​,​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​j​e​c​t​i​o​n​s​ ​w​i​t​h​o​u​t​ ​c​h​a​n​g​i​n​g​ ​t​h​e​ ​g​r​a​p​h​.
 	 */
 	admin_identity_mapping_description: string
-	/**
-	 * P​r​e​v​i​e​w​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​,​ ​c​a​n​o​n​i​c​a​l​ ​i​d​e​n​t​i​t​y​ ​t​a​r​g​e​t​s​,​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​j​e​c​t​i​o​n​s​ ​f​r​o​m​ ​o​n​e​ ​c​o​n​t​r​o​l​-​p​l​a​n​e​ ​v​i​e​w​.
-	 */
-	admin_identity_mapping_shell_description: string
 	/**
 	 * B​a​c​k​ ​t​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g
 	 */
@@ -25889,26 +25002,6 @@ type RootTranslation = {
 	 * D​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s
 	 */
 	admin_identity_mapping_destination_profiles: string
-	/**
-	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_source_policy: string
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_destination_policy: string
-	/**
-	 * {​c​o​u​n​t​}​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​{​p​l​u​r​a​l​}
-	 * @param {number} count
-	 * @param {string} plural
-	 */
-	admin_identity_mapping_source_profile_count: RequiredParams<'count' | 'plural'>
-	/**
-	 * {​c​o​u​n​t​}​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​{​p​l​u​r​a​l​}
-	 * @param {number} count
-	 * @param {string} plural
-	 */
-	admin_identity_mapping_destination_profile_count: RequiredParams<'count' | 'plural'>
 	/**
 	 * p​r​e​s​e​n​t
 	 */
@@ -25956,14 +25049,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_saving: string
 	/**
-	 * C​o​m​p​i​l​e​ ​d​r​a​f​t
-	 */
-	admin_identity_mapping_editor_compile_draft: string
-	/**
-	 * C​o​m​p​i​l​i​n​g​.​.​.
-	 */
-	admin_identity_mapping_editor_compiling: string
-	/**
 	 * M​a​p​p​i​n​g​ ​e​d​i​t​ ​p​r​o​f​i​l​e​ ​s​e​l​e​c​t​o​r
 	 */
 	admin_identity_mapping_editor_profile_selector_aria: string
@@ -26005,29 +25090,9 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_no_policy_selected: string
 	/**
-	 * V​e​r​s​i​o​n
-	 */
-	admin_identity_mapping_editor_policy_version: string
-	/**
-	 * N​o​ ​v​e​r​s​i​o​n​ ​s​e​l​e​c​t​e​d
-	 */
-	admin_identity_mapping_editor_no_version_selected: string
-	/**
 	 * A​c​t​i​v​a​t​e
 	 */
 	admin_identity_mapping_editor_activate: string
-	/**
-	 * P​u​b​l​i​s​h
-	 */
-	admin_identity_mapping_editor_publish: string
-	/**
-	 * R​e​q​u​e​s​t​ ​R​o​l​l​b​a​c​k
-	 */
-	admin_identity_mapping_editor_request_rollback: string
-	/**
-	 * C​o​n​f​i​r​m​ ​R​o​l​l​b​a​c​k
-	 */
-	admin_identity_mapping_editor_confirm_rollback: string
 	/**
 	 * D​e​l​e​t​e
 	 */
@@ -26084,21 +25149,9 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: string
 	/**
-	 * S​a​v​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_editor_policy_published: string
-	/**
 	 * A​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
 	admin_identity_mapping_editor_policy_activated: string
-	/**
-	 * D​e​a​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_editor_policy_deactivated: string
-	/**
-	 * N​o​ ​a​c​t​i​v​e​ ​c​a​t​a​l​o​g​ ​v​e​r​s​i​o​n​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​p​r​e​p​a​r​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_editor_no_active_catalog: string
 	/**
 	 * S​a​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​o​n
 	 */
@@ -26107,18 +25160,6 @@ type RootTranslation = {
 	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​f​i​r​s​t
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: string
-	/**
-	 * C​o​n​f​i​r​m​ ​r​o​l​l​b​a​c​k​ ​t​o​ ​c​o​n​t​i​n​u​e
-	 */
-	admin_identity_mapping_editor_confirm_rollback_status: string
-	/**
-	 * R​o​l​l​b​a​c​k​ ​r​e​q​u​e​s​t​e​d
-	 */
-	admin_identity_mapping_editor_rollback_requested: string
-	/**
-	 * R​o​l​l​b​a​c​k​ ​f​a​i​l​e​d
-	 */
-	admin_identity_mapping_editor_rollback_failed: string
 	/**
 	 * C​o​n​f​i​r​m​ ​d​e​l​e​t​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
 	 */
@@ -26161,7 +25202,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profiles_title: string
 	/**
-	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​f​r​o​m​ ​C​S​V​ ​f​i​l​e​s​ ​o​r​ ​m​a​n​u​a​l​ ​c​o​l​u​m​n​ ​d​e​f​i​n​i​t​i​o​n​s​,​ ​t​h​e​n​ ​s​e​l​e​c​t​ ​t​h​e​m​ ​i​n​ ​t​h​e​ ​F​l​o​w​ ​E​d​i​t​o​r​.​ ​S​A​M​L​,​ ​S​C​I​M​,​ ​O​I​D​C​,​ ​V​C​,​ ​D​I​D​,​ ​M​C​P​,​ ​A​2​A​,​ ​a​n​d​ ​c​l​i​e​n​t​-​c​r​e​d​e​n​t​i​a​l​ ​s​o​u​r​c​e​s​ ​w​i​l​l​ ​u​s​e​ ​t​h​i​s​ ​s​a​m​e​ ​s​u​r​f​a​c​e​ ​a​s​ ​t​h​e​i​r​ ​a​d​a​p​t​e​r​s​ ​a​r​e​ ​a​d​d​e​d​.
+	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​f​r​o​m​ ​C​S​V​ ​f​i​l​e​s​ ​o​r​ ​m​a​n​u​a​l​ ​c​o​l​u​m​n​ ​d​e​f​i​n​i​t​i​o​n​s​,​ ​t​h​e​n​ ​s​e​l​e​c​t​ ​t​h​e​m​ ​i​n​ ​t​h​e​ ​F​l​o​w​ ​E​d​i​t​o​r​.​ ​T​h​e​ ​b​u​i​l​t​-​i​n​ ​S​C​I​M​ ​2​.​0​ ​U​s​e​r​ ​s​o​u​r​c​e​ ​i​s​ ​r​e​a​d​y​ ​f​o​r​ ​i​n​b​o​u​n​d​ ​p​r​o​v​i​s​i​o​n​i​n​g​ ​m​a​p​p​i​n​g​s​;​ ​o​t​h​e​r​ ​p​r​o​t​o​c​o​l​ ​a​d​a​p​t​e​r​s​ ​w​i​l​l​ ​a​p​p​e​a​r​ ​h​e​r​e​ ​a​s​ ​t​h​e​y​ ​a​r​e​ ​a​d​d​e​d​.
 	 */
 	admin_identity_mapping_profiles_description: string
 	/**
@@ -26344,10 +25385,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
 	 */
 	admin_identity_mapping_policies_load_failed: string
-	/**
-	 * N​o​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​y​e​t​.
-	 */
-	admin_identity_mapping_policies_empty: string
 	/**
 	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
 	 */
@@ -26734,10 +25771,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​a​g​g​r​e​g​a​t​e​ ​e​n​t​i​t​i​e​s
 	 */
 	admin_identity_mapping_trust_entities_load_failed: string
-	/**
-	 * B​a​c​k​ ​t​o​ ​p​r​o​f​i​l​e​s
-	 */
-	admin_identity_mapping_profile_edit_back: string
 	/**
 	 * S​o​u​r​c​e​ ​P​r​o​f​i​l​e
 	 */
@@ -27263,97 +26296,9 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_blocking_warnings: RequiredParams<'count'>
 	/**
-	 * C​o​n​f​i​g​u​r​e​ ​R​e​l​e​a​s​e​ ​C​o​n​s​e​n​t
-	 */
-	admin_identity_mapping_profile_edit_configure_release_consent: string
-	/**
 	 * S​a​v​e​ ​d​e​s​t​i​n​a​t​i​o​n​ ​d​r​a​f​t
 	 */
 	admin_identity_mapping_profile_edit_save_destination_draft: string
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​c​o​n​s​e​n​t​ ​s​e​t​t​i​n​g​s
-	 */
-	admin_identity_mapping_profile_edit_destination_consent_aria: string
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​C​o​n​s​e​n​t​ ​S​e​t​t​i​n​g​s
-	 */
-	admin_identity_mapping_profile_edit_destination_consent_settings: string
-	/**
-	 * R​e​l​e​a​s​e​ ​c​o​n​s​e​n​t
-	 */
-	admin_identity_mapping_profile_edit_release_consent: string
-	/**
-	 * S​c​o​p​e
-	 */
-	admin_identity_mapping_profile_edit_scope: string
-	/**
-	 * T​e​n​a​n​t​ ​d​e​f​a​u​l​t
-	 */
-	admin_identity_mapping_profile_edit_tenant_default: string
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​o​v​e​r​r​i​d​e
-	 */
-	admin_identity_mapping_profile_edit_destination_override: string
-	/**
-	 * C​o​n​s​e​n​t​ ​m​o​d​e
-	 */
-	admin_identity_mapping_profile_edit_consent_mode: string
-	/**
-	 * O​n​c​e
-	 */
-	admin_identity_mapping_profile_edit_once: string
-	/**
-	 * E​v​e​r​y​ ​t​i​m​e
-	 */
-	admin_identity_mapping_profile_edit_every_time: string
-	/**
-	 * U​n​t​i​l​ ​a​t​t​r​i​b​u​t​e​s​ ​c​h​a​n​g​e
-	 */
-	admin_identity_mapping_profile_edit_until_attributes_change: string
-	/**
-	 * R​e​q​u​i​r​e​ ​p​u​r​p​o​s​e​ ​g​u​a​r​d​ ​f​o​r​ ​r​e​g​u​l​a​t​e​d​ ​a​t​t​r​i​b​u​t​e​s
-	 */
-	admin_identity_mapping_profile_edit_require_purpose_guard: string
-	/**
-	 * R​a​w​ ​a​t​t​r​i​b​u​t​e​ ​v​a​l​u​e​s​ ​r​e​m​a​i​n​ ​{​d​i​s​p​l​a​y​}​.
-	 * @param {string} display
-	 */
-	admin_identity_mapping_profile_edit_raw_values_remain: RequiredParams<'display'>
-	/**
-	 * h​i​d​d​e​n
-	 */
-	admin_identity_mapping_profile_edit_raw_value_hidden: string
-	/**
-	 * {​s​c​o​p​e​}​:​ ​{​l​e​g​a​l​B​a​s​i​s​}​,​ ​{​m​o​d​e​}​,​ ​{​p​u​r​p​o​s​e​}​,​ ​{​c​h​a​l​l​e​n​g​e​}​,​ ​{​g​u​a​r​d​}
-	 * @param {string} challenge
-	 * @param {string} guard
-	 * @param {string} legalBasis
-	 * @param {string} mode
-	 * @param {string} purpose
-	 * @param {string} scope
-	 */
-	admin_identity_mapping_profile_edit_consent_summary: RequiredParams<'challenge' | 'guard' | 'legalBasis' | 'mode' | 'purpose' | 'scope'>
-	/**
-	 * c​l​i​e​n​t​ ​o​v​e​r​r​i​d​e​ ​{​c​l​i​e​n​t​I​d​}
-	 * @param {string} clientId
-	 */
-	admin_identity_mapping_profile_edit_client_override: RequiredParams<'clientId'>
-	/**
-	 * l​o​g​i​n​ ​f​l​o​w​ ​c​h​a​l​l​e​n​g​e
-	 */
-	admin_identity_mapping_profile_edit_login_flow_challenge: string
-	/**
-	 * s​t​e​p​-​u​p​ ​c​h​a​l​l​e​n​g​e
-	 */
-	admin_identity_mapping_profile_edit_step_up_challenge: string
-	/**
-	 * p​u​r​p​o​s​e​ ​g​u​a​r​d​ ​e​n​a​b​l​e​d
-	 */
-	admin_identity_mapping_profile_edit_purpose_guard_enabled: string
-	/**
-	 * p​u​r​p​o​s​e​ ​g​u​a​r​d​ ​o​f​f
-	 */
-	admin_identity_mapping_profile_edit_purpose_guard_off: string
 	/**
 	 * A​t​t​r​i​b​u​t​e​ ​R​e​g​i​s​t​r​y
 	 */
@@ -27880,54 +26825,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_output: string
 	/**
-	 * C​o​n​s​e​n​t​ ​s​t​a​t​u​s
-	 */
-	admin_identity_mapping_flow_consent_status: string
-	/**
-	 * L​e​g​a​l​ ​b​a​s​i​s
-	 */
-	admin_identity_mapping_flow_legal_basis: string
-	/**
-	 * P​u​r​p​o​s​e
-	 */
-	admin_identity_mapping_flow_purpose: string
-	/**
-	 * A​t​t​r​i​b​u​t​e​ ​s​e​t
-	 */
-	admin_identity_mapping_flow_attribute_set: string
-	/**
-	 * C​h​a​l​l​e​n​g​e​ ​m​o​d​e
-	 */
-	admin_identity_mapping_flow_challenge_mode: string
-	/**
-	 * R​e​l​e​a​s​e​ ​p​o​l​i​c​y
-	 */
-	admin_identity_mapping_flow_release_policy: string
-	/**
-	 * T​e​r​m​s
-	 */
-	admin_identity_mapping_flow_terms: string
-	/**
-	 * P​r​i​v​a​c​y​ ​P​o​l​i​c​y
-	 */
-	admin_identity_mapping_flow_privacy_policy: string
-	/**
-	 * D​e​n​y​ ​r​e​a​s​o​n
-	 */
-	admin_identity_mapping_flow_deny_reason: string
-	/**
-	 * R​u​n​t​i​m​e​ ​e​x​p​o​s​u​r​e
-	 */
-	admin_identity_mapping_flow_runtime_exposure: string
-	/**
-	 * C​o​n​f​l​i​c​t​ ​p​o​l​i​c​y
-	 */
-	admin_identity_mapping_flow_conflict_policy: string
-	/**
-	 * T​r​a​c​e​ ​d​i​s​c​l​o​s​u​r​e
-	 */
-	admin_identity_mapping_flow_trace_disclosure: string
-	/**
 	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​d​r​a​f​t​ ​c​h​a​n​g​e​s​.​ ​L​e​a​v​e​ ​t​h​i​s​ ​p​a​g​e​ ​a​n​d​ ​d​i​s​c​a​r​d​ ​t​h​e​m​?
 	 */
 	admin_identity_mapping_flow_unsaved_leave_confirm: string
@@ -28357,6 +27254,30 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_flow_draft_only_node_diff: string
 	/**
+	 * R​e​s​o​u​r​c​e​ ​S​e​r​v​e​r
+	 */
+	admin_identity_mapping_profile_edit_resource_server: string
+	/**
+	 * P​a​y​m​e​n​t​s​ ​A​P​I​ ​i​n​t​r​o​s​p​e​c​t​i​o​n
+	 */
+	admin_identity_mapping_profile_edit_resource_server_display_placeholder: string
+	/**
+	 * R​e​s​o​u​r​c​e​ ​S​e​r​v​e​r​ ​c​l​i​e​n​t​_​i​d
+	 */
+	admin_identity_mapping_profile_edit_resource_server_client_id: string
+	/**
+	 * p​a​y​m​e​n​t​s​-​a​p​i
+	 */
+	admin_identity_mapping_profile_edit_resource_server_client_id_placeholder: string
+	/**
+	 * T​h​e​ ​a​c​t​i​v​e​ ​p​r​o​f​i​l​e​ ​c​o​n​t​r​o​l​s​ ​e​x​t​e​n​s​i​o​n​ ​c​l​a​i​m​s​ ​r​e​t​u​r​n​e​d​ ​t​o​ ​t​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​e​d​ ​R​e​s​o​u​r​c​e​ ​S​e​r​v​e​r​ ​b​y​ ​I​n​t​r​o​s​p​e​c​t​i​o​n​.
+	 */
+	admin_identity_mapping_profile_edit_resource_server_note: string
+	/**
+	 * i​n​t​r​o​s​p​e​c​t​i​o​n
+	 */
+	admin_identity_mapping_profile_edit_introspection_surface: string
+	/**
 	 * C​o​n​s​e​n​t​ ​P​o​l​i​c​i​e​s
 	 */
 	admin_consent_policies_nav: string
@@ -28466,10 +27387,6 @@ type RootTranslation = {
 	 */
 	admin_consent_policies_permission_statements: string
 	/**
-	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​p​o​l​i​c​y​ ​a​s​s​i​g​n​m​e​n​t​s​.
-	 */
-	admin_consent_policies_permission_assignments: string
-	/**
 	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​c​h​a​n​g​e​ ​c​l​i​e​n​t​ ​t​r​u​s​t​ ​p​o​l​i​c​i​e​s​.
 	 */
 	admin_consent_policies_permission_trust: string
@@ -28560,93 +27477,9 @@ type RootTranslation = {
 	 */
 	admin_consent_policies_select_statement: string
 	/**
-	 * R​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_consent_policies_requirement: string
-	/**
-	 * R​e​q​u​i​r​e​d
-	 */
-	admin_consent_policies_requirement_required: string
-	/**
-	 * O​p​t​i​o​n​a​l
-	 */
-	admin_consent_policies_requirement_optional: string
-	/**
-	 * H​i​d​d​e​n
-	 */
-	admin_consent_policies_requirement_hidden: string
-	/**
-	 * V​e​r​s​i​o​n
-	 */
-	admin_consent_policies_version: string
-	/**
-	 * C​u​r​r​e​n​t
-	 */
-	admin_consent_policies_version_current: string
-	/**
-	 * F​i​x​e​d​ ​I​D
-	 */
-	admin_consent_policies_version_fixed: string
-	/**
-	 * M​i​n​i​m​u​m
-	 */
-	admin_consent_policies_version_minimum: string
-	/**
-	 * V​e​r​s​i​o​n​ ​v​a​l​u​e
-	 */
-	admin_consent_policies_version_value: string
-	/**
-	 * C​h​e​c​k​b​o​x
-	 */
-	admin_consent_policies_checkbox: string
-	/**
-	 * N​o​n​e
-	 */
-	admin_consent_policies_checkbox_none: string
-	/**
-	 * C​h​e​c​k​e​d​ ​b​y​ ​d​e​f​a​u​l​t
-	 */
-	admin_consent_policies_checkbox_checked_default: string
-	/**
 	 * O​r​d​e​r
 	 */
 	admin_consent_policies_order: string
-	/**
-	 * B​i​n​d​i​n​g
-	 */
-	admin_consent_policies_binding: string
-	/**
-	 * N​o​n​e
-	 */
-	admin_consent_policies_binding_none: string
-	/**
-	 * S​c​o​p​e
-	 */
-	admin_consent_policies_binding_scope: string
-	/**
-	 * C​l​a​i​m
-	 */
-	admin_consent_policies_binding_claim: string
-	/**
-	 * S​A​M​L​ ​a​t​t​r​i​b​u​t​e
-	 */
-	admin_consent_policies_binding_saml_attribute: string
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​f​i​e​l​d​ ​s​e​t
-	 */
-	admin_consent_policies_binding_destination_field_set: string
-	/**
-	 * B​i​n​d​i​n​g​ ​v​a​l​u​e
-	 */
-	admin_consent_policies_binding_value: string
-	/**
-	 * E​v​i​d​e​n​c​e
-	 */
-	admin_consent_policies_evidence: string
-	/**
-	 * F​a​l​l​b​a​c​k
-	 */
-	admin_consent_policies_fallback: string
 	/**
 	 * S​a​v​e​ ​s​t​a​t​e​m​e​n​t​s
 	 */
@@ -28664,18 +27497,6 @@ type RootTranslation = {
 	 */
 	admin_consent_policies_statements_save_error: string
 	/**
-	 * A​s​s​i​g​n​m​e​n​t​s
-	 */
-	admin_consent_policies_assignments: string
-	/**
-	 * A​t​t​a​c​h​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​t​o​ ​a​c​c​o​u​n​t​ ​f​l​o​w​s​,​ ​O​I​D​C​ ​c​l​i​e​n​t​s​,​ ​o​r​ ​S​A​M​L​ ​s​e​r​v​i​c​e​ ​p​r​o​v​i​d​e​r​s​.
-	 */
-	admin_consent_policies_assignments_description: string
-	/**
-	 * C​r​e​a​t​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​a​s​s​i​g​n​i​n​g​ ​i​t​.
-	 */
-	admin_consent_policies_assignments_create_first: string
-	/**
 	 * T​a​r​g​e​t
 	 */
 	admin_consent_policies_target: string
@@ -28687,14 +27508,6 @@ type RootTranslation = {
 	 * S​e​l​e​c​t​ ​a​ ​t​a​r​g​e​t​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
 	 */
 	admin_consent_policies_target_id_required: string
-	/**
-	 * R​e​g​i​s​t​r​a​t​i​o​n
-	 */
-	admin_consent_policies_registration: string
-	/**
-	 * L​o​g​i​n
-	 */
-	admin_consent_policies_login: string
 	/**
 	 * O​I​D​C​ ​C​l​i​e​n​t
 	 */
@@ -28715,26 +27528,6 @@ type RootTranslation = {
 	 * A​c​c​o​u​n​t​ ​f​l​o​w
 	 */
 	admin_consent_policies_tenant_account_flow: string
-	/**
-	 * S​a​v​e​ ​a​s​s​i​g​n​m​e​n​t
-	 */
-	admin_consent_policies_save_assignment: string
-	/**
-	 * S​a​v​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​a​s​s​i​g​n​i​n​g​ ​i​t​.
-	 */
-	admin_consent_policies_save_assignment_first: string
-	/**
-	 * C​o​n​s​e​n​t​ ​p​o​l​i​c​y​ ​a​s​s​i​g​n​m​e​n​t​ ​s​a​v​e​d​.
-	 */
-	admin_consent_policies_assignment_saved: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​a​s​s​i​g​n​m​e​n​t​.
-	 */
-	admin_consent_policies_assignment_save_error: string
-	/**
-	 * T​h​i​s​ ​p​o​l​i​c​y​ ​h​a​s​ ​n​o​ ​a​s​s​i​g​n​m​e​n​t​s​.
-	 */
-	admin_consent_policies_no_assignments: string
 	/**
 	 * C​l​i​e​n​t​ ​T​r​u​s​t
 	 */
@@ -29522,11 +28315,6 @@ type RootTranslation = {
 	 * @param {string} title
 	 */
 	admin_flows_node_settings_aria: RequiredParams<'title'>
-	/**
-	 * D​e​s​c​r​i​p​t​i​o​n​ ​f​o​r​ ​{​t​i​t​l​e​}
-	 * @param {string} title
-	 */
-	admin_flows_node_description_aria: RequiredParams<'title'>
 	/**
 	 * {​t​i​t​l​e​}​ ​o​u​t​p​u​t​s
 	 * @param {string} title
@@ -30385,10 +29173,6 @@ type RootTranslation = {
 	 */
 	admin_flows_output_otherwise: string
 	/**
-	 * R​e​c​e​i​v​e​ ​a​ ​r​e​q​u​e​s​t​,​ ​d​i​r​e​c​t​ ​l​i​n​k​,​ ​o​r​ ​L​o​g​i​n​U​I​ ​e​n​t​r​y​.
-	 */
-	admin_flows_editor_start_description: string
-	/**
 	 * R​e​c​e​i​v​e​ ​a​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​r​e​q​u​e​s​t​ ​o​r​ ​L​o​g​i​n​U​I​ ​s​i​g​n​-​u​p​ ​e​n​t​r​y​ ​a​n​d​ ​r​e​s​o​l​v​e​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​ ​c​o​n​t​e​x​t​.
 	 */
 	admin_flows_editor_registration_request_description: string
@@ -30424,10 +29208,6 @@ type RootTranslation = {
 	 * s​i​g​n​u​p​ ​e​n​t​r​y
 	 */
 	admin_flows_editor_setting_signup_entry: string
-	/**
-	 * D​e​f​a​u​l​t​ ​p​r​o​f​i​l​e
-	 */
-	admin_flows_editor_setting_default_profile: string
 	/**
 	 * B​a​s​i​c​ ​p​r​o​f​i​l​e
 	 */
@@ -30633,21 +29413,9 @@ type RootTranslation = {
 	 */
 	admin_screens_fields: string
 	/**
-	 * I​d​e​n​t​i​t​y​ ​S​c​h​e​m​a​ ​f​i​e​l​d
-	 */
-	admin_screens_field_name: string
-	/**
-	 * L​a​b​e​l
-	 */
-	admin_screens_field_label: string
-	/**
 	 * R​e​q​u​i​r​e​d​ ​o​n​ ​t​h​i​s​ ​s​c​r​e​e​n
 	 */
 	admin_screens_field_required: string
-	/**
-	 * A​d​d​ ​f​i​e​l​d
-	 */
-	admin_screens_add_field: string
 	/**
 	 * R​e​m​o​v​e
 	 */
@@ -30660,14 +29428,6 @@ type RootTranslation = {
 	 * R​e​q​u​i​r​e​d
 	 */
 	admin_screens_required_mark: string
-	/**
-	 * I​ ​h​a​v​e​ ​r​e​v​i​e​w​e​d​ ​t​h​e​ ​e​n​t​e​r​e​d​ ​i​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_screens_preview_checkbox_text: string
-	/**
-	 * I​n​ ​t​h​e​ ​a​c​t​u​a​l​ ​f​l​o​w​,​ ​t​h​i​s​ ​s​c​r​e​e​n​ ​i​s​ ​s​h​o​w​n​ ​a​c​c​o​r​d​i​n​g​ ​t​o​ ​t​h​e​ ​F​l​o​w​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
-	 */
-	admin_screens_preview_footer_text: string
 	/**
 	 * A​d​d​ ​s​i​g​n​-​i​n​ ​t​e​x​t
 	 */
@@ -31348,26 +30108,6 @@ type RootTranslation = {
 	 */
 	admin_settings_diagnostic_logging_desc: string
 	/**
-	 * G​e​n​e​r​a​l
-	 */
-	admin_settings_general: string
-	/**
-	 * A​p​p​e​a​r​a​n​c​e
-	 */
-	admin_settings_appearance: string
-	/**
-	 * S​e​c​u​r​i​t​y
-	 */
-	admin_settings_security: string
-	/**
-	 * E​m​a​i​l
-	 */
-	admin_settings_email: string
-	/**
-	 * A​d​v​a​n​c​e​d
-	 */
-	admin_settings_advanced: string
-	/**
 	 * I​n​ ​D​e​v​e​l​o​p​m​e​n​t
 	 */
 	admin_settings_in_development: string
@@ -31465,37 +30205,9 @@ type RootTranslation = {
 	 */
 	admin_inheritance_override: string
 	/**
-	 * A​u​d​i​t​ ​L​o​g
-	 */
-	admin_audit_title: string
-	/**
-	 * T​i​m​e​s​t​a​m​p
-	 */
-	admin_audit_timestamp: string
-	/**
-	 * U​s​e​r
-	 */
-	admin_audit_user: string
-	/**
 	 * A​c​t​i​o​n
 	 */
 	admin_audit_action: string
-	/**
-	 * R​e​s​o​u​r​c​e
-	 */
-	admin_audit_resource: string
-	/**
-	 * I​P​ ​A​d​d​r​e​s​s
-	 */
-	admin_audit_ip: string
-	/**
-	 * S​t​a​t​u​s
-	 */
-	admin_audit_status: string
-	/**
-	 * E​x​p​o​r​t
-	 */
-	admin_audit_export: string
 	/**
 	 * S​i​g​n​i​n​g​ ​K​e​y​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -32287,10 +30999,6 @@ type RootTranslation = {
 	 */
 	admin_theme_preview_viewport: string
 	/**
-	 * P​r​e​v​i​e​w​ ​s​c​a​l​e
-	 */
-	admin_theme_preview_scale: string
-	/**
 	 * L​o​g​i​n
 	 */
 	admin_theme_preview_surface_login: string
@@ -32339,10 +31047,6 @@ type RootTranslation = {
 	 */
 	admin_theme_preview_inspector_description: string
 	/**
-	 * S​u​m​m​a​r​y
-	 */
-	admin_theme_preview_inspector_summary: string
-	/**
 	 * L​a​y​o​u​t
 	 */
 	admin_theme_preview_inspector_layout: string
@@ -32350,26 +31054,6 @@ type RootTranslation = {
 	 * A​s​s​e​t​s
 	 */
 	admin_theme_preview_inspector_assets: string
-	/**
-	 * C​h​e​c​k​s
-	 */
-	admin_theme_preview_inspector_checks: string
-	/**
-	 * T​e​m​p​l​a​t​e
-	 */
-	admin_theme_preview_inspector_template: string
-	/**
-	 * S​c​r​e​e​n
-	 */
-	admin_theme_preview_inspector_screen: string
-	/**
-	 * M​o​d​e
-	 */
-	admin_theme_preview_inspector_mode: string
-	/**
-	 * V​i​e​w​p​o​r​t
-	 */
-	admin_theme_preview_inspector_viewport: string
 	/**
 	 * P​a​g​e
 	 */
@@ -32382,10 +31066,6 @@ type RootTranslation = {
 	 * F​o​o​t​e​r
 	 */
 	admin_theme_preview_inspector_footer: string
-	/**
-	 * B​r​a​n​d​ ​p​a​n​e​l
-	 */
-	admin_theme_preview_inspector_brand_panel: string
 	/**
 	 * L​o​g​o​ ​s​e​t
 	 */
@@ -32410,18 +31090,6 @@ type RootTranslation = {
 	 * D​e​f​a​u​l​t​ ​f​a​v​i​c​o​n
 	 */
 	admin_theme_preview_inspector_favicon_default: string
-	/**
-	 * H​e​a​d​e​r
-	 */
-	admin_theme_preview_inspector_header: string
-	/**
-	 * L​a​n​g​u​a​g​e​ ​s​e​l​e​c​t​o​r
-	 */
-	admin_theme_preview_inspector_language: string
-	/**
-	 * T​h​e​m​e​ ​t​o​g​g​l​e
-	 */
-	admin_theme_preview_inspector_theme_toggle: string
 	/**
 	 * T​e​x​t
 	 */
@@ -32490,135 +31158,6 @@ type RootTranslation = {
 	 * R​e​-​a​u​t​h​e​n​t​i​c​a​t​i​o​n​,​ ​c​o​n​s​e​n​t​,​ ​d​e​v​i​c​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​,​ ​e​m​a​i​l​ ​v​e​r​i​f​i​c​a​t​i​o​n​,​ ​e​r​r​o​r​,​ ​a​n​d​ ​c​o​m​p​l​e​t​i​o​n​ ​t​i​t​l​e​s​ ​r​e​m​a​i​n​ ​c​o​n​t​e​x​t​u​a​l​ ​s​y​s​t​e​m​ ​m​e​s​s​a​g​e​s​.
 	 */
 	admin_theme_page_titles_help: string
-	/**
-	 * P​o​l​i​c​y​ ​S​e​t​t​i​n​g​s
-	 */
-	admin_policy_title: string
-	/**
-	 * C​o​n​f​i​g​u​r​e​ ​p​o​l​i​c​y​ ​s​y​s​t​e​m​ ​f​e​a​t​u​r​e​s​ ​a​n​d​ ​t​o​k​e​n​ ​c​l​a​i​m​s
-	 */
-	admin_policy_subtitle: string
-	/**
-	 * S​a​v​e​ ​C​h​a​n​g​e​s
-	 */
-	admin_policy_save: string
-	/**
-	 * P​o​l​i​c​y​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	admin_policy_save_success: string
-	/**
-	 * O​I​D​C​ ​C​o​n​f​o​r​m​a​n​c​e​ ​N​o​t​i​c​e
-	 */
-	admin_policy_warning_title: string
-	/**
-	 * E​n​a​b​l​i​n​g​ ​p​o​l​i​c​y​ ​f​e​a​t​u​r​e​s​ ​m​a​y​ ​a​f​f​e​c​t​ ​O​I​D​C​ ​c​o​n​f​o​r​m​a​n​c​e​ ​t​e​s​t​i​n​g​.​ ​C​u​s​t​o​m​ ​c​l​a​i​m​s​ ​u​s​e​ ​t​h​e​ ​"​a​u​t​h​r​i​m​_​"​ ​p​r​e​f​i​x​ ​t​o​ ​a​v​o​i​d​ ​c​o​n​f​l​i​c​t​s​ ​w​i​t​h​ ​s​t​a​n​d​a​r​d​ ​c​l​a​i​m​s​.
-	 */
-	admin_policy_warning_desc: string
-	/**
-	 * F​e​a​t​u​r​e​ ​F​l​a​g​s
-	 */
-	admin_policy_feature_flags: string
-	/**
-	 * E​n​a​b​l​e​ ​A​B​A​C​ ​(​A​t​t​r​i​b​u​t​e​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
-	 */
-	admin_policy_enable_abac: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​u​s​e​r​ ​a​t​t​r​i​b​u​t​e​s​ ​(​d​e​p​a​r​t​m​e​n​t​,​ ​c​l​e​a​r​a​n​c​e​ ​l​e​v​e​l​,​ ​e​t​c​.​)
-	 */
-	admin_policy_enable_abac_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​R​e​B​A​C​ ​(​R​e​l​a​t​i​o​n​s​h​i​p​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​)
-	 */
-	admin_policy_enable_rebac: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​a​c​c​e​s​s​ ​b​a​s​e​d​ ​o​n​ ​r​e​l​a​t​i​o​n​s​h​i​p​s​ ​b​e​t​w​e​e​n​ ​e​n​t​i​t​i​e​s​ ​(​G​o​o​g​l​e​ ​Z​a​n​z​i​b​a​r​ ​s​t​y​l​e​)
-	 */
-	admin_policy_enable_rebac_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​L​o​g​g​i​n​g
-	 */
-	admin_policy_enable_logging: string
-	/**
-	 * L​o​g​ ​d​e​t​a​i​l​e​d​ ​p​o​l​i​c​y​ ​e​v​a​l​u​a​t​i​o​n​ ​r​e​s​u​l​t​s​ ​f​o​r​ ​d​e​b​u​g​g​i​n​g
-	 */
-	admin_policy_enable_logging_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​V​e​r​i​f​i​e​d​ ​A​t​t​r​i​b​u​t​e​s
-	 */
-	admin_policy_enable_verified_attrs: string
-	/**
-	 * R​e​q​u​i​r​e​ ​c​r​y​p​t​o​g​r​a​p​h​i​c​ ​p​r​o​o​f​ ​o​f​ ​a​t​t​r​i​b​u​t​e​ ​c​l​a​i​m​s
-	 */
-	admin_policy_enable_verified_attrs_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​C​u​s​t​o​m​ ​R​u​l​e​s
-	 */
-	admin_policy_enable_custom_rules: string
-	/**
-	 * A​l​l​o​w​ ​c​u​s​t​o​m​ ​p​o​l​i​c​y​ ​r​u​l​e​s​ ​b​e​y​o​n​d​ ​d​e​f​a​u​l​t​ ​R​B​A​C
-	 */
-	admin_policy_enable_custom_rules_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​S​D​-​J​W​T​ ​(​S​e​l​e​c​t​i​v​e​ ​D​i​s​c​l​o​s​u​r​e​)
-	 */
-	admin_policy_enable_sd_jwt: string
-	/**
-	 * I​s​s​u​e​ ​I​D​ ​T​o​k​e​n​s​ ​i​n​ ​S​D​-​J​W​T​ ​f​o​r​m​a​t​ ​f​o​r​ ​s​e​l​e​c​t​i​v​e​ ​d​i​s​c​l​o​s​u​r​e​ ​(​R​F​C​ ​9​9​0​1​)
-	 */
-	admin_policy_enable_sd_jwt_desc: string
-	/**
-	 * E​n​a​b​l​e​ ​P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n
-	 */
-	admin_policy_enable_embedding: string
-	/**
-	 * E​v​a​l​u​a​t​e​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​p​o​l​i​c​y​ ​a​n​d​ ​e​m​b​e​d​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​a​s​ ​a​u​t​h​r​i​m​_​p​e​r​m​i​s​s​i​o​n​s​ ​c​l​a​i​m
-	 */
-	admin_policy_enable_embedding_desc: string
-	/**
-	 * T​o​k​e​n​ ​C​l​a​i​m​s​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_policy_token_claims: string
-	/**
-	 * A​c​c​e​s​s​ ​T​o​k​e​n​ ​C​l​a​i​m​s
-	 */
-	admin_policy_access_token_claims: string
-	/**
-	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​A​c​c​e​s​s​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
-	 */
-	admin_policy_access_token_claims_desc: string
-	/**
-	 * I​D​ ​T​o​k​e​n​ ​C​l​a​i​m​s
-	 */
-	admin_policy_id_token_claims: string
-	/**
-	 * C​o​m​m​a​-​s​e​p​a​r​a​t​e​d​ ​l​i​s​t​ ​o​f​ ​c​l​a​i​m​s​ ​t​o​ ​i​n​c​l​u​d​e​ ​i​n​ ​I​D​ ​T​o​k​e​n​ ​(​p​r​e​f​i​x​e​d​ ​w​i​t​h​ ​a​u​t​h​r​i​m​_​)
-	 */
-	admin_policy_id_token_claims_desc: string
-	/**
-	 * A​v​a​i​l​a​b​l​e​ ​C​l​a​i​m​s
-	 */
-	admin_policy_available_claims: string
-	/**
-	 * P​o​l​i​c​y​ ​E​m​b​e​d​d​i​n​g​ ​I​n​f​o​r​m​a​t​i​o​n
-	 */
-	admin_policy_embedding_info: string
-	/**
-	 * W​h​e​n​ ​e​n​a​b​l​e​d​,​ ​t​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​s​e​r​v​e​r​ ​e​v​a​l​u​a​t​e​s​ ​r​e​q​u​e​s​t​e​d​ ​s​c​o​p​e​s​ ​a​g​a​i​n​s​t​ ​t​h​e​ ​u​s​e​r​'​s​ ​p​e​r​m​i​s​s​i​o​n​s​ ​a​n​d​ ​e​m​b​e​d​s​ ​o​n​l​y​ ​p​e​r​m​i​t​t​e​d​ ​a​c​t​i​o​n​s​ ​i​n​ ​t​h​e​ ​A​c​c​e​s​s​ ​T​o​k​e​n​.
-	 */
-	admin_policy_embedding_info_desc: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
-	 */
-	admin_authentication_methods_page_title: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​M​e​t​h​o​d​s
-	 */
-	admin_authentication_methods_title: string
-	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​a​n​d​ ​c​u​s​t​o​m​ ​e​x​t​e​r​n​a​l​ ​p​r​o​v​i​d​e​r​ ​s​e​t​t​i​n​g​s​ ​f​o​r​ ​t​e​n​a​n​t​ ​{​t​e​n​a​n​t​I​d​}
-	 * @param {string} tenantId
-	 */
-	admin_authentication_methods_description: RequiredParams<'tenantId'>
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​s​e​t​t​i​n​g​s
 	 */
@@ -32728,10 +31267,6 @@ type RootTranslation = {
 	 */
 	admin_authentication_methods_human_verification_description: string
 	/**
-	 * C​l​o​u​d​f​l​a​r​e​ ​T​u​r​n​s​t​i​l​e
-	 */
-	admin_authentication_methods_turnstile: string
-	/**
 	 * U​s​e​ ​T​u​r​n​s​t​i​l​e​ ​f​o​r​ ​L​o​g​i​n​ ​U​I​ ​a​b​u​s​e​ ​p​r​o​t​e​c​t​i​o​n​.
 	 */
 	admin_authentication_methods_turnstile_description: string
@@ -32799,122 +31334,6 @@ type RootTranslation = {
 	 * D​i​s​a​b​l​e​d
 	 */
 	admin_authentication_methods_disabled: string
-	/**
-	 * E​d​i​t
-	 */
-	admin_authentication_methods_edit_title: string
-	/**
-	 * D​u​p​l​i​c​a​t​e
-	 */
-	admin_authentication_methods_duplicate_title: string
-	/**
-	 * R​e​m​o​v​e
-	 */
-	admin_authentication_methods_remove_title: string
-	/**
-	 * C​o​p​y
-	 */
-	admin_authentication_methods_copy_suffix: string
-	/**
-	 * A​d​d​ ​P​r​o​v​i​d​e​r
-	 */
-	admin_authentication_methods_add_provider: string
-	/**
-	 * E​d​i​t​ ​P​r​o​v​i​d​e​r
-	 */
-	admin_authentication_methods_edit_provider: string
-	/**
-	 * U​p​d​a​t​e​ ​P​r​o​v​i​d​e​r
-	 */
-	admin_authentication_methods_update_provider: string
-	/**
-	 * C​a​n​c​e​l
-	 */
-	admin_authentication_methods_cancel: string
-	/**
-	 * P​r​o​v​i​d​e​r​ ​I​D
-	 */
-	admin_authentication_methods_provider_id: string
-	/**
-	 * N​a​m​e
-	 */
-	admin_authentication_methods_name: string
-	/**
-	 * T​y​p​e
-	 */
-	admin_authentication_methods_type: string
-	/**
-	 * S​t​a​r​t​ ​M​o​d​e
-	 */
-	admin_authentication_methods_start_mode: string
-	/**
-	 * S​t​a​r​t​ ​U​R​L
-	 */
-	admin_authentication_methods_start_url: string
-	/**
-	 * S​l​u​g
-	 */
-	admin_authentication_methods_slug: string
-	/**
-	 * B​u​t​t​o​n​ ​T​e​x​t
-	 */
-	admin_authentication_methods_button_text: string
-	/**
-	 * I​c​o​n​ ​U​R​L
-	 */
-	admin_authentication_methods_icon_url: string
-	/**
-	 * B​u​t​t​o​n​ ​C​o​l​o​r
-	 */
-	admin_authentication_methods_button_color: string
-	/**
-	 * E​n​a​b​l​e​d
-	 */
-	admin_authentication_methods_enabled: string
-	/**
-	 * S​A​M​L​ ​S​P
-	 */
-	admin_authentication_methods_start_mode_saml_sp: string
-	/**
-	 * O​A​u​t​h​ ​R​e​d​i​r​e​c​t
-	 */
-	admin_authentication_methods_start_mode_oauth_redirect: string
-	/**
-	 * P​r​o​v​i​d​e​r​ ​I​D​ ​i​s​ ​r​e​q​u​i​r​e​d​.
-	 */
-	admin_authentication_methods_validation_id_required: string
-	/**
-	 * P​r​o​v​i​d​e​r​ ​I​D​ ​c​a​n​ ​c​o​n​t​a​i​n​ ​l​e​t​t​e​r​s​,​ ​n​u​m​b​e​r​s​,​ ​c​o​l​o​n​,​ ​h​y​p​h​e​n​,​ ​a​n​d​ ​u​n​d​e​r​s​c​o​r​e​.
-	 */
-	admin_authentication_methods_validation_id_format: string
-	/**
-	 * P​r​o​v​i​d​e​r​ ​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d​.
-	 */
-	admin_authentication_methods_validation_name_required: string
-	/**
-	 * S​t​a​r​t​ ​U​R​L​ ​i​s​ ​r​e​q​u​i​r​e​d​.
-	 */
-	admin_authentication_methods_validation_start_url_required: string
-	/**
-	 * S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​n​o​t​ ​b​e​ ​p​r​o​t​o​c​o​l​-​r​e​l​a​t​i​v​e​.
-	 */
-	admin_authentication_methods_validation_start_url_protocol_relative: string
-	/**
-	 * R​e​l​a​t​i​v​e​ ​S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​s​t​a​r​t​ ​w​i​t​h​ ​/​.
-	 */
-	admin_authentication_methods_validation_relative_start_url: string
-	/**
-	 * A​b​s​o​l​u​t​e​ ​S​t​a​r​t​ ​U​R​L​ ​m​u​s​t​ ​u​s​e​ ​H​T​T​P​S​.
-	 */
-	admin_authentication_methods_validation_absolute_start_url: string
-	/**
-	 * S​t​a​r​t​ ​U​R​L​ ​i​s​ ​i​n​v​a​l​i​d​.
-	 */
-	admin_authentication_methods_validation_start_url_invalid: string
-	/**
-	 * P​r​o​v​i​d​e​r​ ​I​D​ ​m​u​s​t​ ​b​e​ ​u​n​i​q​u​e​.
-	 */
-	admin_authentication_methods_validation_id_unique: string
 	/**
 	 * L​o​g​i​n​ ​U​I​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -33004,18 +31423,6 @@ type RootTranslation = {
 	 */
 	admin_login_ui_error_update_trusted_origins: string
 	/**
-	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​e​d​i​t​ ​L​o​g​i​n​ ​U​I​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​.
-	 */
-	admin_login_ui_error_no_config_permission: string
-	/**
-	 * G​l​o​b​a​l​ ​L​o​g​i​n​ ​U​I​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​u​p​d​a​t​e​d​.
-	 */
-	admin_login_ui_config_updated: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​U​I​ ​c​o​n​f​i​g
-	 */
-	admin_login_ui_error_update_config: string
-	/**
 	 * Y​o​u​ ​d​o​ ​n​o​t​ ​h​a​v​e​ ​p​e​r​m​i​s​s​i​o​n​ ​t​o​ ​e​d​i​t​ ​s​e​t​t​i​n​g​s​ ​a​t​ ​t​h​i​s​ ​s​c​o​p​e​ ​l​e​v​e​l
 	 */
 	admin_login_ui_error_no_settings_permission: string
@@ -33033,27 +31440,6 @@ type RootTranslation = {
 	 */
 	admin_login_ui_error_save_settings: string
 	/**
-	 * G​l​o​b​a​l​ ​U​I​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_login_ui_global_config_title: string
-	/**
-	 * C​o​n​f​i​g​u​r​e​ ​t​h​e​ ​g​l​o​b​a​l​ ​L​o​g​i​n​ ​U​I​ ​b​a​s​e​ ​U​R​L​ ​a​n​d​ ​p​a​g​e​ ​p​a​t​h​s​ ​u​s​e​d​ ​b​y​ ​t​h​e​ ​a​u​t​h​o​r​i​z​a​t​i​o​n​ ​f​l​o​w​.
-	 */
-	admin_login_ui_global_config_description: string
-	/**
-	 * S​o​u​r​c​e​:​ ​{​s​o​u​r​c​e​}
-	 * @param {string} source
-	 */
-	admin_login_ui_source: RequiredParams<'source'>
-	/**
-	 * G​l​o​b​a​l​ ​U​I​ ​B​a​s​e​ ​U​R​L
-	 */
-	admin_login_ui_global_base_url: string
-	/**
-	 * B​a​s​e​ ​U​R​L​ ​f​o​r​ ​t​h​e​ ​s​h​a​r​e​d​ ​L​o​g​i​n​ ​U​I​ ​d​e​p​l​o​y​m​e​n​t​.​ ​M​u​s​t​ ​u​s​e​ ​H​T​T​P​S​ ​e​x​c​e​p​t​ ​l​o​c​a​l​h​o​s​t​.
-	 */
-	admin_login_ui_global_base_url_description: string
-	/**
 	 * M​o​d​i​f​i​e​d
 	 */
 	admin_login_ui_modified: string
@@ -33069,10 +31455,6 @@ type RootTranslation = {
 	 * C​h​a​n​g​e​s​ ​m​a​y​ ​t​a​k​e​ ​u​p​ ​t​o​ ​6​0​ ​s​e​c​o​n​d​s​ ​t​o​ ​a​p​p​e​a​r​ ​i​n​ ​L​o​g​i​n​ ​U​I​.
 	 */
 	admin_login_ui_cache_notice: string
-	/**
-	 * S​a​v​e​ ​G​l​o​b​a​l​ ​U​I​ ​C​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_login_ui_save_global_config: string
 	/**
 	 * L​a​n​g​u​a​g​e​ ​S​e​t​t​i​n​g​s
 	 */
@@ -33353,101 +31735,13 @@ type RootTranslation = {
 	 */
 	admin_login_ui_loading_settings: string
 	/**
-	 * L​o​c​k​e​d
-	 */
-	admin_login_ui_locked: string
-	/**
-	 * R​a​n​g​e​:​ ​{​m​i​n​}​ ​-​ ​{​m​a​x​}
-	 * @param {number} max
-	 * @param {number} min
-	 */
-	admin_login_ui_range: RequiredParams<'max' | 'min'>
-	/**
-	 * M​i​n​:​ ​{​m​i​n​}
-	 * @param {number} min
-	 */
-	admin_login_ui_min: RequiredParams<'min'>
-	/**
-	 * M​a​x​:​ ​{​m​a​x​}
-	 * @param {number} max
-	 */
-	admin_login_ui_max: RequiredParams<'max'>
-	/**
 	 * S​a​v​e​ ​C​h​a​n​g​e​s
 	 */
 	admin_login_ui_save_changes: string
 	/**
-	 * C​o​m​i​n​g​ ​S​o​o​n
-	 */
-	admin_login_ui_coming_soon_title: string
-	/**
-	 * T​h​e​ ​f​o​l​l​o​w​i​n​g​ ​f​e​a​t​u​r​e​s​ ​a​r​e​ ​c​u​r​r​e​n​t​l​y​ ​i​n​ ​d​e​v​e​l​o​p​m​e​n​t​:
-	 */
-	admin_login_ui_coming_soon_description: string
-	/**
-	 * F​a​v​i​c​o​n​ ​U​R​L
-	 */
-	admin_login_ui_coming_soon_favicon: string
-	/**
-	 * U​R​L​ ​t​o​ ​t​h​e​ ​f​a​v​i​c​o​n​ ​i​m​a​g​e​ ​d​i​s​p​l​a​y​e​d​ ​i​n​ ​b​r​o​w​s​e​r​ ​t​a​b​s
-	 */
-	admin_login_ui_coming_soon_favicon_desc: string
-	/**
-	 * B​a​c​k​g​r​o​u​n​d​ ​I​m​a​g​e​ ​U​R​L
-	 */
-	admin_login_ui_coming_soon_background: string
-	/**
-	 * U​R​L​ ​t​o​ ​t​h​e​ ​b​a​c​k​g​r​o​u​n​d​ ​i​m​a​g​e​ ​d​i​s​p​l​a​y​e​d​ ​o​n​ ​t​h​e​ ​L​o​g​i​n​ ​U​I
-	 */
-	admin_login_ui_coming_soon_background_desc: string
-	/**
-	 * C​u​s​t​o​m​ ​C​S​S
-	 */
-	admin_login_ui_coming_soon_custom_css: string
-	/**
-	 * C​u​s​t​o​m​ ​C​S​S​ ​t​o​ ​a​p​p​l​y​ ​t​o​ ​t​h​e​ ​L​o​g​i​n​ ​U​I​ ​(​r​e​s​t​r​i​c​t​e​d​ ​p​r​o​p​e​r​t​i​e​s​ ​o​n​l​y​)
-	 */
-	admin_login_ui_coming_soon_custom_css_desc: string
-	/**
-	 * H​e​a​d​e​r​ ​T​e​x​t
-	 */
-	admin_login_ui_coming_soon_header: string
-	/**
-	 * H​e​a​d​e​r​ ​t​e​x​t​ ​d​i​s​p​l​a​y​e​d​ ​a​b​o​v​e​ ​t​h​e​ ​l​o​g​i​n​ ​f​o​r​m
-	 */
-	admin_login_ui_coming_soon_header_desc: string
-	/**
-	 * F​o​o​t​e​r​ ​T​e​x​t
-	 */
-	admin_login_ui_coming_soon_footer: string
-	/**
-	 * F​o​o​t​e​r​ ​t​e​x​t​ ​d​i​s​p​l​a​y​e​d​ ​b​e​l​o​w​ ​t​h​e​ ​l​o​g​i​n​ ​f​o​r​m​ ​(​e​.​g​.​,​ ​c​o​p​y​r​i​g​h​t​ ​n​o​t​i​c​e​)
-	 */
-	admin_login_ui_coming_soon_footer_desc: string
-	/**
-	 * F​o​o​t​e​r​ ​L​i​n​k​s
-	 */
-	admin_login_ui_coming_soon_footer_links: string
-	/**
-	 * J​S​O​N​ ​a​r​r​a​y​ ​o​f​ ​f​o​o​t​e​r​ ​l​i​n​k​s​ ​w​i​t​h​ ​l​a​b​e​l​ ​a​n​d​ ​U​R​L​ ​f​i​e​l​d​s​.
-	 */
-	admin_login_ui_coming_soon_footer_links_desc: string
-	/**
-	 * C​u​s​t​o​m​ ​B​l​o​c​k​s
-	 */
-	admin_login_ui_coming_soon_custom_blocks: string
-	/**
-	 * J​S​O​N​ ​a​r​r​a​y​ ​o​f​ ​c​u​s​t​o​m​ ​c​o​n​t​e​n​t​ ​b​l​o​c​k​s​ ​w​i​t​h​ ​p​o​s​i​t​i​o​n​,​ ​t​y​p​e​,​ ​a​n​d​ ​c​o​n​t​e​n​t​ ​f​i​e​l​d​s​.
-	 */
-	admin_login_ui_coming_soon_custom_blocks_desc: string
-	/**
 	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​ ​M​a​n​a​g​e​m​e​n​t
 	 */
 	admin_consent_statements_title: string
-	/**
-	 * M​a​n​a​g​e​ ​c​o​n​s​e​n​t​ ​i​t​e​m​s​,​ ​v​e​r​s​i​o​n​s​,​ ​l​o​c​a​l​i​z​a​t​i​o​n​s​,​ ​a​n​d​ ​r​e​q​u​i​r​e​m​e​n​t​s
-	 */
-	admin_consent_statements_subtitle: string
 	/**
 	 * M​a​n​a​g​e​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​s​ ​u​s​e​d​ ​b​y​ ​p​o​l​i​c​i​e​s​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​f​l​o​w​s​.
 	 */
@@ -33472,14 +31766,6 @@ type RootTranslation = {
 	 * C​r​e​a​t​e​ ​C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
 	 */
 	admin_consent_templates_page_title: string
-	/**
-	 * C​r​e​a​t​e​ ​C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
-	 */
-	admin_consent_templates_plain_page_title: string
-	/**
-	 * C​o​n​s​e​n​t​ ​t​e​m​p​l​a​t​e
-	 */
-	admin_consent_templates_kicker: string
 	/**
 	 * C​h​o​o​s​e​ ​t​h​e​ ​c​l​o​s​e​s​t​ ​t​e​m​p​l​a​t​e​,​ ​t​h​e​n​ ​s​e​t​ ​t​h​e​ ​u​s​e​r​ ​i​n​p​u​t​ ​b​e​h​a​v​i​o​r​ ​a​n​d​ ​b​i​n​d​i​n​g​ ​t​a​r​g​e​t​.
 	 */
@@ -33548,14 +31834,6 @@ type RootTranslation = {
 	 * C​r​e​a​t​e​ ​a​ ​b​l​a​n​k​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​w​i​t​h​o​u​t​ ​u​s​i​n​g​ ​a​ ​t​e​m​p​l​a​t​e​.
 	 */
 	admin_consent_templates_custom_description: string
-	/**
-	 * C​u​s​t​o​m​ ​c​r​e​a​t​i​o​n​ ​l​e​t​s​ ​y​o​u​ ​c​o​n​f​i​g​u​r​e​ ​t​h​e​ ​c​a​t​e​g​o​r​y​,​ ​c​o​n​t​e​n​t​,​ ​a​n​d​ ​r​e​q​u​i​r​e​m​e​n​t​ ​f​r​e​e​l​y​ ​o​n​ ​t​h​e​ ​n​e​x​t​ ​s​c​r​e​e​n​.
-	 */
-	admin_consent_templates_custom_panel_description: string
-	/**
-	 * C​u​s​t​o​m
-	 */
-	admin_consent_templates_custom_kicker: string
 	/**
 	 * I​n​p​u​t​ ​m​o​d​e
 	 */
@@ -33629,14 +31907,6 @@ type RootTranslation = {
 	 * S​e​t​ ​a​s​ ​d​e​f​a​u​l​t​ ​l​a​n​g​u​a​g​e
 	 */
 	admin_consent_templates_default_language: string
-	/**
-	 * C​o​n​s​e​n​t​ ​c​o​n​t​e​n​t​ ​e​d​i​t​o​r​ ​t​a​b​s
-	 */
-	admin_consent_templates_editor_tabs: string
-	/**
-	 * T​e​x​t
-	 */
-	admin_consent_templates_text_tab: string
 	/**
 	 * p​r​e​v​i​e​w
 	 */
@@ -33742,11 +32012,6 @@ type RootTranslation = {
 	 */
 	admin_consent_templates_option_value: string
 	/**
-	 * L​a​b​e​l​ ​(​{​l​a​n​g​u​a​g​e​}​)
-	 * @param {string} language
-	 */
-	admin_consent_templates_option_label: RequiredParams<'language'>
-	/**
 	 * O​p​t​i​o​n​ ​t​e​x​t​ ​(​{​l​a​n​g​u​a​g​e​}​)
 	 * @param {string} language
 	 */
@@ -33755,30 +32020,6 @@ type RootTranslation = {
 	 * T​h​i​s​ ​t​e​x​t​ ​i​s​ ​s​h​o​w​n​ ​a​s​ ​t​h​e​ ​o​p​t​i​o​n​ ​l​a​b​e​l​/​b​o​d​y​.​ ​I​t​ ​c​a​n​ ​i​n​c​l​u​d​e​ ​m​a​n​a​g​e​d​ ​l​i​n​k​ ​t​o​k​e​n​s​ ​s​u​c​h​ ​a​s​ ​%​l​i​n​k​1​%​.
 	 */
 	admin_consent_templates_option_body_description: string
-	/**
-	 * E​f​f​e​c​t
-	 */
-	admin_consent_templates_option_effect: string
-	/**
-	 * E​f​f​e​c​t​ ​t​a​r​g​e​t
-	 */
-	admin_consent_templates_option_effect_target: string
-	/**
-	 * N​o​ ​e​f​f​e​c​t
-	 */
-	admin_consent_templates_option_effect_none: string
-	/**
-	 * R​e​l​e​a​s​e​ ​f​i​e​l​d​ ​s​e​t
-	 */
-	admin_consent_templates_option_effect_release_field_set: string
-	/**
-	 * D​e​n​y​ ​/​ ​s​t​o​p
-	 */
-	admin_consent_templates_option_effect_deny: string
-	/**
-	 * R​e​m​e​m​b​e​r​ ​a​n​s​w​e​r
-	 */
-	admin_consent_templates_option_effect_remember: string
 	/**
 	 * O​p​e​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​s​e​t​t​i​n​g​s
 	 */
@@ -33836,10 +32077,6 @@ type RootTranslation = {
 	 */
 	admin_consent_templates_binding_loading_field_mapping_sets: string
 	/**
-	 * S​t​a​r​t​ ​b​l​a​n​k
-	 */
-	admin_consent_templates_start_blank: string
-	/**
 	 * C​r​e​a​t​e
 	 */
 	admin_consent_templates_create_from_template: string
@@ -33882,33 +32119,9 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_save_settings: string
 	/**
-	 * S​t​a​t​e​m​e​n​t​s
-	 */
-	admin_consent_statements_tab_statements: string
-	/**
-	 * V​e​r​s​i​o​n​s
-	 */
-	admin_consent_statements_tab_versions: string
-	/**
-	 * L​o​c​a​l​i​z​a​t​i​o​n​s
-	 */
-	admin_consent_statements_tab_localizations: string
-	/**
-	 * N​e​w​ ​S​t​a​t​e​m​e​n​t
-	 */
-	admin_consent_statements_new: string
-	/**
-	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​ ​D​e​t​a​i​l​s
-	 */
-	admin_consent_statements_edit: string
-	/**
 	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​n​a​m​e
 	 */
 	admin_consent_statements_name: string
-	/**
-	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​d​e​n​t​i​f​i​e​r
-	 */
-	admin_consent_statements_identifier: string
 	/**
 	 * S​l​u​g
 	 */
@@ -33918,17 +32131,9 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_category: string
 	/**
-	 * L​e​g​a​l​ ​B​a​s​i​s
-	 */
-	admin_consent_statements_legal_basis: string
-	/**
 	 * P​r​o​c​e​s​s​i​n​g​ ​P​u​r​p​o​s​e
 	 */
 	admin_consent_statements_purpose: string
-	/**
-	 * D​i​s​p​l​a​y​ ​O​r​d​e​r
-	 */
-	admin_consent_statements_order: string
 	/**
 	 * A​c​t​i​v​e
 	 */
@@ -33937,10 +32142,6 @@ type RootTranslation = {
 	 * I​n​a​c​t​i​v​e
 	 */
 	admin_consent_statements_inactive: string
-	/**
-	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t​s
-	 */
-	admin_consent_statements_consent_statements: string
 	/**
 	 * C​r​e​a​t​e​d
 	 */
@@ -33986,25 +32187,9 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_empty: string
 	/**
-	 * S​e​l​e​c​t​e​d​ ​s​t​a​t​e​m​e​n​t​.​ ​S​w​i​t​c​h​ ​t​o​ ​V​e​r​s​i​o​n​s​ ​t​a​b​ ​t​o​ ​m​a​n​a​g​e​ ​v​e​r​s​i​o​n​s​.
-	 */
-	admin_consent_statements_selected: string
-	/**
 	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​t​i​t​l​e
 	 */
 	admin_consent_statements_placeholder_title: string
-	/**
-	 * e​.​g​.​,​ ​m​a​r​k​e​t​i​n​g​_​e​m​a​i​l​s
-	 */
-	admin_consent_statements_placeholder_slug: string
-	/**
-	 * C​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​d​e​n​t​i​f​i​e​r
-	 */
-	admin_consent_statements_placeholder_identifier: string
-	/**
-	 * G​D​P​R​ ​A​r​t​1​3​/​1​4​:​ ​D​a​t​a​ ​p​r​o​c​e​s​s​i​n​g​ ​p​u​r​p​o​s​e​ ​d​e​s​c​r​i​p​t​i​o​n
-	 */
-	admin_consent_statements_placeholder_purpose: string
 	/**
 	 * R​e​c​o​r​d​ ​r​e​t​e​n​t​i​o​n​ ​d​a​y​s
 	 */
@@ -34096,29 +32281,13 @@ type RootTranslation = {
 	 */
 	admin_consent_statements_error_save: string
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​s​t​a​t​e​m​e​n​t
-	 */
-	admin_consent_statements_error_update: string
-	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​s​t​a​t​e​m​e​n​t
 	 */
 	admin_consent_statements_error_delete: string
 	/**
-	 * S​t​a​t​e​m​e​n​t​ ​c​r​e​a​t​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	admin_consent_statements_created_success: string
-	/**
 	 * S​t​a​t​e​m​e​n​t​ ​u​p​d​a​t​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
 	 */
 	admin_consent_statements_updated_success: string
-	/**
-	 * S​t​a​t​e​m​e​n​t​ ​d​e​l​e​t​e​d
-	 */
-	admin_consent_statements_deleted_success: string
-	/**
-	 * D​e​l​e​t​e​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​?
-	 */
-	admin_consent_statements_delete_confirm: string
 	/**
 	 * D​e​a​c​t​i​v​a​t​e​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​?​ ​I​t​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​u​s​e​d​ ​f​o​r​ ​n​e​w​ ​c​o​n​s​e​n​t​ ​c​o​l​l​e​c​t​i​o​n​.
 	 */
@@ -34132,53 +32301,13 @@ type RootTranslation = {
 	 */
 	admin_consent_category_privacy_policy: string
 	/**
-	 * C​o​o​k​i​e​ ​P​o​l​i​c​y
-	 */
-	admin_consent_category_cookie_policy: string
-	/**
-	 * M​a​r​k​e​t​i​n​g
-	 */
-	admin_consent_category_marketing: string
-	/**
-	 * D​a​t​a​ ​S​h​a​r​i​n​g
-	 */
-	admin_consent_category_data_sharing: string
-	/**
-	 * A​n​a​l​y​t​i​c​s
-	 */
-	admin_consent_category_analytics: string
-	/**
-	 * D​o​ ​N​o​t​ ​S​e​l​l
-	 */
-	admin_consent_category_do_not_sell: string
-	/**
 	 * O​t​h​e​r
 	 */
 	admin_consent_category_custom: string
 	/**
-	 * C​o​n​s​e​n​t
-	 */
-	admin_consent_legal_basis_consent: string
-	/**
-	 * L​e​g​i​t​i​m​a​t​e​ ​I​n​t​e​r​e​s​t
-	 */
-	admin_consent_legal_basis_legitimate_interest: string
-	/**
-	 * C​o​n​t​r​a​c​t
-	 */
-	admin_consent_legal_basis_contract: string
-	/**
-	 * L​e​g​a​l​ ​O​b​l​i​g​a​t​i​o​n
-	 */
-	admin_consent_legal_basis_legal_obligation: string
-	/**
 	 * N​e​w​ ​V​e​r​s​i​o​n
 	 */
 	admin_consent_versions_new: string
-	/**
-	 * V​e​r​s​i​o​n​s
-	 */
-	admin_consent_versions_title: string
 	/**
 	 * V​e​r​s​i​o​n​ ​(​Y​Y​Y​Y​M​M​D​D​)
 	 */
@@ -34187,10 +32316,6 @@ type RootTranslation = {
 	 * C​o​n​t​e​n​t​ ​T​y​p​e
 	 */
 	admin_consent_versions_content_type: string
-	/**
-	 * E​f​f​e​c​t​i​v​e​ ​D​a​t​e
-	 */
-	admin_consent_versions_effective: string
 	/**
 	 * S​t​a​r​t​ ​d​a​t​e​ ​a​n​d​ ​t​i​m​e
 	 */
@@ -34232,10 +32357,6 @@ type RootTranslation = {
 	 */
 	admin_consent_versions_empty: string
 	/**
-	 * S​e​l​e​c​t​e​d​ ​v​e​r​s​i​o​n​.​ ​S​w​i​t​c​h​ ​t​o​ ​L​o​c​a​l​i​z​a​t​i​o​n​s​ ​t​a​b​ ​t​o​ ​m​a​n​a​g​e​ ​t​r​a​n​s​l​a​t​i​o​n​s​.
-	 */
-	admin_consent_versions_selected: string
-	/**
 	 * A​c​t​i​v​a​t​e​ ​V​e​r​s​i​o​n
 	 */
 	admin_consent_versions_dialog_title: string
@@ -34243,14 +32364,6 @@ type RootTranslation = {
 	 * C​l​o​s​e​ ​a​c​t​i​v​a​t​e​ ​v​e​r​s​i​o​n​ ​d​i​a​l​o​g
 	 */
 	admin_consent_versions_dialog_close: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​v​e​r​s​i​o​n​s
-	 */
-	admin_consent_versions_error_load: string
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​v​e​r​s​i​o​n
-	 */
-	admin_consent_versions_error_save: string
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​a​c​t​i​v​a​t​e​ ​v​e​r​s​i​o​n
 	 */
@@ -34263,10 +32376,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​v​e​r​s​i​o​n
 	 */
 	admin_consent_versions_error_delete: string
-	/**
-	 * V​e​r​s​i​o​n​ ​c​r​e​a​t​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
-	 */
-	admin_consent_versions_created_success: string
 	/**
 	 * V​e​r​s​i​o​n​ ​a​c​t​i​v​a​t​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
 	 */
@@ -34406,10 +32515,6 @@ type RootTranslation = {
 	 */
 	admin_consent_requirements_advanced_title: string
 	/**
-	 * C​o​n​f​i​g​u​r​e​ ​r​e​q​u​i​r​e​m​e​n​t
-	 */
-	admin_consent_requirements_enabled: string
-	/**
 	 * U​s​e​r​ ​i​n​p​u​t
 	 */
 	admin_consent_requirements_collection_mode: string
@@ -34469,89 +32574,13 @@ type RootTranslation = {
 
 export type TranslationFunctions = {
 	/**
-	 * Authrim
-	 */
-	app_title: () => LocalizedString
-	/**
-	 * OpenID Connect Provider on Cloudflare Workers
-	 */
-	app_subtitle: () => LocalizedString
-	/**
-	 * Frontend Stack Test
-	 */
-	test_title: () => LocalizedString
-	/**
-	 * Test Melt UI (Headless Components):
-	 */
-	test_meltui: () => LocalizedString
-	/**
-	 * Primary Button
-	 */
-	button_primary: () => LocalizedString
-	/**
-	 * Secondary Button
-	 */
-	button_secondary: () => LocalizedString
-	/**
-	 * Ghost Button
-	 */
-	button_ghost: () => LocalizedString
-	/**
-	 * Open Dialog
-	 */
-	button_openDialog: () => LocalizedString
-	/**
-	 * Email address
-	 */
-	form_email: () => LocalizedString
-	/**
-	 * you@example.com
-	 */
-	form_emailPlaceholder: () => LocalizedString
-	/**
-	 * Success
-	 */
-	badge_success: () => LocalizedString
-	/**
-	 * Warning
-	 */
-	badge_warning: () => LocalizedString
-	/**
-	 * Error
-	 */
-	badge_error: () => LocalizedString
-	/**
-	 * Info
-	 */
-	badge_info: () => LocalizedString
-	/**
-	 * Melt UI Dialog
-	 */
-	dialog_title: () => LocalizedString
-	/**
-	 * This is a test dialog using Melt UI, a headless, accessible component library for Svelte.
-	 */
-	dialog_description: () => LocalizedString
-	/**
 	 * Cancel
 	 */
 	dialog_cancel: () => LocalizedString
 	/**
-	 * Confirm
-	 */
-	dialog_confirm: () => LocalizedString
-	/**
 	 * Close
 	 */
 	dialog_close: () => LocalizedString
-	/**
-	 * Powered by Authrim
-	 */
-	footer_stack: () => LocalizedString
-	/**
-	 * Switch Language
-	 */
-	language_switch: () => LocalizedString
 	/**
 	 * English
 	 */
@@ -34569,25 +32598,9 @@ export type TranslationFunctions = {
 	 */
 	language_switch_error: () => LocalizedString
 	/**
-	 * Email address
-	 */
-	common_email: () => LocalizedString
-	/**
-	 * you@example.com
-	 */
-	common_emailPlaceholder: () => LocalizedString
-	/**
-	 * Full name
-	 */
-	common_name: () => LocalizedString
-	/**
 	 * John Doe
 	 */
 	common_namePlaceholder: () => LocalizedString
-	/**
-	 * Continue
-	 */
-	common_continue: () => LocalizedString
 	/**
 	 * Confirm
 	 */
@@ -34613,29 +32626,9 @@ export type TranslationFunctions = {
 	 */
 	common_next: () => LocalizedString
 	/**
-	 * Back to login
-	 */
-	common_backToLogin: () => LocalizedString
-	/**
-	 * or
-	 */
-	common_or: () => LocalizedString
-	/**
 	 * Loading...
 	 */
 	common_loading: () => LocalizedString
-	/**
-	 * No results found
-	 */
-	common_empty_state: () => LocalizedString
-	/**
-	 * Something went wrong
-	 */
-	common_error_state: () => LocalizedString
-	/**
-	 * Try again
-	 */
-	common_try_again: () => LocalizedString
 	/**
 	 * Search...
 	 */
@@ -34709,333 +32702,9 @@ export type TranslationFunctions = {
 	 */
 	common_status_neutral: () => LocalizedString
 	/**
-	 * Welcome back
-	 */
-	login_title: () => LocalizedString
-	/**
-	 * Sign in to your account
-	 */
-	login_subtitle: () => LocalizedString
-	/**
-	 * Continue with Passkey
-	 */
-	login_continueWithPasskey: () => LocalizedString
-	/**
-	 * Sign in with Passkey
-	 */
-	login_signInWithPasskey: () => LocalizedString
-	/**
-	 * Send verification code
-	 */
-	login_sendCode: () => LocalizedString
-	/**
-	 * Don't have an account? Create one
-	 */
-	login_createAccount: () => LocalizedString
-	/**
-	 * Email address is required
-	 */
-	login_errorEmailRequired: () => LocalizedString
-	/**
-	 * Please enter a valid email address
-	 */
-	login_errorEmailInvalid: () => LocalizedString
-	/**
-	 * Or continue with
-	 */
-	login_orContinueWith: () => LocalizedString
-	/**
 	 * Continue with {provider}
 	 */
 	login_continueWith: (arg: { provider: string }) => LocalizedString
-	/**
-	 * Sign Up
-	 */
-	header_signUp: () => LocalizedString
-	/**
-	 * Login
-	 */
-	header_login: () => LocalizedString
-	/**
-	 * Logout
-	 */
-	header_logout: () => LocalizedString
-	/**
-	 * Create your account
-	 */
-	register_title: () => LocalizedString
-	/**
-	 * Get started with Authrim
-	 */
-	register_subtitle: () => LocalizedString
-	/**
-	 * Create Account with Passkey
-	 */
-	register_createWithPasskey: () => LocalizedString
-	/**
-	 * Sign up with verification code
-	 */
-	register_sendCode: () => LocalizedString
-	/**
-	 * Already have an account? Sign in
-	 */
-	register_alreadyHaveAccount: () => LocalizedString
-	/**
-	 * By creating an account, you agree to our Terms of Service and Privacy Policy
-	 */
-	register_termsAgreement: () => LocalizedString
-	/**
-	 * Name is required
-	 */
-	register_errorNameRequired: () => LocalizedString
-	/**
-	 * Check your email
-	 */
-	emailCode_title: () => LocalizedString
-	/**
-	 * We've sent a verification code to
-	 */
-	emailCode_subtitle: () => LocalizedString
-	/**
-	 * Enter the 6-digit code from your email. The code will expire in 5 minutes.
-	 */
-	emailCode_instructions: () => LocalizedString
-	/**
-	 * Verification Code
-	 */
-	emailCode_codeLabel: () => LocalizedString
-	/**
-	 * Verify
-	 */
-	emailCode_verifyButton: () => LocalizedString
-	/**
-	 * Resend code
-	 */
-	emailCode_resendButton: () => LocalizedString
-	/**
-	 * Resend in {seconds}s
-	 */
-	emailCode_resendTimer: (arg: { seconds: unknown }) => LocalizedString
-	/**
-	 * Code sent successfully
-	 */
-	emailCode_resendSuccess: () => LocalizedString
-	/**
-	 * Verification successful! Redirecting...
-	 */
-	emailCode_success: () => LocalizedString
-	/**
-	 * Invalid or expired code
-	 */
-	emailCode_errorInvalid: () => LocalizedString
-	/**
-	 * Session mismatch. Please request a new code.
-	 */
-	emailCode_errorSessionMismatch: () => LocalizedString
-	/**
-	 * {clientName} wants to access your account
-	 */
-	consent_title: (arg: { clientName: string }) => LocalizedString
-	/**
-	 * This application is requesting access to your Authrim account
-	 */
-	consent_subtitle: () => LocalizedString
-	/**
-	 * This application will be able to:
-	 */
-	consent_scopesTitle: () => LocalizedString
-	/**
-	 * You are signed in as
-	 */
-	consent_userInfo: () => LocalizedString
-	/**
-	 * Not you? Switch account
-	 */
-	consent_notYou: () => LocalizedString
-	/**
-	 * Allow
-	 */
-	consent_allowButton: () => LocalizedString
-	/**
-	 * Deny
-	 */
-	consent_denyButton: () => LocalizedString
-	/**
-	 * Privacy Policy
-	 */
-	consent_privacyPolicy: () => LocalizedString
-	/**
-	 * Terms of Service
-	 */
-	consent_termsOfService: () => LocalizedString
-	/**
-	 * Verify your identity
-	 */
-	consent_scope_openid: () => LocalizedString
-	/**
-	 * View your profile information (name, picture)
-	 */
-	consent_scope_profile: () => LocalizedString
-	/**
-	 * View your email address
-	 */
-	consent_scope_email: () => LocalizedString
-	/**
-	 * View your phone number
-	 */
-	consent_scope_phone: () => LocalizedString
-	/**
-	 * View your address
-	 */
-	consent_scope_address: () => LocalizedString
-	/**
-	 * Maintain access when you're not using the app
-	 */
-	consent_scope_offline_access: () => LocalizedString
-	/**
-	 * Select organization
-	 */
-	consent_organizationSelect: () => LocalizedString
-	/**
-	 * Primary
-	 */
-	consent_primaryOrg: () => LocalizedString
-	/**
-	 * Current organization
-	 */
-	consent_currentOrganization: () => LocalizedString
-	/**
-	 * Acting on behalf of {name}
-	 */
-	consent_actingOnBehalfOf: (arg: { name: string }) => LocalizedString
-	/**
-	 * Delegated Access
-	 */
-	consent_delegatedAccess: () => LocalizedString
-	/**
-	 * You are authorizing this application to access {name}'s account on their behalf
-	 */
-	consent_delegatedAccessWarning: (arg: { name: unknown }) => LocalizedString
-	/**
-	 * Your roles
-	 */
-	consent_yourRoles: () => LocalizedString
-	/**
-	 * No organization
-	 */
-	consent_noOrganization: () => LocalizedString
-	/**
-	 * Trusted application
-	 */
-	consent_trustedClient: () => LocalizedString
-	/**
-	 * Oops! Something went wrong
-	 */
-	error_title: () => LocalizedString
-	/**
-	 * We encountered an error while processing your request
-	 */
-	error_subtitle: () => LocalizedString
-	/**
-	 * If this problem persists, please contact support
-	 */
-	error_contactSupport: () => LocalizedString
-	/**
-	 * Error code
-	 */
-	error_errorCode: () => LocalizedString
-	/**
-	 * The request is missing a required parameter or is otherwise malformed
-	 */
-	error_invalid_request: () => LocalizedString
-	/**
-	 * You denied the authorization request
-	 */
-	error_access_denied: () => LocalizedString
-	/**
-	 * The client is not authorized to request an authorization code
-	 */
-	error_unauthorized_client: () => LocalizedString
-	/**
-	 * The authorization server does not support this response type
-	 */
-	error_unsupported_response_type: () => LocalizedString
-	/**
-	 * The requested scope is invalid, unknown, or malformed
-	 */
-	error_invalid_scope: () => LocalizedString
-	/**
-	 * The authorization server encountered an unexpected error
-	 */
-	error_server_error: () => LocalizedString
-	/**
-	 * The authorization server is temporarily unable to handle the request
-	 */
-	error_temporarily_unavailable: () => LocalizedString
-	/**
-	 * An unknown error occurred
-	 */
-	error_unknown: () => LocalizedString
-	/**
-	 * Device Verification
-	 */
-	device_title: () => LocalizedString
-	/**
-	 * Enter the code shown on your device
-	 */
-	device_subtitle: () => LocalizedString
-	/**
-	 * Enter the 8-character code displayed on your device to authorize it
-	 */
-	device_instructions: () => LocalizedString
-	/**
-	 * Scan this QR code
-	 */
-	device_qrCodeLabel: () => LocalizedString
-	/**
-	 * or enter code manually
-	 */
-	device_orManual: () => LocalizedString
-	/**
-	 * Verification Code
-	 */
-	device_codeLabel: () => LocalizedString
-	/**
-	 * XXXX-XXXX
-	 */
-	device_codePlaceholder: () => LocalizedString
-	/**
-	 * Approve
-	 */
-	device_approveButton: () => LocalizedString
-	/**
-	 * Deny
-	 */
-	device_denyButton: () => LocalizedString
-	/**
-	 * Device authorized successfully! You can now close this window.
-	 */
-	device_success: () => LocalizedString
-	/**
-	 * Device authorization denied
-	 */
-	device_denied: () => LocalizedString
-	/**
-	 * Invalid or expired verification code
-	 */
-	device_errorInvalidCode: () => LocalizedString
-	/**
-	 * This code has already been used
-	 */
-	device_errorAlreadyUsed: () => LocalizedString
-	/**
-	 * Verification failed. Please try again.
-	 */
-	device_errorGeneric: () => LocalizedString
-	/**
-	 * Please enter the verification code
-	 */
-	device_errorCodeRequired: () => LocalizedString
 	/**
 	 * Loading...
 	 */
@@ -35064,10 +32733,6 @@ export type TranslationFunctions = {
 	 * Admin
 	 */
 	admin_header_admin_fallback: () => LocalizedString
-	/**
-	 * Last login: {time}
-	 */
-	admin_header_last_login: (arg: { time: string }) => LocalizedString
 	/**
 	 * Theme
 	 */
@@ -35105,22 +32770,6 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_dashboard: () => LocalizedString
 	/**
-	 * End User
-	 */
-	admin_nav_section_end_user: () => LocalizedString
-	/**
-	 * Client
-	 */
-	admin_nav_section_client: () => LocalizedString
-	/**
-	 * Tenant
-	 */
-	admin_nav_section_tenant: () => LocalizedString
-	/**
-	 * Platform
-	 */
-	admin_nav_section_platform: () => LocalizedString
-	/**
 	 * Identity
 	 */
 	admin_nav_group_identity: () => LocalizedString
@@ -35141,21 +32790,9 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_group_federation_directory: () => LocalizedString
 	/**
-	 * Authentication
-	 */
-	admin_nav_group_authentication: () => LocalizedString
-	/**
 	 * Schema Settings
 	 */
 	admin_nav_group_schema_settings: () => LocalizedString
-	/**
-	 * Branding
-	 */
-	admin_nav_group_branding: () => LocalizedString
-	/**
-	 * Configuration
-	 */
-	admin_nav_group_configuration: () => LocalizedString
 	/**
 	 * Tenant Settings
 	 */
@@ -35629,50 +33266,6 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_footer_tenant: (arg: { tenant: string }) => LocalizedString
 	/**
-	 * Dashboard
-	 */
-	admin_sidebar_dashboard: () => LocalizedString
-	/**
-	 * Users
-	 */
-	admin_sidebar_users: () => LocalizedString
-	/**
-	 * Clients
-	 */
-	admin_sidebar_clients: () => LocalizedString
-	/**
-	 * Sessions
-	 */
-	admin_sidebar_sessions: () => LocalizedString
-	/**
-	 * Audit Log
-	 */
-	admin_sidebar_audit_log: () => LocalizedString
-	/**
-	 * Settings
-	 */
-	admin_sidebar_settings: () => LocalizedString
-	/**
-	 * SCIM Tokens
-	 */
-	admin_sidebar_scim_tokens: () => LocalizedString
-	/**
-	 * Identity Providers
-	 */
-	admin_sidebar_identity_providers: () => LocalizedString
-	/**
-	 * Policy
-	 */
-	admin_sidebar_policy: () => LocalizedString
-	/**
-	 * Consent Statements
-	 */
-	admin_sidebar_consent_statements: () => LocalizedString
-	/**
-	 * Dashboard
-	 */
-	admin_dashboard_title: () => LocalizedString
-	/**
 	 * Active Users
 	 */
 	admin_dashboard_activeUsers: () => LocalizedString
@@ -35945,10 +33538,6 @@ export type TranslationFunctions = {
 	 */
 	admin_account_light_theme_color_desc: () => LocalizedString
 	/**
-	 * Select the Admin UI skin. Each skin supports light and dark mode.
-	 */
-	admin_account_dark_theme_color_desc: () => LocalizedString
-	/**
 	 * Classic
 	 */
 	admin_account_skin_classic: () => LocalizedString
@@ -35980,30 +33569,6 @@ export type TranslationFunctions = {
 	 * Translucent panels, blur, and a quiet indigo control language.
 	 */
 	admin_account_skin_frosted_desc: () => LocalizedString
-	/**
-	 * Warm Beige
-	 */
-	admin_account_theme_warm_beige: () => LocalizedString
-	/**
-	 * Blue Gray
-	 */
-	admin_account_theme_blue_gray: () => LocalizedString
-	/**
-	 * Fresh Green
-	 */
-	admin_account_theme_fresh_green: () => LocalizedString
-	/**
-	 * Dark Brown
-	 */
-	admin_account_theme_dark_brown: () => LocalizedString
-	/**
-	 * Navy Blue
-	 */
-	admin_account_theme_navy_blue: () => LocalizedString
-	/**
-	 * Slate Gray
-	 */
-	admin_account_theme_slate_gray: () => LocalizedString
 	/**
 	 * Language & Region
 	 */
@@ -36092,10 +33657,6 @@ export type TranslationFunctions = {
 	 * An unexpected error occurred.
 	 */
 	admin_account_unexpected_error: () => LocalizedString
-	/**
-	 * User Management
-	 */
-	admin_users_title: () => LocalizedString
 	/**
 	 * Users - Admin Dashboard - Authrim
 	 */
@@ -36285,14 +33846,6 @@ export type TranslationFunctions = {
 	 */
 	admin_users_delete_action: (arg: { count: number }) => LocalizedString
 	/**
-	 * Search by email or name
-	 */
-	admin_users_search: () => LocalizedString
-	/**
-	 * Add User
-	 */
-	admin_users_addUser: () => LocalizedString
-	/**
 	 * Filter
 	 */
 	admin_users_filter: () => LocalizedString
@@ -36341,17 +33894,9 @@ export type TranslationFunctions = {
 	 */
 	admin_users_delete: () => LocalizedString
 	/**
-	 * View
-	 */
-	admin_users_view: () => LocalizedString
-	/**
 	 * User Details
 	 */
 	admin_user_detail_title: () => LocalizedString
-	/**
-	 * Basic Information
-	 */
-	admin_user_detail_basicInfo: () => LocalizedString
 	/**
 	 * Custom Fields
 	 */
@@ -36372,10 +33917,6 @@ export type TranslationFunctions = {
 	 * Delete User
 	 */
 	admin_user_detail_deleteUser: () => LocalizedString
-	/**
-	 * Are you sure you want to delete this user?
-	 */
-	admin_user_detail_deleteConfirm: () => LocalizedString
 	/**
 	 * User
 	 */
@@ -36493,10 +34034,6 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_phone_verified_desc: () => LocalizedString
 	/**
-	 * Mark the user's email address as verified
-	 */
-	admin_user_detail_email_verified_desc: () => LocalizedString
-	/**
 	 * Preferred Username
 	 */
 	admin_user_detail_preferred_username: () => LocalizedString
@@ -36516,10 +34053,6 @@ export type TranslationFunctions = {
 	 * No
 	 */
 	admin_user_detail_no: () => LocalizedString
-	/**
-	 * Timestamps
-	 */
-	admin_user_detail_timestamps: () => LocalizedString
 	/**
 	 * Created At
 	 */
@@ -36548,14 +34081,6 @@ export type TranslationFunctions = {
 	 * Unnamed Device
 	 */
 	admin_user_detail_unnamed_device: () => LocalizedString
-	/**
-	 * Created: {date}
-	 */
-	admin_user_detail_passkey_created: (arg: { date: string }) => LocalizedString
-	/**
-	 * Last used: {date}
-	 */
-	admin_user_detail_passkey_last_used: (arg: { date: string }) => LocalizedString
 	/**
 	 * No passkeys registered
 	 */
@@ -36905,10 +34430,6 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_action_version_upgraded: () => LocalizedString
 	/**
-	 * Client Management
-	 */
-	admin_clients_title: () => LocalizedString
-	/**
 	 * OAuth Clients - Admin Dashboard - Authrim
 	 */
 	admin_clients_page_title: () => LocalizedString
@@ -37037,14 +34558,6 @@ export type TranslationFunctions = {
 	 */
 	admin_clients_badge_audience: (arg: { audience: string }) => LocalizedString
 	/**
-	 * Search by client name or ID
-	 */
-	admin_clients_search: () => LocalizedString
-	/**
-	 * Register Client
-	 */
-	admin_clients_registerClient: () => LocalizedString
-	/**
 	 * Client ID
 	 */
 	admin_clients_clientId: () => LocalizedString
@@ -37061,10 +34574,6 @@ export type TranslationFunctions = {
 	 */
 	admin_clients_created: () => LocalizedString
 	/**
-	 * Actions
-	 */
-	admin_clients_actions: () => LocalizedString
-	/**
 	 * Client Details
 	 */
 	admin_client_detail_title: () => LocalizedString
@@ -37080,14 +34589,6 @@ export type TranslationFunctions = {
 	 * Grant Types
 	 */
 	admin_client_detail_grantTypes: () => LocalizedString
-	/**
-	 * Scopes
-	 */
-	admin_client_detail_scopes: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_client_detail_save: () => LocalizedString
 	/**
 	 * Regenerate Secret
 	 */
@@ -37293,10 +34794,6 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_default_scope_hint: () => LocalizedString
 	/**
-	 * Redirect URIs - Browser Origin Status
-	 */
-	admin_client_detail_redirect_origin_status: () => LocalizedString
-	/**
 	 * No redirect URIs configured
 	 */
 	admin_client_detail_no_redirect_uris: () => LocalizedString
@@ -37413,14 +34910,6 @@ export type TranslationFunctions = {
 	 */
 	admin_client_detail_security_settings: () => LocalizedString
 	/**
-	 * Consent Required
-	 */
-	admin_client_detail_consent_required: () => LocalizedString
-	/**
-	 * Require user consent for this client
-	 */
-	admin_client_detail_consent_required_desc: () => LocalizedString
-	/**
 	 * SSO Enabled
 	 */
 	admin_client_detail_sso_enabled: () => LocalizedString
@@ -37432,14 +34921,6 @@ export type TranslationFunctions = {
 	 * Enable Single Sign-On (session sharing)
 	 */
 	admin_client_detail_sso_enabled_hint: () => LocalizedString
-	/**
-	 * First Party App
-	 */
-	admin_client_detail_first_party_app: () => LocalizedString
-	/**
-	 * Mark this client as a first-party application
-	 */
-	admin_client_detail_first_party_app_desc: () => LocalizedString
 	/**
 	 * App Login Enabled
 	 */
@@ -38957,14 +36438,6 @@ export type TranslationFunctions = {
 	 */
 	admin_directory_authentication_saved: () => LocalizedString
 	/**
-	 * Back to Settings
-	 */
-	admin_directory_authentication_back_to_settings: () => LocalizedString
-	/**
-	 * Connector Fleet
-	 */
-	admin_directory_authentication_open_fleet: () => LocalizedString
-	/**
 	 * Select a tenant to manage directory authentication.
 	 */
 	admin_directory_authentication_select_tenant: () => LocalizedString
@@ -40333,10 +37806,6 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_local_copy: () => LocalizedString
 	/**
-	 * Download
-	 */
-	admin_saml_local_download: () => LocalizedString
-	/**
 	 * Metadata
 	 */
 	admin_saml_local_download_xml: () => LocalizedString
@@ -40891,15 +38360,7 @@ export type TranslationFunctions = {
 	/**
 	 * In use
 	 */
-	admin_saml_local_rollover_status_signing_published: () => LocalizedString
-	/**
-	 * In use
-	 */
 	admin_saml_local_rollover_status_signing: () => LocalizedString
-	/**
-	 * Stored
-	 */
-	admin_saml_local_rollover_status_stored_published: () => LocalizedString
 	/**
 	 * Stored
 	 */
@@ -41105,14 +38566,6 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_validate_certificate: () => LocalizedString
 	/**
-	 * Attribute Mapping JSON
-	 */
-	admin_saml_detail_attribute_mapping_json: () => LocalizedString
-	/**
-	 * Attribute mapping must be a JSON object
-	 */
-	admin_saml_detail_mapping_object_error: () => LocalizedString
-	/**
 	 * Allowed SAML Bindings
 	 */
 	admin_saml_detail_allowed_bindings: () => LocalizedString
@@ -41209,14 +38662,6 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_profile_hint_legacy: () => LocalizedString
 	/**
-	 * Attribute Preset
-	 */
-	admin_saml_detail_attribute_preset: () => LocalizedString
-	/**
-	 * None
-	 */
-	admin_saml_detail_none: () => LocalizedString
-	/**
 	 * Field Mapping Set
 	 */
 	admin_saml_detail_identity_mapping_policy: () => LocalizedString
@@ -41232,30 +38677,6 @@ export type TranslationFunctions = {
 	 * Manage Field Mapping Sets
 	 */
 	admin_saml_detail_identity_mapping_policy_link: () => LocalizedString
-	/**
-	 * Attribute release consent
-	 */
-	admin_saml_detail_attribute_release_consent: () => LocalizedString
-	/**
-	 * Do not ask before releasing attributes
-	 */
-	admin_saml_detail_attribute_release_consent_disabled: () => LocalizedString
-	/**
-	 * Ask the first time, then remember
-	 */
-	admin_saml_detail_attribute_release_consent_once: () => LocalizedString
-	/**
-	 * Ask every SSO
-	 */
-	admin_saml_detail_attribute_release_consent_every_time: () => LocalizedString
-	/**
-	 * Ask again when attributes change
-	 */
-	admin_saml_detail_attribute_release_consent_until_attributes_change: () => LocalizedString
-	/**
-	 * Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.
-	 */
-	admin_saml_detail_attribute_release_consent_hint: () => LocalizedString
 	/**
 	 * AuthnRequest signature verification
 	 */
@@ -46069,6 +43490,70 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_scim_tokens_description: () => LocalizedString
 	/**
+	 * Inbound provisioning
+	 */
+	admin_scim_tokens_inbound_title: () => LocalizedString
+	/**
+	 * Failed to load SCIM settings
+	 */
+	admin_scim_tokens_settings_load_failed: () => LocalizedString
+	/**
+	 * Failed to save SCIM settings
+	 */
+	admin_scim_tokens_settings_save_failed: () => LocalizedString
+	/**
+	 * SCIM inbound settings saved.
+	 */
+	admin_scim_tokens_settings_saved: () => LocalizedString
+	/**
+	 * Loading SCIM settings...
+	 */
+	admin_scim_tokens_settings_loading: () => LocalizedString
+	/**
+	 * Enable inbound SCIM provisioning
+	 */
+	admin_scim_tokens_inbound_enabled: () => LocalizedString
+	/**
+	 * Inbound Mapping Set
+	 */
+	admin_scim_tokens_mapping_set: () => LocalizedString
+	/**
+	 * Select an active Mapping Set
+	 */
+	admin_scim_tokens_mapping_set_placeholder: () => LocalizedString
+	/**
+	 * Create and activate the SCIM 2.0 User mapping in Field Mapping before enabling writes.
+	 */
+	admin_scim_tokens_mapping_set_hint: () => LocalizedString
+	/**
+	 * Users
+	 */
+	admin_scim_tokens_users_resource: () => LocalizedString
+	/**
+	 * Groups
+	 */
+	admin_scim_tokens_groups_resource: () => LocalizedString
+	/**
+	 * Bulk
+	 */
+	admin_scim_tokens_bulk_resource: () => LocalizedString
+	/**
+	 * Bulk max operations
+	 */
+	admin_scim_tokens_bulk_max_operations: () => LocalizedString
+	/**
+	 * Bulk max payload (bytes)
+	 */
+	admin_scim_tokens_bulk_max_payload: () => LocalizedString
+	/**
+	 * Saving...
+	 */
+	admin_scim_tokens_settings_saving: () => LocalizedString
+	/**
+	 * Save inbound settings
+	 */
+	admin_scim_tokens_settings_save: () => LocalizedString
+	/**
 	 * Create Token
 	 */
 	admin_scim_tokens_create_token: () => LocalizedString
@@ -46225,7 +43710,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_title: () => LocalizedString
 	/**
-	 * Define and manage claim fields for users. Control field types, validation rules, and how claims map to OIDC tokens.
+	 * Define stored user fields, value types, cardinality, and validation rules. Configure protocol release separately in Schema Mapping and Destination Profiles.
 	 */
 	admin_custom_claims_description: () => LocalizedString
 	/**
@@ -46353,14 +43838,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_operation_errors_description: (arg: { count: number }) => LocalizedString
 	/**
-	 * System schema fields
-	 */
-	admin_custom_claims_system_note_title: () => LocalizedString
-	/**
-	 * Standard OIDC fields such as email, name, phone, and address are available as presets. Apply only the groups this tenant needs; custom fields remain manually managed.
-	 */
-	admin_custom_claims_system_note_description: () => LocalizedString
-	/**
 	 * Search field key, label, description...
 	 */
 	admin_custom_claims_search_placeholder: () => LocalizedString
@@ -46408,10 +43885,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Type
 	 */
 	admin_custom_claims_type: () => LocalizedString
-	/**
-	 * Token
-	 */
-	admin_custom_claims_token: () => LocalizedString
 	/**
 	 * Required
 	 */
@@ -46493,6 +43966,30 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_field_type: () => LocalizedString
 	/**
+	 * Cardinality
+	 */
+	admin_custom_claims_cardinality: () => LocalizedString
+	/**
+	 * Single value
+	 */
+	admin_custom_claims_cardinality_single: () => LocalizedString
+	/**
+	 * Multiple values
+	 */
+	admin_custom_claims_cardinality_multi: () => LocalizedString
+	/**
+	 * Multiple values are stored as a validated JSON array and mapped as an array.
+	 */
+	admin_custom_claims_cardinality_hint: () => LocalizedString
+	/**
+	 * Attribute Release
+	 */
+	admin_custom_claims_release_mapping_title: () => LocalizedString
+	/**
+	 * This schema defines stored data only. Schema Mapping and the active Destination Profile decide the output name, scope requirements, and whether it is released to ID Token, UserInfo, or Introspection.
+	 */
+	admin_custom_claims_release_mapping_hint: () => LocalizedString
+	/**
 	 * e.g. employee_id
 	 */
 	admin_custom_claims_field_key_placeholder: () => LocalizedString
@@ -46544,50 +44041,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * String: min_length, max_length, pattern. Number: min, max. Enum: enum_values (array). Date: min_date, max_date (ISO 8601).
 	 */
 	admin_custom_claims_validation_hint: () => LocalizedString
-	/**
-	 * Token / Endpoint Integration
-	 */
-	admin_custom_claims_token_integration: () => LocalizedString
-	/**
-	 * Custom claim embedding in Introspection responses is currently disabled.
-	 */
-	admin_custom_claims_introspection_disabled: () => LocalizedString
-	/**
-	 * Custom claim embedding in Introspection responses is currently disabled. Please use the UserInfo endpoint instead.
-	 */
-	admin_custom_claims_introspection_disabled_use_userinfo: () => LocalizedString
-	/**
-	 * Required Scopes (comma-separated)
-	 */
-	admin_custom_claims_required_scopes: () => LocalizedString
-	/**
-	 * e.g. profile, employee
-	 */
-	admin_custom_claims_required_scopes_placeholder: () => LocalizedString
-	/**
-	 * Leave empty to always include when token flags are set.
-	 */
-	admin_custom_claims_required_scopes_hint: () => LocalizedString
-	/**
-	 * Scope Mode
-	 */
-	admin_custom_claims_scope_mode: () => LocalizedString
-	/**
-	 * Any (one scope suffices)
-	 */
-	admin_custom_claims_scope_mode_any: () => LocalizedString
-	/**
-	 * All (all scopes required)
-	 */
-	admin_custom_claims_scope_mode_all: () => LocalizedString
-	/**
-	 * Claim Namespace (optional)
-	 */
-	admin_custom_claims_claim_namespace: () => LocalizedString
-	/**
-	 * e.g. https://example.com/claims/
-	 */
-	admin_custom_claims_claim_namespace_placeholder: () => LocalizedString
 	/**
 	 * Delete Custom Claim Schema
 	 */
@@ -46665,11 +44118,11 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_direct_rename_warning_label: () => LocalizedString
 	/**
-	 * Renaming changes the claim name in API responses and tokens. This may break integrations with Relying Parties (RP) that expect the old claim name.
+	 * Renaming changes the canonical source key. Existing Schema Mappings that reference the old key must be updated.
 	 */
 	admin_custom_claims_direct_rename_warning: () => LocalizedString
 	/**
-	 * Renaming changes the claim name in API responses and tokens. This may break integrations with Relying Parties (RP) expecting the old claim name.
+	 * Renaming changes the canonical source key. Existing Schema Mappings that reference the old key must be updated.
 	 */
 	admin_custom_claims_rename_warning: () => LocalizedString
 	/**
@@ -46733,14 +44186,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_display_order: () => LocalizedString
 	/**
-	 * Token & Endpoint Inclusion
-	 */
-	admin_custom_claims_token_endpoint_inclusion: () => LocalizedString
-	/**
-	 * Controls which tokens and endpoints include this claim by default.
-	 */
-	admin_custom_claims_token_endpoint_description: () => LocalizedString
-	/**
 	 * Advanced
 	 */
 	admin_custom_claims_advanced: () => LocalizedString
@@ -46789,7 +44234,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_custom_claims_danger_zone: () => LocalizedString
 	/**
-	 * Changes the claim name in API responses and tokens. May break RP integrations.
+	 * Changes the canonical source key and may break existing Schema Mappings.
 	 */
 	admin_custom_claims_rename_description: () => LocalizedString
 	/**
@@ -46908,6 +44353,10 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Deleting...
 	 */
 	admin_custom_claims_status_deleting: () => LocalizedString
+	/**
+	 * Reconfiguring...
+	 */
+	admin_custom_claims_status_reconfiguring: () => LocalizedString
 	/**
 	 * Error
 	 */
@@ -47100,50 +44549,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Example: {sample}
 	 */
 	admin_tenant_discovery_example: (arg: { sample: string }) => LocalizedString
-	/**
-	 * Email Resolution
-	 */
-	admin_tenant_discovery_email_resolution: () => LocalizedString
-	/**
-	 * Exact email, then email-domain fallback
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain: () => LocalizedString
-	/**
-	 * Exact email only
-	 */
-	admin_tenant_discovery_email_resolution_exact_only: () => LocalizedString
-	/**
-	 * Email-based discovery is currently disabled.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_description: () => LocalizedString
-	/**
-	 * Enable Email address below to use this policy.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_sample: () => LocalizedString
-	/**
-	 * Resolve the tenant only when the full email address is explicitly mapped.
-	 */
-	admin_tenant_discovery_email_resolution_exact_only_description: () => LocalizedString
-	/**
-	 * alice@example.edu must have its own mapping.
-	 */
-	admin_tenant_discovery_email_resolution_exact_only_sample: () => LocalizedString
-	/**
-	 * Try an exact email mapping first, then fall back to the email domain if no exact match exists.
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain_description: () => LocalizedString
-	/**
-	 * alice@example.edu falls back to example.edu.
-	 */
-	admin_tenant_discovery_email_resolution_exact_then_domain_sample: () => LocalizedString
-	/**
-	 * Do not resolve tenants from email addresses.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_policy_description: () => LocalizedString
-	/**
-	 * Users must use another enabled discovery method.
-	 */
-	admin_tenant_discovery_email_resolution_disabled_policy_sample: () => LocalizedString
 	/**
 	 * Selection Policy
 	 */
@@ -48281,30 +45686,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenants_create_failed: () => LocalizedString
 	/**
-	 * Reserve
-	 */
-	admin_tenants_step_reserve: () => LocalizedString
-	/**
-	 * Seed
-	 */
-	admin_tenants_step_seed: () => LocalizedString
-	/**
-	 * Registry
-	 */
-	admin_tenants_step_registry: () => LocalizedString
-	/**
-	 * Snapshot
-	 */
-	admin_tenants_step_snapshot: () => LocalizedString
-	/**
-	 * Smoke test
-	 */
-	admin_tenants_step_smoke: () => LocalizedString
-	/**
-	 * Activate
-	 */
-	admin_tenants_step_activate: () => LocalizedString
-	/**
 	 * e.g. acme-corp
 	 */
 	admin_tenants_id_placeholder: () => LocalizedString
@@ -48601,14 +45982,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_tenants_placement_migration_step_complete: () => LocalizedString
 	/**
-	 * Last Error
-	 */
-	admin_tenants_last_error: () => LocalizedString
-	/**
-	 * No error detail was recorded.
-	 */
-	admin_tenants_no_error_detail: () => LocalizedString
-	/**
 	 * Updated
 	 */
 	admin_tenants_updated: () => LocalizedString
@@ -48640,26 +46013,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Used for discovery. Lowercase letters, numbers, hyphens.
 	 */
 	admin_tenants_code_edit_hint: () => LocalizedString
-	/**
-	 * Lifecycle State
-	 */
-	admin_tenants_lifecycle_state: () => LocalizedString
-	/**
-	 * Cannot be changed in single-tenant mode.
-	 */
-	admin_tenants_lifecycle_single_tenant_hint: () => LocalizedString
-	/**
-	 * The default tenant must remain active.
-	 */
-	admin_tenants_lifecycle_default_hint: () => LocalizedString
-	/**
-	 * This lifecycle state requires a dedicated operation.
-	 */
-	admin_tenants_lifecycle_dedicated_operation_hint: () => LocalizedString
-	/**
-	 * The initial tenant must remain active in single-tenant mode.
-	 */
-	admin_tenants_initial_active_required: () => LocalizedString
 	/**
 	 * Failed to save
 	 */
@@ -49501,10 +46854,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_admins_detail_title_fallback: () => LocalizedString
 	/**
-	 * Loading...
-	 */
-	admin_admins_detail_loading_fallback: () => LocalizedString
-	/**
 	 * Admin ID is required
 	 */
 	admin_admins_id_required: () => LocalizedString
@@ -49512,10 +46861,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Failed to load admin user
 	 */
 	admin_admins_detail_load_failed: () => LocalizedString
-	/**
-	 * Failed to load roles
-	 */
-	admin_admins_roles_load_failed: () => LocalizedString
 	/**
 	 * Failed to update admin user
 	 */
@@ -50023,10 +47368,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_rbac_save: () => LocalizedString
 	/**
-	 * Back to Admin Roles
-	 */
-	admin_admin_rbac_back_to_roles: () => LocalizedString
-	/**
 	 * Create Custom Admin Role
 	 */
 	admin_admin_rbac_create_title: () => LocalizedString
@@ -50102,10 +47443,6 @@ Remove this role from {email}?
 	 * Back to List
 	 */
 	admin_admin_rbac_back_to_list: () => LocalizedString
-	/**
-	 * Admin RBAC
-	 */
-	admin_admin_rbac_admin_rbac: () => LocalizedString
 	/**
 	 * Basic Information
 	 */
@@ -50819,10 +48156,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_rebac_tuples_head_title: () => LocalizedString
 	/**
-	 * Tuples
-	 */
-	admin_admin_rebac_tuples_breadcrumb: () => LocalizedString
-	/**
 	 * Manage relationship instances between Admin users
 	 */
 	admin_admin_rebac_tuples_description: () => LocalizedString
@@ -50870,10 +48203,6 @@ Remove this role from {email}?
 	 * Details
 	 */
 	admin_admin_rebac_details: () => LocalizedString
-	/**
-	 * Close create relationship dialog
-	 */
-	admin_admin_rebac_close_create_relationship_dialog: () => LocalizedString
 	/**
 	 * Relationship Type
 	 */
@@ -50923,10 +48252,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_rebac_bidirectional_help: () => LocalizedString
 	/**
-	 * Close delete relationship dialog
-	 */
-	admin_admin_rebac_close_delete_relationship_dialog: () => LocalizedString
-	/**
 	 * Delete Relationship
 	 */
 	admin_admin_rebac_delete_relationship: () => LocalizedString
@@ -50946,10 +48271,6 @@ Remove this role from {email}?
 	 * Relationship Definitions - Admin ReBAC - Authrim
 	 */
 	admin_admin_rebac_definitions_head_title: () => LocalizedString
-	/**
-	 * Definitions
-	 */
-	admin_admin_rebac_definitions_breadcrumb: () => LocalizedString
 	/**
 	 * Define relationship types for Admin ReBAC
 	 */
@@ -50986,18 +48307,6 @@ Remove this role from {email}?
 	 * Delete Relationship Definition
 	 */
 	admin_admin_rebac_delete_relationship_definition: () => LocalizedString
-	/**
-	 * Close create relationship definition dialog
-	 */
-	admin_admin_rebac_close_create_definition_dialog: () => LocalizedString
-	/**
-	 * Close edit relationship definition dialog
-	 */
-	admin_admin_rebac_close_edit_definition_dialog: () => LocalizedString
-	/**
-	 * Close delete relationship definition dialog
-	 */
-	admin_admin_rebac_close_delete_definition_dialog: () => LocalizedString
 	/**
 	 * Relation Name
 	 */
@@ -51062,10 +48371,6 @@ Remove this role from {email}?
 	 * Admin Policies - Authrim
 	 */
 	admin_admin_policies_head_title: () => LocalizedString
-	/**
-	 * Admin Access Control
-	 */
-	admin_admin_policies_access_control: () => LocalizedString
 	/**
 	 * Policies
 	 */
@@ -51167,10 +48472,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_policies_system_protected: () => LocalizedString
 	/**
-	 * Close create policy dialog
-	 */
-	admin_admin_policies_close_create_dialog: () => LocalizedString
-	/**
 	 * Create Policy
 	 */
 	admin_admin_policies_create_title: () => LocalizedString
@@ -51210,10 +48511,6 @@ Remove this role from {email}?
 	 * Creating...
 	 */
 	admin_admin_policies_creating: () => LocalizedString
-	/**
-	 * Close policy simulation dialog
-	 */
-	admin_admin_policies_close_simulation_dialog: () => LocalizedString
 	/**
 	 * Policy Simulation
 	 */
@@ -52747,10 +50044,6 @@ Remove this role from {email}?
 	 */
 	admin_agent_access_revoked_grants: () => LocalizedString
 	/**
-	 * Manage Agent Grants
-	 */
-	admin_agent_access_open_grants: () => LocalizedString
-	/**
 	 * Review policy settings
 	 */
 	admin_agent_access_open_settings: () => LocalizedString
@@ -52934,26 +50227,6 @@ Remove this role from {email}?
 	 * Failed to resolve eligible Agent capabilities.
 	 */
 	admin_agent_access_eligibility_error: () => LocalizedString
-	/**
-	 * This capability is outside the current participant permission ceilings. Remove it before saving.
-	 */
-	admin_agent_access_permission_no_longer_eligible: () => LocalizedString
-	/**
-	 * Read masked users
-	 */
-	admin_agent_access_permission_users: () => LocalizedString
-	/**
-	 * Read OAuth clients
-	 */
-	admin_agent_access_permission_clients: () => LocalizedString
-	/**
-	 * Read sanitized Admin audit events
-	 */
-	admin_agent_access_permission_audit: () => LocalizedString
-	/**
-	 * Read Agent Access settings
-	 */
-	admin_agent_access_permission_settings: () => LocalizedString
 	/**
 	 * Purpose
 	 */
@@ -56995,10 +54268,6 @@ Remove this role from {email}?
 	 */
 	admin_jobs_creating: () => LocalizedString
 	/**
-	 * Create Request
-	 */
-	admin_jobs_create_request: () => LocalizedString
-	/**
 	 * CSV File
 	 */
 	admin_jobs_csv_file: () => LocalizedString
@@ -59327,10 +56596,6 @@ Remove this role from {email}?
 	 */
 	admin_external_token_refresh_status_running: () => LocalizedString
 	/**
-	 * Pending
-	 */
-	admin_external_token_refresh_status_pending: () => LocalizedString
-	/**
 	 * Failed to load token refresh settings
 	 */
 	admin_external_token_refresh_load_failed: () => LocalizedString
@@ -59558,10 +56823,6 @@ Remove this role from {email}?
 	 * Disabled
 	 */
 	admin_plugins_disabled: () => LocalizedString
-	/**
-	 * Apply
-	 */
-	admin_plugins_apply: () => LocalizedString
 	/**
 	 * Clear
 	 */
@@ -59875,34 +57136,6 @@ Remove this role from {email}?
 	 */
 	admin_plugins_category_compliance: () => LocalizedString
 	/**
-	 * official
-	 */
-	admin_plugins_trust_official: () => LocalizedString
-	/**
-	 * verified
-	 */
-	admin_plugins_trust_verified: () => LocalizedString
-	/**
-	 * community
-	 */
-	admin_plugins_trust_community: () => LocalizedString
-	/**
-	 * stable
-	 */
-	admin_plugins_stability_stable: () => LocalizedString
-	/**
-	 * beta
-	 */
-	admin_plugins_stability_beta: () => LocalizedString
-	/**
-	 * alpha
-	 */
-	admin_plugins_stability_alpha: () => LocalizedString
-	/**
-	 * experimental
-	 */
-	admin_plugins_stability_experimental: () => LocalizedString
-	/**
 	 * healthy
 	 */
 	admin_plugins_health_healthy: () => LocalizedString
@@ -59923,10 +57156,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_title: () => LocalizedString
 	/**
-	 * Field Mapping - Authrim Admin
-	 */
-	admin_identity_mapping_head_title: () => LocalizedString
-	/**
 	 * Overview
 	 */
 	admin_identity_mapping_overview_title: () => LocalizedString
@@ -59938,10 +57167,6 @@ Remove this role from {email}?
 	 * Review source profiles, canonical identity targets, and destination projections without changing the graph.
 	 */
 	admin_identity_mapping_description: () => LocalizedString
-	/**
-	 * Preview source profiles, canonical identity targets, and destination projections from one control-plane view.
-	 */
-	admin_identity_mapping_shell_description: () => LocalizedString
 	/**
 	 * Back to Field Mapping
 	 */
@@ -59978,22 +57203,6 @@ Remove this role from {email}?
 	 * Destination profiles
 	 */
 	admin_identity_mapping_destination_profiles: () => LocalizedString
-	/**
-	 * Source Field Mapping Set
-	 */
-	admin_identity_mapping_source_policy: () => LocalizedString
-	/**
-	 * Destination Field Mapping Set
-	 */
-	admin_identity_mapping_destination_policy: () => LocalizedString
-	/**
-	 * {count} source profile{plural}
-	 */
-	admin_identity_mapping_source_profile_count: (arg: { count: number, plural: string }) => LocalizedString
-	/**
-	 * {count} destination profile{plural}
-	 */
-	admin_identity_mapping_destination_profile_count: (arg: { count: number, plural: string }) => LocalizedString
 	/**
 	 * present
 	 */
@@ -60039,14 +57248,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_saving: () => LocalizedString
 	/**
-	 * Compile draft
-	 */
-	admin_identity_mapping_editor_compile_draft: () => LocalizedString
-	/**
-	 * Compiling...
-	 */
-	admin_identity_mapping_editor_compiling: () => LocalizedString
-	/**
 	 * Mapping edit profile selector
 	 */
 	admin_identity_mapping_editor_profile_selector_aria: () => LocalizedString
@@ -60087,29 +57288,9 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_no_policy_selected: () => LocalizedString
 	/**
-	 * Version
-	 */
-	admin_identity_mapping_editor_policy_version: () => LocalizedString
-	/**
-	 * No version selected
-	 */
-	admin_identity_mapping_editor_no_version_selected: () => LocalizedString
-	/**
 	 * Activate
 	 */
 	admin_identity_mapping_editor_activate: () => LocalizedString
-	/**
-	 * Publish
-	 */
-	admin_identity_mapping_editor_publish: () => LocalizedString
-	/**
-	 * Request Rollback
-	 */
-	admin_identity_mapping_editor_request_rollback: () => LocalizedString
-	/**
-	 * Confirm Rollback
-	 */
-	admin_identity_mapping_editor_confirm_rollback: () => LocalizedString
 	/**
 	 * Delete
 	 */
@@ -60163,21 +57344,9 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_policy_default_suffix: () => LocalizedString
 	/**
-	 * Saved field mapping set
-	 */
-	admin_identity_mapping_editor_policy_published: () => LocalizedString
-	/**
 	 * Activated field mapping set
 	 */
 	admin_identity_mapping_editor_policy_activated: () => LocalizedString
-	/**
-	 * Deactivated field mapping set
-	 */
-	admin_identity_mapping_editor_policy_deactivated: () => LocalizedString
-	/**
-	 * No active catalog version is available to prepare this field mapping set
-	 */
-	admin_identity_mapping_editor_no_active_catalog: () => LocalizedString
 	/**
 	 * Save this field mapping set before activation
 	 */
@@ -60186,18 +57355,6 @@ Remove this role from {email}?
 	 * Select a Field Mapping Set first
 	 */
 	admin_identity_mapping_editor_select_policy_version_first: () => LocalizedString
-	/**
-	 * Confirm rollback to continue
-	 */
-	admin_identity_mapping_editor_confirm_rollback_status: () => LocalizedString
-	/**
-	 * Rollback requested
-	 */
-	admin_identity_mapping_editor_rollback_requested: () => LocalizedString
-	/**
-	 * Rollback failed
-	 */
-	admin_identity_mapping_editor_rollback_failed: () => LocalizedString
 	/**
 	 * Confirm delete to remove this field mapping set
 	 */
@@ -60239,7 +57396,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profiles_title: () => LocalizedString
 	/**
-	 * Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. SAML, SCIM, OIDC, VC, DID, MCP, A2A, and client-credential sources will use this same surface as their adapters are added.
+	 * Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. The built-in SCIM 2.0 User source is ready for inbound provisioning mappings; other protocol adapters will appear here as they are added.
 	 */
 	admin_identity_mapping_profiles_description: () => LocalizedString
 	/**
@@ -60422,10 +57579,6 @@ Remove this role from {email}?
 	 * Failed to load field mapping sets
 	 */
 	admin_identity_mapping_policies_load_failed: () => LocalizedString
-	/**
-	 * No field mapping sets are registered yet.
-	 */
-	admin_identity_mapping_policies_empty: () => LocalizedString
 	/**
 	 * Source Field Mapping Sets
 	 */
@@ -60810,10 +57963,6 @@ Remove this role from {email}?
 	 * Failed to load aggregate entities
 	 */
 	admin_identity_mapping_trust_entities_load_failed: () => LocalizedString
-	/**
-	 * Back to profiles
-	 */
-	admin_identity_mapping_profile_edit_back: () => LocalizedString
 	/**
 	 * Source Profile
 	 */
@@ -61331,89 +58480,9 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_blocking_warnings: (arg: { count: number }) => LocalizedString
 	/**
-	 * Configure Release Consent
-	 */
-	admin_identity_mapping_profile_edit_configure_release_consent: () => LocalizedString
-	/**
 	 * Save destination draft
 	 */
 	admin_identity_mapping_profile_edit_save_destination_draft: () => LocalizedString
-	/**
-	 * Destination consent settings
-	 */
-	admin_identity_mapping_profile_edit_destination_consent_aria: () => LocalizedString
-	/**
-	 * Destination Consent Settings
-	 */
-	admin_identity_mapping_profile_edit_destination_consent_settings: () => LocalizedString
-	/**
-	 * Release consent
-	 */
-	admin_identity_mapping_profile_edit_release_consent: () => LocalizedString
-	/**
-	 * Scope
-	 */
-	admin_identity_mapping_profile_edit_scope: () => LocalizedString
-	/**
-	 * Tenant default
-	 */
-	admin_identity_mapping_profile_edit_tenant_default: () => LocalizedString
-	/**
-	 * Destination override
-	 */
-	admin_identity_mapping_profile_edit_destination_override: () => LocalizedString
-	/**
-	 * Consent mode
-	 */
-	admin_identity_mapping_profile_edit_consent_mode: () => LocalizedString
-	/**
-	 * Once
-	 */
-	admin_identity_mapping_profile_edit_once: () => LocalizedString
-	/**
-	 * Every time
-	 */
-	admin_identity_mapping_profile_edit_every_time: () => LocalizedString
-	/**
-	 * Until attributes change
-	 */
-	admin_identity_mapping_profile_edit_until_attributes_change: () => LocalizedString
-	/**
-	 * Require purpose guard for regulated attributes
-	 */
-	admin_identity_mapping_profile_edit_require_purpose_guard: () => LocalizedString
-	/**
-	 * Raw attribute values remain {display}.
-	 */
-	admin_identity_mapping_profile_edit_raw_values_remain: (arg: { display: string }) => LocalizedString
-	/**
-	 * hidden
-	 */
-	admin_identity_mapping_profile_edit_raw_value_hidden: () => LocalizedString
-	/**
-	 * {scope}: {legalBasis}, {mode}, {purpose}, {challenge}, {guard}
-	 */
-	admin_identity_mapping_profile_edit_consent_summary: (arg: { challenge: string, guard: string, legalBasis: string, mode: string, purpose: string, scope: string }) => LocalizedString
-	/**
-	 * client override {clientId}
-	 */
-	admin_identity_mapping_profile_edit_client_override: (arg: { clientId: string }) => LocalizedString
-	/**
-	 * login flow challenge
-	 */
-	admin_identity_mapping_profile_edit_login_flow_challenge: () => LocalizedString
-	/**
-	 * step-up challenge
-	 */
-	admin_identity_mapping_profile_edit_step_up_challenge: () => LocalizedString
-	/**
-	 * purpose guard enabled
-	 */
-	admin_identity_mapping_profile_edit_purpose_guard_enabled: () => LocalizedString
-	/**
-	 * purpose guard off
-	 */
-	admin_identity_mapping_profile_edit_purpose_guard_off: () => LocalizedString
 	/**
 	 * Attribute Registry
 	 */
@@ -61927,54 +58996,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_output: () => LocalizedString
 	/**
-	 * Consent status
-	 */
-	admin_identity_mapping_flow_consent_status: () => LocalizedString
-	/**
-	 * Legal basis
-	 */
-	admin_identity_mapping_flow_legal_basis: () => LocalizedString
-	/**
-	 * Purpose
-	 */
-	admin_identity_mapping_flow_purpose: () => LocalizedString
-	/**
-	 * Attribute set
-	 */
-	admin_identity_mapping_flow_attribute_set: () => LocalizedString
-	/**
-	 * Challenge mode
-	 */
-	admin_identity_mapping_flow_challenge_mode: () => LocalizedString
-	/**
-	 * Release policy
-	 */
-	admin_identity_mapping_flow_release_policy: () => LocalizedString
-	/**
-	 * Terms
-	 */
-	admin_identity_mapping_flow_terms: () => LocalizedString
-	/**
-	 * Privacy Policy
-	 */
-	admin_identity_mapping_flow_privacy_policy: () => LocalizedString
-	/**
-	 * Deny reason
-	 */
-	admin_identity_mapping_flow_deny_reason: () => LocalizedString
-	/**
-	 * Runtime exposure
-	 */
-	admin_identity_mapping_flow_runtime_exposure: () => LocalizedString
-	/**
-	 * Conflict policy
-	 */
-	admin_identity_mapping_flow_conflict_policy: () => LocalizedString
-	/**
-	 * Trace disclosure
-	 */
-	admin_identity_mapping_flow_trace_disclosure: () => LocalizedString
-	/**
 	 * You have unsaved mapping draft changes. Leave this page and discard them?
 	 */
 	admin_identity_mapping_flow_unsaved_leave_confirm: () => LocalizedString
@@ -62399,6 +59420,30 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_flow_draft_only_node_diff: () => LocalizedString
 	/**
+	 * Resource Server
+	 */
+	admin_identity_mapping_profile_edit_resource_server: () => LocalizedString
+	/**
+	 * Payments API introspection
+	 */
+	admin_identity_mapping_profile_edit_resource_server_display_placeholder: () => LocalizedString
+	/**
+	 * Resource Server client_id
+	 */
+	admin_identity_mapping_profile_edit_resource_server_client_id: () => LocalizedString
+	/**
+	 * payments-api
+	 */
+	admin_identity_mapping_profile_edit_resource_server_client_id_placeholder: () => LocalizedString
+	/**
+	 * The active profile controls extension claims returned to this authenticated Resource Server by Introspection.
+	 */
+	admin_identity_mapping_profile_edit_resource_server_note: () => LocalizedString
+	/**
+	 * introspection
+	 */
+	admin_identity_mapping_profile_edit_introspection_surface: () => LocalizedString
+	/**
 	 * Consent Policies
 	 */
 	admin_consent_policies_nav: () => LocalizedString
@@ -62507,10 +59552,6 @@ Remove this role from {email}?
 	 */
 	admin_consent_policies_permission_statements: () => LocalizedString
 	/**
-	 * You do not have permission to change policy assignments.
-	 */
-	admin_consent_policies_permission_assignments: () => LocalizedString
-	/**
 	 * You do not have permission to change client trust policies.
 	 */
 	admin_consent_policies_permission_trust: () => LocalizedString
@@ -62599,93 +59640,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_policies_select_statement: () => LocalizedString
 	/**
-	 * Requirement
-	 */
-	admin_consent_policies_requirement: () => LocalizedString
-	/**
-	 * Required
-	 */
-	admin_consent_policies_requirement_required: () => LocalizedString
-	/**
-	 * Optional
-	 */
-	admin_consent_policies_requirement_optional: () => LocalizedString
-	/**
-	 * Hidden
-	 */
-	admin_consent_policies_requirement_hidden: () => LocalizedString
-	/**
-	 * Version
-	 */
-	admin_consent_policies_version: () => LocalizedString
-	/**
-	 * Current
-	 */
-	admin_consent_policies_version_current: () => LocalizedString
-	/**
-	 * Fixed ID
-	 */
-	admin_consent_policies_version_fixed: () => LocalizedString
-	/**
-	 * Minimum
-	 */
-	admin_consent_policies_version_minimum: () => LocalizedString
-	/**
-	 * Version value
-	 */
-	admin_consent_policies_version_value: () => LocalizedString
-	/**
-	 * Checkbox
-	 */
-	admin_consent_policies_checkbox: () => LocalizedString
-	/**
-	 * None
-	 */
-	admin_consent_policies_checkbox_none: () => LocalizedString
-	/**
-	 * Checked by default
-	 */
-	admin_consent_policies_checkbox_checked_default: () => LocalizedString
-	/**
 	 * Order
 	 */
 	admin_consent_policies_order: () => LocalizedString
-	/**
-	 * Binding
-	 */
-	admin_consent_policies_binding: () => LocalizedString
-	/**
-	 * None
-	 */
-	admin_consent_policies_binding_none: () => LocalizedString
-	/**
-	 * Scope
-	 */
-	admin_consent_policies_binding_scope: () => LocalizedString
-	/**
-	 * Claim
-	 */
-	admin_consent_policies_binding_claim: () => LocalizedString
-	/**
-	 * SAML attribute
-	 */
-	admin_consent_policies_binding_saml_attribute: () => LocalizedString
-	/**
-	 * Destination field set
-	 */
-	admin_consent_policies_binding_destination_field_set: () => LocalizedString
-	/**
-	 * Binding value
-	 */
-	admin_consent_policies_binding_value: () => LocalizedString
-	/**
-	 * Evidence
-	 */
-	admin_consent_policies_evidence: () => LocalizedString
-	/**
-	 * Fallback
-	 */
-	admin_consent_policies_fallback: () => LocalizedString
 	/**
 	 * Save statements
 	 */
@@ -62703,18 +59660,6 @@ Remove this role from {email}?
 	 */
 	admin_consent_policies_statements_save_error: () => LocalizedString
 	/**
-	 * Assignments
-	 */
-	admin_consent_policies_assignments: () => LocalizedString
-	/**
-	 * Attach this consent policy to account flows, OIDC clients, or SAML service providers.
-	 */
-	admin_consent_policies_assignments_description: () => LocalizedString
-	/**
-	 * Create the policy before assigning it.
-	 */
-	admin_consent_policies_assignments_create_first: () => LocalizedString
-	/**
 	 * Target
 	 */
 	admin_consent_policies_target: () => LocalizedString
@@ -62726,14 +59671,6 @@ Remove this role from {email}?
 	 * Select a target before saving.
 	 */
 	admin_consent_policies_target_id_required: () => LocalizedString
-	/**
-	 * Registration
-	 */
-	admin_consent_policies_registration: () => LocalizedString
-	/**
-	 * Login
-	 */
-	admin_consent_policies_login: () => LocalizedString
 	/**
 	 * OIDC Client
 	 */
@@ -62754,26 +59691,6 @@ Remove this role from {email}?
 	 * Account flow
 	 */
 	admin_consent_policies_tenant_account_flow: () => LocalizedString
-	/**
-	 * Save assignment
-	 */
-	admin_consent_policies_save_assignment: () => LocalizedString
-	/**
-	 * Save the policy before assigning it.
-	 */
-	admin_consent_policies_save_assignment_first: () => LocalizedString
-	/**
-	 * Consent policy assignment saved.
-	 */
-	admin_consent_policies_assignment_saved: () => LocalizedString
-	/**
-	 * Failed to save assignment.
-	 */
-	admin_consent_policies_assignment_save_error: () => LocalizedString
-	/**
-	 * This policy has no assignments.
-	 */
-	admin_consent_policies_no_assignments: () => LocalizedString
 	/**
 	 * Client Trust
 	 */
@@ -63550,10 +60467,6 @@ Remove this role from {email}?
 	 * Configure {title}
 	 */
 	admin_flows_node_settings_aria: (arg: { title: string }) => LocalizedString
-	/**
-	 * Description for {title}
-	 */
-	admin_flows_node_description_aria: (arg: { title: string }) => LocalizedString
 	/**
 	 * {title} outputs
 	 */
@@ -64411,10 +61324,6 @@ Remove this role from {email}?
 	 */
 	admin_flows_output_otherwise: () => LocalizedString
 	/**
-	 * Receive a request, direct link, or LoginUI entry.
-	 */
-	admin_flows_editor_start_description: () => LocalizedString
-	/**
 	 * Receive a registration request or LoginUI sign-up entry and resolve the application context.
 	 */
 	admin_flows_editor_registration_request_description: () => LocalizedString
@@ -64450,10 +61359,6 @@ Remove this role from {email}?
 	 * signup entry
 	 */
 	admin_flows_editor_setting_signup_entry: () => LocalizedString
-	/**
-	 * Default profile
-	 */
-	admin_flows_editor_setting_default_profile: () => LocalizedString
 	/**
 	 * Basic profile
 	 */
@@ -64659,21 +61564,9 @@ Remove this role from {email}?
 	 */
 	admin_screens_fields: () => LocalizedString
 	/**
-	 * Identity Schema field
-	 */
-	admin_screens_field_name: () => LocalizedString
-	/**
-	 * Label
-	 */
-	admin_screens_field_label: () => LocalizedString
-	/**
 	 * Required on this screen
 	 */
 	admin_screens_field_required: () => LocalizedString
-	/**
-	 * Add field
-	 */
-	admin_screens_add_field: () => LocalizedString
 	/**
 	 * Remove
 	 */
@@ -64686,14 +61579,6 @@ Remove this role from {email}?
 	 * Required
 	 */
 	admin_screens_required_mark: () => LocalizedString
-	/**
-	 * I have reviewed the entered information
-	 */
-	admin_screens_preview_checkbox_text: () => LocalizedString
-	/**
-	 * In the actual flow, this screen is shown according to the Flow configuration.
-	 */
-	admin_screens_preview_footer_text: () => LocalizedString
 	/**
 	 * Add sign-in text
 	 */
@@ -65371,26 +62256,6 @@ Remove this role from {email}?
 	 */
 	admin_settings_diagnostic_logging_desc: () => LocalizedString
 	/**
-	 * General
-	 */
-	admin_settings_general: () => LocalizedString
-	/**
-	 * Appearance
-	 */
-	admin_settings_appearance: () => LocalizedString
-	/**
-	 * Security
-	 */
-	admin_settings_security: () => LocalizedString
-	/**
-	 * Email
-	 */
-	admin_settings_email: () => LocalizedString
-	/**
-	 * Advanced
-	 */
-	admin_settings_advanced: () => LocalizedString
-	/**
 	 * In Development
 	 */
 	admin_settings_in_development: () => LocalizedString
@@ -65483,37 +62348,9 @@ Remove this role from {email}?
 	 */
 	admin_inheritance_override: () => LocalizedString
 	/**
-	 * Audit Log
-	 */
-	admin_audit_title: () => LocalizedString
-	/**
-	 * Timestamp
-	 */
-	admin_audit_timestamp: () => LocalizedString
-	/**
-	 * User
-	 */
-	admin_audit_user: () => LocalizedString
-	/**
 	 * Action
 	 */
 	admin_audit_action: () => LocalizedString
-	/**
-	 * Resource
-	 */
-	admin_audit_resource: () => LocalizedString
-	/**
-	 * IP Address
-	 */
-	admin_audit_ip: () => LocalizedString
-	/**
-	 * Status
-	 */
-	admin_audit_status: () => LocalizedString
-	/**
-	 * Export
-	 */
-	admin_audit_export: () => LocalizedString
 	/**
 	 * Signing Keys - Admin Dashboard - Authrim
 	 */
@@ -66295,10 +63132,6 @@ Remove this role from {email}?
 	 */
 	admin_theme_preview_viewport: () => LocalizedString
 	/**
-	 * Preview scale
-	 */
-	admin_theme_preview_scale: () => LocalizedString
-	/**
 	 * Login
 	 */
 	admin_theme_preview_surface_login: () => LocalizedString
@@ -66347,10 +63180,6 @@ Remove this role from {email}?
 	 */
 	admin_theme_preview_inspector_description: () => LocalizedString
 	/**
-	 * Summary
-	 */
-	admin_theme_preview_inspector_summary: () => LocalizedString
-	/**
 	 * Layout
 	 */
 	admin_theme_preview_inspector_layout: () => LocalizedString
@@ -66358,26 +63187,6 @@ Remove this role from {email}?
 	 * Assets
 	 */
 	admin_theme_preview_inspector_assets: () => LocalizedString
-	/**
-	 * Checks
-	 */
-	admin_theme_preview_inspector_checks: () => LocalizedString
-	/**
-	 * Template
-	 */
-	admin_theme_preview_inspector_template: () => LocalizedString
-	/**
-	 * Screen
-	 */
-	admin_theme_preview_inspector_screen: () => LocalizedString
-	/**
-	 * Mode
-	 */
-	admin_theme_preview_inspector_mode: () => LocalizedString
-	/**
-	 * Viewport
-	 */
-	admin_theme_preview_inspector_viewport: () => LocalizedString
 	/**
 	 * Page
 	 */
@@ -66390,10 +63199,6 @@ Remove this role from {email}?
 	 * Footer
 	 */
 	admin_theme_preview_inspector_footer: () => LocalizedString
-	/**
-	 * Brand panel
-	 */
-	admin_theme_preview_inspector_brand_panel: () => LocalizedString
 	/**
 	 * Logo set
 	 */
@@ -66418,18 +63223,6 @@ Remove this role from {email}?
 	 * Default favicon
 	 */
 	admin_theme_preview_inspector_favicon_default: () => LocalizedString
-	/**
-	 * Header
-	 */
-	admin_theme_preview_inspector_header: () => LocalizedString
-	/**
-	 * Language selector
-	 */
-	admin_theme_preview_inspector_language: () => LocalizedString
-	/**
-	 * Theme toggle
-	 */
-	admin_theme_preview_inspector_theme_toggle: () => LocalizedString
 	/**
 	 * Text
 	 */
@@ -66498,134 +63291,6 @@ Remove this role from {email}?
 	 * Re-authentication, consent, device verification, email verification, error, and completion titles remain contextual system messages.
 	 */
 	admin_theme_page_titles_help: () => LocalizedString
-	/**
-	 * Policy Settings
-	 */
-	admin_policy_title: () => LocalizedString
-	/**
-	 * Configure policy system features and token claims
-	 */
-	admin_policy_subtitle: () => LocalizedString
-	/**
-	 * Save Changes
-	 */
-	admin_policy_save: () => LocalizedString
-	/**
-	 * Policy settings saved successfully
-	 */
-	admin_policy_save_success: () => LocalizedString
-	/**
-	 * OIDC Conformance Notice
-	 */
-	admin_policy_warning_title: () => LocalizedString
-	/**
-	 * Enabling policy features may affect OIDC conformance testing. Custom claims use the "authrim_" prefix to avoid conflicts with standard claims.
-	 */
-	admin_policy_warning_desc: () => LocalizedString
-	/**
-	 * Feature Flags
-	 */
-	admin_policy_feature_flags: () => LocalizedString
-	/**
-	 * Enable ABAC (Attribute-Based Access Control)
-	 */
-	admin_policy_enable_abac: () => LocalizedString
-	/**
-	 * Evaluate access based on user attributes (department, clearance level, etc.)
-	 */
-	admin_policy_enable_abac_desc: () => LocalizedString
-	/**
-	 * Enable ReBAC (Relationship-Based Access Control)
-	 */
-	admin_policy_enable_rebac: () => LocalizedString
-	/**
-	 * Evaluate access based on relationships between entities (Google Zanzibar style)
-	 */
-	admin_policy_enable_rebac_desc: () => LocalizedString
-	/**
-	 * Enable Policy Logging
-	 */
-	admin_policy_enable_logging: () => LocalizedString
-	/**
-	 * Log detailed policy evaluation results for debugging
-	 */
-	admin_policy_enable_logging_desc: () => LocalizedString
-	/**
-	 * Enable Verified Attributes
-	 */
-	admin_policy_enable_verified_attrs: () => LocalizedString
-	/**
-	 * Require cryptographic proof of attribute claims
-	 */
-	admin_policy_enable_verified_attrs_desc: () => LocalizedString
-	/**
-	 * Enable Custom Rules
-	 */
-	admin_policy_enable_custom_rules: () => LocalizedString
-	/**
-	 * Allow custom policy rules beyond default RBAC
-	 */
-	admin_policy_enable_custom_rules_desc: () => LocalizedString
-	/**
-	 * Enable SD-JWT (Selective Disclosure)
-	 */
-	admin_policy_enable_sd_jwt: () => LocalizedString
-	/**
-	 * Issue ID Tokens in SD-JWT format for selective disclosure (RFC 9901)
-	 */
-	admin_policy_enable_sd_jwt_desc: () => LocalizedString
-	/**
-	 * Enable Policy Embedding in Access Token
-	 */
-	admin_policy_enable_embedding: () => LocalizedString
-	/**
-	 * Evaluate requested scopes against policy and embed permitted actions as authrim_permissions claim
-	 */
-	admin_policy_enable_embedding_desc: () => LocalizedString
-	/**
-	 * Token Claims Configuration
-	 */
-	admin_policy_token_claims: () => LocalizedString
-	/**
-	 * Access Token Claims
-	 */
-	admin_policy_access_token_claims: () => LocalizedString
-	/**
-	 * Comma-separated list of claims to include in Access Token (prefixed with authrim_)
-	 */
-	admin_policy_access_token_claims_desc: () => LocalizedString
-	/**
-	 * ID Token Claims
-	 */
-	admin_policy_id_token_claims: () => LocalizedString
-	/**
-	 * Comma-separated list of claims to include in ID Token (prefixed with authrim_)
-	 */
-	admin_policy_id_token_claims_desc: () => LocalizedString
-	/**
-	 * Available Claims
-	 */
-	admin_policy_available_claims: () => LocalizedString
-	/**
-	 * Policy Embedding Information
-	 */
-	admin_policy_embedding_info: () => LocalizedString
-	/**
-	 * When enabled, the authorization server evaluates requested scopes against the user's permissions and embeds only permitted actions in the Access Token.
-	 */
-	admin_policy_embedding_info_desc: () => LocalizedString
-	/**
-	 * Authentication Methods - Authrim Admin
-	 */
-	admin_authentication_methods_page_title: () => LocalizedString
-	/**
-	 * Authentication Methods
-	 */
-	admin_authentication_methods_title: () => LocalizedString
-	/**
-	 * Authentication method and custom external provider settings for tenant {tenantId}
-	 */
-	admin_authentication_methods_description: (arg: { tenantId: string }) => LocalizedString
 	/**
 	 * Failed to load authentication method settings
 	 */
@@ -66735,10 +63400,6 @@ Remove this role from {email}?
 	 */
 	admin_authentication_methods_human_verification_description: () => LocalizedString
 	/**
-	 * Cloudflare Turnstile
-	 */
-	admin_authentication_methods_turnstile: () => LocalizedString
-	/**
 	 * Use Turnstile for Login UI abuse protection.
 	 */
 	admin_authentication_methods_turnstile_description: () => LocalizedString
@@ -66802,122 +63463,6 @@ Remove this role from {email}?
 	 * Disabled
 	 */
 	admin_authentication_methods_disabled: () => LocalizedString
-	/**
-	 * Edit
-	 */
-	admin_authentication_methods_edit_title: () => LocalizedString
-	/**
-	 * Duplicate
-	 */
-	admin_authentication_methods_duplicate_title: () => LocalizedString
-	/**
-	 * Remove
-	 */
-	admin_authentication_methods_remove_title: () => LocalizedString
-	/**
-	 * Copy
-	 */
-	admin_authentication_methods_copy_suffix: () => LocalizedString
-	/**
-	 * Add Provider
-	 */
-	admin_authentication_methods_add_provider: () => LocalizedString
-	/**
-	 * Edit Provider
-	 */
-	admin_authentication_methods_edit_provider: () => LocalizedString
-	/**
-	 * Update Provider
-	 */
-	admin_authentication_methods_update_provider: () => LocalizedString
-	/**
-	 * Cancel
-	 */
-	admin_authentication_methods_cancel: () => LocalizedString
-	/**
-	 * Provider ID
-	 */
-	admin_authentication_methods_provider_id: () => LocalizedString
-	/**
-	 * Name
-	 */
-	admin_authentication_methods_name: () => LocalizedString
-	/**
-	 * Type
-	 */
-	admin_authentication_methods_type: () => LocalizedString
-	/**
-	 * Start Mode
-	 */
-	admin_authentication_methods_start_mode: () => LocalizedString
-	/**
-	 * Start URL
-	 */
-	admin_authentication_methods_start_url: () => LocalizedString
-	/**
-	 * Slug
-	 */
-	admin_authentication_methods_slug: () => LocalizedString
-	/**
-	 * Button Text
-	 */
-	admin_authentication_methods_button_text: () => LocalizedString
-	/**
-	 * Icon URL
-	 */
-	admin_authentication_methods_icon_url: () => LocalizedString
-	/**
-	 * Button Color
-	 */
-	admin_authentication_methods_button_color: () => LocalizedString
-	/**
-	 * Enabled
-	 */
-	admin_authentication_methods_enabled: () => LocalizedString
-	/**
-	 * SAML SP
-	 */
-	admin_authentication_methods_start_mode_saml_sp: () => LocalizedString
-	/**
-	 * OAuth Redirect
-	 */
-	admin_authentication_methods_start_mode_oauth_redirect: () => LocalizedString
-	/**
-	 * Provider ID is required.
-	 */
-	admin_authentication_methods_validation_id_required: () => LocalizedString
-	/**
-	 * Provider ID can contain letters, numbers, colon, hyphen, and underscore.
-	 */
-	admin_authentication_methods_validation_id_format: () => LocalizedString
-	/**
-	 * Provider name is required.
-	 */
-	admin_authentication_methods_validation_name_required: () => LocalizedString
-	/**
-	 * Start URL is required.
-	 */
-	admin_authentication_methods_validation_start_url_required: () => LocalizedString
-	/**
-	 * Start URL must not be protocol-relative.
-	 */
-	admin_authentication_methods_validation_start_url_protocol_relative: () => LocalizedString
-	/**
-	 * Relative Start URL must start with /.
-	 */
-	admin_authentication_methods_validation_relative_start_url: () => LocalizedString
-	/**
-	 * Absolute Start URL must use HTTPS.
-	 */
-	admin_authentication_methods_validation_absolute_start_url: () => LocalizedString
-	/**
-	 * Start URL is invalid.
-	 */
-	admin_authentication_methods_validation_start_url_invalid: () => LocalizedString
-	/**
-	 * Provider ID must be unique.
-	 */
-	admin_authentication_methods_validation_id_unique: () => LocalizedString
 	/**
 	 * Login UI - Authrim Admin
 	 */
@@ -67003,18 +63548,6 @@ Remove this role from {email}?
 	 */
 	admin_login_ui_error_update_trusted_origins: () => LocalizedString
 	/**
-	 * You do not have permission to edit Login UI configuration.
-	 */
-	admin_login_ui_error_no_config_permission: () => LocalizedString
-	/**
-	 * Global Login UI configuration updated.
-	 */
-	admin_login_ui_config_updated: () => LocalizedString
-	/**
-	 * Failed to update UI config
-	 */
-	admin_login_ui_error_update_config: () => LocalizedString
-	/**
 	 * You do not have permission to edit settings at this scope level
 	 */
 	admin_login_ui_error_no_settings_permission: () => LocalizedString
@@ -67031,26 +63564,6 @@ Remove this role from {email}?
 	 */
 	admin_login_ui_error_save_settings: () => LocalizedString
 	/**
-	 * Global UI Configuration
-	 */
-	admin_login_ui_global_config_title: () => LocalizedString
-	/**
-	 * Configure the global Login UI base URL and page paths used by the authorization flow.
-	 */
-	admin_login_ui_global_config_description: () => LocalizedString
-	/**
-	 * Source: {source}
-	 */
-	admin_login_ui_source: (arg: { source: string }) => LocalizedString
-	/**
-	 * Global UI Base URL
-	 */
-	admin_login_ui_global_base_url: () => LocalizedString
-	/**
-	 * Base URL for the shared Login UI deployment. Must use HTTPS except localhost.
-	 */
-	admin_login_ui_global_base_url_description: () => LocalizedString
-	/**
 	 * Modified
 	 */
 	admin_login_ui_modified: () => LocalizedString
@@ -67066,10 +63579,6 @@ Remove this role from {email}?
 	 * Changes may take up to 60 seconds to appear in Login UI.
 	 */
 	admin_login_ui_cache_notice: () => LocalizedString
-	/**
-	 * Save Global UI Configuration
-	 */
-	admin_login_ui_save_global_config: () => LocalizedString
 	/**
 	 * Language Settings
 	 */
@@ -67347,97 +63856,13 @@ Remove this role from {email}?
 	 */
 	admin_login_ui_loading_settings: () => LocalizedString
 	/**
-	 * Locked
-	 */
-	admin_login_ui_locked: () => LocalizedString
-	/**
-	 * Range: {min} - {max}
-	 */
-	admin_login_ui_range: (arg: { max: number, min: number }) => LocalizedString
-	/**
-	 * Min: {min}
-	 */
-	admin_login_ui_min: (arg: { min: number }) => LocalizedString
-	/**
-	 * Max: {max}
-	 */
-	admin_login_ui_max: (arg: { max: number }) => LocalizedString
-	/**
 	 * Save Changes
 	 */
 	admin_login_ui_save_changes: () => LocalizedString
 	/**
-	 * Coming Soon
-	 */
-	admin_login_ui_coming_soon_title: () => LocalizedString
-	/**
-	 * The following features are currently in development:
-	 */
-	admin_login_ui_coming_soon_description: () => LocalizedString
-	/**
-	 * Favicon URL
-	 */
-	admin_login_ui_coming_soon_favicon: () => LocalizedString
-	/**
-	 * URL to the favicon image displayed in browser tabs
-	 */
-	admin_login_ui_coming_soon_favicon_desc: () => LocalizedString
-	/**
-	 * Background Image URL
-	 */
-	admin_login_ui_coming_soon_background: () => LocalizedString
-	/**
-	 * URL to the background image displayed on the Login UI
-	 */
-	admin_login_ui_coming_soon_background_desc: () => LocalizedString
-	/**
-	 * Custom CSS
-	 */
-	admin_login_ui_coming_soon_custom_css: () => LocalizedString
-	/**
-	 * Custom CSS to apply to the Login UI (restricted properties only)
-	 */
-	admin_login_ui_coming_soon_custom_css_desc: () => LocalizedString
-	/**
-	 * Header Text
-	 */
-	admin_login_ui_coming_soon_header: () => LocalizedString
-	/**
-	 * Header text displayed above the login form
-	 */
-	admin_login_ui_coming_soon_header_desc: () => LocalizedString
-	/**
-	 * Footer Text
-	 */
-	admin_login_ui_coming_soon_footer: () => LocalizedString
-	/**
-	 * Footer text displayed below the login form (e.g., copyright notice)
-	 */
-	admin_login_ui_coming_soon_footer_desc: () => LocalizedString
-	/**
-	 * Footer Links
-	 */
-	admin_login_ui_coming_soon_footer_links: () => LocalizedString
-	/**
-	 * JSON array of footer links with label and URL fields.
-	 */
-	admin_login_ui_coming_soon_footer_links_desc: () => LocalizedString
-	/**
-	 * Custom Blocks
-	 */
-	admin_login_ui_coming_soon_custom_blocks: () => LocalizedString
-	/**
-	 * JSON array of custom content blocks with position, type, and content fields.
-	 */
-	admin_login_ui_coming_soon_custom_blocks_desc: () => LocalizedString
-	/**
 	 * Consent Statement Management
 	 */
 	admin_consent_statements_title: () => LocalizedString
-	/**
-	 * Manage consent items, versions, localizations, and requirements
-	 */
-	admin_consent_statements_subtitle: () => LocalizedString
 	/**
 	 * Manage consent statements used by policies and account flows.
 	 */
@@ -67462,14 +63887,6 @@ Remove this role from {email}?
 	 * Create Consent Statement
 	 */
 	admin_consent_templates_page_title: () => LocalizedString
-	/**
-	 * Create Consent Statement
-	 */
-	admin_consent_templates_plain_page_title: () => LocalizedString
-	/**
-	 * Consent template
-	 */
-	admin_consent_templates_kicker: () => LocalizedString
 	/**
 	 * Choose the closest template, then set the user input behavior and binding target.
 	 */
@@ -67538,14 +63955,6 @@ Remove this role from {email}?
 	 * Create a blank consent statement without using a template.
 	 */
 	admin_consent_templates_custom_description: () => LocalizedString
-	/**
-	 * Custom creation lets you configure the category, content, and requirement freely on the next screen.
-	 */
-	admin_consent_templates_custom_panel_description: () => LocalizedString
-	/**
-	 * Custom
-	 */
-	admin_consent_templates_custom_kicker: () => LocalizedString
 	/**
 	 * Input mode
 	 */
@@ -67618,14 +64027,6 @@ Remove this role from {email}?
 	 * Set as default language
 	 */
 	admin_consent_templates_default_language: () => LocalizedString
-	/**
-	 * Consent content editor tabs
-	 */
-	admin_consent_templates_editor_tabs: () => LocalizedString
-	/**
-	 * Text
-	 */
-	admin_consent_templates_text_tab: () => LocalizedString
 	/**
 	 * preview
 	 */
@@ -67727,10 +64128,6 @@ Remove this role from {email}?
 	 */
 	admin_consent_templates_option_value: () => LocalizedString
 	/**
-	 * Label ({language})
-	 */
-	admin_consent_templates_option_label: (arg: { language: string }) => LocalizedString
-	/**
 	 * Option text ({language})
 	 */
 	admin_consent_templates_option_body: (arg: { language: string }) => LocalizedString
@@ -67738,30 +64135,6 @@ Remove this role from {email}?
 	 * This text is shown as the option label/body. It can include managed link tokens such as %link1%.
 	 */
 	admin_consent_templates_option_body_description: () => LocalizedString
-	/**
-	 * Effect
-	 */
-	admin_consent_templates_option_effect: () => LocalizedString
-	/**
-	 * Effect target
-	 */
-	admin_consent_templates_option_effect_target: () => LocalizedString
-	/**
-	 * No effect
-	 */
-	admin_consent_templates_option_effect_none: () => LocalizedString
-	/**
-	 * Release field set
-	 */
-	admin_consent_templates_option_effect_release_field_set: () => LocalizedString
-	/**
-	 * Deny / stop
-	 */
-	admin_consent_templates_option_effect_deny: () => LocalizedString
-	/**
-	 * Remember answer
-	 */
-	admin_consent_templates_option_effect_remember: () => LocalizedString
 	/**
 	 * Open Field Mapping Set settings
 	 */
@@ -67819,10 +64192,6 @@ Remove this role from {email}?
 	 */
 	admin_consent_templates_binding_loading_field_mapping_sets: () => LocalizedString
 	/**
-	 * Start blank
-	 */
-	admin_consent_templates_start_blank: () => LocalizedString
-	/**
 	 * Create
 	 */
 	admin_consent_templates_create_from_template: () => LocalizedString
@@ -67863,33 +64232,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_save_settings: () => LocalizedString
 	/**
-	 * Statements
-	 */
-	admin_consent_statements_tab_statements: () => LocalizedString
-	/**
-	 * Versions
-	 */
-	admin_consent_statements_tab_versions: () => LocalizedString
-	/**
-	 * Localizations
-	 */
-	admin_consent_statements_tab_localizations: () => LocalizedString
-	/**
-	 * New Statement
-	 */
-	admin_consent_statements_new: () => LocalizedString
-	/**
-	 * Consent Statement Details
-	 */
-	admin_consent_statements_edit: () => LocalizedString
-	/**
 	 * Consent statement name
 	 */
 	admin_consent_statements_name: () => LocalizedString
-	/**
-	 * Consent statement identifier
-	 */
-	admin_consent_statements_identifier: () => LocalizedString
 	/**
 	 * Slug
 	 */
@@ -67899,17 +64244,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_category: () => LocalizedString
 	/**
-	 * Legal Basis
-	 */
-	admin_consent_statements_legal_basis: () => LocalizedString
-	/**
 	 * Processing Purpose
 	 */
 	admin_consent_statements_purpose: () => LocalizedString
-	/**
-	 * Display Order
-	 */
-	admin_consent_statements_order: () => LocalizedString
 	/**
 	 * Active
 	 */
@@ -67918,10 +64255,6 @@ Remove this role from {email}?
 	 * Inactive
 	 */
 	admin_consent_statements_inactive: () => LocalizedString
-	/**
-	 * Consent Statements
-	 */
-	admin_consent_statements_consent_statements: () => LocalizedString
 	/**
 	 * Created
 	 */
@@ -67967,25 +64300,9 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_empty: () => LocalizedString
 	/**
-	 * Selected statement. Switch to Versions tab to manage versions.
-	 */
-	admin_consent_statements_selected: () => LocalizedString
-	/**
 	 * Consent statement title
 	 */
 	admin_consent_statements_placeholder_title: () => LocalizedString
-	/**
-	 * e.g., marketing_emails
-	 */
-	admin_consent_statements_placeholder_slug: () => LocalizedString
-	/**
-	 * Consent statement identifier
-	 */
-	admin_consent_statements_placeholder_identifier: () => LocalizedString
-	/**
-	 * GDPR Art13/14: Data processing purpose description
-	 */
-	admin_consent_statements_placeholder_purpose: () => LocalizedString
 	/**
 	 * Record retention days
 	 */
@@ -68075,29 +64392,13 @@ Remove this role from {email}?
 	 */
 	admin_consent_statements_error_save: () => LocalizedString
 	/**
-	 * Failed to update statement
-	 */
-	admin_consent_statements_error_update: () => LocalizedString
-	/**
 	 * Failed to delete statement
 	 */
 	admin_consent_statements_error_delete: () => LocalizedString
 	/**
-	 * Statement created successfully
-	 */
-	admin_consent_statements_created_success: () => LocalizedString
-	/**
 	 * Statement updated successfully
 	 */
 	admin_consent_statements_updated_success: () => LocalizedString
-	/**
-	 * Statement deleted
-	 */
-	admin_consent_statements_deleted_success: () => LocalizedString
-	/**
-	 * Delete this consent statement?
-	 */
-	admin_consent_statements_delete_confirm: () => LocalizedString
 	/**
 	 * Deactivate this consent statement? It will no longer be used for new consent collection.
 	 */
@@ -68111,53 +64412,13 @@ Remove this role from {email}?
 	 */
 	admin_consent_category_privacy_policy: () => LocalizedString
 	/**
-	 * Cookie Policy
-	 */
-	admin_consent_category_cookie_policy: () => LocalizedString
-	/**
-	 * Marketing
-	 */
-	admin_consent_category_marketing: () => LocalizedString
-	/**
-	 * Data Sharing
-	 */
-	admin_consent_category_data_sharing: () => LocalizedString
-	/**
-	 * Analytics
-	 */
-	admin_consent_category_analytics: () => LocalizedString
-	/**
-	 * Do Not Sell
-	 */
-	admin_consent_category_do_not_sell: () => LocalizedString
-	/**
 	 * Other
 	 */
 	admin_consent_category_custom: () => LocalizedString
 	/**
-	 * Consent
-	 */
-	admin_consent_legal_basis_consent: () => LocalizedString
-	/**
-	 * Legitimate Interest
-	 */
-	admin_consent_legal_basis_legitimate_interest: () => LocalizedString
-	/**
-	 * Contract
-	 */
-	admin_consent_legal_basis_contract: () => LocalizedString
-	/**
-	 * Legal Obligation
-	 */
-	admin_consent_legal_basis_legal_obligation: () => LocalizedString
-	/**
 	 * New Version
 	 */
 	admin_consent_versions_new: () => LocalizedString
-	/**
-	 * Versions
-	 */
-	admin_consent_versions_title: () => LocalizedString
 	/**
 	 * Version (YYYYMMDD)
 	 */
@@ -68166,10 +64427,6 @@ Remove this role from {email}?
 	 * Content Type
 	 */
 	admin_consent_versions_content_type: () => LocalizedString
-	/**
-	 * Effective Date
-	 */
-	admin_consent_versions_effective: () => LocalizedString
 	/**
 	 * Start date and time
 	 */
@@ -68211,10 +64468,6 @@ Remove this role from {email}?
 	 */
 	admin_consent_versions_empty: () => LocalizedString
 	/**
-	 * Selected version. Switch to Localizations tab to manage translations.
-	 */
-	admin_consent_versions_selected: () => LocalizedString
-	/**
 	 * Activate Version
 	 */
 	admin_consent_versions_dialog_title: () => LocalizedString
@@ -68222,14 +64475,6 @@ Remove this role from {email}?
 	 * Close activate version dialog
 	 */
 	admin_consent_versions_dialog_close: () => LocalizedString
-	/**
-	 * Failed to load versions
-	 */
-	admin_consent_versions_error_load: () => LocalizedString
-	/**
-	 * Failed to save version
-	 */
-	admin_consent_versions_error_save: () => LocalizedString
 	/**
 	 * Failed to activate version
 	 */
@@ -68242,10 +64487,6 @@ Remove this role from {email}?
 	 * Failed to delete version
 	 */
 	admin_consent_versions_error_delete: () => LocalizedString
-	/**
-	 * Version created successfully
-	 */
-	admin_consent_versions_created_success: () => LocalizedString
 	/**
 	 * Version activated successfully
 	 */
@@ -68382,10 +64623,6 @@ Remove this role from {email}?
 	 * Advanced settings
 	 */
 	admin_consent_requirements_advanced_title: () => LocalizedString
-	/**
-	 * Configure requirement
-	 */
-	admin_consent_requirements_enabled: () => LocalizedString
 	/**
 	 * User input
 	 */

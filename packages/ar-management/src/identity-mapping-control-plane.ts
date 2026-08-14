@@ -6,6 +6,10 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
+import {
+  isProtectedIdentityMappingDestinationClaim,
+  OIDC_PROTOCOL_ENVELOPE_CLAIMS,
+} from '@authrim/ar-lib-core/services/destination-profile-consent';
 import type {
   LifecycleSignalType,
   ProvisioningAssignmentCondition,
@@ -68,6 +72,36 @@ const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
 const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
 const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
 const DEFAULT_CANONICAL_NAMESPACE = 'authrim.canonical';
+const BUILTIN_SCIM_PROTOCOL_SCHEMA_ID = 'builtin_scim_user_schema';
+const BUILTIN_SCIM_USER_SCHEMA = {
+  sourceType: 'scim',
+  attributes: [
+    { name: 'userName', label: 'User name', type: 'string', required: true },
+    { name: 'externalId', label: 'External ID', type: 'string' },
+    { name: 'active', label: 'Active', type: 'boolean' },
+    { name: 'displayName', label: 'Display name', type: 'string' },
+    { name: 'name.formatted', label: 'Formatted name', type: 'string' },
+    { name: 'name.givenName', label: 'Given name', type: 'string' },
+    { name: 'name.familyName', label: 'Family name', type: 'string' },
+    { name: 'name.middleName', label: 'Middle name', type: 'string' },
+    { name: 'nickName', label: 'Nickname', type: 'string' },
+    { name: 'profileUrl', label: 'Profile URL', type: 'string' },
+    { name: 'title', label: 'Title', type: 'string' },
+    { name: 'userType', label: 'User type', type: 'string' },
+    { name: 'preferredLanguage', label: 'Preferred language', type: 'string' },
+    { name: 'locale', label: 'Locale', type: 'string' },
+    { name: 'timezone', label: 'Timezone', type: 'string' },
+    { name: 'emails.value', label: 'Primary email', type: 'string', required: true },
+    { name: 'phoneNumbers.value', label: 'Primary phone number', type: 'string' },
+    { name: 'addresses.primary', label: 'Primary address', type: 'json' },
+    { name: 'enterprise.employeeNumber', label: 'Employee number', type: 'string' },
+    { name: 'enterprise.costCenter', label: 'Cost center', type: 'string' },
+    { name: 'enterprise.organization', label: 'Organization', type: 'string' },
+    { name: 'enterprise.division', label: 'Division', type: 'string' },
+    { name: 'enterprise.department', label: 'Department', type: 'string' },
+    { name: 'enterprise.manager.value', label: 'Manager ID', type: 'string' },
+  ],
+};
 
 const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   {
@@ -462,6 +496,11 @@ interface FieldMappingTransformSummaryRow {
   parameters_json: string | null;
 }
 
+interface SensitiveReleaseMappingEdgeRow {
+  source_ref_json: string;
+  target_ref_json: string;
+}
+
 interface FieldCatalogVersionRow {
   id: string;
   tenant_id: string;
@@ -507,6 +546,7 @@ interface CustomClaimSchemaCatalogRow {
   active_field_key: string | null;
   display_label: string | null;
   field_type: string | null;
+  cardinality: string | null;
   is_pii: number | boolean | null;
   is_required: number | boolean | null;
   validation_rules: string | null;
@@ -790,7 +830,7 @@ interface UpdateSourceProfileRequest {
 }
 
 interface CreateDestinationProfileRequest {
-  destinationType: 'oidc' | 'csv' | 'saml';
+  destinationType: 'oidc' | 'csv' | 'saml' | 'resource_server';
   profileKey: string;
   displayName: string;
   ownerScopeType?: 'platform' | 'tenant' | 'client';
@@ -803,7 +843,7 @@ interface CreateDestinationProfileRequest {
 }
 
 interface UpdateDestinationProfileRequest {
-  destinationType?: 'oidc' | 'csv' | 'saml';
+  destinationType?: 'oidc' | 'csv' | 'saml' | 'resource_server';
   profileKey?: string;
   displayName?: string;
   ownerScopeType?: 'platform' | 'tenant' | 'client';
@@ -1204,7 +1244,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
 ]);
 const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
-const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml']);
+const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml', 'resource_server']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const PROFILE_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant', 'client']);
 const REGISTRY_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant']);
@@ -1287,18 +1327,7 @@ const DIRECTORY_FACTS_SCHEMA = {
     groupsPolicy: 'opt_in',
   },
 } satisfies Record<string, unknown>;
-const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
-  'iss',
-  'aud',
-  'exp',
-  'iat',
-  'nbf',
-  'jti',
-  'nonce',
-  'at_hash',
-  'c_hash',
-  'azp',
-]);
+const OIDC_RESERVED_NON_PROFILE_CLAIMS = OIDC_PROTOCOL_ENVELOPE_CLAIMS;
 const OIDC_STANDARD_CLAIMS = new Set([
   'sub',
   'name',
@@ -1428,6 +1457,14 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.versionLabel, 'versionLabel');
     if (!Array.isArray(input.entries) || input.entries.length === 0) {
       throw badRequest('entries must contain at least one catalog entry');
+    }
+    for (const entry of input.entries) {
+      if (
+        entry.targetType === 'destination-only' &&
+        isProtectedIdentityMappingDestinationClaim(entry.namespace, entry.path)
+      ) {
+        throw badRequest(`${entry.namespace}:${entry.path} is reserved by the protocol envelope`);
+      }
     }
 
     const catalogId = createId('catalog');
@@ -1650,6 +1687,7 @@ export class IdentityMappingControlPlaneRepository {
             active_field_key,
             display_label,
             field_type,
+            cardinality,
             is_pii,
             is_required,
             validation_rules,
@@ -1742,15 +1780,27 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY protocol ASC, schema_key ASC, updated_at DESC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
-      tenantId: row.tenant_id,
-      protocol: row.protocol,
-      schemaKey: row.schema_key,
-      schemaVersion: row.schema_version,
-      schema: JSON.parse(row.schema_json) as Record<string, unknown>,
-      lifecycleState: row.lifecycle_state,
-    }));
+    return [
+      {
+        id: BUILTIN_SCIM_PROTOCOL_SCHEMA_ID,
+        tenantId,
+        protocol: 'scim',
+        schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
+        schemaVersion: '2.0',
+        displayName: 'SCIM 2.0 User (inbound)',
+        schema: BUILTIN_SCIM_USER_SCHEMA,
+        lifecycleState: 'active',
+      },
+      ...rows.map((row) => ({
+        id: row.id,
+        tenantId: row.tenant_id,
+        protocol: row.protocol,
+        schemaKey: row.schema_key,
+        schemaVersion: row.schema_version,
+        schema: JSON.parse(row.schema_json) as Record<string, unknown>,
+        lifecycleState: row.lifecycle_state,
+      })),
+    ];
   }
 
   async importExternalSchema(tenantId: string, input: ImportExternalSchemaRequest) {
@@ -2409,7 +2459,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!DESTINATION_PROFILE_TYPES.has(input.destinationType)) {
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
     }
     if (!isRecord(input.schema)) {
       throw badRequest('schema must be an object');
@@ -2419,6 +2469,7 @@ export class IdentityMappingControlPlaneRepository {
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    assertDestinationProfileOwner(input.destinationType, owner);
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
          FROM destination_profiles
@@ -2614,9 +2665,10 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const destinationType =
-      input.destinationType ?? (existing.destination_type as 'oidc' | 'csv' | 'saml');
+      input.destinationType ??
+      (existing.destination_type as 'oidc' | 'csv' | 'saml' | 'resource_server');
     if (!DESTINATION_PROFILE_TYPES.has(destinationType)) {
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
     }
     if (!isRecord(input.schema)) {
       throw badRequest('schema is required');
@@ -2630,6 +2682,7 @@ export class IdentityMappingControlPlaneRepository {
       input.ownerScopeType ?? (existing.owner_scope_type as 'platform' | 'tenant' | 'client'),
       input.ownerScopeId === undefined ? existing.owner_scope_id : input.ownerScopeId
     );
+    assertDestinationProfileOwner(destinationType, owner);
     if (owner.tenantId === 'platform' && !allowPlatformScope) {
       throw forbidden('platform owner scope requires platform admin');
     }
@@ -2806,11 +2859,21 @@ export class IdentityMappingControlPlaneRepository {
     versionId: string,
     allowPlatformScope = false
   ) {
-    const row = await this.adapter.queryOne<{ tenant_id: string; lifecycle_state: string }>(
-      `SELECT tenant_id, lifecycle_state
-         FROM destination_profile_versions
-        WHERE profile_id = ? AND id = ?
-          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+    const row = await this.adapter.queryOne<{
+      tenant_id: string;
+      lifecycle_state: string;
+      destination_type: string;
+      owner_scope_type: string;
+      owner_scope_id: string | null;
+      schema_json: string;
+    }>(
+      `SELECT v.tenant_id, v.lifecycle_state, v.schema_json,
+              p.destination_type, p.owner_scope_type, p.owner_scope_id
+         FROM destination_profile_versions v
+         JOIN destination_profiles p
+           ON p.tenant_id = v.tenant_id AND p.id = v.profile_id
+        WHERE v.profile_id = ? AND v.id = ?
+          AND (v.tenant_id = ? OR (? = 1 AND v.tenant_id = ?))`,
       [profileId, versionId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
     );
     if (!row) {
@@ -2819,27 +2882,70 @@ export class IdentityMappingControlPlaneRepository {
     if (row.lifecycle_state !== 'reviewed' && row.lifecycle_state !== 'active') {
       throw badRequest('destination profile version must be reviewed before activation');
     }
+    assertDestinationProfileOwner(row.destination_type, {
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeId: row.owner_scope_id,
+    });
+    let schema: unknown;
+    try {
+      schema = JSON.parse(row.schema_json) as unknown;
+    } catch {
+      throw badRequest('destination profile schema is invalid');
+    }
+    if (!isRecord(schema)) {
+      throw badRequest('destination profile schema is invalid');
+    }
+    const attributeGroups = await this.listAttributeGroups(
+      row.tenant_id === 'platform' ? tenantId : row.tenant_id
+    );
+    const validation = validateDestinationProfileSchema(
+      row.destination_type,
+      schema,
+      attributeGroups
+    );
+    if (validation.errorCount > 0) {
+      throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
+    }
+    if (row.destination_type === 'resource_server') {
+      const conflictingProfile = await this.adapter.queryOne<{ id: string }>(
+        `SELECT id
+           FROM destination_profiles
+          WHERE tenant_id = ?
+            AND destination_type = 'resource_server'
+            AND owner_scope_type = 'client'
+            AND owner_scope_id = ?
+            AND lifecycle_state = 'active'
+            AND id <> ?
+          LIMIT 1`,
+        [row.tenant_id, row.owner_scope_id, profileId]
+      );
+      if (conflictingProfile) {
+        throw conflict(
+          'another active Resource Server destination profile already owns this client'
+        );
+      }
+    }
     const now = this.now();
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `UPDATE destination_profile_versions
+    await this.adapter.batch([
+      {
+        sql: `UPDATE destination_profile_versions
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND profile_id = ? AND lifecycle_state = ?`,
-        ['reviewed', now, row.tenant_id, profileId, 'active']
-      );
-      await tx.execute(
-        `UPDATE destination_profile_versions
+        params: ['reviewed', now, row.tenant_id, profileId, 'active'],
+      },
+      {
+        sql: `UPDATE destination_profile_versions
             SET lifecycle_state = ?, activated_at = ?, updated_at = ?
           WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
-        ['active', now, now, row.tenant_id, profileId, versionId]
-      );
-      await tx.execute(
-        `UPDATE destination_profiles
+        params: ['active', now, now, row.tenant_id, profileId, versionId],
+      },
+      {
+        sql: `UPDATE destination_profiles
             SET lifecycle_state = ?, active_version_id = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        ['active', versionId, now, row.tenant_id, profileId]
-      );
-    });
+        params: ['active', versionId, now, row.tenant_id, profileId],
+      },
+    ]);
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
@@ -3501,6 +3607,11 @@ export class IdentityMappingControlPlaneRepository {
     if (!snapshot) {
       throw notFound('compiled snapshot not found');
     }
+    await this.assertSensitiveMappingReleaseSafety(
+      tenantId,
+      fieldMappingVersionId,
+      snapshot.catalog_version_id
+    );
     if (snapshot.lifecycle_state === 'active') {
       return {
         id: input.snapshotId,
@@ -5972,6 +6083,178 @@ export class IdentityMappingControlPlaneRepository {
     );
   }
 
+  private async assertSensitiveMappingReleaseSafety(
+    tenantId: string,
+    fieldMappingVersionId: string,
+    catalogVersionId: string | null
+  ): Promise<void> {
+    const edgeRows = await this.adapter.query<SensitiveReleaseMappingEdgeRow>(
+      `SELECT e.source_ref_json, e.target_ref_json
+         FROM mapping_rules r
+         JOIN mapping_rule_edges e
+           ON e.tenant_id = r.tenant_id
+          AND e.rule_id = r.id
+        WHERE r.tenant_id = ?
+          AND r.field_mapping_version_id = ?`,
+      [tenantId, fieldMappingVersionId]
+    );
+    const releaseEdges = edgeRows
+      .map((row) => ({
+        sourceRef: parseJsonObject(row.source_ref_json, {}),
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+      }))
+      .filter(({ targetRef }) =>
+        isDestinationProfileMappingReference(readStringValue(targetRef.profileId))
+      );
+    if (releaseEdges.length === 0) return;
+    if (!catalogVersionId) {
+      throw badRequest('sensitive destination mappings require a compiled catalog snapshot');
+    }
+
+    const sourceEntries = await this.loadCatalogEntriesForActivation(tenantId, catalogVersionId);
+    const profileCache = new Map<string, DestinationProfileRow | null>();
+    for (const { sourceRef, targetRef } of releaseEdges) {
+      const sourceEntry = findCatalogEntryForMappingRef(sourceEntries, sourceRef);
+      const sourceNamespace = readStringValue(sourceRef.namespace);
+      if (!sourceEntry) {
+        if (sourceNamespace === 'authrim.profile') {
+          throw badRequest(
+            `mapping source field is missing from compiled catalog: ${readStringValue(sourceRef.path) ?? 'unknown'}`
+          );
+        }
+        continue;
+      }
+      const sourceSensitivity = sensitiveClassificationRank(sourceEntry.classification);
+      if (sourceSensitivity === 0) continue;
+
+      const profileRef = readStringValue(targetRef.profileId);
+      const targetPath = readStringValue(targetRef.path);
+      if (!profileRef || !targetPath) {
+        throw badRequest('sensitive destination mapping must reference a profile field');
+      }
+      let profile = profileCache.get(profileRef);
+      if (profile === undefined) {
+        profile = await this.loadActiveDestinationProfileForActivation(tenantId, profileRef);
+        profileCache.set(profileRef, profile);
+      }
+      if (!profile || !profile.schema_json) {
+        throw badRequest(`sensitive destination mapping profile is unavailable: ${profileRef}`);
+      }
+      const targetField = findDestinationProfileField(
+        profile.destination_type,
+        parseJsonObject(profile.schema_json, {}),
+        targetPath
+      );
+      if (!targetField) {
+        throw badRequest(`sensitive destination profile field is unavailable: ${targetPath}`);
+      }
+      const targetClassification = readStringValue(targetField.classification) ?? 'internal';
+      if (sensitiveClassificationRank(targetClassification) < sourceSensitivity) {
+        throw badRequest(
+          `sensitive mapping cannot lower classification from ${sourceEntry.classification} to ${targetClassification}: ${targetPath}`
+        );
+      }
+      if (
+        (profile.destination_type === 'oidc' || profile.destination_type === 'resource_server') &&
+        readStringArrayValue(targetField.requiredScopes).length === 0
+      ) {
+        throw badRequest(
+          `sensitive destination field must require at least one scope: ${targetPath}`
+        );
+      }
+    }
+  }
+
+  private async loadCatalogEntriesForActivation(
+    tenantId: string,
+    catalogVersionId: string
+  ): Promise<FieldCatalogEntrySummary[]> {
+    const configuredCatalog = await this.loadConfiguredCanonicalCatalog(tenantId);
+    if (configuredCatalog?.versionId === catalogVersionId) return configuredCatalog.entries;
+
+    const rows = await this.adapter.query<FieldCatalogListRow>(
+      `SELECT e.id AS entry_id,
+              e.stable_field_id,
+              e.namespace,
+              e.path,
+              e.target_taxonomy,
+              e.value_type,
+              e.cardinality,
+              e.classification,
+              e.aliases_json,
+              e.validation_json,
+              e.ui_group_key,
+              e.ui_group_label,
+              e.ui_group_order,
+              e.ui_field_order,
+              e.examples_json,
+              e.note
+         FROM field_catalog_entries e
+        WHERE e.tenant_id = ? AND e.catalog_version_id = ?`,
+      [tenantId, catalogVersionId]
+    );
+    return rows.flatMap((row) => {
+      if (!row.entry_id || !row.stable_field_id || !row.namespace || !row.path) return [];
+      const validation = parseJsonObject(row.validation_json ?? '{}', {});
+      return [
+        {
+          id: row.entry_id,
+          stableFieldId: row.stable_field_id,
+          namespace: row.namespace,
+          path: row.path,
+          targetTaxonomy: row.target_taxonomy ?? 'canonical',
+          valueType: row.value_type ?? 'string',
+          cardinality: row.cardinality ?? 'single',
+          classification: row.classification ?? 'internal',
+          aliases: parseCatalogAliases(row.aliases_json),
+          uiGroupKey: row.ui_group_key,
+          uiGroupLabel: row.ui_group_label,
+          uiGroupOrder: row.ui_group_order ?? 0,
+          uiFieldOrder: row.ui_field_order ?? 0,
+          examples: parseJsonUnknownArray(row.examples_json),
+          note: row.note,
+          allowedValues: parseStringArray(validation.allowedValues),
+          valueMultiplicity:
+            validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+              ? validation.valueMultiplicity
+              : null,
+          nullable: typeof validation.nullable === 'boolean' ? validation.nullable : null,
+          required: typeof validation.required === 'boolean' ? validation.required : null,
+        },
+      ];
+    });
+  }
+
+  private async loadActiveDestinationProfileForActivation(
+    tenantId: string,
+    profileRef: string
+  ): Promise<DestinationProfileRow | null> {
+    const profileIds = destinationProfileReferenceCandidates(profileRef);
+    const rows = await this.adapter.query<DestinationProfileRow>(
+      `SELECT p.*,
+              v.id AS version_id,
+              v.version_label,
+              v.lifecycle_state AS version_lifecycle_state,
+              v.schema_hash,
+              v.schema_json,
+              v.validation_summary_json,
+              v.warning_summary_json,
+              v.release_impact_json
+         FROM destination_profiles p
+         JOIN destination_profile_versions v
+           ON v.id = p.active_version_id
+          AND v.profile_id = p.id
+          AND v.tenant_id = p.tenant_id
+        WHERE p.tenant_id IN (?, 'platform')
+          AND p.id IN (${profileIds.map(() => '?').join(', ')})
+          AND p.lifecycle_state = 'active'
+          AND v.lifecycle_state = 'active'
+        LIMIT 1`,
+      [tenantId, ...profileIds]
+    );
+    return rows[0] ?? null;
+  }
+
   private async insertFieldMappingRule(
     executor: SqlExecutor,
     tenantId: string,
@@ -6203,7 +6486,7 @@ function customClaimSchemaToCatalogEntry(
       path: fieldKey,
       targetTaxonomy: 'canonical',
       valueType: normalizeCatalogValueType(row.field_type),
-      cardinality: 'single',
+      cardinality: row.cardinality === 'multi' ? 'multi' : 'single',
       classification: readDatabaseBoolean(row.is_pii) ? 'pii' : 'internal',
       aliases: [{ namespace: 'oidc', path: fieldKey }],
       uiGroupKey: row.ui_group_key,
@@ -6214,9 +6497,11 @@ function customClaimSchemaToCatalogEntry(
       note: row.description,
       allowedValues: allowedValuesFromCatalog.length > 0 ? allowedValuesFromCatalog : enumValues,
       valueMultiplicity:
-        validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
-          ? validation.valueMultiplicity
-          : null,
+        row.cardinality === 'multi'
+          ? 'multi'
+          : validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+            ? validation.valueMultiplicity
+            : 'single',
       nullable: required ? false : null,
       required,
     },
@@ -6997,6 +7282,16 @@ function normalizeProfileOwner(
   };
 }
 
+function assertDestinationProfileOwner(
+  destinationType: string,
+  owner: { ownerScopeType: string; ownerScopeId: string | null }
+): void {
+  if (destinationType !== 'resource_server') return;
+  if (owner.ownerScopeType !== 'client' || !owner.ownerScopeId) {
+    throw badRequest('resource_server destination profiles must be owned by a specific client');
+  }
+}
+
 function normalizeRegistryOwner(
   tenantId: string,
   ownerScopeType?: string,
@@ -7056,9 +7351,91 @@ function validateDestinationProfileSchema(
       return validateCsvDestinationProfileSchema(schema);
     case 'saml':
       return validateSamlDestinationProfileSchema(schema);
+    case 'resource_server':
+      return validateResourceServerDestinationProfileSchema(schema);
     default:
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
   }
+}
+
+function validateResourceServerDestinationProfileSchema(schema: Record<string, unknown>) {
+  const claims = Array.isArray(schema.claims)
+    ? schema.claims.filter(isRecord)
+    : ([] as Record<string, unknown>[]);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (schema.destinationType !== 'resource_server') {
+    errors.push('destinationType must be resource_server');
+  }
+
+  const activeClaim = claims.find((claim) => claim.claimName === 'active');
+  if (!activeClaim) {
+    errors.push('Resource Server destination profile must include active');
+  } else {
+    if (activeClaim.required === false) {
+      errors.push('Introspection active claim must be required');
+    }
+    if (
+      Array.isArray(activeClaim.requiredScopes) &&
+      activeClaim.requiredScopes.map(String).some(Boolean)
+    ) {
+      errors.push('Introspection active claim must not depend on optional scopes');
+    }
+  }
+
+  const claimNames = new Set<string>();
+  let piiClaimCount = 0;
+  let regulatedClaimCount = 0;
+  let requiredClaimCount = 0;
+  for (const claim of claims) {
+    const claimName = String(claim.claimName ?? '');
+    if (!claimName) {
+      errors.push('claimName is required');
+      continue;
+    }
+    if (claimNames.has(claimName)) errors.push(`${claimName} appears more than once`);
+    claimNames.add(claimName);
+    try {
+      validateOidcClaimName(claimName);
+    } catch {
+      errors.push(`${claimName} is not a valid introspection claim name`);
+    }
+    validateFieldConstraintDefinition(claim, `claim ${claimName}`, errors);
+    if (claim.required === true || claimName === 'active') requiredClaimCount += 1;
+    const requiredScopes = Array.isArray(claim.requiredScopes)
+      ? claim.requiredScopes.map(String).filter(Boolean)
+      : [];
+    const classification = String(claim.classification ?? 'internal');
+    if (classification === 'pii') piiClaimCount += 1;
+    if (classification === 'regulated') regulatedClaimCount += 1;
+    if (
+      claimName !== 'active' &&
+      (classification === 'pii' || classification === 'regulated') &&
+      requiredScopes.length === 0
+    ) {
+      errors.push(`${claimName} must require at least one scope before releasing sensitive data`);
+    }
+  }
+
+  return {
+    errorCount: errors.length,
+    errors,
+    warningCount: warnings.length,
+    warnings,
+    warningSummary: {
+      warningCount: warnings.length,
+      blockingWarningCount: 0,
+      overReleaseWarningCount: 0,
+    },
+    releaseImpact: {
+      destinationType: 'resource_server',
+      claimCount: claims.length,
+      requiredClaimCount,
+      surfaces: ['introspection'],
+      piiClaimCount,
+      regulatedClaimCount,
+    },
+  };
 }
 
 function validateOidcDestinationProfileSchema(
@@ -7149,8 +7526,7 @@ function validateOidcDestinationProfileSchema(
       (classification === 'pii' || classification === 'regulated') &&
       requiredScopes.length === 0
     ) {
-      blockingWarningCount += 1;
-      warnings.push(`${claimName} releases sensitive data without required scopes`);
+      errors.push(`${claimName} must require at least one scope before releasing sensitive data`);
     }
     if (isOverReleasedOidcClaim(claimName, requiredScopes, attributeGroupFields)) {
       overReleaseWarningCount += 1;
@@ -7458,7 +7834,10 @@ function validateFieldConstraintDefinition(
   };
 
   if (definition.allowedValues !== undefined) {
-    if (!Array.isArray(definition.allowedValues)) {
+    if (
+      !Array.isArray(definition.allowedValues) ||
+      definition.allowedValues.some((value) => typeof value !== 'string')
+    ) {
       report(`${path}.allowedValues must be an array of strings`);
     }
   }
@@ -7475,6 +7854,83 @@ function validateFieldConstraintDefinition(
   if (definition.required !== undefined && typeof definition.required !== 'boolean') {
     report(`${path}.required must be boolean`);
   }
+}
+
+function isDestinationProfileMappingReference(profileId: string | null): boolean {
+  return Boolean(
+    profileId &&
+    (profileId.startsWith('destination-profile-') || profileId.startsWith('destination_profile_'))
+  );
+}
+
+function destinationProfileReferenceCandidates(profileId: string): string[] {
+  const candidates = new Set([profileId]);
+  if (profileId.startsWith('destination-profile-')) {
+    candidates.add(profileId.slice('destination-profile-'.length));
+  }
+  return [...candidates];
+}
+
+function findCatalogEntryForMappingRef(
+  entries: FieldCatalogEntrySummary[],
+  ref: Record<string, unknown>
+): FieldCatalogEntrySummary | null {
+  const catalogEntryId = readStringValue(ref.catalogEntryId);
+  if (catalogEntryId) {
+    const exact = entries.find(
+      (entry) => entry.id === catalogEntryId || entry.stableFieldId === catalogEntryId
+    );
+    if (exact) return exact;
+  }
+  const namespace = readStringValue(ref.namespace);
+  const path = readStringValue(ref.path);
+  if (!namespace || !path) return null;
+  return (
+    entries.find(
+      (entry) =>
+        (entry.namespace === namespace && entry.path === path) ||
+        entry.aliases.some((alias) => alias.namespace === namespace && alias.path === path)
+    ) ?? null
+  );
+}
+
+function findDestinationProfileField(
+  destinationType: string,
+  schema: Record<string, unknown>,
+  path: string
+): Record<string, unknown> | null {
+  const definitions =
+    destinationType === 'saml'
+      ? schema.attributes
+      : destinationType === 'csv'
+        ? schema.columns
+        : schema.claims;
+  if (!Array.isArray(definitions)) return null;
+  const key =
+    destinationType === 'saml' ? 'name' : destinationType === 'csv' ? 'columnName' : 'claimName';
+  return (
+    definitions.filter(isRecord).find((definition) => readStringValue(definition[key]) === path) ??
+    null
+  );
+}
+
+function sensitiveClassificationRank(classification: string): number {
+  if (classification === 'regulated') return 2;
+  if (classification === 'pii') return 1;
+  return 0;
+}
+
+function readStringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readStringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
 }
 
 function assertProfileSchemaBudget(value: unknown, path: string): void {
@@ -7562,6 +8018,17 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
   rule.edges?.forEach((edge, index) => {
     assertNonEmptyRecord(edge.sourceRef, `${path}.edges[${index}].sourceRef`);
     assertNonEmptyRecord(edge.targetRef, `${path}.edges[${index}].targetRef`);
+    const targetNamespace = readStringValue(edge.targetRef.namespace);
+    const targetPath = readStringValue(edge.targetRef.path);
+    if (
+      targetNamespace &&
+      targetPath &&
+      isProtectedIdentityMappingDestinationClaim(targetNamespace, targetPath)
+    ) {
+      throw badRequest(
+        `${path}.edges[${index}].targetRef targets a claim reserved by the protocol envelope`
+      );
+    }
     if (edge.edgeKind !== undefined) {
       validatePolicySymbol(edge.edgeKind, `${path}.edges[${index}].edgeKind`);
     }

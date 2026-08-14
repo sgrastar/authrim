@@ -97,6 +97,17 @@ function writeOnly(pattern: string, permission: string, description: string): Ad
 }
 
 export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
+  rule({
+    pattern: '/api/internal/versions/:workerName',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION],
+    description: 'internal Worker version registration',
+  }),
+  readOnly(
+    '/api/internal/version-manager/status',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    'internal Worker version status'
+  ),
   authenticated('/api/admin/me/session', 'current admin session'),
   authenticated('/api/admin/logout', 'current admin logout'),
   authenticated('/api/admin/sessions/me', 'removed legacy session endpoint'),
@@ -879,6 +890,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     'SCIM bearer tokens'
+  ),
+  ...byMethod(
+    '/api/admin/scim-settings',
+    ADMIN_PERMISSIONS.SECURITY_READ,
+    ADMIN_PERMISSIONS.SECURITY_WRITE,
+    ADMIN_PERMISSIONS.SECURITY_WRITE,
+    'SCIM inbound settings'
   ),
   ...byMethod(
     '/api/admin/check-api-keys',

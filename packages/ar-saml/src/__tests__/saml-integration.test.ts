@@ -24,8 +24,10 @@ type SamlTestEnv = Partial<Env> & {
   TDB_TEST_CORE?: D1Database;
   TDB_TEST_PII?: D1Database;
   LOGIN_UI_CLIENT_ID?: string;
+  SAML_STRICT_INRESPONSETO?: string;
 };
 import { handleSPACS } from '../sp/acs';
+import { buildSAMLRequestBindingCookie } from '../sp/request-browser-binding';
 import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
@@ -673,6 +675,7 @@ describe('SAML Integration', () => {
       ISSUER_URL: 'https://auth.example.com',
       DEFAULT_TENANT_ID: 'default',
       UI_URL: 'https://ui.example.com',
+      SAML_STRICT_INRESPONSETO: 'false',
       SAML_ACCOUNT_PROVISIONER: {
         provisionAuthAccount: mockProvisionAuthAccount,
         publishExternalIdpRoute: mockPublishExternalIdpRoute,
@@ -800,6 +803,10 @@ describe('SAML Integration', () => {
     if (relayState) {
       formData.append('RelayState', relayState);
     }
+    const inResponseTo = atob(samlResponse).match(/\bInResponseTo="(_[0-9a-f]{32})"/)?.[1];
+    const browserBindingCookie = inResponseTo
+      ? buildSAMLRequestBindingCookie(inResponseTo)
+      : undefined;
 
     // Create minimal Hono-like context with all required properties
     const context = {
@@ -807,9 +814,11 @@ describe('SAML Integration', () => {
       req: {
         url: 'https://auth.example.com/saml/sp/acs',
         formData: async () => formData,
-        header: vi.fn((name: string) =>
-          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
-        ),
+        header: vi.fn((name: string) => {
+          if (name === 'X-Tenant-Id') return options.headerTenantId;
+          if (name.toLowerCase() === 'cookie') return browserBindingCookie;
+          return undefined;
+        }),
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
       get: vi.fn((key: string) =>
@@ -1050,6 +1059,7 @@ describe('SAML Integration', () => {
     });
 
     it('should reject strict InResponseTo when the stored request is only present in another tenant', async () => {
+      const requestId = `_${'a'.repeat(32)}`;
       const tenantBStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
       const tenantAStoreFetch = vi
         .fn()
@@ -1067,7 +1077,7 @@ describe('SAML Integration', () => {
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
-          inResponseTo: '_tenant_b_request',
+          inResponseTo: requestId,
         }),
         undefined,
         { tenantId: 'tenant-a' }
@@ -1079,13 +1089,14 @@ describe('SAML Integration', () => {
       );
       expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-b:'));
       expect(tenantAStoreFetch).toHaveBeenCalledWith(
-        'https://saml-request-store/consume/_tenant_b_request',
+        `https://saml-request-store/consume/${requestId}`,
         { method: 'POST' }
       );
       expect(tenantBStoreFetch).not.toHaveBeenCalled();
     });
 
     it('should reject strict InResponseTo when tenant-a has the request but tenant-b context does not', async () => {
+      const requestId = `_${'b'.repeat(32)}`;
       const tenantAStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
       const tenantBStoreFetch = vi
         .fn()
@@ -1103,7 +1114,7 @@ describe('SAML Integration', () => {
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
-          inResponseTo: '_shared_request',
+          inResponseTo: requestId,
         }),
         undefined,
         { tenantId: 'tenant-b' }
@@ -1115,7 +1126,7 @@ describe('SAML Integration', () => {
       );
       expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-a:'));
       expect(tenantBStoreFetch).toHaveBeenCalledWith(
-        'https://saml-request-store/consume/_shared_request',
+        `https://saml-request-store/consume/${requestId}`,
         { method: 'POST' }
       );
       expect(tenantAStoreFetch).not.toHaveBeenCalled();

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +12,9 @@ import {
   type MigrationReleaseArtifactPlan,
 } from '../core/migration-release-publication.js';
 import {
+  calculateReleaseManifestChecksum,
   generateReleaseMigrationManifest,
+  serializeReleaseMigrationManifest,
   writeReleaseMigrationManifest,
 } from '../core/release-migrations.js';
 
@@ -126,12 +127,12 @@ function controlDatabase(): DatabaseSync {
 }
 
 describe('migration release artifact publication', () => {
-  it('uses exact manifest bytes and uploads rendered SQLite streams under a digest key', () => {
+  it('uses canonical manifest bytes and uploads rendered SQLite streams under a digest key', () => {
     const fixture = temporaryRelease();
-    const exactManifest = readFileSync(fixture.manifestPath);
+    const manifest = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
     const plan = buildMigrationReleaseArtifactPlan(fixture);
 
-    expect(plan.manifestDigest).toBe(createHash('sha256').update(exactManifest).digest('hex'));
+    expect(plan.manifestDigest).toBe(calculateReleaseManifestChecksum(manifest));
     expect(plan.releaseId).toBe(`0.4.0-draft.${plan.manifestDigest.slice(0, 12)}`);
     expect(plan.manifestObjectKey).toBe(
       `releases/${plan.releaseId}/${plan.manifestDigest}/manifest.json`
@@ -143,6 +144,25 @@ describe('migration release artifact publication', () => {
     const coreSql = plan.objects.find((object) => object.objectKey.endsWith('/001_core.sql'));
     expect(new TextDecoder().decode(coreSql?.bytes)).toContain('unixepoch()');
     expect(plan.objects.at(-1)?.objectKey).toBe(plan.manifestObjectKey);
+    expect(new TextDecoder().decode(plan.objects.at(-1)?.bytes)).toBe(
+      serializeReleaseMigrationManifest(manifest)
+    );
+  });
+
+  it('keeps draft release identity stable across equivalent JSON formatting', () => {
+    const fixture = temporaryRelease();
+    const canonicalPlan = buildMigrationReleaseArtifactPlan(fixture);
+    const manifest = JSON.parse(readFileSync(fixture.manifestPath, 'utf8'));
+    writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+
+    const compactPlan = buildMigrationReleaseArtifactPlan(fixture);
+
+    expect(compactPlan.manifestDigest).toBe(canonicalPlan.manifestDigest);
+    expect(compactPlan.releaseId).toBe(canonicalPlan.releaseId);
+    expect(compactPlan.manifestObjectKey).toBe(canonicalPlan.manifestObjectKey);
+    expect(new TextDecoder().decode(compactPlan.objects.at(-1)?.bytes)).toBe(
+      serializeReleaseMigrationManifest(manifest)
+    );
   });
 
   it('rejects changed SQL before any object can be published', () => {

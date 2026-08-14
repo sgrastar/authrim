@@ -1,5 +1,10 @@
 import type { DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter } from '../../db';
+import {
+  customAttributeSensitiveValueId,
+  customAttributeValueKey,
+  serializeCustomAttributeValue,
+} from './pii-field-storage';
 
 const DEFAULT_PII_BATCH_SIZE = 500;
 
@@ -95,6 +100,25 @@ export async function countUsersWithNonPiiFieldData(
   return result[0]?.count || 0;
 }
 
+export async function countUsersWithPiiFieldData(
+  dbPii: DatabaseSource,
+  tenantId: string,
+  fieldKey: string
+): Promise<number> {
+  const piiAdapter = ensureDatabaseAdapter(dbPii, 'custom-claims-storage-admin-pii');
+  const result = await piiAdapter.query<{ count: number }>(
+    `SELECT COUNT(DISTINCT owner_id) as count
+       FROM identity_sensitive_values
+      WHERE tenant_id = ?
+        AND owner_type = 'runtime_user'
+        AND value_key = ?
+        AND lifecycle_state = 'active'
+        AND value_json IS NOT NULL`,
+    [tenantId, customAttributeValueKey(fieldKey)]
+  );
+  return result[0]?.count || 0;
+}
+
 export async function deleteStoredCustomClaimData(
   params: DeleteStoredCustomClaimDataParams
 ): Promise<StoredCustomClaimMutationResult> {
@@ -160,15 +184,25 @@ export async function deleteStoredCustomClaimData(
         const attrs = JSON.parse(user.value_json) as Record<string, unknown>;
         if (fieldKey in attrs) {
           delete attrs[fieldKey];
-          await piiAdapter.execute(
-            `UPDATE identity_sensitive_values
+          await piiAdapter.batch([
+            {
+              sql: `DELETE FROM identity_sensitive_values
+                     WHERE tenant_id = ?
+                       AND owner_type = 'runtime_user'
+                       AND owner_id = ?
+                       AND value_key = ?`,
+              params: [tenantId, user.owner_id, customAttributeValueKey(fieldKey)],
+            },
+            {
+              sql: `UPDATE identity_sensitive_values
                 SET value_json = ?, updated_at = ?
               WHERE tenant_id = ?
                 AND owner_type = 'runtime_user'
                 AND owner_id = ?
                 AND value_key = 'custom_attributes_json'`,
-            [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id]
-          );
+              params: [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id],
+            },
+          ]);
           affectedUsers++;
         }
       } catch {
@@ -257,15 +291,45 @@ export async function renameStoredCustomClaimData(
         if (oldKey in attrs && !(newKey in attrs)) {
           attrs[newKey] = attrs[oldKey];
           delete attrs[oldKey];
-          await piiAdapter.execute(
-            `UPDATE identity_sensitive_values
+          await piiAdapter.batch([
+            {
+              sql: `DELETE FROM identity_sensitive_values
+                     WHERE tenant_id = ?
+                       AND owner_type = 'runtime_user'
+                       AND owner_id = ?
+                       AND value_key = ?`,
+              params: [tenantId, user.owner_id, customAttributeValueKey(oldKey)],
+            },
+            {
+              sql: `INSERT INTO identity_sensitive_values (
+                      id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
+                      classification, lifecycle_state, created_at, updated_at
+                    ) VALUES (?, ?, 'runtime_user', ?, ?, ?, NULL, 'sensitive', 'active', ?, ?)
+                    ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
+                      value_json = excluded.value_json,
+                      classification = excluded.classification,
+                      lifecycle_state = excluded.lifecycle_state,
+                      updated_at = excluded.updated_at`,
+              params: [
+                customAttributeSensitiveValueId(user.owner_id, newKey),
+                tenantId,
+                user.owner_id,
+                customAttributeValueKey(newKey),
+                serializeCustomAttributeValue(attrs[newKey]),
+                updatedAt,
+                updatedAt,
+              ],
+            },
+            {
+              sql: `UPDATE identity_sensitive_values
                 SET value_json = ?, updated_at = ?
               WHERE tenant_id = ?
                 AND owner_type = 'runtime_user'
                 AND owner_id = ?
                 AND value_key = 'custom_attributes_json'`,
-            [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id]
-          );
+              params: [JSON.stringify(attrs), updatedAt, tenantId, user.owner_id],
+            },
+          ]);
           affectedUsers++;
         }
       } catch {

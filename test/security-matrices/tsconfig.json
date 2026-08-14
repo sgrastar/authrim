@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "moduleResolution": "bundler",
+    "types": ["node", "@cloudflare/workers-types", "vitest/globals"]
+  },
+  "include": [
+    "./**/*.ts",
+    "../../packages/ar-auth/src/**/*.ts",
+    "../../packages/ar-token/src/**/*.ts",
+    "../../packages/ar-lib-core/src/**/*.ts"
+  ],
+  "exclude": [
+    "../../node_modules",
+    "../../packages/**/__tests__/**",
+    "../../packages/**/src/test/**"
+  ]
+}

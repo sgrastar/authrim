@@ -143,7 +143,7 @@ describe('admin-info tenant base URL resolution', () => {
     });
   });
 
-  it('includes global_login_ui_url in tenant info responses', async () => {
+  it('reads tenant inventory without requiring request-scoped tenant metadata', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
@@ -175,9 +175,6 @@ describe('admin-info tenant base URL resolution', () => {
         }),
       get: vi.fn((key: string) => {
         if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
-        if (key === 'tenantMetadataContext') {
-          return { tenantId: 'default', coreDb: env.DB, route: {} };
-        }
         return undefined;
       }),
     } as any);

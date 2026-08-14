@@ -119,7 +119,8 @@ vi.mock('../../common/idp-signing', () => ({
 }));
 
 vi.mock('../signing', () => ({
-  applySAMLResponseSigningPolicy: vi.fn(async (xml: string) => xml),
+  applySAMLResponseSigningPolicy: vi.fn((xml: string) => xml),
+  assertSAMLResponseSigningPolicy: vi.fn(),
 }));
 
 vi.mock('../assertion', () => ({

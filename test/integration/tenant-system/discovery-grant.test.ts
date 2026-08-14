@@ -3,12 +3,12 @@ import { SignJWT } from 'jose';
 import {
   buildEnvForTopology,
   createTenantSystemDiscoveryApp,
-  loadMatrixCsv,
   makeCommonHost,
   makeTenantHost,
   makeTenantRequest,
   seedTenantDataset,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface CookieSessionMatrixRow {
   case_id: string;

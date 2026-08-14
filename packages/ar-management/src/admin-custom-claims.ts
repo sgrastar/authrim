@@ -36,6 +36,7 @@ import {
   countUsersWithPiiCustomClaimData,
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
+  countUsersWithPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   resolveCustomClaimRuntimeSourcesFromEnv,
@@ -181,6 +182,18 @@ async function countNonPiiFieldAcrossStores(
   );
 }
 
+async function countPiiFieldAcrossStores(
+  sources: CustomClaimStorageSources,
+  tenantId: string,
+  fieldKey: string
+): Promise<number> {
+  return sum(
+    await mapWithConcurrency(sources.piiDbs, 4, (db) =>
+      countUsersWithPiiFieldData(db, tenantId, fieldKey)
+    )
+  );
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -233,6 +246,8 @@ const RESERVED_CLAIM_NAMES = new Set([
 /** Valid field types */
 const VALID_FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum'] as const;
 type FieldType = (typeof VALID_FIELD_TYPES)[number];
+const VALID_CARDINALITIES = ['single', 'multi'] as const;
+type Cardinality = (typeof VALID_CARDINALITIES)[number];
 
 /** field_key pattern: snake_case, starts with letter, max 64 chars */
 const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -244,7 +259,13 @@ const STATS_CACHE_PREFIX = 'custom_claim_stats:';
 const STATS_CACHE_TTL = 300; // 5 minutes
 
 /** Valid operation statuses for filtering */
-const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'error']);
+const VALID_OPERATION_STATUSES = new Set([
+  'active',
+  'deleting',
+  'renaming',
+  'reconfiguring',
+  'error',
+]);
 
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
@@ -872,13 +893,13 @@ async function seedPresetCustomClaimSchemas(
 
     await adapter.execute(
       `INSERT INTO custom_claim_schemas (
-        id, tenant_id, field_key, active_field_key, display_label, field_type,
+        id, tenant_id, field_key, active_field_key, display_label, field_type, cardinality,
         is_pii, is_required, is_active, is_system,
         is_searchable, is_exportable, is_vc_claim,
         include_in_id_token, include_in_userinfo, include_in_introspection,
         scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
         examples_json, schema_version, operation_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 0, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         generateId(),
         tenantId,
@@ -886,6 +907,7 @@ async function seedPresetCustomClaimSchemas(
         schema.field_key,
         schema.display_label,
         schema.field_type,
+        schema.cardinality ?? 'single',
         schema.is_pii,
         schema.is_searchable,
         schema.is_exportable,
@@ -1160,6 +1182,16 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       });
     }
 
+    const cardinality = body.cardinality ?? 'single';
+    if (!VALID_CARDINALITIES.includes(cardinality as Cardinality)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'cardinality',
+          reason: `Must be one of: ${VALID_CARDINALITIES.join(', ')}`,
+        },
+      });
+    }
+
     // Validate validation_rules (pre-serialize for size check + reuse)
     let validationRulesJson: string | null = null;
     if (body.validation_rules !== undefined && body.validation_rules !== null) {
@@ -1256,13 +1288,16 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       field_key,
       display_label,
       field_type,
+      cardinality,
       is_pii: body.is_pii ? 1 : 0,
       is_required: body.is_required ? 1 : 0,
       is_active: 1,
       validation_rules: validationRulesJson,
-      include_in_id_token: body.include_in_id_token ? 1 : 0,
-      include_in_userinfo: body.include_in_userinfo ? 1 : 0,
-      include_in_introspection: body.include_in_introspection ? 1 : 0,
+      // Schema Settings defines storage only. Runtime release is authorized by
+      // Schema Mapping and an active Destination Profile.
+      include_in_id_token: 0,
+      include_in_userinfo: 0,
+      include_in_introspection: 0,
       required_scopes: requiredScopesJson,
       scope_mode: scopeMode,
       is_searchable: body.is_searchable !== false ? 1 : 0,
@@ -1617,6 +1652,11 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
  * Update a custom claim schema (is_pii and field_key are immutable)
  */
 export async function adminCustomClaimUpdateHandler(c: AdminContext) {
+  let cardinalityFence: {
+    adapter: DatabaseAdapter;
+    tenantId: string;
+    schemaId: string;
+  } | null = null;
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
@@ -1642,7 +1682,7 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 
     // Block protected field changes for system claims
     if (schema.is_system === 1) {
-      const protectedFields = ['field_key', 'field_type', 'is_pii'];
+      const protectedFields = ['field_key', 'field_type', 'cardinality', 'is_pii'];
       for (const f of protectedFields) {
         if (body[f] !== undefined && body[f] !== schema[f]) {
           return c.json(
@@ -1721,6 +1761,22 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
         },
       });
     }
+
+    if (
+      body.cardinality !== undefined &&
+      !VALID_CARDINALITIES.includes(body.cardinality as Cardinality)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'cardinality',
+          reason: `Must be one of: ${VALID_CARDINALITIES.join(', ')}`,
+        },
+      });
+    }
+
+    const existingCardinality = schema.cardinality === 'multi' ? 'multi' : 'single';
+    const cardinalityChanging =
+      body.cardinality !== undefined && body.cardinality !== existingCardinality;
 
     // Validate validation_rules (pre-serialize for size check + reuse)
     const validationRules = body.validation_rules !== undefined ? body.validation_rules : undefined;
@@ -1824,11 +1880,9 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     const updateableFields: Record<string, (v: unknown) => unknown> = {
       display_label: (v) => v,
       field_type: (v) => v,
+      cardinality: (v) => v,
       is_required: (v) => (v ? 1 : 0),
       is_active: (v) => (v ? 1 : 0),
-      include_in_id_token: (v) => (v ? 1 : 0),
-      include_in_userinfo: (v) => (v ? 1 : 0),
-      include_in_introspection: (v) => (v ? 1 : 0),
       scope_mode: (v) => v,
       is_searchable: (v) => (v ? 1 : 0),
       is_exportable: (v) => (v ? 1 : 0),
@@ -1882,17 +1936,76 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       });
     }
 
+    if (cardinalityChanging) {
+      const fenceDetail = JSON.stringify({
+        operation: 'cardinality_change',
+        from: existingCardinality,
+        to: body.cardinality,
+        started_at: now,
+      });
+      const fenceResult = await adapter.execute(
+        `UPDATE custom_claim_schemas
+            SET operation_status = 'reconfiguring', operation_detail = ?, updated_at = ?
+          WHERE id = ?
+            AND tenant_id = ?
+            AND operation_status = 'active'
+            AND cardinality = ?`,
+        [fenceDetail, now, id, tenantId, existingCardinality]
+      );
+      if (fenceResult.rowsAffected !== 1) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+          variables: {
+            field: 'operation_status',
+            reason: 'Schema changed concurrently. Reload it and retry.',
+          },
+        });
+      }
+      cardinalityFence = { adapter, tenantId, schemaId: id };
+      await invalidateSchemaCache(c, tenantId);
+
+      const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
+      const storedUserCount = schema.is_pii
+        ? await countPiiFieldAcrossStores(storageSources, tenantId, schema.field_key as string)
+        : await countNonPiiFieldAcrossStores(storageSources, tenantId, schema.field_key as string);
+      if (storedUserCount > 0) {
+        await updateCustomClaimSchemaFields({
+          db: adapter,
+          tenantId,
+          schemaId: id,
+          updates: { operation_status: 'active', operation_detail: null, updated_at: now },
+          allowedCurrentStatuses: ['reconfiguring'],
+        });
+        cardinalityFence = null;
+        await invalidateSchemaCache(c, tenantId);
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+          variables: {
+            field: 'cardinality',
+            reason:
+              'Cardinality cannot be changed while stored values exist. Remove or migrate the field data first.',
+          },
+        });
+      }
+
+      updates.push('operation_status = ?', 'operation_detail = ?');
+      updateParams.push('active', null);
+    }
+
     updates.push('updated_at = ?');
     updateParams.push(now);
 
-    await updateCustomClaimSchemaFields({
+    const updatedRows = await updateCustomClaimSchemaFields({
       db: adapter,
       tenantId,
       schemaId: id,
       updates: Object.fromEntries(
         updates.map((clause, index) => [clause.replace(' = ?', ''), updateParams[index]])
       ),
+      allowedCurrentStatuses: [cardinalityChanging ? 'reconfiguring' : 'active'],
     });
+    if (updatedRows !== 1) {
+      throw new Error('custom_claim_schema_update_conflict');
+    }
+    cardinalityFence = null;
 
     // Fetch updated schema
     const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
@@ -1924,6 +2037,24 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 
     return c.json({ schema: updated });
   } catch (error) {
+    if (cardinalityFence) {
+      try {
+        await updateCustomClaimSchemaFields({
+          db: cardinalityFence.adapter,
+          tenantId: cardinalityFence.tenantId,
+          schemaId: cardinalityFence.schemaId,
+          updates: {
+            operation_status: 'active',
+            operation_detail: null,
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+          allowedCurrentStatuses: ['reconfiguring'],
+        });
+        await invalidateSchemaCache(c, cardinalityFence.tenantId);
+      } catch {
+        // Best effort: the operation remains visible as reconfiguring for operator recovery.
+      }
+    }
     console.error('Failed to update custom claim schema:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

@@ -23,7 +23,7 @@ Load testing framework for Authrim OIDC Provider using K6.
 > - This folder is primarily for throughput / capacity benchmarking.
 > - Some benchmark or seed flows assume benchmark-only helpers or permissive preconditions that are not always available in a hardened deployed environment.
 > - For generated/deployed env validation against supported APIs only, use
->   `test/environment-validation/load-generated-live-safe.ts`.
+>   `test/generated-environment/load-generated-live-safe.ts`.
 
 ## Table of Contents
 
@@ -146,8 +146,8 @@ k6 run \
 If you want to exercise a real generated/deployed environment without relying on benchmark-only helpers, use:
 
 ```bash
-pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --env single --profile safe
-pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --config /path/to/.authrim/single/config.json --profile medium --json
+pnpm exec tsx test/generated-environment/load-generated-live-safe.ts --env single --profile safe
+pnpm exec tsx test/generated-environment/load-generated-live-safe.ts --config /path/to/.authrim/single/config.json --profile medium --json
 ```
 
 This runner:

@@ -3,8 +3,13 @@
 	import {
 		adminScimTokensAPI,
 		type ScimToken,
-		type CreateScimTokenResponse
+		type CreateScimTokenResponse,
+		type ScimInboundSettings
 	} from '$lib/api/admin-scim-tokens';
+	import {
+		adminIdentityMappingAPI,
+		type IdentityMappingFieldMappingSetSummary
+	} from '$lib/api/admin-identity-mapping';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
@@ -15,6 +20,20 @@
 	let tokens: ScimToken[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
+	let settings = $state<ScimInboundSettings>({
+		enabled: false,
+		usersEnabled: true,
+		groupsEnabled: true,
+		bulkEnabled: true,
+		mappingSetId: null,
+		bulkMaxOperations: 100,
+		bulkMaxPayloadSize: 1048576
+	});
+	let mappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
+	let settingsLoading = $state(true);
+	let settingsSaving = $state(false);
+	let settingsMessage = $state('');
+	let settingsError = $state('');
 
 	// Create token dialog state
 	let showCreateDialog = $state(false);
@@ -49,8 +68,44 @@
 	}
 
 	onMount(() => {
-		loadTokens();
+		void Promise.all([loadTokens(), loadSettingsAndMappings()]);
 	});
+
+	async function loadSettingsAndMappings() {
+		settingsLoading = true;
+		settingsError = '';
+		try {
+			const [settingsResult, mappingResult] = await Promise.all([
+				adminScimTokensAPI.getSettings(),
+				adminIdentityMappingAPI.listFieldMappingSets()
+			]);
+			settings = settingsResult.settings;
+			mappingSets = mappingResult.fieldMappingSets.filter(
+				(mappingSet) => mappingSet.lifecycleState === 'active'
+			);
+		} catch (err) {
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_scim_tokens_settings_load_failed();
+		} finally {
+			settingsLoading = false;
+		}
+	}
+
+	async function saveSettings() {
+		settingsSaving = true;
+		settingsError = '';
+		settingsMessage = '';
+		try {
+			const result = await adminScimTokensAPI.updateSettings(settings);
+			settings = result.settings;
+			settingsMessage = $LL.admin_scim_tokens_settings_saved();
+		} catch (err) {
+			settingsError =
+				err instanceof Error ? err.message : $LL.admin_scim_tokens_settings_save_failed();
+		} finally {
+			settingsSaving = false;
+		}
+	}
 
 	function openCreateDialog() {
 		newTokenDescription = '';
@@ -160,6 +215,88 @@
 	{#if error}
 		<div class="alert alert-error">{error}</div>
 	{/if}
+
+	<AdminSection title={$LL.admin_scim_tokens_inbound_title()}>
+		{#if settingsError}<div class="alert alert-error">{settingsError}</div>{/if}
+		{#if settingsMessage}<div class="alert alert-success">{settingsMessage}</div>{/if}
+		{#if settingsLoading}
+			<p>{$LL.admin_scim_tokens_settings_loading()}</p>
+		{:else}
+			<div class="settings-grid">
+				<label class="check-row">
+					<input type="checkbox" bind:checked={settings.enabled} />
+					<span>{$LL.admin_scim_tokens_inbound_enabled()}</span>
+				</label>
+				<div class="admin-field dialog-field">
+					<label class="admin-field__label" for="mappingSet"
+						>{$LL.admin_scim_tokens_mapping_set()}</label
+					>
+					<select id="mappingSet" class="admin-input" bind:value={settings.mappingSetId}>
+						<option value={null}>{$LL.admin_scim_tokens_mapping_set_placeholder()}</option>
+						{#each mappingSets as mappingSet (mappingSet.id)}
+							<option value={mappingSet.id}>
+								{mappingSet.displayName} ({mappingSet.lifecycleState})
+							</option>
+						{/each}
+					</select>
+					<p class="form-hint">
+						{$LL.admin_scim_tokens_mapping_set_hint()}
+					</p>
+				</div>
+				<div class="operation-grid">
+					<label class="check-row"
+						><input type="checkbox" bind:checked={settings.usersEnabled} />
+						{$LL.admin_scim_tokens_users_resource()}</label
+					>
+					<label class="check-row"
+						><input type="checkbox" bind:checked={settings.groupsEnabled} />
+						{$LL.admin_scim_tokens_groups_resource()}</label
+					>
+					<label class="check-row"
+						><input type="checkbox" bind:checked={settings.bulkEnabled} />
+						{$LL.admin_scim_tokens_bulk_resource()}</label
+					>
+				</div>
+				<div class="limit-grid">
+					<div class="admin-field dialog-field">
+						<label class="admin-field__label" for="bulkMaxOperations"
+							>{$LL.admin_scim_tokens_bulk_max_operations()}</label
+						>
+						<input
+							id="bulkMaxOperations"
+							class="admin-input"
+							type="number"
+							min="1"
+							max="1000"
+							bind:value={settings.bulkMaxOperations}
+						/>
+					</div>
+					<div class="admin-field dialog-field">
+						<label class="admin-field__label" for="bulkMaxPayloadSize"
+							>{$LL.admin_scim_tokens_bulk_max_payload()}</label
+						>
+						<input
+							id="bulkMaxPayloadSize"
+							class="admin-input"
+							type="number"
+							min="1024"
+							max="10485760"
+							bind:value={settings.bulkMaxPayloadSize}
+						/>
+					</div>
+				</div>
+				<button
+					class="btn btn-primary"
+					onclick={saveSettings}
+					disabled={settingsSaving || (settings.enabled && !settings.mappingSetId)}
+				>
+					{settingsSaving
+						? $LL.admin_scim_tokens_settings_saving()
+						: $LL.admin_scim_tokens_settings_save()}
+				</button>
+			</div>
+		{/if}
+	</AdminSection>
 
 	{#if loading}
 		<div class="loading-state">
@@ -353,6 +490,25 @@
 		display: grid;
 		gap: 6px;
 		margin-bottom: 16px;
+	}
+
+	.settings-grid {
+		display: grid;
+		gap: 16px;
+		max-width: 760px;
+	}
+
+	.check-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.operation-grid,
+	.limit-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 12px;
 	}
 
 	.dialog-field :global(.admin-field__label) {

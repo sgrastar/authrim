@@ -2,18 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 
-const { mockAdapter, mockGetOperationalLog, mockGrantRepo } = vi.hoisted(() => ({
-  mockAdapter: {
-    query: vi.fn(),
-    queryOne: vi.fn(),
-    execute: vi.fn(),
-  } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
-  mockGetOperationalLog: vi.fn(),
-  mockGrantRepo: {
-    getElevationGrantByPublicId: vi.fn(),
-    listActiveElevationGrants: vi.fn(),
-  },
-}));
+const { mockAdapter, mockCreateAuthContextFromHono, mockGetOperationalLog, mockGrantRepo } =
+  vi.hoisted(() => ({
+    mockAdapter: {
+      query: vi.fn(),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+    } satisfies Pick<DatabaseAdapter, 'query' | 'queryOne' | 'execute'>,
+    mockCreateAuthContextFromHono: vi.fn(),
+    mockGetOperationalLog: vi.fn(),
+    mockGrantRepo: {
+      getElevationGrantByPublicId: vi.fn(),
+      listActiveElevationGrants: vi.fn(),
+    },
+  }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -54,7 +56,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           await next();
         }
     ),
-    requireDedicatedAdminDatabaseAdapter: vi.fn(() => mockAdapter),
+    createAuthContextFromHono: mockCreateAuthContextFromHono,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getOperationalLog: mockGetOperationalLog,
     ElevationGrantRepository: vi.fn(function MockElevationGrantRepository() {
@@ -79,6 +81,7 @@ function createApp() {
 describe('operational logs router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCreateAuthContextFromHono.mockReturnValue({ coreAdapter: mockAdapter });
     mockGrantRepo.listActiveElevationGrants.mockResolvedValue([]);
     mockAdapter.query.mockResolvedValue([
       {
@@ -120,6 +123,7 @@ describe('operational logs router', () => {
       expect.stringContaining('FROM operational_logs'),
       expect.arrayContaining(['tenant-a', expect.any(Number), 'user', 'user-1'])
     );
+    expect(mockCreateAuthContextFromHono).toHaveBeenCalledWith(expect.anything(), 'tenant-a');
   });
 
   it('requires detail permission for full reason detail', async () => {
@@ -170,7 +174,12 @@ describe('operational logs router', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reason_detail: string };
     expect(body.reason_detail).toContain('immediate suspension');
-    expect(mockGetOperationalLog).toHaveBeenCalled();
+    expect(mockGetOperationalLog).toHaveBeenCalledWith(
+      mockAdapter,
+      expect.objectContaining({ inlineEncryptionKey: 'test-key' }),
+      'tenant-a',
+      'op-1'
+    );
   });
 
   it('returns operational log detail with a matching elevation grant', async () => {

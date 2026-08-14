@@ -44,7 +44,8 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
         id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
         record_count, byte_count, checksum_sha256, compression, encryption_scope,
         key_version, created_at, committed_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING`,
       [
         row.id,
         row.tenantKey,
@@ -80,7 +81,8 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
           record_id, tenant_key, log_type, plane, surface, object_catalog_id, chunk_id,
           line_number, block_offset, block_length, record_offset, record_length,
           event_at, index_profile, indexed_fields, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(tenant_key, log_type, plane, record_id) DO NOTHING`,
           params: [
             row.recordId,
             row.tenantKey,
