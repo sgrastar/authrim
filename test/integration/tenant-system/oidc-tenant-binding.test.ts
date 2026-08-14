@@ -1,20 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
 import { authorizeHandler } from '../../../packages/ar-auth/src/authorize';
+import { loginChallengeGetHandler } from '../../../packages/ar-auth/src/login-challenge';
 import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
+import { clearLoginDiscoveryConfigCacheForTests } from '../../../packages/ar-login-ui/src/lib/login-discovery-config-cache';
 import { getChallengeStoreByChallengeId } from '@authrim/ar-lib-core';
-import { tenantSystemProfiles } from '../../fixtures/tenant-system/profiles';
+import { tenantSystemProfiles } from './fixtures/profiles';
 import {
   applyLoginEntryProfile,
   buildEnvForTopology,
   createTenantSystemApiFetch,
   createTenantSystemDiscoveryApp,
-  loadMatrixCsv,
   makeCommonHost,
   makeTenantHost,
   makeTenantRequest,
   seedTenantDataset,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface OidcTenantMatrixRow {
   case_id: string;
@@ -47,6 +49,7 @@ describe('tenant-system OIDC tenant binding matrix', () => {
     const app = new Hono();
     app.use('*', async (c, next) => {
       c.set('tenantId', tenantId);
+      c.set('tenantMetadataContext' as never, { tenantId, coreDb: c.env.DB } as never);
       await next();
     });
     app.get('/authorize', authorizeHandler);
@@ -61,6 +64,8 @@ describe('tenant-system OIDC tenant binding matrix', () => {
       redirect_uri: redirectUri,
       scope: 'openid',
       state: 'tenant-system-state',
+      code_challenge: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      code_challenge_method: 'S256',
     });
     return `/authorize?${params.toString()}`;
   }
@@ -86,7 +91,7 @@ describe('tenant-system OIDC tenant binding matrix', () => {
       'https://first.tenant-system.authrim.test'
     ).searchParams.get('challenge_id');
     expect(challengeId).toBeTruthy();
-    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!);
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!, 'first');
     const challenge = await challengeStore.getChallengeRpc(challengeId!);
     expect(challenge?.metadata).toMatchObject({
       client_id: 'client_first',
@@ -109,8 +114,8 @@ describe('tenant-system OIDC tenant binding matrix', () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: 'invalid_client',
-      error_description: 'client_id is invalid for this tenant',
+      error: 'invalid_request',
+      error_description: 'client_id is invalid',
     });
   });
 
@@ -166,7 +171,7 @@ describe('tenant-system OIDC tenant binding matrix', () => {
       response.headers.get('location')!,
       `https://${host}`
     ).searchParams.get('challenge_id');
-    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!);
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!, 'first');
     const challenge = await challengeStore.getChallengeRpc(challengeId!);
     expect(challenge?.metadata).toMatchObject({
       tenant_id: 'first',
@@ -191,7 +196,7 @@ describe('tenant-system OIDC tenant binding matrix', () => {
       response.headers.get('location')!,
       `https://${host}`
     ).searchParams.get('challenge_id');
-    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!);
+    const challengeStore = await getChallengeStoreByChallengeId(env, challengeId!, 'second');
     const challenge = await challengeStore.getChallengeRpc(challengeId!);
     expect(challenge?.metadata).toMatchObject({
       tenant_id: 'second',
@@ -200,9 +205,12 @@ describe('tenant-system OIDC tenant binding matrix', () => {
   });
 
   it('OIDC-009 challenge login bypasses common discovery enforcement', async () => {
+    clearLoginDiscoveryConfigCacheForTests();
     const { app, env } = await createAuthorizeFlow('first');
     const host = makeTenantHost('D3_custom_subdomain', 'first');
-    const apiFetch = createTenantSystemApiFetch(createTenantSystemDiscoveryApp('first'), env);
+    const discoveryApp = createTenantSystemDiscoveryApp('first');
+    discoveryApp.get('/auth/login-challenge', loginChallengeGetHandler);
+    const apiFetch = createTenantSystemApiFetch(discoveryApp, env);
 
     const response = await app.request(
       makeTenantRequest(

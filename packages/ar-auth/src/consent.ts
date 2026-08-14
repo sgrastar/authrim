@@ -27,16 +27,20 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   buildAuthorizeContinuationUrl,
+  CONSENT_CONFIRMATION_COOKIE_NAME,
   createAuthorizationRequestContinuation,
 } from './authorization-continuation';
 import {
   getConsentRBACData,
   getConsentUserInfo,
   getActingAsUserInfo,
+  validateActingAsRelationship,
   parseConsentFeatureFlags,
   getRolesInOrganization,
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
+  getSessionStoreBySessionId,
+  isShardedSessionId,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
@@ -61,6 +65,8 @@ import {
   getTenantSystemSettings,
   resolveClientTrustPolicy,
   resolveAccountDataContextFromHono,
+  generateSecureRandomString,
+  getSessionCookieSameSite,
 } from '@authrim/ar-lib-core';
 import { redirectWithError } from './authorize';
 import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
@@ -101,13 +107,79 @@ function acceptsJson(c: Context): boolean {
   return accept.includes('application/json');
 }
 
+type SessionBoundConsentChallenge = {
+  userId: string;
+  metadata?: ConsentChallengeMetadata & { session_id?: unknown };
+};
+
+async function validateConsentSessionBinding(
+  c: Context<{ Bindings: Env }>,
+  challenge: SessionBoundConsentChallenge
+): Promise<Response | null> {
+  const boundSessionId = challenge.metadata?.session_id;
+  // Consent is an authenticated browser action. A bearer challenge without an explicit session
+  // binding lets any holder approve it, so legacy/unbound challenges must fail closed.
+  if (typeof boundSessionId !== 'string' || boundSessionId.length === 0) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Consent approval requires the bound authenticated session',
+      },
+      401
+    );
+  }
+
+  const rawCookie = c.req.header('Cookie')?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+  let presentedSessionId: string | undefined;
+  try {
+    presentedSessionId = rawCookie ? decodeURIComponent(rawCookie) : undefined;
+  } catch {
+    presentedSessionId = undefined;
+  }
+
+  if (presentedSessionId !== boundSessionId || !isShardedSessionId(boundSessionId)) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Consent approval requires the bound authenticated session',
+      },
+      401
+    );
+  }
+
+  const tenantId = getTenantIdFromContext(c);
+  const { stub } = getSessionStoreBySessionId(c.env, boundSessionId, tenantId);
+  const session = (await stub.getSessionRpc(boundSessionId)) as {
+    userId?: string;
+    expiresAt?: number;
+  } | null;
+  if (
+    !session ||
+    session.userId !== challenge.userId ||
+    typeof session.expiresAt !== 'number' ||
+    session.expiresAt <= Date.now()
+  ) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Consent approval requires the bound authenticated session',
+      },
+      401
+    );
+  }
+
+  return null;
+}
+
 async function createConsentConfirmationChallenge(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   userId: string,
+  sessionId: string,
   authorizationRequest: Record<string, unknown>
-): Promise<string> {
+): Promise<{ id: string; browserBinding: string }> {
   const confirmationId = crypto.randomUUID();
+  const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
@@ -118,10 +190,12 @@ async function createConsentConfirmationChallenge(
     ttl: 60,
     metadata: {
       purpose: 'authorize_consent_confirmation',
+      sessionId,
+      browserBinding,
       authorization_request: authorizationRequest,
     },
   });
-  return confirmationId;
+  return { id: confirmationId, browserBinding };
 }
 
 /**
@@ -216,6 +290,9 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+
+    const sessionError = await validateConsentSessionBinding(c, typedChallengeData);
+    if (sessionError) return sessionError;
 
     const metadata = typedChallengeData.metadata || {};
     const client_id = metadata.client_id as string;
@@ -634,6 +711,7 @@ function renderHtmlConsent(
     <ul class="scopes">
       ${consentItems
         .map((item) => {
+          const safeDocumentUrl = safeHttpsDisplayUrl(item.document_url);
           const hiddenInput =
             item.checkbox_mode === 'none'
               ? `<input form="approve-consent-form" type="hidden" name="consent_item_decision:${escapeHtml(item.statement_id)}" value="granted">`
@@ -652,7 +730,7 @@ function renderHtmlConsent(
           ${hiddenInput}
           <div class="scope-title">${escapeHtml(item.title)}</div>
           <div class="scope-desc">${escapeHtml(item.description || item.slug)}</div>
-          ${item.document_url ? `<div class="scope-desc"><a href="${escapeHtml(item.document_url)}" target="_blank" rel="noopener noreferrer">Read document</a></div>` : ''}
+          ${safeDocumentUrl ? `<div class="scope-desc"><a href="${escapeHtml(safeDocumentUrl)}" target="_blank" rel="noopener noreferrer">Read document</a></div>` : ''}
           ${checkbox}
         </li>
       `;
@@ -896,13 +974,30 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Consume consent challenge from ChallengeStore (RPC)
+    // Verify the current browser session before consuming the bearer challenge. The challenge is
+    // routing state, not proof that the stored user approved this operation.
     // Use challengeId-based sharding - must match the shard used during challenge creation
     const challengeStore = await getChallengeStoreByChallengeId(
       c.env,
       challenge_id,
       getTenantIdFromContext(c)
     );
+
+    const pendingChallenge = (await challengeStore.getChallengeRpc(
+      challenge_id
+    )) as SessionBoundConsentChallenge | null;
+    if (!pendingChallenge) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Invalid or expired challenge',
+        },
+        400
+      );
+    }
+    const sessionError = await validateConsentSessionBinding(c, pendingChallenge);
+    if (sessionError) return sessionError;
+    const consentSessionId = pendingChallenge.metadata!.session_id as string;
 
     let consumedChallengeData: {
       userId: string;
@@ -1043,6 +1138,44 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     await resolveAccountDataContextFromHono(c, userId);
     const authCtx = createAccountAuthContextFromHono(c, tenantId);
+
+    const requestedActingAsUserId =
+      acting_as_user_id ||
+      (typeof metadata.acting_as === 'string' ? metadata.acting_as : undefined);
+    let validatedActingAsUserId: string | undefined;
+    if (requestedActingAsUserId) {
+      const features = parseConsentFeatureFlags(
+        c.env.ENABLE_RBAC_CONSENT_ORG_SELECTOR,
+        c.env.ENABLE_RBAC_CONSENT_ACTING_AS,
+        c.env.ENABLE_RBAC_CONSENT_SHOW_ROLES
+      );
+      if (!features.acting_as_enabled) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Acting-as consent is not permitted',
+          },
+          403
+        );
+      }
+
+      const relationship = await validateActingAsRelationship(
+        authCtx.coreAdapter,
+        userId,
+        requestedActingAsUserId,
+        tenantId
+      );
+      if (!relationship.valid) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Acting-as consent is not permitted',
+          },
+          403
+        );
+      }
+      validatedActingAsUserId = requestedActingAsUserId;
+    }
 
     // Get settings for granular scopes and expiration
     const configManager = createOAuthConfigManager(c.env);
@@ -1285,28 +1418,34 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const authorizationRequest = createAuthorizationRequestContinuation(authorizationMetadata, {
       scope: effectiveScope,
       org_id: effectiveOrgId || undefined,
-      acting_as:
-        acting_as_user_id ||
-        (typeof metadata.acting_as === 'string' ? metadata.acting_as : undefined),
+      acting_as: validatedActingAsUserId,
     });
-    const consentConfirmationId = await createConsentConfirmationChallenge(
+    const consentConfirmation = await createConsentConfirmationChallenge(
       c,
       tenantId,
       userId,
+      consentSessionId,
       authorizationRequest
     );
     const redirectUrl = buildAuthorizeContinuationUrl(
       authorizationMetadata,
-      consentConfirmationId,
+      consentConfirmation.id,
       c.env.ISSUER_URL || 'https://authrim.local',
       '_consent_confirmation_challenge'
     );
 
-    // For JSON requests, return redirect URL instead of redirecting
-    if (contentType.includes('application/json')) {
-      return c.json({ redirect_url: redirectUrl });
-    }
-    return c.redirect(redirectUrl, 302);
+    const response = contentType.includes('application/json')
+      ? c.json({ redirect_url: redirectUrl })
+      : c.redirect(redirectUrl, 302);
+    response.headers.append(
+      'Set-Cookie',
+      `${CONSENT_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(
+        consentConfirmation.browserBinding
+      )}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(
+        c.env
+      )}; Secure; Max-Age=120`
+    );
+    return response;
   } catch (error) {
     log.error('Consent post error', { action: 'post_consent' }, error as Error);
     return c.json(

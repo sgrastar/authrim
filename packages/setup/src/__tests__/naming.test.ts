@@ -181,7 +181,12 @@ describe('getBuiltinD1BindingsForComponent', () => {
     ]);
     expect(getBuiltinD1BindingsForComponent('ar-token')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-userinfo')).toEqual(['LOOKUP_DB']);
-    expect(getBuiltinD1BindingsForComponent('ar-bridge')).toEqual(['DB', 'DB_PII', 'LOOKUP_DB']);
+    expect(getBuiltinD1BindingsForComponent('ar-bridge')).toEqual([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'LOOKUP_DB',
+    ]);
     expect(getBuiltinD1BindingsForComponent('ar-discovery')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-agent-access')).toEqual(['DB_ADMIN']);

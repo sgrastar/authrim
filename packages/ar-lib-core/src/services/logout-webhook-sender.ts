@@ -395,7 +395,7 @@ export function createLogoutWebhookOrchestrator(kv: KVNamespace): LogoutWebhookO
                 issuer: params.issuer,
                 clientId: client.client_id,
                 userId: config.include_sub_claim ? params.userId : undefined,
-                sessionId: config.include_sid_claim ? params.sessionId : undefined,
+                sessionId: config.include_sid_claim ? client.oidc_sid : undefined,
                 includeSub: config.include_sub_claim,
                 includeSid: config.include_sid_claim,
               });

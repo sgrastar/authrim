@@ -34,26 +34,6 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_entry_mode_discovery_required_sample:
 		'Use when the shared login entry should always choose a tenant first.',
 	admin_tenant_discovery_example: 'Example: {sample:string}',
-	admin_tenant_discovery_email_resolution: 'Email Resolution',
-	admin_tenant_discovery_email_resolution_exact_then_domain:
-		'Exact email, then email-domain fallback',
-	admin_tenant_discovery_email_resolution_exact_only: 'Exact email only',
-	admin_tenant_discovery_email_resolution_disabled_description:
-		'Email-based discovery is currently disabled.',
-	admin_tenant_discovery_email_resolution_disabled_sample:
-		'Enable Email address below to use this policy.',
-	admin_tenant_discovery_email_resolution_exact_only_description:
-		'Resolve the tenant only when the full email address is explicitly mapped.',
-	admin_tenant_discovery_email_resolution_exact_only_sample:
-		'alice@example.edu must have its own mapping.',
-	admin_tenant_discovery_email_resolution_exact_then_domain_description:
-		'Try an exact email mapping first, then fall back to the email domain if no exact match exists.',
-	admin_tenant_discovery_email_resolution_exact_then_domain_sample:
-		'alice@example.edu falls back to example.edu.',
-	admin_tenant_discovery_email_resolution_disabled_policy_description:
-		'Do not resolve tenants from email addresses.',
-	admin_tenant_discovery_email_resolution_disabled_policy_sample:
-		'Users must use another enabled discovery method.',
 	admin_tenant_discovery_selection_policy: 'Selection Policy',
 	admin_tenant_discovery_selection_auto_if_single: 'Auto if single',
 	admin_tenant_discovery_selection_always_select: 'Always select',

@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "suite_id": "oauth-oidc-authorization-flow",
+  "expectation": "secure",
+  "confirmed_findings": 17,
+  "findings": [
+    {
+      "id": "AO-01",
+      "title": "Authorization-code concurrent redemption",
+      "root_cause": "RC-03",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-lib-core",
+      "file": "src/durable-objects/__tests__/AuthorizationCodeStore.test.ts"
+    },
+    {
+      "id": "AO-02",
+      "title": "PAR private_key_jwt authentication bypass",
+      "root_cause": "RC-01",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/par.test.ts"
+    },
+    {
+      "id": "AO-03",
+      "title": "JAR client identity confusion",
+      "root_cause": "RC-01",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/https-request-uri-security.test.ts"
+    },
+    {
+      "id": "AO-04",
+      "title": "Token endpoint authentication downgrade",
+      "root_cause": "RC-01",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-token",
+      "file": "src/__tests__/client-auth.test.ts"
+    },
+    {
+      "id": "AO-06",
+      "title": "Implicit and hybrid tokens in query response mode",
+      "root_cause": "RC-05",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/authorize.test.ts"
+    },
+    {
+      "id": "AO-07",
+      "title": "Simultaneous request and request_uri",
+      "root_cause": "RC-02",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/authorize.test.ts"
+    },
+    {
+      "id": "AO-08",
+      "title": "redirect_uri validation after code consumption",
+      "root_cause": "RC-03",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-token",
+      "file": "src/__tests__/client-auth.test.ts"
+    },
+    {
+      "id": "AO-09",
+      "title": "DPoP JKT validation after code consumption",
+      "root_cause": "RC-03",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-token",
+      "file": "src/__tests__/client-auth.test.ts"
+    },
+    {
+      "id": "AO-10",
+      "title": "OIDC sid and internal session ID confusion",
+      "root_cause": "RC-04",
+      "primary_treatment": "architectural",
+      "package_dir": ".",
+      "file": "test/integration/sid-logout-data-flow.security.test.ts"
+    },
+    {
+      "id": "AO-11",
+      "title": "Expired-code per-user counter leak",
+      "root_cause": "RC-03",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-lib-core",
+      "file": "src/durable-objects/__tests__/AuthorizationCodeStore.test.ts"
+    },
+    {
+      "id": "AO-12",
+      "title": "Issuer-alias code and PAR mix-up",
+      "root_cause": "RC-04",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-lib-core",
+      "file": "src/middleware/__tests__/request-context-issuer-alias-security.test.ts"
+    },
+    {
+      "id": "AO-14",
+      "title": "PKCE code_verifier ABNF not enforced",
+      "root_cause": "RC-05",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-lib-core",
+      "file": "src/durable-objects/__tests__/AuthorizationCodeStore.test.ts"
+    },
+    {
+      "id": "AO-15",
+      "title": "Built-in flow form reflected XSS",
+      "root_cause": "RC-06",
+      "primary_treatment": "local",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/authorize.test.ts"
+    },
+    {
+      "id": "AO-16",
+      "title": "GET logout CSRF",
+      "root_cause": "RC-06",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-auth",
+      "file": "src/__tests__/logout.test.ts"
+    },
+    {
+      "id": "AO-17",
+      "title": "CIBA and Admin Agent registered client authentication downgrade",
+      "root_cause": "RC-01",
+      "primary_treatment": "architectural",
+      "tests": [
+        {
+          "package_dir": "packages/ar-async",
+          "file": "src/__tests__/ciba-integration.test.ts"
+        },
+        {
+          "package_dir": "packages/ar-auth",
+          "file": "src/__tests__/admin-agent-oauth.test.ts"
+        },
+        {
+          "package_dir": "packages/ar-token",
+          "file": "src/__tests__/client-auth.test.ts"
+        },
+        {
+          "package_dir": "packages/ar-token",
+          "file": "src/__tests__/admin-agent-token.test.ts"
+        }
+      ]
+    },
+    {
+      "id": "AO-18",
+      "title": "Confidential device-code redemption without client authentication",
+      "root_cause": "RC-01",
+      "primary_treatment": "architectural",
+      "package_dir": "packages/ar-token",
+      "file": "src/__tests__/client-auth.test.ts"
+    },
+    {
+      "id": "AO-19",
+      "title": "Predeployment session-client SID namespace remains active",
+      "root_cause": "RC-04",
+      "primary_treatment": "architectural",
+      "tests": [
+        {
+          "package_dir": "packages/ar-lib-core",
+          "file": "src/durable-objects/__tests__/SessionStore.test.ts"
+        },
+        {
+          "package_dir": ".",
+          "file": "test/integration/sid-logout-data-flow.security.test.ts"
+        }
+      ]
+    }
+  ]
+}

@@ -86,6 +86,13 @@ interface OutboxStatus {
   pendingCount: number;
 }
 
+function targetDatabaseId(route: DatabaseRouteRow): string {
+  if (!route.target_database_id) {
+    throw new Error('control_tenant_placement_database_route_unavailable');
+  }
+  return route.target_database_id;
+}
+
 function primary(database: D1Database): D1DatabaseSession {
   if (typeof database.withSession !== 'function') throw new Error('d1_sessions_api_required');
   return database.withSession('first-primary');
@@ -320,7 +327,12 @@ export class TenantPlacementMigrationReconciler {
     }
 
     if (tableIndex < inventory.length) {
-      if (!Number.isSafeInteger(shard.capture_fencing_token) || shard.capture_fencing_token! < 1) {
+      const fencingToken = shard.capture_fencing_token;
+      if (
+        typeof fencingToken !== 'number' ||
+        !Number.isSafeInteger(fencingToken) ||
+        fencingToken < 1
+      ) {
         throw new Error('control_tenant_placement_purge_capture_invalid');
       }
       const tenantKey = await this.tenantKey(operation);
@@ -331,7 +343,7 @@ export class TenantPlacementMigrationReconciler {
         tenantKey,
         sourceShardId: shard.source_shard_id,
         migrationGeneration: operation.target_policy_generation,
-        fencingToken: shard.capture_fencing_token!,
+        fencingToken,
         inventory: [table],
         now: this.now(),
       });
@@ -706,9 +718,10 @@ export class TenantPlacementMigrationReconciler {
       return;
     }
     const route = await this.databaseRoutes(shard);
+    const targetDatabase = targetDatabaseId(route);
     const [sourceSchema, targetSchema] = await Promise.all([
       inspectTenantMigrationSchema(this.d1, route.source_database_id),
-      inspectTenantMigrationSchema(this.d1, route.target_database_id!),
+      inspectTenantMigrationSchema(this.d1, targetDatabase),
     ]);
     if (!rowsEqual(sourceSchema, targetSchema)) {
       throw new Error('control_tenant_placement_schema_mismatch');
@@ -984,7 +997,7 @@ export class TenantPlacementMigrationReconciler {
     });
     await applyTenantMigrationBackfillPage({
       executor: this.d1,
-      targetDatabaseId: route.target_database_id!,
+      targetDatabaseId: targetDatabaseId(route),
       table,
       tenantId: operation.tenant_id,
       tenantKey,
@@ -1111,17 +1124,21 @@ export class TenantPlacementMigrationReconciler {
     const row = status[0]?.results?.[0] as
       | { max_sequence?: unknown; pending_count?: unknown }
       | undefined;
+    const maxSequence = row?.max_sequence;
+    const pendingCount = row?.pending_count;
     if (
       status.length !== 1 ||
       status[0]?.success !== true ||
-      !Number.isSafeInteger(row?.max_sequence) ||
-      !Number.isSafeInteger(row?.pending_count)
+      typeof maxSequence !== 'number' ||
+      !Number.isSafeInteger(maxSequence) ||
+      typeof pendingCount !== 'number' ||
+      !Number.isSafeInteger(pendingCount)
     ) {
       throw new Error('control_tenant_placement_outbox_status_invalid');
     }
     return {
-      maxSequence: row!.max_sequence as number,
-      pendingCount: row!.pending_count as number,
+      maxSequence,
+      pendingCount,
     };
   }
 
@@ -1173,7 +1190,7 @@ export class TenantPlacementMigrationReconciler {
     const applied = await applyTenantMigrationOutboxBatch({
       executor: this.d1,
       sourceDatabaseId: route.source_database_id,
-      targetDatabaseId: route.target_database_id!,
+      targetDatabaseId: targetDatabaseId(route),
       operationId: operation.operation_id,
       tenantId: operation.tenant_id,
       tenantKey,
@@ -1350,7 +1367,7 @@ export class TenantPlacementMigrationReconciler {
       }),
       readTenantMigrationBackfillPage({
         executor: this.d1,
-        sourceDatabaseId: route.target_database_id!,
+        sourceDatabaseId: targetDatabaseId(route),
         table,
         tenantId: operation.tenant_id,
         tenantKey,

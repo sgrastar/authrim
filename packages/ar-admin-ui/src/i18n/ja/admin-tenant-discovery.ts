@@ -34,26 +34,6 @@ const adminTenantDiscovery = {
 	admin_tenant_discovery_entry_mode_discovery_required_sample:
 		'Shared login entryで常に先にtenantを選ばせたい場合に使います。',
 	admin_tenant_discovery_example: '例: {sample}',
-	admin_tenant_discovery_email_resolution: 'Email Resolution',
-	admin_tenant_discovery_email_resolution_exact_then_domain:
-		'Exact email, then email-domain fallback',
-	admin_tenant_discovery_email_resolution_exact_only: 'Exact email only',
-	admin_tenant_discovery_email_resolution_disabled_description:
-		'Email-based discoveryは現在無効です。',
-	admin_tenant_discovery_email_resolution_disabled_sample:
-		'このpolicyを使うには下のEmail addressを有効にしてください。',
-	admin_tenant_discovery_email_resolution_exact_only_description:
-		'Full email addressが明示的にmappingされている場合のみtenantを解決します。',
-	admin_tenant_discovery_email_resolution_exact_only_sample:
-		'alice@example.eduには個別mappingが必要です。',
-	admin_tenant_discovery_email_resolution_exact_then_domain_description:
-		'まずexact email mappingを試し、存在しなければemail domainへfallbackします。',
-	admin_tenant_discovery_email_resolution_exact_then_domain_sample:
-		'alice@example.eduはexample.eduへfallbackします。',
-	admin_tenant_discovery_email_resolution_disabled_policy_description:
-		'Email addressからtenantを解決しません。',
-	admin_tenant_discovery_email_resolution_disabled_policy_sample:
-		'ユーザーは別の有効なディスカバリー方法を使う必要があります。',
 	admin_tenant_discovery_selection_policy: '選択ポリシー',
 	admin_tenant_discovery_selection_auto_if_single: 'Auto if single',
 	admin_tenant_discovery_selection_always_select: 'Always select',

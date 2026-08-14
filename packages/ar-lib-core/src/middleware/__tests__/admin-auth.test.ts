@@ -359,6 +359,34 @@ describe('adminAuthMiddleware', () => {
       });
     });
 
+    it('rejects an owner-package bearer context without an explicit tenant scope', async () => {
+      const authenticateBearer = vi.fn().mockResolvedValue({
+        userId: 'admin-user-123',
+        actorType: 'agent',
+        actorId: 'client:client-1',
+        clientId: 'client-1',
+        authMethod: 'bearer',
+        roles: [],
+        tenantId: 'default',
+        permissions: ['admin:users:read'],
+        hierarchyLevel: 0,
+        mfaVerified: false,
+      });
+      const app = createTestApp(mockEnv, {
+        authenticateBearer,
+        requirePermissions: ['admin:users:read'],
+      });
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: { Authorization: 'Bearer missing-scope-token' },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
+    });
+
     it('reuses an already verified in-process context in nested admin routers', async () => {
       const authenticateBearer = vi.fn().mockResolvedValue({
         userId: 'admin-user-123',

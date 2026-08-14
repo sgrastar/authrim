@@ -10,6 +10,11 @@ type SqliteValue = string | number | null | Uint8Array;
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const HASH = 'a'.repeat(64);
 
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('required_test_value_missing');
+  return value;
+}
+
 class BoundStatement {
   constructor(
     private readonly statement: StatementSync,
@@ -242,7 +247,7 @@ describe('tenant disaster recovery', () => {
     expect(await service.reconcileDrain('env-test')).toEqual({ advanced: 0 });
     now += 1;
     expect(await service.reconcileDrain('env-test')).toEqual({ advanced: 1 });
-    recovery = (await service.get('env-test', recovery.operationId))!;
+    recovery = required(await service.get('env-test', recovery.operationId));
     expect(recovery).toMatchObject({ state: 'operator_restore_required', canConfirmRestore: true });
 
     const restoreRequest = {
@@ -468,7 +473,7 @@ describe('tenant disaster recovery', () => {
       )
       .run(now, recovery.operationId);
     expect(await service.reconcileBindingSmoke('env-test')).toEqual({ completed: 1 });
-    recovery = (await service.get('env-test', recovery.operationId))!;
+    recovery = required(await service.get('env-test', recovery.operationId));
     expect(
       database
         .prepare(

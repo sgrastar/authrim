@@ -45,6 +45,81 @@ describe('executeD1Migration retry handling', () => {
     );
   });
 
+  it('gives Cloudflare authentication error 10000 an extended retry window', async () => {
+    const migrationPath = join(root, '002_core_protocol_and_consent.sql');
+    writeFileSync(migrationPath, 'CREATE TABLE protocol_state (id TEXT PRIMARY KEY);');
+    for (let attempt = 0; attempt < 7; attempt++) {
+      vi.mocked(execa).mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: 'Uploading complete.',
+        stderr: 'Authentication error [code: 10000]',
+      } as never);
+    }
+    vi.mocked(execa).mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as never);
+
+    const progress: string[] = [];
+    const result = await executeD1Migration('test-db', migrationPath, (message) =>
+      progress.push(message)
+    );
+
+    expect(result.success).toBe(true);
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(8);
+    expect(
+      progress.some(
+        (message) =>
+          message.includes('Transient Cloudflare D1 authentication failure') &&
+          message.includes('attempt 7/8')
+      )
+    ).toBe(true);
+  });
+
+  it('retries when authentication also prevents the ambiguous-commit check', async () => {
+    const migrationPath = join(root, '002_core_protocol_and_consent.sql');
+    writeFileSync(migrationPath, 'CREATE TABLE protocol_state (id TEXT PRIMARY KEY);');
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: 'Uploading complete.',
+        stderr: 'Authentication error [code: 10000]',
+      } as never)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' } as never);
+    const verifyCommitted = vi
+      .fn<() => Promise<boolean>>()
+      .mockRejectedValueOnce(new Error('Authentication error [code: 10000]'));
+
+    const result = await executeD1Migration('test-db', migrationPath, undefined, {
+      verifyCommitted,
+    });
+
+    expect(result.success).toBe(true);
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
+    expect(verifyCommitted).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not re-execute a migration while its commit state remains unverified', async () => {
+    const migrationPath = join(root, '002_core_protocol_and_consent.sql');
+    writeFileSync(migrationPath, 'CREATE TABLE protocol_state (id TEXT PRIMARY KEY);');
+    vi.mocked(execa).mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: 'Uploading complete.',
+      stderr: 'Authentication error [code: 10000]',
+    } as never);
+    const verifyCommitted = vi
+      .fn<() => Promise<boolean>>()
+      .mockRejectedValue(new Error('Authentication error [code: 10000]'));
+
+    const result = await executeD1Migration('test-db', migrationPath, undefined, {
+      verifyCommitted,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+    });
+    expect(result.error).toContain('could not determine whether the migration committed');
+    expect(vi.mocked(execa)).toHaveBeenCalledTimes(1);
+    expect(verifyCommitted).toHaveBeenCalledTimes(8);
+  });
+
   it('does not retry deterministic SQL errors', async () => {
     const migrationPath = join(root, '001_bad.sql');
     writeFileSync(migrationPath, 'SELECT * FROM missing_table;');

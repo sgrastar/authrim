@@ -36,7 +36,10 @@ const mocks = vi.hoisted(() => ({
   registerControlWorkerInventory: vi.fn(),
   registerInitialControlTopology: vi.fn(),
   isInitialBootstrapHandoffAccepted: vi.fn(),
+  advanceInitialBootstrapWorkerBindingsAsOperator: vi.fn(),
+  reconcileInitialBootstrapHandoffAsOperator: vi.fn(),
   recordInitialBootstrapWorkerEvidence: vi.fn(),
+  requestInitialBootstrapAcceleration: vi.fn(),
   waitForInitialBootstrapHandoff: vi.fn(),
   initializeControlKeyState: vi.fn(),
   reconcileLocalControlKeyFiles: vi.fn(),
@@ -151,7 +154,11 @@ vi.mock('../core/control-worker-inventory.js', () => ({
 vi.mock('../core/control-bootstrap-handoff.js', () => ({
   registerInitialControlTopology: mocks.registerInitialControlTopology,
   isInitialBootstrapHandoffAccepted: mocks.isInitialBootstrapHandoffAccepted,
+  advanceInitialBootstrapWorkerBindingsAsOperator:
+    mocks.advanceInitialBootstrapWorkerBindingsAsOperator,
+  reconcileInitialBootstrapHandoffAsOperator: mocks.reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence: mocks.recordInitialBootstrapWorkerEvidence,
+  requestInitialBootstrapAcceleration: mocks.requestInitialBootstrapAcceleration,
   waitForInitialBootstrapHandoff: mocks.waitForInitialBootstrapHandoff,
 }));
 
@@ -432,6 +439,7 @@ describe('CLI initial deployment', () => {
       state: 'accepted',
       acceptedAt: 1,
     });
+    mocks.requestInitialBootstrapAcceleration.mockResolvedValue('accepted');
     mocks.initializeControlKeyState.mockResolvedValue({
       initialized: true,
       operationId: `op_key_init_${'d'.repeat(32)}`,
@@ -603,8 +611,23 @@ describe('CLI initial deployment', () => {
       })
     );
     expect(mocks.registerInitialControlTopology).toHaveBeenCalledOnce();
-    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     expect(mocks.waitForInitialBootstrapHandoff).toHaveBeenCalledOnce();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+    const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
+      | {
+          advanceBindings?: () => Promise<unknown>;
+          refreshEvidence?: () => Promise<unknown>;
+          pollIntervalMs?: number;
+        }
+      | undefined;
+    expect(handoffInput?.timeoutMs).toBe(30 * 60_000);
+    expect(handoffInput?.stallTimeoutMs).toBe(5 * 60_000);
+    expect(handoffInput?.pollIntervalMs).toBe(2_000);
+    expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
+    await handoffInput?.advanceBindings?.();
+    await handoffInput?.refreshEvidence?.();
+    expect(mocks.requestInitialBootstrapAcceleration).not.toHaveBeenCalled();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     expect(mocks.deployAll).toHaveBeenCalledWith(expect.any(Object), CORE_WORKER_COMPONENTS);
     expect(mocks.resolveMissingUiWorkerBindingTargets).toHaveBeenCalledWith(expect.any(Object), {
       loginUi: false,
@@ -638,6 +661,28 @@ describe('CLI initial deployment', () => {
     expect(mocks.publishAndActivateMigrationRelease).toHaveBeenCalledOnce();
     expect(mocks.deployUiWorkerBindingTargets).not.toHaveBeenCalled();
     expect(mocks.deployAll).toHaveBeenCalledOnce();
+    const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
+      | {
+          advanceBindings?: () => Promise<unknown>;
+          refreshEvidence?: () => Promise<unknown>;
+          reconcile?: () => Promise<unknown>;
+        }
+      | undefined;
+    expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
+    expect(handoffInput?.refreshEvidence).toEqual(expect.any(Function));
+    expect(handoffInput?.reconcile).toEqual(expect.any(Function));
+    await handoffInput?.advanceBindings?.();
+    await handoffInput?.refreshEvidence?.();
+    await handoffInput?.reconcile?.();
+    expect(mocks.advanceInitialBootstrapWorkerBindingsAsOperator).toHaveBeenCalledWith({
+      controlDatabaseId: 'control-id',
+      controlDatabaseName: 'headless-authrim-control-db',
+      environmentId: env,
+    });
+    expect(mocks.reconcileInitialBootstrapHandoffAsOperator).toHaveBeenCalledWith({
+      controlDatabaseId: 'control-id',
+      executeWorkerBindings: false,
+    });
   });
 
   it('keeps a fresh-install dry run mutation-free before the Control schema exists', async () => {
@@ -680,6 +725,7 @@ describe('CLI initial deployment', () => {
 
     mocks.deployAll.mockClear();
     mocks.applyReleaseSchemaUpdatePlan.mockClear();
+    mocks.publishAndActivateMigrationRelease.mockClear();
     mocks.isInitialBootstrapHandoffAccepted.mockResolvedValue(true);
     mocks.waitForInitialBootstrapHandoff.mockResolvedValue({ state: 'accepted', acceptedAt: 2 });
 
@@ -690,7 +736,37 @@ describe('CLI initial deployment', () => {
     expect(mocks.isInitialBootstrapHandoffAccepted).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: env })
     );
-    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledTimes(1);
+    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+  });
+
+  it('requires recreation without mutating schema or Workers when the draft manifest changed', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
+      new Error('control_bootstrap_handoff_transient')
+    );
+
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'control_bootstrap_handoff_transient'
+    );
+
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const checkpoint = JSON.parse(await readFile(lockPath, 'utf-8'));
+    checkpoint.releaseUpdate.manifestChecksum = 'f'.repeat(64);
+    await writeFile(lockPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
+
+    mocks.deployAll.mockClear();
+    mocks.applyReleaseSchemaUpdatePlan.mockClear();
+    mocks.publishAndActivateMigrationRelease.mockClear();
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'process.exit unexpectedly called with "1"'
+    );
+
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
+    expect(mocks.deployAll).not.toHaveBeenCalled();
+    const unchanged = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(unchanged.releaseUpdate.manifestChecksum).toBe('f'.repeat(64));
   });
 
   it('rejects an incomplete or cross-environment handoff checkpoint', () => {
@@ -772,6 +848,24 @@ describe('CLI initial deployment', () => {
 
     expect(mocks.applyReleaseSchemaUpdatePlan).toHaveBeenCalledOnce();
     expect(mocks.deployAll).toHaveBeenCalledOnce();
+    const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
+      | {
+          advanceBindings?: () => Promise<unknown>;
+          pollIntervalMs?: number;
+        }
+      | undefined;
+    expect(handoffInput?.timeoutMs).toBe(30 * 60_000);
+    expect(handoffInput?.stallTimeoutMs).toBe(5 * 60_000);
+    expect(handoffInput?.pollIntervalMs).toBe(2_000);
+    expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
+    await handoffInput?.advanceBindings?.();
+    expect(mocks.requestInitialBootstrapAcceleration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: env,
+        activeSlot: 'A',
+        activeKeyId: 'smoke-v1',
+      })
+    );
     const schemaIndex = events.indexOf('schema');
     const firstQueryIndex = events.indexOf('query');
     expect(schemaIndex).toBeGreaterThanOrEqual(0);

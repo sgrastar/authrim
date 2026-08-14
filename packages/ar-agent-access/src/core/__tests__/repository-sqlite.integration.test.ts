@@ -1753,10 +1753,9 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
       .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
       .sort()
       .map((filename) =>
-        readFileSync(path.join(migrationDirectory, filename), 'utf8').replaceAll(
-          '__AUTHRIM_NOW_EPOCH_MILLISECONDS__',
-          '0'
-        )
+        readFileSync(path.join(migrationDirectory, filename), 'utf8')
+          .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '0')
+          .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', '0')
       )
       .join('\n');
     execFileSync(sqlite3Path!, ['-bail', databasePath], {

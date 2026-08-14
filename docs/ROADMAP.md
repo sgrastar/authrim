@@ -23,23 +23,23 @@ The exact release date depends on UI consolidation, SAML interoperability valida
 
 ## Current Status
 
-| Area | Status | Notes |
+| Area                              | Status                                               | Notes                                                                                                                                                                                                                                                                   |
 | --- | --- | --- |
-| Core OIDC/OAuth implementation | Implemented | Authorization, token, UserInfo, discovery, logout, PAR, DPoP, JAR, JARM, JWE, token exchange, client credentials |
-| FAPI profiles | Implemented / official Suite tested | FAPI 2.0 Final DPoP OpenID Connect, Client Credentials, Message Signing OP, and corresponding RP plans have completed without functional failures; formal certification publication is still planned |
-| CIBA | Implemented / official Suite tested | Backchannel authentication, approval, polling, and request storage paths exist; FAPI-CIBA private-key Poll and Ping plans completed without functional failures, while Ping retains Suite-side incoming TLS warnings |
-| SAML 2.0 IdP/SP | Active / implementation substantially complete | Core protocol support, local entity metadata, entityID style, interactive login redirect policy, signing subject/rollover, and metadata import/export are implemented; interoperability and DR assumptions are tracked below |
-| SCIM 2.0 | Implemented | Provisioning support is available; production deployment guidance still needs refinement |
-| Policy engine | Implemented | RBAC, ABAC, ReBAC, token embedding, real-time check API |
-| Identity Hub | Implemented | External OIDC/OAuth providers, account linking, identity stitching |
-| Passkey / email auth / local auth | Implemented | Login UI and production flow hardening remain active work |
-| VC/DID capabilities | Partial / interoperability active | OpenID4VCI and OpenID4VP implementation baselines exist, but the official Final and HAIP Suite plans currently have known conformance gaps; did:web and did:key support exists |
-| JavaScript SDKs | Implemented | Core, web, server, and SvelteKit packages |
-| Setup tooling | Implemented | Source-download setup, fresh root migrations, standard SAML/CIBA/VC installation, optional Admin/Login UI, DNS guidance, and deletion cleanup exist; documentation needs continued hardening |
-| UI consolidation | Active | Broad Admin UI and Login UI surfaces exist; SAML, database, storage, logging, tenant discovery, and provider icon surfaces have been updated; consolidation and polish continue |
-| Security, QA, and validation | Active | Formal external audit and penetration test have not yet been completed |
-| Storage/logging portability | Implementation baseline complete / validation active | Runtime profiles, Hyperdrive-backed user/custom/audit paths, setup-managed D1/R2 inventory, storage destinations, logging policy snapshots, delivery/DLQ surfaces, setup validation, and schema portability checks are in place; control-plane limits remain documented |
-| Multi-tenant isolation | Implementation baseline complete / validation active | Tenant-scoped storage, routing, admin boundaries, job isolation, and regression coverage are in place; production hardening continues |
+| Core OIDC/OAuth implementation    | Implemented                                          | Authorization, token, UserInfo, discovery, logout, PAR, DPoP, JAR, JARM, JWE, token exchange, client credentials                                                                                                                                                        |
+| FAPI profiles                     | Implemented / official Suite tested                  | FAPI 2.0 Final DPoP OpenID Connect, Client Credentials, Message Signing OP, and corresponding RP plans have completed without functional failures; formal certification publication is still planned                                                                    |
+| CIBA                              | Implemented / official Suite tested                  | Backchannel authentication, approval, polling, and request storage paths exist; FAPI-CIBA private-key Poll and Ping plans completed without functional failures, while Ping retains Suite-side incoming TLS warnings                                                    |
+| SAML 2.0 IdP/SP                   | Active / implementation substantially complete       | Core protocol support, local entity metadata, entityID style, interactive login redirect policy, signing subject/rollover, and metadata import/export are implemented; interoperability and DR assumptions are tracked below                                            |
+| SCIM 2.0 | Inbound implemented | Users, Groups, and Bulk receiver are available; outbound provisioning is out of scope |
+| Policy engine                     | Implemented                                          | RBAC, ABAC, ReBAC, token embedding, real-time check API                                                                                                                                                                                                                 |
+| Identity Hub                      | Implemented                                          | External OIDC/OAuth providers, account linking, identity stitching                                                                                                                                                                                                      |
+| Passkey / email auth / local auth | Implemented                                          | Login UI and production flow hardening remain active work                                                                                                                                                                                                               |
+| VC/DID capabilities               | Partial / interoperability active                    | OpenID4VCI and OpenID4VP implementation baselines exist, but the official Final and HAIP Suite plans currently have known conformance gaps; did:web and did:key support exists                                                                                          |
+| JavaScript SDKs                   | Implemented                                          | Core, web, server, and SvelteKit packages                                                                                                                                                                                                                               |
+| Setup tooling                     | Implemented                                          | Source-download setup, fresh root migrations, standard SAML/CIBA/VC installation, optional Admin/Login UI, DNS guidance, and deletion cleanup exist; documentation needs continued hardening                                                                            |
+| UI consolidation                  | Active                                               | Broad Admin UI and Login UI surfaces exist; SAML, database, storage, logging, tenant discovery, and provider icon surfaces have been updated; consolidation and polish continue                                                                                         |
+| Security, QA, and validation      | Active                                               | Formal external audit and penetration test have not yet been completed                                                                                                                                                                                                  |
+| Storage/logging portability       | Implementation baseline complete / validation active | Runtime profiles, Hyperdrive-backed user/custom/audit paths, setup-managed D1/R2 inventory, storage destinations, logging policy snapshots, delivery/DLQ surfaces, setup validation, and schema portability checks are in place; control-plane limits remain documented |
+| Multi-tenant isolation            | Implementation baseline complete / validation active | Tenant-scoped storage, routing, admin boundaries, job isolation, and regression coverage are in place; production hardening continues                                                                                                                                   |
 
 ---
 
@@ -247,13 +247,13 @@ Authrim should not be recommended for production migration until these baseline 
 
 ## Not Currently In Scope
 
-| Item | Reason / Alternative |
+| Item                                 | Reason / Alternative                                                                                                                                                                                                              |
 | --- | --- |
-| Full AWS/Azure runtime support | Authrim currently depends on Cloudflare-native primitives such as D1, KV, R2, Durable Objects, Workers bindings, and service bindings. Hono portability helps at the HTTP layer, but it does not make the whole runtime portable. |
-| Multi-cloud active-active deployment | Requires a separate architecture for state, storage, keys, DNS, metadata, and operations. |
-| Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML. |
-| Direct MTLS termination | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
-| SFTP storage or delivery | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead. |
+| Full AWS/Azure runtime support       | Authrim currently depends on Cloudflare-native primitives such as D1, KV, R2, Durable Objects, Workers bindings, and service bindings. Hono portability helps at the HTTP layer, but it does not make the whole runtime portable. |
+| Multi-cloud active-active deployment | Requires a separate architecture for state, storage, keys, DNS, metadata, and operations.                                                                                                                                         |
+| Direct LDAP/AD integration           | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML.                                                                         |
+| Direct MTLS termination              | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate.                       |
+| SFTP storage or delivery             | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                                                     |
 
 ---
 
@@ -261,22 +261,22 @@ Authrim should not be recommended for production migration until these baseline 
 
 This section is a compressed history of major completed work. It replaces the older phase-based roadmap.
 
-| Date | Milestone |
+| Date       | Milestone                                                                                                                                                               |
 | --- | --- |
-| 2025-11 | Initial foundation, Cloudflare Workers setup, Hono framework, TypeScript, testing, CI/CD |
-| 2025-11 | OIDC/OAuth core implementation and initial conformance testing |
-| 2025-11 | Advanced OAuth/OIDC features: PAR, DPoP, pairwise identifiers, token management, form post |
-| 2025-11 | Admin UI, login/signup/consent/device/CIBA UI, passkey, email code, multi-language support |
-| 2025-12 | Enterprise protocol work: Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML core |
-| 2025-12 | Identity Hub foundation, social login providers, account linking, identity stitching |
-| 2025-12 | PII/non-PII data separation, DatabaseAdapter, repository pattern, PII routing |
-| 2025-12 | Policy integration: RBAC, ABAC, ReBAC, token embedding, check API, permission change notifications |
-| 2025-12 | Advanced identity implementation baseline: OpenID4VP, OpenID4VCI, DID resolver, DID authentication |
-| 2025-12 | Load testing and Durable Object sharding work |
-| 2026-01 | Client Credentials flow |
-| 2026-01 | JavaScript SDK ecosystem: core, web, server, SvelteKit |
-| 2026-04/05 | Runtime profiles, storage portability, audit export, Hyperdrive-backed PostgreSQL/MySQL work |
-| 2026-05 | SAML local entity info, signing subject/rollover UI, tenant discovery WAYF, setup migration consolidation, database/storage inventory, and managed logging control work |
+| 2025-11    | Initial foundation, Cloudflare Workers setup, Hono framework, TypeScript, testing, CI/CD                                                                                |
+| 2025-11    | OIDC/OAuth core implementation and initial conformance testing                                                                                                          |
+| 2025-11    | Advanced OAuth/OIDC features: PAR, DPoP, pairwise identifiers, token management, form post                                                                              |
+| 2025-11    | Admin UI, login/signup/consent/device/CIBA UI, passkey, email code, multi-language support                                                                              |
+| 2025-12    | Enterprise protocol work: Device Flow, CIBA, SCIM, JWE, Hybrid, JAR, JARM, JWT Bearer, SAML core                                                                        |
+| 2025-12    | Identity Hub foundation, social login providers, account linking, identity stitching                                                                                    |
+| 2025-12    | PII/non-PII data separation, DatabaseAdapter, repository pattern, PII routing                                                                                           |
+| 2025-12    | Policy integration: RBAC, ABAC, ReBAC, token embedding, check API, permission change notifications                                                                      |
+| 2025-12    | Advanced identity implementation baseline: OpenID4VP, OpenID4VCI, DID resolver, DID authentication                                                                      |
+| 2025-12    | Load testing and Durable Object sharding work                                                                                                                           |
+| 2026-01    | Client Credentials flow                                                                                                                                                 |
+| 2026-01    | JavaScript SDK ecosystem: core, web, server, SvelteKit                                                                                                                  |
+| 2026-04/05 | Runtime profiles, storage portability, audit export, Hyperdrive-backed PostgreSQL/MySQL work                                                                            |
+| 2026-05    | SAML local entity info, signing subject/rollover UI, tenant discovery WAYF, setup migration consolidation, database/storage inventory, and managed logging control work |
 
 ---
 

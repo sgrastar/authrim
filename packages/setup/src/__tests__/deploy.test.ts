@@ -93,6 +93,11 @@ function commandError(message: string): Error & { stderr: string; exitCode: numb
   });
 }
 
+function expectOptimizedWorkerUpload(args: readonly string[]): void {
+  expect(args.filter((argument) => argument === '--minify')).toHaveLength(1);
+  expect(args.filter((argument) => argument === '--upload-source-maps')).toHaveLength(1);
+}
+
 function fakeDeploymentLeaseCoordinator(calls: string[]): WorkerDeploymentLeaseCoordinator {
   const nextLease = (
     lease: SetupWorkerDeploymentLease,
@@ -384,6 +389,8 @@ describe('deployWorker', () => {
         'exec',
         'wrangler',
         'deploy',
+        '--minify',
+        '--upload-source-maps',
         '--config',
         'wrangler.toml',
         '--env',
@@ -718,6 +725,7 @@ describe('deployWorkerGradually', () => {
         } as Awaited<ReturnType<typeof execa>>;
       }
       if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        expectOptimizedWorkerUpload(commandArgs);
         const outputDirectory = options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY;
         expect(outputDirectory).toBeTypeOf('string');
         const secretsFileIndex = commandArgs.indexOf('--secrets-file');
@@ -777,6 +785,10 @@ describe('deployWorkerGradually', () => {
     expect(trafficCommands[1]).toEqual(
       expect.arrayContaining(['versions', 'deploy', `${newVersionId}@100%`, '--yes'])
     );
+    for (const command of trafficCommands) {
+      expect(command).not.toContain('--minify');
+      expect(command).not.toContain('--upload-source-maps');
+    }
     expect(trafficCommands[1]).not.toContain(oldVersionId);
     expect(healthCheck).toHaveBeenCalledTimes(2);
     expect(healthCheck).toHaveBeenNthCalledWith(1, 10);
@@ -897,6 +909,8 @@ describe('deployWorkerGradually', () => {
     expect(trafficCommands[1]).toContain(`${oldVersionId}@100%`);
     expect(triggerCommands).toHaveLength(1);
     expect(triggerCommands[0]).toContain('--dry-run');
+    expect(triggerCommands[0]).not.toContain('--minify');
+    expect(triggerCommands[0]).not.toContain('--upload-source-maps');
   });
 
   it('reports committed traffic without unsafe rollback when final trigger sync fails', async () => {
@@ -951,6 +965,37 @@ describe('deployWorkerGradually', () => {
 });
 
 describe('deployUiWorkerComponent', () => {
+  it('fails closed before upload when UI Static Assets contain a source map', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const publicChunkDirectory = join(
+      rootDir,
+      'packages',
+      'ar-login-ui',
+      '.svelte-kit',
+      'cloudflare',
+      '_app',
+      'immutable',
+      'chunks'
+    );
+    mkdirSync(publicChunkDirectory, { recursive: true });
+    writeFileSync(join(publicChunkDirectory, 'client.js.map'), '{"version":3}');
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      skipBuild: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'ui_public_source_maps_forbidden:1',
+      })
+    );
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
   it('deploys Admin UI BFF secrets in one temporary secrets file and cleans it up', async () => {
     const rootDir = createTempRoot();
     createUiPackage(rootDir, 'ar-admin-ui');
@@ -973,6 +1018,7 @@ describe('deployUiWorkerComponent', () => {
         } as Awaited<ReturnType<typeof execa>>;
       }
       if (commandArgs.includes('deploy')) {
+        expectOptimizedWorkerUpload(commandArgs);
         const secretsFileIndex = commandArgs.indexOf('--secrets-file');
         expect(secretsFileIndex).toBeGreaterThan(-1);
         secretFilePath = commandArgs[secretsFileIndex + 1];
@@ -1035,6 +1081,7 @@ describe('deployUiWorkerComponent', () => {
         } as Awaited<ReturnType<typeof execa>>;
       }
       if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        expectOptimizedWorkerUpload(commandArgs);
         writeFileSync(
           join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
           `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
@@ -1063,9 +1110,20 @@ describe('deployUiWorkerComponent', () => {
           args.includes('versions') && args.includes('deploy') && args.includes(`${versionId}@100%`)
       )
     ).toBe(true);
-    expect(
-      wranglerCommands.filter((args) => args.includes('triggers') && args.includes('deploy'))
-    ).toHaveLength(2);
+    for (const command of wranglerCommands.filter(
+      (args) => args.includes('versions') && args.includes('deploy')
+    )) {
+      expect(command).not.toContain('--minify');
+      expect(command).not.toContain('--upload-source-maps');
+    }
+    const triggerDeployCommands = wranglerCommands.filter(
+      (args) => args.includes('triggers') && args.includes('deploy')
+    );
+    expect(triggerDeployCommands).toHaveLength(2);
+    for (const command of triggerDeployCommands) {
+      expect(command).not.toContain('--minify');
+      expect(command).not.toContain('--upload-source-maps');
+    }
     expect(wranglerCommands.some((args) => args[2] === 'wrangler' && args[3] === 'deploy')).toBe(
       false
     );
@@ -1420,15 +1478,21 @@ describe('deployAll', () => {
     );
     writeFileSync(bridgeBootstrapPath, 'name = "test-ar-bridge"\n');
 
-    const mutations: Array<{ component: string; bootstrap: 'auth' | 'bridge' | false }> = [];
+    const mutations: Array<{
+      component: string;
+      bootstrap: 'auth' | 'bridge' | false;
+      args: string[];
+    }> = [];
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
       mutations.push({
         component: basename(String(options?.cwd)),
-        bootstrap: (args ?? []).includes(bootstrapPath)
+        bootstrap: commandArgs.includes(bootstrapPath)
           ? 'auth'
-          : (args ?? []).includes(bridgeBootstrapPath)
+          : commandArgs.includes(bridgeBootstrapPath)
             ? 'bridge'
             : false,
+        args: commandArgs,
       });
       return successfulCommandResult();
     });
@@ -1453,15 +1517,18 @@ describe('deployAll', () => {
 
     expect(summary.failedCount).toBe(0);
     const authMutations = mutations.filter(({ component }) => component === 'ar-auth');
-    expect(authMutations).toEqual([
+    expect(authMutations.map(({ component, bootstrap }) => ({ component, bootstrap }))).toEqual([
       { component: 'ar-auth', bootstrap: 'auth' },
       { component: 'ar-auth', bootstrap: false },
     ]);
     const bridgeMutations = mutations.filter(({ component }) => component === 'ar-bridge');
-    expect(bridgeMutations).toEqual([
+    expect(bridgeMutations.map(({ component, bootstrap }) => ({ component, bootstrap }))).toEqual([
       { component: 'ar-bridge', bootstrap: 'bridge' },
       { component: 'ar-bridge', bootstrap: false },
     ]);
+    for (const mutation of mutations) {
+      expectOptimizedWorkerUpload(mutation.args);
+    }
     const managementIndex = mutations.findIndex(({ component }) => component === 'ar-management');
     expect(managementIndex).toBeGreaterThan(
       mutations.findIndex(
@@ -1662,6 +1729,9 @@ describe('deployAll', () => {
     expect(firstTriggerIndex).toBeGreaterThan(lastPromotionIndex);
 
     expect(commandEvents.filter((event) => event.kind === 'upload')).toHaveLength(selected.length);
+    for (const event of commandEvents.filter((candidate) => candidate.kind === 'upload')) {
+      expectOptimizedWorkerUpload(event.args);
+    }
     expect(
       commandEvents.filter((event) => event.kind === 'promote').map((event) => event.component)
     ).toEqual([...selected]);
@@ -1678,6 +1748,12 @@ describe('deployAll', () => {
           'test',
         ])
       );
+      expect(event.args).not.toContain('--minify');
+      expect(event.args).not.toContain('--upload-source-maps');
+    }
+    for (const event of commandEvents.filter((candidate) => candidate.kind === 'triggers')) {
+      expect(event.args).not.toContain('--minify');
+      expect(event.args).not.toContain('--upload-source-maps');
     }
   });
 

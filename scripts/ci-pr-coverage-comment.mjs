@@ -212,7 +212,137 @@ async function collectPackageStats(repoRoot) {
   return { packages, totals };
 }
 
-function buildComment({ packages, totals }) {
+function normalizeReportPath(filePath) {
+  return filePath.split(path.sep).join('/');
+}
+
+function summarizeVitestReport(report, pathFragment) {
+  const results = Array.isArray(report.testResults)
+    ? report.testResults.filter((result) => {
+        if (!pathFragment) return true;
+        return normalizeReportPath(String(result.name ?? '')).includes(pathFragment);
+      })
+    : [];
+  const assertions = results.flatMap((result) =>
+    Array.isArray(result.assertionResults) ? result.assertionResults : []
+  );
+  const passed = assertions.filter((assertion) => assertion.status === 'passed').length;
+  const failed = assertions.filter((assertion) => assertion.status === 'failed').length;
+  const skipped = assertions.filter((assertion) =>
+    ['pending', 'skipped', 'todo', 'disabled'].includes(assertion.status)
+  ).length;
+  const fileFailures = results.filter((result) => result.status === 'failed').length;
+
+  return {
+    reported: true,
+    success: results.length > 0 && failed === 0 && fileFailures === 0,
+    files: results.length,
+    total: assertions.length,
+    passed,
+    failed,
+    skipped,
+  };
+}
+
+function summarizeAuthrimReport(report) {
+  const cases = report?.cases ?? {};
+  const values = [report?.files, cases.total, cases.passed, cases.failed, cases.skipped];
+  if (!values.every(Number.isSafeInteger)) {
+    throw new Error('OAuth/OIDC regression report contains invalid counts');
+  }
+  return {
+    reported: true,
+    success: report.success === true,
+    files: report.files,
+    total: cases.total,
+    passed: cases.passed,
+    failed: cases.failed,
+    skipped: cases.skipped,
+  };
+}
+
+async function readJsonReport(envName) {
+  const reportPath = process.env[envName]?.trim();
+  if (!reportPath) return null;
+  if (!(await pathExists(reportPath))) {
+    throw new Error(`${envName} does not exist: ${reportPath}`);
+  }
+  return JSON.parse(await fs.readFile(reportPath, 'utf8'));
+}
+
+function unreportedSuite() {
+  return {
+    reported: false,
+    success: false,
+    files: null,
+    total: null,
+    passed: null,
+    failed: null,
+    skipped: null,
+  };
+}
+
+async function collectRepositorySuiteStats() {
+  const integrationReport = await readJsonReport('AUTHRIM_INTEGRATION_REPORT');
+  const oauthReport = await readJsonReport('AUTHRIM_OAUTH_OIDC_REPORT');
+  const matricesReport = await readJsonReport('AUTHRIM_SECURITY_MATRICES_REPORT');
+  const integration = integrationReport
+    ? summarizeVitestReport(integrationReport)
+    : unreportedSuite();
+  const oauth = oauthReport ? summarizeAuthrimReport(oauthReport) : unreportedSuite();
+
+  const definitions = [
+    {
+      name: 'Canonical integration',
+      purpose: 'Cross-package protocol, tenant, and runtime flows',
+      evidence: '308-row constrained 3-wise tenant matrix + lifecycle flows',
+      result: integration,
+    },
+    {
+      name: 'OAuth/OIDC regressions',
+      purpose: 'Confirmed security finding regressions',
+      evidence: oauth.reported
+        ? `${oauth.total} manifest-defined regression checks`
+        : 'manifest-driven',
+      result: oauth,
+    },
+    {
+      name: 'Authorization matrix',
+      purpose: 'SSO, session, consent, PAR, JAR, PKCE, redirects, JARM',
+      evidence: '100% legal pairs + selected 3-wise (meta-tested)',
+      pathFragment: '/test/security-matrices/authorize-matrix/',
+    },
+    {
+      name: 'Token matrix',
+      purpose: 'Client auth, code state, PKCE, DPoP, issuance failures',
+      evidence: '100% legal pairs + selected 3-wise (meta-tested)',
+      pathFragment: '/test/security-matrices/token-matrix/',
+    },
+    {
+      name: 'Runtime-topology matrix',
+      purpose: 'Host, tenant, registry, issuer, cache, service bindings',
+      evidence: '5 matrices; 6 required 3-wise groups + legal pairs',
+      pathFragment: '/test/security-matrices/runtime-topology-matrix/',
+    },
+    {
+      name: 'State-transition matrix',
+      purpose: 'Refresh, Device, CIBA, Queue transitions and side effects',
+      evidence: '8 matrices; legal pairs + selected 3-wise',
+      pathFragment: '/test/security-matrices/state-transition-matrix/',
+    },
+  ];
+
+  return definitions.map((definition) => ({
+    ...definition,
+    result:
+      definition.result ??
+      (matricesReport
+        ? summarizeVitestReport(matricesReport, definition.pathFragment)
+        : unreportedSuite()),
+  }));
+}
+
+function buildComment({ packages, totals, repositorySuites }) {
   const sha = process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 7) : 'local';
   const generatedAt = new Date().toISOString();
 
@@ -238,6 +368,13 @@ function buildComment({ packages, totals }) {
       formatPct(coverage?.statements?.pct),
     ];
   });
+  const repositorySuiteRows = repositorySuites.map(({ name, purpose, evidence, result }) => [
+    name,
+    result.reported ? (result.success ? 'passed' : 'failed') : 'not reported',
+    result.total ?? '-',
+    purpose,
+    evidence,
+  ]);
 
   return `${MARKER}
 ## Coverage Summary
@@ -256,6 +393,12 @@ ${overviewRows.map(([label, value]) => `| ${label} | ${value} |`).join('\n')}
 | Package | status | Test cases | lines | branches | funcs | stmts |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 ${packageRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
+
+### Repository Test Suites
+
+| Suite | status | Cases | Tests | Combinations |
+| --- | --- | ---: | --- | --- |
+${repositorySuiteRows.map((row) => `| ${row.join(' | ')} |`).join('\n')}
 
 _Updated at ${generatedAt}._
 `;
@@ -311,7 +454,8 @@ async function upsertPullRequestComment(body) {
 
 async function main() {
   const stats = await collectPackageStats(process.cwd());
-  const body = buildComment(stats);
+  const repositorySuites = await collectRepositorySuiteStats();
+  const body = buildComment({ ...stats, repositorySuites });
 
   try {
     await upsertPullRequestComment(body);

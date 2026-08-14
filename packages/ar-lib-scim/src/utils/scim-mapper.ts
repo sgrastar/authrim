@@ -316,7 +316,7 @@ export interface InternalGroup {
  * Convert internal user to SCIM User resource
  */
 export function userToScim(user: InternalUser, context: UserToScimContext): ScimUser {
-  const { baseUrl, includeGroups = false } = context;
+  const { baseUrl, includeGroups = false, groups } = context;
 
   // Parse address if present
   let addresses: ScimAddress[] | undefined;
@@ -372,29 +372,28 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
 
   // Parse custom attributes for enterprise extension
   let enterpriseExtension: ScimEnterpriseExtension | undefined = undefined;
+  let customAttributes: Record<string, unknown> = {};
   if (user.custom_attributes_json) {
     try {
-      const customAttrs = JSON.parse(
-        user.custom_attributes_json
-      ) as Partial<ScimEnterpriseExtension>;
-      if (
-        customAttrs.employeeNumber ||
-        customAttrs.costCenter ||
-        customAttrs.organization ||
-        customAttrs.division ||
-        customAttrs.department ||
-        customAttrs.manager
-      ) {
+      const customAttrs = JSON.parse(user.custom_attributes_json) as Record<string, unknown>;
+      customAttributes = customAttrs;
+      const employeeNumber = stringAttribute(customAttrs, 'employee_number', 'employeeNumber');
+      const costCenter = stringAttribute(customAttrs, 'cost_center', 'costCenter');
+      const organization = stringAttribute(customAttrs, 'organization');
+      const division = stringAttribute(customAttrs, 'division');
+      const department = stringAttribute(customAttrs, 'department');
+      const managerValue = managerAttribute(customAttrs.manager);
+      if (employeeNumber || costCenter || organization || division || department || managerValue) {
         enterpriseExtension = {
-          employeeNumber: customAttrs.employeeNumber,
-          costCenter: customAttrs.costCenter,
-          organization: customAttrs.organization,
-          division: customAttrs.division,
-          department: customAttrs.department,
-          manager: customAttrs.manager
+          employeeNumber,
+          costCenter,
+          organization,
+          division,
+          department,
+          manager: managerValue
             ? {
-                value: customAttrs.manager.value,
-                $ref: `${baseUrl}/scim/v2/Users/${customAttrs.manager.value}`,
+                value: managerValue,
+                $ref: `${baseUrl}/scim/v2/Users/${managerValue}`,
               }
             : undefined,
         };
@@ -413,8 +412,8 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
     displayName: user.name || undefined,
     nickName: user.nickname || undefined,
     profileUrl: user.profile || undefined,
-    title: undefined, // Not in our schema
-    userType: undefined, // Not in our schema
+    title: stringAttribute(customAttributes, 'title'),
+    userType: stringAttribute(customAttributes, 'user_type', 'userType'),
     preferredLanguage: user.locale || undefined,
     locale: user.locale || undefined,
     timezone: user.zoneinfo || undefined,
@@ -437,85 +436,30 @@ export function userToScim(user: InternalUser, context: UserToScimContext): Scim
     scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'] = enterpriseExtension;
   }
 
-  // TODO: Add groups if requested
   if (includeGroups) {
-    // This would require a JOIN or separate query
-    scimUser.groups = [];
+    scimUser.groups = groups ?? [];
   }
 
   return scimUser;
 }
 
-/**
- * Convert SCIM User to internal user model
- */
-export function scimToUser(scimUser: Partial<ScimUser>): Partial<InternalUser> {
-  const user: Partial<InternalUser> = {};
-
-  if (scimUser.externalId) user.external_id = scimUser.externalId;
-  if (scimUser.userName) user.preferred_username = scimUser.userName;
-  if (scimUser.active !== undefined) user.active = scimUser.active ? 1 : 0;
-
-  // Name fields
-  if (scimUser.name) {
-    if (scimUser.name.givenName) user.given_name = scimUser.name.givenName;
-    if (scimUser.name.familyName) user.family_name = scimUser.name.familyName;
-    if (scimUser.name.middleName) user.middle_name = scimUser.name.middleName;
-    if (scimUser.name.formatted) user.name = scimUser.name.formatted;
+function stringAttribute(source: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    if (typeof source[key] === 'string' && source[key]) return source[key] as string;
   }
+  return undefined;
+}
 
-  if (scimUser.displayName) user.name = scimUser.displayName;
-  if (scimUser.nickName) user.nickname = scimUser.nickName;
-  if (scimUser.profileUrl) user.profile = scimUser.profileUrl;
-  if (scimUser.preferredLanguage) user.locale = scimUser.preferredLanguage;
-  if (scimUser.timezone) user.zoneinfo = scimUser.timezone;
-
-  // Email (primary)
-  if (scimUser.emails && scimUser.emails.length > 0) {
-    const primaryEmail = scimUser.emails.find((e) => e.primary) || scimUser.emails[0];
-    user.email = primaryEmail.value;
-    // Note: email_verified is not set here, as SCIM doesn't provide this info
+function managerAttribute(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (
+    value &&
+    typeof value === 'object' &&
+    typeof (value as { value?: unknown }).value === 'string'
+  ) {
+    return (value as { value: string }).value;
   }
-
-  // Phone number (primary)
-  if (scimUser.phoneNumbers && scimUser.phoneNumbers.length > 0) {
-    const primaryPhone = scimUser.phoneNumbers.find((p) => p.primary) || scimUser.phoneNumbers[0];
-    user.phone_number = primaryPhone.value;
-  }
-
-  // Address (primary)
-  if (scimUser.addresses && scimUser.addresses.length > 0) {
-    const primaryAddress = scimUser.addresses.find((a) => a.primary) || scimUser.addresses[0];
-    user.address_json = JSON.stringify({
-      formatted: primaryAddress.formatted,
-      street_address: primaryAddress.streetAddress,
-      locality: primaryAddress.locality,
-      region: primaryAddress.region,
-      postal_code: primaryAddress.postalCode,
-      country: primaryAddress.country,
-    });
-  }
-
-  // SCIM password is intentionally ignored here. Authrim does not provision or
-  // store user password credentials through SCIM.
-
-  // Enterprise extension
-  const enterpriseExt = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
-  if (enterpriseExt) {
-    const customAttrs: Record<string, string> = {};
-    if (enterpriseExt.employeeNumber) customAttrs.employeeNumber = enterpriseExt.employeeNumber;
-    if (enterpriseExt.costCenter) customAttrs.costCenter = enterpriseExt.costCenter;
-    if (enterpriseExt.organization) customAttrs.organization = enterpriseExt.organization;
-    if (enterpriseExt.division) customAttrs.division = enterpriseExt.division;
-    if (enterpriseExt.department) customAttrs.department = enterpriseExt.department;
-    if (enterpriseExt.manager?.value) customAttrs.manager = enterpriseExt.manager.value;
-
-    if (Object.keys(customAttrs).length > 0) {
-      user.custom_attributes_json = JSON.stringify(customAttrs);
-    }
-  }
-
-  return user;
+  return undefined;
 }
 
 /**
@@ -643,10 +587,6 @@ export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; err
 
   if (!user.userName) {
     errors.push('userName is required');
-  }
-
-  if (!user.emails || user.emails.length === 0) {
-    errors.push('At least one email is required');
   }
 
   return {

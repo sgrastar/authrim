@@ -63,19 +63,19 @@ function current(row: StateRow): LookupHmacKeyClaim {
 }
 
 function previous(row: StateRow): LookupHmacKeyClaim | null {
-  const values = [
-    row.previous_key_generation,
-    row.previous_key_id,
-    row.previous_key_slot,
-    row.previous_key_fingerprint,
-  ];
-  if (values.every((value) => value === null)) return null;
-  if (values.some((value) => value === null)) throw new Error('lookup_hmac_key_state_row_invalid');
+  const generation = row.previous_key_generation;
+  const keyId = row.previous_key_id;
+  const slot = row.previous_key_slot;
+  const fingerprint = row.previous_key_fingerprint;
+  if (generation === null && keyId === null && slot === null && fingerprint === null) return null;
+  if (generation === null || keyId === null || slot === null || fingerprint === null) {
+    throw new Error('lookup_hmac_key_state_row_invalid');
+  }
   return {
-    generation: row.previous_key_generation!,
-    keyId: row.previous_key_id!,
-    slot: row.previous_key_slot!,
-    fingerprint: row.previous_key_fingerprint!,
+    generation,
+    keyId,
+    slot,
+    fingerprint,
   };
 }
 

@@ -402,6 +402,23 @@ export interface Translations {
   'web.lightMode': string;
   'web.systemMode': string;
 
+  // Initial deployment recovery
+  'web.envDetail.initialDeployRecoveryTitle': string;
+  'web.envDetail.initialDeployRecoveryDesc': string;
+  'web.envDetail.initialDeployRecoveryAction': string;
+  'web.envDetail.initialDeployRecoveryVerified': string;
+  'web.envDetail.initialDeployRecoveryStageMigrations': string;
+  'web.envDetail.initialDeployRecoveryStageControlPlane': string;
+  'web.envDetail.initialDeployRecoveryStageWorkers': string;
+  'web.envDetail.initialDeployRecoveryStageVerification': string;
+  'web.envDetail.initialDeployRecoveryResources': string;
+  'web.envDetail.initialDeployRecoverySchema': string;
+  'web.envDetail.initialDeployRecoveryWorkers': string;
+  'web.envDetail.initialDeployRecoveryRecreate': string;
+  'web.envDetail.initialDeployRecoveryManifestChanged': string;
+  'web.envDetail.initialDeployRecoveryBlocked': string;
+  'web.envDetail.initialDeployRecoveryTokenRequired': string;
+
   // Web UI steps
   'web.step.environment': string;
   'web.step.region': string;

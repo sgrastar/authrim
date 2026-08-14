@@ -2747,6 +2747,9 @@ describe('Admin API Handlers', () => {
         })
         .mockResolvedValueOnce({
           results: [],
+        })
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
         });
 
       const mockDBPII = createMockDB({

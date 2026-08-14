@@ -393,6 +393,11 @@ class FakeRepository implements ControlRepository {
   }
 }
 
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('required_test_value_missing');
+  return value;
+}
+
 function env(): ControlEnv {
   return {
     CONTROL_DB: {} as D1Database,
@@ -479,11 +484,23 @@ function controlApi(
 }
 
 describe('Control Worker boundary', () => {
-  it('rejects every public HTTP request', async () => {
+  it('keeps the default HTTP surface closed', async () => {
     const response = await worker().fetch();
     expect(response.status).toBe(404);
     expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+  });
+
+  it('rejects unauthenticated bootstrap acceleration before touching storage', async () => {
+    const response = await worker().fetch(
+      new Request('https://control.internal/api/internal/control/bootstrap/advance', {
+        method: 'POST',
+      })
+    );
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('WWW-Authenticate')).toBe('Bearer');
   });
 
   it('masks storage implementation errors at the RPC boundary', async () => {
@@ -888,7 +905,7 @@ describe('ControlService tenant shard provisioning', () => {
       ],
     };
     repository.tenantPlacementPolicy = {
-      ...repository.tenantPlacementPolicy!,
+      ...required(repository.tenantPlacementPolicy),
       isolationPolicy: 'tenant_exclusive',
     };
     const service = new ControlService({ repository, env: env(), now: () => NOW });
@@ -945,7 +962,7 @@ describe('ControlService tenant shard provisioning', () => {
   it('exposes provisioning assignments only through the provisioning route method', async () => {
     const repository = new FakeRepository();
     repository.tenantPlacementPolicy = {
-      ...repository.tenantPlacementPolicy!,
+      ...required(repository.tenantPlacementPolicy),
       state: 'provisioning',
     };
     repository.runtimeRouteTargets = (
@@ -992,7 +1009,7 @@ describe('ControlService tenant shard provisioning', () => {
   it('projects the active tenant residency into an allowed DO region policy', async () => {
     const repository = new FakeRepository();
     repository.tenantPlacementPolicy = {
-      ...repository.tenantPlacementPolicy!,
+      ...required(repository.tenantPlacementPolicy),
       isolationPolicy: 'tenant_exclusive',
     };
     repository.activeResidencies = [
@@ -1058,7 +1075,7 @@ describe('ControlService tenant shard provisioning', () => {
   it('fails closed for incomplete or wrong-owner runtime route targets', async () => {
     const repository = new FakeRepository();
     repository.tenantPlacementPolicy = {
-      ...repository.tenantPlacementPolicy!,
+      ...required(repository.tenantPlacementPolicy),
       isolationPolicy: 'tenant_exclusive',
     };
     repository.runtimeRouteTargets = [
@@ -1144,7 +1161,7 @@ describe('ControlService tenant shard provisioning', () => {
   it('fails closed for incomplete or wrong-owner deletion inventory', async () => {
     const repository = new FakeRepository();
     repository.tenantPlacementPolicy = {
-      ...repository.tenantPlacementPolicy!,
+      ...required(repository.tenantPlacementPolicy),
       isolationPolicy: 'tenant_exclusive',
     };
     repository.deletionLookupShards = [

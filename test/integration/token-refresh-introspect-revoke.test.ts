@@ -8,9 +8,9 @@
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { tokenHandler } from '../../packages/op-token/src/token';
-import { introspectHandler } from '../../packages/op-management/src/introspect';
-import { revokeHandler } from '../../packages/op-management/src/revoke';
+import { tokenHandler } from '../../packages/ar-token/src/token';
+import { introspectHandler } from '../../packages/ar-management/src/introspect';
+import { revokeHandler } from '../../packages/ar-management/src/revoke';
 import { generateKeySet } from '@authrim/ar-lib-core/utils/keys';
 import { generateSecureRandomString } from '@authrim/ar-lib-core/utils/crypto';
 
@@ -81,6 +81,17 @@ describe('Refresh Token Flow, Introspection, and Revocation', () => {
 
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      c.set('tenantId' as never, 'default' as never);
+      c.set(
+        'tenantMetadataContext' as never,
+        {
+          tenantId: 'default',
+          coreDb: c.env.DB,
+        } as never
+      );
+      await next();
+    });
     app.post('/token', tokenHandler);
     app.post('/introspect', introspectHandler);
     app.post('/revoke', revokeHandler);

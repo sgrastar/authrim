@@ -53,6 +53,7 @@ export interface AuthorizationCode {
   cHash?: string; // OIDC c_hash for hybrid flows (RFC 3.3.2.11)
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449) - binds code to DPoP key
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
+  sessionId?: string; // Internal OP session storage key; never expose as the OIDC sid
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
   authorizationServer: AuthorizationServerKind;
   subjectType: AuthorizationCodeSubjectType;
@@ -66,6 +67,7 @@ export interface AuthorizationCode {
   // Token JTIs for replay attack revocation (RFC 6749 Section 4.1.2)
   issuedAccessTokenJti?: string;
   issuedRefreshTokenJti?: string;
+  replayDetectedBeforeTokenRegistration?: boolean;
 }
 
 /**
@@ -90,6 +92,7 @@ export interface StoreCodeRequest {
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
+  sessionId?: string; // Internal OP session storage key
   authorizationDetails?: string; // RFC 9396 authorization_details (JSON string)
   authorizationServer?: AuthorizationServerKind;
   subjectType?: AuthorizationCodeSubjectType;
@@ -119,6 +122,9 @@ export interface ConsumeCodeRequest {
   expectedAuthorizationServer?: AuthorizationServerKind;
   expectedSubjectType?: AuthorizationCodeSubjectType;
   expectedResource?: string;
+  expectedRedirectUri?: string;
+  enforceDpopBinding?: boolean;
+  expectedDpopJkt?: string;
 }
 
 /**
@@ -138,6 +144,7 @@ export interface ConsumeCodeResponse {
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
+  sessionId?: string; // Internal OP session storage key
   authorizationDetails?: string; // RFC 9396: Rich Authorization Requests (JSON string)
   authorizationServer: AuthorizationServerKind;
   subjectType: AuthorizationCodeSubjectType;
@@ -188,6 +195,11 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
   // User code counter for O(1) DDoS protection check (instead of O(n) scan)
   // Maps userId to count of active (non-expired) codes
   private userCodeCounts: Map<string, number> = new Map();
+
+  // A Durable Object can interleave requests across non-storage awaits (for
+  // example WebCrypto). Acquire this synchronously before any per-code await so
+  // only one request can cross the one-time redemption boundary.
+  private consumingCodes: Set<string> = new Set();
 
   // Configuration (loaded from KV > env > default in initializeState)
   private CODE_TTL: number; // Default: 60 seconds per OAuth 2.0 Security BCP
@@ -559,6 +571,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       cHash: request.cHash,
       dpopJkt: request.dpopJkt,
       sid: request.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
+      sessionId: request.sessionId,
       authorizationDetails: request.authorizationDetails, // RFC 9396 authorization_details
       authorizationServer: request.authorizationServer ?? 'default',
       subjectType: request.subjectType ?? 'end_user',
@@ -598,80 +611,172 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     await this.initializeState();
     assertValidTenantId(request.tenantId);
 
-    // Lazy-load + fallback get: Check memory first, then storage
-    let stored = this.codes.get(request.code);
+    if (this.consumingCodes.has(request.code)) {
+      throw new Error('invalid_grant: Authorization code is already being consumed');
+    }
+    this.consumingCodes.add(request.code);
 
-    if (!stored) {
-      // Fallback: Try to load from storage (handles edge case where code was stored
-      // but DO restarted before initializeState saw it)
-      const fromStorage = await this.actorCtx.storage.get<AuthorizationCode>(
-        this.buildCodeKey(request.code)
-      );
-      if (fromStorage) {
-        stored = fromStorage;
-        // Promote to memory cache
-        this.codes.set(request.code, stored);
+    try {
+      // Lazy-load + fallback get: Check memory first, then storage
+      let stored = this.codes.get(request.code);
+
+      if (!stored) {
+        // Fallback: Try to load from storage (handles edge case where code was stored
+        // but DO restarted before initializeState saw it)
+        const fromStorage = await this.actorCtx.storage.get<AuthorizationCode>(
+          this.buildCodeKey(request.code)
+        );
+        if (fromStorage) {
+          stored = fromStorage;
+          // Promote to memory cache
+          this.codes.set(request.code, stored);
+        }
       }
-    }
 
-    if (!stored) {
-      throw new Error('invalid_grant: Authorization code not found or expired');
-    }
+      if (!stored) {
+        throw new Error('invalid_grant: Authorization code not found or expired');
+      }
 
-    // Old persisted entries predate explicit journey tagging and are end-user codes.
-    stored.authorizationServer ??= 'default';
-    stored.subjectType ??= 'end_user';
+      // Old persisted entries predate explicit journey tagging and are end-user codes.
+      stored.authorizationServer ??= 'default';
+      stored.subjectType ??= 'end_user';
 
-    // Check expiration
-    if (this.isExpired(stored)) {
-      this.codes.delete(request.code);
-      await this.actorCtx.storage.delete(this.buildCodeKey(request.code));
-      throw new Error('invalid_grant: Authorization code expired');
-    }
+      // Check expiration
+      if (this.isExpired(stored)) {
+        this.codes.delete(request.code);
+        await this.actorCtx.storage.delete(this.buildCodeKey(request.code));
+        this.decrementUserCodeCount(stored.userId);
+        throw new Error('invalid_grant: Authorization code expired');
+      }
 
-    // Validate the caller's security boundary before returning replay metadata.
-    if (stored.clientId !== request.clientId) {
-      throw new Error('invalid_grant: Client ID mismatch');
-    }
-    if (stored.tenantId !== request.tenantId) {
-      throw new Error('invalid_grant: Tenant mismatch');
-    }
-    if (
-      request.expectedAuthorizationServer &&
-      stored.authorizationServer !== request.expectedAuthorizationServer
-    ) {
-      throw new Error('invalid_grant: Authorization server mismatch');
-    }
-    if (request.expectedSubjectType && stored.subjectType !== request.expectedSubjectType) {
-      throw new Error('invalid_grant: Authorization code subject type mismatch');
-    }
-    if (request.expectedResource && stored.resource !== request.expectedResource) {
-      throw new Error('invalid_grant: Resource mismatch');
-    }
+      // Validate the caller's security boundary before returning replay metadata.
+      if (stored.clientId !== request.clientId) {
+        throw new Error('invalid_grant: Client ID mismatch');
+      }
+      if (stored.tenantId !== request.tenantId) {
+        throw new Error('invalid_grant: Tenant mismatch');
+      }
+      if (
+        request.expectedAuthorizationServer &&
+        stored.authorizationServer !== request.expectedAuthorizationServer
+      ) {
+        throw new Error('invalid_grant: Authorization server mismatch');
+      }
+      if (request.expectedSubjectType && stored.subjectType !== request.expectedSubjectType) {
+        throw new Error('invalid_grant: Authorization code subject type mismatch');
+      }
+      if (request.expectedResource && stored.resource !== request.expectedResource) {
+        throw new Error('invalid_grant: Resource mismatch');
+      }
+      if (request.expectedRedirectUri && stored.redirectUri !== request.expectedRedirectUri) {
+        throw new Error('invalid_grant: Redirect URI mismatch');
+      }
+      if (
+        request.enforceDpopBinding &&
+        stored.dpopJkt &&
+        stored.dpopJkt !== request.expectedDpopJkt
+      ) {
+        throw new Error(
+          request.expectedDpopJkt
+            ? 'invalid_grant: DPoP key mismatch'
+            : 'invalid_grant: DPoP proof required'
+        );
+      }
 
-    // CRITICAL: Check if already used (replay attack detection)
-    if (stored.used) {
-      this.log.error('SECURITY: Replay attack detected', {
-        code: request.code.substring(0, 8) + '...',
-        userId: stored.userId,
-      });
+      // Validate PKCE before treating a used code as an authenticated replay. Otherwise an
+      // interceptor who only observed the code could omit/guess the verifier and trigger
+      // revocation of the legitimate client's tokens.
+      if (stored.codeChallenge) {
+        if (!request.codeVerifier) {
+          throw new Error('invalid_grant: code_verifier required for PKCE');
+        }
+        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(request.codeVerifier)) {
+          throw new Error('invalid_grant: Invalid code_verifier format');
+        }
+        const challenge = await this.generateCodeChallenge(
+          request.codeVerifier,
+          stored.codeChallengeMethod || 'S256'
+        );
+        if (challenge !== stored.codeChallenge) {
+          throw new Error('invalid_grant: Invalid code_verifier (PKCE validation failed)');
+        }
+      }
 
-      // OAuth 2.0 Security BCP (RFC 6749 Section 4.1.2):
-      // "If an authorization code is used more than once, the authorization server
-      //  MUST deny the request and SHOULD revoke (when possible) all tokens
-      //  previously issued based on that authorization code."
-      //
-      // Return replayAttack field with token JTIs for the caller to revoke
-      // This allows the token endpoint to revoke tokens before returning the error
-      if (stored.issuedAccessTokenJti || stored.issuedRefreshTokenJti) {
-        this.log.error('SECURITY: Tokens to revoke', {
-          accessTokenJti: stored.issuedAccessTokenJti,
-          refreshTokenJti: stored.issuedRefreshTokenJti,
+      // CRITICAL: Check if already used (replay attack detection)
+      if (stored.used) {
+        this.log.error('SECURITY: Replay attack detected', {
+          code: request.code.substring(0, 8) + '...',
+          userId: stored.userId,
         });
+
+        // OAuth 2.0 Security BCP (RFC 6749 Section 4.1.2):
+        // "If an authorization code is used more than once, the authorization server
+        //  MUST deny the request and SHOULD revoke (when possible) all tokens
+        //  previously issued based on that authorization code."
+        //
+        // Return replayAttack field with token JTIs for the caller to revoke
+        // This allows the token endpoint to revoke tokens before returning the error
+        if (stored.issuedAccessTokenJti || stored.issuedRefreshTokenJti) {
+          this.log.error('SECURITY: Tokens to revoke', {
+            accessTokenJti: stored.issuedAccessTokenJti,
+            refreshTokenJti: stored.issuedRefreshTokenJti,
+          });
+        } else if (!stored.replayDetectedBeforeTokenRegistration) {
+          // A valid replay raced token issuance. Persist this before responding so the first
+          // request cannot publish tokens after registering their JTIs.
+          stored = { ...stored, replayDetectedBeforeTokenRegistration: true };
+          await this.actorCtx.storage.put(this.buildCodeKey(request.code), stored);
+          this.codes.set(request.code, stored);
+        }
+
+        // Return response with replayAttack field containing JTIs to revoke
+        // The caller is responsible for revoking these tokens and returning an error
+        return {
+          userId: stored.userId,
+          scope: stored.scope,
+          redirectUri: stored.redirectUri,
+          nonce: stored.nonce,
+          state: stored.state,
+          claims: stored.claims,
+          claimsRequestProtected: stored.claimsRequestProtected,
+          authTime: stored.authTime,
+          acr: stored.acr,
+          amr: stored.amr,
+          cHash: stored.cHash,
+          dpopJkt: stored.dpopJkt,
+          sid: stored.sid,
+          sessionId: stored.sessionId,
+          authorizationDetails: stored.authorizationDetails,
+          authorizationServer: stored.authorizationServer,
+          subjectType: stored.subjectType,
+          resource: stored.resource,
+          agentGrantId: stored.agentGrantId,
+          agentGrantGeneration: stored.agentGrantGeneration,
+          agentConsentVersion: stored.agentConsentVersion,
+          replayAttack: {
+            accessTokenJti: stored.issuedAccessTokenJti,
+            refreshTokenJti: stored.issuedRefreshTokenJti,
+          },
+        };
       }
 
-      // Return response with replayAttack field containing JTIs to revoke
-      // The caller is responsible for revoking these tokens and returning an error
+      // Commit the consumed state while the code-specific guard is held. Durable
+      // Storage provides the strongly consistent publication boundary.
+      const consumed: AuthorizationCode = {
+        ...stored,
+        used: true,
+        ...(request.accessTokenJti ? { issuedAccessTokenJti: request.accessTokenJti } : {}),
+        ...(request.refreshTokenJti ? { issuedRefreshTokenJti: request.refreshTokenJti } : {}),
+      };
+
+      // Persist to Durable Storage - O(1) individual key
+      await this.actorCtx.storage.put(this.buildCodeKey(request.code), consumed);
+
+      // Publish the consumed state only after the one-time marker is durable.
+      this.codes.set(request.code, consumed);
+      stored = consumed;
+
+      // Return authorization data
       return {
         userId: stored.userId,
         scope: stored.scope,
@@ -685,76 +790,19 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
         amr: stored.amr,
         cHash: stored.cHash,
         dpopJkt: stored.dpopJkt,
-        sid: stored.sid,
-        authorizationDetails: stored.authorizationDetails,
+        sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
+        sessionId: stored.sessionId,
+        authorizationDetails: stored.authorizationDetails, // RFC 9396 authorization_details
         authorizationServer: stored.authorizationServer,
         subjectType: stored.subjectType,
         resource: stored.resource,
         agentGrantId: stored.agentGrantId,
         agentGrantGeneration: stored.agentGrantGeneration,
         agentConsentVersion: stored.agentConsentVersion,
-        replayAttack: {
-          accessTokenJti: stored.issuedAccessTokenJti,
-          refreshTokenJti: stored.issuedRefreshTokenJti,
-        },
       };
+    } finally {
+      this.consumingCodes.delete(request.code);
     }
-
-    // Validate PKCE (if code_challenge was provided)
-    if (stored.codeChallenge) {
-      if (!request.codeVerifier) {
-        throw new Error('invalid_grant: code_verifier required for PKCE');
-      }
-
-      const challenge = await this.generateCodeChallenge(
-        request.codeVerifier,
-        stored.codeChallengeMethod || 'S256'
-      );
-
-      if (challenge !== stored.codeChallenge) {
-        throw new Error('invalid_grant: Invalid code_verifier (PKCE validation failed)');
-      }
-    }
-
-    // Mark as used ATOMICALLY
-    // Durable Objects guarantee strong consistency, so this is atomic
-    const consumed: AuthorizationCode = {
-      ...stored,
-      used: true,
-      ...(request.accessTokenJti ? { issuedAccessTokenJti: request.accessTokenJti } : {}),
-      ...(request.refreshTokenJti ? { issuedRefreshTokenJti: request.refreshTokenJti } : {}),
-    };
-
-    // Persist to Durable Storage - O(1) individual key
-    await this.actorCtx.storage.put(this.buildCodeKey(request.code), consumed);
-
-    // Publish the consumed state only after the one-time marker is durable.
-    this.codes.set(request.code, consumed);
-    stored = consumed;
-
-    // Return authorization data
-    return {
-      userId: stored.userId,
-      scope: stored.scope,
-      redirectUri: stored.redirectUri,
-      nonce: stored.nonce,
-      state: stored.state,
-      claims: stored.claims,
-      claimsRequestProtected: stored.claimsRequestProtected,
-      authTime: stored.authTime,
-      acr: stored.acr,
-      amr: stored.amr,
-      cHash: stored.cHash,
-      dpopJkt: stored.dpopJkt,
-      sid: stored.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
-      authorizationDetails: stored.authorizationDetails, // RFC 9396 authorization_details
-      authorizationServer: stored.authorizationServer,
-      subjectType: stored.subjectType,
-      resource: stored.resource,
-      agentGrantId: stored.agentGrantId,
-      agentGrantGeneration: stored.agentGrantGeneration,
-      agentConsentVersion: stored.agentConsentVersion,
-    };
   }
 
   /**
@@ -803,6 +851,8 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
       return false;
     }
 
+    const replayDetected = stored.replayDetectedBeforeTokenRegistration === true;
+
     stored.issuedAccessTokenJti = accessTokenJti;
     if (refreshTokenJti) {
       stored.issuedRefreshTokenJti = refreshTokenJti;
@@ -813,7 +863,7 @@ export class AuthorizationCodeStore extends DurableObject<Env> {
     await this.actorCtx.storage.put(this.buildCodeKey(code), stored);
 
     this.log.info('Registered token JTIs for code', { code: code.substring(0, 8) + '...' });
-    return true;
+    return !replayDetected;
   }
 
   /**

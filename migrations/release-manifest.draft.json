@@ -189,6 +189,10 @@
         {
           "path": "047_align_registration_email_requirement.sql",
           "checksum": "7c4ba530a7f701dcbaa92bdab9c5ce4dc688f2f2cd6509444ce125ff37d196b7"
+        },
+        {
+          "path": "048_custom_claim_cardinality.sql",
+          "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
         }
       ]
     },
@@ -227,6 +231,10 @@
         {
           "path": "009_allow_environment_prefixed_tenant_bindings.sql",
           "checksum": "781a8c2fec31594729c737b52991f55845a0d5f2e2228392c04731fbf243af1a"
+        },
+        {
+          "path": "010_custom_claim_field_values.sql",
+          "checksum": "d63bc14f7dfe7e633261c4d55f2bbd5c4aeb7dfa873c8d5946b4555c5a58dfc4"
         }
       ]
     },
@@ -384,6 +392,10 @@
         {
           "path": "037_unified_logging_job_topology.sql",
           "checksum": "504f413777da6c21941ff897dc5b1423523b5e2ffb102747f93c48b7757db236"
+        },
+        {
+          "path": "038_unique_active_resource_server_profile.sql",
+          "checksum": "a38cfedf604eee5658e2702c1d2d88351360697efbcd0897fbc758f3e1ac4020"
         }
       ]
     },
@@ -481,6 +493,10 @@
         {
           "path": "022_lookup_generated_worker_bindings.sql",
           "checksum": "f6b61bd4abae8decf072b667fc80712f9e4f787bb5ff69d5b373fc2a7feb8888"
+        },
+        {
+          "path": "023_bootstrap_accelerator.sql",
+          "checksum": "8a54db86e9797f8ca20297f3a84beaa9420be4193b1a126e47e3be3988076369"
         }
       ]
     },
@@ -618,6 +634,14 @@
         {
           "path": "020_external_rename_authentication_only_login.sql",
           "checksum": "71ade831c86d7ed2877d57ae8d93e7082f96723d83faba8a85b97afc53c69925"
+        },
+        {
+          "path": "021_external_custom_claim_cardinality.sql",
+          "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
+        },
+        {
+          "path": "022_external_custom_claim_field_values.sql",
+          "checksum": "a30a99406b2b97950a0a4b34527f435c78431f82c286cffbc9037ddc98203685"
         }
       ]
     },

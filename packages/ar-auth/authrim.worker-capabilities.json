@@ -33,6 +33,7 @@
     { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
     { "name": "PAR_REQUEST_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "FLOW_STATE_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DIRECTORY_CONNECTOR_RELAY", "kind": "durable_object_namespace", "required": true },
     { "name": "PUBLIC_ASSETS", "kind": "r2_bucket", "required": false },
     { "name": "AVATARS", "kind": "r2_bucket", "required": false },

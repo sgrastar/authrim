@@ -1,8 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   CloudflareControlApiClient,
   calculateControlBootstrapOwnershipFingerprint,
   digestCloudflareWorkerSettings,
+  signBootstrapAcceleratorProof,
   type CloudflareWorkerDeployment,
   type ControlBootstrapOwnershipResource,
 } from '@authrim/ar-lib-core/control-plane';
@@ -34,6 +37,7 @@ import {
 import type { ReleaseMigrationManifest } from './release-migrations.js';
 import type { DeployResult } from './deploy.js';
 import { isValidTenantId } from './tenant-id.js';
+import { fetchWithTimeout } from './http-limits.js';
 
 function sqlString(value: string): string {
   return `'${value.replace(/'/gu, "''")}'`;
@@ -142,6 +146,70 @@ export function createOperatorBootstrapHandoffRepository(
   );
 }
 
+async function executeInitialBootstrapWorkerBindingsAsOperator(input: {
+  controlDatabaseId: string;
+  controlDatabaseName: string;
+  environmentId: string;
+  accountId: string;
+  client: SetupOperatorControlClient;
+}): Promise<void> {
+  const operations = (
+    await listPendingControlOperatorOperations({
+      controlDatabaseName: input.controlDatabaseName,
+    })
+  ).filter(
+    (operation) =>
+      operation.environmentId === input.environmentId &&
+      operation.operationId.startsWith('op_bootstrap_') &&
+      operation.requestedByType === 'setup' &&
+      operation.currentStep === 'reconcile_worker_bindings'
+  );
+  for (const operation of operations) {
+    const result = await executeSetupControlOperatorWorkerBindings({
+      controlDatabaseId: input.controlDatabaseId,
+      operation,
+      client: input.client,
+      expectedAccountId: input.accountId,
+    });
+    assertInitialBootstrapBindingExecutionCanContinue(result);
+  }
+}
+
+async function createInitialBootstrapOperatorClient(input: {
+  accountId?: string;
+  token?: string;
+  createClient?: (input: { expectedAccountId?: string }) => Promise<SetupOperatorControlClient>;
+}): Promise<{ accountId: string; client: SetupOperatorControlClient }> {
+  const accountId = input.accountId?.trim() || (await getAccountId());
+  if (!accountId) throw new Error('control_bootstrap_operator_account_missing');
+  const explicitToken = input.token?.trim();
+  const client = explicitToken
+    ? new CloudflareControlApiClient({
+        accountId,
+        tokens: { d1: explicitToken, workers: explicitToken },
+      })
+    : await (input.createClient ?? createSetupOperatorD1Client)({ expectedAccountId: accountId });
+  return { accountId, client };
+}
+
+export async function advanceInitialBootstrapWorkerBindingsAsOperator(input: {
+  controlDatabaseId: string;
+  controlDatabaseName: string;
+  environmentId: string;
+  accountId?: string;
+  token?: string;
+  createClient?: (input: { expectedAccountId?: string }) => Promise<SetupOperatorControlClient>;
+}): Promise<void> {
+  const { accountId, client } = await createInitialBootstrapOperatorClient(input);
+  await executeInitialBootstrapWorkerBindingsAsOperator({
+    controlDatabaseId: input.controlDatabaseId,
+    controlDatabaseName: input.controlDatabaseName,
+    environmentId: input.environmentId,
+    accountId,
+    client,
+  });
+}
+
 export async function reconcileInitialBootstrapHandoffAsOperator(input: {
   controlDatabaseId: string;
   controlDatabaseName?: string;
@@ -152,39 +220,18 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
   createClient?: (input: { expectedAccountId?: string }) => Promise<SetupOperatorControlClient>;
   now?: () => number;
 }): Promise<{ attempted: number; accepted: number; blocked: number; retrying: number }> {
-  const accountId = input.accountId?.trim() || (await getAccountId());
-  if (!accountId) throw new Error('control_bootstrap_operator_account_missing');
-  const explicitToken = input.token?.trim();
-  const client = explicitToken
-    ? new CloudflareControlApiClient({
-        accountId,
-        tokens: { d1: explicitToken, workers: explicitToken },
-      })
-    : await (input.createClient ?? createSetupOperatorD1Client)({ expectedAccountId: accountId });
+  const { accountId, client } = await createInitialBootstrapOperatorClient(input);
   if (input.executeWorkerBindings) {
     if (!input.controlDatabaseName || !input.environmentId) {
       throw new Error('control_bootstrap_operator_binding_context_missing');
     }
-    const operations = (
-      await listPendingControlOperatorOperations({
-        controlDatabaseName: input.controlDatabaseName,
-      })
-    ).filter(
-      (operation) =>
-        operation.environmentId === input.environmentId &&
-        operation.operationId.startsWith('op_bootstrap_') &&
-        operation.requestedByType === 'setup' &&
-        operation.currentStep === 'reconcile_worker_bindings'
-    );
-    for (const operation of operations) {
-      const result = await executeSetupControlOperatorWorkerBindings({
-        controlDatabaseId: input.controlDatabaseId,
-        operation,
-        client,
-        expectedAccountId: accountId,
-      });
-      assertInitialBootstrapBindingExecutionCanContinue(result);
-    }
+    await executeInitialBootstrapWorkerBindingsAsOperator({
+      controlDatabaseId: input.controlDatabaseId,
+      controlDatabaseName: input.controlDatabaseName,
+      environmentId: input.environmentId,
+      accountId,
+      client,
+    });
   }
   const repository = createOperatorBootstrapHandoffRepository(input.controlDatabaseId, client);
   return new BootstrapHandoffVerifier(
@@ -735,6 +782,40 @@ function isSecretOnlyWorkerVersionAdvance(input: {
   );
 }
 
+function workerDeploymentIdentity(
+  workerScriptName: string,
+  deploymentId: string,
+  versionId: string
+) {
+  return `${workerScriptName}\0${deploymentId}\0${versionId}`;
+}
+
+export function workerVersionIdentity(workerScriptName: string, versionId: string): string {
+  return `${workerScriptName}\0${versionId}`;
+}
+
+export async function listInitialBootstrapReconciledWorkerVersions(input: {
+  environmentId: string;
+  controlDatabaseName: string;
+  query?: typeof queryD1Rows;
+}): Promise<Set<string>> {
+  const query = input.query ?? queryD1Rows;
+  const rows = await query<{
+    worker_script_name: string;
+    patch_result_version_id: string;
+  }>(
+    input.controlDatabaseName,
+    `SELECT DISTINCT worker_script_name, patch_result_version_id
+       FROM control_worker_binding_reconciliations
+      WHERE environment_id = ${sqlString(input.environmentId)}
+        AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing', 'succeeded')
+        AND patch_result_version_id IS NOT NULL`
+  );
+  return new Set(
+    rows.map((row) => workerVersionIdentity(row.worker_script_name, row.patch_result_version_id))
+  );
+}
+
 export async function recordInitialBootstrapWorkerEvidence(input: {
   environmentId: string;
   controlDatabaseName: string;
@@ -772,6 +853,29 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
       ORDER BY worker_script_name`
   );
   if (inventory.length === 0) throw new Error('control_bootstrap_worker_inventory_missing');
+  const reconciledDeployments = new Set(
+    (
+      await query<{
+        worker_script_name: string;
+        patch_result_deployment_id: string;
+        patch_result_version_id: string;
+      }>(
+        input.controlDatabaseName,
+        `SELECT worker_script_name, patch_result_deployment_id, patch_result_version_id
+           FROM control_worker_binding_reconciliations
+          WHERE environment_id = ${sqlString(input.environmentId)}
+            AND state = 'succeeded'
+            AND patch_result_deployment_id IS NOT NULL
+            AND patch_result_version_id IS NOT NULL`
+      )
+    ).map((row) =>
+      workerDeploymentIdentity(
+        row.worker_script_name,
+        row.patch_result_deployment_id,
+        row.patch_result_version_id
+      )
+    )
+  );
   const deploymentByName = new Map<string, DeployResult>();
   for (const deployment of input.deployments) {
     if (!deployment.success && !deployment.trafficCommitted) continue;
@@ -797,8 +901,12 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
       client.listWorkerDeployments(row.worker_script_name),
     ]);
     const active = activeWorkerDeployment(deployments);
+    const isReconciledBindingDeployment = reconciledDeployments.has(
+      workerDeploymentIdentity(row.worker_script_name, active.deploymentId, active.versionId)
+    );
     if (
       active.versionId !== deployed.cloudflareVersionId &&
+      !isReconciledBindingDeployment &&
       (!allowSecretAdvance.has(row.worker_script_name) ||
         !isSecretOnlyWorkerVersionAdvance({
           deployments,
@@ -951,32 +1059,83 @@ export async function isInitialBootstrapHandoffAccepted(input: {
   return row?.state === 'accepted';
 }
 
+export async function requestInitialBootstrapAcceleration(input: {
+  apiBaseUrl: string;
+  environmentId: string;
+  keysDir: string;
+  activeSlot: 'A' | 'B';
+  activeKeyId: string;
+  fetch?: typeof fetch;
+}): Promise<'accepted' | 'inactive'> {
+  const privateJwk = JSON.parse(
+    await readFile(
+      join(
+        input.keysDir,
+        `smoke_rpc_signing_jwk_slot_${input.activeSlot.toLowerCase()}.private.jwk.json`
+      ),
+      'utf8'
+    )
+  ) as Record<string, unknown>;
+  const proof = await signBootstrapAcceleratorProof({
+    environmentId: input.environmentId,
+    jti: `setup-${randomBytes(18).toString('base64url')}`,
+    privateJwk,
+    keyId: input.activeKeyId,
+  });
+  const response = await (input.fetch ?? fetchWithTimeout)(
+    `${input.apiBaseUrl.replace(/\/+$/u, '')}/api/internal/control/bootstrap/advance`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${proof}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    }
+  );
+  if (response.status === 202) return 'accepted';
+  if (response.status === 404) return 'inactive';
+  throw new Error(`control_bootstrap_accelerator_http_${response.status}`);
+}
+
 export async function waitForInitialBootstrapHandoff(input: {
   environmentId: string;
   controlDatabaseName: string;
   timeoutMs?: number;
+  stallTimeoutMs?: number;
   pollIntervalMs?: number;
   query?: typeof queryD1Rows;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
   onProgress?: (message: string) => void;
+  advanceBindings?: () => Promise<unknown>;
+  refreshEvidence?: () => Promise<unknown>;
   reconcile?: () => Promise<unknown>;
 }): Promise<{ state: 'accepted'; acceptedAt: number }> {
-  const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 5 * 60_000, 15 * 60_000));
+  const timeoutMs = Math.max(1_000, Math.min(input.timeoutMs ?? 5 * 60_000, 30 * 60_000));
+  const stallTimeoutMs = Math.max(1_000, Math.min(input.stallTimeoutMs ?? timeoutMs, timeoutMs));
   const pollIntervalMs = Math.max(250, Math.min(input.pollIntervalMs ?? 5_000, 30_000));
   const query = input.query ?? queryD1Rows;
   const sleep =
     input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const now = input.now ?? Date.now;
-  const deadline = now() + timeoutMs;
+  const startedAt = now();
+  const deadline = startedAt + timeoutMs;
+  let stallDeadline = startedAt + stallTimeoutMs;
+  let lastProgressIdentity = '';
+  let completedBindingCountAwaitingConfirmation: number | null = null;
   while (now() <= deadline) {
-    await input.reconcile?.();
+    await input.advanceBindings?.();
     const [row] = await query<{
       state: string;
       verification_error_code: string | null;
       accepted_at: number | string | null;
       total_bindings: number | string;
       pending_bindings: number | string;
+      failed_bindings: number | string;
+      failed_binding_error_code: string | null;
+      latest_binding_update: number | string | null;
     }>(
       input.controlDatabaseName,
       `SELECT handoff.state, handoff.verification_error_code, handoff.accepted_at,
@@ -984,7 +1143,20 @@ export async function waitForInitialBootstrapHandoff(input: {
                 WHERE reconciliation.environment_id = handoff.environment_id) AS total_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
-                  AND reconciliation.state <> 'succeeded') AS pending_bindings
+                  AND reconciliation.state NOT IN ('succeeded', 'blocked', 'rolled_back'))
+                AS pending_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state IN ('blocked', 'rolled_back')) AS failed_bindings,
+              (SELECT reconciliation.last_error_code
+                 FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state IN ('blocked', 'rolled_back')
+                ORDER BY reconciliation.updated_at DESC LIMIT 1) AS failed_binding_error_code,
+              (SELECT MAX(reconciliation.updated_at)
+                 FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id)
+                AS latest_binding_update
          FROM control_bootstrap_handoffs handoff
         WHERE handoff.environment_id = ${sqlString(input.environmentId)}`
     );
@@ -1001,6 +1173,13 @@ export async function waitForInitialBootstrapHandoff(input: {
         `control_bootstrap_handoff_blocked:${row.verification_error_code ?? 'unknown'}`
       );
     }
+    const failedBindings = Math.max(0, Number(row.failed_bindings) || 0);
+    if (failedBindings > 0) {
+      const safeError = /^control_[a-z0-9_]{1,128}$/u.test(row.failed_binding_error_code ?? '')
+        ? row.failed_binding_error_code
+        : 'control_worker_binding_reconciliation_failed';
+      throw new Error(`control_bootstrap_binding_blocked:${safeError}`);
+    }
     const pendingBindings = Math.max(0, Number(row.pending_bindings));
     const queriedTotalBindings = Number(row.total_bindings);
     const totalBindings =
@@ -1008,10 +1187,30 @@ export async function waitForInitialBootstrapHandoff(input: {
         ? queriedTotalBindings
         : pendingBindings;
     const completedBindings = Math.max(0, totalBindings - pendingBindings);
+    const progressIdentity = `${totalBindings}:${completedBindings}:${String(
+      row.latest_binding_update ?? ''
+    )}`;
+    if (progressIdentity !== lastProgressIdentity) {
+      lastProgressIdentity = progressIdentity;
+      stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
+    }
     input.onProgress?.(
       `Control bootstrap verification progress: ${completedBindings}/${totalBindings} binding checks complete (${pendingBindings} remaining)...`
     );
+    const bindingsAreQuiescent =
+      pendingBindings === 0 &&
+      totalBindings > 0 &&
+      completedBindingCountAwaitingConfirmation === totalBindings;
+    completedBindingCountAwaitingConfirmation =
+      pendingBindings === 0 && totalBindings > 0 ? totalBindings : null;
+    if (bindingsAreQuiescent) {
+      await input.refreshEvidence?.();
+      await input.reconcile?.();
+    }
     await sleep(pollIntervalMs);
+    if (now() > stallDeadline && now() <= deadline) {
+      throw new Error('control_bootstrap_handoff_stalled');
+    }
   }
   throw new Error('control_bootstrap_handoff_timeout');
 }

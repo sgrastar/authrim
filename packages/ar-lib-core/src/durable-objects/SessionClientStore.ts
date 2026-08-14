@@ -5,12 +5,16 @@ import { createLogger, type Logger } from '../utils/logger';
 const SESSION_CLIENT_PREFIX = 'session-client:';
 const SESSION_CLIENT_TENANT_KEY = 'session-client-context:tenant-id';
 const SESSION_CLIENT_SESSION_KEY = 'session-client-context:session-id';
+const OIDC_SID_ALIAS_TENANT_KEY = 'oidc-sid-alias:tenant-id';
+const OIDC_SID_ALIAS_SID_KEY = 'oidc-sid-alias:oidc-sid';
+const OIDC_SID_ALIAS_SESSION_KEY = 'oidc-sid-alias:session-id';
 
 export interface SessionClientRecord {
   id: string;
   tenant_id: string;
   session_id: string;
   client_id: string;
+  oidc_sid?: string;
   first_token_at: number;
   last_token_at: number;
   last_seen_at: number | null;
@@ -20,6 +24,7 @@ export interface RegisterSessionClientRequest {
   tenantId: string;
   sessionId: string;
   clientId: string;
+  oidcSid?: string;
   now?: number;
 }
 
@@ -70,6 +75,7 @@ export class SessionClientStore extends DurableObject<Env> {
         const updated: SessionClientRecord = {
           ...existing,
           last_token_at: now,
+          ...(input.oidcSid ? { oidc_sid: normalizeRequired(input.oidcSid, 'oidc_sid') } : {}),
         };
         await txn.put(key, updated);
         return updated;
@@ -80,6 +86,7 @@ export class SessionClientStore extends DurableObject<Env> {
         tenant_id: tenantId,
         session_id: sessionId,
         client_id: clientId,
+        ...(input.oidcSid ? { oidc_sid: normalizeRequired(input.oidcSid, 'oidc_sid') } : {}),
         first_token_at: now,
         last_token_at: now,
         last_seen_at: null,
@@ -133,6 +140,53 @@ export class SessionClientStore extends DurableObject<Env> {
     });
     const deleted = await this.ctx.storage.delete([...entries.keys()]);
     return typeof deleted === 'number' ? deleted : entries.size;
+  }
+
+  async registerOidcSidAliasRpc(input: {
+    tenantId: string;
+    oidcSid: string;
+    sessionId: string;
+  }): Promise<void> {
+    const tenantId = normalizeRequired(input.tenantId, 'tenant_id');
+    const oidcSid = normalizeRequired(input.oidcSid, 'oidc_sid');
+    const sessionId = normalizeRequired(input.sessionId, 'session_id');
+
+    await this.ctx.storage.transaction(async (txn) => {
+      const [storedTenantId, storedOidcSid, storedSessionId] = await Promise.all([
+        txn.get<string>(OIDC_SID_ALIAS_TENANT_KEY),
+        txn.get<string>(OIDC_SID_ALIAS_SID_KEY),
+        txn.get<string>(OIDC_SID_ALIAS_SESSION_KEY),
+      ]);
+      if (
+        (storedTenantId && storedTenantId !== tenantId) ||
+        (storedOidcSid && storedOidcSid !== oidcSid) ||
+        (storedSessionId && storedSessionId !== sessionId)
+      ) {
+        throw new Error('session_client_store_oidc_sid_alias_mismatch');
+      }
+      await txn.put({
+        [OIDC_SID_ALIAS_TENANT_KEY]: tenantId,
+        [OIDC_SID_ALIAS_SID_KEY]: oidcSid,
+        [OIDC_SID_ALIAS_SESSION_KEY]: sessionId,
+      });
+    });
+  }
+
+  async resolveOidcSidAliasRpc(input: {
+    tenantId: string;
+    oidcSid: string;
+  }): Promise<string | null> {
+    const tenantId = normalizeRequired(input.tenantId, 'tenant_id');
+    const oidcSid = normalizeRequired(input.oidcSid, 'oidc_sid');
+    const [storedTenantId, storedOidcSid, storedSessionId] = await Promise.all([
+      this.ctx.storage.get<string>(OIDC_SID_ALIAS_TENANT_KEY),
+      this.ctx.storage.get<string>(OIDC_SID_ALIAS_SID_KEY),
+      this.ctx.storage.get<string>(OIDC_SID_ALIAS_SESSION_KEY),
+    ]);
+    if (storedTenantId !== tenantId || storedOidcSid !== oidcSid) {
+      return null;
+    }
+    return storedSessionId ?? null;
   }
 
   private async ensurePinnedContext(

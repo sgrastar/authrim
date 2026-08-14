@@ -14,6 +14,7 @@ import { consentGetHandler, consentPostHandler } from '../consent';
 const mockRedirectWithError = vi.hoisted(() => vi.fn());
 const mockResolveClientTrustPolicy = vi.hoisted(() => vi.fn());
 const mockResolveAccountDataContextFromHono = vi.hoisted(() => vi.fn());
+const mockValidateActingAsRelationship = vi.hoisted(() => vi.fn());
 
 vi.mock('../authorize', () => ({
   redirectWithError: mockRedirectWithError,
@@ -36,6 +37,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     processConsentItemDecisions: vi.fn(async () => undefined),
     resolveClientTrustPolicy: mockResolveClientTrustPolicy,
     resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    validateActingAsRelationship: mockValidateActingAsRelationship,
   };
 });
 
@@ -64,7 +66,17 @@ function createMockChallengeStore(challengeData?: any) {
   const challenges = new Map<string, any>();
 
   if (challengeData) {
-    challenges.set(challengeData.id, challengeData);
+    const normalizedChallenge =
+      challengeData.type === 'consent' && challengeData.metadata?.session_id === undefined
+        ? {
+            ...challengeData,
+            metadata: {
+              ...challengeData.metadata,
+              session_id: 'g1:apac:3:session_user_123',
+            },
+          }
+        : challengeData;
+    challenges.set(challengeData.id, normalizedChallenge);
   }
 
   return {
@@ -193,6 +205,9 @@ function createMockContext(options: {
         if (normalizedName === 'content-type') {
           return options.headers?.['content-type'] ?? 'application/json';
         }
+        if (normalizedName === 'cookie') {
+          return options.headers?.cookie ?? 'authrim_session=g1%3Aapac%3A3%3Asession_user_123';
+        }
         return options.headers?.[normalizedName] ?? null;
       }),
     },
@@ -204,6 +219,15 @@ function createMockContext(options: {
         idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-auth-code-id' }),
         get: vi.fn().mockReturnValue({
           fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ success: true }))),
+        }),
+      },
+      SESSION_STORE: {
+        idFromName: vi.fn().mockReturnValue({ toString: () => 'mock-session-id' }),
+        get: vi.fn().mockReturnValue({
+          getSessionRpc: vi.fn().mockResolvedValue({
+            userId: 'user-123',
+            expiresAt: Date.now() + 60_000,
+          }),
         }),
       },
       ...options.env,
@@ -234,6 +258,10 @@ describe('Consent Handlers', () => {
     vi.mocked(getConsentItemsForScreen).mockResolvedValue([]);
     vi.mocked(processConsentItemDecisions).mockResolvedValue(undefined);
     mockResolveClientTrustPolicy.mockResolvedValue(null);
+    mockValidateActingAsRelationship.mockResolvedValue({
+      valid: false,
+      error: 'No valid acting-as relationship exists',
+    });
     mockResolveAccountDataContextFromHono.mockImplementation(async (c, userId: string) => {
       const context = c.get('accountDataContext');
       return { ...context, accountId: userId, legacyUserId: userId };
@@ -585,6 +613,7 @@ describe('Consent Handlers', () => {
           legal_basis: 'consent',
           title: 'Optional updates',
           description: 'Product updates',
+          document_url: 'javascript:alert(document.domain)',
           version: '1',
           version_id: 'version-3',
           is_required: false,
@@ -630,6 +659,8 @@ describe('Consent Handlers', () => {
       expect(html).toContain('name="consent_item_decision:optional-statement" value="granted"');
       expect(html).toContain('Privacy Policy');
       expect(html).toContain('Terms of Service');
+      expect(html).toContain('href="https://example.com/implicit"');
+      expect(html).not.toContain('javascript:');
       expect(html).toContain('custom_scope');
     });
 
@@ -655,6 +686,61 @@ describe('Consent Handlers', () => {
   });
 
   describe('consentPostHandler', () => {
+    it('rejects a session-bound consent challenge when only the bearer challenge is presented', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'session-bound-consent',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'client-123',
+          redirect_uri: 'https://client.example.com/callback',
+          scope: 'openid profile',
+          session_id: 'g1:apac:3:session_victim',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'session-bound-consent', approved: true },
+        headers: { cookie: '' },
+        challengeStore,
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
+      expect(challengeStore._challenges.has('session-bound-consent')).toBe(true);
+      expect(c._mockDB.prepare).not.toHaveBeenCalledWith(
+        expect.stringContaining('oauth_client_consents')
+      );
+    });
+
+    it('rejects legacy consent challenges that have no authenticated session binding', async () => {
+      const challengeStore = createMockChallengeStore({
+        id: 'legacy-unbound-consent',
+        tenantId: 'default',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          client_id: 'client-123',
+          redirect_uri: 'https://client.example.com/callback',
+          scope: 'openid profile',
+          session_id: null,
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'legacy-unbound-consent', approved: true },
+        challengeStore,
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
+      expect(challengeStore._challenges.has('legacy-unbound-consent')).toBe(true);
+    });
     it('should require challenge_id parameter', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -662,7 +748,7 @@ describe('Consent Handlers', () => {
         headers: { 'content-type': 'application/json' },
       });
 
-      await consentPostHandler(c);
+      const response = await consentPostHandler(c);
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -900,7 +986,7 @@ describe('Consent Handlers', () => {
         db: mockDB,
       });
 
-      await consentPostHandler(c);
+      const response = await consentPostHandler(c);
 
       // Should save consent to database
       expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('oauth_client_consents'));
@@ -914,6 +1000,8 @@ describe('Consent Handlers', () => {
         userId: 'user-123',
         metadata: {
           purpose: 'authorize_consent_confirmation',
+          sessionId: 'g1:apac:3:session_user_123',
+          browserBinding: expect.any(String),
           authorization_request: expect.objectContaining({
             response_type: 'code',
             client_id: 'test-client',
@@ -921,6 +1009,122 @@ describe('Consent Handlers', () => {
           }),
         },
       });
+      expect(response.headers.get('Set-Cookie')).toContain('authrim_consent_confirmation=');
+      expect(response.headers.get('Set-Cookie')).toContain('HttpOnly');
+    });
+
+    it.each([
+      ['submitted acting_as_user_id', {}, { acting_as_user_id: 'victim-user' }],
+      ['challenge acting_as metadata', { acting_as: 'victim-user' }, {}],
+    ])('rejects an unvalidated acting-as target from %s', async (_source, metadata, body) => {
+      const challengeStore = createMockChallengeStore({
+        id: 'invalid-acting-as-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid profile',
+          ...metadata,
+        },
+      });
+      const mockDB = createMockDB({ runResult: { success: true } });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          challenge_id: 'invalid-acting-as-challenge',
+          approved: true,
+          ...body,
+        },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        db: mockDB,
+        env: { ENABLE_RBAC_CONSENT_ACTING_AS: 'true' },
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
+      expect(mockValidateActingAsRelationship).toHaveBeenCalledWith(
+        expect.anything(),
+        'user-123',
+        'victim-user',
+        'default'
+      );
+      expect(mockDB.prepare).not.toHaveBeenCalledWith(
+        expect.stringContaining('oauth_client_consents')
+      );
+    });
+
+    it('preserves acting-as state after validating the delegated relationship', async () => {
+      mockValidateActingAsRelationship.mockResolvedValue({
+        valid: true,
+        relationship_type: 'delegate',
+        permission_level: 'manage',
+      });
+      const challengeStore = createMockChallengeStore({
+        id: 'valid-acting-as-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          acting_as: 'delegated-user',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'valid-acting-as-challenge', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+        env: { ENABLE_RBAC_CONSENT_ACTING_AS: 'true' },
+      });
+
+      await consentPostHandler(c);
+
+      const response = c.json.mock.calls[0][0] as { redirect_url: string };
+      const confirmationId = new URL(response.redirect_url, 'https://example.com').searchParams.get(
+        '_consent_confirmation_challenge'
+      );
+      expect(challengeStore._challenges.get(confirmationId!)?.metadata).toMatchObject({
+        authorization_request: expect.objectContaining({ acting_as: 'delegated-user' }),
+      });
+    });
+
+    it('rejects acting-as consent when the feature is disabled', async () => {
+      mockValidateActingAsRelationship.mockResolvedValue({
+        valid: true,
+        relationship_type: 'delegate',
+        permission_level: 'manage',
+      });
+      const challengeStore = createMockChallengeStore({
+        id: 'disabled-acting-as-challenge',
+        type: 'consent',
+        userId: 'user-123',
+        metadata: {
+          response_type: 'code',
+          client_id: 'test-client',
+          redirect_uri: 'https://example.com/callback',
+          scope: 'openid',
+          acting_as: 'delegated-user',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { challenge_id: 'disabled-acting-as-challenge', approved: true },
+        headers: { 'content-type': 'application/json' },
+        challengeStore,
+      });
+
+      const response = await consentPostHandler(c);
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
+      expect(mockValidateActingAsRelationship).not.toHaveBeenCalled();
     });
 
     it('should reject approval when required consent items are not granted', async () => {

@@ -30,7 +30,6 @@ const adminAdminRbac = {
 	admin_admin_rbac_cancel: 'Cancel',
 	admin_admin_rbac_saving: 'Saving...',
 	admin_admin_rbac_save: 'Save',
-	admin_admin_rbac_back_to_roles: 'Back to Admin Roles',
 	admin_admin_rbac_create_title: 'Create Custom Admin Role',
 	admin_admin_rbac_create_description:
 		'Create a new custom role with specific permissions for Admin Operators.',
@@ -55,7 +54,6 @@ const adminAdminRbac = {
 	admin_admin_rbac_create_button: 'Create Role',
 	admin_admin_rbac_detail_loading: 'Loading role...',
 	admin_admin_rbac_back_to_list: 'Back to List',
-	admin_admin_rbac_admin_rbac: 'Admin RBAC',
 	admin_admin_rbac_role_information: 'Basic Information',
 	admin_admin_rbac_role_type: 'Role Type',
 	admin_admin_rbac_hierarchy_level: 'Hierarchy Level',

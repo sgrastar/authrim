@@ -11,9 +11,35 @@ export interface CastResult {
 }
 
 export class ClaimValueCaster {
-  cast(rawValue: string | null | undefined, fieldType: string): CastResult {
+  cast(
+    rawValue: string | null | undefined,
+    fieldType: string,
+    cardinality: 'single' | 'multi' = 'single'
+  ): CastResult {
     if (rawValue === null || rawValue === undefined) {
       return { value: undefined, valid: false };
+    }
+
+    if (cardinality === 'multi') {
+      let values: unknown;
+      try {
+        values = JSON.parse(rawValue);
+      } catch {
+        return { value: undefined, valid: false };
+      }
+      if (!Array.isArray(values)) {
+        return { value: undefined, valid: false };
+      }
+      const castValues: unknown[] = [];
+      for (const value of values) {
+        if (value === null || typeof value === 'object') {
+          return { value: undefined, valid: false };
+        }
+        const cast = this.cast(String(value), fieldType, 'single');
+        if (!cast.valid) return { value: undefined, valid: false };
+        castValues.push(cast.value);
+      }
+      return { value: castValues, valid: true };
     }
 
     switch (fieldType) {

@@ -17,6 +17,25 @@ describe('SessionClientRepository logout target hydration', () => {
     repository = new SessionClientRepository(adapter, 'tenant-a');
   });
 
+  it('lists distinct logout-capable clients within the repository tenant', async () => {
+    queryMock.mockResolvedValue([
+      { client_id: 'client-back' },
+      { client_id: 'client-back' },
+      { client_id: 'client-front' },
+    ]);
+
+    await expect(repository.listLogoutCandidateClientIds()).resolves.toEqual([
+      'client-back',
+      'client-front',
+    ]);
+    expect(queryMock).toHaveBeenCalledWith(expect.stringContaining('WHERE tenant_id = ?'), [
+      'tenant-a',
+    ]);
+    expect(queryMock.mock.calls[0][0]).toContain('backchannel_logout_uri IS NOT NULL');
+    expect(queryMock.mock.calls[0][0]).toContain('frontchannel_logout_uri IS NOT NULL');
+    expect(queryMock.mock.calls[0][0]).toContain('logout_webhook_uri IS NOT NULL');
+  });
+
   it('hydrates DO records from oauth_clients without reading a D1 session-client mirror', async () => {
     queryMock.mockResolvedValue([
       {

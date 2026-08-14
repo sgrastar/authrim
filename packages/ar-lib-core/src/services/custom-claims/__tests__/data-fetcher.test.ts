@@ -60,7 +60,7 @@ describe('UserCustomDataFetcher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.query.mockResolvedValue([]);
-    mockPiiDb.queryOne.mockResolvedValue(null);
+    mockPiiDb.query.mockResolvedValue([]);
   });
 
   it('fetches non-PII data from user_custom_fields', async () => {
@@ -80,9 +80,9 @@ describe('UserCustomDataFetcher', () => {
 
   it('fetches PII data from identity_sensitive_values', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
-    mockPiiDb.queryOne.mockResolvedValue({
-      value_json: JSON.stringify({ ssn: '123-45-6789' }),
-    });
+    mockPiiDb.query.mockResolvedValue([
+      { value_key: 'custom_attribute:ssn', value_json: JSON.stringify('123-45-6789') },
+    ]);
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
     const result = await fetcher.fetch('default', 'user-1', schemas);
@@ -96,9 +96,9 @@ describe('UserCustomDataFetcher', () => {
       makeSchema({ field_key: 'ssn', is_pii: 1 }),
     ];
     mockDb.query.mockResolvedValue([{ field_name: 'department', field_value: 'eng' }]);
-    mockPiiDb.queryOne.mockResolvedValue({
-      value_json: JSON.stringify({ ssn: '999' }),
-    });
+    mockPiiDb.query.mockResolvedValue([
+      { value_key: 'custom_attribute:ssn', value_json: JSON.stringify('999') },
+    ]);
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
     const result = await fetcher.fetch('default', 'user-1', schemas);
@@ -118,9 +118,9 @@ describe('UserCustomDataFetcher', () => {
 
   it('handles PII JSON parse error gracefully', async () => {
     const schemas = [makeSchema({ field_key: 'ssn', is_pii: 1 })];
-    mockPiiDb.queryOne.mockResolvedValue({
-      value_json: 'not-json',
-    });
+    mockPiiDb.query.mockResolvedValue([
+      { value_key: 'custom_attribute:ssn', value_json: 'not-json' },
+    ]);
 
     const fetcher = new UserCustomDataFetcher(mockDb as any, mockPiiDb as any);
     const result = await fetcher.fetch('default', 'user-1', schemas);

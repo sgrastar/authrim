@@ -155,7 +155,7 @@ test('enrolls an invited Admin and verifies the newly created Passkey', async ({
           '/api/admin/invitations/activate',
         ],
       });
-    await expect(page.locator('.message.success')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open Admin dashboard' })).toBeVisible();
     expect(registeredCredentialId).not.toBe('');
     expect(authenticatedCredentialId).toBe(registeredCredentialId);
   } finally {

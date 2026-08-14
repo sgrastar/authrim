@@ -345,6 +345,7 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'RATE_LIMITER',
     'PAR_REQUEST_STORE',
     'FLOW_STATE_STORE',
+    'DPOP_JTI_STORE',
   ],
   'ar-token': [
     'KEY_MANAGER',
@@ -375,10 +376,11 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'TOKEN_REVOCATION_STORE',
     'VERSION_MANAGER',
     'CHALLENGE_STORE',
+    'DPOP_JTI_STORE',
   ],
   'ar-agent-access': ['KEY_MANAGER', 'RATE_LIMITER', 'DPOP_JTI_STORE'],
   'ar-router': [],
-  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE'],
+  'ar-async': ['DEVICE_CODE_STORE', 'CIBA_REQUEST_STORE', 'DPOP_JTI_STORE'],
   'ar-policy': ['PERMISSION_CHANGE_HUB'],
   'ar-saml': [
     'KEY_MANAGER',
@@ -1047,6 +1049,7 @@ export function generateWranglerConfig(
       { binding: 'OP_TOKEN', service: `${env}-ar-token` },
       { binding: 'OP_USERINFO', service: `${env}-ar-userinfo` },
       { binding: 'OP_MANAGEMENT', service: `${env}-ar-management` },
+      { binding: 'OP_CONTROL', service: `${env}-ar-control` },
       { binding: 'OP_AGENT_ACCESS', service: `${env}-ar-agent-access` },
     ];
 
@@ -2455,6 +2458,9 @@ export function generateUiWorkersWranglerConfig(options: UiWorkersWranglerOption
     lines.push(``, `[[services]]`);
     lines.push(`binding = "AR_ROUTER"`);
     lines.push(`service = "${workerName}"`);
+    if (component === 'ar-login-ui') {
+      lines.push(`entrypoint = "LoginUiBackendEntrypoint"`);
+    }
   }
 
   return lines.join('\n') + '\n';

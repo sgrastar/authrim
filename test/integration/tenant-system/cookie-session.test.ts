@@ -5,14 +5,14 @@ import {
 } from '../../../packages/ar-login-ui/src/routes/discover/+page.server';
 import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
 import { REMEMBERED_TENANT_COOKIE } from '../../../packages/ar-login-ui/src/lib/discovery-session';
-import { tenantSystemProfiles } from '../../fixtures/tenant-system/profiles';
+import { tenantSystemProfiles } from './fixtures/profiles';
 import {
   applyLoginEntryProfile,
   buildEnvForTopology,
   createTenantSystemDiscoveryApp,
-  loadMatrixCsv,
   seedTenantDataset,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface CookieSessionMatrixRow {
   case_id: string;
@@ -42,7 +42,7 @@ function discoveryConfig(rememberLastTenant = true) {
     config: {
       tenant_id: 'first',
       mode: 'discovery_optional',
-      discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+      discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
       email_resolution_policy: 'exact_email_then_domain',
       selection_policy: 'select_if_multiple',
       allow_manual_tenant_entry: true,

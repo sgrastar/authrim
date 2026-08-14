@@ -15,7 +15,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
   createD1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -288,7 +287,10 @@ function getDefaultTenantGuard(isDefault: boolean): string | null {
 }
 
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
-  return createAuthContextFromHono(c, getTenantIdFromContext(c)).coreAdapter;
+  // Tenant inventory routes intentionally run without a request-scoped tenant
+  // metadata context. The deployment Core binding is the platform directory
+  // that contains the tenant inventory and provisioning drafts.
+  return createD1Adapter(c.env.DB, 'tenant-inventory');
 }
 
 function formatTenant(row: TenantRow) {

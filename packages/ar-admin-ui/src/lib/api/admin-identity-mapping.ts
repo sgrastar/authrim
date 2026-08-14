@@ -175,7 +175,7 @@ export interface IdentityMappingSourceProfileSummary {
 	} | null;
 }
 
-export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml';
+export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml' | 'resource_server';
 export type IdentityMappingProfileOwnerScope = 'platform' | 'tenant' | 'client';
 export type IdentityMappingRegistryOwnerScope = 'platform' | 'tenant';
 export type IdentityMappingOidcSurface = 'id_token' | 'userinfo';

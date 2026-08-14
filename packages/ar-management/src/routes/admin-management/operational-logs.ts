@@ -5,10 +5,10 @@ import {
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
+  createAuthContextFromHono,
   createErrorResponse,
   getOperationalLog,
   getTenantIdFromContext,
-  requireDedicatedAdminDatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   auditAdminSensitiveRead,
@@ -30,8 +30,9 @@ interface OperationalLogSummaryRow {
   detail_object_catalog_id: string | null;
 }
 
-function getAdminAdapter(c: Context<any, any, any>) {
-  return requireDedicatedAdminDatabaseAdapter(c.env, 'admin-operational-logs');
+function getCoreAdapter(c: Context<any, any, any>) {
+  const tenantId = getTenantIdFromContext(c);
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 function getOperationalLogStorageOptions(c: AdminContext): OperationalLogStorageOptions {
@@ -61,7 +62,7 @@ operationalLogsRouter.use(
 
 operationalLogsRouter.get('/', async (c) => {
   try {
-    const adapter = getAdminAdapter(c);
+    const adapter = getCoreAdapter(c);
     const tenantId = getTenantIdFromContext(c);
     const subjectType = c.req.query('subject_type');
     const subjectId = c.req.query('subject_id');
@@ -135,7 +136,7 @@ operationalLogsRouter.get('/:id', async (c) => {
     if (access instanceof Response) {
       return access;
     }
-    const adapter = getAdminAdapter(c);
+    const adapter = getCoreAdapter(c);
     const tenantId = getTenantIdFromContext(c);
     const entry = await getOperationalLog(
       adapter,

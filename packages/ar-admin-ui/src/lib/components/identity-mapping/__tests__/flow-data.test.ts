@@ -251,6 +251,7 @@ describe('field mapping flow data adapter', () => {
 					field_key: 'email',
 					display_label: 'Email',
 					field_type: 'string',
+					cardinality: 'multi',
 					is_pii: 1,
 					is_required: 1,
 					is_active: 1,
@@ -393,9 +394,11 @@ describe('field mapping flow data adapter', () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					label: 'Email',
+					inputCardinality: 'many',
+					valueMultiplicity: 'multi',
 					fieldRef: expect.objectContaining({
 						path: 'email',
-						catalogEntryId: 'custom-claim.email'
+						catalogEntryId: 'field.canonical.email'
 					}),
 					uiGroupKey: 'contact',
 					uiGroupLabel: 'Contact',
@@ -407,7 +410,7 @@ describe('field mapping flow data adapter', () => {
 					label: 'Nickname',
 					fieldRef: expect.objectContaining({
 						path: 'nickname',
-						catalogEntryId: 'custom-claim.nickname'
+						catalogEntryId: 'field.canonical.nickname'
 					}),
 					examples: ['taro', 'yamada_t']
 				})

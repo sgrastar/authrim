@@ -1078,6 +1078,26 @@ const zhTW: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '環境詳情',
+  'web.envDetail.initialDeployRecoveryTitle': '初始部署尚未完成',
+  'web.envDetail.initialDeployRecoveryDesc': '上次部署在驗證前停止。恢復時將重用已建立的資源。',
+  'web.envDetail.initialDeployRecoveryAction': '恢復初始部署',
+  'web.envDetail.initialDeployRecoveryVerified':
+    '已驗證 Cloudflare 狀態。已完成：{{completed}}。將從{{stage}}恢復。',
+  'web.envDetail.initialDeployRecoveryStageMigrations': '資料庫遷移驗證',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '初始部署準備',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryStageVerification': '部署後驗證',
+  'web.envDetail.initialDeployRecoveryResources': '資源建立',
+  'web.envDetail.initialDeployRecoverySchema': '資料庫遷移',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '儲存的檢查點與 Cloudflare 上的狀態不一致，因此已停用恢復。請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '初始部署開始後，draft migration 定義已變更。儲存的部署狀態可能已與資料庫不一致，因此已停用恢復。請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '無法驗證目前狀態，因此已停用恢復。請檢查 Cloudflare 連線並重新檢查此環境。如果仍無法驗證，請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' 部署認證資訊需要更新；系統將要求輸入新的一次性 Cloudflare token。',
   'web.envDetail.adminNotConfigured': '管理員帳戶未配置',
   'web.envDetail.adminNotConfiguredDesc': '此環境尚未設定初始管理員。',
   'web.envDetail.startPasskey': '使用 Passkey 開始管理員帳戶設定',

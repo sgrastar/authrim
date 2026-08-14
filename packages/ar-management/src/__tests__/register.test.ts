@@ -1350,6 +1350,28 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('token_endpoint_auth_method');
     });
+
+    it('should reject client_secret_jwt because no reversible HMAC secret is stored', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'client_secret_jwt',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('token_endpoint_auth_method');
+    });
   });
 
   describe('Validation - application_type', () => {

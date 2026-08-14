@@ -483,6 +483,36 @@ describe('declared admin route access', () => {
     expect(uncoveredRoutes).toEqual([]);
   });
 
+  it('exposes only the authenticated ingest handler on the public diagnostic log surface', () => {
+    const routes = [
+      ...new Set(
+        managementApp.routes
+          .filter((route) => ROUTE_METHODS.has(route.method))
+          .filter((route) => route.path.startsWith('/api/v1/diagnostic-logs'))
+          .map((route) => `${route.method} ${route.path.replace(/\/$/u, '')}`)
+      ),
+    ].sort();
+
+    expect(routes).toEqual(['POST /api/v1/diagnostic-logs/ingest']);
+  });
+
+  it('keeps authenticated internal management routes covered by declared access rules', () => {
+    const routes = managementApp.routes
+      .filter((route) => ROUTE_METHODS.has(route.method))
+      .filter((route) => route.path.startsWith('/api/internal'));
+
+    const uncoveredRoutes = [
+      ...new Set(
+        routes
+          .filter((route) => !findAdminRouteAccessRule(route.method, route.path))
+          .map((route) => `${route.method} ${route.path}`)
+      ),
+    ].sort();
+
+    expect(routes.length).toBeGreaterThan(0);
+    expect(uncoveredRoutes).toEqual([]);
+  });
+
   it('does not rely on a blanket /api/admin/* declaration', async () => {
     const hasBlanketRule = ADMIN_ROUTE_ACCESS_RULES.some((rule) => rule.pattern === '/api/admin/*');
     expect(hasBlanketRule).toBe(false);

@@ -8,7 +8,9 @@ import {
   type D1BatchStatement,
 } from './cloudflare.js';
 import {
+  calculateReleaseManifestChecksum,
   ReleaseMigrationManifestSchema,
+  serializeReleaseMigrationManifest,
   streamDirectory,
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
@@ -53,6 +55,54 @@ type R2ObjectUploader = typeof putR2Object;
 type Sleep = (milliseconds: number) => Promise<void>;
 
 const CATALOG_MAX_ATTEMPTS = 4;
+const ARTIFACT_UPLOAD_MAX_ATTEMPTS = 4;
+
+function isRetryableArtifactUploadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const statusPatterns = [
+    /failed to fetch[^\n]*?[-:]\s*(\d{3})\b/iu,
+    /\b(?:http|status|status code|error code)\s*[:=]?\s*(\d{3})\b/iu,
+  ];
+  for (const pattern of statusPatterns) {
+    const match = message.match(pattern);
+    if (match?.[1]) {
+      const status = Number.parseInt(match[1], 10);
+      return status === 408 || status === 425 || status === 429 || status >= 500;
+    }
+  }
+  return /\b(?:ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT)\b|fetch failed|network error|socket hang up|timed? out|timeout occurred/iu.test(
+    message
+  );
+}
+
+async function uploadArtifactWithRetry(input: {
+  upload: R2ObjectUploader;
+  bucketName: string;
+  object: MigrationReleaseArtifactObject;
+  onProgress?: (message: string) => void;
+  sleep: Sleep;
+}): Promise<void> {
+  for (let attempt = 1; attempt <= ARTIFACT_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await input.upload({
+        bucketName: input.bucketName,
+        objectKey: input.object.objectKey,
+        bytes: input.object.bytes,
+        contentType: input.object.contentType,
+      });
+      return;
+    } catch (error) {
+      if (attempt === ARTIFACT_UPLOAD_MAX_ATTEMPTS || !isRetryableArtifactUploadError(error)) {
+        throw error;
+      }
+      const delayMs = 1_000 * 2 ** (attempt - 1);
+      input.onProgress?.(
+        `Retrying migration release object ${input.object.objectKey} (${attempt + 1}/${ARTIFACT_UPLOAD_MAX_ATTEMPTS})`
+      );
+      await input.sleep(delayMs);
+    }
+  }
+}
 
 function isRetryableCatalogError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -119,12 +169,15 @@ export function buildMigrationReleaseArtifactPlan(input: {
   if (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES) {
     throw new Error('migration_release_manifest_size_invalid');
   }
-  const manifestBytes = new Uint8Array(manifestBuffer);
-  const manifest = decodeManifest(manifestBytes);
+  const manifest = decodeManifest(new Uint8Array(manifestBuffer));
+  const manifestBytes = new TextEncoder().encode(serializeReleaseMigrationManifest(manifest));
+  if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
+    throw new Error('migration_release_manifest_size_invalid');
+  }
   if (manifest.streams.length > MAX_STREAMS) {
     throw new Error('migration_release_stream_limit_exceeded');
   }
-  const manifestDigest = sha256(manifestBytes);
+  const manifestDigest = calculateReleaseManifestChecksum(manifest);
   const releaseId =
     basename(input.manifestPath) === 'release-manifest.draft.json'
       ? `${manifest.productVersion}-draft.${manifestDigest.slice(0, 12)}`
@@ -384,13 +437,16 @@ export async function publishAndActivateMigrationRelease(input: {
 }): Promise<{ artifact: MigrationReleaseArtifactPlan; operationId: string }> {
   const artifact = buildMigrationReleaseArtifactPlan(input);
   const upload = input.upload ?? putR2Object;
+  const sleep =
+    input.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   for (const object of artifact.objects) {
     input.onProgress?.(`Uploading ${object.objectKey}`);
-    await upload({
+    await uploadArtifactWithRetry({
+      upload,
       bucketName: input.bucketName,
-      objectKey: object.objectKey,
-      bytes: object.bytes,
-      contentType: object.contentType,
+      object,
+      onProgress: input.onProgress,
+      sleep,
     });
   }
   const catalog = buildMigrationReleaseCatalogPlan({
@@ -404,9 +460,7 @@ export async function publishAndActivateMigrationRelease(input: {
     databaseId: input.controlDatabaseId,
     statements: catalog.statements,
     onProgress: input.onProgress,
-    sleep:
-      input.sleep ??
-      ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
+    sleep,
   });
   verifyActiveCatalogRows(results.at(-1), catalog, artifact, input.environmentId);
   return { artifact, operationId: catalog.operationId };

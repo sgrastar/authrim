@@ -168,7 +168,7 @@ export function getBuiltinD1BindingsForComponent(
   if (component === 'ar-auth') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-token') return ['DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-userinfo') return ['LOOKUP_DB'];
-  if (component === 'ar-bridge') return ['DB', 'DB_PII', 'LOOKUP_DB'];
+  if (component === 'ar-bridge') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-agent-access') return ['DB_ADMIN'];
   // Policy resolves tenant/account adapters from the request-scoped Runtime
   // Registry context. It must not receive the deployment Core binding as a

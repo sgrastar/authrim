@@ -71,8 +71,13 @@ describe('Cloudflare environment deletion helpers', () => {
         { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
         { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
         { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
+        { name: 'test-authrim-tenant-default-bootstrap-db', uuid: 'bootstrap-default' },
+        { name: 'test-authrim-tenant-users-bootstrap-db', uuid: 'bootstrap-users' },
+        { name: 'test-authrim-tenant-pii-bootstrap-db', uuid: 'bootstrap-pii' },
         { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
         { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
+        { name: 'test-authrim-tenant-lookup-bootstrap-db', uuid: 'bootstrap-near-miss' },
+        { name: 'other-authrim-tenant-default-bootstrap-db', uuid: 'other-bootstrap' },
         { name: 'authrim-test-unrelated-a1b2c3d4', uuid: 'unrelated' },
         { name: 'authrim-other-core-default-default-a1b2c3d4', uuid: 'other' },
       ])
@@ -81,6 +86,9 @@ describe('Cloudflare environment deletion helpers', () => {
       { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
       { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
       { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
+      { name: 'test-authrim-tenant-default-bootstrap-db', uuid: 'bootstrap-default' },
+      { name: 'test-authrim-tenant-users-bootstrap-db', uuid: 'bootstrap-users' },
+      { name: 'test-authrim-tenant-pii-bootstrap-db', uuid: 'bootstrap-pii' },
       { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
       { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
     ]);

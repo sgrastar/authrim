@@ -213,6 +213,15 @@ describe('SAMLRequestStore replay protection', () => {
     await expect(store.consumeAssertionId('assertion-1')).resolves.toBe(true);
     await expect(store.checkAssertionId('assertion-1')).resolves.toBe(true);
     await expect(store.consumeAssertionId('assertion-1')).resolves.toBe(false);
+
+    await expect(store.consumeAssertionId('expiring-assertion', Date.now() + 60_000)).resolves.toBe(
+      true
+    );
+    vi.advanceTimersByTime(30 * 60 * 1000 + 1);
+    await expect(store.checkAssertionId('expiring-assertion')).resolves.toBe(false);
+    await expect(store.consumeAssertionId('expiring-assertion', Date.now() + 60_000)).resolves.toBe(
+      true
+    );
   });
 
   it('rejects expired requests and artifacts and cleans old persisted entries', async () => {

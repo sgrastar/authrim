@@ -24,7 +24,7 @@ import {
   type MockEnv,
 } from './helpers/mocks';
 import {
-  createConfidentialClient,
+  createConfidentialClient as createConfidentialClientFixture,
   createM2MClient,
   createPublicClient,
   createFAPIClient,
@@ -44,6 +44,15 @@ import {
   OAuthErrors,
   type TestAuthCodeData,
 } from './helpers/fixtures';
+
+function createConfidentialClient(
+  overrides?: Parameters<typeof createConfidentialClientFixture>[0]
+) {
+  return createConfidentialClientFixture({
+    token_endpoint_auth_method: 'client_secret_post',
+    ...overrides,
+  });
+}
 
 // ============================================================================
 // Module Mock Setup
@@ -686,6 +695,62 @@ describe('Security-Critical Tests', () => {
       );
     });
 
+    it('assigns authorization grant claims after evaluated custom claims', async () => {
+      const client = createConfidentialClient({ require_pkce: false });
+      const authCodeData = createAuthCodeData({
+        userId: 'user-custom-claim-collision',
+        scope: 'openid profile',
+      });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockIsCustomClaimsEnabled.mockResolvedValue(true);
+      mocks.mockCreateTokenClaimEvaluator.mockReturnValueOnce({
+        evaluate: vi.fn().mockResolvedValue({
+          matched_rules: ['unsafe-rule'],
+          claims_to_add: {
+            scope: 'openid admin:all',
+            client_id: 'other-client',
+            token_use: 'refresh',
+            department: 'Engineering',
+          },
+          claim_overrides: [],
+          truncated: false,
+        }),
+      });
+      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+        consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(undefined),
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'openid profile',
+          client_id: client.client_id,
+          token_use: 'access',
+          department: 'Engineering',
+        }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
     it('rejects authorization_code token issuance when PII scopes are requested for failed PII state', async () => {
       const client = createConfidentialClient({ require_pkce: false });
       const authCodeData = createAuthCodeData({
@@ -827,6 +892,7 @@ describe('Security-Critical Tests', () => {
         const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
         mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
           consumeCodeRpc: consumeCodeRpcMock,
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
         });
 
         const ctx = createMockContext({
@@ -1392,6 +1458,7 @@ describe('Security-Critical Tests', () => {
         const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
         mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
           consumeCodeRpc: consumeCodeRpcMock,
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
         });
 
         const ctx = createMockContext({
@@ -1524,6 +1591,7 @@ describe('Security-Critical Tests', () => {
         const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
         mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
           consumeCodeRpc: consumeCodeRpcMock,
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
         });
 
         const ctx = createMockContext({
@@ -1686,6 +1754,45 @@ describe('Security-Critical Tests', () => {
       // Default to allowing client authentication via POST (client_id in body + client_secret)
       // Individual tests can override as needed
       mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+    });
+
+    it('rejects an invalid refresh token signature before reading rotation state', async () => {
+      const client = createConfidentialClient();
+      const refreshTokenPayload = createRefreshTokenPayload({
+        client_id: client.client_id,
+        sub: 'user-001',
+      });
+      const refreshTokenJWT = createTestRefreshTokenJWT({
+        client_id: client.client_id,
+        sub: 'user-001',
+      });
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockParseToken.mockReturnValue(refreshTokenPayload);
+      mocks.mockVerifyToken.mockRejectedValue(new Error('bad signature'));
+      mocks.mockGetRefreshToken.mockResolvedValue({
+        sub: refreshTokenPayload.sub,
+        scope: refreshTokenPayload.scope,
+        client_id: refreshTokenPayload.client_id,
+      });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'refresh_token',
+            refresh_token: refreshTokenJWT,
+            client_id: client.client_id,
+            client_secret: 'valid-secret',
+          },
+          env: mockEnv,
+        })
+      );
+      const body = await parseJsonResponse<{ error: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error).toBe('invalid_grant');
+      expect(mocks.mockGetRefreshToken).not.toHaveBeenCalled();
     });
 
     describe('Refresh Token Rotation', () => {
@@ -2387,7 +2494,9 @@ describe('Security-Critical Tests', () => {
       });
 
       it('should accept correct client secret via Basic auth', async () => {
-        const client = createConfidentialClient();
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_basic',
+        });
         const authCodeData = createAuthCodeData();
 
         mocks.mockGetClientCached.mockResolvedValue(client);
@@ -2403,6 +2512,7 @@ describe('Security-Critical Tests', () => {
         const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
         mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
           consumeCodeRpc: consumeCodeRpcMock,
+          registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
         });
 
         const ctx = createMockContext({
@@ -2611,6 +2721,7 @@ describe('Security-Critical Tests', () => {
             code: 'valid-auth-code',
             redirect_uri: 'https://app.example.com/callback',
             client_id: client.client_id,
+            client_secret: 'valid-secret',
           },
           env: mockEnv,
         });

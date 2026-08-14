@@ -41,6 +41,7 @@ export {
   countUsersWithPiiCustomClaimData,
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
+  countUsersWithPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   type NonPiiFieldUsageRow,

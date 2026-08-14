@@ -1,12 +1,9 @@
 const adminIdentityMapping = {
 	admin_identity_mapping_title: 'Field Mapping',
-	admin_identity_mapping_head_title: 'Field Mapping - Authrim Admin',
 	admin_identity_mapping_overview_title: '概要',
 	admin_identity_mapping_overview_head_title: 'Field Mapping概要',
 	admin_identity_mapping_description:
 		'グラフを変更せずに、source profile、正規化されたIDターゲット、destination projectionを確認します。',
-	admin_identity_mapping_shell_description:
-		'source profile、正規化されたIDターゲット、destination projectionを1つのcontrol-planeビューで確認します。',
 	admin_identity_mapping_back: 'Field Mappingに戻る',
 	admin_identity_mapping_back_to_policies: 'Field Mapping Setに戻る',
 	admin_identity_mapping_refresh: '更新',
@@ -16,10 +13,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_destination_profile: 'Destination profile',
 	admin_identity_mapping_source_profiles: 'Source profile',
 	admin_identity_mapping_destination_profiles: 'Destination profile',
-	admin_identity_mapping_source_policy: 'Source Field Mapping Set',
-	admin_identity_mapping_destination_policy: 'Destination Field Mapping Set',
-	admin_identity_mapping_source_profile_count: '{count}件のsource profile{plural}',
-	admin_identity_mapping_destination_profile_count: '{count}件のdestination profile{plural}',
 	admin_identity_mapping_present: 'あり',
 	admin_identity_mapping_missing: 'なし',
 	admin_identity_mapping_service_adapter: 'サービス / アダプター',
@@ -33,8 +26,6 @@ const adminIdentityMapping = {
 		'登録済みsource profileとdestination profileに対して、source mappingとdestination release projectionを編集します。',
 	admin_identity_mapping_editor_save_draft: '保存',
 	admin_identity_mapping_editor_saving: '保存中...',
-	admin_identity_mapping_editor_compile_draft: '下書きをコンパイル',
-	admin_identity_mapping_editor_compiling: 'コンパイル中...',
 	admin_identity_mapping_editor_profile_selector_aria: 'マッピング編集プロファイルセレクター',
 	admin_identity_mapping_editor_profile_side: 'Profile side',
 	admin_identity_mapping_editor_source_mapping: 'Source mapping',
@@ -46,12 +37,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_exists:
 		'{name} はすでに存在します。別のField Mapping Set名を選択してください。',
 	admin_identity_mapping_editor_no_policy_selected: 'Field Mapping Set未選択',
-	admin_identity_mapping_editor_policy_version: 'バージョン',
-	admin_identity_mapping_editor_no_version_selected: 'バージョン未選択',
 	admin_identity_mapping_editor_activate: '有効化',
-	admin_identity_mapping_editor_publish: '公開',
-	admin_identity_mapping_editor_request_rollback: 'ロールバックを要求',
-	admin_identity_mapping_editor_confirm_rollback: 'ロールバックを確認',
 	admin_identity_mapping_editor_delete: '削除',
 	admin_identity_mapping_editor_confirm_delete: '削除を確認',
 	admin_identity_mapping_editor_side_not_selected: 'side未選択',
@@ -67,19 +53,11 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_policy_default_name: 'Field Mapping UI Draft',
 	admin_identity_mapping_editor_destination_profile_fallback: 'Destination profile',
 	admin_identity_mapping_editor_policy_default_suffix: 'Field Mapping Set',
-	admin_identity_mapping_editor_policy_published: 'Field Mapping Setを保存しました',
 	admin_identity_mapping_editor_policy_activated: 'Field Mapping Setを有効化しました',
-	admin_identity_mapping_editor_policy_deactivated: 'Field Mapping Setを無効化しました',
-	admin_identity_mapping_editor_no_active_catalog:
-		'このField Mapping Setを準備するためのactive catalog versionがありません',
 	admin_identity_mapping_editor_publish_before_activation:
 		'有効化する前にこのField Mapping Setを保存してください',
 	admin_identity_mapping_editor_select_policy_version_first:
 		'先にField Mapping Setを選択してください',
-	admin_identity_mapping_editor_confirm_rollback_status:
-		'続行するにはロールバックを確認してください',
-	admin_identity_mapping_editor_rollback_requested: 'ロールバックを要求しました',
-	admin_identity_mapping_editor_rollback_failed: 'ロールバックに失敗しました',
 	admin_identity_mapping_editor_confirm_delete_status:
 		'このField Mapping Setを削除するには確認してください',
 	admin_identity_mapping_editor_policy_delete_failed: 'Field Mapping Setの削除に失敗しました',
@@ -151,7 +129,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_policies_lists_title: 'Source/Destination Field Mapping Set一覧',
 	admin_identity_mapping_policies_loading: 'Field Mapping Setを読み込み中です。',
 	admin_identity_mapping_policies_load_failed: 'Field Mapping Setの読み込みに失敗しました',
-	admin_identity_mapping_policies_empty: 'Field Mapping Setはまだ登録されていません。',
 	admin_identity_mapping_policies_source_title: 'Source Field Mapping Sets',
 	admin_identity_mapping_policies_destination_title: 'Destination Field Mapping Sets',
 	admin_identity_mapping_policies_create_source: 'Source Field Mapping Setを作成',
@@ -273,8 +250,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_trust_preview_required:
 		'先にSAML aggregate preview IDを入力してください。',
 	admin_identity_mapping_trust_entities_load_failed: 'aggregate entityの読み込みに失敗しました',
-
-	admin_identity_mapping_profile_edit_back: 'プロファイルに戻る',
 	admin_identity_mapping_profile_edit_source_title: 'Source Profile',
 	admin_identity_mapping_profile_edit_destination_title: 'Destination Profile',
 	admin_identity_mapping_profile_edit_source_description:
@@ -414,29 +389,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_attributes_count: '{count} attributes',
 	admin_identity_mapping_profile_edit_columns_count: '{count} columns',
 	admin_identity_mapping_profile_edit_blocking_warnings: '{count} blocking warning(s)',
-	admin_identity_mapping_profile_edit_configure_release_consent: 'Release Consentを設定',
 	admin_identity_mapping_profile_edit_save_destination_draft: 'destination下書きを保存',
-	admin_identity_mapping_profile_edit_destination_consent_aria: 'Destination consent settings',
-	admin_identity_mapping_profile_edit_destination_consent_settings: 'Destination Consent Settings',
-	admin_identity_mapping_profile_edit_release_consent: 'Release consent',
-	admin_identity_mapping_profile_edit_scope: 'Scope',
-	admin_identity_mapping_profile_edit_tenant_default: 'Tenant default',
-	admin_identity_mapping_profile_edit_destination_override: 'Destination override',
-	admin_identity_mapping_profile_edit_consent_mode: 'Consent mode',
-	admin_identity_mapping_profile_edit_once: 'Once',
-	admin_identity_mapping_profile_edit_every_time: 'Every time',
-	admin_identity_mapping_profile_edit_until_attributes_change: 'Until attributes change',
-	admin_identity_mapping_profile_edit_require_purpose_guard:
-		'regulated属性にはpurpose guardを必須にする',
-	admin_identity_mapping_profile_edit_raw_values_remain: 'Raw attribute values remain {display}。',
-	admin_identity_mapping_profile_edit_raw_value_hidden: '非表示',
-	admin_identity_mapping_profile_edit_consent_summary:
-		'{scope}: {legalBasis}, {mode}, {purpose}, {challenge}, {guard}',
-	admin_identity_mapping_profile_edit_client_override: 'client override {clientId}',
-	admin_identity_mapping_profile_edit_login_flow_challenge: 'login flow challenge',
-	admin_identity_mapping_profile_edit_step_up_challenge: 'step-up challenge',
-	admin_identity_mapping_profile_edit_purpose_guard_enabled: 'purpose guard有効',
-	admin_identity_mapping_profile_edit_purpose_guard_off: 'purpose guard無効',
 	admin_identity_mapping_profile_edit_attribute_registry: 'Attribute Registry',
 	admin_identity_mapping_profile_edit_groups_and_fields: 'Groups and fields',
 	admin_identity_mapping_profile_edit_attribute_group: 'Attribute group',
@@ -592,18 +545,6 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_sample_evaluation: 'サンプル評価',
 	admin_identity_mapping_flow_input: '入力',
 	admin_identity_mapping_flow_output: '出力',
-	admin_identity_mapping_flow_consent_status: '同意状態',
-	admin_identity_mapping_flow_legal_basis: '法的根拠',
-	admin_identity_mapping_flow_purpose: '目的',
-	admin_identity_mapping_flow_attribute_set: '属性セット',
-	admin_identity_mapping_flow_challenge_mode: 'チャレンジモード',
-	admin_identity_mapping_flow_release_policy: 'リリースポリシー',
-	admin_identity_mapping_flow_terms: '利用規約',
-	admin_identity_mapping_flow_privacy_policy: 'プライバシーポリシー',
-	admin_identity_mapping_flow_deny_reason: '拒否理由',
-	admin_identity_mapping_flow_runtime_exposure: '実行時の露出',
-	admin_identity_mapping_flow_conflict_policy: '競合ポリシー',
-	admin_identity_mapping_flow_trace_disclosure: 'トレース開示',
 	admin_identity_mapping_flow_unsaved_leave_confirm:
 		'未保存のマッピング下書きがあります。このページを離れて破棄しますか？',
 	admin_identity_mapping_flow_no_auto_map: '信頼できる自動マッピング候補は見つかりませんでした。',
@@ -739,7 +680,15 @@ const adminIdentityMapping = {
 		'ルールの挙動を確認するにはマッピングnodeを選択してください。',
 	admin_identity_mapping_flow_draft_only_node: '下書きのみのnode',
 	admin_identity_mapping_flow_draft_only_node_diff:
-		'このnodeはローカル下書きpreviewにのみ存在します。'
+		'このnodeはローカル下書きpreviewにのみ存在します。',
+	admin_identity_mapping_profile_edit_resource_server: 'Resource Server',
+	admin_identity_mapping_profile_edit_resource_server_display_placeholder:
+		'Payments API introspection',
+	admin_identity_mapping_profile_edit_resource_server_client_id: 'Resource Server client_id',
+	admin_identity_mapping_profile_edit_resource_server_client_id_placeholder: 'payments-api',
+	admin_identity_mapping_profile_edit_resource_server_note:
+		'このactive profileが、認証済みResource ServerへIntrospectionで返す拡張claimを制御します。',
+	admin_identity_mapping_profile_edit_introspection_surface: 'introspection'
 } as const;
 
 export default adminIdentityMapping;

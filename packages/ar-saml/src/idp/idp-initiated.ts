@@ -34,6 +34,7 @@ import { getSAMLIdPSigningMaterial } from '../common/idp-signing';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSP,
+  resolveSAMLIdentityMappingFieldMappingBinding,
   type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
@@ -344,6 +345,12 @@ async function generateIdPInitiatedResponse(
       samlSpId: spConfig.entityId,
       profileId: identityMapping.destinationProfileId,
       fieldPolicies: identityMapping.destinationFieldPolicies,
+      releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping, {
+        role: 'idp',
+        tenantId,
+        localEntityId: idpEntityId,
+        partnerEntityId: spConfig.entityId,
+      }),
       attributes,
     })) as {
       attributes: typeof attributes;
@@ -411,13 +418,10 @@ async function generateIdPInitiatedResponse(
     attributes,
   });
 
-  const finalResponseXml =
-    spConfig.signResponses || spConfig.signAssertions
-      ? await applySAMLResponseSigningPolicy(responseXml, spConfig, {
-          privateKeyPem,
-          certificate,
-        })
-      : responseXml;
+  const finalResponseXml = applySAMLResponseSigningPolicy(responseXml, spConfig, {
+    privateKeyPem,
+    certificate,
+  });
   if (
     destinationFieldConsentConfirmed &&
     spConfig.attributeReleaseConsent?.enabled === true &&

@@ -24,7 +24,7 @@ export const oidcDestinationTemplates: DestinationTemplate[] = [
 					required: true,
 					classification: 'internal',
 					surfaces: ['id_token', 'userinfo'],
-					requiredScopes: ['openid']
+					requiredScopes: []
 				},
 				{
 					claimName: 'name',

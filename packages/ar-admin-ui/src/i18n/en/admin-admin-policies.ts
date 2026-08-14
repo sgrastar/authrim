@@ -1,6 +1,5 @@
 const adminAdminPolicies = {
 	admin_admin_policies_head_title: 'Admin Policies - Authrim',
-	admin_admin_policies_access_control: 'Admin Access Control',
 	admin_admin_policies_breadcrumb: 'Policies',
 	admin_admin_policies_title: 'Admin Policies',
 	admin_admin_policies_description: 'Combined RBAC/ABAC/ReBAC access control policies',
@@ -26,7 +25,6 @@ const adminAdminPolicies = {
 	admin_admin_policies_edit: 'Edit',
 	admin_admin_policies_delete: 'Delete',
 	admin_admin_policies_system_protected: 'System-protected',
-	admin_admin_policies_close_create_dialog: 'Close create policy dialog',
 	admin_admin_policies_create_title: 'Create Policy',
 	admin_admin_policies_name_required: 'Name',
 	admin_admin_policies_resource_pattern_required: 'Resource Pattern',
@@ -37,7 +35,6 @@ const adminAdminPolicies = {
 	admin_admin_policies_cancel: 'Cancel',
 	admin_admin_policies_create: 'Create',
 	admin_admin_policies_creating: 'Creating...',
-	admin_admin_policies_close_simulation_dialog: 'Close policy simulation dialog',
 	admin_admin_policies_simulation_title: 'Policy Simulation',
 	admin_admin_policies_simulation_description: 'Test policy evaluation with custom user context',
 	admin_admin_policies_resource_placeholder: 'Resource (e.g., admin:admin_users:read)',

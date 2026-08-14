@@ -56,7 +56,6 @@ type AdminTokenEndpointAuthMethod =
   | 'none'
   | 'client_secret_basic'
   | 'client_secret_post'
-  | 'client_secret_jwt'
   | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
@@ -106,7 +105,6 @@ const VALID_TOKEN_ENDPOINT_AUTH_METHODS = new Set<AdminTokenEndpointAuthMethod>(
   'none',
   'client_secret_basic',
   'client_secret_post',
-  'client_secret_jwt',
   'private_key_jwt',
 ]);
 const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set(['RS256', 'ES256']);
@@ -2018,6 +2016,24 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const existingTokenEndpointAuthMethodValidation = validateTokenEndpointAuthMethod(
+      existingClient.token_endpoint_auth_method,
+      'existing token_endpoint_auth_method'
+    );
+    if (
+      tokenEndpointAuthMethodValidation.value === undefined &&
+      !existingTokenEndpointAuthMethodValidation.ok
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'The existing token_endpoint_auth_method is no longer supported and must be replaced',
+        },
+        400
+      );
+    }
+
     const requirePkceValidation = validateOptionalStrictBooleanField(require_pkce, 'require_pkce');
     if (!requirePkceValidation.ok) {
       return c.json(
@@ -2034,7 +2050,9 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       parseClientStringArray(existingClient.grant_types, [GRANT_TYPES.AUTHORIZATION_CODE]);
     const effectiveTokenEndpointAuthMethod =
       tokenEndpointAuthMethodValidation.value ??
-      existingClient.token_endpoint_auth_method ??
+      (existingTokenEndpointAuthMethodValidation.ok
+        ? existingTokenEndpointAuthMethodValidation.value
+        : undefined) ??
       'client_secret_basic';
     const effectiveRequirePkce =
       requirePkceValidation.value ?? Boolean(existingClient.require_pkce);

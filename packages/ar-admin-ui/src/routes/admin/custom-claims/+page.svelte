@@ -6,8 +6,8 @@
 		type CustomClaimPreset,
 		type CustomClaimSchema,
 		type CustomClaimStats,
+		type Cardinality,
 		type FieldType,
-		type ScopeMode,
 		type ValidationRules,
 		type OperationStatus
 	} from '$lib/api/admin-custom-claims';
@@ -59,16 +59,11 @@
 		field_key: '',
 		display_label: '',
 		field_type: 'string' as FieldType,
+		cardinality: 'single' as Cardinality,
 		is_pii: false,
 		is_required: false,
 		description: '',
-		validation_rules_json: '',
-		include_in_id_token: false,
-		include_in_userinfo: false,
-		include_in_introspection: false,
-		required_scopes_text: '',
-		scope_mode: 'any' as ScopeMode,
-		claim_namespace: ''
+		validation_rules_json: ''
 	});
 
 	// Delete dialog
@@ -154,16 +149,11 @@
 			field_key: '',
 			display_label: '',
 			field_type: 'string',
+			cardinality: 'single',
 			is_pii: false,
 			is_required: false,
 			description: '',
-			validation_rules_json: '',
-			include_in_id_token: false,
-			include_in_userinfo: false,
-			include_in_introspection: false,
-			required_scopes_text: '',
-			scope_mode: 'any',
-			claim_namespace: ''
+			validation_rules_json: ''
 		};
 		createError = '';
 		showCreateDialog = true;
@@ -252,28 +242,15 @@
 				}
 			}
 
-			let requiredScopes: string[] | null = null;
-			if (createForm.required_scopes_text.trim()) {
-				requiredScopes = createForm.required_scopes_text
-					.split(',')
-					.map((s) => s.trim())
-					.filter((s) => s.length > 0);
-			}
-
 			await adminCustomClaimsAPI.createSchema({
 				field_key: createForm.field_key,
 				display_label: createForm.display_label,
 				field_type: createForm.field_type,
+				cardinality: createForm.cardinality,
 				is_pii: createForm.is_pii,
 				is_required: createForm.is_required,
 				description: createForm.description || null,
-				validation_rules: validationRules,
-				include_in_id_token: createForm.include_in_id_token,
-				include_in_userinfo: createForm.include_in_userinfo,
-				include_in_introspection: createForm.include_in_introspection,
-				required_scopes: requiredScopes,
-				scope_mode: createForm.scope_mode,
-				claim_namespace: createForm.claim_namespace || null
+				validation_rules: validationRules
 			});
 
 			showCreateDialog = false;
@@ -389,14 +366,6 @@
 	// Helpers
 	// =========================================================================
 
-	function getTokenBadges(schema: CustomClaimSchema): string[] {
-		const badges: string[] = [];
-		if (schema.include_in_id_token) badges.push('ID Token');
-		if (schema.include_in_userinfo) badges.push('UserInfo');
-		if (schema.include_in_introspection) badges.push('Introspection');
-		return badges;
-	}
-
 	function fieldTypeLabel(type: FieldType): string {
 		switch (type) {
 			case 'string':
@@ -422,6 +391,8 @@
 				return $LL.admin_custom_claims_status_renaming();
 			case 'deleting':
 				return $LL.admin_custom_claims_status_deleting();
+			case 'reconfiguring':
+				return $LL.admin_custom_claims_status_reconfiguring();
 			case 'error':
 				return $LL.admin_custom_claims_status_error();
 			default:
@@ -714,7 +685,7 @@
 					<th>{$LL.admin_custom_claims_label()}</th>
 					<th>{$LL.admin_custom_claims_type()}</th>
 					<th>PII</th>
-					<th>{$LL.admin_custom_claims_token()}</th>
+					<th>{$LL.admin_custom_claims_cardinality()}</th>
 					<th>{$LL.admin_custom_claims_required()}</th>
 					<th>{$LL.admin_custom_claims_status()}</th>
 				</tr>
@@ -740,7 +711,6 @@
 					</tr>
 					{#if !isSchemaGroupCollapsed(group.key)}
 						{#each group.schemas as schema (schema.id)}
-							{@const tokenBadges = getTokenBadges(schema)}
 							<tr
 								data-clickable="true"
 								class:schema-row--inactive={!schema.is_active}
@@ -769,15 +739,11 @@
 									{/if}
 								</td>
 								<td>
-									{#if tokenBadges.length > 0}
-										<div class="token-badges">
-											{#each tokenBadges as badge (badge)}
-												<span class="badge badge-info">{badge}</span>
-											{/each}
-										</div>
-									{:else}
-										<span class="muted-text">-</span>
-									{/if}
+									<span class="badge badge-info">
+										{schema.cardinality === 'multi'
+											? $LL.admin_custom_claims_cardinality_multi()
+											: $LL.admin_custom_claims_cardinality_single()}
+									</span>
 								</td>
 								<td>
 									{#if schema.is_required}
@@ -906,6 +872,9 @@
 						</span>
 						<span class="preset-field-meta">
 							<span class="badge badge-neutral">{fieldTypeLabel(field.field_type)}</span>
+							{#if field.cardinality === 'multi'}
+								<span class="badge badge-info">{$LL.admin_custom_claims_cardinality_multi()}</span>
+							{/if}
 							{#if field.is_pii}
 								<span class="badge badge-warning">PII</span>
 							{:else}
@@ -1005,6 +974,17 @@
 		</div>
 
 		<div class="form-group">
+			<label class="form-label" for="create-cardinality"
+				>{$LL.admin_custom_claims_cardinality()}</label
+			>
+			<select id="create-cardinality" class="form-select" bind:value={createForm.cardinality}>
+				<option value="single">{$LL.admin_custom_claims_cardinality_single()}</option>
+				<option value="multi">{$LL.admin_custom_claims_cardinality_multi()}</option>
+			</select>
+			<p class="form-hint">{$LL.admin_custom_claims_cardinality_hint()}</p>
+		</div>
+
+		<div class="form-group">
 			<label class="form-label">
 				<input type="checkbox" bind:checked={createForm.is_pii} />
 				{$LL.admin_custom_claims_pii_full()}
@@ -1050,65 +1030,11 @@
 			</p>
 		</div>
 
-		<!-- Token Integration -->
 		<div class="form-group col-span-2">
 			<h4 class="token-section-title">
-				{$LL.admin_custom_claims_token_integration()}
+				{$LL.admin_custom_claims_release_mapping_title()}
 			</h4>
-			<div class="token-checkbox-grid">
-				<label class="form-label">
-					<input type="checkbox" bind:checked={createForm.include_in_id_token} />
-					ID Token
-				</label>
-				<label class="form-label">
-					<input type="checkbox" bind:checked={createForm.include_in_userinfo} />
-					UserInfo
-				</label>
-				<label class="form-label">
-					<input type="checkbox" bind:checked={createForm.include_in_introspection} />
-					Introspection
-					<small class="token-checkbox-warning"
-						>{$LL.admin_custom_claims_introspection_disabled_use_userinfo()}</small
-					>
-				</label>
-			</div>
-		</div>
-
-		<div class="form-group">
-			<label class="form-label" for="create-scopes"
-				>{$LL.admin_custom_claims_required_scopes()}</label
-			>
-			<input
-				id="create-scopes"
-				type="text"
-				class="form-input"
-				placeholder={$LL.admin_custom_claims_required_scopes_placeholder()}
-				bind:value={createForm.required_scopes_text}
-			/>
-			<p class="form-hint">{$LL.admin_custom_claims_required_scopes_hint()}</p>
-		</div>
-
-		<div class="form-group">
-			<label class="form-label" for="create-scope-mode"
-				>{$LL.admin_custom_claims_scope_mode()}</label
-			>
-			<select id="create-scope-mode" class="form-select" bind:value={createForm.scope_mode}>
-				<option value="any">{$LL.admin_custom_claims_scope_mode_any()}</option>
-				<option value="all">{$LL.admin_custom_claims_scope_mode_all()}</option>
-			</select>
-		</div>
-
-		<div class="form-group col-span-2">
-			<label class="form-label" for="create-namespace"
-				>{$LL.admin_custom_claims_claim_namespace()}</label
-			>
-			<input
-				id="create-namespace"
-				type="text"
-				class="form-input"
-				placeholder={$LL.admin_custom_claims_claim_namespace_placeholder()}
-				bind:value={createForm.claim_namespace}
-			/>
+			<p class="form-hint">{$LL.admin_custom_claims_release_mapping_hint()}</p>
 		</div>
 	</div>
 
@@ -1303,8 +1229,7 @@
 	}
 
 	.filter-actions,
-	.field-key-cell,
-	.token-badges {
+	.field-key-cell {
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -1376,18 +1301,6 @@
 		font-size: 0.875rem;
 		font-weight: 700;
 		line-height: 1.35;
-	}
-
-	.token-checkbox-grid {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1rem;
-	}
-
-	.token-checkbox-warning {
-		display: block;
-		color: var(--color-warning);
-		font-size: 0.75rem;
 	}
 
 	.recommended-approach,

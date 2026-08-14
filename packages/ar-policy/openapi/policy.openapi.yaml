@@ -1072,6 +1072,10 @@ components:
             - deny
         cache_ttl:
           type: integer
+          minimum: 0
+          description: >-
+            Suggested cache lifetime in seconds. This is 0 for decisions using resource_context
+            or rebac because those request-specific authorization inputs are not cacheable.
     BatchCheckApiRequest:
       type: object
       required:

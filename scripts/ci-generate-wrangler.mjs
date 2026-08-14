@@ -46,7 +46,9 @@ if (!existsSync(configPath)) {
 }
 if (!existsSync(lockPath)) {
   console.error(`❌ Lock file not found: ${lockPath}`);
-  console.error('   Make sure AUTHRIM_TEST_LOCK secret is set and restored before this step.');
+  console.error(
+    '   Make sure AUTHRIM_TEST_LOCK_GZIP_B64 secret is set and restored before this step.'
+  );
   process.exit(1);
 }
 

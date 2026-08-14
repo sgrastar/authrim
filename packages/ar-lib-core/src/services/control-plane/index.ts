@@ -1,5 +1,6 @@
 export * from './cloudflare-worker-settings.js';
 export * from './bootstrap-handoff-contract.js';
+export * from './bootstrap-accelerator-proof.js';
 export * from './capacity-planner.js';
 export * from './cloudflare-control-api-client.js';
 export * from './control-plane-contracts.js';

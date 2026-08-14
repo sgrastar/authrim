@@ -140,6 +140,7 @@ describe('Cloudflare pure resource contracts', () => {
         'authrim-prod-core-default-default-a1b2c3d4',
         'prod-authrim-core-db',
         'production-authrim-core-db',
+        'prod-authrim-customer-backups',
       ])
     ).toEqual([
       'prod-authrim-core-db',

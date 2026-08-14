@@ -32,6 +32,7 @@ export interface CustomClaimSchema {
   field_key: string;
   display_label: string;
   field_type: string;
+  cardinality?: 'single' | 'multi';
   is_pii: number;
   is_required: number;
   is_active: number;
@@ -178,6 +179,50 @@ export class CustomClaimSchemaResolver {
     }
   }
 
+  /**
+   * Resolve only the canonical fields referenced by an active mapping.
+   * Destination Profiles, rather than schema-level include flags, authorize release.
+   */
+  async resolveFieldValues(
+    tenantId: string,
+    userId: string,
+    fieldKeys: string[]
+  ): Promise<ResolvedCustomClaims> {
+    const empty: ResolvedCustomClaims = {
+      claims: {},
+      schemas_evaluated: 0,
+      schemas_matched: 0,
+      pii_accessed: false,
+      truncated: false,
+    };
+    try {
+      const requested = new Set(fieldKeys);
+      const allSchemas = await this.schemaLoader.loadActiveSchemas(tenantId);
+      const matched = allSchemas.filter((schema) => requested.has(schema.field_key));
+      const result = {
+        ...empty,
+        schemas_evaluated: allSchemas.length,
+        schemas_matched: matched.length,
+      };
+      if (matched.length === 0) return result;
+
+      result.pii_accessed = matched.some((schema) => schema.is_pii === 1);
+      const userData = await this.dataFetcher.fetch(tenantId, userId, matched);
+      for (const schema of matched) {
+        const cast = this.valueCaster.cast(
+          userData.get(schema.field_key),
+          schema.field_type,
+          schema.cardinality === 'multi' ? 'multi' : 'single'
+        );
+        if (cast.valid) result.claims[schema.field_key] = cast.value;
+      }
+      return result;
+    } catch (error) {
+      log.error('Failed to resolve mapped custom fields', { tenantId }, error as Error);
+      return empty;
+    }
+  }
+
   private async _resolve(
     tenantId: string,
     userId: string,
@@ -235,7 +280,11 @@ export class CustomClaimSchemaResolver {
       }
 
       const rawValue = userData.get(schema.field_key);
-      const castResult = this.valueCaster.cast(rawValue, schema.field_type);
+      const castResult = this.valueCaster.cast(
+        rawValue,
+        schema.field_type,
+        schema.cardinality === 'multi' ? 'multi' : 'single'
+      );
 
       if (!castResult.valid) {
         if (rawValue !== undefined) {

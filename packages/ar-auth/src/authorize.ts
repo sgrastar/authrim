@@ -19,6 +19,7 @@ import {
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
+  deriveOidcSid,
   isShardedSessionId,
   parseShardedSessionId,
   getCachedUser,
@@ -72,6 +73,7 @@ import {
   resolveAuthorizationResponseSigningAlgorithm,
   selectJWEEncryptionKey,
   setBoundedMapEntry,
+  timingSafeEqual,
   type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
@@ -82,6 +84,7 @@ import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
 import {
   buildAuthorizeContinuationUrl,
+  CONSENT_CONFIRMATION_COOKIE_NAME,
   createAuthorizationRequestContinuation,
   parseAuthorizationRequestContinuation,
   type AuthorizationRequestContinuation,
@@ -126,6 +129,8 @@ const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
+const AUTHORIZE_CONFIRMATION_COOKIE_NAME = 'authrim_authorize_confirmation';
+const DEFAULT_CLIENT_AUTHORIZATION_SCOPES = ['openid', 'profile', 'email'];
 
 function splitScopes(scope: string | undefined | null): string[] {
   return (scope ?? '')
@@ -157,7 +162,8 @@ function getClientAllowedScopes(clientMetadata: {
   if (Array.isArray(clientMetadata.allowed_scopes) && clientMetadata.allowed_scopes.length) {
     return clientMetadata.allowed_scopes;
   }
-  return splitScopes(clientMetadata.scope);
+  const registeredScopes = splitScopes(clientMetadata.scope);
+  return registeredScopes.length > 0 ? registeredScopes : [...DEFAULT_CLIENT_AUTHORIZATION_SCOPES];
 }
 
 function isClientPublic(clientMetadata: {
@@ -187,15 +193,6 @@ function isOidcCertificationRedirectUri(value: unknown): boolean {
 
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
   return splitScopes(responseType).includes('code');
-}
-
-async function deriveOidcSid(sessionId: string, clientId: string, issuer: string): Promise<string> {
-  const data = new TextEncoder().encode(`${issuer}\u0000${clientId}\u0000${sessionId}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
 }
 
 async function loadOIDCClaimsUser(
@@ -622,10 +619,12 @@ async function createAuthorizeConfirmationChallenge(
   metadata: {
     authTime?: number;
     sessionUserId?: string;
+    sessionId?: string;
     authorizationRequest: AuthorizationRequestContinuation;
   }
 ): Promise<string> {
   const confirmationId = crypto.randomUUID();
+  const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
@@ -638,9 +637,15 @@ async function createAuthorizeConfirmationChallenge(
       purpose: 'authorize_confirmation',
       authTime: metadata.authTime,
       sessionUserId: metadata.sessionUserId ?? userId,
+      sessionId: metadata.sessionId,
+      browserBinding,
       authorization_request: metadata.authorizationRequest,
     },
   });
+  c.res.headers.append(
+    'Set-Cookie',
+    `${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(c.env)}; Secure; Max-Age=120`
+  );
   return confirmationId;
 }
 
@@ -778,6 +783,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     cancel_uri = c.req.query('cancel_uri') ?? undefined;
   }
 
+  // RFC 9101 Section 5: request and request_uri are mutually exclusive.
+  // Reject before resolving either container so one protected request cannot
+  // silently override the other.
+  if (request && request_uri) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'request and request_uri must not be used together',
+      },
+      400
+    );
+  }
+
   if (_confirmation_challenge) {
     const tenantId = getTenantIdFromContext(c);
     const confirmationStore = await getChallengeStoreByChallengeId(
@@ -785,23 +803,106 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       _confirmation_challenge,
       tenantId
     );
-    let confirmationData: {
+    type AuthorizeConfirmationData = {
       userId?: string;
       metadata?: {
         purpose?: string;
         authTime?: number;
         sessionUserId?: string;
+        sessionId?: string;
+        browserBinding?: string;
         authorization_request?: unknown;
       };
     };
+    let confirmationData: AuthorizeConfirmationData;
 
     try {
+      const pendingConfirmation = (await confirmationStore.getChallengeRpc(
+        _confirmation_challenge
+      )) as AuthorizeConfirmationData | null;
+      if (pendingConfirmation?.metadata?.purpose !== 'authorize_confirmation') {
+        throw new Error('Invalid confirmation challenge');
+      }
+
+      const boundSessionId = pendingConfirmation.metadata.sessionId;
+      const browserBinding = pendingConfirmation.metadata.browserBinding;
+      if (typeof browserBinding !== 'string' || browserBinding.length === 0) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Authorization confirmation requires browser binding',
+          },
+          401
+        );
+      }
+      {
+        const rawBindingCookie = c.req
+          .header('Cookie')
+          ?.match(new RegExp(`(?:^|;\\s*)${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=([^;]+)`))?.[1];
+        let presentedBrowserBinding: string | undefined;
+        try {
+          presentedBrowserBinding = rawBindingCookie
+            ? decodeURIComponent(rawBindingCookie)
+            : undefined;
+        } catch {
+          presentedBrowserBinding = undefined;
+        }
+        if (!presentedBrowserBinding || !timingSafeEqual(presentedBrowserBinding, browserBinding)) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the originating browser',
+            },
+            401
+          );
+        }
+      }
+      if (boundSessionId) {
+        const rawCookie = c.req.header('Cookie')?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+        let presentedSessionId: string | undefined;
+        try {
+          presentedSessionId = rawCookie ? decodeURIComponent(rawCookie) : undefined;
+        } catch {
+          presentedSessionId = undefined;
+        }
+        if (presentedSessionId !== boundSessionId || !isShardedSessionId(boundSessionId)) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the bound session',
+            },
+            401
+          );
+        }
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, boundSessionId, tenantId);
+        const session = (await sessionStore.getSessionRpc(boundSessionId)) as Session | null;
+        if (
+          !session ||
+          session.userId !== pendingConfirmation.userId ||
+          session.expiresAt <= Date.now()
+        ) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the bound session',
+            },
+            401
+          );
+        }
+      }
+
       confirmationData = (await confirmationStore.consumeChallengeRpc({
         id: _confirmation_challenge,
         tenantId,
         type: 'reauth',
         challenge: _confirmation_challenge,
       })) as typeof confirmationData;
+      if (browserBinding) {
+        c.res.headers.append(
+          'Set-Cookie',
+          `${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(c.env)}; Secure; Max-Age=0`
+        );
+      }
     } catch {
       return c.json(
         {
@@ -855,17 +956,105 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       userId?: string;
       metadata?: {
         purpose?: string;
+        sessionId?: string;
+        browserBinding?: string;
         authorization_request?: unknown;
       };
     };
 
     try {
+      const pendingConfirmation = (await confirmationStore.getChallengeRpc(
+        _consent_confirmation_challenge
+      )) as typeof confirmationData | null;
+      if (pendingConfirmation?.metadata?.purpose !== 'authorize_consent_confirmation') {
+        throw new Error('Invalid consent confirmation challenge');
+      }
+
+      const boundSessionId = pendingConfirmation.metadata.sessionId;
+      const browserBinding = pendingConfirmation.metadata.browserBinding;
+      if (
+        typeof boundSessionId !== 'string' ||
+        boundSessionId.length === 0 ||
+        typeof browserBinding !== 'string' ||
+        browserBinding.length === 0
+      ) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires session and browser binding',
+          },
+          401
+        );
+      }
+
+      const rawBindingCookie = c.req
+        .header('Cookie')
+        ?.match(new RegExp(`(?:^|;\\s*)${CONSENT_CONFIRMATION_COOKIE_NAME}=([^;]+)`))?.[1];
+      let presentedBrowserBinding: string | undefined;
+      try {
+        presentedBrowserBinding = rawBindingCookie
+          ? decodeURIComponent(rawBindingCookie)
+          : undefined;
+      } catch {
+        presentedBrowserBinding = undefined;
+      }
+      if (!presentedBrowserBinding || !timingSafeEqual(presentedBrowserBinding, browserBinding)) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the originating browser',
+          },
+          401
+        );
+      }
+
+      const rawSessionCookie = c.req
+        .header('Cookie')
+        ?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+      let presentedSessionId: string | undefined;
+      try {
+        presentedSessionId = rawSessionCookie ? decodeURIComponent(rawSessionCookie) : undefined;
+      } catch {
+        presentedSessionId = undefined;
+      }
+      if (presentedSessionId !== boundSessionId || !isShardedSessionId(boundSessionId)) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the bound session',
+          },
+          401
+        );
+      }
+
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, boundSessionId, tenantId);
+      const session = (await sessionStore.getSessionRpc(boundSessionId)) as Session | null;
+      if (
+        !session ||
+        session.userId !== pendingConfirmation.userId ||
+        session.expiresAt <= Date.now()
+      ) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the bound session',
+          },
+          401
+        );
+      }
+
       confirmationData = (await confirmationStore.consumeChallengeRpc({
         id: _consent_confirmation_challenge,
         tenantId,
         type: 'consent',
         challenge: _consent_confirmation_challenge,
       })) as typeof confirmationData;
+      c.res.headers.append(
+        'Set-Cookie',
+        `${CONSENT_CONFIRMATION_COOKIE_NAME}=; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(
+          c.env
+        )}; Secure; Max-Age=0`
+      );
     } catch {
       return c.json(
         {
@@ -1500,6 +1689,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // Preserve the front-channel client identity. A Request Object may protect
+  // parameters for that client, but it must not switch the authorization
+  // transaction to another registered client after signature verification.
+  const outerRequestClientId = client_id;
+
   // RFC 9101 (JAR): If request parameter is present, parse JWT request object
   if (request) {
     try {
@@ -1753,6 +1947,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
       if (requestObjectClaims) {
+        if (
+          typeof requestObjectClaims.client_id !== 'string' ||
+          !outerRequestClientId ||
+          requestObjectClaims.client_id !== outerRequestClientId
+        ) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description:
+                'client_id in the request object must match the authorization request',
+            },
+            400
+          );
+        }
+
         // OIDC Core 6.1: redirect_uri is REQUIRED in the request object
         if (!requestObjectClaims.redirect_uri) {
           return c.json(
@@ -1780,7 +1989,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (requestObjectClaims.response_type)
           response_type = requestObjectClaims.response_type as string;
-        if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
+        client_id = requestObjectClaims.client_id;
         redirect_uri = requestObjectRedirectUri;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
@@ -1797,7 +2006,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.response_mode)
           response_mode = requestObjectClaims.response_mode as string;
         if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
-        if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
+        if (requestObjectClaims.max_age !== undefined) {
+          max_age = String(requestObjectClaims.max_age);
+        }
         if (requestObjectClaims.id_token_hint)
           id_token_hint = requestObjectClaims.id_token_hint as string;
         if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
@@ -1982,6 +2193,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
   interface OIDCConfig {
     requirePar?: boolean;
+    responseTypesSupported?: unknown;
     /** RFC 9396: Rich Authorization Requests */
     rar?: { enabled: boolean };
     /** Supported ACR values */
@@ -2007,6 +2219,29 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (securitySettings.value) {
     fapiConfig = securitySettings.value.fapi || {};
     oidcConfig = securitySettings.value.oidc || {};
+  }
+
+  let configuredResponseTypes: string[] | undefined;
+  if (oidcConfig.responseTypesSupported !== undefined) {
+    if (
+      !Array.isArray(oidcConfig.responseTypesSupported) ||
+      oidcConfig.responseTypesSupported.length === 0 ||
+      oidcConfig.responseTypesSupported.some(
+        (value) => typeof value !== 'string' || !validateResponseType(value).valid
+      )
+    ) {
+      log.error('Invalid tenant response type policy', {
+        action: 'oidc_response_type_policy',
+      });
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'OIDC response type policy is unavailable',
+        },
+        503
+      );
+    }
+    configuredResponseTypes = oidcConfig.responseTypesSupported as string[];
   }
 
   // OAuth 2.0 Section 3.1.2.3: Handle redirect_uri based on registration
@@ -2369,6 +2604,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       errorUri: validatedErrorUri,
     });
 
+  if (configuredResponseTypes && !configuredResponseTypes.includes(response_type!)) {
+    return sendError(
+      'unsupported_response_type',
+      `Response type '${response_type}' is not enabled for this tenant`
+    );
+  }
+
   if (!profileAllowedResponseTypes.includes(response_type!)) {
     return sendError(
       'unsupported_response_type',
@@ -2548,6 +2790,20 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         'response_mode=fragment is not compatible with response_type=code'
       );
     }
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices: credentials returned
+    // directly from the authorization endpoint must not be placed in the query,
+    // where they leak through browser history, server logs and Referer headers.
+    const responseTypes = response_type!.split(/\s+/);
+    if (
+      baseMode === 'query' &&
+      (responseTypes.includes('token') || responseTypes.includes('id_token'))
+    ) {
+      return sendError(
+        'invalid_request',
+        'response_mode=query is not compatible with token or id_token response types'
+      );
+    }
   }
 
   if (
@@ -2720,7 +2976,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
-    if (prompt?.includes('login') || max_age) {
+    if (prompt?.includes('login') || max_age !== undefined) {
       authTime = Math.floor(Date.now() / 1000);
       log.debug('Re-authentication confirmed, setting new authTime', {
         action: 'reauth',
@@ -2914,10 +3170,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   //    → Evaluated before SSO setting (specification requirement)
   //    → For prompt=none, separate check in prompt processing (Line 2143-2155) returns error
   //    → For other cases, clear session to trigger re-authentication
-  else if (max_age && authTime && !prompt?.includes('none') && _confirmed !== 'true') {
+  else if (
+    max_age !== undefined &&
+    authTime !== undefined &&
+    !prompt?.includes('none') &&
+    _confirmed !== 'true'
+  ) {
     const authAge = Math.floor(Date.now() / 1000) - authTime;
     const maxAgeSeconds = parseInt(max_age, 10);
-    if (authAge > maxAgeSeconds) {
+    if (maxAgeSeconds === 0 || authAge > maxAgeSeconds) {
       log.info('max_age exceeded - re-authentication required', {
         action: 'max_age_exceeded',
         clientId: validClientId,
@@ -3023,12 +3284,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Check max_age if provided
-      if (max_age && authTime) {
+      if (max_age !== undefined && authTime !== undefined) {
         const maxAgeSeconds = parseInt(max_age, 10);
         const currentTime = Math.floor(Date.now() / 1000);
         const timeSinceAuth = currentTime - authTime;
 
-        if (timeSinceAuth > maxAgeSeconds) {
+        if (maxAgeSeconds === 0 || timeSinceAuth > maxAgeSeconds) {
           return sendError(
             'login_required',
             'Re-authentication is required due to max_age constraint'
@@ -3123,7 +3384,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         challenge_id: challengeId,
       }),
       tenantId,
-      clientMetadata?.login_ui_url,
+      undefined,
       getRequestIssuer(c),
       useCertificationBuiltinForms
     );
@@ -3550,6 +3811,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             login_hint,
             authorization_details,
             sessionUserId: sub,
+            session_id: sessionId,
             authTime, // Preserve auth_time
             issuer: getRequestIssuer(c),
             authorization_request_source: authorizationRequestSource,
@@ -3576,7 +3838,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             challenge_id: challengeId,
           }),
           tenantId,
-          clientMetadata?.login_ui_url,
+          undefined,
           getRequestIssuer(c),
           useCertificationBuiltinForms
         );
@@ -3708,6 +3970,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 login_hint,
                 authorization_details,
                 sessionUserId: sub,
+                session_id: sessionId,
                 authTime,
                 issuer: getRequestIssuer(c),
                 authorization_request_source: authorizationRequestSource,
@@ -3729,7 +3992,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               'consent',
               getTenantAwareUiQueryParams(c, { challenge_id: challengeId }),
               tenantId,
-              clientMetadata?.login_ui_url,
+              undefined,
               getRequestIssuer(c),
               useCertificationBuiltinForms
             );
@@ -3974,6 +4237,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization code using AuthorizationCodeStore Durable Object (RPC)
     try {
       const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+      const authorizationGrantResource =
+        typeof clientMetadata.default_resource === 'string' &&
+        clientMetadata.default_resource.length > 0
+          ? clientMetadata.default_resource
+          : typeof clientMetadata.default_audience === 'string' &&
+              clientMetadata.default_audience.length > 0
+            ? clientMetadata.default_audience
+            : undefined;
 
       await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_code_store', () =>
         authCodeStore.storeCodeRpc({
@@ -3994,7 +4265,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           amr: sessionAmr,
           dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
           sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
+          sessionId, // Internal OP session key for logout target lookup
           authorizationDetails: authorization_details, // RFC 9396 RAR
+          resource: authorizationGrantResource,
         })
       );
       log.info('Stored authorization code', {
@@ -4182,6 +4455,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const registrationInput = {
         session_id: sessionId,
         client_id: validClientId,
+        oidc_sid: oidcSid,
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
@@ -4843,6 +5117,21 @@ function safeHttpsDisplayUrl(value: string | undefined): string | null {
  */
 export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('AUTHORIZE');
+  const testEndpointsEnabled = c.env.ENABLE_TEST_ENDPOINTS === 'true';
+  const builtinFormsEnabled = await shouldUseBuiltinForms(c.env);
+  if (!testEndpointsEnabled && !builtinFormsEnabled) {
+    log.warn('Built-in login adapter request rejected outside test or conformance mode', {
+      action: 'login_stub_denied',
+    });
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in login is unavailable',
+      },
+      403
+    );
+  }
+
   // Parse challenge_id and username from request
   let challenge_id: string | undefined;
   let loginUsername: string | undefined;
@@ -4875,40 +5164,63 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  const tenantId = getTenantIdFromContext(c);
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
+  let previewChallenge: {
+    tenantId?: string;
+    type?: string;
+    metadata?: {
+      redirect_uri?: string;
+      logo_uri?: string;
+      client_name?: string;
+      policy_uri?: string;
+      tos_uri?: string;
+      [key: string]: unknown;
+    };
+  } | null;
+  try {
+    previewChallenge = (await challengeStore.getChallengeRpc(
+      challenge_id
+    )) as typeof previewChallenge;
+  } catch {
+    previewChallenge = null;
+  }
+  if (
+    !previewChallenge ||
+    previewChallenge.type !== 'login' ||
+    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
+
+  const isCertificationTest =
+    builtinFormsEnabled && isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
+  if (!testEndpointsEnabled && !isCertificationTest) {
+    log.warn('Built-in login adapter rejected for a non-certification client', {
+      action: 'login_stub_denied',
+    });
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in login is unavailable for this client',
+      },
+      403
+    );
+  }
+
   // GET request: Show login form (stub implementation with username/password fields)
   if (c.req.method === 'GET') {
     // Fetch challenge data to display client logo and info (OIDC Dynamic OP conformance)
-    let logoUri: string | undefined;
-    let clientName: string | undefined;
-    let policyUri: string | undefined;
-    let tosUri: string | undefined;
-
-    try {
-      const challengeStore = await getChallengeStoreByChallengeId(
-        c.env,
-        challenge_id,
-        getTenantIdFromContext(c)
-      );
-      const challengeData = (await challengeStore.getChallengeRpc(challenge_id)) as {
-        id: string;
-        type: string;
-        metadata?: {
-          logo_uri?: string;
-          client_name?: string;
-          policy_uri?: string;
-          tos_uri?: string;
-          [key: string]: unknown;
-        };
-      } | null;
-      if (challengeData?.metadata) {
-        logoUri = challengeData.metadata.logo_uri;
-        clientName = challengeData.metadata.client_name;
-        policyUri = challengeData.metadata.policy_uri;
-        tosUri = challengeData.metadata.tos_uri;
-      }
-    } catch (e) {
-      log.warn('Failed to fetch challenge data for client info', { action: 'challenge_fetch' });
-    }
+    const logoUri = previewChallenge.metadata?.logo_uri;
+    const clientName = previewChallenge.metadata?.client_name;
+    const policyUri = previewChallenge.metadata?.policy_uri;
+    const tosUri = previewChallenge.metadata?.tos_uri;
 
     const safeLogoUri = safeHttpsDisplayUrl(logoUri);
     const safePolicyUri = safeHttpsDisplayUrl(policyUri);
@@ -5027,7 +5339,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     <h1>Login Required</h1>
     <p>Please enter your credentials to continue.</p>
     <form method="POST" action="/flow/login">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Login</button>
@@ -5038,13 +5350,6 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // POST request: Process login (stub - accepts any credentials) (RPC)
-  // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(
-    c.env,
-    challenge_id,
-    getTenantIdFromContext(c)
-  );
-
   let challengeData: {
     userId: string;
     metadata?: {
@@ -5081,16 +5386,9 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   const metadata = challengeData.metadata || {};
 
-  // Never infer certification privileges from the client's registered URI set.
-  // The consumed challenge must itself target the certification service and the
-  // deployment must have explicitly enabled its built-in conformance forms.
-  const isCertificationTest =
-    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(metadata.redirect_uri);
-
   // Create a new user and session (stub - in production, verify credentials first).
   // Even test-only users must enter through the Control Plane provisioning boundary so a
   // fresh installation never falls back to writing account rows into tenant metadata D1.
-  const tenantId = getTenantIdFromContext(c);
   let candidateUserId: string;
   let userEmail: string;
   let runtimeUser: Parameters<typeof provisionEmailAccount>[1]['runtimeUser'];
@@ -5152,20 +5450,6 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // - /api/auth/passkey (WebAuthn registration)
     // - /api/auth/email-code (Passwordless OTP)
     // - External IdP (SAML/OIDC federation)
-    if (c.env.ENABLE_TEST_ENDPOINTS !== 'true') {
-      log.warn('Non-certification client attempted stub login without ENABLE_TEST_ENDPOINTS', {
-        action: 'login_stub_denied',
-      });
-      return c.json(
-        {
-          error: 'access_denied',
-          error_description:
-            'Stub login is only available for OIDC certification tests or when ENABLE_TEST_ENDPOINTS is enabled',
-        },
-        403
-      );
-    }
-
     log.info('Creating stub user (ENABLE_TEST_ENDPOINTS=true)', {
       action: 'login_stub_user_create',
     });
@@ -5205,6 +5489,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     c.env,
     tenantId
   );
+  let browserSessionId: string | undefined;
 
   if (sessionTenantProfile.uses_do_for_state) {
     // Human profile: Create session using sharded SessionStore
@@ -5242,6 +5527,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         'Set-Cookie',
         `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=3600`
       );
+      browserSessionId = newSessionId;
     } catch (error) {
       log.error('Failed to create session', { action: 'session_create' }, error as Error);
       // Continue even if session creation fails - user can re-login
@@ -5257,6 +5543,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   const confirmationId = await createAuthorizeConfirmationChallenge(c, tenantId, userId, {
     authTime: loginAuthTime,
     sessionUserId: userId,
+    sessionId: browserSessionId,
     authorizationRequest: createAuthorizationRequestContinuation(metadata),
   });
   log.debug('Setting auth_time for authorization redirect', {
@@ -5305,6 +5592,41 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
         error_description: 'Missing challenge_id parameter',
       },
       400
+    );
+  }
+
+  // This credential-looking form is a local test/conformance adapter only. Production
+  // reauthentication is completed by passkey, OTP, directory, or external-IdP handlers.
+  const tenantId = getTenantIdFromContext(c);
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
+  const previewChallenge = (await challengeStore.getChallengeRpc(challenge_id)) as {
+    tenantId?: string;
+    type?: string;
+    metadata?: { redirect_uri?: unknown };
+  } | null;
+  if (
+    !previewChallenge ||
+    previewChallenge.type !== 'reauth' ||
+    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
+  const isCertificationAdapter =
+    (await shouldUseBuiltinForms(c.env)) &&
+    isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
+  if (c.env.ENABLE_TEST_ENDPOINTS !== 'true' && !isCertificationAdapter) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in reauthentication is unavailable for this client',
+      },
+      403
     );
   }
 
@@ -5376,7 +5698,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
     <h1>Re-authentication Required</h1>
     <p>For security reasons, please re-enter your credentials.</p>
     <form method="POST" action="/flow/confirm">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Confirm</button>
@@ -5388,12 +5710,6 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process confirmation and redirect to /authorize (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(
-    c.env,
-    challenge_id,
-    getTenantIdFromContext(c)
-  );
-
   let challengeData: {
     userId: string;
     metadata?: {
@@ -5439,6 +5755,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
       authTime: typeof metadata.authTime === 'number' ? metadata.authTime : undefined,
       sessionUserId:
         typeof metadata.sessionUserId === 'string' ? metadata.sessionUserId : challengeData.userId,
+      sessionId: typeof metadata.session_id === 'string' ? metadata.session_id : undefined,
       authorizationRequest: createAuthorizationRequestContinuation(metadata),
     }
   );

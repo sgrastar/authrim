@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 const {
   mockValidateClientId,
   mockValidateRedirectUri,
@@ -162,7 +165,7 @@ describe('PAR Handler', () => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
       redirect_uris: ['https://client.example.com/callback'],
-      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_method: 'none',
     });
     mockStoreRequestRpc.mockResolvedValue(undefined);
     mockGetPARRequestStoreForNewRequest.mockResolvedValue({
@@ -363,6 +366,40 @@ describe('PAR Handler', () => {
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
   });
 
+  securityRegressionIt(
+    '[security regression][AO-02] rejects PAR for private_key_jwt without client authentication',
+    async () => {
+      mockGetClientCached.mockResolvedValue({
+        client_id: 'victim-private-key-client',
+        token_endpoint_auth_method: 'private_key_jwt',
+        redirect_uris: ['https://victim.example.com/callback'],
+        // Intentionally no client_secret_hash: possession of the registered private key is the
+        // authentication boundary for this confidential client.
+      });
+
+      const c = createMockContext({
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          // Attacker-controlled form: no client_assertion, assertion type, or client secret.
+          client_id: 'victim-private-key-client',
+          response_type: 'code',
+          redirect_uri: 'https://victim.example.com/callback',
+          scope: 'openid profile',
+        },
+      });
+
+      const response = await parHandler(c);
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'invalid_client',
+      });
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    }
+  );
+
   it('enforces private_key_jwt for FAPI PAR requests', async () => {
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
@@ -408,6 +445,11 @@ describe('PAR Handler', () => {
 
   it('derives an omitted outer client_id from a valid private_key_jwt assertion', async () => {
     mockParseToken.mockReturnValue({ iss: 'client-123', sub: 'client-123' });
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'private_key_jwt',
+    });
     const c = createMockContext({
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
@@ -619,7 +661,7 @@ describe('PAR Handler', () => {
     };
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
-      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_method: 'none',
       redirect_uris: ['https://client.example.com/callback'],
       jwks: {
         keys: [firstKey, matchingKey],
@@ -923,7 +965,7 @@ describe('PAR Handler', () => {
     mockParseTokenHeader.mockReturnValue({ alg: 'RS256', kid: 'missing-key' });
     mockGetClientCached.mockResolvedValue({
       client_id: 'client-123',
-      token_endpoint_auth_method: 'private_key_jwt',
+      token_endpoint_auth_method: 'none',
       redirect_uris: ['https://client.example.com/callback'],
       jwks: {
         keys: [
@@ -1143,6 +1185,11 @@ describe('PAR Handler', () => {
   });
 
   it('rejects hybrid response types at PAR when FAPI 2.0 is enabled', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'private_key_jwt',
+    });
     const c = createMockContext({
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
@@ -1500,6 +1547,11 @@ describe('PAR Handler', () => {
   });
 
   it('rejects a failed client assertion without falling back to public-client handling', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'private_key_jwt',
+    });
     mockValidateClientAssertion.mockResolvedValueOnce({
       valid: false,
       error: 'invalid_client',
@@ -1528,6 +1580,11 @@ describe('PAR Handler', () => {
   });
 
   it('uses issuer-only client assertion audiences for the FAPI Final profile', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'private_key_jwt',
+    });
     const c = createMockContext({
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: {
@@ -1566,6 +1623,45 @@ describe('PAR Handler', () => {
         issuer: 'https://op.example.com',
         additionalAudiences: [],
       })
+    );
+  });
+
+  it('preserves max_age=0 from a PAR request object', async () => {
+    mockGetTokenFormat.mockReturnValueOnce('jwt');
+    mockParseTokenHeader.mockReturnValue({ alg: 'none' });
+    mockParseToken.mockReturnValue({
+      client_id: 'client-123',
+      response_type: 'code',
+      redirect_uri: 'https://client.example.com/callback',
+      scope: 'openid',
+      max_age: 0,
+    });
+    const c = createMockContext({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid',
+        request: 'unsigned.request.object',
+      },
+      env: {
+        ENVIRONMENT: 'development',
+        SETTINGS: {
+          get: vi
+            .fn()
+            .mockResolvedValue(
+              JSON.stringify({ oidc: { allowNoneAlgorithm: true, parExpiry: 90 } })
+            ),
+        } as unknown as KVNamespace,
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    expect(mockStoreRequestRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ max_age: 0 }) })
     );
   });
 

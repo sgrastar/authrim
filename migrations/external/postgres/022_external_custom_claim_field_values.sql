@@ -1,0 +1,39 @@
+-- Materialize PII custom attributes as field-level sensitive values so runtime
+-- mappings can retrieve only the fields they reference. Keep the aggregate
+-- custom_attributes_json row for compatibility with existing account readers.
+INSERT INTO identity_sensitive_values (
+  id,
+  tenant_id,
+  owner_type,
+  owner_id,
+  value_key,
+  value_json,
+  value_hash,
+  classification,
+  lifecycle_state,
+  created_at,
+  updated_at
+)
+SELECT
+  source.id || ':field:' || attribute.key,
+  source.tenant_id,
+  source.owner_type,
+  source.owner_id,
+  'custom_attribute:' || attribute.key,
+  attribute.value,
+  NULL,
+  source.classification,
+  source.lifecycle_state,
+  source.created_at,
+  source.updated_at
+FROM identity_sensitive_values AS source
+CROSS JOIN LATERAL jsonb_each(
+  CASE
+    WHEN jsonb_typeof(source.value_json) = 'object' THEN source.value_json
+    ELSE '{}'::jsonb
+  END
+) AS attribute(key, value)
+WHERE source.owner_type = 'runtime_user'
+  AND source.value_key = 'custom_attributes_json'
+  AND source.lifecycle_state = 'active'
+ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO NOTHING;

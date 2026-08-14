@@ -14,7 +14,7 @@ const DIRECT_ADMIN_CLIENT_CREATORS = [
   'scripts/control-plane/phase0c-mail-otp-live.ts',
   'scripts/control-plane/phase0c-totp-load-live.ts',
   'scripts/control-plane/phase0c-totp-smoke-live.ts',
-  'test/remote-logging/smoke-remote-logging-output.ts',
+  'test/generated-environment/remote-logging/smoke-remote-logging-output.ts',
 ] as const;
 
 describe('direct Admin Client API creators', () => {

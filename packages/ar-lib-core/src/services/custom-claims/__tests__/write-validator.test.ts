@@ -47,7 +47,9 @@ function createMockCoreDb(state: {
   return {
     query: vi.fn(async (sql: string, params?: unknown[]) => {
       if (sql.includes('FROM custom_claim_schemas')) {
-        return state.schemas;
+        return state.schemas.filter(
+          (schema) => schema.is_active === 1 && schema.operation_status === 'active'
+        );
       }
 
       if (sql.includes('FROM user_custom_fields')) {
@@ -61,6 +63,14 @@ function createMockCoreDb(state: {
       return [];
     }),
     queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('FROM custom_claim_schemas')) {
+        const fieldKeys = (params ?? []).slice(1).map(String);
+        return (
+          state.schemas.find(
+            (schema) => fieldKeys.includes(schema.field_key) && schema.operation_status !== 'active'
+          ) ?? null
+        );
+      }
       if (sql.includes('SELECT user_id FROM user_custom_fields')) {
         const [userId, fieldName] = params ?? [];
         const values = state.userCustomFields.get(String(userId)) || {};
@@ -110,6 +120,27 @@ function createMockCoreDb(state: {
 }
 
 function createMockPiiDb(state: { userCustomAttributes: Map<string, Record<string, unknown>> }) {
+  const execute = vi.fn(async (sql: string, params?: unknown[]) => {
+    if (sql.includes('INSERT INTO identity_sensitive_values')) {
+      const valueKey = sql.includes("'custom_attributes_json'")
+        ? 'custom_attributes_json'
+        : String(params?.[3]);
+      const userId = String(params?.[2]);
+      if (valueKey === 'custom_attributes_json') {
+        state.userCustomAttributes.set(userId, JSON.parse(String(params?.[3])));
+      }
+      return { success: true, rowsAffected: 1 };
+    }
+    if (sql.includes('DELETE FROM identity_sensitive_values')) {
+      const [_tenantId, userId, valueKey] = params ?? [];
+      const fieldKey = String(valueKey).replace(/^custom_attribute:/, '');
+      const values = state.userCustomAttributes.get(String(userId)) || {};
+      delete values[fieldKey];
+      state.userCustomAttributes.set(String(userId), values);
+      return { success: true, rowsAffected: 1 };
+    }
+    return { success: true, rowsAffected: 0 };
+  });
   return {
     query: vi.fn(async () => []),
     queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -122,16 +153,11 @@ function createMockPiiDb(state: { userCustomAttributes: Map<string, Record<strin
       }
       return null;
     }),
-    execute: vi.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('INSERT INTO identity_sensitive_values')) {
-        const [_id, _tenantId, userId, serialized] = params ?? [];
-        state.userCustomAttributes.set(String(userId), JSON.parse(String(serialized)));
-        return { success: true, rowsAffected: 1 };
-      }
-      return { success: true, rowsAffected: 0 };
-    }),
+    execute,
     transaction: vi.fn(),
-    batch: vi.fn(),
+    batch: vi.fn(async (statements) =>
+      Promise.all(statements.map((statement) => execute(statement.sql, statement.params)))
+    ),
     isHealthy: vi.fn(),
     getType: vi.fn().mockReturnValue('mock'),
     close: vi.fn(),
@@ -353,5 +379,97 @@ describe('write-validator', () => {
         fieldType: 'string',
       },
     ]);
+  });
+
+  it('validates and serializes multi-valued fields as JSON arrays', async () => {
+    const schemas = [
+      makeSchema({
+        field_key: 'roles',
+        display_label: 'Roles',
+        cardinality: 'multi',
+        is_required: 0,
+      }),
+    ];
+    const state = {
+      schemas,
+      userCustomFields: new Map<string, Record<string, string>>(),
+    };
+
+    await expect(
+      validateCustomClaimWrite({
+        db: createMockCoreDb(state),
+        tenantId: 'default',
+        submitted: { roles: ['admin', 'auditor', 'admin'] },
+      })
+    ).resolves.toEqual(
+      expect.objectContaining({ ok: true, nonPiiValues: { roles: '["admin","auditor"]' } })
+    );
+    await expect(
+      validateCustomClaimWrite({
+        db: createMockCoreDb(state),
+        tenantId: 'default',
+        submitted: { roles: 'admin' },
+      })
+    ).resolves.toEqual({ ok: false, error: 'Roles must be an array' });
+  });
+
+  it('rejects writes while a submitted schema is being reconfigured', async () => {
+    const state = {
+      schemas: [
+        makeSchema({
+          field_key: 'roles',
+          display_label: 'Roles',
+          cardinality: 'multi',
+          operation_status: 'reconfiguring',
+        }),
+      ],
+      userCustomFields: new Map<string, Record<string, string>>(),
+    };
+
+    await expect(
+      validateCustomClaimWrite({
+        db: createMockCoreDb(state),
+        tenantId: 'default',
+        submitted: { roles: ['admin'] },
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Roles is temporarily unavailable while its schema is being modified',
+    });
+  });
+
+  it('rechecks schema state immediately before persistence', async () => {
+    const expectedSchema = makeSchema({
+      field_key: 'roles',
+      display_label: 'Roles',
+      cardinality: 'multi',
+      is_required: 0,
+    });
+    const schemaDb = createMockCoreDb({
+      schemas: [{ ...expectedSchema, operation_status: 'reconfiguring' }],
+      userCustomFields: new Map<string, Record<string, string>>(),
+    });
+    const dataDb = createMockCoreDb({
+      schemas: [],
+      userCustomFields: new Map<string, Record<string, string>>(),
+    });
+
+    await expect(
+      persistCustomClaimWrite({
+        db: dataDb,
+        schemaDb,
+        tenantId: 'default',
+        userId: 'user-1',
+        validation: {
+          ok: true,
+          schemas: [expectedSchema],
+          nonPiiValues: { roles: '["admin"]' },
+          piiValues: {},
+          nonPiiKeysToDelete: [],
+          piiKeysToDelete: [],
+        },
+      })
+    ).rejects.toThrow('custom_claim_schema_changed_during_write:roles');
+    expect(dataDb.execute).not.toHaveBeenCalled();
   });
 });

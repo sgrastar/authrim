@@ -1,4 +1,5 @@
 import { Hono, type Context, type Next } from 'hono';
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -29,6 +30,7 @@ interface Env {
   OP_TOKEN: Fetcher;
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
+  OP_CONTROL: Fetcher;
   OP_AGENT_ACCESS?: Fetcher;
   OP_ASYNC?: Fetcher;
   OP_SAML?: Fetcher;
@@ -163,6 +165,39 @@ function isLoginUiBackendProxyRequest(request: Request): boolean {
   return request.headers.get('X-Authrim-Ui-Proxy') === 'login-ui';
 }
 
+const LOGIN_UI_INTERNAL_HEADERS = [
+  'X-Authrim-Ui-Proxy',
+  'X-Authrim-Original-Host',
+  'X-Authrim-Forwarded-Host',
+  'X-Authrim-Browser-Origin',
+] as const;
+
+function sanitizePublicRouterRequest(request: Request): Request {
+  const headers = new Headers(request.headers);
+  for (const header of LOGIN_UI_INTERNAL_HEADERS) {
+    headers.delete(header);
+  }
+  return new Request(request, { headers });
+}
+
+function validateLoginUiServiceBindingRequest(request: Request): Request | null {
+  if (!isLoginUiBackendProxyRequest(request)) return null;
+
+  const requestHost = new URL(request.url).host;
+  const forwardedHost = normalizeForwardedHostHeader(
+    request.headers.get('X-Authrim-Forwarded-Host')
+  );
+  const originalHost = normalizeForwardedHostHeader(request.headers.get('X-Authrim-Original-Host'));
+  if (forwardedHost !== requestHost || originalHost !== requestHost) return null;
+
+  const headers = new Headers(request.headers);
+  headers.set('Host', requestHost);
+  headers.set('X-Forwarded-Host', requestHost);
+  headers.set('X-Authrim-Forwarded-Host', requestHost);
+  headers.set('X-Authrim-Original-Host', requestHost);
+  return new Request(request, { headers });
+}
+
 function isDedicatedLoginUiHostMode(env: Env): boolean {
   return env.LOGIN_UI_HOST_MODE !== 'shared';
 }
@@ -231,19 +266,9 @@ function createServiceBindingRequest(request: Request): Request {
   const forwarded = new Request(request.url, request);
   const headers = new Headers(forwarded.headers);
   const originalHost = new URL(request.url).host;
-  const forwardedHost = isLoginUiBackendProxyRequest(request)
-    ? normalizeForwardedHostHeader(headers.get('X-Authrim-Forwarded-Host')) ||
-      normalizeForwardedHostHeader(headers.get('X-Authrim-Original-Host')) ||
-      originalHost
-    : originalHost;
-
-  if (forwardedHost !== originalHost) {
-    targetUrl.host = forwardedHost;
-    targetUrl.protocol = 'https:';
-  }
-  headers.set('X-Authrim-Forwarded-Host', forwardedHost);
-  headers.set('X-Forwarded-Host', forwardedHost);
-  headers.set('Host', forwardedHost);
+  headers.set('X-Authrim-Forwarded-Host', originalHost);
+  headers.set('X-Forwarded-Host', originalHost);
+  headers.set('Host', originalHost);
 
   return new Request(new Request(targetUrl.toString(), forwarded), { headers });
 }
@@ -1127,6 +1152,12 @@ app.get('/api/health', (c) => {
   });
 });
 
+// Initial setup acceleration is authenticated and state-gated by Control. Router only preserves
+// the proof-bearing request across the private service binding; Control remains the authority.
+app.post('/api/internal/control/bootstrap/advance', async (c) => {
+  return c.env.OP_CONTROL.fetch(createServiceBindingRequest(c.req.raw));
+});
+
 // Kubernetes health probes (router has no DB/KV, just routes to other services)
 app.get('/health/live', (c) => {
   return c.json({
@@ -1351,7 +1382,7 @@ app.get('/api/v1/registration-fields', async (c) => {
  * Diagnostic Logs API v1 - Route to OP_MANAGEMENT worker
  * - /api/v1/diagnostic-logs/ingest
  */
-app.all('/api/v1/diagnostic-logs/*', async (c) => {
+app.post('/api/v1/diagnostic-logs/ingest', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
@@ -1974,5 +2005,32 @@ app.onError((err, c) => {
   );
 });
 
-// Export for Cloudflare Workers
-export default app;
+/** Private fetch entrypoint bound only by the Login UI Worker. */
+export class LoginUiBackendEntrypoint extends WorkerEntrypoint<Env> {
+  fetch(request: Request): Promise<Response> {
+    const trustedRequest = validateLoginUiServiceBindingRequest(request);
+    if (!trustedRequest) {
+      return Promise.resolve(
+        Response.json(
+          {
+            error: 'access_denied',
+            error_description: 'Trusted Login UI service-binding request required.',
+          },
+          { status: 403 }
+        )
+      );
+    }
+    return Promise.resolve(app.fetch(trustedRequest, this.env, this.ctx));
+  }
+}
+
+// Public HTTP entrypoint: internal Login UI trust headers are never accepted from the network.
+export default {
+  fetch(
+    request: Request,
+    env: unknown,
+    executionCtx?: ExecutionContext
+  ): Response | Promise<Response> {
+    return app.fetch(sanitizePublicRouterRequest(request), env as Env, executionCtx);
+  },
+};

@@ -33,7 +33,6 @@ const adminExternalTokenRefresh = {
 	admin_external_token_refresh_status_partial_failure: 'Partial failure',
 	admin_external_token_refresh_status_failed: 'Failed',
 	admin_external_token_refresh_status_running: 'Running',
-	admin_external_token_refresh_status_pending: 'Pending',
 	admin_external_token_refresh_load_failed: 'token refresh設定を読み込めませんでした',
 	admin_external_token_refresh_save_success: 'token refresh設定を保存しました。',
 	admin_external_token_refresh_save_failed: 'token refresh設定を保存できませんでした',

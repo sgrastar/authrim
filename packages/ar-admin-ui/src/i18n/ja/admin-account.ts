@@ -32,8 +32,6 @@ const adminAccount = {
 	admin_account_theme_color: 'Admin UIスキン',
 	admin_account_light_theme_color_desc:
 		'Admin UIのスキンを選択します。各スキンはライト/ダークモードに対応しています',
-	admin_account_dark_theme_color_desc:
-		'Admin UIのスキンを選択します。各スキンはライト/ダークモードに対応しています',
 	admin_account_skin_classic: 'Classic',
 	admin_account_skin_classic_desc: 'アイボリー、ネイビー、真鍮を基調にした堅実な管理画面です。',
 	admin_account_skin_swiss_grid: 'Swiss Grid',
@@ -44,12 +42,6 @@ const adminAccount = {
 		'温かい紙面、やわらかな操作部品、ダークナビとエメラルドのアクセントです。',
 	admin_account_skin_frosted: 'Frosted',
 	admin_account_skin_frosted_desc: '透過パネル、blur、落ち着いたインディゴの操作体系です。',
-	admin_account_theme_warm_beige: 'ウォームベージュ',
-	admin_account_theme_blue_gray: 'ブルーグレー',
-	admin_account_theme_fresh_green: 'フレッシュグリーン',
-	admin_account_theme_dark_brown: 'ダークブラウン',
-	admin_account_theme_navy_blue: 'ネイビーブルー',
-	admin_account_theme_slate_gray: 'スレートグレー',
 	admin_account_language_region: '言語と地域',
 	admin_account_interface_language: '表示言語',
 	admin_account_interface_language_desc: '管理画面で使用する言語を選択します',

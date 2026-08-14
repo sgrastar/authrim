@@ -856,6 +856,16 @@ describe('release update lock state', () => {
     const initialLock = lock({
       DB: { id: 'core-id', name: 'prod-core' },
     });
+    initialLock.releaseUpdate = {
+      targetVersion: '1.0.0',
+      phase: 'schema_applied',
+      manifestChecksum: 'c'.repeat(64),
+      startedAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+      initialWorkerRedeployRequired: true,
+    };
     const manifest: ReleaseMigrationManifest = {
       formatVersion: 1,
       productVersion: '1.0.0',
@@ -904,6 +914,7 @@ describe('release update lock state', () => {
 
     expect(result.productVersion).toBe('1.0.0');
     expect(result.releaseUpdate?.phase).toBe('verified');
+    expect(result.releaseUpdate?.initialWorkerRedeployRequired).toBeUndefined();
     expect(result.releaseUpdate?.appliedTargets).toHaveLength(2);
     expect(result.schemaTargets?.['d1:core-id:d1-core']?.appliedBy).toBe('automatic');
     expect(

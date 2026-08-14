@@ -274,21 +274,23 @@ Authrim should keep package tests organized by product and protocol feature,
 not only by implementation file. This makes gaps visible without requiring a
 large external test framework.
 
-| Package                | Feature suites to maintain                                                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------- |
-| `ar-auth`              | authorize, interaction, consent, PAR, request object/JAR, JARM, logout, session, passkey    |
-| `ar-token`             | client authentication, grant validation, refresh, introspection, revocation, token exchange |
-| `ar-discovery`         | OIDC metadata, OAuth metadata, JWKS, WebFinger, tenant issuer, profile metadata             |
-| `ar-router`            | service routing, host forwarding, CORS, CSRF, UI proxying, static asset fallback            |
-| `ar-async`             | device authorization, device verification, CIBA authorization, CIBA approval, CIBA polling  |
-| `ar-management`        | clients, settings, admin auth, RBAC, audit, logging control, webhooks, tenant operations    |
-| `ar-lib-core`          | tenant context, repositories, middleware, audit services, storage, crypto-adjacent helpers  |
-| `ar-lib-logging`       | policy, redaction, chunking, delivery, destination validation, key handling                 |
-| `ar-bridge`            | external IdP start/callback, state, PKCE, linking, JIT provisioning, backchannel logout     |
-| `ar-saml`              | metadata, bindings, relay state, SSO, SLO, admin provider configuration                     |
-| `setup`                | generated env, migrations, deployment wiring, smoke clients, CLI output, resource naming    |
-| `test/integration`     | protocol flows, topology/storage matrices, generated environment validation                 |
-| `test-e2e` / UI suites | login critical path, consent, admin settings, passkey/WebAuthn, accessibility               |
+| Package                      | Feature suites to maintain                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------- |
+| `ar-auth`                    | authorize, interaction, consent, PAR, request object/JAR, JARM, logout, session, passkey    |
+| `ar-token`                   | client authentication, grant validation, refresh, introspection, revocation, token exchange |
+| `ar-discovery`               | OIDC metadata, OAuth metadata, JWKS, WebFinger, tenant issuer, profile metadata             |
+| `ar-router`                  | service routing, host forwarding, CORS, CSRF, UI proxying, static asset fallback            |
+| `ar-async`                   | device authorization, device verification, CIBA authorization, CIBA approval, CIBA polling  |
+| `ar-management`              | clients, settings, admin auth, RBAC, audit, logging control, webhooks, tenant operations    |
+| `ar-lib-core`                | tenant context, repositories, middleware, audit services, storage, crypto-adjacent helpers  |
+| `ar-lib-logging`             | policy, redaction, chunking, delivery, destination validation, key handling                 |
+| `ar-bridge`                  | external IdP start/callback, state, PKCE, linking, JIT provisioning, backchannel logout     |
+| `ar-saml`                    | metadata, bindings, relay state, SSO, SLO, admin provider configuration                     |
+| `setup`                      | generated env, migrations, deployment wiring, smoke clients, CLI output, resource naming    |
+| `test/integration`           | maintained cross-package protocol, tenant, and runtime integration flows                    |
+| `test/security-matrices`     | high-volume authorization, token, topology, and state-transition combinations               |
+| `test/generated-environment` | operator-driven generated-file validation and deployed-environment smoke checks             |
+| `test-e2e` / UI suites       | login critical path, consent, admin settings, passkey/WebAuthn, accessibility               |
 
 The taxonomy is a planning aid. It does not require every feature suite to have
 the same number of tests, but important gaps should be visible and intentional.

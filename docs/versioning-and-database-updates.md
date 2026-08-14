@@ -148,11 +148,11 @@ This command updates the required databases before publishing Workers.
 
 ```sh
 pnpm run setup status --env test
-pnpm exec tsx test/environment-validation/smoke-generated-api.ts --env test
-pnpm exec tsx test/environment-validation/smoke-generated-admin-api.ts --env test
-pnpm exec tsx test/environment-validation/smoke-generated-auth-flow.ts --env test
-pnpm exec tsx test/environment-validation/smoke-generated-approvals.ts --env test
-pnpm exec tsx test/environment-validation/smoke-generated-server-surfaces.ts --env test
+pnpm exec tsx test/generated-environment/smoke-generated-api.ts --env test
+pnpm exec tsx test/generated-environment/smoke-generated-admin-api.ts --env test
+pnpm exec tsx test/generated-environment/smoke-generated-auth-flow.ts --env test
+pnpm exec tsx test/generated-environment/smoke-generated-approvals.ts --env test
+pnpm exec tsx test/generated-environment/smoke-generated-server-surfaces.ts --env test
 ```
 
 Also check the changed features through their UI or API. If a problem is found, do not fix the release

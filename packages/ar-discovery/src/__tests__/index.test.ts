@@ -1,6 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Context, Next } from 'hono';
 import app from '../index';
 import type { Env, OIDCProviderMetadata } from '@authrim/ar-lib-core';
+
+// These tests cover the Discovery app's route, handler, and security-header stack.
+// Tenant metadata routing is exercised independently by request-context and security
+// matrix tests, so provide a resolved request context without requiring a signed
+// Runtime Registry snapshot in every route-level fixture.
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    requestContextMiddleware:
+      () =>
+      async (c: Context<{ Bindings: Env }>, next: Next): Promise<void> => {
+        const context = c as unknown as {
+          set(key: string, value: unknown): void;
+        };
+        context.set('requestId', 'discovery-route-test');
+        context.set('tenantId', 'default');
+        context.set(
+          'logger',
+          actual.createLogger({ requestId: 'discovery-route-test', tenantId: 'default' })
+        );
+        context.set('startTime', Date.now());
+        await next();
+      },
+  };
+});
 
 function createMockEnv(): Env {
   return {

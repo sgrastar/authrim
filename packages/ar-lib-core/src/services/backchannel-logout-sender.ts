@@ -425,7 +425,7 @@ export function createBackchannelLogoutOrchestrator(
                   userId: config.include_sub_claim ? params.userId : undefined,
                   sessionId:
                     config.include_sid_claim || client.backchannel_logout_session_required
-                      ? params.sessionId
+                      ? client.oidc_sid
                       : undefined,
                   expirationSeconds: config.logout_token_exp_seconds,
                   includeSub: config.include_sub_claim,

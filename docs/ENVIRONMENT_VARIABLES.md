@@ -170,10 +170,18 @@ these paths.
 
 ### SCIM Configuration
 
-| Variable                      | Type    | Default | Description                              |
-| ----------------------------- | ------- | ------- | ---------------------------------------- |
-| `ENABLE_SCIM_AUTH_RATE_LIMIT` | boolean | `true`  | Enable SCIM auth rate limiting           |
-| `SCIM_AUTH_FAILURE_DELAY_MS`  | number  | `1000`  | Delay after auth failure in milliseconds |
+Tenant enablement, the inbound Mapping Set, enabled resource endpoints, and Bulk limits are
+configured in Admin UI. The deployment environment controls authentication-abuse protection:
+
+| Variable                        | Type    | Default | Description                                      |
+| ------------------------------- | ------- | ------- | ------------------------------------------------ |
+| `ENABLE_SCIM_AUTH_RATE_LIMIT`   | boolean | `true`  | Enable failed-authentication rate limiting       |
+| `SCIM_AUTH_MAX_FAILED_ATTEMPTS` | number  | `5`     | Failed attempts before lockout                   |
+| `SCIM_AUTH_WINDOW_SECONDS`      | number  | `300`   | Failure counting window in seconds               |
+| `SCIM_AUTH_LOCKOUT_SECONDS`     | number  | `900`   | Lockout duration after the threshold, in seconds |
+| `SCIM_AUTH_FAILURE_DELAY_MS`    | number  | `200`   | Base delay after an authentication failure       |
+
+See [SCIM Inbound Provisioning](./scim-inbound-provisioning.md) for tenant and Mapping Set setup.
 
 ### Logging Configuration
 

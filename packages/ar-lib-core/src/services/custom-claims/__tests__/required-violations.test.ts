@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import type { DatabaseAdapter } from '../../../db';
 import { getRequiredCustomClaimViolationStatuses } from '../required-violations';
 import type { CustomClaimSchema } from '../resolver';
 
@@ -98,6 +99,44 @@ function createMockCoreDb(state: {
 }
 
 describe('required-violations', () => {
+  it('loads only required PII field rows instead of the aggregate custom attribute document', async () => {
+    const state = {
+      schemas: [makeSchema({ field_key: 'tax_id', display_label: 'Tax ID', is_pii: 1 })],
+      userCustomFields: new Map<string, Record<string, string>>(),
+      lifecycleStates: new Map<string, string | null>(),
+    };
+    const piiAdapter = {
+      query: vi.fn().mockResolvedValue([
+        {
+          owner_id: 'user-1',
+          value_key: 'custom_attribute:tax_id',
+          value_json: JSON.stringify('TX-123'),
+        },
+      ]),
+      queryOne: vi.fn(),
+      execute: vi.fn(),
+      transaction: vi.fn(),
+      batch: vi.fn(),
+      isHealthy: vi.fn(),
+      getType: vi.fn(() => 'mock'),
+      close: vi.fn(),
+    } as unknown as DatabaseAdapter;
+
+    const result = await getRequiredCustomClaimViolationStatuses({
+      db: createMockCoreDb(state),
+      dbPii: piiAdapter,
+      tenantId: 'default',
+      userIds: ['user-1'],
+    });
+
+    expect(result.users[0]).toMatchObject({ lifecycleState: 'active', missingRequiredFields: [] });
+    expect(piiAdapter.query).toHaveBeenCalledWith(expect.stringContaining('value_key IN (?)'), [
+      'default',
+      'user-1',
+      'custom_attribute:tax_id',
+    ]);
+  });
+
   it('returns missing required fields per user and can sync lifecycle_state', async () => {
     const state = {
       schemas: [makeSchema()],

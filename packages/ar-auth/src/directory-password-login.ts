@@ -589,7 +589,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (authorizationChallengeId && !deferAuthorizationContinuation) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         authorizationChallengeId,
         runtimeUser.id,
@@ -1009,7 +1009,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
@@ -1308,7 +1308,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,

@@ -1126,6 +1126,18 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.initialDeployRecoveryTitle': 'Initial deployment incomplete',
           'web.envDetail.initialDeployRecoveryDesc': 'The previous deployment stopped before verification. Existing resources will be reused when you resume.',
           'web.envDetail.initialDeployRecoveryAction': 'Resume initial deployment',
+          'web.envDetail.initialDeployRecoveryVerified': 'Cloudflare state verified. Completed: {{completed}}. Resume from {{stage}}.',
+          'web.envDetail.initialDeployRecoveryStageMigrations': 'database migration verification',
+          'web.envDetail.initialDeployRecoveryStageControlPlane': 'initial deployment setup',
+          'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker deployment',
+          'web.envDetail.initialDeployRecoveryStageVerification': 'post-deployment verification',
+          'web.envDetail.initialDeployRecoveryResources': 'resource provisioning',
+          'web.envDetail.initialDeployRecoverySchema': 'database migrations',
+          'web.envDetail.initialDeployRecoveryWorkers': 'Worker deployment',
+          'web.envDetail.initialDeployRecoveryRecreate': 'The saved checkpoint does not match Cloudflare. Resume is disabled. Delete this incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryManifestChanged': 'The draft migration definition changed after initial deployment started, so the saved deployment state may no longer match the databases. Resume is disabled. Delete this incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryBlocked': 'The current state could not be verified, so resume is disabled. Check the Cloudflare connection and recheck this environment. If verification continues to fail, delete the incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryTokenRequired': ' Deployment credentials need to be refreshed; a new one-time Cloudflare token will be requested.',
           'web.deploy.retryDeploy': 'Retry deployment',
           'web.loadConfig.checkingEnvironment': 'Checking environment',
           'web.provision.resourcesToCreate': 'Resources to Create',
@@ -1225,6 +1237,18 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.initialDeployRecoveryTitle': '初回デプロイが完了していません',
           'web.envDetail.initialDeployRecoveryDesc': '前回のデプロイは検証前に停止しました。作成済みのリソースを再利用して再開できます。',
           'web.envDetail.initialDeployRecoveryAction': '初回デプロイを再開',
+          'web.envDetail.initialDeployRecoveryVerified': 'Cloudflare 上の状態を確認しました。完了済み: {{completed}}。{{stage}}から再開できます。',
+          'web.envDetail.initialDeployRecoveryStageMigrations': 'データベースマイグレーションの検証',
+          'web.envDetail.initialDeployRecoveryStageControlPlane': '初回デプロイの準備',
+          'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker のデプロイ',
+          'web.envDetail.initialDeployRecoveryStageVerification': 'デプロイ後の検証',
+          'web.envDetail.initialDeployRecoveryResources': 'リソース作成',
+          'web.envDetail.initialDeployRecoverySchema': 'データベースマイグレーション',
+          'web.envDetail.initialDeployRecoveryWorkers': 'Worker のデプロイ',
+          'web.envDetail.initialDeployRecoveryRecreate': '保存されたチェックポイントと Cloudflare 上の状態が一致しないため、再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+          'web.envDetail.initialDeployRecoveryManifestChanged': '初回デプロイ開始後にデータベースの定義が変わり、保存済みの進行状況と現在のデータベースが一致しない可能性があります。安全のため再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+          'web.envDetail.initialDeployRecoveryBlocked': '現在の状態を確認できなかったため、再開を無効にしました。Cloudflare 接続を確認して、この環境を再チェックしてください。確認できない状態が続く場合は、不完全な環境を削除して作り直してください。',
+          'web.envDetail.initialDeployRecoveryTokenRequired': ' デプロイ用の接続情報を更新するため、新しい一時 Cloudflare token の入力が必要です。',
           'web.deploy.retryDeploy': 'デプロイを再試行',
           'web.loadConfig.checkingEnvironment': '既存環境を確認中',
           'web.provision.resourcesToCreate': '作成されるリソース',
@@ -2218,7 +2242,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resources',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verified ✓',
+          'web.envDetail.verified': 'Deployment verified ✓',
+          'web.envDetail.deploymentChecking': 'Checking deployment status...',
+          'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
+          'web.envDetail.deploymentStatusUnknown': 'Status not verified',
           'web.envDetail.adminAccount': 'Admin Account',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2333,7 +2360,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'メール',
           'web.envDetail.resources': 'リソース一覧',
           'web.envDetail.updates': '更新可能',
-          'web.envDetail.verified': '稼働確認済み ✓',
+          'web.envDetail.verified': 'デプロイ検証済み ✓',
+          'web.envDetail.deploymentChecking': 'デプロイ状態を確認中…',
+          'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
+          'web.envDetail.deploymentStatusUnknown': '状態未確認',
           'web.envDetail.adminAccount': '管理者アカウント',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2423,7 +2453,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '邮件',
           'web.envDetail.resources': '资源',
           'web.envDetail.updates': '更新',
-          'web.envDetail.verified': '已验证 ✓',
+          'web.envDetail.verified': '部署已验证 ✓',
+          'web.envDetail.deploymentChecking': '正在检查部署状态…',
+          'web.envDetail.deploymentIncomplete': '部署未完成',
+          'web.envDetail.deploymentStatusUnknown': '状态未验证',
           'web.envDetail.adminAccount': '管理员账户',
           'web.envDetail.workerUpdateHint': '比较已部署版本和本地构建',
           'web.envDetail.versionComparison': '版本比较',
@@ -2463,7 +2496,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '郵件',
           'web.envDetail.resources': '資源',
           'web.envDetail.updates': '更新',
-          'web.envDetail.verified': '已驗證 ✓',
+          'web.envDetail.verified': '部署已驗證 ✓',
+          'web.envDetail.deploymentChecking': '正在檢查部署狀態…',
+          'web.envDetail.deploymentIncomplete': '部署未完成',
+          'web.envDetail.deploymentStatusUnknown': '狀態未驗證',
           'web.envDetail.adminAccount': '管理員帳戶',
           'web.envDetail.workerUpdateHint': '比較已部署版本與本機建置',
           'web.envDetail.versionComparison': '版本比較',
@@ -2503,7 +2539,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Recursos',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verificado ✓',
+          'web.envDetail.verified': 'Despliegue verificado ✓',
+          'web.envDetail.deploymentChecking': 'Comprobando el estado del despliegue…',
+          'web.envDetail.deploymentIncomplete': 'Despliegue incompleto',
+          'web.envDetail.deploymentStatusUnknown': 'Estado sin verificar',
           'web.envDetail.adminAccount': 'Cuenta admin',
           'web.envDetail.workerUpdateHint': 'Comparar versiones desplegadas con la build local',
           'web.envDetail.versionComparison': 'Comparación de versiones',
@@ -2543,7 +2582,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Recursos',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verificado ✓',
+          'web.envDetail.verified': 'Deploy verificado ✓',
+          'web.envDetail.deploymentChecking': 'Verificando o status do deploy…',
+          'web.envDetail.deploymentIncomplete': 'Deploy incompleto',
+          'web.envDetail.deploymentStatusUnknown': 'Status não verificado',
           'web.envDetail.adminAccount': 'Conta admin',
           'web.envDetail.workerUpdateHint': 'Compare versões implantadas com o build local',
           'web.envDetail.versionComparison': 'Comparação de versões',
@@ -2583,7 +2625,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Ressources',
           'web.envDetail.updates': 'Mises à jour',
-          'web.envDetail.verified': 'vérifié ✓',
+          'web.envDetail.verified': 'Déploiement vérifié ✓',
+          'web.envDetail.deploymentChecking': 'Vérification de l’état du déploiement…',
+          'web.envDetail.deploymentIncomplete': 'Déploiement incomplet',
+          'web.envDetail.deploymentStatusUnknown': 'État non vérifié',
           'web.envDetail.adminAccount': 'Compte admin',
           'web.envDetail.workerUpdateHint': 'Comparer les versions déployées et le build local',
           'web.envDetail.versionComparison': 'Comparaison des versions',
@@ -2623,7 +2668,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'E-Mail',
           'web.envDetail.resources': 'Ressourcen',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'geprüft ✓',
+          'web.envDetail.verified': 'Bereitstellung verifiziert ✓',
+          'web.envDetail.deploymentChecking': 'Bereitstellungsstatus wird geprüft…',
+          'web.envDetail.deploymentIncomplete': 'Bereitstellung unvollständig',
+          'web.envDetail.deploymentStatusUnknown': 'Status nicht verifiziert',
           'web.envDetail.adminAccount': 'Admin-Konto',
           'web.envDetail.workerUpdateHint': 'Deployte Versionen mit lokalem Build vergleichen',
           'web.envDetail.versionComparison': 'Versionsvergleich',
@@ -2663,7 +2711,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '이메일',
           'web.envDetail.resources': '리소스',
           'web.envDetail.updates': '업데이트',
-          'web.envDetail.verified': '검증됨 ✓',
+          'web.envDetail.verified': '배포 검증 완료 ✓',
+          'web.envDetail.deploymentChecking': '배포 상태 확인 중…',
+          'web.envDetail.deploymentIncomplete': '배포 미완료',
+          'web.envDetail.deploymentStatusUnknown': '상태 미확인',
           'web.envDetail.adminAccount': '관리자 계정',
           'web.envDetail.workerUpdateHint': '배포된 버전과 로컬 빌드 비교',
           'web.envDetail.versionComparison': '버전 비교',
@@ -2703,7 +2754,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Почта',
           'web.envDetail.resources': 'Ресурсы',
           'web.envDetail.updates': 'Обновления',
-          'web.envDetail.verified': 'проверено ✓',
+          'web.envDetail.verified': 'Развертывание подтверждено ✓',
+          'web.envDetail.deploymentChecking': 'Проверка состояния развертывания…',
+          'web.envDetail.deploymentIncomplete': 'Развертывание не завершено',
+          'web.envDetail.deploymentStatusUnknown': 'Статус не подтвержден',
           'web.envDetail.adminAccount': 'Аккаунт администратора',
           'web.envDetail.workerUpdateHint': 'Сравнить развернутые версии с локальной сборкой',
           'web.envDetail.versionComparison': 'Сравнение версий',
@@ -2743,7 +2797,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resource',
           'web.envDetail.updates': 'Update',
-          'web.envDetail.verified': 'terverifikasi ✓',
+          'web.envDetail.verified': 'Deployment terverifikasi ✓',
+          'web.envDetail.deploymentChecking': 'Memeriksa status deployment…',
+          'web.envDetail.deploymentIncomplete': 'Deployment belum selesai',
+          'web.envDetail.deploymentStatusUnknown': 'Status belum diverifikasi',
           'web.envDetail.adminAccount': 'Akun admin',
           'web.envDetail.workerUpdateHint': 'Bandingkan versi deploy dengan build lokal',
           'web.envDetail.versionComparison': 'Perbandingan versi',
@@ -5138,7 +5195,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 7: Resource Provisioning -->
     <div id="section-provision" class="setup-provision-section hidden">
-      <section class="row">
+      <section class="row" id="provision-preflight-row" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.provision.resourcesToCreate">Resources to Create</h2>
         </div>
@@ -5249,7 +5306,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 8: Deployment -->
     <div id="section-deploy" class="hidden setup-step-surface">
-      <section class="row wide hidden" id="control-token-bootstrap-row">
+      <section class="row wide hidden" id="control-token-bootstrap-row" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.deploy.controlCredentialsTitle">Cloudflare connection</h2>
         </div>
@@ -5275,7 +5332,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         </div>
       </section>
 
-      <section class="row wide hidden" id="deploy-manual-wildcard-warning">
+      <section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.deploy.manualDnsSectionTitle">DNS settings</h2>
         </div>
@@ -5424,13 +5481,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         <div id="env-initial-deploy-recovery" class="alert warn hidden">
           <div class="a-head" data-i18n="web.envDetail.initialDeployRecoveryTitle">Initial deployment incomplete</div>
-          <p data-i18n="web.envDetail.initialDeployRecoveryDesc">The previous deployment stopped before verification. Existing resources will be reused when you resume.</p>
-          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</button>
+          <p id="env-initial-deploy-recovery-message" data-i18n="web.envDetail.initialDeployRecoveryDesc">The previous deployment stopped before verification. Existing resources will be reused when you resume.</p>
+          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" aria-busy="false">
+            <span class="inline-action-spinner hidden" aria-hidden="true"></span>
+            <span data-resume-label data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</span>
+          </button>
         </div>
 
         <div class="sechead"><span class="idx">URL</span><h3 data-i18n="web.complete.endpoints">Endpoints</h3></div>
         <div class="bigtable">
-          <div class="cap"><span>URLs</span><em data-i18n="web.envDetail.verified">verified ✓</em></div>
+          <div class="cap"><span>URLs</span><em id="detail-url-deployment-status">Checking deployment status...</em></div>
           <table><tbody id="detail-url-list"></tbody></table>
         </div>
 
@@ -5990,6 +6050,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       };
     }
 
+    let resumeControlBootstrapReady = false;
+
     function automaticProvisioningEnabled() {
       return document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off';
     }
@@ -6004,7 +6066,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function syncAutomaticProvisioningUi() {
       document
         .getElementById('control-token-bootstrap-row')
-        ?.classList.toggle('hidden', !automaticProvisioningEnabled());
+        ?.classList.toggle(
+          'hidden',
+          !automaticProvisioningEnabled() || resumeControlBootstrapReady
+        );
     }
     document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
       input.addEventListener('change', syncAutomaticProvisioningUi);
@@ -6167,6 +6232,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let pendingControlOperations = [];
     let selectedEnvForDetail = null;
     let selectedEnvDetailConfig = null;
+    let selectedEnvRecoveryStatus = null;
     let envControlBootstrapOwnership = null;
     let controlCapacityPreview = null;
     let selectedEnvForDelete = null;
@@ -6654,6 +6720,49 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    const setupProgressPreludeHideTimers = new Map();
+
+    function dismissSetupProgressPreludes(ids) {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element || element.classList.contains('hidden')) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        element.dataset.setupProgressPreludeWasVisible = 'true';
+
+        if (reduceMotion) {
+          element.classList.add('hidden');
+          return;
+        }
+
+        element.classList.add('setup-progress-prelude-exit');
+        const timer = setTimeout(() => {
+          element.classList.remove('setup-progress-prelude-exit');
+          element.classList.add('hidden');
+          setupProgressPreludeHideTimers.delete(element);
+        }, 220);
+        setupProgressPreludeHideTimers.set(element, timer);
+      });
+    }
+
+    function restoreSetupProgressPreludes(ids) {
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        setupProgressPreludeHideTimers.delete(element);
+        element.classList.remove('setup-progress-prelude-exit');
+        if (element.dataset.setupProgressPreludeWasVisible === 'true') {
+          element.classList.remove('hidden');
+        }
+        delete element.dataset.setupProgressPreludeWasVisible;
+      });
+    }
+
     function showSection(name) {
       Object.values(sections).forEach(s => {
         s.classList.add('hidden');
@@ -6870,6 +6979,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
+      let completed = false;
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -6885,7 +6995,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function handle(message) {
+        if (completed) return;
         if (message.includes('Provisioning complete')) {
+          completed = true;
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -6909,6 +7021,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function complete() {
+        completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
       }
 
@@ -9661,6 +9774,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       status.textContent = t('web.provision.runningTasks', { current: 0, total: 5 });
       status.className = '';
       progressUI.classList.remove('hidden');
+      dismissSetupProgressPreludes(['provision-preflight-row']);
       setLogVisibility('provision-log-toggle', 'provision-log', true);
       resourcePreview.classList.remove('hidden');
       keysSavedInfo.classList.add('hidden');
@@ -9830,6 +9944,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           status.textContent = result.error || 'Could not create the Cloudflare token link.';
           return;
         }
+        resumeControlBootstrapReady = false;
         controlBootstrapOwnership = result.ownership;
         if (dashboardWindow) dashboardWindow.location.replace(result.url);
         status.textContent = dashboardWindow
@@ -9972,7 +10087,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const bootstrapTokenInput = document.getElementById('control-bootstrap-token');
       const bootstrapToken = bootstrapTokenInput.value.trim();
 
-      if (automaticProvisioningEnabled() && (!bootstrapToken || !controlBootstrapOwnership)) {
+      if (
+        automaticProvisioningEnabled() &&
+        !resumeControlBootstrapReady &&
+        (!bootstrapToken || !controlBootstrapOwnership)
+      ) {
         document.getElementById('control-bootstrap-token-status').textContent =
           t('web.deploy.bootstrapTokenRequired');
         bootstrapTokenInput.focus();
@@ -9989,6 +10108,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       status.className = '';
       readyText.classList.add('hidden');
       progressUI.classList.remove('hidden');
+      dismissSetupProgressPreludes([
+        'control-token-bootstrap-row',
+        'deploy-manual-wildcard-warning',
+      ]);
       setLogVisibility('deploy-log-toggle', 'deploy-log', true);
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
@@ -10039,7 +10162,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             dryRun: false,
-            ...(automaticProvisioningEnabled()
+            ...(automaticProvisioningEnabled() && !resumeControlBootstrapReady
               ? {
                   bootstrapToken,
                   tokenOwnership: controlBootstrapOwnership,
@@ -10139,6 +10262,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           config.manualAction = result.manualAction;
           renderDeployManualWildcardWarning();
+          restoreSetupProgressPreludes(['deploy-manual-wildcard-warning']);
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
@@ -10166,12 +10290,31 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pollInterval = null;
         }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
-        scrollToBottom(log);
         status.textContent = t('web.status.error');
         status.className = '';
         btn.disabled = false;
-        btn.textContent = t('web.deploy.retryDeploy');
-        btn.classList.remove('hidden');
+        let recoveryStatus = null;
+        try {
+          recoveryStatus = await api('/deploy/recovery/' + encodeURIComponent(config.env));
+        } catch {
+          // An unverified checkpoint must never enable a blind retry.
+        }
+        if (recoveryStatus?.success === true && recoveryStatus.canResume === true) {
+          btn.textContent = t('web.envDetail.initialDeployRecoveryAction');
+          output.textContent += '\\n' + describeInitialDeploymentRecovery(recoveryStatus) + '\\n';
+        } else {
+          output.textContent +=
+            '\\n' +
+            (recoveryStatus
+              ? describeInitialDeploymentRecovery(recoveryStatus)
+              : t('web.envDetail.initialDeployRecoveryBlocked')) +
+            '\\n';
+          btn.classList.add('hidden');
+        }
+        scrollToBottom(log);
+        if (recoveryStatus?.success === true && recoveryStatus.canResume === true) {
+          btn.classList.remove('hidden');
+        }
         btnBack.classList.remove('hidden');
         btnCancel.classList.add('hidden');
         btnGotoComplete.classList.add('hidden');
@@ -10895,6 +11038,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function showEnvDetail(env) {
       selectedEnvForDetail = env;
       selectedEnvDetailConfig = null;
+      selectedEnvRecoveryStatus = null;
+      renderEnvDetailDeploymentStatus(null);
 
       const totalResources =
         (env.workers?.length || 0) +
@@ -10998,17 +11143,106 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       loadResourceDetails(env);
     }
 
+    function describeInitialDeploymentRecovery(result) {
+      if (result?.status === 'recreate_required') {
+        if (result.reasonCode === 'initial_manifest_changed') {
+          return t('web.envDetail.initialDeployRecoveryManifestChanged');
+        }
+        return t('web.envDetail.initialDeployRecoveryRecreate');
+      }
+      if (result?.status === 'blocked') {
+        return t('web.envDetail.initialDeployRecoveryBlocked');
+      }
+      if (result?.status !== 'resumable') {
+        return t('web.envDetail.initialDeployRecoveryDesc');
+      }
+      const completed = [];
+      if (result.completedSteps?.resourcesProvisioned) {
+        completed.push(t('web.envDetail.initialDeployRecoveryResources'));
+      }
+      if (result.completedSteps?.schemaApplied) {
+        completed.push(t('web.envDetail.initialDeployRecoverySchema'));
+      }
+      if (result.completedSteps?.workersDeployed) {
+        completed.push(t('web.envDetail.initialDeployRecoveryWorkers'));
+      }
+      const stageKey =
+        result.resumeFrom === 'database_migrations'
+          ? 'web.envDetail.initialDeployRecoveryStageMigrations'
+          : result.resumeFrom === 'control_plane_bootstrap'
+            ? 'web.envDetail.initialDeployRecoveryStageControlPlane'
+          : result.resumeFrom === 'worker_deployment'
+            ? 'web.envDetail.initialDeployRecoveryStageWorkers'
+            : 'web.envDetail.initialDeployRecoveryStageVerification';
+      return (
+        t('web.envDetail.initialDeployRecoveryVerified', {
+          completed: completed.join(' / '),
+          stage: t(stageKey),
+        }) +
+        (result.requiresBootstrapToken
+          ? t('web.envDetail.initialDeployRecoveryTokenRequired')
+          : '')
+      );
+    }
+
     async function loadInitialDeploymentRecovery(envName) {
       const recovery = document.getElementById('env-initial-deploy-recovery');
       if (!recovery) return;
       recovery.classList.add('hidden');
+      renderEnvDetailDeploymentStatus(null);
       try {
         const result = await api('/deploy/recovery/' + encodeURIComponent(envName));
-        recovery.classList.toggle('hidden', result.success !== true || result.canResume !== true);
+        if (selectedEnvForDetail?.env !== envName) return;
+        selectedEnvRecoveryStatus = result;
+        renderEnvDetailDeploymentStatus(result);
+        const visible =
+          result.success === true &&
+          ['resumable', 'blocked', 'recreate_required'].includes(result.status);
+        recovery.classList.toggle('hidden', !visible);
+        const message = document.getElementById('env-initial-deploy-recovery-message');
+        if (message && visible) message.textContent = describeInitialDeploymentRecovery(result);
+        const button = document.getElementById('btn-resume-initial-deploy');
+        if (button) button.classList.toggle('hidden', result.canResume !== true);
       } catch (error) {
-        recovery.classList.add('hidden');
+        if (selectedEnvForDetail?.env !== envName) return;
+        selectedEnvRecoveryStatus = { success: false };
+        renderEnvDetailDeploymentStatus(selectedEnvRecoveryStatus);
+        recovery.classList.remove('hidden');
+        const message = document.getElementById('env-initial-deploy-recovery-message');
+        if (message) message.textContent = t('web.envDetail.initialDeployRecoveryBlocked');
+        document.getElementById('btn-resume-initial-deploy')?.classList.add('hidden');
         console.warn('Failed to load initial deployment recovery status:', error);
       }
+    }
+
+    function renderEnvDetailDeploymentStatus(result) {
+      const status = document.getElementById('detail-url-deployment-status');
+      if (!status) return;
+
+      if (result === null) {
+        status.textContent = t('web.envDetail.deploymentChecking');
+        status.dataset.state = 'checking';
+        return;
+      }
+
+      const deploymentVerified =
+        result?.success === true &&
+        result.status === 'complete' &&
+        result.completedSteps?.verificationComplete === true;
+      if (deploymentVerified) {
+        status.textContent = t('web.envDetail.verified');
+        status.dataset.state = 'verified';
+        return;
+      }
+
+      if (result?.success === true) {
+        status.textContent = t('web.envDetail.deploymentIncomplete');
+        status.dataset.state = 'incomplete';
+        return;
+      }
+
+      status.textContent = t('web.envDetail.deploymentStatusUnknown');
+      status.dataset.state = 'unknown';
     }
 
     function buildSetupConfigFromSavedConfig(savedConfig) {
@@ -11063,14 +11297,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function resumeInitialDeploymentFromEnvironment() {
       if (!selectedEnvForDetail) return;
       const button = document.getElementById('btn-resume-initial-deploy');
+      const spinner = button.querySelector('.inline-action-spinner');
       button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      spinner?.classList.remove('hidden');
       try {
+        const recoveryStatus = await api(
+          '/deploy/recovery/' + encodeURIComponent(selectedEnvForDetail.env)
+        );
+        if (recoveryStatus.success !== true || recoveryStatus.canResume !== true) {
+          throw new Error(describeInitialDeploymentRecovery(recoveryStatus));
+        }
         const response = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
         if (!response.exists || !response.config) {
           throw new Error(t('web.loadConfig.provisionedValid'));
         }
         config = buildSetupConfigFromSavedConfig(response.config);
         controlBootstrapOwnership = null;
+        resumeControlBootstrapReady = false;
+        if (config.controlPlane?.automaticProvisioning === true) {
+          resumeControlBootstrapReady = recoveryStatus.requiresBootstrapToken !== true;
+        }
         const bootstrapInput = document.getElementById('control-bootstrap-token');
         if (bootstrapInput) bootstrapInput.value = '';
         setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
@@ -11080,6 +11327,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       } catch (error) {
         alert(error instanceof Error ? error.message : String(error));
       } finally {
+        spinner?.classList.add('hidden');
+        button.setAttribute('aria-busy', 'false');
         button.disabled = false;
       }
     }

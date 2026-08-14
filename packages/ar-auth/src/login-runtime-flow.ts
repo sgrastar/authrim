@@ -2736,7 +2736,7 @@ async function resolveCompletedProtocolRedirect(input: {
   }
 
   const continuation = await consumeAuthorizationChallengeContinuation(
-    input.c.env,
+    input.c,
     input.tenantId,
     input.requestContext.authorization_challenge_id,
     userId,

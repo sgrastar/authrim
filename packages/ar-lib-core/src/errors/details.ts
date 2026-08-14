@@ -28,6 +28,7 @@ export const PHASE1_ERROR_DETAIL_CODES = {
   DEVICE_SECRET_BINDING_FAILED: 'device_secret_binding_failed',
   TRUST_GROUP_NOT_ALLOWED: 'trust_group_not_allowed',
   DEVICE_SECRET_INACTIVE: 'device_secret_inactive',
+  NATIVE_SSO_SCOPE_INVALID: 'native_sso_scope_invalid',
   NATIVE_SSO_SERVER_ERROR: 'native_sso_server_error',
 
   STEP_UP_REQUIRED: 'step_up_required',
@@ -64,6 +65,7 @@ export type NativeSSOErrorDetailCode = Extract<
   | 'device_secret_binding_failed'
   | 'trust_group_not_allowed'
   | 'device_secret_inactive'
+  | 'native_sso_scope_invalid'
   | 'native_sso_server_error'
 >;
 
@@ -255,6 +257,13 @@ export const PHASE1_ERROR_DETAIL_DEFINITIONS: Phase1ErrorDetailDefinitions = {
     transient: false,
     retryable: false,
     user_action: 'reauthenticate',
+    severity: 'error',
+  },
+  native_sso_scope_invalid: {
+    message: 'Native SSO scope must include openid and be permitted for the client',
+    transient: false,
+    retryable: false,
+    user_action: 'contact_support',
     severity: 'error',
   },
   native_sso_server_error: {

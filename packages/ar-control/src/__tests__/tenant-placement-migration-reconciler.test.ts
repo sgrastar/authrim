@@ -16,6 +16,11 @@ import type { TenantMigrationTransferExecutor } from '../tenant-placement-migrat
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 type SqlValue = string | number | bigint | null | Uint8Array;
 
+function required<T>(value: T | null | undefined): T {
+  if (value == null) throw new Error('required_test_value_missing');
+  return value;
+}
+
 function values(input: readonly unknown[] = []): SqlValue[] {
   return input.map((value) => {
     if (
@@ -613,7 +618,7 @@ describe('tenant placement migration verification and write fence', () => {
       control.prepare('SELECT COUNT(*) AS count FROM control_directory_rewrite_leases').get()
     ).toEqual({ count: 0 });
 
-    const usersSource = physical.get('source-db-1')!;
+    const usersSource = required(physical.get('source-db-1'));
     expect(() =>
       usersSource
         .prepare("UPDATE identity_accounts SET display_name = 'blocked' WHERE id = 'account-a'")
@@ -700,12 +705,16 @@ describe('tenant placement migration verification and write fence', () => {
       { assignment_state: 'active', count: 3 },
       { assignment_state: 'retired', count: 3 },
     ]);
-    expect(physical.get('source-db-0')!.prepare('SELECT * FROM tenants').all()).toEqual([]);
+    expect(required(physical.get('source-db-0')).prepare('SELECT * FROM tenants').all()).toEqual(
+      []
+    );
     expect(
       usersSource.prepare('SELECT id, tenant_id FROM identity_accounts ORDER BY id').all()
     ).toEqual([{ id: 'account-b', tenant_id: 'tenant-b' }]);
-    expect(physical.get('source-db-2')!.prepare('SELECT * FROM users_pii').all()).toEqual([]);
-    expect(physical.get('target-db-0')!.prepare('SELECT id FROM tenants').all()).toEqual([
+    expect(required(physical.get('source-db-2')).prepare('SELECT * FROM users_pii').all()).toEqual(
+      []
+    );
+    expect(required(physical.get('target-db-0')).prepare('SELECT id FROM tenants').all()).toEqual([
       { id: 'tenant-a' },
     ]);
     expect(
@@ -763,8 +772,7 @@ describe('tenant placement migration verification and write fence', () => {
   });
 
   it('fails closed on a stable target mismatch before starting the write fence', async () => {
-    physical
-      .get('target-db-2')!
+    required(physical.get('target-db-2'))
       .prepare("UPDATE users_pii SET email = 'wrong@example.test' WHERE id = 'user-a'")
       .run();
 

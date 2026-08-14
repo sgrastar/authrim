@@ -129,7 +129,7 @@ function baseSp(overrides: Record<string, unknown> = {}) {
     entityId: 'https://sp.example.test',
     acsUrl: 'https://sp.example.test/acs',
     enabled: true,
-    signResponses: false,
+    signResponses: true,
     signAssertions: false,
     ...overrides,
   };
@@ -295,7 +295,7 @@ describe('IdP-initiated SSO', () => {
     expect(response.status).toBe(404);
   });
 
-  it('issues an unsigned response using configured identity mapping', async () => {
+  it('issues a signed response using configured identity mapping', async () => {
     mocks.cookieSessionId = 'session-id';
     mocks.sessionResponse = new Response(
       JSON.stringify({ userId: 'user-a', data: { acr: 'loa2', amr: ['pwd', 1, 'mfa'] } }),
@@ -318,7 +318,7 @@ describe('IdP-initiated SSO', () => {
     );
     const calls = mocks.buildResponse.mock.calls as unknown as Array<[Record<string, unknown>]>;
     expect(calls[0]?.[0]).not.toHaveProperty('inResponseTo');
-    expect(mocks.applySigning).not.toHaveBeenCalled();
+    expect(mocks.applySigning).toHaveBeenCalled();
   });
 
   it('loads runtime identity mapping and applies signing policy', async () => {
@@ -371,6 +371,10 @@ describe('IdP-initiated SSO', () => {
       expect.objectContaining({
         profileId: 'destination',
         fieldPolicies: { mail: 'required' },
+        releaseSafetyBinding: expect.objectContaining({
+          fieldMappingSetId: 'set',
+          destinationProfileId: 'destination',
+        }),
       })
     );
     expect(mocks.enforceConsent).toHaveBeenCalled();

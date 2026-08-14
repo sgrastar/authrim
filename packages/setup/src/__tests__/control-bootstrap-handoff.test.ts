@@ -1,15 +1,20 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { verifyBootstrapAcceleratorProof } from '@authrim/ar-lib-core/control-plane';
 import {
   assertInitialBootstrapBindingExecutionCanContinue,
   buildInitialControlTopologyRegistration,
   isInitialBootstrapHandoffAccepted,
+  listInitialBootstrapReconciledWorkerVersions,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
+  requestInitialBootstrapAcceleration,
   waitForInitialBootstrapHandoff,
 } from '../core/control-bootstrap-handoff.js';
 import type { DeployResult } from '../core/deploy.js';
@@ -717,6 +722,95 @@ describe('initial Control topology handoff registration', () => {
     ).rejects.toThrow('control_bootstrap_worker_version_mismatch:test-ar-control');
   });
 
+  it('accepts only an exact Worker deployment recorded by a succeeded binding reconciliation', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
+      lock: lock(),
+      release: release(),
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(plan.sql);
+    const execute = async (_name: string, sql: string) => {
+      db.exec(sql);
+      return { success: true } as never;
+    };
+    const query = async (_name: string, sql: string) => db.prepare(sql).all() as never;
+    const createClient = () => ({
+      getWorkerSettings: async () => ({ compatibility_date: '2026-07-30', bindings: [] }),
+      listWorkerDeployments: async (scriptName: string) => [
+        {
+          id: `${scriptName}-deployment-v1`,
+          created_on: '2026-07-30T00:00:00.000Z',
+          source: 'api',
+          strategy: 'percentage' as const,
+          versions: [
+            {
+              percentage: 100,
+              version_id: scriptName.endsWith('ar-control') ? 'control-v1' : 'management-v1',
+            },
+          ],
+        },
+        ...(scriptName.endsWith('ar-control')
+          ? [
+              {
+                id: 'test-ar-control-binding-deployment-v2',
+                created_on: '2026-07-30T00:01:00.000Z',
+                source: 'api',
+                strategy: 'percentage' as const,
+                versions: [{ percentage: 100, version_id: 'control-binding-v2' }],
+              },
+            ]
+          : []),
+      ],
+    });
+    const input = {
+      environmentId: 'test',
+      controlDatabaseName: 'control',
+      deployments: deploymentResults(),
+      now: 101,
+      accountId: 'account-id',
+      token: 'workers-token',
+      createClient,
+      execute,
+      query,
+    };
+
+    await expect(recordInitialBootstrapWorkerEvidence(input)).rejects.toThrow(
+      'control_bootstrap_worker_version_mismatch:test-ar-control'
+    );
+    db.exec(`
+      INSERT INTO control_worker_binding_reconciliations (
+        operation_id, environment_id, worker_script_name, shard_id, binding_ref,
+        data_role, residency_partition, migration_generation, provider_database_id,
+        state, expected_source_version_id, previous_deployment_id,
+        patch_result_version_id, patch_result_deployment_id, previous_restore_settings_json,
+        smoke_attempt_count, consecutive_smoke_successes, created_at, updated_at, completed_at
+      )
+      SELECT operation.operation_id, operation.environment_id, 'test-ar-control', shard.shard_id,
+             shard.binding_ref, shard.data_role, shard.residency_partition, shard.generation,
+             migration.provider_database_id, 'succeeded', 'control-v1',
+             'test-ar-control-deployment-v1', 'control-binding-v2',
+             'test-ar-control-binding-deployment-v2', '{}', 1, 3, 100, 101, 101
+        FROM control_operations operation
+        JOIN control_tenant_database_migration_state migration
+          ON migration.operation_id = operation.operation_id
+        JOIN control_tenant_shards shard
+          ON shard.d1_desired_resource_id = migration.desired_resource_id
+       WHERE operation.environment_id = 'test'
+         AND operation.operation_kind = 'provision_shard'
+       LIMIT 1;
+    `);
+
+    await expect(recordInitialBootstrapWorkerEvidence(input)).resolves.toMatchObject({
+      controlDeploymentId: 'test-ar-control-binding-deployment-v2',
+      controlVersionId: 'control-binding-v2',
+    });
+  });
+
   it('refreshes changed evidence before acceptance and rejects changes after acceptance', async () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
@@ -857,6 +951,74 @@ describe('initial Control topology handoff registration', () => {
     );
   });
 
+  it('surfaces a failed binding immediately instead of waiting for the handoff timeout', async () => {
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query: async () =>
+          [
+            {
+              state: 'creating',
+              verification_error_code: null,
+              accepted_at: null,
+              total_bindings: 102,
+              pending_bindings: 3,
+              failed_bindings: 1,
+              failed_binding_error_code: 'control_worker_settings_request_rejected',
+              latest_binding_update: 200,
+            },
+          ] as never,
+      })
+    ).rejects.toThrow('control_bootstrap_binding_blocked:control_worker_settings_request_rejected');
+  });
+
+  it('extends a bounded wait while retryable binding work is still changing', async () => {
+    let time = 0;
+    let update = 1;
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        timeoutMs: 2_000,
+        stallTimeoutMs: 500,
+        pollIntervalMs: 250,
+        now: () => time,
+        sleep: async (milliseconds) => {
+          time += milliseconds;
+          update += 1;
+        },
+        advanceBindings: async () => undefined,
+        query: async () =>
+          time < 1_250
+            ? ([
+                {
+                  state: 'creating',
+                  verification_error_code: null,
+                  accepted_at: null,
+                  total_bindings: 102,
+                  pending_bindings: 3,
+                  failed_bindings: 0,
+                  failed_binding_error_code: null,
+                  latest_binding_update: update,
+                },
+              ] as never)
+            : ([
+                {
+                  state: 'accepted',
+                  verification_error_code: null,
+                  accepted_at: 300,
+                  total_bindings: 102,
+                  pending_bindings: 0,
+                  failed_bindings: 0,
+                  failed_binding_error_code: null,
+                  latest_binding_update: update,
+                },
+              ] as never),
+      })
+    ).resolves.toEqual({ state: 'accepted', acceptedAt: 300 });
+  });
+
   it('detects an already accepted handoff without mutating its evidence', async () => {
     const query = vi
       .fn()
@@ -879,30 +1041,103 @@ describe('initial Control topology handoff registration', () => {
     ).resolves.toBe(false);
   });
 
-  it('runs the operator reconciler before observing handoff state', async () => {
+  it('loads only Control-recorded binding reconciliation Worker versions', async () => {
+    const query = vi.fn(async (_databaseName: string, sql: string) => {
+      expect(sql).toContain(
+        "state IN ('settings_patched', 'smoke_verifying', 'stabilizing', 'succeeded')"
+      );
+      return [
+        {
+          worker_script_name: 'test-ar-auth',
+          patch_result_version_id: 'version-reconciled',
+        },
+      ];
+    });
+
+    await expect(
+      listInitialBootstrapReconciledWorkerVersions({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query,
+      })
+    ).resolves.toEqual(new Set(['test-ar-auth\0version-reconciled']));
+  });
+
+  it('advances bindings first and verifies only after every binding succeeds', async () => {
     const events: string[] = [];
+    let time = 0;
+    const states = [
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 2,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+      {
+        state: 'accepted',
+        verification_error_code: null,
+        accepted_at: 200,
+        total_bindings: 2,
+        pending_bindings: 0,
+      },
+    ];
 
     await expect(
       waitForInitialBootstrapHandoff({
         environmentId: 'test',
         controlDatabaseName: 'control',
+        advanceBindings: async () => {
+          events.push('advance');
+        },
+        refreshEvidence: async () => {
+          events.push('refresh');
+        },
         reconcile: async () => {
           events.push('reconcile');
         },
         query: async () => {
           events.push('query');
-          return [
-            {
-              state: 'accepted',
-              verification_error_code: null,
-              accepted_at: 200,
-              pending_bindings: 0,
-            },
-          ] as never;
+          return [states.shift()!] as never;
         },
+        now: () => time,
+        sleep: async (milliseconds) => {
+          events.push('sleep');
+          time += milliseconds;
+        },
+        timeoutMs: 1_000,
+        pollIntervalMs: 250,
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
-    expect(events).toEqual(['reconcile', 'query']);
+    expect(events).toEqual([
+      'advance',
+      'query',
+      'sleep',
+      'advance',
+      'query',
+      'sleep',
+      'advance',
+      'query',
+      'refresh',
+      'reconcile',
+      'sleep',
+      'advance',
+      'query',
+    ]);
   });
 
   it('uses the Wrangler OAuth operator client for handoff reconciliation without a direct token', async () => {
@@ -921,5 +1156,62 @@ describe('initial Control topology handoff registration', () => {
       })
     ).resolves.toEqual({ attempted: 0, accepted: 0, blocked: 0, retrying: 0 });
     expect(createClient).toHaveBeenCalledOnce();
+  });
+
+  it('sends a short-lived environment-bound proof to the internal accelerator route', async () => {
+    const keysDir = await mkdtemp(join(tmpdir(), 'authrim-bootstrap-accelerator-'));
+    try {
+      const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+      if (!('privateKey' in pair)) throw new Error('expected_key_pair');
+      const privateJwk = {
+        ...(await crypto.subtle.exportKey('jwk', pair.privateKey)),
+        kid: 'smoke-a',
+        alg: 'EdDSA',
+        use: 'sig',
+      };
+      const publicJwk = {
+        ...(await crypto.subtle.exportKey('jwk', pair.publicKey)),
+        kid: 'smoke-a',
+        alg: 'EdDSA',
+        use: 'sig',
+      };
+      await writeFile(
+        join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+        JSON.stringify(privateJwk),
+        'utf8'
+      );
+      const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+        expect(String(input)).toBe(
+          'https://test.example.com/api/internal/control/bootstrap/advance'
+        );
+        expect(init?.method).toBe('POST');
+        const authorization = new Headers(init?.headers).get('Authorization');
+        expect(authorization).toMatch(/^Bearer /u);
+        await expect(
+          verifyBootstrapAcceleratorProof(authorization!.slice('Bearer '.length), {
+            environmentId: 'test',
+            publicJwk,
+          })
+        ).resolves.toMatchObject({
+          purpose: 'initial_bootstrap_advance',
+          environmentId: 'test',
+        });
+        return new Response(null, { status: 202 });
+      });
+
+      await expect(
+        requestInitialBootstrapAcceleration({
+          apiBaseUrl: 'https://test.example.com/',
+          environmentId: 'test',
+          keysDir,
+          activeSlot: 'A',
+          activeKeyId: 'smoke-a',
+          fetch: fetcher,
+        })
+      ).resolves.toBe('accepted');
+      expect(fetcher).toHaveBeenCalledOnce();
+    } finally {
+      await rm(keysDir, { recursive: true, force: true });
+    }
   });
 });

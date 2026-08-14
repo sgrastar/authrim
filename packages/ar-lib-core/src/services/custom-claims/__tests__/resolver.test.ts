@@ -86,7 +86,7 @@ describe('CustomClaimSchemaResolver', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDb.query.mockResolvedValue([]);
-    mockPiiDb.queryOne.mockResolvedValue(null);
+    mockPiiDb.query.mockResolvedValue([]);
     mockKV.get.mockResolvedValue(null);
   });
 
@@ -146,7 +146,11 @@ describe('CustomClaimSchemaResolver', () => {
     };
     const piiDb = {
       ...mockPiiDb,
-      queryOne: vi.fn().mockResolvedValue({ value_json: JSON.stringify({ tax_id: 'TX-123' }) }),
+      query: vi
+        .fn()
+        .mockResolvedValue([
+          { value_key: 'custom_attribute:tax_id', value_json: JSON.stringify('TX-123') },
+        ]),
     };
 
     const resolver = createCustomClaimSchemaResolverFromSources({
@@ -166,10 +170,34 @@ describe('CustomClaimSchemaResolver', () => {
       'user-1',
       'dept',
     ]);
-    expect(piiDb.queryOne).toHaveBeenCalledWith(
-      expect.stringContaining('identity_sensitive_values'),
-      ['default', 'user-1']
+    expect(piiDb.query).toHaveBeenCalledWith(expect.stringContaining('identity_sensitive_values'), [
+      'default',
+      'user-1',
+      'custom_attribute:tax_id',
+    ]);
+  });
+
+  it('fetches only mapping-referenced fields and preserves multi-valued cardinality', async () => {
+    const schemas = [
+      makeSchema({ field_key: 'department' }),
+      makeSchema({ field_key: 'roles', cardinality: 'multi' }),
+      makeSchema({ field_key: 'tax_id', is_pii: 1 }),
+    ];
+    mockKV.get.mockResolvedValue(
+      JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
+    mockDb.query.mockResolvedValue([{ field_name: 'roles', field_value: '["admin","auditor"]' }]);
+
+    const result = await createResolver().resolveFieldValues('default', 'user-1', ['roles']);
+
+    expect(result.claims).toEqual({ roles: ['admin', 'auditor'] });
+    expect(result.pii_accessed).toBe(false);
+    expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining('user_custom_fields'), [
+      'default',
+      'user-1',
+      'roles',
+    ]);
+    expect(mockPiiDb.query).not.toHaveBeenCalled();
   });
 
   it('filters by userinfo target', async () => {
@@ -347,9 +375,9 @@ describe('CustomClaimSchemaResolver', () => {
     mockKV.get.mockResolvedValue(
       JSON.stringify({ schemas, fetched_at: Date.now(), schema_version_max: 1 })
     );
-    mockPiiDb.queryOne.mockResolvedValue({
-      value_json: JSON.stringify({ ssn: '123' }),
-    });
+    mockPiiDb.query.mockResolvedValue([
+      { value_key: 'custom_attribute:ssn', value_json: JSON.stringify('123') },
+    ]);
 
     const resolver = createResolver();
     const result = await resolver.resolveClaimsForTarget('default', 'user-1', [], 'userinfo');
@@ -443,9 +471,9 @@ describe('CustomClaimSchemaResolver', () => {
       ]);
 
       // PII data
-      mockPiiDb.queryOne.mockResolvedValue({
-        value_json: JSON.stringify({ tax_id: 'TX-123' }),
-      });
+      mockPiiDb.query.mockResolvedValue([
+        { value_key: 'custom_attribute:tax_id', value_json: JSON.stringify('TX-123') },
+      ]);
 
       const resolver = createResolver();
       const result = await resolver.resolveClaimsForTarget(

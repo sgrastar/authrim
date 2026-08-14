@@ -73,6 +73,16 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.get('/.well-known/oauth-protected-resource/mcp', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({
+      tenantId,
+      hasTenantMetadataContext: Boolean(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).get('tenantMetadataContext')
+      ),
+    });
+  });
   app.get('/api/auth/authentication-methods', (c) => {
     const tenantId = getTenantIdFromContext(c);
     return c.json({
@@ -185,6 +195,36 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       const body = await res.json<{ tenantId: string }>();
       expect(body.tenantId).toBe('sample');
+    });
+
+    it('resolves tenant storage for discovery after the positive KV cache expires', async () => {
+      const tenantDb = createMockDB({ tenantRow: { id: 'sample' } });
+      const controlPlaneDb = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = { BASE_DOMAIN, DB: controlPlaneDb, AUTHRIM_CONFIG: kv };
+      runtimeMocks.resolveTenantMetadata.mockResolvedValueOnce({
+        tenantId: 'sample',
+        coreDb: tenantDb,
+        route: {},
+      });
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`sample.${BASE_DOMAIN}`, '/.well-known/oauth-protected-resource/mcp'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'sample',
+        hasTenantMetadataContext: true,
+      });
+      expect(runtimeMocks.resolveTenantMetadata).toHaveBeenCalledWith(env, 'sample');
+      expect(controlPlaneDb.prepare).not.toHaveBeenCalled();
+      expect(tenantDb.prepare).toHaveBeenCalledWith(
+        "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'"
+      );
     });
 
     it('caches positive tenant existence within the same isolate', async () => {

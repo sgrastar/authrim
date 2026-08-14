@@ -1116,6 +1116,27 @@ const ja: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '環境詳細',
+  'web.envDetail.initialDeployRecoveryTitle': '初回デプロイが完了していません',
+  'web.envDetail.initialDeployRecoveryDesc':
+    '前回のデプロイは検証前に停止しました。作成済みのリソースを再利用して再開できます。',
+  'web.envDetail.initialDeployRecoveryAction': '初回デプロイを再開',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare 上の状態を確認しました。完了済み: {{completed}}。{{stage}}から再開できます。',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'データベースマイグレーションの検証',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '初回デプロイの準備',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker のデプロイ',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'デプロイ後の検証',
+  'web.envDetail.initialDeployRecoveryResources': 'リソース作成',
+  'web.envDetail.initialDeployRecoverySchema': 'データベースマイグレーション',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker のデプロイ',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '保存されたチェックポイントと Cloudflare 上の状態が一致しないため、再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '初回デプロイ開始後にデータベースの定義が変わり、保存済みの進行状況と現在のデータベースが一致しない可能性があります。安全のため再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '現在の状態を確認できなかったため、再開を無効にしました。Cloudflare 接続を確認して、この環境を再チェックしてください。確認できない状態が続く場合は、不完全な環境を削除して作り直してください。',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' デプロイ用の接続情報を更新するため、新しい一時 Cloudflare token の入力が必要です。',
   'web.envDetail.adminNotConfigured': '管理者アカウント未設定',
   'web.envDetail.adminNotConfiguredDesc': 'この環境の初期管理者がまだ設定されていません。',
   'web.envDetail.startPasskey': 'Passkeyで管理者アカウント設定を開始',

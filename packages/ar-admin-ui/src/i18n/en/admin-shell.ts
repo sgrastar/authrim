@@ -6,7 +6,6 @@ const adminShell = {
 	admin_header_breadcrumb: 'Breadcrumb',
 	admin_header_tenant: 'Tenant:',
 	admin_header_admin_fallback: 'Admin',
-	admin_header_last_login: 'Last login: {time:string}',
 	admin_header_theme: 'Theme',
 	admin_header_light_mode: 'Light mode',
 	admin_header_dark_mode: 'Dark mode',
@@ -16,19 +15,12 @@ const adminShell = {
 	admin_tabs_page_sections: 'Page sections',
 	admin_nav_main_navigation: 'Main navigation',
 	admin_nav_dashboard: 'Dashboard',
-	admin_nav_section_end_user: 'End User',
-	admin_nav_section_client: 'Client',
-	admin_nav_section_tenant: 'Tenant',
-	admin_nav_section_platform: 'Platform',
 	admin_nav_group_identity: 'Identity',
 	admin_nav_group_monitoring: 'Monitoring',
 	admin_nav_group_applications: 'Applications',
 	admin_nav_group_login_experience: 'Login Experience',
 	admin_nav_group_federation_directory: 'Federation & Directory',
-	admin_nav_group_authentication: 'Authentication',
 	admin_nav_group_schema_settings: 'Schema Settings',
-	admin_nav_group_branding: 'Branding',
-	admin_nav_group_configuration: 'Configuration',
 	admin_nav_group_tenant_settings: 'Tenant Settings',
 	admin_nav_group_tenant_management: 'Tenant Management',
 	admin_nav_group_security_compliance: 'Security & Compliance',
@@ -153,19 +145,7 @@ const adminShell = {
 	admin_tenant_domain_mappings_confirm_verify: 'Confirm Verification',
 	admin_tenant_domain_mappings_close: 'Close',
 	admin_nav_footer_environment: 'env: {env:string}',
-	admin_nav_footer_tenant: 'tenant: {tenant:string}',
-	admin_sidebar_dashboard: 'Dashboard',
-	admin_sidebar_users: 'Users',
-	admin_sidebar_clients: 'Clients',
-	admin_sidebar_sessions: 'Sessions',
-	admin_sidebar_audit_log: 'Audit Log',
-	admin_sidebar_settings: 'Settings',
-	admin_sidebar_scim_tokens: 'SCIM Tokens',
-	admin_sidebar_identity_providers: 'Identity Providers',
-	// Policy Settings
-	admin_sidebar_policy: 'Policy',
-	// Consent Statement Management
-	admin_sidebar_consent_statements: 'Consent Statements'
+	admin_nav_footer_tenant: 'tenant: {tenant:string}'
 } as const;
 
 export default adminShell;

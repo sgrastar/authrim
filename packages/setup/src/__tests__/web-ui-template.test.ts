@@ -221,6 +221,68 @@ describe('getHtmlTemplate', () => {
     });
   });
 
+  it('offers in-place initial deployment recovery after a failed deploy request', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain(
+      "recoveryStatus = await api('/deploy/recovery/' + encodeURIComponent(config.env))"
+    );
+    expect(html).toContain("btn.textContent = t('web.envDetail.initialDeployRecoveryAction')");
+    expect(html).toContain('describeInitialDeploymentRecovery(recoveryStatus)');
+    expect(html).toContain("result?.status === 'recreate_required'");
+    expect(html).toContain("result.reasonCode === 'initial_manifest_changed'");
+    expect(html).toContain('Delete this incomplete environment and create it again.');
+    expect(html).toContain(
+      "document.getElementById('btn-resume-initial-deploy')?.classList.add('hidden')"
+    );
+    expect(html).toContain('class="inline-action-spinner hidden"');
+    expect(html).toContain("spinner?.classList.remove('hidden')");
+    expect(html).toContain("button.setAttribute('aria-busy', 'true')");
+    expect(html).toContain('recoveryStatus.requiresBootstrapToken !== true');
+    expect(html).toContain('!resumeControlBootstrapReady');
+  });
+
+  it('does not label endpoint URLs as verified before initial deployment verification completes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="detail-url-deployment-status"');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentChecking')");
+    expect(html).toContain("result.status === 'complete'");
+    expect(html).toContain('result.completedSteps?.verificationComplete === true');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentIncomplete')");
+    expect(html).toContain("status.dataset.state = 'incomplete'");
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentStatusUnknown')");
+    expect(html).toContain('デプロイ未完了');
+    expect(html).not.toContain('<em data-i18n="web.envDetail.verified">verified ✓</em>');
+  });
+
+  it('keeps setup prelude sections dismissed after deployment starts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
+    expect(html).not.toContain(
+      "restoreSetupProgressPreludes([\n          'control-token-bootstrap-row'"
+    );
+  });
+
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -565,6 +627,81 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('.deploy-ready-card');
   });
 
+  it('dismisses setup guidance when provisioning or deployment starts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="provision-preflight-row" data-setup-progress-prelude');
+    expect(html).toContain('id="control-token-bootstrap-row" data-setup-progress-prelude');
+    expect(html).toContain('id="deploy-manual-wildcard-warning" data-setup-progress-prelude');
+    expect(html).toContain("dismissSetupProgressPreludes(['provision-preflight-row'])");
+    expect(html).toContain(
+      "'control-token-bootstrap-row',\n        'deploy-manual-wildcard-warning'"
+    );
+    expect(html).toContain("window.matchMedia('(prefers-reduced-motion: reduce)').matches");
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-prelude-exit');
+    expect(SETUP_WEB_UI_STYLE).toContain('authrim-prelude-exit 0.22s');
+  });
+
+  it('hides running-stage guidance and restores only explicitly requested manual guidance', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const transitionSource = html.match(
+      /const setupProgressPreludeHideTimers = new Map\(\);[\s\S]*?(?=\n\s{4}function showSection\(name\))/u
+    )?.[0];
+    expect(transitionSource).toBeTruthy();
+
+    const classes = new Set<string>();
+    const element = {
+      dataset: {} as Record<string, string>,
+      classList: {
+        add: (...names: string[]) => names.forEach((name) => classes.add(name)),
+        contains: (name: string) => classes.has(name),
+        remove: (...names: string[]) => names.forEach((name) => classes.delete(name)),
+      },
+    };
+    let finishTransition: (() => void) | undefined;
+    const context = vm.createContext({
+      clearTimeout: () => undefined,
+      document: {
+        getElementById: (id: string) => (id === 'prelude' ? element : null),
+      },
+      setTimeout: (callback: () => void) => {
+        finishTransition = callback;
+        return 1;
+      },
+      window: {
+        matchMedia: () => ({ matches: false }),
+      },
+    });
+
+    vm.runInContext(`${transitionSource}\ndismissSetupProgressPreludes(['prelude']);`, context);
+    expect(classes.has('setup-progress-prelude-exit')).toBe(true);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBe('true');
+
+    expect(finishTransition).toBeTypeOf('function');
+    finishTransition?.();
+    expect(classes.has('setup-progress-prelude-exit')).toBe(false);
+    expect(classes.has('hidden')).toBe(true);
+
+    vm.runInContext("restoreSetupProgressPreludes(['prelude']);", context);
+    expect(classes.has('hidden')).toBe(false);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBeUndefined();
+
+    expect(html).toContain('function restoreSetupProgressPreludes(ids)');
+    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
+  });
+
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -579,6 +716,46 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("Deploying API Workers (' + completed + '/' + expectedWorkers + ')");
     expect(html).not.toContain("Processing... ' + completedCount + ' steps completed");
     expect(html).not.toContain('totalComponents = Math.max');
+  });
+
+  it('keeps provisioning progress complete after trailing log messages and polling races', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const trackerSource = html.match(
+      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}function createDeployProgressTracker\(\))/u
+    )?.[0];
+    expect(trackerSource).toBeTruthy();
+    const progressUpdates: Array<{ current: number; total: number; task: string }> = [];
+    const context = vm.createContext({
+      updateProgressUI: (_prefix: string, current: number, total: number, task: string) => {
+        progressUpdates.push({ current, total, task });
+      },
+      parseProgressMessage: () => null,
+      t: (key: string) => key,
+    });
+    vm.runInContext(
+      `${trackerSource}
+       const tracker = createProvisionProgressTracker(8);
+       tracker.handle('D1 Databases (6/6) ✓');
+       tracker.handle('Provisioning complete!');
+       tracker.handle('Config saved: /tmp/config.json');
+       tracker.complete();
+       tracker.handle('Log: Progress log saved');`,
+      context
+    );
+
+    expect(progressUpdates.at(-1)).toEqual({
+      current: 8,
+      total: 8,
+      task: 'web.status.complete',
+    });
+    expect(progressUpdates.filter((update) => update.current === 8)).toHaveLength(2);
+    expect(progressUpdates.at(-1)?.current).not.toBe(4);
   });
 
   it('renders prerequisite capability list styles and client-side renderer', () => {
@@ -635,7 +812,9 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('function getWildcardDnsManualCopy()');
     expect(html).toContain('deploy-manual-wildcard-warning');
-    expect(html).toContain('<section class="row wide hidden" id="deploy-manual-wildcard-warning">');
+    expect(html).toContain(
+      '<section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>'
+    );
     expect(html).toContain('data-i18n="web.deploy.manualDnsSectionTitle"');
     expect(html).toContain('deploy-manual-wildcard-dashboard-link');
     expect(html).toContain('deploy-manual-wildcard-docs-link');

@@ -3,9 +3,20 @@ import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract
 import type { DatabaseAdapter } from '../db/adapter';
 import type { Env } from '../types/env';
 import type { OIDCIdentityMappingFieldMappingSelector } from '../types/oidc';
-import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
-import { filterOidcClaimsByDestinationConsent } from './destination-profile-consent';
 import {
+  createCustomClaimSchemaResolverFromSources,
+  loadFeatureConfig,
+} from './custom-claims/resolver';
+import { resolveCustomClaimRuntimeSourcesFromEnv } from './custom-claims/runtime-sources';
+import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
+import {
+  filterOidcClaimsByDestinationConsent,
+  filterOidcClaimsWithoutDestinationProfile,
+  isProtectedIdentityMappingDestinationClaim,
+  loadDestinationProfileConsentDescriptor,
+} from './destination-profile-consent';
+import {
+  assertRuntimeIdentityMappingReleaseSafety,
   resolveRuntimeIdentityMappingBinding,
   type RuntimeIdentityMappingBinding,
 } from './identity-mapping-runtime-resolver';
@@ -18,7 +29,7 @@ import {
 
 export interface ApplyOIDCIdentityMappingInput {
   adapter: DatabaseAdapter;
-  env?: Pick<Env, 'DB_ADMIN' | 'KEY_MANAGER'>;
+  env?: Partial<Env>;
   tenantId: string;
   clientId: string;
   sectorIdentifier?: string | null;
@@ -90,12 +101,25 @@ export async function applyOIDCIdentityMapping(
     );
   }
 
+  const destinationProfileAdapter = input.env?.DB_ADMIN
+    ? requireDedicatedAdminDatabaseAdapter(input.env, 'oidc-destination-profile-safety')
+    : input.adapter;
+  const destinationDescriptor = await loadDestinationProfileConsentDescriptor(
+    destinationProfileAdapter,
+    input.tenantId,
+    binding.destinationProfileId
+  );
+  if (destinationDescriptor?.destinationType === 'oidc') {
+    assertRuntimeIdentityMappingReleaseSafety(binding, destinationDescriptor.fields, true);
+  }
+
   const destinationNamespace =
     input.selector?.destinationNamespace ?? binding.destinationNamespace ?? 'oidc.claim';
+  const sourceClaims = await loadMappedCustomClaimSources(input, binding);
   const persistentIdentifiers = await resolveOIDCPersistentIdentifiers(input, binding);
   const runtimeResult = executeRuntimeMapping({
     catalog: binding.catalog,
-    sourceValues: toOIDCSourceValues(input.claims),
+    sourceValues: toOIDCSourceValues(sourceClaims, binding),
     edges: binding.edges,
     transforms: binding.transforms,
     validationRules: binding.validationRules,
@@ -126,6 +150,9 @@ export async function applyOIDCIdentityMapping(
     if (value.sourceRef.namespace !== destinationNamespace) {
       continue;
     }
+    if (isProtectedIdentityMappingDestinationClaim('oidc.claim', value.sourceRef.path)) {
+      continue;
+    }
     mappedClaims[value.sourceRef.path] = value.value;
   }
 
@@ -135,6 +162,41 @@ export async function applyOIDCIdentityMapping(
   };
 }
 
+async function loadMappedCustomClaimSources(
+  input: ApplyOIDCIdentityMappingInput,
+  binding: RuntimeIdentityMappingBinding
+): Promise<Record<string, unknown>> {
+  const claims = { ...input.claims };
+  if (!input.env) return claims;
+  const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
+  if (!subjectId) return claims;
+
+  const referencedKeys = Array.from(
+    new Set(
+      binding.edges
+        .filter((edge) => edge.sourceRef.side === 'source')
+        .map((edge) => edge.sourceRef.path)
+        .filter((path) => path && !Object.prototype.hasOwnProperty.call(claims, path))
+    )
+  );
+  if (referencedKeys.length === 0) return claims;
+
+  const featureConfig = await loadFeatureConfig(input.env.AUTHRIM_CONFIG || null);
+  if (!featureConfig.enabled) return claims;
+  const sources = await resolveCustomClaimRuntimeSourcesFromEnv(input.env as Env, input.tenantId, {
+    accountId: subjectId,
+  });
+  const resolver = createCustomClaimSchemaResolverFromSources({
+    schemaDb: sources.schemaDb,
+    nonPiiDb: sources.nonPiiDb,
+    piiDb: sources.piiDb,
+    cache: input.env.AUTHRIM_CONFIG || null,
+    featureConfig,
+  });
+  const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, referencedKeys);
+  return { ...claims, ...custom.claims };
+}
+
 async function applyOIDCDestinationFieldConsent(
   input: ApplyOIDCIdentityMappingInput,
   claims: Record<string, unknown>,
@@ -142,7 +204,7 @@ async function applyOIDCDestinationFieldConsent(
 ): Promise<Record<string, unknown>> {
   const profileId = binding?.destinationProfileId ?? input.selector?.destinationProfileId;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
-  if (!profileId) return claims;
+  if (!profileId) return filterOidcClaimsWithoutDestinationProfile(claims);
   if (!subjectId) {
     throw new OIDCIdentityMappingRuntimeError(
       'OIDC destination release requires a subject identifier',
@@ -344,18 +406,27 @@ function isAudienceMode(value: string | null): value is PersistentIdentifierAudi
   return value === 'runtime' || value === 'saml_sp_entity_id' || value === 'oidc_sector_identifier';
 }
 
-function toOIDCSourceValues(claims: Record<string, unknown>): SourceValueEnvelope[] {
-  return Object.entries(claims).map(([path, value]) => ({
+function toOIDCSourceValues(
+  claims: Record<string, unknown>,
+  binding: RuntimeIdentityMappingBinding
+): SourceValueEnvelope[] {
+  const values: SourceValueEnvelope[] = Object.entries(claims).map(([path, value]) => ({
     value,
-    sourceRef: {
-      side: 'source',
-      namespace: 'oidc.claim',
-      path,
-    },
-    metadata: {
-      oidcClaimName: path,
-    },
+    sourceRef: { side: 'source', namespace: 'oidc.claim', path },
+    metadata: { oidcClaimName: path },
   }));
+  const seen = new Set(
+    values.map((value) => `${value.sourceRef.namespace}:${value.sourceRef.path}`)
+  );
+  for (const edge of binding.edges) {
+    if (edge.sourceRef.side !== 'source') continue;
+    if (!Object.prototype.hasOwnProperty.call(claims, edge.sourceRef.path)) continue;
+    const key = `${edge.sourceRef.namespace}:${edge.sourceRef.path}`;
+    if (seen.has(key)) continue;
+    values.push({ value: claims[edge.sourceRef.path], sourceRef: edge.sourceRef });
+    seen.add(key);
+  }
+  return values;
 }
 
 export class OIDCIdentityMappingRuntimeError extends Error {

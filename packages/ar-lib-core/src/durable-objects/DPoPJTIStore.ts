@@ -54,6 +54,8 @@ interface DPoPJTIStoreState {
   lastCleanup: number;
 }
 
+class DPoPJTIReplayError extends Error {}
+
 /**
  * DPoPJTIStore Durable Object
  *
@@ -93,6 +95,7 @@ export class DPoPJTIStore {
       }
     } catch (error) {
       this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
+      throw error;
     }
 
     this.initialized = true;
@@ -112,6 +115,7 @@ export class DPoPJTIStore {
       await this.state.storage.put('state', stateToSave);
     } catch (error) {
       this.log.error('Failed to save to Durable Storage', {}, error as Error);
+      throw error;
     }
   }
 
@@ -185,7 +189,7 @@ export class DPoPJTIStore {
     // Check if JTI already exists (ATOMIC CHECK)
     const existing = await this.checkJTI(request.jti);
     if (existing) {
-      throw new Error('DPoP replay detected: JTI already used');
+      throw new DPoPJTIReplayError('DPoP replay detected: JTI already used');
     }
 
     // Store new JTI (ATOMIC STORE)
@@ -296,6 +300,9 @@ export class DPoPJTIStore {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (error) {
+          if (!(error instanceof DPoPJTIReplayError)) {
+            throw error;
+          }
           this.log.warn('checkAndStoreJTI replay detected', {}, error as Error);
           return new Response(
             JSON.stringify({

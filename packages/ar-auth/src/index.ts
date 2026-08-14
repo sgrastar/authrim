@@ -710,6 +710,7 @@ app.get('/session/check', checkSessionIframeHandler); // Check session iframe fo
 
 // Logout endpoints
 app.get('/logout', frontChannelLogoutHandler);
+app.post('/logout', frontChannelLogoutHandler);
 app.post('/logout/backchannel', backChannelLogoutHandler);
 
 // Logged out page - displayed after successful logout when no valid post_logout_redirect_uri

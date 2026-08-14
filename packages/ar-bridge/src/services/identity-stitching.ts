@@ -961,9 +961,11 @@ async function applyTenantD1JITPlan(
     throw new Error('external_idp_jit_pending_identity_not_found');
   }
 
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, input.tenantId);
   await persistCustomClaimWrite({
     db: account.coreDb,
     dbPii: account.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId: input.tenantId,
     userId: input.userId,
     validation: input.plan.customClaimValidation,
@@ -1019,7 +1021,6 @@ async function applyTenantD1JITPlan(
     }
   }
 
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, input.tenantId);
   await syncUserLifecycleState({
     db: account.coreDb,
     dbPii: account.piiDb,
@@ -1475,6 +1476,7 @@ async function createUserWithJITProvisioning(
     await persistCustomClaimWrite({
       db: customClaimSources.nonPiiDb,
       dbPii: customClaimSources.piiDb,
+      schemaDb: customClaimSources.schemaDb,
       tenantId: params.tenantId,
       userId: id,
       validation: customClaimValidation,

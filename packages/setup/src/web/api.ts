@@ -69,6 +69,7 @@ import {
   loadLockFileAuto,
   mergeLockFiles,
   saveLockFile,
+  type AuthrimLock,
 } from '../core/lock.js';
 import {
   getEnvironmentPaths,
@@ -113,9 +114,13 @@ import {
   projectControlGeneratedKeyState,
 } from '../core/control-generated-state.js';
 import {
+  advanceInitialBootstrapWorkerBindingsAsOperator,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
+  requestInitialBootstrapAcceleration,
+  listInitialBootstrapReconciledWorkerVersions,
+  workerVersionIdentity,
   waitForInitialBootstrapHandoff,
 } from '../core/control-bootstrap-handoff.js';
 import {
@@ -143,6 +148,7 @@ import {
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
   type DeployResult,
+  type DeploymentSummary,
   type UiWorkerComponent,
 } from '../core/deploy.js';
 import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
@@ -167,6 +173,7 @@ import {
   loadInstalledReleaseMigrationManifest,
   loadTargetReleaseMigrationManifest,
   resolveReleaseMigrationTargets,
+  type ReleaseMigrationManifest,
 } from '../core/release-migrations.js';
 import {
   applyReleaseSchemaUpdatePlan,
@@ -206,6 +213,7 @@ import {
 import {
   completeControlTokenBootstrap,
   findMissingControlTokenResourceClasses,
+  hasReadyControlTokenBootstrap,
   resolveControlTokenResourceClasses,
 } from '../core/control-token-bootstrap-orchestrator.js';
 import {
@@ -268,6 +276,96 @@ export function generateSessionToken(): string {
  */
 export function getSessionToken(): string {
   return sessionToken;
+}
+
+/**
+ * Recover the exact Worker set from an interrupted initial Web deployment.
+ *
+ * Older setup versions persisted the deployed Worker names and timestamps but omitted the
+ * Cloudflare version IDs and the workers_deployed release checkpoint. Only recover that legacy
+ * state when every enabled Worker has exact environment/name/version evidence. A version created
+ * by Control's recorded binding reconciliation is also trusted, then re-verified by the final
+ * handoff checks; any other version drift remains a hard recovery failure.
+ */
+export async function buildWebInitialHandoffResumeSummary(input: {
+  lock: AuthrimLock;
+  components: readonly WorkerComponent[];
+  productVersion: string;
+  getDeployment?: typeof getWorkerDeployments;
+  allowSecretTriggeredVersionAdvanceFor?: readonly WorkerComponent[];
+  reconciledWorkerVersions?: ReadonlySet<string>;
+  now?: string;
+}): Promise<DeploymentSummary | null> {
+  const phase = input.lock.releaseUpdate?.phase;
+  if (phase !== 'schema_applied' && phase !== 'workers_deployed') return null;
+  if (input.lock.releaseUpdate?.initialWorkerRedeployRequired === true) return null;
+
+  const lockedWorkers = input.components.map((component) => ({
+    component,
+    worker: input.lock.workers?.[component],
+  }));
+  const hasCompleteLocalEvidence = lockedWorkers.every(
+    ({ component, worker }) =>
+      worker?.name === `${input.lock.env}-${component}` &&
+      worker.version === input.productVersion &&
+      Boolean(worker.deployedAt)
+  );
+  if (!hasCompleteLocalEvidence) {
+    if (phase === 'workers_deployed') {
+      throw new Error('initial_handoff_resume_worker_evidence_incomplete');
+    }
+    return null;
+  }
+
+  const getDeployment = input.getDeployment ?? getWorkerDeployments;
+  const recovered = await Promise.all(
+    lockedWorkers.map(async ({ component, worker }): Promise<DeployResult> => {
+      // The completeness check above narrows the operational state; retain this explicit guard so
+      // a future refactor cannot turn an incomplete checkpoint into a deployment fallback.
+      if (!worker?.deployedAt) {
+        throw new Error(`initial_handoff_resume_worker_evidence_incomplete:${component}`);
+      }
+      const remote = await getDeployment(worker.name);
+      const cloudflareVersionId = remote?.versionId ?? undefined;
+      if (!remote?.exists || !cloudflareVersionId) {
+        throw new Error(`initial_handoff_resume_remote_evidence_missing:${component}`);
+      }
+      const allowedSecretVersionAdvance =
+        input.allowSecretTriggeredVersionAdvanceFor?.includes(component) === true &&
+        remote.source === 'Secret Change';
+      const allowedBindingVersionAdvance = input.reconciledWorkerVersions?.has(
+        workerVersionIdentity(worker.name, cloudflareVersionId)
+      );
+      if (
+        worker.cloudflareVersionId &&
+        worker.cloudflareVersionId !== cloudflareVersionId &&
+        !allowedSecretVersionAdvance &&
+        !allowedBindingVersionAdvance
+      ) {
+        throw new Error(`initial_handoff_resume_remote_version_mismatch:${component}`);
+      }
+      return {
+        component,
+        workerName: worker.name,
+        success: true,
+        deployedAt: worker.deployedAt,
+        version: worker.version,
+        cloudflareVersionId,
+      };
+    })
+  );
+
+  const completedAt = input.now ?? new Date().toISOString();
+  const results = recovered;
+  return {
+    totalComponents: results.length,
+    successCount: results.length,
+    failedCount: 0,
+    results,
+    startedAt: completedAt,
+    completedAt,
+    duration: 0,
+  };
 }
 
 // =============================================================================
@@ -2908,7 +3006,9 @@ export function createApiRoutes(): Hono {
           existingDeploymentLock,
           productVersion,
           'initial_deploy',
-          { releaseManifestChecksum: initialManifestChecksum }
+          {
+            releaseManifestChecksum: initialManifestChecksum,
+          }
         );
         if (!initialDeploymentGuard.allowed) {
           return c.json(
@@ -2942,12 +3042,35 @@ export function createApiRoutes(): Hono {
           env
         );
         const automaticProvisioning = releaseConfig.controlPlane?.automaticProvisioning === true;
-        if (automaticProvisioning !== Boolean(bootstrapToken && bootstrapOwnership)) {
+        let existingControlTokenBootstrapReady = false;
+        if (automaticProvisioning && !bootstrapToken && interruptedInitialRelease) {
+          const controlDatabaseName = existingDeploymentLock.d1.CONTROL_DB?.name;
+          if (controlDatabaseName) {
+            try {
+              existingControlTokenBootstrapReady = await hasReadyControlTokenBootstrap({
+                environmentId: env,
+                controlDatabaseName,
+                resourceClasses: resolveControlTokenResourceClasses(releaseConfig),
+                secretSink: new WranglerControlSecretSink({
+                  workerName: `${env}-ar-control`,
+                  cwd: resolvedRootDir,
+                }),
+              });
+            } catch {
+              existingControlTokenBootstrapReady = false;
+            }
+          }
+        }
+        const hasBootstrapInput = bootstrapToken.length > 0 && bootstrapOwnership !== null;
+        if (
+          (!automaticProvisioning && hasBootstrapInput) ||
+          (automaticProvisioning && !existingControlTokenBootstrapReady && !hasBootstrapInput)
+        ) {
           return c.json(
             {
               success: false,
               error: automaticProvisioning
-                ? 'Automatic provisioning requires one bootstrap token'
+                ? 'Automatic provisioning requires one bootstrap token or an existing ready Control authority'
                 : 'Bootstrap token input is not allowed when Automatic provisioning is off',
             },
             409
@@ -2985,10 +3108,49 @@ export function createApiRoutes(): Hono {
             );
           }
         }
+        const locallyRecordedComponents = WORKER_COMPONENTS.filter(
+          (component) => existingDeploymentLock?.workers?.[component] !== undefined
+        );
+        const remotelyVerifiedExistingComponents = dryRun
+          ? locallyRecordedComponents
+          : await resolveExistingWorkerComponents(
+              {
+                env,
+                rootDir: resolvedRootDir,
+                dryRun: false,
+                concurrency: 2,
+                existingComponents: locallyRecordedComponents,
+                onProgress: addProgress,
+              },
+              WORKER_COMPONENTS
+            );
+        const canResumeExactInitialHandoff =
+          !dryRun &&
+          existingDeploymentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
+          existingDeploymentLock.releaseUpdate?.targetVersion === productVersion &&
+          existingDeploymentLock.releaseUpdate.manifestChecksum === initialManifestChecksum;
+        const reconciledWorkerVersions =
+          canResumeExactInitialHandoff &&
+          existingDeploymentLock.releaseUpdate?.phase === 'workers_deployed' &&
+          existingDeploymentLock.d1.CONTROL_DB?.name
+            ? await listInitialBootstrapReconciledWorkerVersions({
+                environmentId: env,
+                controlDatabaseName: existingDeploymentLock.d1.CONTROL_DB.name,
+              })
+            : undefined;
+        const initialHandoffResumeSummary = canResumeExactInitialHandoff
+          ? await buildWebInitialHandoffResumeSummary({
+              lock: existingDeploymentLock,
+              components: enabledComponents,
+              productVersion,
+              allowSecretTriggeredVersionAdvanceFor: automaticProvisioning ? ['ar-control'] : [],
+              reconciledWorkerVersions,
+            })
+          : null;
         const cfg = releaseConfig;
 
         // Validate the locked environment and complete component set before doing build work.
-        if (!dryRun && !skipBuild) {
+        if (!dryRun && !skipBuild && !initialHandoffResumeSummary) {
           const buildResult = await buildApiPackages({
             rootDir: resolvedRootDir,
             onProgress: addProgress,
@@ -3066,7 +3228,10 @@ export function createApiRoutes(): Hono {
           );
           const missingControlSecrets = getMissingRequiredDeploySecrets(
             deploymentSecrets,
-            ['ar-control'],
+            enabledComponents.includes('ar-control') &&
+              !remotelyVerifiedExistingComponents.includes('ar-control')
+              ? ['ar-control']
+              : [],
             { automaticProvisioning: automaticProvisioning && !bootstrapToken }
           );
           if (missingControlSecrets.length > 0) {
@@ -3396,24 +3561,7 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        const { lock: deploymentLock } = await loadLockFileAuto(rootDir, env);
-        let existingComponents = WORKER_COMPONENTS.filter(
-          (component) => deploymentLock?.workers?.[component] !== undefined
-        );
-        const remoteProbeOptions = {
-          env,
-          rootDir: resolve(rootDir),
-          dryRun,
-          concurrency: 2,
-          existingComponents,
-          onProgress: addProgress,
-        };
-        if (!dryRun) {
-          existingComponents = await resolveExistingWorkerComponents(
-            remoteProbeOptions,
-            WORKER_COMPONENTS
-          );
-        }
+        const existingComponents = remotelyVerifiedExistingComponents;
         const enabledUiBindingTargets = {
           loginUi: cfg?.components?.loginUi ?? true,
           adminUi: cfg?.components?.adminUi ?? true,
@@ -3456,24 +3604,32 @@ export function createApiRoutes(): Hono {
           }
         }
 
-        const summary = await deployAll(
-          {
-            env,
-            rootDir: resolve(rootDir),
-            dryRun,
-            concurrency: 2,
-            deploymentStrategy: 'auto',
-            existingComponents,
-            secrets: deploymentSecrets,
-            automaticProvisioning: automaticProvisioning && !bootstrapToken,
-            cleanupLegacyStaticSecrets: true,
-            onProgress: addProgress,
-            onError: (comp, error) => {
-              addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+        const resumeSummary = initialHandoffResumeSummary;
+        const summary =
+          resumeSummary ??
+          (await deployAll(
+            {
+              env,
+              rootDir: resolve(rootDir),
+              dryRun,
+              concurrency: 2,
+              deploymentStrategy: 'auto',
+              existingComponents,
+              secrets: deploymentSecrets,
+              automaticProvisioning: automaticProvisioning && !bootstrapToken,
+              cleanupLegacyStaticSecrets: true,
+              onProgress: addProgress,
+              onError: (comp, error) => {
+                addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+              },
             },
-          },
-          enabledComponents
-        );
+            enabledComponents
+          ));
+        if (resumeSummary) {
+          addProgress(
+            `Resuming initial deployment from ${resumeSummary.results.length} active Worker version(s); no Worker traffic was changed.`
+          );
+        }
 
         state.deployResults = summary.results;
 
@@ -3515,20 +3671,7 @@ export function createApiRoutes(): Hono {
           if (!currentLock || !lockPath) {
             throw new Error('Deployment lock disappeared before Worker evidence was recorded.');
           }
-          const now = new Date().toISOString();
-          const workers: Record<string, { name: string; deployedAt?: string; version?: string }> = {
-            ...currentLock.workers,
-          };
-          for (const result of summary.results) {
-            if (result.success && result.deployedAt) {
-              workers[result.component] = {
-                name: result.workerName,
-                deployedAt: result.deployedAt,
-                version: result.version,
-              };
-            }
-          }
-          await saveLockFile({ ...currentLock, workers, updatedAt: now }, lockPath);
+          await saveLockFile(updateLockWithDeployments(currentLock, summary.results), lockPath);
           addProgress('Lock file updated with deployment info');
         }
 
@@ -3549,6 +3692,24 @@ export function createApiRoutes(): Hono {
               `Worker deployments did not become visible: ${workerDeploymentResult.error || 'unknown verification error'}`
             );
           }
+
+          const { lock: checkpointLock, path: checkpointPath } = await loadLockFileAuto(
+            rootDir,
+            env
+          );
+          if (!checkpointLock || !checkpointPath) {
+            throw new Error('Deployment lock disappeared before the handoff checkpoint was saved.');
+          }
+          await saveLockFile(
+            withReleaseUpdateState(checkpointLock, {
+              targetVersion: productVersion,
+              phase: 'workers_deployed',
+              manifestChecksum: initialManifestChecksum,
+              initialWorkerRedeployRequired: false,
+            }),
+            checkpointPath
+          );
+          addProgress('Saved initial Worker handoff checkpoint');
 
           if (bootstrapToken && bootstrapOwnership) {
             const accountId = releaseConfig.cloudflare?.accountId ?? (await getAccountId());
@@ -3609,29 +3770,63 @@ export function createApiRoutes(): Hono {
           if (!controlDatabaseName || !controlDatabaseId) {
             throw new Error('control_database_required');
           }
-          const evidence = await recordInitialBootstrapWorkerEvidence({
-            environmentId: env,
-            controlDatabaseName,
-            deployments: summary.results,
-            allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
-              ? [`${env}-ar-control`]
-              : undefined,
-          });
+          const deployedWorkerCount = new Set(
+            summary.results
+              .filter((result) => result.success || result.trafficCommitted)
+              .map((result) => result.workerName)
+          ).size;
           addProgress(
-            `Waiting for Control bootstrap verification of ${evidence.workerCount} Worker(s)...`
+            `Waiting for Control bootstrap verification of ${deployedWorkerCount} Worker(s)...`
           );
+          let acceleratorFallbackReported = false;
+          const smokeKeyState = handoffLock.controlKeyState?.smokeRpc;
           await waitForInitialBootstrapHandoff({
             environmentId: env,
             controlDatabaseName,
-            timeoutMs: 15 * 60_000,
-            pollIntervalMs: 30_000,
+            timeoutMs: 30 * 60_000,
+            stallTimeoutMs: 5 * 60_000,
+            pollIntervalMs: 2_000,
             onProgress: addProgress,
+            advanceBindings: automaticProvisioning
+              ? smokeKeyState
+                ? async () => {
+                    try {
+                      await requestInitialBootstrapAcceleration({
+                        apiBaseUrl,
+                        environmentId: env,
+                        keysDir,
+                        activeSlot: smokeKeyState.activeSlot,
+                        activeKeyId: smokeKeyState.activeKeyId,
+                      });
+                    } catch {
+                      if (!acceleratorFallbackReported) {
+                        acceleratorFallbackReported = true;
+                        addProgress(
+                          'Control bootstrap acceleration unavailable; continuing with scheduled verification...'
+                        );
+                      }
+                    }
+                  }
+                : undefined
+              : () =>
+                  advanceInitialBootstrapWorkerBindingsAsOperator({
+                    controlDatabaseId,
+                    controlDatabaseName,
+                    environmentId: env,
+                  }),
+            refreshEvidence: () =>
+              recordInitialBootstrapWorkerEvidence({
+                environmentId: env,
+                controlDatabaseName,
+                deployments: summary.results,
+                allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
+                  ? [`${env}-ar-control`]
+                  : undefined,
+              }),
             reconcile: () =>
               reconcileInitialBootstrapHandoffAsOperator({
                 controlDatabaseId,
-                controlDatabaseName,
-                environmentId: env,
-                executeWorkerBindings: !automaticProvisioning,
+                executeWorkerBindings: false,
               }),
           });
           addProgress('✓ Initial D1 topology accepted by Control');
@@ -4739,18 +4934,265 @@ export function createApiRoutes(): Hono {
           ? (resolved.paths as EnvironmentPaths).config
           : (resolved.paths as LegacyPaths).config;
       const { lock } = await loadLockFileAuto(baseDir, env);
-      const interruptedInitialRelease = Boolean(
-        lock &&
-        !lock.productVersion &&
-        lock.releaseUpdate !== undefined &&
-        lock.releaseUpdate.phase !== 'verified'
+      const configExists = existsSync(configPath);
+      const phase = lock?.releaseUpdate?.phase ?? null;
+      const completedSteps = {
+        resourcesProvisioned: Boolean(lock),
+        schemaApplied:
+          phase === 'schema_applied' || phase === 'workers_deployed' || phase === 'verified',
+        workersDeployed: phase === 'workers_deployed' || phase === 'verified',
+        verificationComplete: Boolean(
+          lock?.productVersion && lock.releaseUpdate?.phase === 'verified'
+        ),
+      };
+      const responseBase = { success: true as const, env, configExists, phase, completedSteps };
+
+      if (!lock) {
+        return c.json({
+          ...responseBase,
+          status: configExists ? 'recreate_required' : 'not_started',
+          canResume: false,
+          requiresRecreate: configExists,
+          reasonCode: configExists ? 'lock_missing' : 'environment_not_started',
+        });
+      }
+
+      if (lock.productVersion && lock.releaseUpdate?.phase === 'verified') {
+        return c.json({
+          ...responseBase,
+          status: 'complete',
+          canResume: false,
+          requiresRecreate: false,
+          installedVersion: lock.productVersion,
+          reasonCode: 'deployment_verified',
+        });
+      }
+
+      if (!configExists || !lock.releaseUpdate || lock.releaseUpdate.phase === 'verified') {
+        return c.json({
+          ...responseBase,
+          status: 'recreate_required',
+          canResume: false,
+          requiresRecreate: true,
+          reasonCode: !configExists ? 'config_missing' : 'release_checkpoint_inconsistent',
+        });
+      }
+
+      let releaseConfig: AuthrimConfig;
+      let productVersion: string;
+      let manifestChecksum: string;
+      let releaseManifest: ReleaseMigrationManifest;
+      try {
+        releaseConfig = parseEnvironmentConfigForEnv(
+          JSON.parse(await readFile(configPath, 'utf-8')),
+          env
+        );
+        productVersion = await getRootProductVersion(baseDir);
+        const migrationsRoot = await findMigrationsRoot(baseDir);
+        if (!migrationsRoot.path) throw new Error('release_migrations_directory_missing');
+        const release = loadTargetReleaseMigrationManifest({
+          migrationsRoot: migrationsRoot.path,
+          productVersion,
+          allowDraft: true,
+        });
+        releaseManifest = release.manifest;
+        manifestChecksum = calculateReleaseManifestChecksum(release.manifest);
+      } catch {
+        return c.json({
+          ...responseBase,
+          status: 'blocked',
+          canResume: false,
+          requiresRecreate: false,
+          reasonCode: 'local_recovery_evidence_unavailable',
+        });
+      }
+
+      const guard = evaluateReleaseDeploymentGuard(lock, productVersion, 'initial_deploy', {
+        releaseManifestChecksum: manifestChecksum,
+      });
+      if (!guard.allowed) {
+        return c.json({
+          ...responseBase,
+          status: 'recreate_required',
+          canResume: false,
+          requiresRecreate: true,
+          reasonCode: guard.reason ?? 'release_checkpoint_mismatch',
+        });
+      }
+      const checkExistingControlCredentials = async (): Promise<boolean> => {
+        if (releaseConfig.controlPlane?.automaticProvisioning !== true) return true;
+        const controlDatabaseName = lock.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) return false;
+        try {
+          return await hasReadyControlTokenBootstrap({
+            environmentId: env,
+            controlDatabaseName,
+            resourceClasses: resolveControlTokenResourceClasses(releaseConfig),
+            secretSink: new WranglerControlSecretSink({
+              workerName: `${env}-ar-control`,
+              cwd: baseDir,
+            }),
+          });
+        } catch {
+          return false;
+        }
+      };
+
+      if (lock.releaseUpdate.phase === 'planned') {
+        const controlCredentialsReady = await checkExistingControlCredentials();
+        return c.json({
+          ...responseBase,
+          status: 'resumable',
+          canResume: true,
+          requiresRecreate: false,
+          resumeFrom: 'database_migrations',
+          resumeMode: 'continue',
+          requiresBootstrapToken: !controlCredentialsReady,
+          reasonCode: 'release_planned',
+        });
+      }
+
+      if (lock.releaseUpdate.phase === 'schema_applied') {
+        const controlCredentialsReady = await checkExistingControlCredentials();
+        const controlPlaneTopologyIssues = inspectInitialControlPlaneTopology({
+          env,
+          config: releaseConfig,
+          lock,
+          productVersion,
+          manifest: releaseManifest,
+        });
+        const controlPlaneReady = controlPlaneTopologyIssues.length === 0;
+        return c.json({
+          ...responseBase,
+          status: 'resumable',
+          canResume: true,
+          requiresRecreate: false,
+          completedSteps: {
+            ...completedSteps,
+            controlPlaneReady,
+          },
+          resumeFrom: controlPlaneReady ? 'worker_deployment' : 'control_plane_bootstrap',
+          resumeMode: 'continue',
+          requiresBootstrapToken: !controlCredentialsReady,
+          reasonCode: controlPlaneReady
+            ? 'schema_checkpoint_verified'
+            : 'initial_control_plane_bootstrap_incomplete',
+          ...(controlPlaneReady
+            ? {}
+            : {
+                incompleteControlPlaneBindings: controlPlaneTopologyIssues.map(
+                  (issue) => issue.binding
+                ),
+              }),
+        });
+      }
+
+      const enabledComponents = Array.from(
+        getEnabledComponents({
+          saml: releaseConfig.components.saml,
+          async: releaseConfig.components.async,
+          vc: releaseConfig.components.vc,
+          bridge: releaseConfig.components.bridge,
+          policy: releaseConfig.components.policy,
+        })
       );
+      let reconciledWorkerVersions: Set<string> | undefined;
+      if (lock.releaseUpdate.phase === 'workers_deployed') {
+        const controlDatabaseName = lock.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) {
+          return c.json({
+            ...responseBase,
+            status: 'recreate_required',
+            canResume: false,
+            requiresRecreate: true,
+            reasonCode: 'control_database_checkpoint_missing',
+          });
+        }
+        try {
+          reconciledWorkerVersions = await listInitialBootstrapReconciledWorkerVersions({
+            environmentId: env,
+            controlDatabaseName,
+          });
+        } catch {
+          return c.json({
+            ...responseBase,
+            status: 'blocked',
+            canResume: false,
+            requiresRecreate: false,
+            reasonCode: 'control_reconciliation_verification_unavailable',
+          });
+        }
+      }
+      try {
+        const summary = await buildWebInitialHandoffResumeSummary({
+          lock,
+          components: enabledComponents,
+          productVersion,
+          allowSecretTriggeredVersionAdvanceFor:
+            releaseConfig.controlPlane?.automaticProvisioning === true ? ['ar-control'] : [],
+          reconciledWorkerVersions,
+        });
+        if (
+          !summary ||
+          summary.failedCount > 0 ||
+          summary.results.length !== enabledComponents.length
+        ) {
+          throw new Error('initial_handoff_resume_worker_evidence_incomplete');
+        }
+      } catch {
+        return c.json({
+          ...responseBase,
+          status: 'recreate_required',
+          canResume: false,
+          requiresRecreate: true,
+          reasonCode: 'remote_worker_checkpoint_mismatch',
+        });
+      }
+
+      let controlCredentialsReady = true;
+      if (releaseConfig.controlPlane?.automaticProvisioning === true) {
+        const controlDatabaseName = lock.d1.CONTROL_DB?.name;
+        if (!controlDatabaseName) {
+          return c.json({
+            ...responseBase,
+            status: 'recreate_required',
+            canResume: false,
+            requiresRecreate: true,
+            reasonCode: 'control_database_checkpoint_missing',
+          });
+        }
+        try {
+          controlCredentialsReady = await hasReadyControlTokenBootstrap({
+            environmentId: env,
+            controlDatabaseName,
+            resourceClasses: resolveControlTokenResourceClasses(releaseConfig),
+            secretSink: new WranglerControlSecretSink({
+              workerName: `${env}-ar-control`,
+              cwd: baseDir,
+            }),
+          });
+        } catch {
+          return c.json({
+            ...responseBase,
+            status: 'blocked',
+            canResume: false,
+            requiresRecreate: false,
+            reasonCode: 'control_credentials_verification_unavailable',
+          });
+        }
+      }
 
       return c.json({
-        success: true,
-        env,
-        configExists: existsSync(configPath),
-        canResume: existsSync(configPath) && interruptedInitialRelease,
+        ...responseBase,
+        status: 'resumable',
+        canResume: true,
+        requiresRecreate: false,
+        resumeFrom: 'post_deploy_verification',
+        resumeMode: 'continue',
+        requiresBootstrapToken: !controlCredentialsReady,
+        reasonCode: controlCredentialsReady
+          ? 'worker_checkpoint_verified'
+          : 'control_credentials_repair_required',
       });
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
@@ -4980,6 +5422,12 @@ export function createApiRoutes(): Hono {
           deleteQueues,
           deleteR2,
           deletePages,
+          knownD1Names: operationLock.lock
+            ? Object.values(operationLock.lock.d1).map((entry) => entry.name)
+            : [],
+          knownQueueNames: operationLock.lock?.queues
+            ? Object.values(operationLock.lock.queues).map((entry) => entry.name)
+            : [],
           onProgress: addProgress,
         });
 
@@ -5301,7 +5749,7 @@ export function createApiRoutes(): Hono {
           if (topologyIssues.length > 0) {
             state.status = 'error';
             state.error =
-              'Control Plane bootstrap topology is incomplete. Re-run setup init before handoff acceptance or repair it from Admin UI after handoff.';
+              'Initial deployment setup is incomplete. Run setup init again before final verification, or repair it from Admin UI after setup completes.';
             await flushProgressLog();
             return c.json(
               {

@@ -144,10 +144,12 @@ import {
   publishInitialControlPlaneRuntimeSnapshot,
 } from '../../core/control-plane-bootstrap.js';
 import {
+  advanceInitialBootstrapWorkerBindingsAsOperator,
   isInitialBootstrapHandoffAccepted,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
+  requestInitialBootstrapAcceleration,
   waitForInitialBootstrapHandoff,
 } from '../../core/control-bootstrap-handoff.js';
 import { ensureInitialNotificationProviderConfiguration } from '../../core/notification-provider-bootstrap.js';
@@ -960,14 +962,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     : undefined;
   const hasInitialWorkerCheckpoint =
     isInitialDeployment && currentLock.releaseUpdate?.phase === 'workers_deployed';
-  if (
-    hasInitialWorkerCheckpoint &&
-    (currentLock.releaseUpdate?.targetVersion !== targetProductVersion ||
-      currentLock.releaseUpdate.manifestChecksum !== initialManifestChecksum)
-  ) {
-    throw new Error('initial_handoff_resume_release_mismatch');
-  }
-  const resumeInitialHandoff = hasInitialWorkerCheckpoint;
   const initialTargets = initialRelease
     ? resolveReleaseMigrationTargets({ lock: currentLock, config })
     : [];
@@ -999,7 +993,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     targetProductVersion,
     deploymentOperationKind,
     isInitialDeployment && initialManifestChecksum
-      ? { releaseManifestChecksum: initialManifestChecksum }
+      ? {
+          releaseManifestChecksum: initialManifestChecksum,
+        }
       : undefined
   );
   if (!deploymentGuard.allowed) {
@@ -1008,6 +1004,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     );
     process.exit(1);
   }
+  const resumeInitialHandoff =
+    hasInitialWorkerCheckpoint &&
+    currentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
+    currentLock.releaseUpdate?.targetVersion === targetProductVersion &&
+    currentLock.releaseUpdate.manifestChecksum === initialManifestChecksum;
   if (options.operationKind === 'topology_change') {
     try {
       assertPendingTopologyUpdate(currentLock, {
@@ -2085,7 +2086,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     console.log(
       chalk.bold(
-        resumeInitialHandoff ? 'Resuming initial Control handoff...\n' : '🔨 Deploying workers...\n'
+        resumeInitialHandoff ? 'Resuming initial deployment...\n' : '🔨 Deploying workers...\n'
       )
     );
 
@@ -2219,7 +2220,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (resumeInitialHandoff) {
       console.log(
         chalk.cyan(
-          `Resuming initial Control handoff from ${summary.results.length} locked Worker version(s); no Worker traffic was changed.`
+          `Resuming initial deployment from ${summary.results.length} locked Worker version(s); no Worker traffic was changed.`
         )
       );
     }
@@ -2276,6 +2277,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           targetVersion: targetProductVersion,
           phase: 'workers_deployed',
           manifestChecksum: initialManifestChecksum,
+          initialWorkerRedeployRequired: false,
         });
         await saveLockFile(currentLock, lockPath);
       }
@@ -2417,30 +2419,64 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           if (alreadyAccepted) {
             handoffSpinner.succeed('Initial D1 topology was already accepted by Control');
           } else {
-            const evidence = await recordInitialBootstrapWorkerEvidence({
-              environmentId: env,
-              controlDatabaseName,
-              deployments: summary.results,
-              allowSecretTriggeredVersionAdvanceFor:
-                config.controlPlane?.automaticProvisioning === true
-                  ? [`${env}-ar-control`]
-                  : undefined,
-            });
-            handoffSpinner.text = `Waiting for Control verification of ${evidence.workerCount} Worker(s)...`;
+            const deployedWorkerCount = new Set(
+              summary.results
+                .filter((result) => result.success || result.trafficCommitted)
+                .map((result) => result.workerName)
+            ).size;
+            handoffSpinner.text = `Waiting for Control verification of ${deployedWorkerCount} Worker(s)...`;
+            let acceleratorFallbackReported = false;
+            const smokeKeyState = currentLock.controlKeyState?.smokeRpc;
             await waitForInitialBootstrapHandoff({
               environmentId: env,
               controlDatabaseName,
-              timeoutMs: 15 * 60_000,
-              pollIntervalMs: 30_000,
+              timeoutMs: 30 * 60_000,
+              stallTimeoutMs: 5 * 60_000,
+              pollIntervalMs: 2_000,
               onProgress: (message) => {
                 handoffSpinner.text = message;
               },
+              advanceBindings:
+                config.controlPlane?.automaticProvisioning === true
+                  ? smokeKeyState
+                    ? async () => {
+                        try {
+                          await requestInitialBootstrapAcceleration({
+                            apiBaseUrl: deploymentApiBaseUrl!,
+                            environmentId: env,
+                            keysDir: getResolvedKeysDir(),
+                            activeSlot: smokeKeyState.activeSlot,
+                            activeKeyId: smokeKeyState.activeKeyId,
+                          });
+                        } catch {
+                          if (!acceleratorFallbackReported) {
+                            acceleratorFallbackReported = true;
+                            handoffSpinner.text =
+                              'Control bootstrap acceleration unavailable; continuing with scheduled verification...';
+                          }
+                        }
+                      }
+                    : undefined
+                  : () =>
+                      advanceInitialBootstrapWorkerBindingsAsOperator({
+                        controlDatabaseId,
+                        controlDatabaseName,
+                        environmentId: env,
+                      }),
+              refreshEvidence: () =>
+                recordInitialBootstrapWorkerEvidence({
+                  environmentId: env,
+                  controlDatabaseName,
+                  deployments: summary.results,
+                  allowSecretTriggeredVersionAdvanceFor:
+                    config.controlPlane?.automaticProvisioning === true
+                      ? [`${env}-ar-control`]
+                      : undefined,
+                }),
               reconcile: () =>
                 reconcileInitialBootstrapHandoffAsOperator({
                   controlDatabaseId,
-                  controlDatabaseName,
-                  environmentId: env,
-                  executeWorkerBindings: config.controlPlane?.automaticProvisioning !== true,
+                  executeWorkerBindings: false,
                 }),
             });
             handoffSpinner.succeed('Initial D1 topology accepted by Control');

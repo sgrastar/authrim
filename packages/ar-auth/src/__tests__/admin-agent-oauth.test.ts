@@ -61,6 +61,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { adminAgentAuthorizeHandler, adminAgentParHandler } from '../admin-agent-oauth';
 import { canonicalizeJson, sha256Base64Url } from '@authrim/ar-agent-access/core';
 
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
+
 function createApp(
   env: Partial<Env> & { ENABLE_AGENT_MCP?: string },
   permissions = ['admin:agent_grants:write', 'admin:users:read']
@@ -337,6 +340,66 @@ describe('Admin Agent PAR', () => {
     expect(await response.json()).toMatchObject({ error: 'invalid_client' });
     expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
   });
+
+  securityRegressionIt(
+    '[security regression][AO-17] rejects a residual client secret for a private_key_jwt client before storing Admin Agent PAR state',
+    async () => {
+      mocks.getClientCached.mockResolvedValue({
+        client_id: 'mcp-client',
+        redirect_uris: ['https://client.example.com/callback'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        client_secret_hash: '3269ad7c6e3e2fe0a25f942328a6099e42978ee9c3d4f55bc222f7520a40d044',
+        jwks: { keys: [] },
+        requestable_scopes: ['agent:read'],
+      });
+      const { app, env } = createApp({
+        ENABLE_AGENT_MCP: 'true',
+        PAR_REQUEST_STORE: {} as never,
+      });
+
+      const response = await app.fetch(
+        new Request('https://tenant.example.com/oauth/admin-agent/par', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: body({ client_secret: 'ciba-secret' }),
+        }),
+        env
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+    }
+  );
+
+  securityRegressionIt(
+    '[security regression][AO-17] rejects a client secret presented by a public Admin Agent client',
+    async () => {
+      mocks.getClientCached.mockResolvedValue({
+        client_id: 'mcp-client',
+        redirect_uris: ['https://client.example.com/callback'],
+        token_endpoint_auth_method: 'none',
+        requestable_scopes: ['agent:read'],
+      });
+      const { app, env } = createApp({
+        ENABLE_AGENT_MCP: 'true',
+        PAR_REQUEST_STORE: {} as never,
+      });
+
+      const response = await app.fetch(
+        new Request('https://tenant.example.com/oauth/admin-agent/par', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: body({ client_secret: 'unexpected-secret' }),
+        }),
+        env
+      );
+
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+      expect(mocks.storeRequestRpc).not.toHaveBeenCalled();
+    }
+  );
 
   it('converts a direct PKCE authorization request into the bounded PAR journey', async () => {
     const { app, env } = createApp({

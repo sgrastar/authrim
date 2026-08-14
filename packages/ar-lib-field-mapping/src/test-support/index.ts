@@ -49,7 +49,7 @@ export const TEST_CATALOG: FieldCatalogBundle = {
     },
     {
       id: 'field.scim.user_name',
-      namespace: 'scim.user',
+      namespace: 'scim.attribute',
       path: 'userName',
       valueType: 'string',
       cardinality: 'single',

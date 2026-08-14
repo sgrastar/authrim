@@ -58,7 +58,6 @@ export default {
 	admin_agent_access_active_grants: '有効な接続',
 	admin_agent_access_suspended_grants: '停止中の接続',
 	admin_agent_access_revoked_grants: '失効済み接続',
-	admin_agent_access_open_grants: 'Agent Grantを管理',
 	admin_agent_access_open_settings: 'ポリシー設定を確認',
 	admin_agent_access_grants_title: 'Agent Grant',
 	admin_agent_access_grants_description:
@@ -118,12 +117,6 @@ export default {
 	admin_agent_access_no_eligible_permissions:
 		'選択した参加者の権限上限内で利用できるPhase 1機能がありません。',
 	admin_agent_access_eligibility_error: '利用可能なAgent機能の解決に失敗しました。',
-	admin_agent_access_permission_no_longer_eligible:
-		'この機能は現在の参加者の権限上限外です。保存前に選択を解除してください。',
-	admin_agent_access_permission_users: 'マスク済みユーザーの参照',
-	admin_agent_access_permission_clients: 'OAuthクライアントの参照',
-	admin_agent_access_permission_audit: 'サニタイズ済みAdmin監査イベントの参照',
-	admin_agent_access_permission_settings: 'Agent Access設定の参照',
 	admin_agent_access_purpose: '用途',
 	admin_agent_access_purpose_placeholder: 'このクライアントへ委任が必要な理由を記載します。',
 	admin_agent_access_expiration: '再認定期限（必須・最長90日）',

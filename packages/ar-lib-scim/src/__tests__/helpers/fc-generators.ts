@@ -328,42 +328,6 @@ export const scimAddressArb: fc.Arbitrary<ScimAddress> = fc.record({
 });
 
 /**
- * SCIM User (partial, for testing scimToUser)
- */
-export const partialScimUserArb = fc.record({
-  userName: fc.option(emailArb, { nil: undefined }),
-  externalId: fc.option(uuidArb, { nil: undefined }),
-  active: fc.option(fc.boolean(), { nil: undefined }),
-  name: fc.option(scimNameArb, { nil: undefined }),
-  displayName: fc.option(nameArb, { nil: undefined }),
-  nickName: fc.option(nameArb, { nil: undefined }),
-  emails: fc.option(fc.array(scimEmailArb, { minLength: 1, maxLength: 3 }), { nil: undefined }),
-  phoneNumbers: fc.option(
-    fc.array(
-      fc.record({
-        value: fc.string({
-          unit: fc.constantFrom(...'0123456789+-'.split('')),
-          minLength: 10,
-          maxLength: 15,
-        }),
-        type: fc.option(fc.constantFrom('work', 'mobile', 'home'), { nil: undefined }),
-        primary: fc.option(fc.boolean(), { nil: undefined }),
-      }),
-      { minLength: 1, maxLength: 2 }
-    ),
-    { nil: undefined }
-  ),
-  addresses: fc.option(fc.array(scimAddressArb, { minLength: 1, maxLength: 2 }), {
-    nil: undefined,
-  }),
-  preferredLanguage: fc.option(fc.constantFrom('en', 'ja', 'de'), { nil: undefined }),
-  timezone: fc.option(fc.constantFrom('Asia/Tokyo', 'America/New_York', 'Europe/London'), {
-    nil: undefined,
-  }),
-  password: fc.option(fc.string({ minLength: 8, maxLength: 20 }), { nil: undefined }),
-});
-
-/**
  * SCIM Group (partial, for testing scimToGroup)
  */
 export const partialScimGroupArb = fc.record({

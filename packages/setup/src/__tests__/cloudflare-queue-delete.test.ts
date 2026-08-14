@@ -256,6 +256,43 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('deletes only exact environment-owned D1 databases discovered from remote inventory', async () => {
+    mockCloudflareInventory([], [], [], undefined, [
+      { name: 'test-authrim-control-db', uuid: 'control' },
+      { name: 'test-authrim-tenant-default-bootstrap-db', uuid: 'bootstrap-default' },
+      { name: 'test-authrim-tenant-users-bootstrap-db', uuid: 'bootstrap-users' },
+      { name: 'test-authrim-tenant-pii-bootstrap-db', uuid: 'bootstrap-pii' },
+      { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'dynamic' },
+      { name: 'test-authrim-customer-backups', uuid: 'unrelated' },
+      { name: 'prod-authrim-tenant-default-bootstrap-db', uuid: 'other-environment' },
+    ]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: true,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: false,
+      deletePages: false,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.deleted.d1).toEqual([
+      'test-authrim-control-db',
+      'test-authrim-tenant-default-bootstrap-db',
+      'test-authrim-tenant-users-bootstrap-db',
+      'test-authrim-tenant-pii-bootstrap-db',
+      'test-authrim-tenant-core-default-default-db-a1b2c3d4',
+    ]);
+    const deletedD1Names = execaMock.mock.calls
+      .map(([, args]) => args as string[])
+      .filter((args) => args[0] === 'wrangler' && args[1] === 'd1' && args[2] === 'delete')
+      .map((args) => args[3]);
+    expect(deletedD1Names).toEqual(result.deleted.d1);
+  });
+
   it('detaches Queues before Worker deletion and deletes Queues last', async () => {
     mockCloudflareInventory(
       [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
@@ -336,7 +373,8 @@ function mockCloudflareInventory(
   queues: Array<{ queue_name: string; queue_id: string }>,
   workers: Array<{ id: string }> = [],
   r2Buckets: Array<{ name: string }> = [],
-  workerDeleteFailureName?: string
+  workerDeleteFailureName?: string,
+  d1Databases: Array<{ name: string; uuid: string }> = []
 ): void {
   process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
@@ -345,7 +383,9 @@ function mockCloudflareInventory(
     async (input: string | URL | Request, init?: { method?: string }) => {
       const url = typeof input === 'string' ? input : input.toString();
       let result: unknown = workers;
-      if (url.includes('/r2/buckets?')) {
+      if (url.includes('/d1/database?')) {
+        result = d1Databases;
+      } else if (url.includes('/r2/buckets?')) {
         result = { buckets: r2Buckets };
       } else if (url.includes('/r2/buckets/') && url.includes('/objects?')) {
         result = [];
@@ -384,6 +424,9 @@ function mockCloudflareInventory(
       if (workerDeleteFailureName && key.includes(workerDeleteFailureName)) {
         return { exitCode: 1, stdout: '', stderr: 'permission denied' };
       }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
+    if (key.startsWith('d1 delete ')) {
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key === 'r2 bucket list' || key === 'pages project list') {

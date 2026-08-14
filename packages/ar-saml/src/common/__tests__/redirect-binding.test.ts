@@ -10,7 +10,7 @@
  * @see https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildLogoutRequest,
   buildLogoutResponse,
@@ -268,6 +268,32 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
       );
 
       expect(isValid).toBe(true);
+    });
+
+    it('rejects a Redirect signature before the pinned certificate validity begins', async () => {
+      const signResult = await signRedirectBinding(
+        'SAMLRequest',
+        'request',
+        'relay',
+        testPrivateKey
+      );
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2025-01-01T00:00:00Z'));
+      try {
+        await expect(
+          verifyRedirectBindingSignature(
+            'SAMLRequest',
+            'request',
+            'relay',
+            signResult.signature,
+            signResult.sigAlg,
+            testCertificate
+          )
+        ).rejects.toThrow('SAML signing certificate is not valid yet');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('should sign and verify LogoutResponse redirect binding query values', async () => {

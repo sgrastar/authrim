@@ -1071,7 +1071,7 @@ describe('UserInfo Endpoint', () => {
   });
 
   describe('Custom Claims', () => {
-    it('should add custom claims without overwriting standard UserInfo claims', async () => {
+    it('does not release schema-level custom claims without an active client mapping', async () => {
       const c = createMockContext({
         headers: { Authorization: 'Bearer valid-token' },
       });
@@ -1102,43 +1102,9 @@ describe('UserInfo Endpoint', () => {
       const responseBody = vi.mocked(c.json).mock.calls[0][0];
       expect(responseBody.sub).toBe('user-123');
       expect(responseBody.name).toBe('Test User');
-      expect(responseBody.department).toBe('security');
-      expect(mockResolveCustomClaimRuntimeSourcesFromEnv).toHaveBeenCalledWith(c, 'default');
-      expect(resolveClaimsForTarget).toHaveBeenCalledWith(
-        'default',
-        'user-123',
-        ['openid', 'profile'],
-        'userinfo'
-      );
-    });
-
-    it('should continue with standard claims when custom claim resolution fails', async () => {
-      const c = createMockContext({
-        headers: { Authorization: 'Bearer valid-token' },
-      });
-      const resolveClaimsForTarget = vi.fn().mockRejectedValue(new Error('resolver unavailable'));
-      mockLoadFeatureConfig.mockResolvedValue({ enabled: true });
-      mockCreateCustomClaimSchemaResolverFromSources.mockReturnValue({
-        resolveClaimsForTarget,
-      });
-
-      vi.mocked(introspectTokenFromContext).mockResolvedValue({
-        valid: true,
-        claims: {
-          sub: 'user-123',
-          scope: 'openid profile',
-          client_id: 'client-123',
-        },
-      });
-      vi.mocked(getClient).mockResolvedValue(null);
-      vi.mocked(isUserInfoEncryptionRequired).mockReturnValue(false);
-
-      await userinfoHandler(c);
-
-      const responseBody = vi.mocked(c.json).mock.calls[0][0];
-      expect(responseBody.sub).toBe('user-123');
-      expect(responseBody.name).toBe('Test User');
       expect(responseBody.department).toBeUndefined();
+      expect(mockResolveCustomClaimRuntimeSourcesFromEnv).not.toHaveBeenCalled();
+      expect(resolveClaimsForTarget).not.toHaveBeenCalled();
     });
   });
 

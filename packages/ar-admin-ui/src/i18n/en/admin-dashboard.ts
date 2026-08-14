@@ -1,5 +1,4 @@
 const adminDashboard = {
-	admin_dashboard_title: 'Dashboard',
 	admin_dashboard_activeUsers: 'Active Users',
 	admin_dashboard_totalUsers: 'Total Users',
 	admin_dashboard_clients: 'OAuth Clients',

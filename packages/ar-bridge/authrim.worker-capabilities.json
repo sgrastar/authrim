@@ -7,6 +7,12 @@
   "bindings": [
     { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
     { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": true,
+      "capability": "admin.session.verify"
+    },
     { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },

@@ -1121,6 +1121,27 @@ const en: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Environment Details',
+  'web.envDetail.initialDeployRecoveryTitle': 'Initial deployment incomplete',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'The previous deployment stopped before verification. Existing resources will be reused when you resume.',
+  'web.envDetail.initialDeployRecoveryAction': 'Resume initial deployment',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare state verified. Completed: {{completed}}. Resume from {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'database migration verification',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'initial deployment setup',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker deployment',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'post-deployment verification',
+  'web.envDetail.initialDeployRecoveryResources': 'resource provisioning',
+  'web.envDetail.initialDeployRecoverySchema': 'database migrations',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker deployment',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'The saved checkpoint does not match Cloudflare. Resume is disabled. Delete this incomplete environment and create it again.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'The draft migration definition changed after initial deployment started, so the saved deployment state may no longer match the databases. Resume is disabled. Delete this incomplete environment and create it again.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'The current state could not be verified, so resume is disabled. Check the Cloudflare connection and recheck this environment. If verification continues to fail, delete the incomplete environment and create it again.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Deployment credentials need to be refreshed; a new one-time Cloudflare token will be requested.',
   'web.envDetail.adminNotConfigured': 'Admin Account Not Configured',
   'web.envDetail.adminNotConfiguredDesc':
     'Initial administrator has not been set up for this environment.',

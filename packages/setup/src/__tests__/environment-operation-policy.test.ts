@@ -187,7 +187,21 @@ describe('environment operation policy', () => {
         targetVersion: '1.1.0',
         releaseManifestChecksum: 'b'.repeat(64),
       }).reason
-    ).toBe('release_update_in_progress');
+    ).toBe('initial_manifest_changed');
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: lock({
+          release: {
+            ...updatingRelease,
+            previousProductVersion: undefined,
+            initialWorkerRedeployRequired: true,
+          },
+        }),
+        targetVersion: '1.1.0',
+        releaseManifestChecksum: checksum,
+      }).reason
+    ).toBe('initial_manifest_changed');
   });
 
   it('fails closed when a same-version operation omits its target version', () => {

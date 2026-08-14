@@ -15,7 +15,7 @@ import { SIGNATURE_ALGORITHMS, DIGEST_ALGORITHMS, CANONICALIZATION_ALGORITHMS } 
 import { parseXml, serializeXml } from './xml-utils';
 import type { XMLNode, XMLElement, SignedXmlWithErrors } from './types';
 import { NodeType, isElementNode } from './types';
-import { extractSubjectPublicKeyInfo } from './x509';
+import { assertCertificateCurrentlyValid, extractSubjectPublicKeyInfo } from './x509';
 
 // =============================================================================
 // Helper Functions
@@ -206,6 +206,8 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     allowSha1SignatureAlgorithm = false,
     allowSha1DigestAlgorithm = false,
   } = options;
+
+  assertCertificateCurrentlyValid(certificateOrKey);
 
   const doc = parseXml(xml);
 
@@ -540,6 +542,8 @@ async function importPublicKeyFromCertificate(
   pem: string,
   options: { hash?: 'SHA-1' | 'SHA-256' } = {}
 ): Promise<CryptoKey> {
+  assertCertificateCurrentlyValid(pem);
+
   // Remove headers and newlines
   const pemContents = pem
     .replace(/-----BEGIN CERTIFICATE-----/g, '')

@@ -5,11 +5,13 @@
  * - client_secret_basic (HTTP Basic authentication)
  * - client_secret_post (credentials in request body)
  * - private_key_jwt (JWT signed with client's private key)
- * - client_secret_jwt (JWT signed with client secret)
+ * - fail-closed handling for legacy client_secret_jwt registrations
  * - none (public clients)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Env } from '@authrim/ar-lib-core';
+import { AuthorizationCodeStore } from '@authrim/ar-lib-core/durable-objects/AuthorizationCodeStore';
 import {
   createMockEnv,
   createMockContext,
@@ -18,6 +20,7 @@ import {
   parseJsonResponse,
   type MockEnv,
 } from './helpers/mocks';
+
 import {
   createConfidentialClient,
   createPublicClient,
@@ -28,6 +31,9 @@ import {
   createClientCredentialsGrantRequest,
   type TestClientMetadata,
 } from './helpers/fixtures';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 // ============================================================================
 // Module Mock Setup
@@ -303,6 +309,71 @@ async function createPkceChallenge(verifier: string): Promise<string> {
   const bytes = Array.from(new Uint8Array(hash));
   const base64 = btoa(String.fromCharCode(...bytes));
   return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+class InMemoryAuthorizationCodeState implements Partial<DurableObjectState> {
+  private readonly data = new Map<string, unknown>();
+  readonly storage: DurableObjectStorage;
+
+  constructor() {
+    this.storage = {
+      get: <T>(key: string): Promise<T | undefined> =>
+        Promise.resolve(this.data.get(key) as T | undefined),
+      put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        if (typeof keyOrEntries === 'string') {
+          this.data.set(keyOrEntries, value);
+        } else {
+          for (const [key, entry] of Object.entries(keyOrEntries)) {
+            this.data.set(key, entry);
+          }
+        }
+        return Promise.resolve();
+      },
+      delete: (keyOrKeys: string | string[]): Promise<boolean | number> => {
+        if (typeof keyOrKeys === 'string') {
+          return Promise.resolve(this.data.delete(keyOrKeys));
+        }
+        let deleted = 0;
+        for (const key of keyOrKeys) {
+          if (this.data.delete(key)) deleted++;
+        }
+        return Promise.resolve(deleted);
+      },
+      list: <T>(options?: { prefix?: string; limit?: number }): Promise<Map<string, T>> => {
+        const entries = [...this.data.entries()].filter(
+          ([key]) => !options?.prefix || key.startsWith(options.prefix)
+        );
+        const limitedEntries =
+          options?.limit === undefined ? entries : entries.slice(0, options.limit);
+        return Promise.resolve(new Map(limitedEntries) as Map<string, T>);
+      },
+    } as unknown as DurableObjectStorage;
+  }
+
+  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+    return callback();
+  }
+
+  read<T>(key: string): T | undefined {
+    return this.data.get(key) as T | undefined;
+  }
+}
+
+function attachActualAuthorizationCodeStore(mockEnv: MockEnv) {
+  const state = new InMemoryAuthorizationCodeState();
+  const store = new AuthorizationCodeStore(
+    state as unknown as DurableObjectState,
+    mockEnv as unknown as Env
+  );
+  const consumeCodeRpc = vi.spyOn(store, 'consumeCodeRpc');
+  const registerIssuedTokensRpc = vi.spyOn(store, 'registerIssuedTokensRpc');
+
+  mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+    consumeCodeRpc: store.consumeCodeRpc.bind(store),
+    registerIssuedTokensRpc: store.registerIssuedTokensRpc.bind(store),
+  });
+
+  return { state, store, consumeCodeRpc, registerIssuedTokensRpc };
 }
 
 function expectRefreshTokenExpiryMetadata(body: Record<string, unknown>, expiresIn = 86400 * 30) {
@@ -602,11 +673,326 @@ describe('Client Authentication Tests', () => {
     vi.clearAllMocks();
   });
 
+  describe('Authorization code post-consumption binding security regressions', () => {
+    const codeVerifier = 'v'.repeat(43);
+    const redirectUri = 'https://app.example.com/callback';
+    const attackerRedirectUri = 'https://attacker.example.com/callback';
+
+    async function storeCode(
+      store: AuthorizationCodeStore,
+      clientId: string,
+      code: string,
+      dpopJkt?: string,
+      resource = 'svc://confidential-api'
+    ) {
+      await store.storeCodeRpc({
+        code,
+        tenantId: 'default',
+        clientId,
+        redirectUri,
+        userId: 'victim-user',
+        scope: 'openid profile',
+        codeChallenge: await createPkceChallenge(codeVerifier),
+        codeChallengeMethod: 'S256',
+        dpopJkt,
+        resource,
+      });
+    }
+
+    async function exchangeCode(options: {
+      clientId: string;
+      code: string;
+      redirectUri?: string;
+      clientSecret?: string;
+      dpopProof?: string;
+      resource?: string;
+    }) {
+      const response = await tokenHandler(
+        createMockContext({
+          headers: options.dpopProof ? { DPoP: options.dpopProof } : undefined,
+          body: {
+            grant_type: 'authorization_code',
+            code: options.code,
+            redirect_uri: options.redirectUri ?? redirectUri,
+            client_id: options.clientId,
+            client_secret: options.clientSecret ?? 'valid-secret',
+            code_verifier: codeVerifier,
+            ...(options.resource ? { resource: options.resource } : {}),
+          },
+          env: mockEnv,
+        })
+      );
+      return {
+        response,
+        body: await parseJsonResponse<Record<string, unknown>>(response),
+      };
+    }
+
+    securityRegressionIt(
+      '[security regression][AO-08] preserves a code after rejecting a redirect_uri mismatch',
+      async () => {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        const code = 'redirect-binding-burn-code';
+        const { state, store, consumeCodeRpc, registerIssuedTokensRpc } =
+          attachActualAuthorizationCodeStore(mockEnv);
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+        await storeCode(store, client.client_id, code);
+
+        const attacker = await exchangeCode({
+          clientId: client.client_id,
+          code,
+          redirectUri: attackerRedirectUri,
+        });
+
+        expect(attacker.response.status).toBe(400);
+        expect(attacker.body).toMatchObject({
+          error: 'invalid_grant',
+          error_description: 'redirect_uri does not match the one used in authorization request',
+        });
+        expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(false);
+        expect(consumeCodeRpc).toHaveBeenCalledTimes(1);
+        expect(registerIssuedTokensRpc).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+
+        const victim = await exchangeCode({ clientId: client.client_id, code });
+
+        expect(victim.response.status).toBe(200);
+        expect(victim.body).toMatchObject({
+          access_token: 'mock-access-token',
+          token_type: 'Bearer',
+        });
+        expect(consumeCodeRpc).toHaveBeenCalledTimes(2);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    securityRegressionIt(
+      '[security regression] prevents an authorization code from being retargeted to another resource',
+      async () => {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+          allowed_token_exchange_resources: ['svc://confidential-api', 'svc://different-api'],
+        });
+        const code = 'authorization-code-resource-binding';
+        const { state, store, consumeCodeRpc } = attachActualAuthorizationCodeStore(mockEnv);
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+        await storeCode(store, client.client_id, code);
+
+        const retargeted = await exchangeCode({
+          clientId: client.client_id,
+          code,
+          resource: 'svc://different-api',
+        });
+
+        expect(retargeted.response.status).toBe(400);
+        expect(retargeted.body).toMatchObject({
+          error: 'invalid_target',
+          error_description: 'Requested resource does not match the authorization grant',
+        });
+        expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(false);
+        expect(consumeCodeRpc).not.toHaveBeenCalled();
+
+        const originalTarget = await exchangeCode({ clientId: client.client_id, code });
+        expect(originalTarget.response.status).toBe(200);
+      }
+    );
+
+    it('does not burn a code when client authentication fails before redirect checking', async () => {
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+      });
+      const code = 'redirect-binding-client-auth-control';
+      const { state, store, consumeCodeRpc, registerIssuedTokensRpc } =
+        attachActualAuthorizationCodeStore(mockEnv);
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+      mocks.mockVerifyClientSecretHash.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+      await storeCode(store, client.client_id, code);
+
+      const unauthenticated = await exchangeCode({
+        clientId: client.client_id,
+        code,
+        redirectUri: attackerRedirectUri,
+        clientSecret: 'wrong-secret',
+      });
+
+      expect(unauthenticated.response.status).toBe(401);
+      expect(unauthenticated.body.error).toBe('invalid_client');
+      expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(false);
+      expect(consumeCodeRpc).not.toHaveBeenCalled();
+
+      const victim = await exchangeCode({ clientId: client.client_id, code });
+
+      expect(victim.response.status).toBe(200);
+      expect(victim.body.access_token).toBe('mock-access-token');
+      expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(true);
+      expect(consumeCodeRpc).toHaveBeenCalledTimes(1);
+      expect(registerIssuedTokensRpc).toHaveBeenCalledTimes(1);
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-09] preserves a DPoP-bound code after a JKT mismatch',
+      async () => {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+          dpop_bound_access_tokens: true,
+        });
+        const code = 'dpop-binding-burn-code';
+        const { state, store, consumeCodeRpc, registerIssuedTokensRpc } =
+          attachActualAuthorizationCodeStore(mockEnv);
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+        mocks.mockExtractDPoPProof.mockReturnValue('valid-attacker-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'attacker-jkt' });
+        await storeCode(store, client.client_id, code, 'victim-jkt');
+
+        const attacker = await exchangeCode({
+          clientId: client.client_id,
+          code,
+          dpopProof: 'valid-attacker-proof',
+        });
+
+        expect(attacker.response.status).toBe(400);
+        expect(attacker.body).toMatchObject({
+          error: 'invalid_grant',
+          error_description: 'DPoP key mismatch (authorization code is bound to different key)',
+        });
+        expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(false);
+        expect(consumeCodeRpc).toHaveBeenCalledTimes(1);
+        expect(registerIssuedTokensRpc).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+
+        mocks.mockExtractDPoPProof.mockReturnValue('valid-victim-proof');
+        mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'victim-jkt' });
+        const victim = await exchangeCode({
+          clientId: client.client_id,
+          code,
+          dpopProof: 'valid-victim-proof',
+        });
+
+        expect(victim.response.status).toBe(200);
+        expect(victim.body).toMatchObject({
+          access_token: 'mock-access-token',
+          token_type: 'DPoP',
+        });
+        expect(consumeCodeRpc).toHaveBeenCalledTimes(2);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('does not burn a DPoP-bound code when proof validation fails before consumption', async () => {
+      const client = createConfidentialClient({
+        token_endpoint_auth_method: 'client_secret_post',
+        dpop_bound_access_tokens: true,
+      });
+      const code = 'dpop-binding-proof-validation-control';
+      const { state, store, consumeCodeRpc, registerIssuedTokensRpc } =
+        attachActualAuthorizationCodeStore(mockEnv);
+
+      mocks.mockGetClientCached.mockResolvedValue(client);
+      mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+      mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+      mocks.mockExtractDPoPProof.mockReturnValue('presented-proof');
+      mocks.mockValidateDPoPProof
+        .mockResolvedValueOnce({
+          valid: false,
+          error: 'invalid_dpop_proof',
+          error_description: 'invalid DPoP signature',
+        })
+        .mockResolvedValueOnce({ valid: true, jkt: 'victim-jkt' });
+      await storeCode(store, client.client_id, code, 'victim-jkt');
+
+      const invalidProof = await exchangeCode({
+        clientId: client.client_id,
+        code,
+        dpopProof: 'invalid-proof',
+      });
+
+      expect(invalidProof.response.status).toBe(400);
+      expect(invalidProof.body.error).toBe('invalid_dpop_proof');
+      expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(false);
+      expect(consumeCodeRpc).not.toHaveBeenCalled();
+
+      const victim = await exchangeCode({
+        clientId: client.client_id,
+        code,
+        dpopProof: 'valid-victim-proof',
+      });
+
+      expect(victim.response.status).toBe(200);
+      expect(victim.body).toMatchObject({
+        access_token: 'mock-access-token',
+        token_type: 'DPoP',
+      });
+      expect(state.read<{ used: boolean }>(`code:${code}`)?.used).toBe(true);
+      expect(consumeCodeRpc).toHaveBeenCalledTimes(1);
+      expect(registerIssuedTokensRpc).toHaveBeenCalledTimes(1);
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-10] withholds tokens when replay races JTI registration',
+      async () => {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        const code = 'token-registration-race-code';
+        const { store, registerIssuedTokensRpc } = attachActualAuthorizationCodeStore(mockEnv);
+
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+        await storeCode(store, client.client_id, code);
+        registerIssuedTokensRpc.mockResolvedValueOnce(false);
+
+        const result = await exchangeCode({ clientId: client.client_id, code });
+
+        expect(result.response.status).toBe(400);
+        expect(result.body).toMatchObject({
+          error: 'invalid_grant',
+          error_description: 'The provided authorization grant is invalid, expired, or revoked',
+        });
+        expect(registerIssuedTokensRpc).toHaveBeenCalledTimes(1);
+      }
+    );
+  });
+
   // ==========================================================================
   // Token endpoint request validation
   // ==========================================================================
 
   describe('Token endpoint request validation', () => {
+    it('rejects authorization-code redemption when redirect_uri is omitted', async () => {
+      const ctx = createMockContext({
+        body: {
+          grant_type: 'authorization_code',
+          code: 'authorization-code-with-bound-redirect',
+          client_id: 'confidential-client',
+        },
+        env: mockEnv,
+      });
+
+      const response = await tokenHandler(ctx);
+      const body = await parseJsonResponse<{ error: string; error_description: string }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_request',
+        error_description: 'redirect_uri is required',
+      });
+      expect(mocks.mockGetClientCached).not.toHaveBeenCalled();
+    });
+
     it('rejects non-form requests before parsing or authenticating clients', async () => {
       const ctx = createMockContext({
         headers: { 'Content-Type': 'application/json' },
@@ -780,7 +1166,10 @@ describe('Client Authentication Tests', () => {
     });
 
     it('rejects CIBA grant requests with an invalid client secret before polling storage', async () => {
-      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      const client = createCIBAClient({
+        client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+        token_endpoint_auth_method: 'client_secret_post',
+      });
       mocks.mockGetClientCached.mockResolvedValue(client);
 
       const ctx = createMockContext({
@@ -806,7 +1195,10 @@ describe('Client Authentication Tests', () => {
     });
 
     it('authenticates CIBA grant requests before polling CIBA storage', async () => {
-      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      const client = createCIBAClient({
+        client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+        token_endpoint_auth_method: 'client_secret_post',
+      });
       mocks.mockGetClientCached.mockResolvedValue(client);
 
       const cibaStoreFetch = vi.fn().mockImplementation(async (request: Request) => {
@@ -891,12 +1283,26 @@ describe('Client Authentication Tests', () => {
     }
 
     async function requestCIBAToken(client: TestClientMetadata) {
+      const usesBasic = client.token_endpoint_auth_method === 'client_secret_basic';
+      if (usesBasic) {
+        mocks.mockParseBasicAuth.mockReturnValue({
+          success: true,
+          credentials: { username: client.client_id, password: CIBA_CLIENT_SECRET },
+        });
+      }
       const ctx = createMockContext({
+        headers: usesBasic
+          ? {
+              Authorization: `Basic ${base64UrlEncode(
+                `${client.client_id}:${CIBA_CLIENT_SECRET}`
+              )}`,
+            }
+          : undefined,
         body: {
           grant_type: 'urn:openid:params:grant-type:ciba',
           auth_req_id: authReqId,
           client_id: client.client_id,
-          client_secret: CIBA_CLIENT_SECRET,
+          ...(usesBasic ? {} : { client_secret: CIBA_CLIENT_SECRET }),
         },
         env: mockEnv,
       });
@@ -921,6 +1327,25 @@ describe('Client Authentication Tests', () => {
         ...overrides,
       };
     }
+
+    securityRegressionIt(
+      '[security regression][AO-17] rejects a residual client secret for a private_key_jwt client before polling CIBA state',
+      async () => {
+        const client = createCIBAClient({
+          client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+          token_endpoint_auth_method: 'private_key_jwt',
+          jwks: { keys: [] },
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+
+        const { response, body } = await requestCIBAToken(client);
+
+        expect(response.status).toBe(401);
+        expect(body).toMatchObject({ error: 'invalid_client' });
+        expect(mockEnv.CIBA_REQUEST_STORE.get).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      }
+    );
 
     it('rejects clients that are not authorized for the CIBA grant before storage access', async () => {
       const client = createCIBAClient({
@@ -979,6 +1404,34 @@ describe('Client Authentication Tests', () => {
         error_description: 'Tokens have already been issued for this auth_req_id',
       });
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the atomic mark-issued operation returns a generic failure', async () => {
+      const client = createCIBAClient({ client_secret_hash: CIBA_CLIENT_SECRET_HASH });
+      configureCIBARequest(
+        client,
+        baseCIBAMetadata(client, { status: 'approved', sub: 'user-123' }),
+        {
+          markIssuedResponse: Response.json(
+            {
+              error: 'server_error',
+              error_description: 'reservation unavailable',
+            },
+            { status: 500 }
+          ),
+        }
+      );
+
+      const { response, body } = await requestCIBAToken(client);
+
+      expect(response.status).toBe(400);
+      expect(body).toEqual({
+        error: 'invalid_grant',
+        error_description: 'CIBA request has already been used or is not approved',
+      });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+      expect(mocks.mockCreateRefreshToken).not.toHaveBeenCalled();
     });
 
     it('deletes denied requests and returns access_denied', async () => {
@@ -1062,7 +1515,7 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(400);
       expect(body).toMatchObject({
         error: 'invalid_grant',
-        error_description: 'Tokens have already been issued for this auth_req_id',
+        error_description: 'CIBA request has already been used or is not approved',
       });
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
     });
@@ -1164,13 +1617,29 @@ describe('Client Authentication Tests', () => {
       };
     }
 
-    async function requestDeviceToken() {
+    beforeEach(() => {
+      mocks.mockGetClientCached.mockResolvedValue(
+        createPublicClient({
+          client_id: clientId,
+          default_resource: 'https://api.example.com',
+        })
+      );
+    });
+
+    async function requestDeviceToken(
+      options: {
+        headers?: Record<string, string>;
+        body?: Record<string, string>;
+      } = {}
+    ) {
       const response = await tokenHandler(
         createMockContext({
+          headers: options.headers,
           body: {
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
             device_code: deviceCode,
             client_id: clientId,
+            ...options.body,
           },
           env: mockEnv,
         })
@@ -1251,6 +1720,67 @@ describe('Client Authentication Tests', () => {
       expect(response.status).toBe(401);
       expect(body).toMatchObject({ error: 'invalid_client' });
       expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-18] rejects an unauthenticated confidential client before consuming an approved device code',
+      async () => {
+        const fetch = configureDeviceCode(
+          baseDeviceMetadata({ status: 'approved', sub: 'user-123' })
+        );
+        mocks.mockGetClientCached.mockResolvedValue(
+          createConfidentialClient({
+            client_id: clientId,
+            grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
+            default_resource: 'https://api.example.com',
+          })
+        );
+
+        const { response, body } = await requestDeviceToken();
+
+        expect(response.status).toBe(401);
+        expect(body).toMatchObject({ error: 'invalid_client' });
+        expect(mockEnv.DEVICE_CODE_STORE.get).not.toHaveBeenCalled();
+        expect(
+          fetch.mock.calls.some(
+            ([request]) => new URL((request as Request).url).pathname === '/mark-token-issued'
+          )
+        ).toBe(false);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      }
+    );
+
+    it('authenticates a confidential device client with its registered Basic method', async () => {
+      const fetch = configureDeviceCode(
+        baseDeviceMetadata({ status: 'approved', sub: 'user-123' })
+      );
+      mocks.mockGetClientCached.mockResolvedValue(
+        createConfidentialClient({
+          client_id: clientId,
+          grant_types: ['urn:ietf:params:oauth:grant-type:device_code'],
+          default_resource: 'https://api.example.com',
+          client_secret_hash: CIBA_CLIENT_SECRET_HASH,
+        })
+      );
+      mocks.mockParseBasicAuth.mockReturnValue({
+        success: true,
+        credentials: { username: clientId, password: CIBA_CLIENT_SECRET },
+      });
+
+      const { response, body } = await requestDeviceToken({
+        headers: {
+          Authorization: `Basic ${base64UrlEncode(`${clientId}:${CIBA_CLIENT_SECRET}`)}`,
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({ access_token: 'mock-access-token', token_type: 'Bearer' });
+      expect(mocks.mockCreateAccessToken).toHaveBeenCalledTimes(1);
+      expect(
+        fetch.mock.calls.some(
+          ([request]) => new URL((request as Request).url).pathname === '/mark-token-issued'
+        )
+      ).toBe(true);
     });
 
     it('rejects a concurrent redemption before signing any tokens', async () => {
@@ -1441,6 +1971,9 @@ describe('Client Authentication Tests', () => {
         tenantId: 'default',
         clientId: client.client_id,
         codeVerifier,
+        expectedRedirectUri: DIRECT_AUTH_REDIRECT_URI,
+        enforceDpopBinding: true,
+        expectedDpopJkt: 'browser-jkt',
         expectedAuthorizationServer: 'default',
         expectedSubjectType: 'end_user',
       });
@@ -2802,6 +3335,37 @@ describe('Client Authentication Tests', () => {
       expect(body.error_details?.code).toBe('id_token_signature_invalid');
     });
 
+    it.each([
+      {
+        name: 'the explicit scope omits openid',
+        requestedScope: 'profile',
+        clientOverrides: {},
+      },
+      {
+        name: 'the client scope policy excludes openid',
+        requestedScope: 'openid profile',
+        clientOverrides: { allowed_scopes: ['profile'] },
+      },
+    ])(
+      'should reject Native SSO token exchange when $name',
+      async ({ requestedScope, clientOverrides }) => {
+        const client = setupNativeSSOValidationTest({}, clientOverrides);
+
+        const response = await tokenHandler(
+          createNativeSSOTokenExchangeContext(client.client_id, { scope: requestedScope })
+        );
+        const body = await parseJsonResponse<{
+          error: string;
+          error_details?: { code?: string };
+        }>(response);
+
+        expect(response.status).toBe(400);
+        expect(body.error).toBe('invalid_scope');
+        expect(body.error_details?.code).toBe('native_sso_scope_invalid');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      }
+    );
+
     it('should reject a subject ID Token expired beyond the 60 second clock-skew window', async () => {
       const now = Math.floor(Date.now() / 1000);
       const client = setupNativeSSOValidationTest({ exp: now - 61 });
@@ -3298,6 +3862,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3340,6 +3905,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(createAuthCodeData());
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3376,6 +3942,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const response = await tokenHandler(
@@ -3475,6 +4042,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(createAuthCodeData());
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3513,6 +4081,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3569,9 +4138,7 @@ describe('Client Authentication Tests', () => {
       expect(body.error).toBe('invalid_client');
     });
 
-    it('should use post credentials when both Basic auth and post credentials are provided', async () => {
-      // Note: Implementation prioritizes POST body credentials over Basic auth
-      // This is because form data is parsed first, and Basic auth only used as fallback
+    it('should reject simultaneous Basic and post credentials', async () => {
       const client = createConfidentialClient();
       const authCodeData = createAuthCodeData();
 
@@ -3589,6 +4156,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3607,13 +4175,12 @@ describe('Client Authentication Tests', () => {
       });
 
       const response = await tokenHandler(ctx);
-      expect(response.status).toBe(200);
-
-      // POST body credentials are used (implementation prioritizes form data over Basic auth)
-      expect(mocks.mockVerifyClientSecretHash).toHaveBeenCalledWith(
-        'post-secret',
-        client.client_secret_hash
-      );
+      expect(response.status).toBe(401);
+      await expect(parseJsonResponse(response)).resolves.toMatchObject({
+        error: 'invalid_client',
+      });
+      expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
     });
   });
 
@@ -3653,6 +4220,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3677,7 +4245,9 @@ describe('Client Authentication Tests', () => {
         clientAssertion,
         expect.stringContaining('/token'),
         expect.anything(),
-        undefined
+        expect.objectContaining({
+          replayProtection: expect.objectContaining({ tenantId: 'default' }),
+        })
       );
     });
 
@@ -3709,6 +4279,7 @@ describe('Client Authentication Tests', () => {
 
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const response = await tokenHandler(
@@ -3731,12 +4302,13 @@ describe('Client Authentication Tests', () => {
         clientAssertion,
         'https://auth.example.com/token',
         expect.anything(),
-        {
+        expect.objectContaining({
           audiencePolicy: 'issuer-only',
           issuer: 'https://auth.example.com',
           allowedAlgorithms: ['ES256', 'PS256', 'EdDSA'],
           clockSkewSeconds: 60,
-        }
+          replayProtection: expect.objectContaining({ tenantId: 'default' }),
+        })
       );
     });
 
@@ -3768,6 +4340,7 @@ describe('Client Authentication Tests', () => {
       mocks.mockParseBasicAuth.mockReturnValue({ success: false });
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const response = await tokenHandler(
@@ -3924,6 +4497,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -3958,6 +4532,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -4009,7 +4584,7 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('client_secret_jwt Authentication', () => {
-    it('should authenticate with JWT signed using client secret (HMAC)', async () => {
+    it('should reject a legacy registration without attempting assertion validation', async () => {
       const client = createConfidentialClient({
         token_endpoint_auth_method: 'client_secret_jwt',
       });
@@ -4039,6 +4614,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -4055,7 +4631,12 @@ describe('Client Authentication Tests', () => {
       });
 
       const response = await tokenHandler(ctx);
-      expect(response.status).toBe(200);
+      const body = await parseJsonResponse<{ error: string }>(response);
+
+      expect(response.status).toBe(401);
+      expect(body.error).toBe('invalid_client');
+      expect(mocks.mockValidateClientAssertion).not.toHaveBeenCalled();
+      expect(consumeCodeRpcMock).not.toHaveBeenCalled();
     });
   });
 
@@ -4077,6 +4658,7 @@ describe('Client Authentication Tests', () => {
       const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
       mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
         consumeCodeRpc: consumeCodeRpcMock,
+        registerIssuedTokensRpc: vi.fn().mockResolvedValue(true),
       });
 
       const ctx = createMockContext({
@@ -4433,50 +5015,65 @@ describe('Client Authentication Tests', () => {
   // ==========================================================================
 
   describe('Authentication Method Enforcement', () => {
-    it('should allow authentication when client has client_secret_hash even if token_endpoint_auth_method is private_key_jwt', async () => {
-      // Note: Current implementation allows authentication to succeed if the secret matches,
-      // regardless of token_endpoint_auth_method setting. This tests actual behavior.
-      // The token_endpoint_auth_method is informational for client registration/discovery.
-      const client = createPrivateKeyJwtClient({
-        token_endpoint_auth_method: 'private_key_jwt',
-        client_secret_hash: 'hashed-secret', // Has a secret configured
-      });
-      const authCodeData = createAuthCodeData();
+    securityRegressionIt(
+      '[security regression][AO-04] enforces private_key_jwt outside FAPI despite a residual secret',
+      async () => {
+        const client = createPrivateKeyJwtClient({
+          token_endpoint_auth_method: 'private_key_jwt',
+          client_secret_hash: 'hashed-secret', // Has a secret configured
+        });
+        const authCodeData = createAuthCodeData();
 
-      mocks.mockGetClientCached.mockResolvedValue(client);
-      mocks.mockVerifyClientSecretHash.mockResolvedValue(true); // Secret matches
-      mocks.mockParseBasicAuth.mockReturnValue({
-        success: true,
-        credentials: {
-          username: client.client_id,
-          password: 'some-secret',
-        },
-      });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true); // Secret matches
+        mocks.mockParseBasicAuth.mockReturnValue({
+          success: true,
+          credentials: {
+            username: client.client_id,
+            password: 'some-secret',
+          },
+        });
 
-      const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
-      mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
-        consumeCodeRpc: consumeCodeRpcMock,
-      });
+        const consumeCodeRpcMock = vi.fn().mockResolvedValue(authCodeData);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: consumeCodeRpcMock,
+        });
 
-      const ctx = createMockContext({
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${base64UrlEncode(`${client.client_id}:some-secret`)}`,
-        },
-        body: {
-          grant_type: 'authorization_code',
-          code: 'valid-auth-code',
-          redirect_uri: authCodeData.redirectUri,
-        },
-        env: mockEnv,
-      });
+        const ctx = createMockContext({
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${base64UrlEncode(`${client.client_id}:some-secret`)}`,
+          },
+          body: {
+            grant_type: 'authorization_code',
+            code: 'valid-auth-code',
+            redirect_uri: authCodeData.redirectUri,
+            code_verifier: 'A'.repeat(43),
+          },
+          env: mockEnv,
+        });
 
-      const response = await tokenHandler(ctx);
+        const response = await tokenHandler(ctx);
+        const body = await parseJsonResponse<{
+          access_token?: string;
+          id_token?: string;
+          token_type?: string;
+        }>(response);
 
-      // Authentication succeeds when client_secret_hash is configured and secret matches
-      // token_endpoint_auth_method is not strictly enforced at runtime
-      expect(response.status).toBe(200);
-    });
+        expect(client.token_endpoint_auth_method).toBe('private_key_jwt');
+        expect(client.jwks_uri).toBeTruthy();
+        expect(response.status).toBe(401);
+        expect(body).toMatchObject({
+          error: 'invalid_client',
+        });
+        expect(mocks.mockValidateClientAssertion).not.toHaveBeenCalled();
+        expect(mocks.mockVerifyClientSecretHash).not.toHaveBeenCalled();
+        expect(consumeCodeRpcMock).not.toHaveBeenCalled();
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+        expect(mocks.mockCreateIDToken).not.toHaveBeenCalled();
+      }
+    );
   });
 
   // ==========================================================================
@@ -4792,6 +5389,7 @@ describe('Client Authentication Tests', () => {
       const client = createM2MClient({
         default_resource: 'svc://m2m-api',
         allowed_scopes: ['api:read', 'api:write'],
+        token_endpoint_auth_method: 'client_secret_post',
         ...overrides,
       });
       mocks.mockGetClientCached.mockResolvedValue(client);

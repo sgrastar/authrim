@@ -48,6 +48,9 @@ paths:
       tags:
         - OAuth
       summary: Start or continue an OAuth/OIDC authorization request.
+      description: >-
+        Rejects response types that are disabled by the tenant OIDC policy. Internal consent
+        continuations are accepted only from the originating live session and browser binding.
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
@@ -71,10 +74,15 @@ paths:
           $ref: '#/components/responses/Any'
         '302':
           description: Redirect response.
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
       summary: Submit an OAuth/OIDC authorization request.
+      description: >-
+        Internal consent continuations are accepted only from the originating live session and
+        browser binding.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
@@ -304,36 +312,52 @@ paths:
     get:
       tags:
         - OAuth
-      summary: Render a built-in login flow page when enabled.
+      summary: Render the test or OIDC-conformance login adapter when enabled.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
-      summary: Submit a built-in login flow step when enabled.
+      summary: Submit the test or OIDC-conformance login adapter when enabled.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /flow/confirm:
     get:
       tags:
         - OAuth
-      summary: Render a built-in confirmation step when enabled.
+      summary: Render the test or OIDC-conformance reauthentication adapter when enabled.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
-      summary: Submit a built-in confirmation step when enabled.
+      summary: Submit the test or OIDC-conformance reauthentication adapter when enabled.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/auth/passkeys/register/options:
     post:
       tags:
@@ -728,28 +752,41 @@ paths:
       tags:
         - Consent
       summary: Submit a consent decision.
+      description: Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Error'
   /auth/consent:
     get:
       tags:
         - Consent
       summary: Render built-in consent page when enabled.
+      description: Managed browser challenges require the authenticated session bound at authorization time.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Consent
       summary: Submit built-in consent page decision when enabled.
+      description: >-
+        Managed browser challenges require the authenticated session bound at authorization time.
+        Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/sessions:
     post:
       tags:
@@ -802,12 +839,46 @@ paths:
     get:
       tags:
         - Logout
-      summary: Start front-channel logout.
+      summary: Start front-channel logout confirmation.
+      description:
+        Renders a no-store confirmation form and sets a short-lived, HttpOnly confirmation cookie.
+        This request does not invalidate the browser session.
       responses:
         '200':
           $ref: '#/components/responses/Any'
         '302':
           description: Redirect response.
+    post:
+      tags:
+        - Logout
+      summary: Start or confirm front-channel logout.
+      description:
+        A direct RP-initiated POST renders the same confirmation interaction as GET. A follow-up POST
+        validates the form confirmation token against the short-lived confirmation cookie, then
+        invalidates the selected session and performs configured logout propagation.
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                confirmation_token:
+                  type: string
+                id_token_hint:
+                  type: string
+                post_logout_redirect_uri:
+                  type: string
+                  format: uri
+                state:
+                  type: string
+                logout_scope:
+                  type: string
+      responses:
+        '302':
+          description: Redirect after successful logout.
+        '400':
+          $ref: '#/components/responses/Error'
   /logout/backchannel:
     post:
       tags:

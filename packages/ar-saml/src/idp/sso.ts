@@ -59,6 +59,7 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
   MissingRequiredSAMLAttributeError,
+  resolveSAMLIdentityMappingFieldMappingBinding,
   type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
@@ -80,7 +81,7 @@ import {
   validateSAMLResponseProtocolBinding,
 } from './response-destination';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
-import { applySAMLResponseSigningPolicy } from './signing';
+import { applySAMLResponseSigningPolicy, assertSAMLResponseSigningPolicy } from './signing';
 import { applySAMLAssertionEncryptionPolicy } from './encryption';
 import {
   createSAMLSessionIndex,
@@ -1350,6 +1351,13 @@ async function generateSAMLResponse(
       samlSpId: spConfig.entityId,
       profileId: identityMapping.destinationProfileId,
       fieldPolicies: identityMapping.destinationFieldPolicies,
+      releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping, {
+        role: 'idp',
+        tenantId,
+        localEntityId: idpEntityId,
+        partnerEntityId: spConfig.entityId,
+        runtimeContext: identityMappingRuntimeContext,
+      }),
       attributes: attributeRelease.attributes,
     })) as {
       attributes: typeof attributeRelease.attributes;
@@ -1425,6 +1433,8 @@ async function generateSAMLResponse(
 
   const encryptFullAssertion = Boolean(spConfig.encryptAssertions);
   const encryptNameIdOnly = !encryptFullAssertion && Boolean(spConfig.encryptNameID);
+
+  assertSAMLResponseSigningPolicy(spConfig);
 
   if (encryptNameIdOnly) {
     responseXml = await applySAMLAssertionEncryptionPolicy(responseXml, spConfig);
@@ -1683,14 +1693,12 @@ async function generateSAMLProtocolErrorResponse(
   statusMessage: string,
   failureKind?: string
 ): Promise<string> {
-  const signingMaterial =
-    spConfig.signResponses || spConfig.signAssertions
-      ? await getSAMLIdPSigningMaterial(env, {
-          tenantId,
-          counterpartyEntityId: spConfig.entityId,
-          providerPolicy: spConfig.signingKeyPolicy,
-        })
-      : undefined;
+  assertSAMLResponseSigningPolicy(spConfig);
+  const signingMaterial = await getSAMLIdPSigningMaterial(env, {
+    tenantId,
+    counterpartyEntityId: spConfig.entityId,
+    providerPolicy: spConfig.signingKeyPolicy,
+  });
 
   const resolvedStatus = applySAMLErrorResponseOverride(spConfig, {
     failureKind,

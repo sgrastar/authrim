@@ -607,7 +607,8 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       scopes: body.scopes || defaultScopes,
       tokenEndpointAuthMethod: body.token_endpoint_auth_method,
       attributeMapping: body.attribute_mapping || defaultAttributeMapping,
-      autoLinkEmail: body.auto_link_email !== false,
+      autoLinkEmail:
+        body.auto_link_email ?? (defaults.autoLinkEmail as boolean | undefined) ?? true,
       jitProvisioning: body.jit_provisioning !== false,
       requireEmailVerified: body.require_email_verified !== false,
       alwaysFetchUserinfo: body.always_fetch_userinfo === true,

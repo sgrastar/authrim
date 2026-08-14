@@ -53,7 +53,6 @@ const adminSaml = {
 	admin_saml_local_settings_updated: 'SAML settings updated',
 	admin_saml_local_certificate_settings_updated: 'SAML signing certificate settings updated',
 	admin_saml_local_copy: 'Copy',
-	admin_saml_local_download: 'Download',
 	admin_saml_local_download_xml: 'Metadata',
 	admin_saml_local_copy_pem: 'Copy',
 	admin_saml_local_download_pem: 'PEM',
@@ -217,9 +216,7 @@ const adminSaml = {
 		'Previous certificate kept temporarily during the metadata cache window.',
 	admin_saml_local_rollover_status_default_active: 'Default currently used certificate',
 	admin_saml_local_rollover_status_not_configured: 'Not configured',
-	admin_saml_local_rollover_status_signing_published: 'In use',
 	admin_saml_local_rollover_status_signing: 'In use',
-	admin_saml_local_rollover_status_stored_published: 'Stored',
 	admin_saml_local_rollover_status_stored_only: 'Stored',
 	admin_saml_local_yes: 'Yes',
 	admin_saml_local_no: 'No',
@@ -280,8 +277,6 @@ const adminSaml = {
 		'Accepts X.509 certificates in PEM or base64 DER form. Metadata import usually fills this automatically.',
 	admin_saml_detail_checking: 'Checking...',
 	admin_saml_detail_validate_certificate: 'Validate Certificate',
-	admin_saml_detail_attribute_mapping_json: 'Attribute Mapping JSON',
-	admin_saml_detail_mapping_object_error: 'Attribute mapping must be a JSON object',
 	admin_saml_detail_allowed_bindings: 'Allowed SAML Bindings',
 	admin_saml_detail_allowed_bindings_hint:
 		'Controls which SAML protocol bindings this provider may use for SSO/SLO messages.',
@@ -316,21 +311,11 @@ const adminSaml = {
 		'Uses strict SP defaults for publisher/library SPs: signed assertions, required signed AuthnRequest and Logout, and Persistent NameID. Pair it with an attribute mapping when the SP expects mail, displayName, eduPersonScopedAffiliation, or eduPersonEntitlement.',
 	admin_saml_detail_profile_hint_legacy:
 		'Legacy relaxes compatibility for older SPs. Use it only for an explicit legacy exception.',
-	admin_saml_detail_attribute_preset: 'Attribute Preset',
-	admin_saml_detail_none: 'None',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: 'Select a Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
 	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
-	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
-	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
-	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',
-	admin_saml_detail_attribute_release_consent_every_time: 'Ask every SSO',
-	admin_saml_detail_attribute_release_consent_until_attributes_change:
-		'Ask again when attributes change',
-	admin_saml_detail_attribute_release_consent_hint:
-		'Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
 	admin_saml_detail_authn_request_signature_hint:
 		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',

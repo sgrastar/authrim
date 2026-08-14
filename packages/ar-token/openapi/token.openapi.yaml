@@ -42,6 +42,10 @@ paths:
       tags:
         - OAuth
       summary: Exchange an OAuth grant for tokens.
+      description: >
+        Processes supported OAuth grants. Token exchange requests fail with `invalid_scope` when
+        no requested scope remains after applying the subject token and client scope constraints.
+        Native SSO scope requests must include `openid`, and client policy must permit it.
       requestBody:
         required: true
         content:
@@ -68,6 +72,8 @@ paths:
         '400':
           $ref: '#/components/responses/Error'
         '401':
+          $ref: '#/components/responses/Error'
+        '500':
           $ref: '#/components/responses/Error'
   /oauth/admin-agent/token:
     post:

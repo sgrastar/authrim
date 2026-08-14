@@ -1079,6 +1079,26 @@ const zhCN: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '环境详情',
+  'web.envDetail.initialDeployRecoveryTitle': '初始部署尚未完成',
+  'web.envDetail.initialDeployRecoveryDesc': '上次部署在验证前停止。恢复时将复用已创建的资源。',
+  'web.envDetail.initialDeployRecoveryAction': '恢复初始部署',
+  'web.envDetail.initialDeployRecoveryVerified':
+    '已验证 Cloudflare 状态。已完成：{{completed}}。将从{{stage}}恢复。',
+  'web.envDetail.initialDeployRecoveryStageMigrations': '数据库迁移验证',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '初始部署准备',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryStageVerification': '部署后验证',
+  'web.envDetail.initialDeployRecoveryResources': '资源创建',
+  'web.envDetail.initialDeployRecoverySchema': '数据库迁移',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '保存的检查点与 Cloudflare 上的状态不一致，因此已禁用恢复。请删除此不完整环境并重新创建。',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '初始部署开始后，draft migration 定义已发生变化。保存的部署状态可能已与数据库不一致，因此已禁用恢复。请删除此不完整环境并重新创建。',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '无法验证当前状态，因此已禁用恢复。请检查 Cloudflare 连接并重新检查此环境。如果仍无法验证，请删除此不完整环境并重新创建。',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' 部署凭据需要更新；系统将要求输入新的一次性 Cloudflare token。',
   'web.envDetail.adminNotConfigured': '管理员账户未配置',
   'web.envDetail.adminNotConfiguredDesc': '此环境的初始管理员尚未设置。',
   'web.envDetail.startPasskey': '使用 Passkey 开始管理员账户设置',

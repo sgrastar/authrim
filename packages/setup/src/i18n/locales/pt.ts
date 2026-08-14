@@ -1132,6 +1132,28 @@ const pt: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Detalhes do Ambiente',
+  'web.envDetail.initialDeployRecoveryTitle': 'A implantação inicial está incompleta',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'A implantação anterior parou antes da verificação. Ao retomar, os recursos criados serão reutilizados.',
+  'web.envDetail.initialDeployRecoveryAction': 'Retomar implantação inicial',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Estado da Cloudflare verificado. Concluído: {{completed}}. A retomada começará em {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations':
+    'verificação das migrações do banco de dados',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': 'preparação da implantação inicial',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'implantação dos Workers',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'verificação pós-implantação',
+  'web.envDetail.initialDeployRecoveryResources': 'provisionamento de recursos',
+  'web.envDetail.initialDeployRecoverySchema': 'migrações do banco de dados',
+  'web.envDetail.initialDeployRecoveryWorkers': 'implantação dos Workers',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'O checkpoint salvo não corresponde ao estado na Cloudflare. A retomada foi desativada. Exclua este ambiente incompleto e crie-o novamente.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'A definição draft das migrações mudou após o início da implantação inicial. O estado salvo da implantação pode não corresponder mais aos bancos de dados; por isso, a retomada foi desativada. Exclua este ambiente incompleto e crie-o novamente.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'Não foi possível verificar o estado atual; por isso, a retomada foi desativada. Verifique a conexão com a Cloudflare e confira o ambiente novamente. Se a verificação continuar falhando, exclua o ambiente incompleto e crie-o novamente.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' As credenciais de implantação precisam ser atualizadas; será solicitado um novo token de uso único da Cloudflare.',
   'web.envDetail.adminNotConfigured': 'Conta de Admin Não Configurada',
   'web.envDetail.adminNotConfiguredDesc':
     'O administrador inicial não foi configurado para este ambiente.',

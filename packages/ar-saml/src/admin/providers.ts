@@ -253,6 +253,10 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
   if (!config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };
   }
+  const signingConfig = applySafeSAMLSPSigningDefaults(config);
+  if (!signingConfig.signAssertions && !signingConfig.signResponses) {
+    return { field: 'signResponses' };
+  }
   const destinationFieldPolicies = normalizeSAMLDestinationFieldPolicies(
     config.identityMapping.destinationFieldPolicies
   );
@@ -266,7 +270,7 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
     ...(destinationFieldPolicies ? { destinationFieldPolicies } : {}),
   };
   if (config.attributeReleaseConsent === undefined) {
-    return { ...config, identityMapping: normalizedIdentityMapping };
+    return { ...signingConfig, identityMapping: normalizedIdentityMapping };
   }
 
   const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
@@ -277,9 +281,17 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
   }
 
   return {
-    ...config,
+    ...signingConfig,
     identityMapping: normalizedIdentityMapping,
     attributeReleaseConsent,
+  };
+}
+
+function applySafeSAMLSPSigningDefaults(config: SAMLSPConfig): SAMLSPConfig {
+  return {
+    ...config,
+    signAssertions: config.signAssertions ?? false,
+    signResponses: config.signResponses ?? true,
   };
 }
 
@@ -3792,7 +3804,8 @@ export async function getSPConfig(
   for (const row of result) {
     const config = JSON.parse(row.config_json) as SAMLSPConfig;
     if (config.entityId === entityId) {
-      return config;
+      // Also protect configurations persisted before signing flags were normalized on write.
+      return applySafeSAMLSPSigningDefaults(config);
     }
   }
 

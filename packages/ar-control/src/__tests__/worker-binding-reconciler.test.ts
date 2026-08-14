@@ -230,6 +230,45 @@ describe('WorkerBindingReconciler', () => {
     expect(result.blocked).toBe(1);
   });
 
+  it('reconciles different Worker scripts concurrently while preserving per-Worker ordering', async () => {
+    const repository = repositoryMock([
+      target({ operationId: 'auth-operation', workerScriptName: 'test-ar-auth' }),
+      target({ operationId: 'token-operation', workerScriptName: 'test-ar-token' }),
+    ]);
+    repository.acquireDeploymentLease.mockResolvedValue(null);
+    let releaseDeployments!: () => void;
+    const deploymentsReady = new Promise<void>((resolve) => {
+      releaseDeployments = resolve;
+    });
+    const listWorkerDeployments = vi.fn(async () => {
+      await deploymentsReady;
+      return [oldDeployment];
+    });
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        listWorkerDeployments,
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    const reconciliation = reconciler.reconcile(2);
+    await vi.waitFor(() => expect(listWorkerDeployments).toHaveBeenCalledTimes(2));
+    releaseDeployments();
+
+    await expect(reconciliation).resolves.toEqual({
+      attempted: 2,
+      succeeded: 0,
+      deferred: 2,
+      blocked: 0,
+    });
+  });
+
   it.each([
     ['ar-lib-core', 'SMOKE_AR_LIB_CORE'],
     ['ar-discovery', 'SMOKE_AR_DISCOVERY'],

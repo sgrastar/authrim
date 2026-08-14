@@ -360,6 +360,7 @@ import {
   adminScimTokenCreateHandler,
   adminScimTokenRevokeHandler,
 } from './scim-tokens';
+import { adminScimSettingsGetHandler, adminScimSettingsUpdateHandler } from './scim-settings';
 import { adminIATListHandler, adminIATCreateHandler, adminIATRevokeHandler } from './iat-tokens';
 import {
   adminExternalProvidersListHandler,
@@ -401,7 +402,11 @@ import {
 } from './admin-rbac';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
-import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
+import {
+  enforceDeclaredAdminRouteAccess,
+  registerDeclaredAdminRouteAccessMiddleware,
+} from './admin-route-access';
+import { requireInternalVersionManagerAuthority } from './internal-version-access';
 import { adminPublicAssetUploadHandler, servePublicAssetHandler } from './admin-public-assets';
 import {
   adminRelationDefinitionsListHandler,
@@ -852,6 +857,7 @@ import settingsV2 from './routes/settings-v2';
 import policyRouter from './routes/policy';
 import adminManagementRouter from './routes/admin-management';
 import diagnosticLoggingRouter from './routes/diagnostic-logging';
+import diagnosticLogIngestRouter from './routes/diagnostic-logging/ingest';
 import {
   revokeCredentialHandler,
   suspendCredentialHandler,
@@ -2142,7 +2148,7 @@ app.route('/api/admin/diagnostic-logging', diagnosticLoggingRouter);
 
 // Public API routes:
 // - POST /api/v1/diagnostic-logs/ingest - Ingest logs from SDK (public API with client auth)
-app.route('/api/v1/diagnostic-logs', diagnosticLoggingRouter);
+app.route('/api/v1/diagnostic-logs/ingest', diagnosticLogIngestRouter);
 
 // Admin Certification Profile endpoints (OpenID Certification)
 // NOTE: Profiles apply predefined settings - kept for certification testing
@@ -2381,6 +2387,8 @@ app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRo
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
 app.post('/api/admin/scim-tokens', adminScimTokenCreateHandler);
 app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
+app.get('/api/admin/scim-settings', adminScimSettingsGetHandler);
+app.put('/api/admin/scim-settings', adminScimSettingsUpdateHandler);
 
 // Admin Initial Access Token (IAT) Management endpoints
 // RFC 7591 Dynamic Client Registration requires Initial Access Token
@@ -3841,11 +3849,17 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  *   "deployTime": "2025-11-28T03:20:15Z"
  * }
  *
- * Requires: Admin authentication plus internal VersionManager DO secret.
+ * Requires: Global platform Admin or the Authrim setup machine with control-plane provision access.
  */
 app.post(
   '/api/internal/versions/:workerName',
-  adminAuthMiddleware({ plane: 'platform' }),
+  csrfProtectionMiddleware(),
+  adminAuthMiddleware({
+    plane: 'platform',
+    requireRoles: ['super_admin', 'system_admin'],
+  }),
+  requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION),
+  enforceDeclaredAdminRouteAccess(),
   async (c) => {
     const workerName = c.req.param('workerName')!;
 
@@ -3905,11 +3919,16 @@ app.post(
  * GET /api/internal/version-manager/status
  * Get all registered versions
  *
- * Requires: Admin authentication. The VersionManager service binding is the internal capability.
+ * Requires: Global platform Admin or the Authrim setup machine with control-plane read access.
  */
 app.get(
   '/api/internal/version-manager/status',
-  adminAuthMiddleware({ plane: 'platform' }),
+  adminAuthMiddleware({
+    plane: 'platform',
+    requireRoles: ['super_admin', 'system_admin'],
+  }),
+  requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_READ),
+  enforceDeclaredAdminRouteAccess(),
   async (c) => {
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');

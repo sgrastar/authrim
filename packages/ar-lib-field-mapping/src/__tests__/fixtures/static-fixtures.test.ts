@@ -103,9 +103,9 @@ describe('static fixtures', () => {
       edges: [emailEdge],
     });
 
-    expect(scim.input?.sourceValues.some((item) => item.sourceRef.namespace === 'scim.user')).toBe(
-      true
-    );
+    expect(
+      scim.input?.sourceValues.some((item) => item.sourceRef.namespace === 'scim.attribute')
+    ).toBe(true);
     expect(saml.input?.sourceValues[0]?.metadata?.samlAttributeName).toBe('mail');
     expect(oidc.input?.sourceValues[0]?.metadata?.oidcClaimName).toBe('email');
   });

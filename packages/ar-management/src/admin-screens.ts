@@ -1009,17 +1009,6 @@ function defaultAuthenticationFields(screenKind: 'registration' | 'login'): Scre
       auth_method: 'passkey',
       order: 10,
     },
-    ...(isRegistration
-      ? [
-          {
-            field: 'email',
-            label: 'Email',
-            required: false,
-            block_type: 'identity_field' as const,
-            order: 15,
-          },
-        ]
-      : []),
     {
       field: 'divider.or',
       label: 'or',
@@ -1699,6 +1688,129 @@ function isPreviousRegistrationDefaultScreen(fields: ScreenField[]): boolean {
   });
 }
 
+function isEmailRegistrationDefaultScreen(fields: ScreenField[]): boolean {
+  if (fields.length !== 10 || fields.some((field) => field.block_id)) return false;
+  const expectedFields = new Map<string, ScreenField>([
+    [
+      'heading.registration',
+      {
+        field: 'heading.registration',
+        label: 'Create your account',
+        required: false,
+        block_type: 'heading',
+        order: 0,
+      },
+    ],
+    [
+      'auth.passkey',
+      {
+        field: 'auth.passkey',
+        label: 'Create Account with Passkey',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'passkey',
+        order: 10,
+      },
+    ],
+    [
+      'email',
+      {
+        field: 'email',
+        label: 'Email',
+        required: false,
+        block_type: 'identity_field',
+        order: 15,
+      },
+    ],
+    [
+      'divider.or',
+      {
+        field: 'divider.or',
+        label: 'or',
+        required: false,
+        block_type: 'divider',
+        text: 'or',
+        display_condition: { mode: 'feature_enabled', feature: 'mail_otp' },
+        order: 20,
+      },
+    ],
+    [
+      'auth.mail_otp',
+      {
+        field: 'auth.mail_otp',
+        label: 'Send code by email',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'mail_otp',
+        order: 30,
+      },
+    ],
+    [
+      'auth.totp',
+      {
+        field: 'auth.totp',
+        label: 'Create account with authenticator app',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'totp',
+        order: 35,
+      },
+    ],
+    [
+      'divider.other_accounts',
+      {
+        field: 'divider.other_accounts',
+        label: 'Continue with another account',
+        required: false,
+        block_type: 'divider',
+        text: 'Continue with another account',
+        display_condition: { mode: 'feature_enabled', feature: 'external_idp' },
+        order: 40,
+      },
+    ],
+    [
+      'auth.external_idp',
+      {
+        field: 'auth.external_idp',
+        label: 'Ext. IdP',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'external_idp',
+        external_idp_show_action_text: false,
+        order: 50,
+      },
+    ],
+    [
+      'divider.directory_password',
+      {
+        field: 'divider.directory_password',
+        label: 'or',
+        required: false,
+        block_type: 'divider',
+        text: 'or',
+        display_condition: { mode: 'feature_enabled', feature: 'directory_password' },
+        order: 55,
+      },
+    ],
+    [
+      'auth.directory_password',
+      {
+        field: 'auth.directory_password',
+        label: 'Sign in with directory password',
+        required: false,
+        block_type: 'auth_widget',
+        auth_method: 'directory_password',
+        order: 60,
+      },
+    ],
+  ]);
+
+  return fields.every((field) => {
+    const expected = expectedFields.get(field.field);
+    return expected !== undefined && serializeJson(field) === serializeJson(expected);
+  });
+}
+
 function isPreferredUsernameRegistrationDefaultScreen(fields: ScreenField[]): boolean {
   if (fields.length !== 11 || fields.some((field) => field.block_id)) return false;
   const expectedFields = new Map<string, { blockType: string; order: number }>([
@@ -1832,6 +1944,7 @@ function mergeDefaultScreenFieldMetadata(
     if (
       isLegacyRegistrationDefaultScreen(fields) ||
       isPreviousRegistrationDefaultScreen(fields) ||
+      isEmailRegistrationDefaultScreen(fields) ||
       isPreferredUsernameRegistrationDefaultScreen(fields)
     ) {
       working = screen.fields;
@@ -1840,7 +1953,6 @@ function mergeDefaultScreenFieldMetadata(
     for (const fieldName of [
       'heading.registration',
       'auth.passkey',
-      'email',
       'divider.or',
       'auth.mail_otp',
       'auth.totp',

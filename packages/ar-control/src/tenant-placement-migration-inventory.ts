@@ -365,7 +365,8 @@ export function orderTenantMigrationTables(
   while (remaining.size > 0) {
     const ready = [...remaining]
       .filter((tableName) => {
-        const table = migratable.get(tableName)!;
+        const table = migratable.get(tableName);
+        if (!table) throw new Error('tenant_migration_table_inventory_invalid');
         const dependencies = new Set([
           ...(table.foreignKeys ?? []).map((foreignKey) => foreignKey.parentTable),
           ...(table.ownership.kind === 'parent' ? [table.ownership.parentTable] : []),
@@ -379,7 +380,9 @@ export function orderTenantMigrationTables(
     if (ready.length === 0) throw new Error('tenant_migration_table_dependency_cycle');
     for (const tableName of ready) {
       remaining.delete(tableName);
-      ordered.push(migratable.get(tableName)!);
+      const table = migratable.get(tableName);
+      if (!table) throw new Error('tenant_migration_table_inventory_invalid');
+      ordered.push(table);
     }
   }
   return ordered;

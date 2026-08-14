@@ -31,7 +31,6 @@ const adminJobs = {
 	admin_jobs_details: 'Details',
 	admin_jobs_cancel: 'Cancel',
 	admin_jobs_creating: 'Creating...',
-	admin_jobs_create_request: 'Create Request',
 	admin_jobs_csv_file: 'CSV File',
 	admin_jobs_expected_headers: 'Expected headers:',
 	admin_jobs_custom_claim_keys_suffix: 'plus any custom claim keys.',

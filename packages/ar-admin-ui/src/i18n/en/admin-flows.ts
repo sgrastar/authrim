@@ -175,7 +175,6 @@ const adminFlows = {
 	admin_flows_cancel: 'Cancel',
 	admin_flows_apply: 'Apply',
 	admin_flows_node_settings_aria: 'Configure {title:string}',
-	admin_flows_node_description_aria: 'Description for {title:string}',
 	admin_flows_node_outputs_aria: '{title:string} outputs',
 	admin_flows_template_saml_attribute_release_title: 'SAML Attribute Release',
 	admin_flows_template_saml_attribute_release_subtitle:
@@ -457,7 +456,6 @@ const adminFlows = {
 	admin_flows_output_complete: 'Complete',
 	admin_flows_output_matched: 'Matched',
 	admin_flows_output_otherwise: 'Otherwise',
-	admin_flows_editor_start_description: 'Receive a request, direct link, or LoginUI entry.',
 	admin_flows_editor_registration_request_description:
 		'Receive a registration request or LoginUI sign-up entry and resolve the application context.',
 	admin_flows_editor_login_request_description:
@@ -474,7 +472,6 @@ const adminFlows = {
 		'Complete the flow by creating the resulting session, response, or redirect.',
 	admin_flows_editor_setting_prompt_create: 'prompt=create',
 	admin_flows_editor_setting_signup_entry: 'signup entry',
-	admin_flows_editor_setting_default_profile: 'Default profile',
 	admin_flows_editor_setting_basic_profile: 'Basic profile',
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',

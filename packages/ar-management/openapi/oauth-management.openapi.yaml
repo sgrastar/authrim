@@ -113,6 +113,10 @@ paths:
       tags:
         - Token Management
       summary: Introspect an OAuth token.
+      description: >-
+        Returns active token metadata only for an Authrim access or refresh token when the
+        authenticated client owns the token or is named by the token's signed audience or resource
+        claim. ID tokens and other signed protocol JWTs are reported as inactive.
       security:
         - clientAuth: []
       requestBody:

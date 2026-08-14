@@ -22,8 +22,6 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_load_failed: 'Failed to load directory connectors',
 	admin_directory_authentication_save_failed: 'Failed to save directory connectors',
 	admin_directory_authentication_saved: 'Directory connector settings saved.',
-	admin_directory_authentication_back_to_settings: 'Back to Settings',
-	admin_directory_authentication_open_fleet: 'Connector Fleet',
 	admin_directory_authentication_select_tenant:
 		'Select a tenant to manage directory authentication.',
 	admin_directory_authentication_loading: 'Loading directory connectors...',

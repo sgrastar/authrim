@@ -15,9 +15,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   authenticateConfidentialOAuthClient,
   validateClientAssertion,
+  validateRegisteredClientAuthenticationMethod,
 } from '../client-authentication';
 import type { ClientMetadata } from '../../types/oidc';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+import { createMockEnv } from '../../test/fixtures';
+import { buildPolicyConstrainedRegionShardConfig } from '../region-sharding';
 
 // Mock fetch for JWKS URI tests
 const mockFetch = vi.fn();
@@ -108,6 +111,12 @@ describe('Client Authentication', () => {
           clientId,
           clientAssertion: assertion,
           clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          presentation: {
+            basic: false,
+            clientSecretPost: false,
+            clientAssertion: true,
+            clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          },
         },
         { issuer }
       );
@@ -128,6 +137,12 @@ describe('Client Authentication', () => {
           clientId,
           clientAssertion: assertion,
           clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          presentation: {
+            basic: false,
+            clientSecretPost: false,
+            clientAssertion: true,
+            clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          },
         },
         { issuer, additionalAudiences: [`${issuer}/token`] }
       );
@@ -169,6 +184,59 @@ describe('Client Authentication', () => {
       const result = await validateClientAssertion(assertion, tokenEndpoint, client);
 
       expect(result.valid).toBe(true);
+    });
+
+    it('atomically rejects reuse of an otherwise valid client assertion', async () => {
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, {
+        jti: 'single-use-client-assertion',
+      });
+      const env = await createMockEnv();
+      const tenantId = 'client-assertion-replay-tenant';
+      const regionConfig = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'client-assertion-test',
+          residencyPartition: 'default',
+          policyGeneration: 1,
+          allowedRegions: ['apac'],
+          jurisdiction: null,
+        },
+        totalShards: 1,
+      });
+      env.AUTHRIM_CONFIG = {
+        get: vi.fn().mockResolvedValue(regionConfig),
+      } as unknown as KVNamespace;
+
+      const first = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        replayProtection: { env, tenantId },
+      });
+      const replay = await validateClientAssertion(assertion, tokenEndpoint, client, {
+        replayProtection: { env, tenantId },
+      });
+
+      expect(first.valid).toBe(true);
+      expect(replay).toMatchObject({
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion replay detected',
+      });
+    });
+
+    it('rejects client assertions whose validity extends more than five minutes', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const client = createClientWithJWKS(clientId);
+      const assertion = await createClientAssertion(clientId, tokenEndpoint, {
+        iat: now,
+        exp: now + 301,
+      });
+
+      const result = await validateClientAssertion(assertion, tokenEndpoint, client);
+
+      expect(result).toMatchObject({
+        valid: false,
+        error_description: 'Client assertion lifetime exceeds 5 minutes',
+      });
     });
 
     it('accepts the explicit issuer audience when validating at the PAR endpoint', async () => {
@@ -599,6 +667,7 @@ describe('Client Authentication', () => {
           sub: clientId,
           aud: [],
           exp: Math.floor(Date.now() / 1000) + 300,
+          jti: 'empty-audience-test',
         })
       )
         .replace(/\+/g, '-')
@@ -1156,6 +1225,79 @@ describe('Client Authentication', () => {
       expect(result.valid).toBe(false);
       // Security: Generic error message to prevent kid enumeration
       expect(result.error_description).toContain('No matching public key found');
+    });
+  });
+});
+
+describe('Registered client authentication method enforcement', () => {
+  const client = (method: ClientMetadata['token_endpoint_auth_method']): ClientMetadata =>
+    ({
+      client_id: 'method-bound-client',
+      redirect_uris: ['https://example.com/callback'],
+      token_endpoint_auth_method: method,
+    }) as ClientMetadata;
+
+  it.each([
+    ['client_secret_basic', { basic: true, clientSecretPost: false, clientAssertion: false }],
+    ['client_secret_post', { basic: false, clientSecretPost: true, clientAssertion: false }],
+    [
+      'private_key_jwt',
+      {
+        basic: false,
+        clientSecretPost: false,
+        clientAssertion: true,
+        clientAssertionType: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      },
+    ],
+    ['none', { basic: false, clientSecretPost: false, clientAssertion: false }],
+  ] as const)('accepts only the registered %s presentation', (method, presentation) => {
+    expect(validateRegisteredClientAuthenticationMethod(client(method), presentation)).toEqual({
+      valid: true,
+    });
+  });
+
+  it('rejects authentication downgrade and multiple presented methods', () => {
+    expect(
+      validateRegisteredClientAuthenticationMethod(client('private_key_jwt'), {
+        basic: true,
+        clientSecretPost: false,
+        clientAssertion: false,
+      })
+    ).toMatchObject({ valid: false });
+    expect(
+      validateRegisteredClientAuthenticationMethod(client('client_secret_basic'), {
+        basic: true,
+        clientSecretPost: true,
+        clientAssertion: false,
+      })
+    ).toEqual({
+      valid: false,
+      errorDescription: 'Multiple client authentication methods are not allowed',
+    });
+  });
+
+  it('enforces the registered method inside the shared confidential authenticator', async () => {
+    const result = await authenticateConfidentialOAuthClient(
+      {
+        ...client('private_key_jwt'),
+        client_secret_hash: 'residual-secret-hash',
+      },
+      'https://op.example.com/token',
+      {
+        clientId: 'method-bound-client',
+        clientSecret: 'residual-secret',
+        presentation: {
+          basic: false,
+          clientSecretPost: true,
+          clientAssertion: false,
+        },
+      }
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'invalid_client',
+      errorDescription: 'Client authentication failed',
     });
   });
 });

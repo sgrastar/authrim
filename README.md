@@ -187,24 +187,24 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 
 **Target release window:** Summer/Fall 2026
 
-| Area | Status |
+| Area                                      | Status                                                                                                                                                  |
 | ----- | ------ |
-| Core OIDC/OAuth implementation | Implemented |
-| FAPI profiles | Implemented; official Final OP/RP Suite plans completed without functional failures; formal certification publication planned |
-| CIBA | Implemented; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures |
-| SAML 2.0 IdP/SP | Active; implementation substantially complete with local entity metadata, signing rollover, and Admin UI operations |
-| SCIM 2.0 | Implemented |
-| RBAC / ABAC / ReBAC policy engine | Implemented |
-| Identity Hub and external IdP integration | Implemented |
-| Passkey / email auth / local auth | Implemented; production flow hardening in progress |
-| VC/DID | Partial; OpenID4VCI/OpenID4VP endpoint baselines exist, but official Final and HAIP conformance gaps remain |
-| JavaScript SDKs | Implemented |
-| Setup tooling | Implemented; production deployment docs in progress |
-| UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
-| Security, QA, and validation | Active; internal review remediation landed for selected management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings |
-| Storage portability | Implementation baseline complete; validation active |
-| Multi-tenant isolation | Implementation baseline complete; validation active |
-| Operational logging and evidence | Implementation baseline complete; validation active |
+| Core OIDC/OAuth implementation            | Implemented                                                                                                                                             |
+| FAPI profiles                             | Implemented; official Final OP/RP Suite plans completed without functional failures; formal certification publication planned                           |
+| CIBA                                      | Implemented; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures                                                          |
+| SAML 2.0 IdP/SP                           | Active; implementation substantially complete with local entity metadata, signing rollover, and Admin UI operations                                     |
+| SCIM 2.0 | Inbound provisioning implemented; outbound provisioning is out of scope |
+| RBAC / ABAC / ReBAC policy engine         | Implemented                                                                                                                                             |
+| Identity Hub and external IdP integration | Implemented                                                                                                                                             |
+| Passkey / email auth / local auth         | Implemented; production flow hardening in progress                                                                                                      |
+| VC/DID                                    | Partial; OpenID4VCI/OpenID4VP endpoint baselines exist, but official Final and HAIP conformance gaps remain                                             |
+| JavaScript SDKs                           | Implemented                                                                                                                                             |
+| Setup tooling                             | Implemented; production deployment docs in progress                                                                                                     |
+| UI consolidation                          | Active; Admin/Login/setup flows are being polished against the current Workers deployment model                                                         |
+| Security, QA, and validation              | Active; internal review remediation landed for selected management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings |
+| Storage portability                       | Implementation baseline complete; validation active                                                                                                     |
+| Multi-tenant isolation                    | Implementation baseline complete; validation active                                                                                                     |
+| Operational logging and evidence          | Implementation baseline complete; validation active                                                                                                     |
 
 [View detailed roadmap](./docs/ROADMAP.md)
 
@@ -214,55 +214,55 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 
 ### Backend (API)
 
-| Layer         | Technology                | Version  | Purpose                            |
+| Layer          | Technology                             | Version               | Purpose                                                                    |
 | ------------- | ------------------------- | -------- | ---------------------------------- |
-| **Runtime**   | Cloudflare Workers        | -        | Global edge deployment             |
-| **Framework** | Hono                      | 4.12.x   | Fast, lightweight web framework    |
-| **Language**  | TypeScript                | 5.9.x    | Type-safe development              |
-| **Build**     | Turbo + pnpm              | 2.7.x / 9.x | Monorepo, parallel builds, caching |
-| **Deployment** | Wrangler                 | 4.59.x   | Workers deployment and local runtime |
-| **Storage**   | KV / D1 / Durable Objects / Hyperdrive | - | Cloudflare-native persistence with external database paths where supported |
-| **Crypto**    | JOSE                      | 6.1.x    | JWT/JWS/JWE/JWK (RS256, ES256)     |
-| **WebAuthn**  | SimpleWebAuthn            | 13.2.x   | Passkey authentication             |
-| **SAML**      | xmldom + xml-crypto + pako | 0.8.x / 6.1.x / 2.1.x | SAML 2.0 XML processing, signatures, and bindings |
-| **Email**     | Cloudflare Email Sending  | -        | Workers `send_email` binding for transactional email |
-| **Email**     | Resend                    | 6.8.x    | Magic Link, OTP delivery           |
-| **Testing**   | Vitest + Playwright       | 4.0.x / 1.57.x | Unit, integration, and E2E tests |
+| **Runtime**    | Cloudflare Workers                     | -                     | Global edge deployment                                                     |
+| **Framework**  | Hono                                   | 4.12.x                | Fast, lightweight web framework                                            |
+| **Language**   | TypeScript                             | 5.9.x                 | Type-safe development                                                      |
+| **Build**      | Turbo + pnpm                           | 2.7.x / 9.x           | Monorepo, parallel builds, caching                                         |
+| **Deployment** | Wrangler                               | 4.59.x                | Workers deployment and local runtime                                       |
+| **Storage**    | KV / D1 / Durable Objects / Hyperdrive | -                     | Cloudflare-native persistence with external database paths where supported |
+| **Crypto**     | JOSE                                   | 6.1.x                 | JWT/JWS/JWE/JWK (RS256, ES256)                                             |
+| **WebAuthn**   | SimpleWebAuthn                         | 13.2.x                | Passkey authentication                                                     |
+| **SAML**       | xmldom + xml-crypto + pako             | 0.8.x / 6.1.x / 2.1.x | SAML 2.0 XML processing, signatures, and bindings                          |
+| **Email**      | Cloudflare Email Sending               | -                     | Workers `send_email` binding for transactional email                       |
+| **Email**      | Resend                                 | 6.8.x                 | Magic Link, OTP delivery                                                   |
+| **Testing**    | Vitest + Playwright                    | 4.0.x / 1.57.x        | Unit, integration, and E2E tests                                           |
 
 ### Frontend (UI)
 
-| Layer          | Technology               | Version   | Purpose                        |
+| Layer          | Technology                                         | Version            | Purpose                                                     |
 | -------------- | ------------------------ | --------- | ------------------------------ |
-| **Framework**  | SvelteKit + Svelte       | 2.53.x / 5.53.x | Modern reactive framework |
-| **Deployment** | Cloudflare Workers static assets | - | UI Workers and global edge delivery |
-| **Build**      | Vite                     | 7.3.x     | UI build and dev server        |
-| **CSS**        | UnoCSS                   | 66.6.x    | Utility-first CSS              |
-| **Components** | Melt UI                  | 0.86.x    | Headless, accessible components |
-| **Icons**      | UnoCSS preset-icons + Iconify Heroicons / Phosphor | 66.6.x / 1.2.x | Utility icon classes and selectable Login UI provider icons |
-| **i18n**       | typesafe-i18n            | 5.26.x    | Type-safe internationalization |
-| **WebAuthn**   | SimpleWebAuthn Browser   | 13.2.x    | Client-side passkey support    |
-| **Testing**    | Vitest + Testing Library | 4.0.x / 5.2.x-next | Component tests                |
+| **Framework**  | SvelteKit + Svelte                                 | 2.53.x / 5.53.x    | Modern reactive framework                                   |
+| **Deployment** | Cloudflare Workers static assets                   | -                  | UI Workers and global edge delivery                         |
+| **Build**      | Vite                                               | 7.3.x              | UI build and dev server                                     |
+| **CSS**        | UnoCSS                                             | 66.6.x             | Utility-first CSS                                           |
+| **Components** | Melt UI                                            | 0.86.x             | Headless, accessible components                             |
+| **Icons**      | UnoCSS preset-icons + Iconify Heroicons / Phosphor | 66.6.x / 1.2.x     | Utility icon classes and selectable Login UI provider icons |
+| **i18n**       | typesafe-i18n                                      | 5.26.x             | Type-safe internationalization                              |
+| **WebAuthn**   | SimpleWebAuthn Browser                             | 13.2.x             | Client-side passkey support                                 |
+| **Testing**    | Vitest + Testing Library                           | 4.0.x / 5.2.x-next | Component tests                                             |
 
 ## Features
 
-| Area | Implementation | Operational maturity | Notes |
+| Area                             | Implementation    | Operational maturity | Notes                                                                                                                                                                                                             |
 | --- | --- | --- | --- |
-| OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
-| OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
-| FAPI profiles | Complete | In progress | FAPI 2.0 Final DPoP, Client Credentials, Message Signing, and RP Suite plans completed without functional failures; formal certification publication is planned |
-| SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, interactive login redirect policy, signing certificate subject/rollover, encryption options, SSO/SLO correlation, and DR planning |
-| SCIM 2.0 | Complete | In progress | User provisioning |
-| Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
-| CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures |
-| Native SSO | Complete | In progress | `device_secret`, `ds_hash`, and DPoP-bound token exchange support |
-| Authorization | Complete | In progress | RBAC, ABAC, ReBAC, token embedding, real-time check API |
-| Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
-| VC/DID | Partial | Experimental | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; official Final and HAIP Suite plans currently have known failures |
-| SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
-| Admin/Login UI | Basic complete | In progress | Admin UI includes SAML entity info, database connections, storage destinations, logging controls, and tenant discovery settings; Login UI supports configured provider logos/icons |
-| Runtime storage profiles | Basic complete | In progress | Runtime profiles, setup-managed D1/R2 inventory, tenant D1 assignment visibility, and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
-| Multi-tenancy isolation | Baseline complete | In progress | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place |
-| Logging and operational evidence | Basic complete | In progress | Structured runtime logs, admin/user audit logs, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, and storage-destination controls are implemented |
+| OpenID Provider                  | Complete          | Ready                | Certified OpenID Provider and Logout profiles                                                                                                                                                                     |
+| OAuth/OIDC advanced profiles     | Complete          | In progress          | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange                                                                                                                                                          |
+| FAPI profiles                    | Complete          | In progress          | FAPI 2.0 Final DPoP, Client Credentials, Message Signing, and RP Suite plans completed without functional failures; formal certification publication is planned                                                   |
+| SAML 2.0 IdP/SP                  | Hardening active  | In progress          | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, interactive login redirect policy, signing certificate subject/rollover, encryption options, SSO/SLO correlation, and DR planning |
+| SCIM 2.0 | Inbound complete | In progress | Users, Groups, and Bulk receiver; outbound provisioning is out of scope |
+| Authentication                   | Complete          | In progress          | Passkey, email code, social login, Direct Auth, device flow, CIBA                                                                                                                                                 |
+| CIBA                             | Complete          | In progress          | Backchannel authentication, approval, polling, and request storage paths; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures                                                       |
+| Native SSO                       | Complete          | In progress          | `device_secret`, `ds_hash`, and DPoP-bound token exchange support                                                                                                                                                 |
+| Authorization                    | Complete          | In progress          | RBAC, ABAC, ReBAC, token embedding, real-time check API                                                                                                                                                           |
+| Identity Hub                     | Complete          | In progress          | External IdP integration, account linking, identity stitching                                                                                                                                                     |
+| VC/DID                           | Partial           | Experimental         | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; official Final and HAIP Suite plans currently have known failures                                                                      |
+| SDKs                             | Complete          | In progress          | Core, web, server, and SvelteKit packages                                                                                                                                                                         |
+| Admin/Login UI                   | Basic complete    | In progress          | Admin UI includes SAML entity info, database connections, storage destinations, logging controls, and tenant discovery settings; Login UI supports configured provider logos/icons                                |
+| Runtime storage profiles         | Basic complete    | In progress          | Runtime profiles, setup-managed D1/R2 inventory, tenant D1 assignment visibility, and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased       |
+| Multi-tenancy isolation          | Baseline complete | In progress          | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place                                                                                               |
+| Logging and operational evidence | Basic complete    | In progress          | Structured runtime logs, admin/user audit logs, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, and storage-destination controls are implemented                                         |
 
 See [Feature Matrix](./docs/FEATURES.md) for a more detailed capability and SDK overview.
 

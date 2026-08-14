@@ -22,6 +22,7 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseAdapter } from '../db';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
+import { RESERVED_CLAIMS } from '../types/token-claim-rules';
 import type {
   TokenClaimRule,
   TokenClaimRuleRow,
@@ -31,8 +32,6 @@ import type {
   TokenClaimEvaluationContext,
   TokenClaimEvaluationResult,
   TokenType,
-  RESERVED_CLAIMS,
-  PII_CLAIM_PATTERNS,
 } from '../types/token-claim-rules';
 import type { RuleCondition, CompoundCondition, ConditionOperator } from '../types/policy-rules';
 import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
@@ -52,22 +51,7 @@ const DEFAULT_CACHE_TTL_SECONDS = 300;
 const TOKEN_CLAIM_RULES_CACHE_PREFIX = 'token_claim_rules_cache:';
 
 /** Reserved claims that cannot be overwritten */
-const RESERVED_CLAIM_NAMES = new Set([
-  'sub',
-  'iss',
-  'aud',
-  'exp',
-  'iat',
-  'jti',
-  'nbf',
-  'auth_time',
-  'nonce',
-  'at_hash',
-  'c_hash',
-  'acr',
-  'amr',
-  'azp',
-]);
+const RESERVED_CLAIM_NAMES = new Set<string>(RESERVED_CLAIMS);
 
 /** PII patterns for warning (not blocking) */
 const PII_PATTERNS = new Set([

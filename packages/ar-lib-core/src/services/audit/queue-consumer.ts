@@ -11,6 +11,7 @@
 import type { MessageBatch, Message, Queue } from '@cloudflare/workers-types';
 import {
   createLoggingId,
+  createUuidV7,
   deriveTenantKeyFromTenantId,
   formatUtcPartition,
   type LogChunkCompression,
@@ -87,6 +88,25 @@ function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
     return input.toString();
   }
   return input.url;
+}
+
+type QueueStableIdPrefix = 'chk' | 'obj' | 'dlq' | 'lde';
+
+function queueMessageTimestamp(message: { timestamp?: Date }): number {
+  const timestamp = message.timestamp instanceof Date ? message.timestamp.getTime() : 0;
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : 0;
+}
+
+async function createQueueStableLoggingId(
+  prefix: QueueStableIdPrefix,
+  message: Pick<Message<unknown>, 'id' | 'timestamp'>,
+  purpose: string
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${purpose}\u0000${message.id}`)
+  );
+  return `${prefix}_${createUuidV7(queueMessageTimestamp(message), new Uint8Array(digest).slice(0, 10))}`;
 }
 
 function getDefaultLoggingDeliveryPayloadBucket(env: AuditQueueConsumerEnv): R2Bucket | null {
@@ -606,7 +626,7 @@ async function processMessage(
   });
 
   if (message.body.fanout) {
-    await processFanoutMessage(message.body, env, logger, message.attempts);
+    await processFanoutMessage(message, env, logger);
     return;
   }
 
@@ -905,7 +925,8 @@ async function writeArchiveTarget(
   target: AuditTarget,
   body: AuditQueueMessage,
   env: AuditQueueConsumerEnv,
-  tenantKey: string
+  tenantKey: string,
+  identity?: { chunkId: string; objectCatalogId: string; createdAt: number }
 ): Promise<WriteLogChunkResult> {
   if (target.type !== 'r2') {
     throw new Error(`Unsupported archive target type: ${target.type}`);
@@ -934,6 +955,9 @@ async function writeArchiveTarget(
     indexProfile: logType,
     catalogStore,
     encryption,
+    now: identity?.createdAt,
+    chunkId: identity?.chunkId,
+    objectCatalogId: identity?.objectCatalogId,
     records: body.entries.map((entry) => ({
       id: entry.id,
       eventAt: entry.createdAt,
@@ -955,6 +979,9 @@ async function writeArchiveTarget(
               actorType: (entry as PIILogEntry).actorType,
             },
     })),
+  } as Parameters<typeof writeLogChunkToR2>[0] & {
+    chunkId?: string;
+    objectCatalogId?: string;
   });
 }
 
@@ -1248,6 +1275,7 @@ async function recordDeliveryEvent(
   store: LoggingDeliveryEventStore | undefined,
   logger: Logger,
   input: {
+    id?: string;
     tenantKey: string;
     destinationId?: string | null;
     logType: LogType;
@@ -1259,6 +1287,7 @@ async function recordDeliveryEvent(
     objectCatalogId?: string | null;
     nextRetryAt?: number | null;
     metadata?: Record<string, unknown>;
+    now?: number;
   }
 ): Promise<void> {
   if (!store) {
@@ -1325,6 +1354,7 @@ async function recordDeliveryNotification(
   repository: InternalNotificationEventRepository | undefined,
   logger: Logger,
   input: {
+    id?: string;
     tenantId: string;
     tenantKey: string;
     destinationId?: string | null;
@@ -1348,6 +1378,7 @@ async function recordDeliveryNotification(
     const externalNotificationEligible =
       input.lane === 'critical' && (input.status === 'dlq' || input.status === 'failed');
     await repository.enqueue({
+      id: input.id,
       tenantId: input.tenantId,
       category: deliveryNotificationCategory(input.status),
       eventType: `logging.delivery.${input.status}`,
@@ -1391,11 +1422,12 @@ async function recordDeliveryNotification(
 }
 
 async function processFanoutMessage(
-  body: AuditQueueMessage,
+  message: Message<AuditQueueMessage>,
   env: AuditQueueConsumerEnv,
-  logger: Logger,
-  attemptCount: number
+  logger: Logger
 ): Promise<void> {
+  const body = message.body;
+  const attemptCount = message.attempts;
   const fanout = body.fanout as AuditQueueFanoutPlan;
   const archives =
     fanout.archives.length > 0 ? fanout.archives : fanout.archive ? [fanout.archive] : [];
@@ -1409,8 +1441,17 @@ async function processFanoutMessage(
   for (const archive of archives) {
     const lane = laneForLogPolicy(logType, 'archive');
     const destinationId = deliveryDestinationId(archive);
+    const stablePurpose = `audit-fanout:${destinationId}`;
+    const stableCreatedAt = queueMessageTimestamp(message);
+    const chunkId = await createQueueStableLoggingId('chk', message, stablePurpose);
+    const objectCatalogId = await createQueueStableLoggingId('obj', message, stablePurpose);
+    const deliveryEventId = await createQueueStableLoggingId('lde', message, stablePurpose);
     try {
-      const result = await writeArchiveTarget(archive, body, env, tenantKey);
+      const result = await writeArchiveTarget(archive, body, env, tenantKey, {
+        chunkId,
+        objectCatalogId,
+        createdAt: stableCreatedAt,
+      });
       const enqueueResult = await enqueueWrittenChunkForDelivery({
         target: archive,
         result,
@@ -1421,6 +1462,7 @@ async function processFanoutMessage(
         env,
       });
       await recordDeliveryEvent(deliveryEventStore, logger, {
+        id: deliveryEventId,
         tenantKey,
         destinationId,
         logType,
@@ -1440,6 +1482,7 @@ async function processFanoutMessage(
       });
       if (enqueueResult && !enqueueResult.queued) {
         await recordDeliveryNotification(notificationRepository, logger, {
+          id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:notification`),
           tenantId: body.tenantId,
           tenantKey,
           destinationId,
@@ -1464,6 +1507,7 @@ async function processFanoutMessage(
       const errorClass = deliveryErrorClass(error, 'archive_delivery_failed');
       const metadata = targetMetadata(archive, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
+        id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:failure`),
         tenantKey,
         destinationId,
         logType,
@@ -1475,6 +1519,11 @@ async function processFanoutMessage(
         metadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
+        id: await createQueueStableLoggingId(
+          'lde',
+          message,
+          `${stablePurpose}:failure-notification`
+        ),
         tenantId: body.tenantId,
         tenantKey,
         destinationId,
@@ -1799,7 +1848,7 @@ export async function processDLQQueue(
 
   for (const message of batch.messages) {
     try {
-      const now = Date.now();
+      const now = queueMessageTimestamp(message);
       const timestamp = new Date(now).toISOString();
       const tenantKey = await deriveTenantKeyFromTenantId(
         message.body.tenantId,
@@ -1808,7 +1857,7 @@ export async function processDLQQueue(
       const logType = logTypeForAuditMessage(message.body);
       const lane = laneForLogPolicy(logType, 'delivery_event');
       const destinationId = 'queue:AUDIT_DLQ';
-      const dlqItemId = createLoggingId('dlq', now);
+      const dlqItemId = await createQueueStableLoggingId('dlq', message, 'audit-dlq');
       const partition = formatUtcPartition(now);
       const payloadObjectRef =
         `dlq/tenant_key=${tenantKey}/yyyy=${partition.year}/mm=${partition.month}` +
@@ -1852,6 +1901,7 @@ export async function processDLQQueue(
       }
 
       await recordDeliveryEvent(deliveryEventStore, log, {
+        id: await createQueueStableLoggingId('lde', message, 'audit-dlq'),
         tenantKey,
         destinationId,
         logType,
@@ -1869,6 +1919,7 @@ export async function processDLQQueue(
         },
       });
       await recordDeliveryNotification(notificationRepository, log, {
+        id: await createQueueStableLoggingId('lde', message, 'audit-dlq:notification'),
         tenantId: message.body.tenantId,
         tenantKey,
         destinationId,
@@ -1916,12 +1967,16 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
 }): Promise<void> {
   const { message, parseResult, env, logger } = input;
   const archiveBucket = env.AUDIT_ARCHIVE ?? null;
-  const now = Date.now();
+  const now = queueMessageTimestamp(message);
   const tenantKey = parseResult.tenantKey ?? 'unknown_tenant_key';
   const lane = parseResult.lane ?? 'default';
   const payloadType = parseResult.payloadType ?? 'unknown_payload';
   const schemaVersion = parseResult.schemaVersion ?? 0;
-  const dlqItemId = createLoggingId('dlq', now);
+  const dlqItemId = await createQueueStableLoggingId(
+    'dlq',
+    message,
+    'logging-delivery-unsupported'
+  );
   const partition = formatUtcPartition(now);
   const payloadObjectRef =
     `dlq/tenant_key=${cleanR2ObjectKeySegment(tenantKey)}/yyyy=${partition.year}/mm=${partition.month}` +
@@ -1978,6 +2033,7 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
     parser_reason: parseResult.reason,
   };
   await recordDeliveryEvent(deliveryEventStore, logger, {
+    id: await createQueueStableLoggingId('lde', message, 'logging-delivery-unsupported'),
     tenantKey,
     destinationId,
     logType: 'operational',
@@ -1989,6 +2045,11 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
     metadata,
   });
   await recordDeliveryNotification(createInternalNotificationRepository(env), logger, {
+    id: await createQueueStableLoggingId(
+      'lde',
+      message,
+      'logging-delivery-unsupported:notification'
+    ),
     tenantId: tenantKey,
     tenantKey,
     destinationId,
@@ -2592,6 +2653,7 @@ async function processChunkWritePayload(input: {
 
   try {
     const records = await loadChunkWriteRecords(payload, env);
+    const stablePurpose = `chunk-write:${payload.payload_id}`;
     const result = await writeLogChunkToR2({
       bucket,
       tenantKey: payload.tenant_key,
@@ -2601,14 +2663,21 @@ async function processChunkWritePayload(input: {
       prefix: 'logs/v1',
       indexProfile: payload.log_type,
       catalogStore,
+      now: queueMessageTimestamp(message),
+      chunkId: await createQueueStableLoggingId('chk', message, stablePurpose),
+      objectCatalogId: await createQueueStableLoggingId('obj', message, stablePurpose),
       encryption: await resolveArchiveChunkEncryption({
         env,
         tenantKey: payload.tenant_key,
         logType: payload.log_type,
         plane: payload.plane,
       }),
+    } as Parameters<typeof writeLogChunkToR2>[0] & {
+      chunkId: string;
+      objectCatalogId: string;
     });
     await recordDeliveryEvent(deliveryEventStore, logger, {
+      id: await createQueueStableLoggingId('lde', message, stablePurpose),
       tenantKey: payload.tenant_key,
       destinationId: 'chunk_writer',
       logType: payload.log_type,
