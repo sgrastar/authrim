@@ -102,7 +102,7 @@ jobs:
       - name: Restore generated environment from secrets
         env:
           AUTHRIM_ENV_CONFIG: ${{ secrets.AUTHRIM_TEST_CONFIG }}
-          AUTHRIM_ENV_LOCK: ${{ secrets.AUTHRIM_TEST_LOCK }}
+          AUTHRIM_ENV_LOCK_GZIP_B64: ${{ secrets.AUTHRIM_TEST_LOCK_GZIP_B64 }}
           AUTHRIM_ENV_KEYS_TAR_B64: ${{ secrets.AUTHRIM_TEST_KEYS_TAR_B64 }}
         run: node scripts/ci-restore-generated-env.mjs
 
