@@ -73,27 +73,14 @@ After running the Authrim setup tool (`authrim-setup init`), two files are gener
 
 These files are **gitignored** and must be exported to GitHub Secrets.
 
-### Using GitHub CLI (recommended)
-
-Use the repository uploader so the lock file and key archive are compressed, validated, and kept
-within the GitHub Actions secret size limit:
-
-```bash
-scripts/upload-test-env-secrets.sh
-```
-
-### Using GitHub Web UI
-
-The compressed lock and key secrets should be generated with
-`scripts/upload-test-env-secrets.sh`; do not paste the raw `lock.json` into the web UI.
+Store the config as JSON, the lock as a base64-encoded gzip archive, and the keys as a
+base64-encoded tar.gz archive. Do not paste the raw `lock.json` into the GitHub web UI because it can
+exceed the Actions secret size limit.
 
 ### After Updating Cloudflare Resources
 
-If you re-run `authrim-setup init` and new KV namespaces or D1 databases are provisioned, update the secrets:
-
-```bash
-scripts/upload-test-env-secrets.sh
-```
+If you re-run `authrim-setup init` and provision new KV namespaces or D1 databases, regenerate and
+update all three generated-environment secrets together.
 
 ## Deployment Flow
 
