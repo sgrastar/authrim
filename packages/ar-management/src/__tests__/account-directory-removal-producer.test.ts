@@ -125,7 +125,7 @@ describe('account directory removal producer', () => {
     expect(executed.some((entry) => entry.sql.includes("lifecycle_state = 'deleting'"))).toBe(true);
   });
 
-  it('allows deletion recovery from an active account when its create outbox is pending', async () => {
+  it('allows deletion recovery from an active or deprovisioned account', async () => {
     await prepareAccountDirectoryRemoval(
       {} as Env,
       { tenantId: 'tenant-a', userId: 'user-a', core, pii },
@@ -135,7 +135,7 @@ describe('account directory removal producer', () => {
     const routeQuery = vi
       .mocked(core.queryOne)
       .mock.calls.find(([sql]) => sql.includes("event_kind = 'account_created'"))?.[0];
-    expect(routeQuery).toContain("account.lifecycle_state = 'active'");
+    expect(routeQuery).toContain("account.lifecycle_state IN ('active', 'deprovisioned')");
     expect(routeQuery).toContain("account.directory_publication_state = 'active'");
     expect(routeQuery).not.toContain("outbox.status = 'succeeded'");
   });

@@ -64,10 +64,29 @@ interface PatchPathSegment {
   };
 }
 
+export function selectPrimaryScimObject(value: unknown): Record<string, unknown> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const records = value.filter(
+    (item): item is Record<string, unknown> =>
+      item !== null && typeof item === 'object' && !Array.isArray(item)
+  );
+  return records.find((item) => item.primary === true) ?? records[0];
+}
+
+export function selectPrimaryScimValue(value: unknown): unknown {
+  return selectPrimaryScimObject(value)?.value;
+}
+
 const DANGEROUS_PATCH_PROPS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function isDangerousPatchKey(key: string): boolean {
-  return DANGEROUS_PATCH_PROPS.has(key);
+  return DANGEROUS_PATCH_PROPS.has(key.toLowerCase());
+}
+
+function resolvePatchKey(target: PatchableRecord, requestedKey: string): string {
+  if (Object.prototype.hasOwnProperty.call(target, requestedKey)) return requestedKey;
+  const normalized = requestedKey.toLowerCase();
+  return Object.keys(target).find((key) => key.toLowerCase() === normalized) ?? requestedKey;
 }
 
 function splitPatchPath(path: string): string[] {
@@ -127,10 +146,11 @@ function findFilteredArrayItem(
     return null;
   }
 
-  const currentValue = target[segment.key];
+  const collectionKey = resolvePatchKey(target, segment.key);
+  const currentValue = target[collectionKey];
   const items = Array.isArray(currentValue) ? currentValue : [];
   if (!Array.isArray(currentValue) && createIfMissing) {
-    Object.defineProperty(target, segment.key, {
+    Object.defineProperty(target, collectionKey, {
       value: items,
       writable: true,
       enumerable: true,
@@ -142,7 +162,8 @@ function findFilteredArrayItem(
     (item) =>
       typeof item === 'object' &&
       item !== null &&
-      String((item as PatchableRecord)[filter.attr]) === filter.value
+      String((item as PatchableRecord)[resolvePatchKey(item as PatchableRecord, filter.attr)]) ===
+        filter.value
   ) as PatchableRecord | undefined;
 
   if (existing) {
@@ -175,9 +196,10 @@ function getPatchParent(
       continue;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(current, segment.key)) {
+    const resolvedKey = resolvePatchKey(current, segment.key);
+    if (!Object.prototype.hasOwnProperty.call(current, resolvedKey)) {
       if (!createIfMissing) return null;
-      Object.defineProperty(current, segment.key, {
+      Object.defineProperty(current, resolvedKey, {
         value: {},
         writable: true,
         enumerable: true,
@@ -185,10 +207,10 @@ function getPatchParent(
       });
     }
 
-    const nextValue = current[segment.key];
+    const nextValue = current[resolvedKey];
     if (typeof nextValue !== 'object' || nextValue === null) {
       if (!createIfMissing) return null;
-      Object.defineProperty(current, segment.key, {
+      Object.defineProperty(current, resolvedKey, {
         value: {},
         writable: true,
         enumerable: true,
@@ -196,7 +218,7 @@ function getPatchParent(
       });
     }
 
-    current = current[segment.key] as PatchableRecord;
+    current = current[resolvedKey] as PatchableRecord;
   }
 
   return current;
@@ -212,11 +234,12 @@ function setPatchPath(
 
   const target = segments[segments.length - 1];
   if (target.filter) {
-    const items = Array.isArray(parent[target.key])
-      ? (parent[target.key] as PatchableRecord[])
+    const collectionKey = resolvePatchKey(parent, target.key);
+    const items = Array.isArray(parent[collectionKey])
+      ? (parent[collectionKey] as PatchableRecord[])
       : [];
-    if (!Array.isArray(parent[target.key])) {
-      Object.defineProperty(parent, target.key, {
+    if (!Array.isArray(parent[collectionKey])) {
+      Object.defineProperty(parent, collectionKey, {
         value: items,
         writable: true,
         enumerable: true,
@@ -225,7 +248,7 @@ function setPatchPath(
     }
 
     const matchIndex = items.findIndex(
-      (item) => String(item[target.filter!.attr]) === target.filter!.value
+      (item) => String(item[resolvePatchKey(item, target.filter!.attr)]) === target.filter!.value
     );
     const normalizedValue =
       typeof value === 'object' && value !== null
@@ -240,7 +263,7 @@ function setPatchPath(
     return;
   }
 
-  Object.defineProperty(parent, target.key, {
+  Object.defineProperty(parent, resolvePatchKey(parent, target.key), {
     value,
     writable: true,
     enumerable: true,
@@ -254,18 +277,21 @@ function removePatchPath(root: PatchableRecord, segments: PatchPathSegment[]): v
 
   const target = segments[segments.length - 1];
   if (target.filter) {
-    const items = parent[target.key];
+    const collectionKey = resolvePatchKey(parent, target.key);
+    const items = parent[collectionKey];
     if (!Array.isArray(items)) return;
-    parent[target.key] = items.filter(
+    parent[collectionKey] = items.filter(
       (item) =>
         typeof item !== 'object' ||
         item === null ||
-        String((item as PatchableRecord)[target.filter!.attr]) !== target.filter!.value
+        String(
+          (item as PatchableRecord)[resolvePatchKey(item as PatchableRecord, target.filter!.attr)]
+        ) !== target.filter!.value
     );
     return;
   }
 
-  delete parent[target.key];
+  delete parent[resolvePatchKey(parent, target.key)];
 }
 
 /**
@@ -547,10 +573,11 @@ export function applyPatchOperations<T extends object>(
 
   for (const operation of operations) {
     const { op, path, value } = operation;
+    const normalizedOp = typeof op === 'string' ? op.toLowerCase() : op;
 
     if (!path) {
       // No path means replace entire attributes
-      if (op === 'replace' || op === 'add') {
+      if (normalizedOp === 'replace' || normalizedOp === 'add') {
         Object.assign(result, value);
       }
       continue;
@@ -563,7 +590,7 @@ export function applyPatchOperations<T extends object>(
       continue; // Skip operations that could cause prototype pollution
     }
 
-    switch (op) {
+    switch (normalizedOp) {
       case 'add':
       case 'replace':
         setPatchPath(result, pathSegments, value);
@@ -584,9 +611,89 @@ export function applyPatchOperations<T extends object>(
  */
 export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+  const rawUser = user as Record<string, unknown>;
 
-  if (!user.userName) {
+  if (typeof user.userName !== 'string' || user.userName.trim().length === 0) {
     errors.push('userName is required');
+  } else if (
+    new TextEncoder().encode(user.userName.trim()).byteLength > 1024 ||
+    /[\u0000-\u001f\u007f]/u.test(user.userName)
+  ) {
+    errors.push('userName is invalid');
+  }
+
+  for (const attribute of [
+    'externalId',
+    'displayName',
+    'nickName',
+    'profileUrl',
+    'title',
+    'userType',
+    'preferredLanguage',
+    'locale',
+    'timezone',
+  ]) {
+    if (rawUser[attribute] !== undefined && typeof rawUser[attribute] !== 'string') {
+      errors.push(`${attribute} must be a string`);
+    }
+  }
+  if (user.active !== undefined && typeof user.active !== 'boolean') {
+    errors.push('active must be a boolean');
+  }
+  validateStringObject(rawUser.name, 'name', errors, [
+    'formatted',
+    'familyName',
+    'givenName',
+    'middleName',
+    'honorificPrefix',
+    'honorificSuffix',
+  ]);
+  if (user.emails !== undefined) {
+    if (!Array.isArray(user.emails)) {
+      errors.push('emails must be an array');
+    } else {
+      for (const [index, email] of user.emails.entries()) {
+        if (!email || typeof email !== 'object' || Array.isArray(email)) {
+          errors.push(`emails[${index}] must be an object`);
+          continue;
+        }
+        const value = (email as { value?: unknown }).value;
+        if (typeof value !== 'string' || !isValidScimEmail(value)) {
+          errors.push(`emails[${index}].value is invalid`);
+        }
+        const primary = (email as { primary?: unknown }).primary;
+        if (primary !== undefined && typeof primary !== 'boolean') {
+          errors.push(`emails[${index}].primary must be a boolean`);
+        }
+      }
+    }
+  }
+  validateMultiValueAttribute(rawUser.phoneNumbers, 'phoneNumbers', errors, ['value', 'type']);
+  validateMultiValueAttribute(rawUser.addresses, 'addresses', errors, [
+    'formatted',
+    'streetAddress',
+    'locality',
+    'region',
+    'postalCode',
+    'country',
+    'type',
+  ]);
+
+  const enterprise = rawUser[SCIM_SCHEMAS.ENTERPRISE_USER];
+  validateStringObject(enterprise, SCIM_SCHEMAS.ENTERPRISE_USER, errors, [
+    'employeeNumber',
+    'costCenter',
+    'organization',
+    'division',
+    'department',
+  ]);
+  if (enterprise && typeof enterprise === 'object' && !Array.isArray(enterprise)) {
+    validateStringObject(
+      (enterprise as Record<string, unknown>).manager,
+      `${SCIM_SCHEMAS.ENTERPRISE_USER}.manager`,
+      errors,
+      ['value', '$ref', 'displayName']
+    );
   }
 
   return {
@@ -595,14 +702,130 @@ export function validateScimUser(user: Partial<ScimUser>): { valid: boolean; err
   };
 }
 
+function validateStringObject(
+  value: unknown,
+  attribute: string,
+  errors: string[],
+  stringFields: string[]
+): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    errors.push(`${attribute} must be an object`);
+    return;
+  }
+  for (const field of stringFields) {
+    const fieldValue = (value as Record<string, unknown>)[field];
+    if (fieldValue !== undefined && typeof fieldValue !== 'string') {
+      errors.push(`${attribute}.${field} must be a string`);
+    }
+  }
+}
+
+function validateMultiValueAttribute(
+  value: unknown,
+  attribute: string,
+  errors: string[],
+  stringFields: string[]
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push(`${attribute} must be an array`);
+    return;
+  }
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      errors.push(`${attribute}[${index}] must be an object`);
+      continue;
+    }
+    for (const field of stringFields) {
+      const fieldValue = (item as Record<string, unknown>)[field];
+      if (fieldValue !== undefined && typeof fieldValue !== 'string') {
+        errors.push(`${attribute}[${index}].${field} must be a string`);
+      }
+    }
+    const primary = (item as Record<string, unknown>).primary;
+    if (primary !== undefined && typeof primary !== 'boolean') {
+      errors.push(`${attribute}[${index}].primary must be a boolean`);
+    }
+  }
+}
+
+function isValidScimEmail(value: string): boolean {
+  const normalized = value.trim();
+  if (
+    normalized.length === 0 ||
+    new TextEncoder().encode(normalized).byteLength > 320 ||
+    /[\s\p{Cc}\p{Cf}]/u.test(normalized)
+  ) {
+    return false;
+  }
+  const firstAt = normalized.indexOf('@');
+  return firstAt > 0 && firstAt === normalized.lastIndexOf('@') && firstAt < normalized.length - 1;
+}
+
+export function validateScimPatchOp(value: unknown): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { valid: false, errors: ['Patch request must be an object'] };
+  }
+  const patch = value as Record<string, unknown>;
+  if (
+    !Array.isArray(patch.schemas) ||
+    !patch.schemas.every((schema) => typeof schema === 'string') ||
+    !patch.schemas.includes(SCIM_SCHEMAS.PATCH_OP)
+  ) {
+    errors.push(`schemas must include ${SCIM_SCHEMAS.PATCH_OP}`);
+  }
+  if (!Array.isArray(patch.Operations) || patch.Operations.length === 0) {
+    errors.push('Operations must be a non-empty array');
+    return { valid: errors.length === 0, errors };
+  }
+  for (const [index, rawOperation] of patch.Operations.entries()) {
+    if (!rawOperation || typeof rawOperation !== 'object' || Array.isArray(rawOperation)) {
+      errors.push(`Operations[${index}] must be an object`);
+      continue;
+    }
+    const operation = rawOperation as Record<string, unknown>;
+    const op = typeof operation.op === 'string' ? operation.op.toLowerCase() : '';
+    if (!['add', 'remove', 'replace'].includes(op)) {
+      errors.push(`Operations[${index}].op is unsupported`);
+    }
+    if (operation.path !== undefined && typeof operation.path !== 'string') {
+      errors.push(`Operations[${index}].path must be a string`);
+    }
+    if (
+      operation.path === undefined &&
+      (op === 'add' || op === 'replace') &&
+      (!operation.value || typeof operation.value !== 'object' || Array.isArray(operation.value))
+    ) {
+      errors.push(`Operations[${index}].value must be an object when path is omitted`);
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
+
 /**
  * Validate required SCIM Group fields
  */
 export function validateScimGroup(group: Partial<ScimGroup>): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  if (!group.displayName) {
+  if (typeof group.displayName !== 'string' || group.displayName.trim().length === 0) {
     errors.push('displayName is required');
+  }
+  if (group.externalId !== undefined && typeof group.externalId !== 'string') {
+    errors.push('externalId must be a string');
+  }
+  if (group.members !== undefined && !Array.isArray(group.members)) {
+    errors.push('members must be an array');
+  } else if (Array.isArray(group.members)) {
+    for (const [index, member] of group.members.entries()) {
+      if (!member || typeof member !== 'object' || Array.isArray(member)) {
+        errors.push(`members[${index}] must be an object`);
+      } else if (typeof (member as { value?: unknown }).value !== 'string') {
+        errors.push(`members[${index}].value must be a string`);
+      }
+    }
   }
 
   return {

@@ -25202,7 +25202,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profiles_title: string
 	/**
-	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​f​r​o​m​ ​C​S​V​ ​f​i​l​e​s​ ​o​r​ ​m​a​n​u​a​l​ ​c​o​l​u​m​n​ ​d​e​f​i​n​i​t​i​o​n​s​,​ ​t​h​e​n​ ​s​e​l​e​c​t​ ​t​h​e​m​ ​i​n​ ​t​h​e​ ​F​l​o​w​ ​E​d​i​t​o​r​.​ ​T​h​e​ ​b​u​i​l​t​-​i​n​ ​S​C​I​M​ ​2​.​0​ ​U​s​e​r​ ​s​o​u​r​c​e​ ​i​s​ ​r​e​a​d​y​ ​f​o​r​ ​i​n​b​o​u​n​d​ ​p​r​o​v​i​s​i​o​n​i​n​g​ ​m​a​p​p​i​n​g​s​;​ ​o​t​h​e​r​ ​p​r​o​t​o​c​o​l​ ​a​d​a​p​t​e​r​s​ ​w​i​l​l​ ​a​p​p​e​a​r​ ​h​e​r​e​ ​a​s​ ​t​h​e​y​ ​a​r​e​ ​a​d​d​e​d​.
+	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​,​ ​t​h​e​n​ ​s​e​l​e​c​t​ ​a​c​t​i​v​e​ ​v​e​r​s​i​o​n​s​ ​i​n​ ​t​h​e​ ​F​l​o​w​ ​E​d​i​t​o​r​.​ ​S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​c​a​n​ ​b​e​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​s​t​a​n​d​a​r​d​ ​i​n​b​o​u​n​d​ ​t​e​m​p​l​a​t​e​s​.
 	 */
 	admin_identity_mapping_profiles_description: string
 	/**
@@ -25780,7 +25780,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_destination_title: string
 	/**
-	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​f​r​o​m​ ​C​S​V​ ​f​i​l​e​s​ ​o​r​ ​m​a​n​u​a​l​ ​c​o​l​u​m​n​ ​d​e​f​i​n​i​t​i​o​n​s​.
+	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​ ​f​r​o​m​ ​C​S​V​ ​i​n​p​u​t​,​ ​S​C​I​M​ ​t​e​m​p​l​a​t​e​s​,​ ​o​r​ ​m​a​n​u​a​l​ ​d​e​f​i​n​i​t​i​o​n​s​.
 	 */
 	admin_identity_mapping_profile_edit_source_description: string
 	/**
@@ -25823,6 +25823,30 @@ type RootTranslation = {
 	 * C​S​V​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
 	 */
 	admin_identity_mapping_profile_edit_csv_source_profile: string
+	/**
+	 * S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
+	 */
+	admin_identity_mapping_profile_edit_scim_source_profile: string
+	/**
+	 * W​o​r​k​f​o​r​c​e​ ​S​C​I​M​ ​U​s​e​r
+	 */
+	admin_identity_mapping_profile_edit_scim_display_placeholder: string
+	/**
+	 * S​c​h​e​m​a​ ​U​R​I​s
+	 */
+	admin_identity_mapping_profile_edit_scim_schema_uris: string
+	/**
+	 * S​C​I​M​ ​a​t​t​r​i​b​u​t​e​s
+	 */
+	admin_identity_mapping_profile_edit_scim_attributes: string
+	/**
+	 * P​a​t​h
+	 */
+	admin_identity_mapping_profile_edit_path: string
+	/**
+	 * A​d​d​ ​S​C​I​M​ ​a​t​t​r​i​b​u​t​e
+	 */
+	admin_identity_mapping_profile_edit_add_scim_attribute: string
 	/**
 	 * D​i​s​p​l​a​y​ ​n​a​m​e
 	 */
@@ -25968,6 +25992,10 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_required: string
 	/**
+	 * M​a​p​p​i​n​g​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_identity_mapping_profile_edit_mapping_required: string
+	/**
 	 * E​x​a​m​p​l​e​s
 	 */
 	admin_identity_mapping_profile_edit_examples: string
@@ -26008,6 +26036,10 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_saving: string
 	/**
+	 * S​a​v​e
+	 */
+	admin_identity_mapping_profile_edit_save: string
+	/**
 	 * S​a​v​e​ ​d​r​a​f​t​ ​p​r​o​f​i​l​e
 	 */
 	admin_identity_mapping_profile_edit_save_draft_profile: string
@@ -26035,6 +26067,10 @@ type RootTranslation = {
 	 * S​t​a​r​t​ ​f​r​o​m​ ​a​ ​p​r​o​f​i​l​e​ ​s​o​u​r​c​e
 	 */
 	admin_identity_mapping_profile_edit_start_from_source: string
+	/**
+	 * S​o​u​r​c​e​ ​c​r​e​a​t​e​ ​m​e​t​h​o​d
+	 */
+	admin_identity_mapping_profile_edit_source_method_aria: string
 	/**
 	 * D​e​s​t​i​n​a​t​i​o​n​ ​c​r​e​a​t​e​ ​m​e​t​h​o​d
 	 */
@@ -26085,6 +26121,18 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_copy: string
 	/**
+	 * E​x​i​s​t​i​n​g​ ​S​C​I​M​ ​s​o​u​r​c​e
+	 */
+	admin_identity_mapping_profile_edit_existing_scim_source: string
+	/**
+	 * C​h​o​o​s​e​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
+	 */
+	admin_identity_mapping_profile_edit_choose_source_profile: string
+	/**
+	 * S​C​I​M​ ​s​o​u​r​c​e​ ​t​e​m​p​l​a​t​e​ ​b​r​o​w​s​e​r
+	 */
+	admin_identity_mapping_profile_edit_source_template_browser_aria: string
+	/**
 	 * D​e​s​t​i​n​a​t​i​o​n​ ​t​e​m​p​l​a​t​e​ ​b​r​o​w​s​e​r
 	 */
 	admin_identity_mapping_profile_edit_template_browser_aria: string
@@ -26113,6 +26161,14 @@ type RootTranslation = {
 	 * N​o​ ​t​e​m​p​l​a​t​e​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​d​e​s​t​i​n​a​t​i​o​n​ ​t​y​p​e​.
 	 */
 	admin_identity_mapping_profile_edit_no_templates: string
+	/**
+	 * N​o​ ​t​e​m​p​l​a​t​e​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​s​o​u​r​c​e​ ​t​y​p​e​.
+	 */
+	admin_identity_mapping_profile_edit_no_source_templates: string
+	/**
+	 * S​t​a​r​t​ ​w​i​t​h​ ​a​ ​S​C​I​M​ ​U​s​e​r​ ​s​o​u​r​c​e​ ​c​o​n​t​a​i​n​i​n​g​ ​u​s​e​r​N​a​m​e​ ​a​n​d​ ​p​r​i​m​a​r​y​ ​e​m​a​i​l​.
+	 */
+	admin_identity_mapping_profile_edit_blank_scim_source: string
 	/**
 	 * S​t​a​r​t​ ​w​i​t​h​ ​a​ ​b​l​a​n​k​ ​{​k​i​n​d​}​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​.
 	 * @param {string} kind
@@ -26454,6 +26510,10 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_save_csv_required: string
 	/**
+	 * E​n​t​e​r​ ​a​ ​d​i​s​p​l​a​y​ ​n​a​m​e​ ​a​n​d​ ​i​n​c​l​u​d​e​ ​t​h​e​ ​S​C​I​M​ ​u​s​e​r​N​a​m​e​ ​a​t​t​r​i​b​u​t​e​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
+	 */
+	admin_identity_mapping_profile_edit_save_scim_required: string
+	/**
 	 * S​a​v​e​d​ ​{​n​a​m​e​}​.​ ​R​e​v​i​e​w​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​i​t​ ​b​e​f​o​r​e​ ​F​l​o​w​ ​E​d​i​t​o​r​ ​u​s​e​.
 	 * @param {string} name
 	 */
@@ -26462,6 +26522,10 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​C​S​V​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
 	 */
 	admin_identity_mapping_profile_edit_save_csv_failed: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
+	 */
+	admin_identity_mapping_profile_edit_save_scim_failed: string
 	/**
 	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​ ​a​n​d​ ​c​o​n​f​i​r​m​ ​b​l​o​c​k​i​n​g​ ​r​e​l​e​a​s​e​ ​w​a​r​n​i​n​g​s​.
 	 */
@@ -26528,15 +26592,29 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_existing_schema_required: string
 	/**
+	 * C​h​o​o​s​e​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​ ​w​i​t​h​ ​a​n​ ​e​d​i​t​a​b​l​e​ ​s​c​h​e​m​a​.
+	 */
+	admin_identity_mapping_profile_edit_existing_source_schema_required: string
+	/**
 	 * C​o​p​i​e​d​ ​{​n​a​m​e​}​.​ ​S​a​v​e​ ​i​t​ ​a​s​ ​a​ ​n​e​w​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​.
 	 * @param {string} name
 	 */
 	admin_identity_mapping_profile_edit_copied_existing: RequiredParams<'name'>
 	/**
+	 * C​o​p​i​e​d​ ​{​n​a​m​e​}​.​ ​S​a​v​e​ ​i​t​ ​a​s​ ​a​ ​n​e​w​ ​S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​.
+	 * @param {string} name
+	 */
+	admin_identity_mapping_profile_edit_copied_existing_source: RequiredParams<'name'>
+	/**
 	 * C​o​p​i​e​d​ ​t​e​m​p​l​a​t​e​ ​{​n​a​m​e​}​.​ ​S​a​v​e​ ​i​t​ ​a​s​ ​a​ ​n​e​w​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​.
 	 * @param {string} name
 	 */
 	admin_identity_mapping_profile_edit_copied_template: RequiredParams<'name'>
+	/**
+	 * C​o​p​i​e​d​ ​t​e​m​p​l​a​t​e​ ​{​n​a​m​e​}​.​ ​S​a​v​e​ ​i​t​ ​a​s​ ​a​ ​n​e​w​ ​S​C​I​M​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​.
+	 * @param {string} name
+	 */
+	admin_identity_mapping_profile_edit_copied_source_template: RequiredParams<'name'>
 	/**
 	 * {​l​a​b​e​l​}​ ​m​u​s​t​ ​b​e​ ​a​ ​J​S​O​N​ ​o​b​j​e​c​t
 	 * @param {string} label
@@ -27073,6 +27151,15 @@ type RootTranslation = {
 	 * R​e​q​u​i​r​e​d
 	 */
 	admin_identity_mapping_flow_required_badge: string
+	/**
+	 * M​a​p​p​i​n​g​ ​r​e​q​u​i​r​e​d
+	 */
+	admin_identity_mapping_flow_mapping_required_badge: string
+	/**
+	 * M​a​p​p​i​n​g​-​r​e​q​u​i​r​e​d​ ​s​o​u​r​c​e​ ​f​i​e​l​d​s​ ​a​r​e​ ​n​o​t​ ​c​o​n​n​e​c​t​e​d​:​ ​{​f​i​e​l​d​s​}
+	 * @param {string} fields
+	 */
+	admin_identity_mapping_flow_mapping_required_not_connected: RequiredParams<'fields'>
 	/**
 	 * M​u​l​t​i​p​l​e​ ​v​a​l​u​e​s
 	 */
@@ -57396,7 +57483,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profiles_title: () => LocalizedString
 	/**
-	 * Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. The built-in SCIM 2.0 User source is ready for inbound provisioning mappings; other protocol adapters will appear here as they are added.
+	 * Register source and destination profiles, then select active versions in the Flow Editor. SCIM source profiles can be created from standard inbound templates.
 	 */
 	admin_identity_mapping_profiles_description: () => LocalizedString
 	/**
@@ -57972,7 +58059,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_destination_title: () => LocalizedString
 	/**
-	 * Register source profiles from CSV files or manual column definitions.
+	 * Register source profiles from CSV input, SCIM templates, or manual definitions.
 	 */
 	admin_identity_mapping_profile_edit_source_description: () => LocalizedString
 	/**
@@ -58015,6 +58102,30 @@ Remove this role from {email}?
 	 * CSV source profile
 	 */
 	admin_identity_mapping_profile_edit_csv_source_profile: () => LocalizedString
+	/**
+	 * SCIM source profile
+	 */
+	admin_identity_mapping_profile_edit_scim_source_profile: () => LocalizedString
+	/**
+	 * Workforce SCIM User
+	 */
+	admin_identity_mapping_profile_edit_scim_display_placeholder: () => LocalizedString
+	/**
+	 * Schema URIs
+	 */
+	admin_identity_mapping_profile_edit_scim_schema_uris: () => LocalizedString
+	/**
+	 * SCIM attributes
+	 */
+	admin_identity_mapping_profile_edit_scim_attributes: () => LocalizedString
+	/**
+	 * Path
+	 */
+	admin_identity_mapping_profile_edit_path: () => LocalizedString
+	/**
+	 * Add SCIM attribute
+	 */
+	admin_identity_mapping_profile_edit_add_scim_attribute: () => LocalizedString
 	/**
 	 * Display name
 	 */
@@ -58160,6 +58271,10 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_required: () => LocalizedString
 	/**
+	 * Mapping required
+	 */
+	admin_identity_mapping_profile_edit_mapping_required: () => LocalizedString
+	/**
 	 * Examples
 	 */
 	admin_identity_mapping_profile_edit_examples: () => LocalizedString
@@ -58200,6 +58315,10 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_saving: () => LocalizedString
 	/**
+	 * Save
+	 */
+	admin_identity_mapping_profile_edit_save: () => LocalizedString
+	/**
 	 * Save draft profile
 	 */
 	admin_identity_mapping_profile_edit_save_draft_profile: () => LocalizedString
@@ -58227,6 +58346,10 @@ Remove this role from {email}?
 	 * Start from a profile source
 	 */
 	admin_identity_mapping_profile_edit_start_from_source: () => LocalizedString
+	/**
+	 * Source create method
+	 */
+	admin_identity_mapping_profile_edit_source_method_aria: () => LocalizedString
 	/**
 	 * Destination create method
 	 */
@@ -58276,6 +58399,18 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_copy: () => LocalizedString
 	/**
+	 * Existing SCIM source
+	 */
+	admin_identity_mapping_profile_edit_existing_scim_source: () => LocalizedString
+	/**
+	 * Choose source profile
+	 */
+	admin_identity_mapping_profile_edit_choose_source_profile: () => LocalizedString
+	/**
+	 * SCIM source template browser
+	 */
+	admin_identity_mapping_profile_edit_source_template_browser_aria: () => LocalizedString
+	/**
 	 * Destination template browser
 	 */
 	admin_identity_mapping_profile_edit_template_browser_aria: () => LocalizedString
@@ -58303,6 +58438,14 @@ Remove this role from {email}?
 	 * No templates are registered for this destination type.
 	 */
 	admin_identity_mapping_profile_edit_no_templates: () => LocalizedString
+	/**
+	 * No templates are registered for this source type.
+	 */
+	admin_identity_mapping_profile_edit_no_source_templates: () => LocalizedString
+	/**
+	 * Start with a SCIM User source containing userName and primary email.
+	 */
+	admin_identity_mapping_profile_edit_blank_scim_source: () => LocalizedString
 	/**
 	 * Start with a blank {kind} destination profile.
 	 */
@@ -58636,6 +58779,10 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_save_csv_required: () => LocalizedString
 	/**
+	 * Enter a display name and include the SCIM userName attribute before saving.
+	 */
+	admin_identity_mapping_profile_edit_save_scim_required: () => LocalizedString
+	/**
 	 * Saved {name}. Review and activate it before Flow Editor use.
 	 */
 	admin_identity_mapping_profile_edit_saved_review_activate: (arg: { name: string }) => LocalizedString
@@ -58643,6 +58790,10 @@ Remove this role from {email}?
 	 * Failed to save CSV source profile
 	 */
 	admin_identity_mapping_profile_edit_save_csv_failed: () => LocalizedString
+	/**
+	 * Failed to save SCIM source profile
+	 */
+	admin_identity_mapping_profile_edit_save_scim_failed: () => LocalizedString
 	/**
 	 * Complete the destination profile and confirm blocking release warnings.
 	 */
@@ -58708,13 +58859,25 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_profile_edit_existing_schema_required: () => LocalizedString
 	/**
+	 * Choose an existing SCIM source profile with an editable schema.
+	 */
+	admin_identity_mapping_profile_edit_existing_source_schema_required: () => LocalizedString
+	/**
 	 * Copied {name}. Save it as a new destination profile.
 	 */
 	admin_identity_mapping_profile_edit_copied_existing: (arg: { name: string }) => LocalizedString
 	/**
+	 * Copied {name}. Save it as a new SCIM source profile.
+	 */
+	admin_identity_mapping_profile_edit_copied_existing_source: (arg: { name: string }) => LocalizedString
+	/**
 	 * Copied template {name}. Save it as a new destination profile.
 	 */
 	admin_identity_mapping_profile_edit_copied_template: (arg: { name: string }) => LocalizedString
+	/**
+	 * Copied template {name}. Save it as a new SCIM source profile.
+	 */
+	admin_identity_mapping_profile_edit_copied_source_template: (arg: { name: string }) => LocalizedString
 	/**
 	 * {label} must be a JSON object
 	 */
@@ -59243,6 +59406,14 @@ Remove this role from {email}?
 	 * Required
 	 */
 	admin_identity_mapping_flow_required_badge: () => LocalizedString
+	/**
+	 * Mapping required
+	 */
+	admin_identity_mapping_flow_mapping_required_badge: () => LocalizedString
+	/**
+	 * Mapping-required source fields are not connected: {fields}
+	 */
+	admin_identity_mapping_flow_mapping_required_not_connected: (arg: { fields: string }) => LocalizedString
 	/**
 	 * Multiple values
 	 */

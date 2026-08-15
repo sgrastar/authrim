@@ -495,6 +495,17 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository source profiles', () => {
+  it('selects the newest created source version when lifecycle timestamps tie', async () => {
+    const adapter = createAdapter({ queryRows: [] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listSourceProfiles('tenant_a');
+
+    expect(adapter.queries[0]?.sql).toContain(
+      'ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC'
+    );
+  });
+
   it('includes built-in directory facts as an external schema', async () => {
     const adapter = createAdapter({ queryRows: [] });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -618,6 +629,74 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
       expect.stringContaining('UPDATE source_profile_versions'),
       expect.stringContaining('UPDATE source_profiles'),
     ]);
+  });
+
+  it('creates a tenant-managed SCIM source profile from template schema metadata', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const created = await repository.createSourceProfile('tenant_a', {
+      sourceType: 'scim',
+      profileKey: 'scim_enterprise_user',
+      displayName: 'SCIM Enterprise User',
+      schema: {
+        sourceType: 'scim',
+        resourceType: 'User',
+        schemaUris: [
+          'urn:ietf:params:scim:schemas:core:2.0:User',
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+        ],
+        attributes: [
+          {
+            name: 'userName',
+            label: 'User name',
+            type: 'string',
+            required: true,
+            mappingRequired: true,
+          },
+          {
+            name: 'enterprise.employeeNumber',
+            label: 'Employee number',
+            type: 'string',
+          },
+        ],
+      },
+    });
+
+    expect(created).toMatchObject({
+      sourceType: 'scim',
+      profileKey: 'scim_enterprise_user',
+      version: {
+        lifecycleState: 'draft',
+        schema: {
+          sourceType: 'scim',
+          resourceType: 'User',
+        },
+      },
+    });
+    expect(adapter.executes[0]?.params?.[2]).toBe('scim');
+  });
+
+  it('rejects a non-boolean mappingRequired source field flag', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createSourceProfile('tenant_a', {
+        sourceType: 'scim',
+        profileKey: 'invalid_mapping_required',
+        displayName: 'Invalid mapping required',
+        schema: {
+          sourceType: 'scim',
+          attributes: [{ name: 'userName', mappingRequired: 'yes' }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('mappingRequired must be boolean'),
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('blocks review until PII and regulated candidates are confirmed', async () => {
@@ -777,6 +856,17 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository destination profiles', () => {
+  it('selects the newest created destination version when lifecycle timestamps tie', async () => {
+    const adapter = createAdapter({ queryRows: [] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listDestinationProfiles('tenant_a');
+
+    expect(adapter.queries[0]?.sql).toContain(
+      'ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC'
+    );
+  });
+
   it('creates OIDC attribute registries and validates destination profile release contracts', async () => {
     const adapter = createAdapter({
       queryRows: [
@@ -2017,6 +2107,123 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       code: 'conflict',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects saving when a mapping-required source field is not connected', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_1',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [
+              { name: 'userName', mappingRequired: true },
+              { name: 'displayName', mappingRequired: false },
+            ],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: ['source-profile-source_profile_1'],
+        rules: [
+          {
+            ruleKey: 'display-name',
+            ruleKind: 'source_mapping',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  profileId: 'source-profile-source_profile_1',
+                  namespace: 'scim.attribute',
+                  path: 'displayName',
+                },
+                targetRef: { namespace: 'authrim.profile', path: 'display_name' },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: 'mapping-required source fields are not connected: scim_users:userName',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('saves when every mapping-required source field is connected', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_1',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [{ name: 'userName', mappingRequired: true }],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: ['source-profile-source_profile_1'],
+        rules: [
+          {
+            ruleKey: 'user-name',
+            ruleKind: 'source_mapping',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  profileId: 'source-profile-source_profile_1',
+                  namespace: 'scim.attribute',
+                  path: 'userName',
+                },
+                targetRef: { namespace: 'authrim.profile', path: 'preferred_username' },
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      fieldMappingSetId: 'policy_1',
+      versionLabel: 'v1',
+    });
+    expect(
+      adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
+    ).toBe(true);
   });
 
   it('rejects sensitive policy rule references before persistence', async () => {
@@ -3530,26 +3737,17 @@ describe('identity mapping control plane Admin API handlers', () => {
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { protocolSchemas: Array<Record<string, unknown>> };
-    expect(body.protocolSchemas).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'builtin_scim_user_schema',
-          tenantId: 'tenant_a',
-          protocol: 'scim',
-          schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
-          lifecycleState: 'active',
-        }),
-        expect.objectContaining({
-          id: 'protocol_schema_1',
-          tenantId: 'tenant_a',
-          protocol: 'scim',
-          schemaKey: 'User',
-          schemaVersion: '2.0',
-          schema: { attributes: [{ name: 'userName' }] },
-          lifecycleState: 'active',
-        }),
-      ])
-    );
+    expect(body.protocolSchemas).toEqual([
+      expect.objectContaining({
+        id: 'protocol_schema_1',
+        tenantId: 'tenant_a',
+        protocol: 'scim',
+        schemaKey: 'User',
+        schemaVersion: '2.0',
+        schema: { attributes: [{ name: 'userName' }] },
+        lifecycleState: 'active',
+      }),
+    ]);
   });
 
   it('rejects tenant admins creating platform-scoped destination profiles', async () => {

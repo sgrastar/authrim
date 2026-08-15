@@ -15,6 +15,7 @@ import { AccountDirectoryCoordinator } from './account-directory-coordinator';
 import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
 import { AccountDirectoryRemovalCoordinator } from './account-directory-removal';
 import { AccountCreationOperationRepository } from './account-creation-operation';
+import { processAccountLifecycleEventForOperation } from './directory-scheduled';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 
 export interface AccountDirectoryRpcProps {
@@ -67,7 +68,10 @@ const EXPOSED_ERROR =
 const SAFE_DIAGNOSTIC_ERROR =
   /^(account_creation_[a-z0-9_]+|account_directory_[a-z0-9_]+|directory_[a-z0-9_]+|invalid_[a-z0-9_]+|lookup_registry_[a-z0-9_]+|control_plane_sensitive_[a-z0-9_:.$-]+)$/u;
 
-function logDirectoryFailure(action: 'publish' | 'remove', error: unknown): void {
+function logDirectoryFailure(
+  action: 'publish' | 'remove' | 'lifecycle_event',
+  error: unknown
+): void {
   const errorCode =
     error instanceof Error && SAFE_DIAGNOSTIC_ERROR.test(error.message)
       ? error.message
@@ -119,6 +123,16 @@ export class AccountDirectoryEntrypoint extends WorkerEntrypoint<Env, AccountDir
               'account-directory-lifecycle-events'
             ),
           });
+          this.ctx.waitUntil(
+            processAccountLifecycleEventForOperation(this.env, tenantCore, {
+              tenantId: activatedPublication.tenantId,
+              operationId: activatedPublication.operationId,
+              now,
+            }).catch((error) => {
+              logDirectoryFailure('lifecycle_event', error);
+              return false;
+            })
+          );
         },
       });
       return await coordinator.publish(publication);

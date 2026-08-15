@@ -50,6 +50,7 @@ export interface MappingNode {
 	locked?: boolean;
 	privacy?: 'PII' | 'non-PII' | 'Other';
 	required?: boolean;
+	mappingRequired?: boolean;
 	transformOperation?: TransformOperation;
 	transformParameters?: Record<string, string | boolean>;
 	layoutPosition?: {
@@ -141,6 +142,7 @@ export interface MappingDraftRuleInput {
 export interface MappingDraftPayload {
 	versionLabel: string;
 	compatibilityRange?: string;
+	sourceProfileIds?: string[];
 	rules: MappingDraftRuleInput[];
 	metadata: {
 		sampleId: string;

@@ -525,8 +525,21 @@ export async function createMockEnv(): Promise<Env> {
   class MockRefreshTokenRotator {
     private families = new Map<
       string,
-      { token: string; userId: string; clientId: string; scope: string; expiresAt: number }
+      {
+        jti: string;
+        userId: string;
+        clientId: string;
+        tenantId: string;
+        scope: string;
+        resourceAudience?: string | string[];
+        version: number;
+        expiresAt: number;
+      }
     >();
+
+    private familyKey(userId: string, clientId: string): string {
+      return `${userId}:${clientId}`;
+    }
 
     async createFamilyRpc(request: {
       jti: string;
@@ -534,12 +547,17 @@ export async function createMockEnv(): Promise<Env> {
       clientId: string;
       scope: string;
       ttl: number;
+      tenantId: string;
+      resourceAudience?: string | string[];
     }) {
-      this.families.set(request.jti, {
-        token: request.jti,
+      this.families.set(this.familyKey(request.userId, request.clientId), {
+        jti: request.jti,
         userId: request.userId,
         clientId: request.clientId,
+        tenantId: request.tenantId,
         scope: request.scope,
+        resourceAudience: request.resourceAudience,
+        version: 1,
         expiresAt: Date.now() + request.ttl * 1000,
       });
       return {
@@ -548,6 +566,77 @@ export async function createMockEnv(): Promise<Env> {
         expiresIn: request.ttl,
         allowedScope: request.scope,
       };
+    }
+
+    async validateRpc(userId: string, version: number, clientId: string) {
+      const family = this.families.get(this.familyKey(userId, clientId));
+      if (!family || family.expiresAt <= Date.now() || family.version !== version) {
+        return { valid: false };
+      }
+      return {
+        valid: true,
+        family: {
+          tenant_id: family.tenantId,
+          version: family.version,
+          last_jti: family.jti,
+          last_used_at: Date.now(),
+          expires_at: family.expiresAt,
+          user_id: family.userId,
+          client_id: family.clientId,
+          allowed_scope: family.scope,
+          resource_aud: family.resourceAudience,
+        },
+      };
+    }
+
+    async rotateRpc(request: {
+      incomingVersion: number;
+      incomingJti: string;
+      userId: string;
+      clientId: string;
+      tenantId: string;
+      requestedScope?: string;
+    }) {
+      const key = this.familyKey(request.userId, request.clientId);
+      const family = this.families.get(key);
+      if (
+        !family ||
+        family.tenantId !== request.tenantId ||
+        family.version !== request.incomingVersion ||
+        family.jti !== request.incomingJti
+      ) {
+        throw new Error('Refresh token family validation failed');
+      }
+      const requestedScope = request.requestedScope ?? family.scope;
+      const allowed = new Set(family.scope.split(' ').filter(Boolean));
+      if (
+        !requestedScope
+          .split(' ')
+          .filter(Boolean)
+          .every((scope) => allowed.has(scope))
+      ) {
+        throw new Error('Requested scope exceeds original scope');
+      }
+      family.version += 1;
+      family.jti = family.jti.replace(/rt_[^_]+$/, `rt_${crypto.randomUUID()}`);
+      this.families.set(key, family);
+      return {
+        newVersion: family.version,
+        newJti: family.jti,
+        expiresIn: Math.max(0, Math.floor((family.expiresAt - Date.now()) / 1000)),
+        allowedScope: requestedScope,
+        resourceAudience: family.resourceAudience,
+      };
+    }
+
+    async revokeByJtiRpc(jti: string): Promise<boolean> {
+      for (const [key, family] of this.families.entries()) {
+        if (family.jti === jti) {
+          this.families.delete(key);
+          return true;
+        }
+      }
+      return false;
     }
 
     async fetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
@@ -564,11 +653,13 @@ export async function createMockEnv(): Promise<Env> {
           ttl: number;
         };
 
-        this.families.set(body.token, {
-          token: body.token,
+        this.families.set(this.familyKey(body.userId, body.clientId), {
+          jti: body.token,
           userId: body.userId,
           clientId: body.clientId,
+          tenantId: 'default',
           scope: body.scope,
+          version: 1,
           expiresAt: Date.now() + body.ttl * 1000,
         });
 
@@ -577,7 +668,7 @@ export async function createMockEnv(): Promise<Env> {
 
       if (request.method === 'GET' && path.endsWith('/validate')) {
         const token = url.searchParams.get('token') || '';
-        const record = this.families.get(token);
+        const record = Array.from(this.families.values()).find((family) => family.jti === token);
 
         if (!record || record.expiresAt <= Date.now()) {
           return jsonResponse({ valid: false }, 404);
@@ -1102,6 +1193,10 @@ export async function createMockEnv(): Promise<Env> {
 
     constructor(clientsKV: MockKVNamespace) {
       this.clientsKV = clientsKV;
+    }
+
+    withSession(): MockD1Database {
+      return this;
     }
 
     prepare(sql: string) {

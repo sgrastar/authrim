@@ -370,17 +370,21 @@ export async function attemptImmediateAccountDirectoryPublication(
   publication: AccountDirectoryPublication
 ): Promise<AccountDirectoryPublishResult> {
   if (binding) {
-    try {
-      const result = await binding.publishAccountDirectory(publication);
-      if (
-        result.status === 201 &&
-        result.accountId === publication.accountId &&
-        result.operationId === publication.operationId
-      ) {
-        return result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await binding.publishAccountDirectory(publication);
+        if (
+          result.status === 201 &&
+          result.accountId === publication.accountId &&
+          result.operationId === publication.operationId
+        ) {
+          return result;
+        }
+        break;
+      } catch {
+        // A publication is fenced by its operation ID and safe to retry once. The prepared outbox
+        // remains the durable retry boundary if both immediate attempts lose their response.
       }
-    } catch {
-      // The prepared outbox is the durable retry boundary.
     }
   }
   return {

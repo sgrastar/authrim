@@ -62,13 +62,34 @@ describe('activatePublishedAccountAuthenticationState', () => {
     });
   });
 
-  it('fails closed when Core is not active after directory publication', async () => {
+  it('preserves an inactive Core account after directory publication', async () => {
     mocks.findState.mockResolvedValue({
       userId: 'user-1',
       accountType: 'end_user',
       lifecycle: 'inactive',
       sourceVersionMs: 1_700_000_000_000,
     });
+
+    const env = { SESSION_REVOCATION_STORE: {} } as Pick<Env, 'SESSION_REVOCATION_STORE'>;
+    await activatePublishedAccountAuthenticationState(
+      env,
+      {} as D1Database,
+      publication,
+      1_700_000_001
+    );
+
+    expect(mocks.transition).toHaveBeenCalledWith(env, {
+      tenantId: 'default',
+      userId: 'user-1',
+      lifecycle: 'inactive',
+      sourceVersionMs: 1_700_000_001_000,
+      operationId: 'directory.account-create-operation-1',
+      revokeSessions: true,
+    });
+  });
+
+  it('fails closed when the canonical authentication state is missing', async () => {
+    mocks.findState.mockResolvedValue(null);
 
     await expect(
       activatePublishedAccountAuthenticationState(

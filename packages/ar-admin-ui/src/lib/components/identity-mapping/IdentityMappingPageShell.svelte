@@ -544,6 +544,7 @@
 		const version = await adminIdentityMappingAPI.createFieldMappingVersion(policy.id, {
 			versionLabel: draft.versionLabel,
 			compatibilityRange: draft.compatibilityRange,
+			sourceProfileIds: draft.sourceProfileIds,
 			rules: draft.rules
 		});
 		const snapshot = await adminIdentityMappingAPI.compileFieldMappingVersion(

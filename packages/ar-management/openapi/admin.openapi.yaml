@@ -9619,7 +9619,8 @@ paths:
       description: >-
         Creates a draft version for a field mapping set with rules, edges, transforms, validation
         rules, release rules, and conflict rules. Mapping edges cannot target claims owned by an OIDC
-        or introspection protocol envelope.
+        or introspection protocol envelope. Every source field marked mappingRequired in a referenced
+        Source Profile must be connected by an edge.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingVersionMutation'
@@ -11033,7 +11034,7 @@ paths:
       operationId: getApiAdminFieldMappingSourceProfiles
       summary: List source profiles.
       description: >-
-        Lists source profiles for CSV or SAML identity data sources, including active version
+        Lists source profiles for CSV, SCIM, SAML, or directory identity data sources, including active version
         metadata and lifecycle state.
       responses:
         '200':
@@ -53498,6 +53499,13 @@ components:
           type: string
         authorId:
           type: string
+        sourceProfileIds:
+          type: array
+          description: >-
+            Source Profile references validated for mappingRequired fields, including profiles with
+            no connected edges yet.
+          items:
+            type: string
         rules:
           type: array
           items:
@@ -54964,7 +54972,9 @@ components:
           type: string
           enum:
             - csv
+            - scim
             - saml
+            - directory
         profileKey:
           type: string
         displayName:
@@ -55001,7 +55011,9 @@ components:
           type: string
           enum:
             - csv
+            - scim
             - saml
+            - directory
         profileKey:
           type: string
         displayName:

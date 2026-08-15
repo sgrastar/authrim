@@ -82,9 +82,14 @@ function d1(database: DatabaseSync): D1Database {
   return { ...session, withSession: () => session } as unknown as D1Database;
 }
 
-function index(generation: number, digest: string, bucket: number): LookupBlindIndex {
+function index(
+  generation: number,
+  digest: string,
+  bucket: number,
+  indexKind: LookupBlindIndex['indexKind'] = 'email_exact'
+): LookupBlindIndex {
   return {
-    indexKind: 'email_exact',
+    indexKind,
     normalizationVersion: 1,
     hmacKeyGeneration: generation,
     digest,
@@ -102,6 +107,7 @@ describe('IdentifierReplacementOperationRepository', () => {
     for (const migrationPath of [
       'migrations/pii/001_pii_schema.sql',
       'migrations/pii/004_identifier_replacement_authority.sql',
+      'migrations/pii/011_allow_external_subject_identifier_replacement.sql',
     ]) {
       database.exec(readFileSync(resolve(REPO_ROOT, migrationPath), 'utf8'));
     }
@@ -175,6 +181,35 @@ describe('IdentifierReplacementOperationRepository', () => {
     await expect(
       repository.create(input({ requestFingerprintSha256: 'f'.repeat(64) }))
     ).rejects.toThrow('identifier_replacement_idempotency_conflict');
+  });
+
+  it('persists a SCIM external-subject replacement without email challenge evidence', async () => {
+    const operation = input({
+      operationId: 'scim-username-replacement-1',
+      outboxId: 'scim-username-outbox-1',
+      authority: 'scim',
+      identifierKind: 'external_subject',
+      challengeId: undefined,
+      initiatingSessionRef: undefined,
+      oldValue: 'OldUser',
+      newValue: 'NewUser',
+      oldIndexes: [index(8, '5'.repeat(64), 20, 'external_subject')],
+      newIndexes: [index(8, '6'.repeat(64), 21, 'external_subject')],
+    });
+
+    await expect(repository.create(operation)).resolves.toMatchObject({
+      operationId: 'scim-username-replacement-1',
+      state: 'directory_pending',
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT identifier_kind, authority
+             FROM identity_identifier_replacement_operations
+            WHERE operation_id = 'scim-username-replacement-1'`
+        )
+        .get()
+    ).toEqual({ identifier_kind: 'external_subject', authority: 'scim' });
   });
 
   it('rejects missing generation pairs and cross-account challenge evidence', async () => {

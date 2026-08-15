@@ -3455,6 +3455,7 @@
 		return {
 			versionLabel: `ui-draft-${new Date().toISOString()}`,
 			compatibilityRange: '>=0.2.0',
+			sourceProfileIds: sample.id.startsWith('source-profile-') ? [sample.id] : [],
 			rules: [...directRules, ...transformRules],
 			metadata: {
 				sampleId: sample.id,
@@ -3468,6 +3469,20 @@
 
 	async function submitDraftForCompile() {
 		if (!editable || draftSubmitStatus === 'saving') return;
+		const connectedSourceNodeIds = new Set(edges.map((edge) => edge.from));
+		const missingMappingRequiredFields = nodes.filter(
+			(node) =>
+				node.role === 'source' &&
+				node.mappingRequired === true &&
+				!connectedSourceNodeIds.has(node.id)
+		);
+		if (missingMappingRequiredFields.length > 0) {
+			draftSubmitStatus = 'error';
+			draftSubmitMessage = $LL.admin_identity_mapping_flow_mapping_required_not_connected({
+				fields: missingMappingRequiredFields.map((node) => node.label).join(', ')
+			});
+			return;
+		}
 		const draft = buildDraftPayload();
 		if (draft.rules.length === 0) {
 			draftSubmitStatus = 'error';
@@ -4441,6 +4456,11 @@
 								<span class="node-badge-row">
 									<span class="target-badges">
 										<span class="target-badge type">{node.type}</span>
+										{#if node.mappingRequired}
+											<span class="target-badge required">
+												{$LL.admin_identity_mapping_flow_mapping_required_badge()}
+											</span>
+										{/if}
 									</span>
 								</span>
 							{/if}

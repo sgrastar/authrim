@@ -5,6 +5,7 @@ interface OperationRow {
   operation_id: string;
   tenant_id: string;
   account_id: string;
+  identifier_kind: 'email_exact' | 'external_subject';
   state:
     | 'directory_pending'
     | 'authoritative_switch_pending'
@@ -116,6 +117,24 @@ function parseValue(value: string | null, field: 'old' | 'new'): string {
   }
 }
 
+function replacementIdentifierKind(operation: OperationRow): 'email_exact' | 'external_subject' {
+  if (
+    operation.identifier_kind === 'email_exact' ||
+    operation.identifier_kind === 'external_subject'
+  ) {
+    return operation.identifier_kind;
+  }
+  throw new Error('identifier_replacement_projection_invalid');
+}
+
+function authoritativeValueKey(operation: OperationRow): 'email' | 'preferred_username' {
+  return replacementIdentifierKind(operation) === 'email_exact' ? 'email' : 'preferred_username';
+}
+
+function directoryAccountId(accountId: string): string {
+  return accountId.startsWith('account:') ? accountId : `account:${accountId}`;
+}
+
 function pairProjections(rows: ProjectionRow[]): Array<{
   old: ProjectionRow;
   next: ProjectionRow;
@@ -188,12 +207,14 @@ export class IdentifierReplacementCoordinator {
         accountId: operation.account_id,
         initiatingSessionRef: operation.initiating_session_ref,
       });
-      await this.dependencies.enqueueOldIdentifierNotification?.({
-        operationId: operation.operation_id,
-        tenantId: operation.tenant_id,
-        accountId: operation.account_id,
-        oldValue,
-      });
+      if (replacementIdentifierKind(operation) === 'email_exact') {
+        await this.dependencies.enqueueOldIdentifierNotification?.({
+          operationId: operation.operation_id,
+          tenantId: operation.tenant_id,
+          accountId: operation.account_id,
+          oldValue,
+        });
+      }
       await this.complete(operation, pairs);
       operation = { ...operation, state: 'completed' };
     }
@@ -207,7 +228,7 @@ export class IdentifierReplacementCoordinator {
     accountId: string;
   }): Promise<OperationRow> {
     const row = await this.dependencies.pii.queryOne<OperationRow>(
-      `SELECT operation_id, tenant_id, account_id, state, initiating_session_ref
+      `SELECT operation_id, tenant_id, account_id, identifier_kind, state, initiating_session_ref
          FROM identity_identifier_replacement_operations
         WHERE operation_id = ? AND tenant_id = ? AND account_id = ?`,
       [input.operationId, input.tenantId, input.accountId],
@@ -246,6 +267,8 @@ export class IdentifierReplacementCoordinator {
     pairs: Array<{ old: ProjectionRow; next: ProjectionRow }>
   ): Promise<void> {
     const now = this.now();
+    const indexKind = replacementIdentifierKind(operation);
+    const lookupAccountId = directoryAccountId(operation.account_id);
     for (const pair of pairs) {
       const oldLookup = primary(await this.dependencies.lookupForBucket(pair.old.virtual_bucket));
       const oldRow = await oldLookup
@@ -255,7 +278,7 @@ export class IdentifierReplacementCoordinator {
                   route_projection_json, tenant_lifecycle_state,
                   runtime_route_status, lifecycle_state
              FROM lookup_identifiers
-            WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?`
         )
@@ -265,7 +288,7 @@ export class IdentifierReplacementCoordinator {
           pair.old.hmac_key_generation,
           pair.old.blind_digest,
           operation.tenant_id,
-          operation.account_id
+          lookupAccountId
         )
         .first<LookupIdentifierRow>();
       if (!oldRow || oldRow.lifecycle_state !== 'active') {
@@ -278,7 +301,7 @@ export class IdentifierReplacementCoordinator {
              virtual_bucket, tenant_id, index_kind, normalization_version,
              hmac_key_generation, identifier_blind_digest, account_id,
              reservation_state, operation_id, lease_expires_at, created_at, updated_at
-           ) VALUES (?, ?, 'email_exact', ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)
+           ) VALUES (?, ?, '${indexKind}', ?, ?, ?, ?, 'reserved', ?, ?, ?, ?)
            ON CONFLICT (
              virtual_bucket, tenant_id, index_kind, normalization_version,
              hmac_key_generation, identifier_blind_digest
@@ -301,7 +324,7 @@ export class IdentifierReplacementCoordinator {
           pair.next.normalization_version,
           pair.next.hmac_key_generation,
           pair.next.blind_digest,
-          operation.account_id,
+          lookupAccountId,
           operation.operation_id,
           now + 2 * 60 * 60,
           now,
@@ -312,7 +335,7 @@ export class IdentifierReplacementCoordinator {
         .prepare(
           `SELECT account_id, operation_id, reservation_state
              FROM lookup_identifier_reservations
-            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ?`
         )
@@ -326,7 +349,7 @@ export class IdentifierReplacementCoordinator {
         .first<ReservationRow>();
       if (
         !reservation ||
-        reservation.account_id !== operation.account_id ||
+        reservation.account_id !== lookupAccountId ||
         reservation.operation_id !== operation.operation_id ||
         !['reserved', 'committed'].includes(reservation.reservation_state)
       ) {
@@ -339,12 +362,12 @@ export class IdentifierReplacementCoordinator {
                replacement_id, tenant_id, account_id, index_kind, normalization_version,
                hmac_key_generation, old_virtual_bucket, old_blind_digest,
                new_virtual_bucket, new_blind_digest, gate_state, created_at, updated_at
-             ) VALUES (?, ?, ?, 'email_exact', ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+             ) VALUES (?, ?, ?, '${indexKind}', ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
           )
           .bind(
             operation.operation_id,
             operation.tenant_id,
-            operation.account_id,
+            lookupAccountId,
             pair.next.normalization_version,
             pair.next.hmac_key_generation,
             pair.old.virtual_bucket,
@@ -362,7 +385,7 @@ export class IdentifierReplacementCoordinator {
                account_route_generation, required_binding_route_generation, residency_policy_id,
                route_projection_json, tenant_lifecycle_state, runtime_route_status,
                lifecycle_state, created_at, updated_at
-             ) VALUES (?, 'email_exact', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+             ) VALUES (?, '${indexKind}', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
           )
           .bind(
             pair.next.virtual_bucket,
@@ -370,7 +393,7 @@ export class IdentifierReplacementCoordinator {
             pair.next.hmac_key_generation,
             pair.next.blind_digest,
             operation.tenant_id,
-            operation.account_id,
+            lookupAccountId,
             oldRow.route_schema_version,
             oldRow.account_route_generation,
             oldRow.required_binding_route_generation,
@@ -400,7 +423,7 @@ export class IdentifierReplacementCoordinator {
                     route_projection_json, tenant_lifecycle_state,
                     runtime_route_status, lifecycle_state
                FROM lookup_identifiers
-              WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+              WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?`
           )
@@ -410,15 +433,15 @@ export class IdentifierReplacementCoordinator {
             pair.next.hmac_key_generation,
             pair.next.blind_digest,
             operation.tenant_id,
-            operation.account_id
+            lookupAccountId
           )
           .first<LookupIdentifierRow>(),
       ]);
       if (
         !gate ||
         gate.tenant_id !== operation.tenant_id ||
-        gate.account_id !== operation.account_id ||
-        gate.index_kind !== 'email_exact' ||
+        gate.account_id !== lookupAccountId ||
+        gate.index_kind !== indexKind ||
         Number(gate.normalization_version) !== pair.next.normalization_version ||
         Number(gate.hmac_key_generation) !== pair.next.hmac_key_generation ||
         Number(gate.old_virtual_bucket) !== pair.old.virtual_bucket ||
@@ -459,6 +482,7 @@ export class IdentifierReplacementCoordinator {
     newValue: string
   ): Promise<void> {
     const now = this.now();
+    const valueKey = authoritativeValueKey(operation);
     const results = await this.dependencies.pii.batch([
       {
         sql: `UPDATE identity_identifier_replacement_operations
@@ -468,7 +492,7 @@ export class IdentifierReplacementCoordinator {
                  AND EXISTS (
                    SELECT 1 FROM identity_sensitive_values value
                     WHERE value.tenant_id = ? AND value.owner_type = 'runtime_user'
-                      AND value.owner_id = ? AND value.value_key = 'email'
+                      AND value.owner_id = ? AND value.value_key = '${valueKey}'
                       AND value.lifecycle_state = 'active' AND value.value_json = ?
                  )`,
         params: [
@@ -486,7 +510,7 @@ export class IdentifierReplacementCoordinator {
         sql: `UPDATE identity_sensitive_values
                  SET value_json = ?, value_hash = NULL, updated_at = ?
                WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                 AND value_key = 'email' AND lifecycle_state = 'active' AND value_json = ?
+                 AND value_key = '${valueKey}' AND lifecycle_state = 'active' AND value_json = ?
                  AND EXISTS (
                    SELECT 1 FROM identity_identifier_replacement_operations operation
                     WHERE operation.operation_id = ? AND operation.state = 'authoritative_switched'
@@ -507,7 +531,7 @@ export class IdentifierReplacementCoordinator {
          FROM identity_identifier_replacement_operations operation
          JOIN identity_sensitive_values value
            ON value.tenant_id = operation.tenant_id AND value.owner_id = operation.account_id
-          AND value.owner_type = 'runtime_user' AND value.value_key = 'email'
+          AND value.owner_type = 'runtime_user' AND value.value_key = '${valueKey}'
           AND value.lifecycle_state = 'active'
         WHERE operation.operation_id = ?`,
       [operation.operation_id],
@@ -526,6 +550,8 @@ export class IdentifierReplacementCoordinator {
     pairs: Array<{ old: ProjectionRow; next: ProjectionRow }>
   ): Promise<void> {
     const now = this.now();
+    const indexKind = replacementIdentifierKind(operation);
+    const lookupAccountId = directoryAccountId(operation.account_id);
     for (const pair of pairs) {
       const nextLookup = primary(await this.dependencies.lookupForBucket(pair.next.virtual_bucket));
       await nextLookup.batch([
@@ -533,7 +559,7 @@ export class IdentifierReplacementCoordinator {
           .prepare(
             `UPDATE lookup_identifiers
                 SET lifecycle_state = 'active', disabled_at = NULL, updated_at = ?
-              WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+              WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?
                 AND tenant_lifecycle_state = 'active' AND runtime_route_status = 'active'
@@ -546,14 +572,14 @@ export class IdentifierReplacementCoordinator {
             pair.next.hmac_key_generation,
             pair.next.blind_digest,
             operation.tenant_id,
-            operation.account_id
+            lookupAccountId
           ),
         nextLookup
           .prepare(
             `UPDATE lookup_identifier_reservations
                 SET reservation_state = 'committed', committed_at = COALESCE(committed_at, ?),
                     lease_expires_at = NULL, updated_at = ?
-              WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = 'email_exact'
+              WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = '${indexKind}'
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND account_id = ? AND operation_id = ?
                 AND reservation_state IN ('reserved', 'committed')`
@@ -566,7 +592,7 @@ export class IdentifierReplacementCoordinator {
             pair.next.normalization_version,
             pair.next.hmac_key_generation,
             pair.next.blind_digest,
-            operation.account_id,
+            lookupAccountId,
             operation.operation_id
           ),
         nextLookup
@@ -582,7 +608,7 @@ export class IdentifierReplacementCoordinator {
             operation.operation_id,
             pair.next.hmac_key_generation,
             operation.tenant_id,
-            operation.account_id
+            lookupAccountId
           ),
       ]);
       const oldLookup = primary(await this.dependencies.lookupForBucket(pair.old.virtual_bucket));
@@ -591,7 +617,7 @@ export class IdentifierReplacementCoordinator {
           .prepare(
             `UPDATE lookup_identifiers
                 SET lifecycle_state = 'disabled', disabled_at = COALESCE(disabled_at, ?), updated_at = ?
-              WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+              WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?
                 AND lifecycle_state IN ('active', 'disabled')`
@@ -604,13 +630,13 @@ export class IdentifierReplacementCoordinator {
             pair.old.hmac_key_generation,
             pair.old.blind_digest,
             operation.tenant_id,
-            operation.account_id
+            lookupAccountId
           ),
         oldLookup
           .prepare(
             `UPDATE lookup_identifier_reservations
                 SET reservation_state = 'releasing', lease_expires_at = NULL, updated_at = ?
-              WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = 'email_exact'
+              WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = '${indexKind}'
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND account_id = ?
                 AND reservation_state IN ('reserved', 'committed', 'releasing')`
@@ -622,13 +648,13 @@ export class IdentifierReplacementCoordinator {
             pair.old.normalization_version,
             pair.old.hmac_key_generation,
             pair.old.blind_digest,
-            operation.account_id
+            lookupAccountId
           ),
       ]);
       const reflectedNew = await nextLookup
         .prepare(
           `SELECT lifecycle_state FROM lookup_identifiers
-            WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?`
         )
@@ -638,13 +664,13 @@ export class IdentifierReplacementCoordinator {
           pair.next.hmac_key_generation,
           pair.next.blind_digest,
           operation.tenant_id,
-          operation.account_id
+          lookupAccountId
         )
         .first<{ lifecycle_state: string }>();
       const reflectedOld = await oldLookup
         .prepare(
           `SELECT lifecycle_state FROM lookup_identifiers
-            WHERE virtual_bucket = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?`
         )
@@ -654,7 +680,7 @@ export class IdentifierReplacementCoordinator {
           pair.old.hmac_key_generation,
           pair.old.blind_digest,
           operation.tenant_id,
-          operation.account_id
+          lookupAccountId
         )
         .first<{ lifecycle_state: string }>();
       if (
@@ -674,10 +700,11 @@ export class IdentifierReplacementCoordinator {
   }
 
   private async verifyAuthoritativeValue(operation: OperationRow, newValue: string): Promise<void> {
+    const valueKey = authoritativeValueKey(operation);
     const reflected = await this.dependencies.pii.queryOne<{ value_json: string }>(
       `SELECT value_json FROM identity_sensitive_values
         WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-          AND value_key = 'email' AND lifecycle_state = 'active'`,
+          AND value_key = '${valueKey}' AND lifecycle_state = 'active'`,
       [operation.tenant_id, operation.account_id],
       { consistencyClass: 'primary_required' }
     );
@@ -711,6 +738,8 @@ export class IdentifierReplacementCoordinator {
     pairs: Array<{ old: ProjectionRow; next: ProjectionRow }>
   ): Promise<void> {
     const now = this.now();
+    const indexKind = replacementIdentifierKind(operation);
+    const lookupAccountId = directoryAccountId(operation.account_id);
     for (const pair of pairs) {
       const nextLookup = primary(await this.dependencies.lookupForBucket(pair.next.virtual_bucket));
       await nextLookup
@@ -732,7 +761,7 @@ export class IdentifierReplacementCoordinator {
           operation.operation_id,
           pair.next.hmac_key_generation,
           operation.tenant_id,
-          operation.account_id
+          lookupAccountId
         )
         .first<{ gate_state: string }>();
       if (completedGate?.gate_state !== 'completed') {
@@ -744,7 +773,7 @@ export class IdentifierReplacementCoordinator {
           `UPDATE lookup_identifier_reservations
               SET reservation_state = 'released', released_at = COALESCE(released_at, ?),
                   lease_expires_at = NULL, updated_at = ?
-            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ? AND account_id = ?
               AND reservation_state IN ('releasing', 'released')`
@@ -757,13 +786,13 @@ export class IdentifierReplacementCoordinator {
           pair.old.normalization_version,
           pair.old.hmac_key_generation,
           pair.old.blind_digest,
-          operation.account_id
+          lookupAccountId
         )
         .run();
       const released = await oldLookup
         .prepare(
           `SELECT reservation_state FROM lookup_identifier_reservations
-            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = 'email_exact'
+            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = '${indexKind}'
               AND normalization_version = ? AND hmac_key_generation = ?
               AND identifier_blind_digest = ? AND account_id = ?`
         )
@@ -773,7 +802,7 @@ export class IdentifierReplacementCoordinator {
           pair.old.normalization_version,
           pair.old.hmac_key_generation,
           pair.old.blind_digest,
-          operation.account_id
+          lookupAccountId
         )
         .first<{ reservation_state: string }>();
       if (released?.reservation_state !== 'released') {

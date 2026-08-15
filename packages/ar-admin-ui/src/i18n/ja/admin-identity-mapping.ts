@@ -75,7 +75,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
 	admin_identity_mapping_profiles_title: 'Source & Destination Profiles',
 	admin_identity_mapping_profiles_description:
-		'CSVファイルまたは手動のカラム定義からsource profileを登録し、Flow Editorで選択します。SAML、SCIM、OIDC、VC、DID、MCP、A2A、client-credential sourceも、アダプター追加後は同じ画面を使います。',
+		'source profileとdestination profileを登録し、有効なversionをFlow Editorで選択します。SCIM source profileは標準の受信テンプレートから作成できます。',
 	admin_identity_mapping_profiles_inventory: 'Profile inventory',
 	admin_identity_mapping_profiles_lists_title: 'Source/Destination profile一覧',
 	admin_identity_mapping_profiles_loading: 'source/destination profileを読み込み中です。',
@@ -253,7 +253,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_source_title: 'Source Profile',
 	admin_identity_mapping_profile_edit_destination_title: 'Destination Profile',
 	admin_identity_mapping_profile_edit_source_description:
-		'CSVファイルまたは手動のカラム定義からsource profileを登録します。',
+		'CSV入力、SCIMテンプレート、または手動定義からsource profileを登録します。',
 	admin_identity_mapping_profile_edit_destination_description:
 		'destination release contract、属性グループ、同意設定を定義します。',
 	admin_identity_mapping_profile_edit_delete: '削除',
@@ -265,6 +265,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_create_source: 'Source Profileを作成',
 	admin_identity_mapping_profile_edit_edit_source: 'Source Profileを編集',
 	admin_identity_mapping_profile_edit_csv_source_profile: 'CSV source profile',
+	admin_identity_mapping_profile_edit_scim_source_profile: 'SCIM source profile',
+	admin_identity_mapping_profile_edit_scim_display_placeholder: 'Workforce SCIM User',
+	admin_identity_mapping_profile_edit_scim_schema_uris: 'Schema URIs',
+	admin_identity_mapping_profile_edit_scim_attributes: 'SCIM属性',
+	admin_identity_mapping_profile_edit_path: 'Path',
+	admin_identity_mapping_profile_edit_add_scim_attribute: 'SCIM属性を追加',
 	admin_identity_mapping_profile_edit_display_name: '表示名',
 	admin_identity_mapping_profile_edit_csv_display_placeholder: 'Workday CSV 2026',
 	admin_identity_mapping_profile_edit_csv_file: 'CSVファイル',
@@ -303,6 +309,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_nullable: 'Nullable',
 	admin_identity_mapping_profile_edit_class: 'Class',
 	admin_identity_mapping_profile_edit_required: '必須',
+	admin_identity_mapping_profile_edit_mapping_required: 'マッピング必須',
 	admin_identity_mapping_profile_edit_examples: '例',
 	admin_identity_mapping_profile_edit_note: 'メモ',
 	admin_identity_mapping_profile_edit_allowed_values_placeholder: 'student,faculty',
@@ -314,6 +321,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_confirm_csv_warnings:
 		'このCSV profile versionのPII候補とregulated候補を確認しました',
 	admin_identity_mapping_profile_edit_saving: '保存中...',
+	admin_identity_mapping_profile_edit_save: '保存',
 	admin_identity_mapping_profile_edit_save_draft_profile: '下書きprofileを保存',
 	admin_identity_mapping_profile_edit_reviewing: 'レビュー中...',
 	admin_identity_mapping_profile_edit_review: 'レビュー',
@@ -321,6 +329,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_activate: '有効化',
 	admin_identity_mapping_profile_edit_create_method: '作成方法',
 	admin_identity_mapping_profile_edit_start_from_source: 'profile sourceから開始',
+	admin_identity_mapping_profile_edit_source_method_aria: 'Source作成方法',
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination作成方法',
 	admin_identity_mapping_profile_edit_create_from_existing: '既存から作成',
 	admin_identity_mapping_profile_edit_create_from_template: 'テンプレートから作成',
@@ -333,6 +342,9 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_existing_destination: '既存の{kind} destination',
 	admin_identity_mapping_profile_edit_choose_destination_profile: 'destination profileを選択',
 	admin_identity_mapping_profile_edit_copy: 'コピー',
+	admin_identity_mapping_profile_edit_existing_scim_source: '既存のSCIM source',
+	admin_identity_mapping_profile_edit_choose_source_profile: 'source profileを選択',
+	admin_identity_mapping_profile_edit_source_template_browser_aria: 'SCIM source template browser',
 	admin_identity_mapping_profile_edit_template_browser_aria: 'Destination template browser',
 	admin_identity_mapping_profile_edit_template: '{kind} template',
 	admin_identity_mapping_profile_edit_version: 'バージョン',
@@ -341,6 +353,10 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_use_template: 'テンプレートを使用',
 	admin_identity_mapping_profile_edit_no_templates:
 		'このdestination typeにはテンプレートが登録されていません。',
+	admin_identity_mapping_profile_edit_no_source_templates:
+		'このsource typeにはテンプレートが登録されていません。',
+	admin_identity_mapping_profile_edit_blank_scim_source:
+		'userNameとprimary emailを含むSCIM User sourceから開始します。',
 	admin_identity_mapping_profile_edit_blank_destination:
 		'空の{kind} destination profileから開始します。',
 	admin_identity_mapping_profile_edit_create_destination: 'Destination Profileを作成',
@@ -434,9 +450,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_parse_failed: 'CSVの解析に失敗しました',
 	admin_identity_mapping_profile_edit_save_csv_required:
 		'保存する前にCSVファイルを解析するか、手動カラムを追加してください。',
+	admin_identity_mapping_profile_edit_save_scim_required:
+		'保存する前に表示名を入力し、SCIM userName属性を含めてください。',
 	admin_identity_mapping_profile_edit_saved_review_activate:
 		'{name}を保存しました。Flow Editorで使う前にレビューして有効化してください。',
 	admin_identity_mapping_profile_edit_save_csv_failed: 'CSV source profileの保存に失敗しました',
+	admin_identity_mapping_profile_edit_save_scim_failed: 'SCIM source profileの保存に失敗しました',
 	admin_identity_mapping_profile_edit_destination_required:
 		'destination profileを完成させ、blocking release warningを確認してください。',
 	admin_identity_mapping_profile_edit_save_destination_failed:
@@ -462,10 +481,16 @@ const adminIdentityMapping = {
 		'attribute fieldの保存に失敗しました',
 	admin_identity_mapping_profile_edit_existing_schema_required:
 		'編集可能なschemaを持つ既存destination profileを選択してください。',
+	admin_identity_mapping_profile_edit_existing_source_schema_required:
+		'編集可能なschemaを持つ既存SCIM source profileを選択してください。',
 	admin_identity_mapping_profile_edit_copied_existing:
 		'{name}をコピーしました。新しいdestination profileとして保存してください。',
+	admin_identity_mapping_profile_edit_copied_existing_source:
+		'{name}をコピーしました。新しいSCIM source profileとして保存してください。',
 	admin_identity_mapping_profile_edit_copied_template:
 		'テンプレート{name}をコピーしました。新しいdestination profileとして保存してください。',
+	admin_identity_mapping_profile_edit_copied_source_template:
+		'テンプレート{name}をコピーしました。新しいSCIM source profileとして保存してください。',
 	admin_identity_mapping_profile_edit_json_object_required:
 		'{label}はJSON objectである必要があります',
 
@@ -623,6 +648,9 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_option_omit_empty: '空値を省略',
 	admin_identity_mapping_flow_transform_option_include_null: 'null値を含める',
 	admin_identity_mapping_flow_required_badge: '必須',
+	admin_identity_mapping_flow_mapping_required_badge: 'マッピング必須',
+	admin_identity_mapping_flow_mapping_required_not_connected:
+		'マッピング必須のSource項目が接続されていません: {fields}',
 	admin_identity_mapping_flow_multiple_values: '複数値',
 	admin_identity_mapping_flow_single_value: '単一値',
 	admin_identity_mapping_flow_nullable: 'Nullable',

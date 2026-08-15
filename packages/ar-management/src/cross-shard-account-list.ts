@@ -11,6 +11,7 @@ import {
   type AccountDirectoryPublication,
   type CrossShardAccountCursor,
   type Env,
+  type LookupIdentifierKind,
   type ResolvedTenantDatabaseSource,
 } from '@authrim/ar-lib-core';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
@@ -21,12 +22,14 @@ const FANOUT_CONCURRENCY = 4;
 const CURSOR_TTL_SECONDS = 15 * 60;
 const CURSOR_TYPE = 'authrim-cross-shard-account-list+jws';
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+const SAFE_BINDING_REF = /^[A-Z][A-Z0-9_]{0,127}$/u;
 
 export interface CrossShardAccountListInput {
   tenantId: string;
   limit?: number;
   cursor?: string;
   accountType?: string;
+  includeInactive?: boolean;
 }
 
 export interface CrossShardAccountListItem {
@@ -118,13 +121,17 @@ async function digestHex(value: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function queryHash(input: { tenantId: string; accountType: string | null }): Promise<string> {
+async function queryHash(input: {
+  tenantId: string;
+  accountType: string | null;
+  includeInactive: boolean;
+}): Promise<string> {
   return digestHex(
     JSON.stringify({
       tenantId: input.tenantId,
       accountType: input.accountType,
       publicationState: 'active',
-      lifecycleState: 'active',
+      lifecycleState: input.includeInactive ? ['active', 'deprovisioned'] : ['active'],
       sort: 'created_at_desc,id_desc',
     })
   );
@@ -358,7 +365,12 @@ export class CrossShardAccountListService {
     }
     const now = this.now();
     const generation = await shardSetGeneration(sortedShards);
-    const expectedQueryHash = await queryHash({ tenantId: input.tenantId, accountType });
+    const includeInactive = input.includeInactive === true;
+    const expectedQueryHash = await queryHash({
+      tenantId: input.tenantId,
+      accountType,
+      includeInactive,
+    });
     const secret = this.env.LOGGING_CURSOR_HMAC_SECRET;
     const decoded = input.cursor ? await decodeCursor(input.cursor, secret ?? '') : null;
     const cursor = decoded
@@ -386,7 +398,9 @@ export class CrossShardAccountListService {
       const session = shard.source.withSession('first-unconstrained');
       const clauses = [
         `account.tenant_id = ?`,
-        `account.lifecycle_state = 'active'`,
+        includeInactive
+          ? `account.lifecycle_state IN ('active', 'deprovisioned')`
+          : `account.lifecycle_state = 'active'`,
         `account.directory_publication_state = 'active'`,
         ...(accountType ? [`account.account_type = ?`] : []),
         ...(position
@@ -480,25 +494,82 @@ export class CrossShardAccountListService {
       nextCursor,
     };
   }
+
+  async count(input: Omit<CrossShardAccountListInput, 'limit' | 'cursor'>): Promise<number> {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('invalid_cross_shard_account_tenant');
+    const accountType = input.accountType?.trim() || null;
+    if (accountType !== null && !SAFE_ID.test(accountType)) {
+      throw new Error('invalid_cross_shard_account_type');
+    }
+    const sources = await activeRouteSources(this.env, input.tenantId);
+    const includeInactive = input.includeInactive === true;
+    const counts = await mapConcurrent(
+      [...sources.core.values()],
+      FANOUT_CONCURRENCY,
+      async (shard) => {
+        const clauses = [
+          `account.tenant_id = ?`,
+          includeInactive
+            ? `account.lifecycle_state IN ('active', 'deprovisioned')`
+            : `account.lifecycle_state = 'active'`,
+          `account.directory_publication_state = 'active'`,
+          ...(accountType ? [`account.account_type = ?`] : []),
+        ];
+        const row = await shard.source
+          .withSession('first-unconstrained')
+          .prepare(
+            `SELECT COUNT(*) AS total
+               FROM identity_accounts account
+               JOIN account_routing_outbox outbox
+                 ON outbox.tenant_id = account.tenant_id
+                AND outbox.account_id = account.id
+                AND outbox.event_kind = 'account_created'
+                AND outbox.route_generation = account.account_route_generation
+                AND outbox.status = 'succeeded'
+              WHERE ${clauses.join(' AND ')}`
+          )
+          .bind(input.tenantId, ...(accountType ? [accountType] : []))
+          .first<{ total: number }>();
+        if (!row || !Number.isSafeInteger(row.total) || row.total < 0) {
+          throw new Error('cross_shard_account_count_invalid');
+        }
+        return row.total;
+      }
+    );
+    return counts.reduce((total, count) => total + count, 0);
+  }
 }
 
 interface ExactAccountRow extends AccountRow {
   directory_publication_state: string;
 }
 
+interface BoundShardMetadataRow {
+  binding_ref: string;
+  data_role: string;
+  residency_partition: string;
+}
+
+type ExactAccountSearchPurpose = 'active_search' | 'account_lifecycle' | 'account_delete_retry';
+
+function exactAccountStateClause(purpose: ExactAccountSearchPurpose): string {
+  return purpose === 'account_delete_retry'
+    ? `AND (
+         (account.lifecycle_state IN ('active', 'deprovisioned') AND account.directory_publication_state = 'active') OR
+         (account.lifecycle_state IN ('deleting', 'deleted') AND account.directory_publication_state = 'disabled')
+       )`
+    : purpose === 'account_lifecycle'
+      ? "AND account.lifecycle_state IN ('active', 'deprovisioned') AND account.directory_publication_state = 'active'"
+      : "AND account.lifecycle_state = 'active' AND account.directory_publication_state = 'active'";
+}
+
 async function primaryAccountRow(
   target: { source: D1Database },
   tenantId: string,
   accountId: string,
-  purpose: 'active_search' | 'account_delete_retry'
+  purpose: ExactAccountSearchPurpose
 ): Promise<ExactAccountRow | null> {
-  const stateClause =
-    purpose === 'account_delete_retry'
-      ? `AND (
-           (lifecycle_state = 'active' AND directory_publication_state = 'active') OR
-           (lifecycle_state IN ('deleting', 'deleted') AND directory_publication_state = 'disabled')
-         )`
-      : "AND lifecycle_state = 'active' AND directory_publication_state = 'active'";
+  const stateClause = exactAccountStateClause(purpose).replaceAll('account.', '');
   return target.source
     .withSession('first-primary')
     .prepare(
@@ -512,13 +583,268 @@ async function primaryAccountRow(
     .first<ExactAccountRow>();
 }
 
+async function findAccountLifecycleByFanout(input: {
+  env: Env;
+  tenantId: string;
+  accountId: string;
+  legacyUserId: string;
+  purpose: Exclude<ExactAccountSearchPurpose, 'active_search'>;
+}): Promise<CrossShardAccountListItem[]> {
+  const sources = await activeRouteSources(input.env, input.tenantId);
+  const candidates = (
+    await mapConcurrent([...sources.core.values()], FANOUT_CONCURRENCY, async (shard) => {
+      const row = await shard.source
+        .withSession('first-primary')
+        .prepare(
+          `SELECT account.id, account.legacy_user_id, account.tenant_id, account.account_type,
+                  account.lifecycle_state, account.display_label, account.created_at,
+                  account.account_route_generation, account.directory_publication_state,
+                  outbox.payload_json
+             FROM identity_accounts account
+             JOIN account_routing_outbox outbox
+               ON outbox.tenant_id = account.tenant_id
+              AND outbox.account_id = account.id
+              AND outbox.event_kind = 'account_created'
+              AND outbox.route_generation = account.account_route_generation
+              AND outbox.status = 'succeeded'
+            WHERE account.tenant_id = ?
+              AND (account.id = ? OR account.legacy_user_id = ?)
+              ${exactAccountStateClause(input.purpose)}
+            LIMIT 1`
+        )
+        .bind(input.tenantId, input.accountId, input.legacyUserId)
+        .first<ExactAccountRow>();
+      return row ? { row, shard } : null;
+    })
+  ).filter(
+    (candidate): candidate is { row: ExactAccountRow; shard: ActiveAccountShard } => !!candidate
+  );
+  if (candidates.length === 0) return findAccountLifecycleAcrossBoundShards(input);
+  if (candidates.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
+
+  const { row, shard } = candidates[0];
+  if (
+    row.account_type !== 'user' ||
+    row.legacy_user_id !== input.legacyUserId ||
+    !isValidPersistedUserId(row.legacy_user_id)
+  ) {
+    return [];
+  }
+  const route = await validatedAccountRoute({
+    row,
+    tenantId: input.tenantId,
+    coreShard: shard,
+    piiShards: sources.pii,
+  });
+  const pii = [...sources.pii.values()].find(
+    (candidate) => candidate.bindingRef === route.piiBindingRef
+  );
+  if (!pii) throw new Error('cross_shard_account_route_invalid');
+  const piiOwner = await pii.source
+    .withSession('first-primary')
+    .prepare(
+      input.purpose === 'account_delete_retry'
+        ? `SELECT owner_id FROM identity_sensitive_values
+             WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+           UNION ALL
+           SELECT id AS owner_id FROM users_pii_tombstone
+             WHERE tenant_id = ? AND id = ?
+           LIMIT 1`
+        : input.purpose === 'account_lifecycle'
+          ? `SELECT owner_id FROM identity_sensitive_values
+               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
+          : `SELECT owner_id FROM identity_sensitive_values
+               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+                 AND lifecycle_state = 'active' LIMIT 1`
+    )
+    .bind(
+      input.tenantId,
+      row.legacy_user_id,
+      ...(input.purpose === 'account_delete_retry' ? [input.tenantId, row.legacy_user_id] : [])
+    )
+    .first<{ owner_id: string }>();
+  if (piiOwner?.owner_id !== row.legacy_user_id) {
+    throw new Error('cross_shard_account_pii_owner_invalid');
+  }
+  return [
+    {
+      id: row.id,
+      legacyUserId: row.legacy_user_id,
+      tenantId: row.tenant_id,
+      accountType: row.account_type,
+      lifecycleState: row.lifecycle_state,
+      displayLabel: row.display_label,
+      createdAt: row.created_at,
+      coreBindingRef: route.coreBindingRef,
+      piiBindingRef: route.piiBindingRef,
+    },
+  ];
+}
+
+async function findAccountLifecycleAcrossBoundShards(input: {
+  env: Env;
+  tenantId: string;
+  accountId: string;
+  legacyUserId: string;
+  purpose: Exclude<ExactAccountSearchPurpose, 'active_search'>;
+}): Promise<CrossShardAccountListItem[]> {
+  const boundCoreCandidates = await mapConcurrent(
+    Object.entries(input.env as unknown as Record<string, unknown>)
+      .filter(([bindingRef]) => SAFE_BINDING_REF.test(bindingRef))
+      .slice(0, MAX_SHARDS * 4),
+    FANOUT_CONCURRENCY,
+    async ([bindingRef, value]) => {
+      try {
+        const source = d1Source(value as ResolvedTenantDatabaseSource['source']);
+        const metadata = await source
+          .withSession('first-primary')
+          .prepare(
+            `SELECT binding_ref, data_role, residency_partition
+               FROM authrim_control_plane_shard_metadata WHERE singleton_id = 1`
+          )
+          .first<BoundShardMetadataRow>();
+        if (metadata?.binding_ref !== bindingRef || metadata.data_role !== 'tenant_core/users') {
+          return null;
+        }
+        const row = await source
+          .withSession('first-primary')
+          .prepare(
+            `SELECT account.id, account.legacy_user_id, account.tenant_id, account.account_type,
+                    account.lifecycle_state, account.display_label, account.created_at,
+                    account.account_route_generation, account.directory_publication_state,
+                    outbox.payload_json
+               FROM identity_accounts account
+               JOIN account_routing_outbox outbox
+                 ON outbox.tenant_id = account.tenant_id
+                AND outbox.account_id = account.id
+                AND outbox.event_kind = 'account_created'
+                AND outbox.route_generation = account.account_route_generation
+                AND outbox.status = 'succeeded'
+              WHERE account.tenant_id = ?
+                AND (account.id = ? OR account.legacy_user_id = ?)
+                ${exactAccountStateClause(input.purpose)}
+              LIMIT 1`
+          )
+          .bind(input.tenantId, input.accountId, input.legacyUserId)
+          .first<ExactAccountRow>();
+        return row ? { bindingRef, metadata, row, source } : null;
+      } catch {
+        return null;
+      }
+    }
+  );
+  const matches = boundCoreCandidates.filter(
+    (
+      candidate
+    ): candidate is {
+      bindingRef: string;
+      metadata: BoundShardMetadataRow;
+      row: ExactAccountRow;
+      source: D1Database;
+    } => !!candidate
+  );
+  if (matches.length === 0) return [];
+  if (matches.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
+  const { bindingRef, metadata, row } = matches[0];
+  if (
+    row.account_type !== 'user' ||
+    row.tenant_id !== input.tenantId ||
+    row.legacy_user_id !== input.legacyUserId ||
+    !isValidPersistedUserId(row.legacy_user_id)
+  ) {
+    return [];
+  }
+  let publication: AccountDirectoryPublication;
+  try {
+    publication = await validateAccountDirectoryPublication(JSON.parse(row.payload_json));
+  } catch {
+    throw new Error('cross_shard_account_route_invalid');
+  }
+  const coreTargets = publication.routeProjection.targets.filter(
+    (target) => target.dataRole === 'tenant_core/users'
+  );
+  const piiTargets = publication.routeProjection.targets.filter(
+    (target) => target.dataRole === 'tenant_pii'
+  );
+  if (
+    publication.tenantId !== input.tenantId ||
+    publication.accountId !== row.id ||
+    publication.routeProjection.accountRouteGeneration !== row.account_route_generation ||
+    coreTargets.length !== 1 ||
+    piiTargets.length !== 1 ||
+    coreTargets[0].bindingRef !== bindingRef ||
+    coreTargets[0].residencyPartition !== metadata.residency_partition
+  ) {
+    throw new Error('cross_shard_account_route_invalid');
+  }
+  const piiTarget = piiTargets[0];
+  const piiValue = (input.env as unknown as Record<string, unknown>)[piiTarget.bindingRef];
+  const piiSource = d1Source(piiValue as ResolvedTenantDatabaseSource['source']);
+  const piiMetadata = await piiSource
+    .withSession('first-primary')
+    .prepare(
+      `SELECT binding_ref, data_role, residency_partition
+         FROM authrim_control_plane_shard_metadata WHERE singleton_id = 1`
+    )
+    .first<BoundShardMetadataRow>();
+  if (
+    piiMetadata?.binding_ref !== piiTarget.bindingRef ||
+    piiMetadata.data_role !== 'tenant_pii' ||
+    piiMetadata.residency_partition !== piiTarget.residencyPartition ||
+    piiTarget.residencyPartition !== coreTargets[0].residencyPartition
+  ) {
+    throw new Error('cross_shard_account_route_invalid');
+  }
+  const piiOwner = await piiSource
+    .withSession('first-primary')
+    .prepare(
+      input.purpose === 'account_delete_retry'
+        ? `SELECT owner_id FROM identity_sensitive_values
+             WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+           UNION ALL
+           SELECT id AS owner_id FROM users_pii_tombstone
+             WHERE tenant_id = ? AND id = ?
+           LIMIT 1`
+        : input.purpose === 'account_lifecycle'
+          ? `SELECT owner_id FROM identity_sensitive_values
+               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
+          : `SELECT owner_id FROM identity_sensitive_values
+               WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+                 AND lifecycle_state = 'active' LIMIT 1`
+    )
+    .bind(
+      input.tenantId,
+      row.legacy_user_id,
+      ...(input.purpose === 'account_delete_retry' ? [input.tenantId, row.legacy_user_id] : [])
+    )
+    .first<{ owner_id: string }>();
+  if (piiOwner?.owner_id !== row.legacy_user_id) {
+    throw new Error('cross_shard_account_pii_owner_invalid');
+  }
+  return [
+    {
+      id: row.id,
+      legacyUserId: row.legacy_user_id,
+      tenantId: row.tenant_id,
+      accountType: row.account_type,
+      lifecycleState: row.lifecycle_state,
+      displayLabel: row.display_label,
+      createdAt: row.created_at,
+      coreBindingRef: bindingRef,
+      piiBindingRef: piiTarget.bindingRef,
+    },
+  ];
+}
+
 export class CrossShardAccountExactSearchService {
   constructor(private readonly env: Env) {}
 
   async find(input: {
     tenantId: string;
     identifier: string;
-    purpose?: 'active_search' | 'account_delete_retry';
+    purpose?: ExactAccountSearchPurpose;
+    indexKind?: LookupIdentifierKind;
+    externalSubjectIssuer?: string;
   }): Promise<CrossShardAccountListItem[]> {
     if (!SAFE_ID.test(input.tenantId) || input.identifier.length > 320) {
       throw new Error('invalid_cross_shard_account_search');
@@ -533,11 +859,29 @@ export class CrossShardAccountExactSearchService {
       throw new Error('cross_shard_account_lookup_registry_unavailable');
     }
     const identifier = input.identifier.trim();
-    const indexKind = identifier.includes('@') ? 'email_exact' : 'account_id';
+    const purpose = input.purpose ?? 'active_search';
+    const indexKind = input.indexKind ?? (identifier.includes('@') ? 'email_exact' : 'account_id');
     const indexValue =
-      indexKind === 'account_id' && !identifier.startsWith('account:')
-        ? `account:${identifier}`
-        : identifier;
+      indexKind === 'external_subject'
+        ? {
+            issuer: input.externalSubjectIssuer ?? '',
+            subject: identifier,
+          }
+        : indexKind === 'account_id' && !identifier.startsWith('account:')
+          ? `account:${identifier}`
+          : identifier;
+    // Lookup destination verification is deliberately active-only. Lifecycle operations instead
+    // resolve the account from its signed creation outbox across the bounded shard inventory, so
+    // deprovisioned accounts remain addressable while deleted accounts resolve to not found.
+    if (purpose !== 'active_search' && indexKind === 'account_id') {
+      return findAccountLifecycleByFanout({
+        env: this.env,
+        tenantId: input.tenantId,
+        accountId: indexValue as string,
+        legacyUserId: identifier,
+        purpose,
+      });
+    }
     const indexes = await createLookupBlindIndexes(
       indexKind,
       indexValue,
@@ -555,10 +899,19 @@ export class CrossShardAccountExactSearchService {
     const memberships = (await resolver.resolveMemberships({ indexes })).filter(
       (membership) => membership.tenantId === input.tenantId
     );
-    if (memberships.length === 0) return [];
+    if (memberships.length === 0) {
+      return purpose === 'active_search' || indexKind !== 'account_id'
+        ? []
+        : findAccountLifecycleByFanout({
+            env: this.env,
+            tenantId: input.tenantId,
+            accountId: indexValue as string,
+            legacyUserId: identifier,
+            purpose,
+          });
+    }
     if (memberships.length !== 1) throw new Error('cross_shard_account_search_ambiguous');
     const membership = memberships[0];
-    const purpose = input.purpose ?? 'active_search';
     const sources = await activeRouteSources(this.env, input.tenantId);
     const observedBindingRouteGenerations = Object.fromEntries(
       [...sources.core.values(), ...sources.pii.values()].map((source) => [
@@ -567,71 +920,96 @@ export class CrossShardAccountExactSearchService {
       ])
     );
     const destination: { account: ExactAccountRow | null } = { account: null };
-    const core = await resolver.resolveTargetAndRevalidate({
-      membership,
-      dataRole: 'tenant_core/users',
-      residencyPartition:
-        membership.routeProjection.targets.find((target) => target.dataRole === 'tenant_core/users')
-          ?.residencyPartition ?? '',
-      observedBindingRouteGenerations,
-      verifyAtDestination: async (target) => {
-        destination.account = await primaryAccountRow(
-          target,
-          input.tenantId,
-          membership.accountId,
-          purpose
-        );
-        return destination.account !== null;
-      },
-    });
-    const account = destination.account;
-    if (!account) throw new Error('cross_shard_account_row_invalid');
-    if (account.account_type !== 'user') return [];
-    const piiResidency = membership.routeProjection.targets.find(
-      (target) => target.dataRole === 'tenant_pii'
-    )?.residencyPartition;
-    if (!piiResidency) throw new Error('cross_shard_account_route_invalid');
-    const pii = await resolver.resolveTargetAndRevalidate({
-      membership,
-      dataRole: 'tenant_pii',
-      residencyPartition: piiResidency,
-      observedBindingRouteGenerations,
-      verifyAtDestination: async (target) => {
-        const row = await target.source
-          .withSession('first-primary')
-          .prepare(
-            purpose === 'account_delete_retry'
-              ? `SELECT owner_id FROM identity_sensitive_values
-                   WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                 UNION ALL
-                 SELECT id AS owner_id FROM users_pii_tombstone
-                   WHERE tenant_id = ? AND id = ?
-                 LIMIT 1`
-              : `SELECT owner_id FROM identity_sensitive_values
-                   WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
-                     AND lifecycle_state = 'active' LIMIT 1`
-          )
-          .bind(
+    try {
+      const core = await resolver.resolveTargetAndRevalidate({
+        membership,
+        dataRole: 'tenant_core/users',
+        residencyPartition:
+          membership.routeProjection.targets.find(
+            (target) => target.dataRole === 'tenant_core/users'
+          )?.residencyPartition ?? '',
+        observedBindingRouteGenerations,
+        verifyAtDestination: async (target) => {
+          destination.account = await primaryAccountRow(
+            target,
             input.tenantId,
-            account!.legacy_user_id,
-            ...(purpose === 'account_delete_retry' ? [input.tenantId, account!.legacy_user_id] : [])
-          )
-          .first<{ owner_id: string }>();
-        return row?.owner_id === account!.legacy_user_id;
-      },
-    });
-    return [
-      {
-        id: account.id,
-        legacyUserId: account.legacy_user_id,
-        tenantId: account.tenant_id,
-        accountType: account.account_type,
-        lifecycleState: account.lifecycle_state,
-        displayLabel: account.display_label,
-        createdAt: account.created_at,
-        coreBindingRef: core.bindingRef,
-        piiBindingRef: pii.bindingRef,
-      },
-    ];
+            membership.accountId,
+            purpose
+          );
+          return destination.account !== null;
+        },
+      });
+      const account = destination.account;
+      if (!account) throw new Error('cross_shard_account_row_invalid');
+      if (account.account_type !== 'user') return [];
+      const piiResidency = membership.routeProjection.targets.find(
+        (target) => target.dataRole === 'tenant_pii'
+      )?.residencyPartition;
+      if (!piiResidency) throw new Error('cross_shard_account_route_invalid');
+      const pii = await resolver.resolveTargetAndRevalidate({
+        membership,
+        dataRole: 'tenant_pii',
+        residencyPartition: piiResidency,
+        observedBindingRouteGenerations,
+        verifyAtDestination: async (target) => {
+          const row = await target.source
+            .withSession('first-primary')
+            .prepare(
+              purpose === 'account_delete_retry'
+                ? `SELECT owner_id FROM identity_sensitive_values
+                     WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+                   UNION ALL
+                   SELECT id AS owner_id FROM users_pii_tombstone
+                     WHERE tenant_id = ? AND id = ?
+                   LIMIT 1`
+                : purpose === 'account_lifecycle'
+                  ? `SELECT owner_id FROM identity_sensitive_values
+                       WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? LIMIT 1`
+                  : `SELECT owner_id FROM identity_sensitive_values
+                       WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+                         AND lifecycle_state = 'active' LIMIT 1`
+            )
+            .bind(
+              input.tenantId,
+              account!.legacy_user_id,
+              ...(purpose === 'account_delete_retry'
+                ? [input.tenantId, account!.legacy_user_id]
+                : [])
+            )
+            .first<{ owner_id: string }>();
+          return row?.owner_id === account!.legacy_user_id;
+        },
+      });
+      return [
+        {
+          id: account.id,
+          legacyUserId: account.legacy_user_id,
+          tenantId: account.tenant_id,
+          accountType: account.account_type,
+          lifecycleState: account.lifecycle_state,
+          displayLabel: account.display_label,
+          createdAt: account.created_at,
+          coreBindingRef: core.bindingRef,
+          piiBindingRef: pii.bindingRef,
+        },
+      ];
+    } catch (error) {
+      if (
+        purpose !== 'active_search' &&
+        error instanceof Error &&
+        error.message === 'lookup_destination_revalidation_failed'
+      ) {
+        const fallback = await findAccountLifecycleByFanout({
+          env: this.env,
+          tenantId: input.tenantId,
+          accountId: indexValue as string,
+          legacyUserId: identifier,
+          purpose,
+        });
+        if (fallback.length === 0 && purpose === 'account_delete_retry') throw error;
+        return fallback;
+      }
+      throw error;
+    }
   }
 }

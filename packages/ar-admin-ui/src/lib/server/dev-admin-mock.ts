@@ -7228,23 +7228,6 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 function sampleProtocolSchemas() {
 	return [
 		{
-			id: 'schema-scim-user',
-			tenantId: TENANT_ID,
-			protocol: 'scim',
-			schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
-			displayName: 'SCIM 2.0 User (inbound)',
-			schemaVersion: '2.0',
-			lifecycleState: 'active',
-			schema: {
-				attributes: [
-					{ name: 'userName', label: 'User name', type: 'string', required: true },
-					{ name: 'emails.value', label: 'Primary email', type: 'string', required: true },
-					{ name: 'enterprise.employeeNumber', label: 'Employee number', type: 'string' },
-					{ name: 'enterprise.costCenter', label: 'Cost center', type: 'string' }
-				]
-			}
-		},
-		{
 			id: 'schema-oidc-core',
 			tenantId: TENANT_ID,
 			protocol: 'oidc',

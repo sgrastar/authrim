@@ -26,7 +26,7 @@ export async function activatePublishedAccountAuthenticationState(
     publication.tenantId,
     userId
   );
-  if (!authenticationState || authenticationState.lifecycle !== 'active') {
+  if (!authenticationState) {
     throw new Error('directory_account_authentication_state_invalid');
   }
 
@@ -37,9 +37,9 @@ export async function activatePublishedAccountAuthenticationState(
   await transitionAccountAuthenticationState(env, {
     tenantId: publication.tenantId,
     userId,
-    lifecycle: 'active',
+    lifecycle: authenticationState.lifecycle,
     sourceVersionMs: Math.max(authenticationState.sourceVersionMs + 1, activatedAtMs),
     operationId: `directory.${publication.operationId}`,
-    revokeSessions: false,
+    revokeSessions: authenticationState.lifecycle !== 'active',
   });
 }

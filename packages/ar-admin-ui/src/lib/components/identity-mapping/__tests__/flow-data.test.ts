@@ -126,6 +126,72 @@ describe('field mapping flow data adapter', () => {
 		expect(samples).toEqual([]);
 	});
 
+	it('builds SCIM source nodes only from a saved source profile', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			identitySchemas: [],
+			sourceProfiles: [
+				{
+					id: 'scim_enterprise',
+					tenantId: 'tenant_a',
+					sourceType: 'scim',
+					profileKey: 'scim_enterprise_user',
+					displayName: 'SCIM Enterprise User',
+					lifecycleState: 'active',
+					version: {
+						id: 'scim_enterprise_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							sourceType: 'scim',
+							resourceType: 'User',
+							schemaUris: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+							attributes: [
+								{
+									name: 'userName',
+									label: 'User name',
+									type: 'string',
+									required: true,
+									classification: 'pii'
+								},
+								{
+									name: 'enterprise.employeeNumber',
+									label: 'Employee number',
+									type: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						}
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			id: 'source-profile-scim_enterprise',
+			title: 'SCIM Enterprise User',
+			sourceAdapter: 'SCIM'
+		});
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					label: 'Employee number',
+					fieldRef: {
+						namespace: 'scim.attribute',
+						path: 'enterprise.employeeNumber'
+					}
+				})
+			])
+		);
+	});
+
 	it('does not show catalog fallback targets when no Schema Settings fields exist', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [],
@@ -364,6 +430,7 @@ describe('field mapping flow data adapter', () => {
 									label: 'Email',
 									valueType: 'email',
 									required: true,
+									mappingRequired: true,
 									classification: 'pii'
 								}
 							]
@@ -377,6 +444,13 @@ describe('field mapping flow data adapter', () => {
 			schemaReadinessRows: []
 		});
 
+		const sourceNodes = samples[0].nodes.filter((node) => node.role === 'source');
+		expect(sourceNodes[0]).toEqual(
+			expect.objectContaining({
+				label: 'Email',
+				mappingRequired: true
+			})
+		);
 		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
 		expect(targetNodes[0]).toEqual(
 			expect.objectContaining({
@@ -762,5 +836,49 @@ describe('field mapping flow data adapter', () => {
 					node.fieldRef.path === 'directory.identity.subject'
 			)
 		).toBe(true);
+	});
+
+	it('keeps mapping-required fields visible beyond the normal 64-field limit', () => {
+		const columns = Array.from({ length: 70 }, (_, index) => ({
+			stableColumnId: `csv.column.${index + 1}`,
+			headerName: `Column ${index + 1}`,
+			label: `Column ${index + 1}`,
+			valueType: 'string',
+			required: false,
+			mappingRequired: index === 69,
+			classification: 'internal'
+		}));
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			identitySchemas: [],
+			sourceProfiles: [
+				{
+					id: 'large_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'large_csv',
+					displayName: 'Large CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'large_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: { sourceType: 'csv', columns }
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		const sourceNodes = samples[0].nodes.filter((node) => node.role === 'source');
+		expect(sourceNodes).toHaveLength(64);
+		expect(sourceNodes[0]).toEqual(
+			expect.objectContaining({ label: 'Column 70', mappingRequired: true })
+		);
+		expect(sourceNodes.some((node) => node.label === 'Column 64')).toBe(false);
 	});
 });

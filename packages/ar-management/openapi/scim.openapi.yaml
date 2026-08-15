@@ -105,6 +105,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
         '401':
           $ref: '#/components/responses/ScimError'
       security:
@@ -132,7 +134,8 @@ paths:
         Creates the account through the tenant directory publication workflow. Idempotency-Key is
         optional for SCIM client compatibility; when omitted, Authrim derives a stable key from the
         authenticated provisioning token and canonical request body. Returns 202 with an operation
-        Location when directory publication continues asynchronously.
+        Location when directory publication continues asynchronously. userName is unique within the
+        tenant using case-insensitive comparison; externalId is not unique.
       security:
         - scimBearer: []
   /scim/v2/Operations/{id}:
@@ -157,6 +160,7 @@ paths:
       tags:
         - SCIM Users
       summary: Get a SCIM user.
+      description: Deactivated users remain readable. Deleted users return 404.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -180,8 +184,16 @@ paths:
           $ref: '#/components/responses/ScimJson'
         '400':
           $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
         '412':
           $ref: '#/components/responses/ScimError'
+        '503':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Changes to userName or the mapped primary email use the durable identifier replacement
+        workflow. Identifier reservation conflicts return 409; retryable directory convergence
+        failures return 503.
       security:
         - scimBearer: []
     patch:
@@ -198,8 +210,16 @@ paths:
           $ref: '#/components/responses/ScimJson'
         '400':
           $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
         '412':
           $ref: '#/components/responses/ScimError'
+        '503':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Changes to userName or the mapped primary email use the durable identifier replacement
+        workflow. Identifier reservation conflicts return 409; retryable directory convergence
+        failures return 503.
       security:
         - scimBearer: []
     delete:
@@ -230,6 +250,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     post:
@@ -614,8 +636,8 @@ components:
       type: object
       additionalProperties: true
       required:
+        - schemas
         - userName
-        - emails
       properties:
         schemas:
           type: array
@@ -626,8 +648,11 @@ components:
           readOnly: true
         externalId:
           type: string
+          description: Source-system correlation identifier. Authrim does not require uniqueness.
         userName:
           type: string
+          minLength: 1
+          description: Tenant-wide, case-insensitive unique SCIM login identifier.
         name:
           $ref: '#/components/schemas/ScimName'
         displayName:
@@ -658,7 +683,6 @@ components:
             Directory Connector, or External IdP authentication instead.
         emails:
           type: array
-          minItems: 1
           items:
             $ref: '#/components/schemas/ScimEmail'
         phoneNumbers:
@@ -680,6 +704,7 @@ components:
       type: object
       additionalProperties: true
       required:
+        - schemas
         - displayName
       properties:
         schemas:
@@ -703,6 +728,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - schemas
         - Operations
       properties:
         schemas:

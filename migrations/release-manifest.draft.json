@@ -193,6 +193,10 @@
         {
           "path": "048_custom_claim_cardinality.sql",
           "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
+        },
+        {
+          "path": "049_scim_group_external_id.sql",
+          "checksum": "cae275ad770fc74125da70e9e655bf96e9a45c3c01917b0c08d39519c31d5edc"
         }
       ]
     },
@@ -235,6 +239,10 @@
         {
           "path": "010_custom_claim_field_values.sql",
           "checksum": "d63bc14f7dfe7e633261c4d55f2bbd5c4aeb7dfa873c8d5946b4555c5a58dfc4"
+        },
+        {
+          "path": "011_allow_external_subject_identifier_replacement.sql",
+          "checksum": "4f6d99a72349c8102fb08b8139a66f8e32c4e19898fda78325967f2296528387"
         }
       ]
     },
@@ -514,6 +522,10 @@
         {
           "path": "002_identifier_replacement_verification_gate.sql",
           "checksum": "3fdb62956052905118aa82cd4b9d066d338f0b9e684d71a9d4ce1b62856fb353"
+        },
+        {
+          "path": "003_allow_external_subject_identifier_replacement.sql",
+          "checksum": "b602c9452d7b1dfe746bc754b716e355214aa6d5130be3da9ab775c29aaede95"
         }
       ]
     },
@@ -642,6 +654,10 @@
         {
           "path": "022_external_custom_claim_field_values.sql",
           "checksum": "a30a99406b2b97950a0a4b34527f435c78431f82c286cffbc9037ddc98203685"
+        },
+        {
+          "path": "023_external_scim_group_external_id.sql",
+          "checksum": "d53907df266e90a6ce248f7826dfb1000fd29e1c79a0843dec0116e0d59b98fc"
         }
       ]
     },
