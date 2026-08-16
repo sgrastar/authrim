@@ -8,7 +8,12 @@ import type {
   SourceValueEnvelope,
 } from '@authrim/ar-lib-field-mapping/contract';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
-import type { InternalUser, ScimUser } from '@authrim/ar-lib-scim';
+import {
+  selectPrimaryScimObject,
+  selectPrimaryScimValue,
+  type InternalUser,
+  type ScimUser,
+} from '@authrim/ar-lib-scim';
 import { getScimInboundSettings } from './scim-settings';
 
 const CANONICAL_NAMESPACES = new Set(['authrim.profile', 'authrim.canonical']);
@@ -112,11 +117,11 @@ function scimSourceValues(user: Record<string, unknown>): SourceValueEnvelope[] 
     scimSourceValue('name.honorificPrefix', readPath(user, ['name', 'honorificPrefix'])),
     scimSourceValue('name.honorificSuffix', readPath(user, ['name', 'honorificSuffix'])),
     scimSourceValue('emails', user.emails),
-    scimSourceValue('emails.value', primaryMultiValue(user.emails)),
+    scimSourceValue('emails.value', selectPrimaryScimValue(user.emails)),
     scimSourceValue('phoneNumbers', user.phoneNumbers),
-    scimSourceValue('phoneNumbers.value', primaryMultiValue(user.phoneNumbers)),
+    scimSourceValue('phoneNumbers.value', selectPrimaryScimValue(user.phoneNumbers)),
     scimSourceValue('addresses', user.addresses),
-    scimSourceValue('addresses.primary', primaryObject(user.addresses)),
+    scimSourceValue('addresses.primary', selectPrimaryScimObject(user.addresses)),
     scimSourceValue('groups', user.groups),
     scimSourceValue('enterprise.employeeNumber', enterprise?.employeeNumber),
     scimSourceValue('enterprise.costCenter', enterprise?.costCenter),
@@ -150,16 +155,6 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function primaryObject(value: unknown): Record<string, unknown> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const records = value.map(readRecord).filter((item): item is Record<string, unknown> => !!item);
-  return records.find((item) => item.primary === true) ?? records[0];
-}
-
-function primaryMultiValue(value: unknown): unknown {
-  return primaryObject(value)?.value;
 }
 
 function prepareRuntimeInput(
@@ -264,6 +259,7 @@ function canonicalPath(path: string): string {
 function assignKnownField(user: Partial<InternalUser>, path: string, value: unknown): boolean {
   switch (path) {
     case 'active':
+    case 'scim_active':
       user.active = value === false || value === 0 ? 0 : 1;
       return true;
     case 'email_verified':
@@ -277,7 +273,11 @@ function assignKnownField(user: Partial<InternalUser>, path: string, value: unkn
       user.address_json = typeof value === 'string' ? value : JSON.stringify(value);
       return true;
     case 'external_id':
+    case 'scim_external_id':
       user.external_id = stringValue(value);
+      return true;
+    case 'display_name':
+      user.name = stringValue(value);
       return true;
     case 'email':
     case 'phone_number':

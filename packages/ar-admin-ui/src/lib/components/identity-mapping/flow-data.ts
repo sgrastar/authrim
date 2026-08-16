@@ -45,6 +45,7 @@ interface ExtractedField {
 	caption: string;
 	type?: string;
 	required?: boolean;
+	mappingRequired?: boolean;
 	privacy?: MappingNode['privacy'];
 	examples?: unknown[];
 	note?: string | null;
@@ -441,7 +442,14 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 					}
 				];
 
-	return extractedFields.slice(0, 64).map((field, index) => {
+	const mappingRequiredFields = extractedFields.filter((field) => field.mappingRequired === true);
+	const optionalFields = extractedFields.filter((field) => field.mappingRequired !== true);
+	const visibleFields = [
+		...mappingRequiredFields,
+		...optionalFields.slice(0, Math.max(0, 64 - mappingRequiredFields.length))
+	];
+
+	return visibleFields.map((field, index) => {
 		const nodeKey = `${role}-${slug(profile.id)}-${slug(field.key, `field-${index + 1}`)}-${index}`;
 		return {
 			id: nodeKey,
@@ -459,6 +467,7 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 			type: displayValueType(field.type),
 			privacy: field.privacy,
 			required: field.required,
+			mappingRequired: field.mappingRequired,
 			examples: field.examples,
 			note: field.note,
 			allowedValues: field.allowedValues,
@@ -535,6 +544,7 @@ function fieldsFromArray(
 				caption: stringValue(item.description) ?? type ?? 'schema field',
 				type,
 				required: required.has(key) || (allowInlineRequired && item.required === true),
+				mappingRequired: item.mappingRequired === true,
 				privacy: privacyFrom(`${key} ${stringValue(item.classification) ?? ''}`),
 				examples:
 					examplesFromRecord(item) ??
@@ -566,6 +576,7 @@ function fieldsFromClaims(value: unknown, required: Set<string>): ExtractedField
 			caption: record ? (stringValue(record.description) ?? 'claim') : 'claim',
 			type,
 			required: required.has(key),
+			mappingRequired: record?.mappingRequired === true,
 			privacy: privacyFrom(key),
 			examples:
 				(record ? examplesFromRecord(record) : undefined) ??
@@ -590,6 +601,7 @@ function fieldsFromProperties(value: unknown, required: Set<string>): ExtractedF
 			caption: record ? (stringValue(record.description) ?? 'property') : 'property',
 			type,
 			required: required.has(key),
+			mappingRequired: record?.mappingRequired === true,
 			privacy: privacyFrom(key),
 			examples:
 				(record ? examplesFromRecord(record) : undefined) ??

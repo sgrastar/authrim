@@ -332,6 +332,13 @@ interface AccountLifecyclePayload {
   eventVersion: 1;
 }
 
+type AccountLifecyclePluginTarget = {
+  installationId: string;
+  capability: 'hook.account.lifecycle';
+};
+
+type AccountLifecycleTargetCache = Map<string, Promise<readonly AccountLifecyclePluginTarget[]>>;
+
 const ROUTING_OUTBOX_LEASE_SECONDS = 120;
 const ROUTING_OUTBOX_RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 const ACCOUNT_EVENT_LEASE_SECONDS = 120;
@@ -416,10 +423,61 @@ async function claimAccountLifecycleEvent(
   );
 }
 
-function pluginTargets(value: string): Array<{
-  installationId: string;
-  capability: 'hook.account.lifecycle';
-}> {
+async function claimAccountLifecycleEventByOperation(
+  session: D1DatabaseSession,
+  tenantId: string,
+  operationId: string,
+  ownerId: string,
+  now: number
+): Promise<AccountLifecycleEventClaimRow | null> {
+  if (!SAFE_RUNTIME_ID.test(tenantId) || !SAFE_RUNTIME_ID.test(operationId)) {
+    throw new Error('account_lifecycle_event_invalid');
+  }
+  const candidate = await firstSession<{ event_id: string }>(
+    session,
+    `SELECT event_id FROM account_lifecycle_event_outbox
+      WHERE tenant_id = ? AND operation_id = ? AND (
+        (status IN ('pending', 'retry') AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+        OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+      )
+      LIMIT 1`,
+    [tenantId, operationId, now, now]
+  );
+  if (!candidate || !SAFE_RUNTIME_ID.test(candidate.event_id)) return null;
+  const claimed = await session
+    .prepare(
+      `UPDATE account_lifecycle_event_outbox
+          SET status = 'leased', attempt_count = attempt_count + 1,
+              lease_owner = ?, lease_expires_at = ?, next_attempt_at = NULL,
+              last_error_code = NULL, updated_at = ?
+        WHERE event_id = ? AND tenant_id = ? AND operation_id = ? AND (
+          (status IN ('pending', 'retry') AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+          OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+        )`
+    )
+    .bind(
+      ownerId,
+      now + ACCOUNT_EVENT_LEASE_SECONDS,
+      now,
+      candidate.event_id,
+      tenantId,
+      operationId,
+      now,
+      now
+    )
+    .run();
+  if ((claimed.meta.changes ?? 0) !== 1) return null;
+  return firstSession<AccountLifecycleEventClaimRow>(
+    session,
+    `SELECT event_id, tenant_id, account_id, operation_id, event_type, event_version,
+            payload_json, plugin_targets_json, attempt_count, created_at
+       FROM account_lifecycle_event_outbox
+      WHERE event_id = ? AND status = 'leased' AND lease_owner = ?`,
+    [candidate.event_id, ownerId]
+  );
+}
+
+function pluginTargets(value: string): AccountLifecyclePluginTarget[] {
   if (value.length > 4096) throw new Error('account_lifecycle_plugin_targets_invalid');
   let parsed: unknown;
   try {
@@ -458,15 +516,20 @@ async function snapshotAccountEventTargets(
   session: D1DatabaseSession,
   claim: AccountLifecycleEventClaimRow,
   ownerId: string,
-  now: number
+  now: number,
+  targetCache: AccountLifecycleTargetCache
 ) {
   if (claim.plugin_targets_json !== null) return pluginTargets(claim.plugin_targets_json);
   if (!env.PLUGIN_RUNNER) throw new Error('account_lifecycle_plugin_runner_unavailable');
-  const resolved = await env.PLUGIN_RUNNER.resolveAccountEventInstallations({
-    tenantId: claim.tenant_id,
-    eventType: 'account.created',
-  });
-  const encoded = JSON.stringify(pluginTargets(JSON.stringify(resolved)));
+  let targetPromise = targetCache.get(claim.tenant_id);
+  if (!targetPromise) {
+    targetPromise = env.PLUGIN_RUNNER.resolveAccountEventInstallations({
+      tenantId: claim.tenant_id,
+      eventType: 'account.created',
+    }).then((resolved) => pluginTargets(JSON.stringify(resolved)));
+    targetCache.set(claim.tenant_id, targetPromise);
+  }
+  const encoded = JSON.stringify(await targetPromise);
   const updated = await session
     .prepare(
       `UPDATE account_lifecycle_event_outbox SET plugin_targets_json = ?, updated_at = ?
@@ -487,13 +550,12 @@ async function completeAccountLifecycleEvent(
   session: D1DatabaseSession,
   claim: AccountLifecycleEventClaimRow,
   ownerId: string,
-  now: number
+  now: number,
+  dispatcher: Awaited<ReturnType<typeof createEventDispatcherFromEnv>>,
+  targetCache: AccountLifecycleTargetCache
 ): Promise<void> {
   const payload = accountLifecyclePayload(claim);
-  const targets = await snapshotAccountEventTargets(env, session, claim, ownerId, now);
-  const dispatcher = await createEventDispatcherFromEnv(env, {
-    adapter: ensureDatabaseAdapter(tenantCore, 'account-lifecycle-event'),
-  });
+  const targets = await snapshotAccountEventTargets(env, session, claim, ownerId, now, targetCache);
   await dispatcher.publish(
     {
       type: USER_EVENTS.CREATED,
@@ -614,6 +676,43 @@ async function releaseAccountLifecycleEventFailure(
   if ((result.meta.changes ?? 0) !== 1) throw new Error('account_lifecycle_event_stale_lease');
 }
 
+export async function processAccountLifecycleEventForOperation(
+  env: Env,
+  tenantCore: D1Database,
+  input: { tenantId: string; operationId: string; now?: number }
+): Promise<boolean> {
+  const now = input.now ?? Math.floor(Date.now() / 1000);
+  const ownerId = `account-event-${crypto.randomUUID()}`;
+  const session = tenantCore.withSession('first-primary');
+  const claim = await claimAccountLifecycleEventByOperation(
+    session,
+    input.tenantId,
+    input.operationId,
+    ownerId,
+    now
+  );
+  if (!claim) return false;
+  try {
+    const dispatcher = await createEventDispatcherFromEnv(env, {
+      adapter: ensureDatabaseAdapter(tenantCore, 'account-lifecycle-event'),
+    });
+    await completeAccountLifecycleEvent(
+      env,
+      tenantCore,
+      session,
+      claim,
+      ownerId,
+      now,
+      dispatcher,
+      new Map()
+    );
+    return true;
+  } catch {
+    await releaseAccountLifecycleEventFailure(session, claim, ownerId, now);
+    return false;
+  }
+}
+
 function d1Binding(env: Env, bindingRef: string, errorCode: string): D1Database {
   const binding = (env as unknown as Record<string, unknown>)[bindingRef];
   if (!binding || typeof binding !== 'object') throw new Error(errorCode);
@@ -696,6 +795,24 @@ async function claimRoutingOutboxRow(
       WHERE outbox_id = ? AND status = 'leased' AND lease_owner = ?`,
     [candidate.outbox_id, ownerId]
   );
+}
+
+async function hasRunnableRoutingOutboxRow(
+  session: D1DatabaseSession,
+  nowSeconds: number
+): Promise<boolean> {
+  const candidate = await firstSession<{ outbox_id: string }>(
+    session,
+    `SELECT outbox_id
+       FROM account_routing_outbox
+      WHERE event_kind IN ('account_created', 'identifier_added', 'account_deleted', 'identifier_removed') AND (
+        (status IN ('pending', 'retry') AND (next_attempt_at IS NULL OR next_attempt_at <= ?))
+        OR (status = 'leased' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?)
+      )
+      ORDER BY created_at, outbox_id LIMIT 1`,
+    [nowSeconds, nowSeconds]
+  );
+  return candidate !== null;
 }
 
 function retryDelaySeconds(outboxId: string, attemptCount: number): number {
@@ -859,23 +976,72 @@ export function createRoutingOutboxProcessor(
     let processedRows = 0;
     // Drain events from a previous activation pass first. Events created below are picked up on
     // the next scheduled pass, keeping account activation independent from plugin availability.
-    while (processedRows < input.rowLimit && input.nowMs() < input.deadlineMs) {
-      const nowSeconds = Math.floor(input.nowMs() / 1000);
-      const event = await claimAccountLifecycleEvent(sourceSession, input.ownerId, nowSeconds);
-      if (!event) break;
-      try {
-        await completeAccountLifecycleEvent(
-          env,
-          tenantCore,
+    // When routing work is also waiting, process at most one lifecycle event first. Plugin/event
+    // latency must not consume the whole shard visit and starve account publication recovery.
+    const routingWorkWaiting = await hasRunnableRoutingOutboxRow(
+      sourceSession,
+      Math.floor(input.nowMs() / 1000)
+    );
+    const lifecycleRowLimit = routingWorkWaiting ? 1 : input.rowLimit;
+    const lifecycleTargetCache: AccountLifecycleTargetCache = new Map();
+    let lifecycleDispatcher: Awaited<ReturnType<typeof createEventDispatcherFromEnv>> | null = null;
+    while (processedRows < lifecycleRowLimit && input.nowMs() < input.deadlineMs) {
+      const events: AccountLifecycleEventClaimRow[] = [];
+      const batchSize = Math.min(8, lifecycleRowLimit - processedRows);
+      for (let index = 0; index < batchSize; index += 1) {
+        const event = await claimAccountLifecycleEvent(
           sourceSession,
-          event,
           input.ownerId,
-          nowSeconds
+          Math.floor(input.nowMs() / 1000)
         );
-      } catch {
-        await releaseAccountLifecycleEventFailure(sourceSession, event, input.ownerId, nowSeconds);
+        if (!event) break;
+        events.push(event);
       }
-      processedRows += 1;
+      if (events.length === 0) break;
+      try {
+        lifecycleDispatcher ??= await createEventDispatcherFromEnv(env, {
+          adapter: ensureDatabaseAdapter(tenantCore, 'account-lifecycle-event'),
+        });
+      } catch {
+        await Promise.all(
+          events.map((event) =>
+            releaseAccountLifecycleEventFailure(
+              tenantCore.withSession('first-primary'),
+              event,
+              input.ownerId,
+              Math.floor(input.nowMs() / 1000)
+            )
+          )
+        );
+        processedRows += events.length;
+        continue;
+      }
+      await Promise.all(
+        events.map(async (event) => {
+          const eventSession = tenantCore.withSession('first-primary');
+          const nowSeconds = Math.floor(input.nowMs() / 1000);
+          try {
+            await completeAccountLifecycleEvent(
+              env,
+              tenantCore,
+              eventSession,
+              event,
+              input.ownerId,
+              nowSeconds,
+              lifecycleDispatcher!,
+              lifecycleTargetCache
+            );
+          } catch {
+            await releaseAccountLifecycleEventFailure(
+              eventSession,
+              event,
+              input.ownerId,
+              nowSeconds
+            );
+          }
+        })
+      );
+      processedRows += events.length;
     }
     while (processedRows < input.rowLimit && input.nowMs() < input.deadlineMs) {
       const nowSeconds = Math.floor(input.nowMs() / 1000);
@@ -995,7 +1161,14 @@ export function createRoutingOutboxProcessor(
       }
       processedRows += 1;
     }
-    return { cursor: { after_shard_id: shard.shardId }, processedRows };
+    const routingWorkRemaining = await hasRunnableRoutingOutboxRow(
+      sourceSession,
+      Math.floor(input.nowMs() / 1000)
+    );
+    return {
+      cursor: { after_shard_id: routingWorkRemaining ? afterShardId : shard.shardId },
+      processedRows,
+    };
   };
 }
 

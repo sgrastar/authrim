@@ -330,6 +330,12 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/024_release_migration_rollout.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -363,6 +369,148 @@ describe('D1ControlRepository lease and budget integration', () => {
   });
 
   afterEach(() => database.close());
+
+  it('reports durable release rollout progress and the Admin mutation fence', async () => {
+    await expect(repository.getReleaseMigrationRolloutStatus('env-test')).resolves.toEqual({
+      operationId: null,
+      sourceVersion: null,
+      targetVersion: null,
+      phase: 'idle',
+      completedTargets: 0,
+      totalTargets: 0,
+      blockedTargetCount: 0,
+      blockedTargets: [],
+      adminMutationMode: 'available',
+      lastErrorCode: null,
+      updatedAt: null,
+    });
+
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, attempt_count, release_id, release_stream_id,
+        release_manifest_digest, created_at, updated_at
+      ) VALUES (
+        'release-rollout-1', 'env-test', 'release_migration_rollout', 'release-rollout:0.5.0',
+        'running', 'setup', 1, '0.5.0', 'all', '${'c'.repeat(64)}', 200, 220
+      );
+      INSERT INTO control_operation_steps (
+        operation_id, step_key, display_order, status, attempt_count,
+        progress_current, progress_total, updated_at
+      ) VALUES
+        ('release-rollout-1', 'apply_managed_migrations', 10, 'succeeded', 1, 12, 12, 215),
+        ('release-rollout-1', 'await_setup', 20, 'running', 1, NULL, NULL, 220),
+        ('release-rollout-1', 'verify_release', 30, 'queued', 0, NULL, NULL, 220);
+      INSERT INTO control_release_migration_rollouts (
+        operation_id, environment_id, source_version, target_version, release_id,
+        manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
+        admin_mutation_mode, handoff_state, active_environment_key,
+        created_at, updated_at
+      ) VALUES (
+        'release-rollout-1', 'env-test', NULL, '0.5.0', '0.5.0', '${'c'.repeat(64)}',
+        'releases/0.5.0/${'c'.repeat(64)}/manifest.json', 'setup_then_control',
+        'after_required_databases', 'read_only', 'awaiting_setup', 'env-test', 200, 220
+      );
+    `);
+
+    await expect(repository.getReleaseMigrationRolloutStatus('env-test')).resolves.toEqual({
+      operationId: 'release-rollout-1',
+      sourceVersion: null,
+      targetVersion: '0.5.0',
+      phase: 'awaiting_setup',
+      completedTargets: 12,
+      totalTargets: 12,
+      blockedTargetCount: 0,
+      blockedTargets: [],
+      adminMutationMode: 'read_only',
+      lastErrorCode: null,
+      updatedAt: 220,
+    });
+  });
+
+  it('prefers an active rollout over a completed rollout created in the same second', async () => {
+    const digest = 'd'.repeat(64);
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, attempt_count, created_at, completed_at, updated_at
+      ) VALUES
+        ('release-rollout-completed', 'env-test', 'release_migration_rollout',
+         'release-rollout:completed', 'succeeded', 'setup', 1, 300, 320, 320),
+        ('release-rollout-active', 'env-test', 'release_migration_rollout',
+         'release-rollout:active', 'running', 'setup', 1, 300, NULL, 310);
+      INSERT INTO control_release_migration_rollouts (
+        operation_id, environment_id, source_version, target_version, release_id,
+        manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
+        admin_mutation_mode, handoff_state, active_environment_key, completed_at,
+        created_at, updated_at
+      ) VALUES
+        ('release-rollout-completed', 'env-test', '0.4.0', '0.5.0', '0.5.0', '${digest}',
+         'releases/0.5.0/${digest}/manifest.json', 'setup_then_control',
+         'after_required_databases', 'read_only', 'completed',
+         'completed:release-rollout-completed', 320, 300, 320),
+        ('release-rollout-active', 'env-test', '0.5.0', '0.6.0', '0.6.0', '${digest}',
+         'releases/0.6.0/${digest}/manifest.json', 'setup_then_control',
+         'after_required_databases', 'read_only', 'database_rollout', 'env-test',
+         NULL, 300, 310);
+      INSERT INTO control_operation_steps (
+        operation_id, step_key, display_order, status, attempt_count,
+        progress_current, progress_total, updated_at
+      ) VALUES
+        ('release-rollout-active', 'apply_managed_migrations', 10, 'running', 1, 2, 5, 310),
+        ('release-rollout-active', 'await_setup', 20, 'queued', 0, NULL, NULL, 310),
+        ('release-rollout-active', 'verify_release', 30, 'queued', 0, NULL, NULL, 310);
+    `);
+
+    await expect(repository.getReleaseMigrationRolloutStatus('env-test')).resolves.toMatchObject({
+      operationId: 'release-rollout-active',
+      targetVersion: '0.6.0',
+      phase: 'database_rollout',
+      completedTargets: 2,
+      totalTargets: 5,
+      adminMutationMode: 'read_only',
+    });
+  });
+
+  it('fails closed when a completed handoff contradicts its operation or required steps', async () => {
+    const digest = 'e'.repeat(64);
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, attempt_count, release_id, release_stream_id,
+        release_manifest_digest, created_at, updated_at
+      ) VALUES (
+        'release-rollout-inconsistent', 'env-test', 'release_migration_rollout',
+        'release-rollout:inconsistent', 'running', 'setup', 1, '0.7.0', 'all',
+        '${digest}', 400, 410
+      );
+      INSERT INTO control_release_migration_rollouts (
+        operation_id, environment_id, source_version, target_version, release_id,
+        manifest_digest, manifest_r2_object_key, database_execution, worker_activation,
+        admin_mutation_mode, handoff_state, active_environment_key, completed_at,
+        created_at, updated_at
+      ) VALUES (
+        'release-rollout-inconsistent', 'env-test', '0.6.0', '0.7.0', '0.7.0',
+        '${digest}', 'releases/0.7.0/${digest}/manifest.json', 'setup_then_control',
+        'after_required_databases', 'read_only', 'completed',
+        'completed:release-rollout-inconsistent', 410, 400, 410
+      );
+      INSERT INTO control_operation_steps (
+        operation_id, step_key, display_order, status, attempt_count,
+        progress_current, progress_total, updated_at
+      ) VALUES
+        ('release-rollout-inconsistent', 'apply_managed_migrations', 10, 'succeeded', 1, 4, 5, 410),
+        ('release-rollout-inconsistent', 'await_setup', 20, 'running', 1, NULL, NULL, 410),
+        ('release-rollout-inconsistent', 'verify_release', 30, 'queued', 0, NULL, NULL, 410);
+    `);
+
+    await expect(repository.getReleaseMigrationRolloutStatus('env-test')).resolves.toMatchObject({
+      operationId: 'release-rollout-inconsistent',
+      phase: 'blocked',
+      adminMutationMode: 'read_only',
+      lastErrorCode: 'release_rollout_state_inconsistent',
+    });
+  });
 
   it('resumes only initial bootstrap operations handed to the operator before credentials were ready', async () => {
     database.exec(`

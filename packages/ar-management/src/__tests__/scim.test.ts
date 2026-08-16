@@ -17,6 +17,10 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 
+vi.mock('../scim-identifier-replacement', () => ({
+  syncScimIdentifierReplacements: vi.fn(async () => {}),
+}));
+
 const canonicalRuntimeState = vi.hoisted(() => ({
   users: new Map<string, any>(),
   apply(input: any) {
@@ -49,6 +53,7 @@ const canonicalRuntimeState = vi.hoisted(() => ({
       password_hash: input.passwordHash ?? existing.password_hash ?? null,
       external_id: input.externalId ?? existing.external_id ?? null,
       active: input.active === false ? 0 : 1,
+      lifecycle_state: input.active === false ? 'deprovisioned' : 'active',
       created_at: existing.created_at ?? nowSeconds,
       updated_at: nowSeconds,
     });
@@ -59,6 +64,9 @@ const accountCreationState = vi.hoisted(() => ({
   deliveryStatus: 201 as 201 | 202,
   capacityUnavailable: false,
   calls: [] as Array<Record<string, unknown>>,
+  pause: null as null | (() => Promise<void>),
+  inFlight: 0,
+  maxInFlight: 0,
 }));
 
 const accountOperationState = vi.hoisted(() => ({
@@ -69,6 +77,10 @@ const accountOperationState = vi.hoisted(() => ({
 const accountRoutingState = vi.hoisted(() => ({
   error: null as Error | null,
   calls: [] as string[],
+}));
+
+const customClaimRoutingState = vi.hoisted(() => ({
+  rejectAccountLookup: false,
 }));
 
 const accountRemovalState = vi.hoisted(() => ({
@@ -92,10 +104,13 @@ vi.mock('../cross-shard-account-list', () => ({
       this.env = env;
     }
 
-    async list(input: { tenantId: string; limit?: number }) {
+    async list(input: { tenantId: string; limit?: number; includeInactive?: boolean }) {
       const limit = input.limit ?? 100;
       const items = [...canonicalRuntimeState.users.values()]
-        .filter((user) => user.active !== 0)
+        .filter(
+          (user) =>
+            user.lifecycle_state !== 'deleted' && (input.includeInactive || user.active !== 0)
+        )
         .sort((left, right) => Number(right.created_at) - Number(left.created_at))
         .slice(0, limit)
         .map((user) => ({
@@ -103,7 +118,7 @@ vi.mock('../cross-shard-account-list', () => ({
           legacyUserId: user.id,
           tenantId: input.tenantId,
           accountType: 'user',
-          lifecycleState: 'active',
+          lifecycleState: user.active === 0 ? 'deprovisioned' : 'active',
           displayLabel: user.name ?? null,
           createdAt: Number(user.created_at),
           coreBindingRef: 'DB',
@@ -111,6 +126,59 @@ vi.mock('../cross-shard-account-list', () => ({
         }));
       if (!this.env.DB || !this.env.DB_PII) throw new Error('test_scim_route_binding_missing');
       return { items, nextCursor: null };
+    }
+
+    async count(input: { includeInactive?: boolean }) {
+      return [...canonicalRuntimeState.users.values()].filter(
+        (user) => user.lifecycle_state !== 'deleted' && (input.includeInactive || user.active !== 0)
+      ).length;
+    }
+  },
+  CrossShardAccountExactSearchService: class {
+    private readonly env: Partial<Env>;
+
+    constructor(env: Partial<Env>) {
+      this.env = env;
+    }
+
+    async find(input: {
+      tenantId: string;
+      identifier: string;
+      purpose?: string;
+      indexKind?: string;
+    }) {
+      const matchingEntry =
+        input.indexKind === 'external_subject'
+          ? [...canonicalRuntimeState.users.entries()].find(
+              ([, user]) =>
+                String(user.preferred_username ?? '').toLowerCase() ===
+                input.identifier.toLowerCase()
+            )
+          : input.indexKind === 'email_exact'
+            ? [...canonicalRuntimeState.users.entries()].find(
+                ([, user]) =>
+                  String(user.email ?? '').toLowerCase() === input.identifier.toLowerCase()
+              )
+            : null;
+      const userId = matchingEntry?.[0] ?? input.identifier.replace(/^account:/, '');
+      accountRoutingState.calls.push(userId);
+      if (accountRoutingState.error) throw accountRoutingState.error;
+      const user = matchingEntry?.[1] ?? canonicalRuntimeState.users.get(userId);
+      if (!user || (input.purpose === 'active_search' && user.active === 0)) return [];
+      if (!this.env.DB || !this.env.DB_PII) throw new Error('test_scim_route_binding_missing');
+      return [
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: input.tenantId,
+          accountType: 'user',
+          lifecycleState: user.active === 0 ? 'deprovisioned' : 'active',
+          displayLabel: user.name ?? null,
+          createdAt: Number(user.created_at),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ];
     }
   },
 }));
@@ -151,6 +219,13 @@ vi.mock('../account-directory-producer', () => ({
   executeDurableInitialAccountDirectoryWrite: vi.fn(
     async (env: any, input: any, dependencies: any) => {
       accountCreationState.calls.push(input);
+      accountCreationState.inFlight += 1;
+      accountCreationState.maxInFlight = Math.max(
+        accountCreationState.maxInFlight,
+        accountCreationState.inFlight
+      );
+      if (accountCreationState.pause) await accountCreationState.pause();
+      accountCreationState.inFlight -= 1;
       if (accountCreationState.capacityUnavailable) {
         throw new Error('control_account_allocation_capacity_unavailable');
       }
@@ -158,6 +233,16 @@ vi.mock('../account-directory-producer', () => ({
         input.email &&
         [...canonicalRuntimeState.users.values()].some(
           (user) => user.email?.toLowerCase() === input.email.toLowerCase()
+        )
+      ) {
+        throw new Error('directory_identifier_reservation_conflict');
+      }
+      if (
+        input.externalSubject &&
+        [...canonicalRuntimeState.users.values()].some(
+          (user) =>
+            user.lifecycle_state !== 'deleted' &&
+            user.preferred_username?.trim().toLowerCase() === input.externalSubject.subject
         )
       ) {
         throw new Error('directory_identifier_reservation_conflict');
@@ -339,7 +424,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     subject_id: `subject:${user.id}`,
     account_id: `account:${user.id}`,
     account_type: 'user',
-    lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+    lifecycle_state: user.lifecycle_state ?? (user.active === 0 ? 'deprovisioned' : 'active'),
     email: user.email ?? null,
     email_verified: user.email_verified ?? 0,
     name: user.name ?? null,
@@ -419,11 +504,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       .mockImplementation(
         async () => `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
       ),
-    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      schemaDb: env.DB,
-      nonPiiDb: env.DB,
-      piiDb: env.DB_PII ?? null,
-    })),
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(
+      async (env: Partial<Env>, _tenantId: string, options?: { accountId?: string }) => {
+        if (options?.accountId && customClaimRoutingState.rejectAccountLookup) {
+          throw new Error('lookup_destination_revalidation_failed');
+        }
+        return {
+          schemaDb: env.DB,
+          nonPiiDb: env.DB,
+          piiDb: env.DB_PII ?? null,
+        };
+      }
+    ),
     CanonicalRuntimeUserProjectionRepository: class {
       async findByLegacyUserId(legacyUserId: string, options?: { includeInactive?: boolean }) {
         const user = canonicalRuntimeState.users.get(legacyUserId);
@@ -454,6 +546,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           return false;
         }
         user.active = 0;
+        user.lifecycle_state = 'deleted';
         user.updated_at = Math.floor(Date.now() / 1000);
         return true;
       }
@@ -512,10 +605,14 @@ describe('SCIM 2.0 Endpoints', () => {
     accountCreationState.deliveryStatus = 201;
     accountCreationState.capacityUnavailable = false;
     accountCreationState.calls = [];
+    accountCreationState.pause = null;
+    accountCreationState.inFlight = 0;
+    accountCreationState.maxInFlight = 0;
     accountOperationState.operation = null;
     accountOperationState.error = null;
     accountRoutingState.error = null;
     accountRoutingState.calls = [];
+    customClaimRoutingState.rejectAccountLookup = false;
     mockUsers = new Map();
     canonicalRuntimeState.users = mockUsers;
     mockGroups = new Map();
@@ -569,77 +666,23 @@ describe('SCIM 2.0 Endpoints', () => {
       DB: {
         prepare: vi.fn().mockImplementation((sql: string) => {
           return {
-            bind: vi.fn().mockImplementation((...args: any[]) => ({
-              first: vi.fn().mockImplementation(async () => {
-                if (sql.includes('FROM identity_accounts')) {
-                  const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
-                  const user = mockUsers.get(userId);
-                  if (!user) return null;
-                  return {
-                    id: `account:${user.id}`,
-                    tenant_id: user.tenant_id || 'default',
-                    account_type: 'user',
-                    lifecycle_state: user.active === 0 ? 'deleted' : 'active',
-                    subject_lifecycle_state: user.active === 0 ? 'deleted' : 'active',
-                    directory_publication_state: 'active',
-                    legacy_user_id: user.id,
-                    primary_subject_id: `subject:${user.id}`,
-                    display_label: null,
-                    metadata_json: JSON.stringify({
-                      external_id: user.external_id ?? null,
-                      password_hash: user.password_hash ?? null,
-                    }),
-                    created_at: user.created_at,
-                    updated_at: user.updated_at,
-                    account_updated_at: user.updated_at,
-                    deleted_at: null,
-                  };
-                }
-                // Handle SELECT queries for users_core (PII/Non-PII separation)
-                if (sql.includes('FROM users_core WHERE id = ?')) {
-                  const user = mockUsers.get(args[0]);
-                  if (!user) return null;
-                  return {
-                    id: user.id,
-                    tenant_id: user.tenant_id || 'default',
-                    email_verified: user.email_verified,
-                    phone_number_verified: 0,
-                    is_active: user.active,
-                    user_type: 'end_user',
-                    external_id: user.external_id,
-                    pii_partition: 'default',
-                    pii_status: 'active',
-                    created_at: user.created_at,
-                    updated_at: user.updated_at,
-                  };
-                }
-                if (sql.includes('SELECT COUNT(*) as total')) {
-                  if (sql.includes('users') || sql.includes('users_core'))
-                    return { total: mockUsers.size };
-                  if (sql.includes('roles')) return { total: mockGroups.size };
-                }
-                if (sql.includes('SELECT * FROM roles WHERE id = ?')) {
-                  return mockGroups.get(args[0]) || null;
-                }
-                if (sql.includes('SELECT id FROM roles WHERE name = ?')) {
-                  for (const group of mockGroups.values()) {
-                    if (group.name === args[0]) return { id: group.id };
-                  }
-                  return null;
-                }
-                return null;
-              }),
-              all: vi.fn().mockImplementation(async () => {
-                if (sql.includes('FROM identity_accounts')) {
-                  const results = Array.from(mockUsers.values())
-                    .filter(
-                      (user) => !sql.includes("lifecycle_state = 'active'") || user.active !== 0
-                    )
-                    .map((user) => ({
+            bind: vi.fn().mockImplementation((...args: any[]) => {
+              if (args.some((value) => value === undefined)) {
+                throw new Error(`D1_TYPE_ERROR: undefined bind value for ${sql}`);
+              }
+              return {
+                first: vi.fn().mockImplementation(async () => {
+                  if (sql.includes('FROM identity_accounts')) {
+                    const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
+                    const user = mockUsers.get(userId);
+                    if (!user) return null;
+                    return {
                       id: `account:${user.id}`,
                       tenant_id: user.tenant_id || 'default',
                       account_type: 'user',
                       lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                      subject_lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                      directory_publication_state: 'active',
                       legacy_user_id: user.id,
                       primary_subject_id: `subject:${user.id}`,
                       display_label: null,
@@ -649,175 +692,234 @@ describe('SCIM 2.0 Endpoints', () => {
                       }),
                       created_at: user.created_at,
                       updated_at: user.updated_at,
+                      account_updated_at: user.updated_at,
                       deleted_at: null,
+                    };
+                  }
+                  // Handle SELECT queries for users_core (PII/Non-PII separation)
+                  if (sql.includes('FROM users_core WHERE id = ?')) {
+                    const user = mockUsers.get(args[0]);
+                    if (!user) return null;
+                    return {
+                      id: user.id,
+                      tenant_id: user.tenant_id || 'default',
+                      email_verified: user.email_verified,
+                      phone_number_verified: 0,
+                      is_active: user.active,
+                      user_type: 'end_user',
+                      external_id: user.external_id,
+                      pii_partition: 'default',
+                      pii_status: 'active',
+                      created_at: user.created_at,
+                      updated_at: user.updated_at,
+                    };
+                  }
+                  if (sql.includes('SELECT COUNT(*) as total')) {
+                    if (sql.includes('users') || sql.includes('users_core'))
+                      return { total: mockUsers.size };
+                    if (sql.includes('roles')) return { total: mockGroups.size };
+                  }
+                  if (sql.includes('SELECT * FROM roles WHERE id = ?')) {
+                    return mockGroups.get(args[0]) || null;
+                  }
+                  if (sql.includes('SELECT id FROM roles WHERE name = ?')) {
+                    for (const group of mockGroups.values()) {
+                      if (group.name === args[0]) return { id: group.id };
+                    }
+                    return null;
+                  }
+                  return null;
+                }),
+                all: vi.fn().mockImplementation(async () => {
+                  if (sql.includes('FROM identity_accounts')) {
+                    const results = Array.from(mockUsers.values())
+                      .filter(
+                        (user) => !sql.includes("lifecycle_state = 'active'") || user.active !== 0
+                      )
+                      .map((user) => ({
+                        id: `account:${user.id}`,
+                        tenant_id: user.tenant_id || 'default',
+                        account_type: 'user',
+                        lifecycle_state: user.active === 0 ? 'deleted' : 'active',
+                        legacy_user_id: user.id,
+                        primary_subject_id: `subject:${user.id}`,
+                        display_label: null,
+                        metadata_json: JSON.stringify({
+                          external_id: user.external_id ?? null,
+                          password_hash: user.password_hash ?? null,
+                        }),
+                        created_at: user.created_at,
+                        updated_at: user.updated_at,
+                        deleted_at: null,
+                      }));
+                    return { results };
+                  }
+                  // Handle SELECT queries for users_core list (PII/Non-PII separation)
+                  if (sql.includes('FROM users_core')) {
+                    const results = Array.from(mockUsers.values()).map((user) => ({
+                      id: user.id,
+                      tenant_id: user.tenant_id || 'default',
+                      email_verified: user.email_verified,
+                      phone_number_verified: 0,
+                      is_active: user.active,
+                      user_type: 'end_user',
+                      external_id: user.external_id,
+                      pii_partition: 'default',
+                      pii_status: 'active',
+                      created_at: user.created_at,
+                      updated_at: user.updated_at,
                     }));
-                  return { results };
-                }
-                // Handle SELECT queries for users_core list (PII/Non-PII separation)
-                if (sql.includes('FROM users_core')) {
-                  const results = Array.from(mockUsers.values()).map((user) => ({
-                    id: user.id,
-                    tenant_id: user.tenant_id || 'default',
-                    email_verified: user.email_verified,
-                    phone_number_verified: 0,
-                    is_active: user.active,
-                    user_type: 'end_user',
-                    external_id: user.external_id,
-                    pii_partition: 'default',
-                    pii_status: 'active',
-                    created_at: user.created_at,
-                    updated_at: user.updated_at,
-                  }));
-                  return { results };
-                }
-                if (sql.includes('FROM custom_claim_schemas')) {
-                  return { results: mockCustomClaimSchemas };
-                }
-                if (sql.includes('FROM user_custom_fields')) {
-                  const userId = args[0];
-                  const fieldNames = args.slice(2);
-                  const user = mockUsers.get(userId);
-                  const customFields = user?.custom_fields || {};
-                  const results = Object.entries(customFields)
-                    .filter(
-                      ([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName)
-                    )
-                    .map(([field_name, field_value]) => ({
-                      field_name,
-                      field_value,
-                    }));
-                  return { results };
-                }
-                if (sql.includes('FROM user_roles ur')) {
-                  const userId = args[1];
-                  const results = [...mockUserRoles.entries()].flatMap(([roleId, members]) => {
-                    if (!members.some((member) => member.user_id === userId)) return [];
-                    const role = mockGroups.get(roleId);
-                    return role ? [{ id: role.id, name: role.name }] : [];
-                  });
-                  return { results };
-                }
-                if (sql.includes('SELECT * FROM roles')) {
-                  return { results: Array.from(mockGroups.values()) };
-                }
-                if (sql.includes('SELECT ur.user_id')) {
-                  const roleId = args[0];
-                  const members = mockUserRoles.get(roleId) || [];
-                  return { results: members };
-                }
-                return { results: [] };
-              }),
-              run: vi.fn().mockImplementation(async () => {
-                if (sql.includes('UPDATE identity_accounts SET')) {
-                  const userId = sql.includes('legacy_user_id IN')
-                    ? args[args.length - 1]
-                    : String(args[2] || '').replace(/^account:/, '');
-                  const user = mockUsers.get(userId);
-                  if (user) {
-                    if (args[0] === 'suspended' || args[0] === 'deleted') {
-                      user.active = 0;
+                    return { results };
+                  }
+                  if (sql.includes('FROM custom_claim_schemas')) {
+                    return { results: mockCustomClaimSchemas };
+                  }
+                  if (sql.includes('FROM user_custom_fields')) {
+                    const userId = args[0];
+                    const fieldNames = args.slice(2);
+                    const user = mockUsers.get(userId);
+                    const customFields = user?.custom_fields || {};
+                    const results = Object.entries(customFields)
+                      .filter(
+                        ([fieldName]) => fieldNames.length === 0 || fieldNames.includes(fieldName)
+                      )
+                      .map(([field_name, field_value]) => ({
+                        field_name,
+                        field_value,
+                      }));
+                    return { results };
+                  }
+                  if (sql.includes('FROM user_roles ur')) {
+                    const userId = args[1];
+                    const results = [...mockUserRoles.entries()].flatMap(([roleId, members]) => {
+                      if (!members.some((member) => member.user_id === userId)) return [];
+                      const role = mockGroups.get(roleId);
+                      return role ? [{ id: role.id, name: role.name }] : [];
+                    });
+                    return { results };
+                  }
+                  if (sql.includes('SELECT * FROM roles')) {
+                    return { results: Array.from(mockGroups.values()) };
+                  }
+                  if (sql.includes('SELECT ur.user_id')) {
+                    const roleId = args[0];
+                    const members = mockUserRoles.get(roleId) || [];
+                    return { results: members };
+                  }
+                  return { results: [] };
+                }),
+                run: vi.fn().mockImplementation(async () => {
+                  if (sql.includes('UPDATE identity_accounts SET')) {
+                    const userId = sql.includes('legacy_user_id IN')
+                      ? args[args.length - 1]
+                      : String(args[2] || '').replace(/^account:/, '');
+                    const user = mockUsers.get(userId);
+                    if (user) {
+                      if (args[0] === 'suspended' || args[0] === 'deleted') {
+                        user.active = 0;
+                      }
+                      if (args[0] === 'active') {
+                        user.active = 1;
+                      }
+                      user.updated_at = Math.floor(Date.now() / 1000);
                     }
-                    if (args[0] === 'active') {
-                      user.active = 1;
+                    return { success: true };
+                  }
+                  // Handle INSERT into users_core (PII/Non-PII separation)
+                  if (sql.includes('INSERT INTO users_core')) {
+                    // bind() order:
+                    // id, tenant_id, email_verified, phone_number_verified, email_domain_hash,
+                    // password_hash, is_active, user_type, pii_partition, pii_status,
+                    // lifecycle_state, created_at, updated_at, last_login_at
+                    const userId = args[0];
+                    // Timestamps are stored as Unix seconds (matching D1 database format)
+                    const nowSeconds = Math.floor(Date.now() / 1000);
+                    mockUsers.set(userId, {
+                      id: userId,
+                      tenant_id: args[1],
+                      email_verified: args[2],
+                      active: args[6],
+                      external_id: null,
+                      created_at: args[11] ?? nowSeconds,
+                      updated_at: args[12] ?? nowSeconds,
+                    });
+                    return { success: true };
+                  }
+                  // Handle UPDATE users_core SET (PII/Non-PII separation)
+                  if (sql.includes('UPDATE users_core SET')) {
+                    const userId = sql.includes('tenant_id = ?')
+                      ? args[args.length - 2]
+                      : args[args.length - 1];
+                    const user = mockUsers.get(userId);
+                    if (user) {
+                      user.updated_at = Math.floor(Date.now() / 1000);
+                      // Handle soft delete (is_active = 0)
+                      if (sql.includes('is_active = 0')) {
+                        user.active = 0;
+                      }
                     }
-                    user.updated_at = Math.floor(Date.now() / 1000);
+                    return { success: true };
                   }
-                  return { success: true };
-                }
-                // Handle INSERT into users_core (PII/Non-PII separation)
-                if (sql.includes('INSERT INTO users_core')) {
-                  // bind() order:
-                  // id, tenant_id, email_verified, phone_number_verified, email_domain_hash,
-                  // password_hash, is_active, user_type, pii_partition, pii_status,
-                  // lifecycle_state, created_at, updated_at, last_login_at
-                  const userId = args[0];
-                  // Timestamps are stored as Unix seconds (matching D1 database format)
-                  const nowSeconds = Math.floor(Date.now() / 1000);
-                  mockUsers.set(userId, {
-                    id: userId,
-                    tenant_id: args[1],
-                    email_verified: args[2],
-                    active: args[6],
-                    external_id: null,
-                    created_at: args[11] ?? nowSeconds,
-                    updated_at: args[12] ?? nowSeconds,
-                  });
-                  return { success: true };
-                }
-                // Handle UPDATE users_core SET (PII/Non-PII separation)
-                if (sql.includes('UPDATE users_core SET')) {
-                  const userId = sql.includes('tenant_id = ?')
-                    ? args[args.length - 2]
-                    : args[args.length - 1];
-                  const user = mockUsers.get(userId);
-                  if (user) {
-                    user.updated_at = Math.floor(Date.now() / 1000);
-                    // Handle soft delete (is_active = 0)
-                    if (sql.includes('is_active = 0')) {
-                      user.active = 0;
+                  if (sql.includes('INSERT INTO user_custom_fields')) {
+                    const userId = args[0];
+                    const user = mockUsers.get(userId);
+                    if (user) {
+                      user.custom_fields = user.custom_fields || {};
+                      user.custom_fields[args[1]] = args[2];
                     }
+                    return { success: true };
+                  }
+                  if (sql.includes('DELETE FROM user_custom_fields')) {
+                    const userId = args[0];
+                    const user = mockUsers.get(userId);
+                    if (user?.custom_fields) {
+                      delete user.custom_fields[args[2]];
+                    }
+                    return { success: true };
+                  }
+                  if (sql.includes('INSERT INTO roles')) {
+                    const groupId = args[0];
+                    mockGroups.set(groupId, {
+                      id: groupId,
+                      tenant_id: args[1],
+                      name: args[2],
+                      description: args[3],
+                      external_id: args[5],
+                      created_at: args[6],
+                    });
+                    return { success: true };
+                  }
+                  if (sql.includes('UPDATE roles SET')) {
+                    const groupId = sql.includes('tenant_id = ?')
+                      ? args[args.length - 2]
+                      : args[args.length - 1];
+                    const group = mockGroups.get(groupId);
+                    if (group) {
+                      group.name = args[0];
+                      group.description = args[1];
+                    }
+                    return { success: true };
+                  }
+                  if (sql.includes('DELETE FROM roles')) {
+                    mockGroups.delete(args[0]);
+                    return { success: true };
+                  }
+                  if (sql.includes('DELETE FROM user_roles')) {
+                    mockUserRoles.delete(args[0]);
+                    return { success: true };
+                  }
+                  if (sql.includes('INSERT INTO user_roles')) {
+                    const userId = args[0];
+                    const roleId = args[1];
+                    const members = mockUserRoles.get(roleId) || [];
+                    members.push({ user_id: userId, email: mockUsers.get(userId)?.email });
+                    mockUserRoles.set(roleId, members);
+                    return { success: true };
                   }
                   return { success: true };
-                }
-                if (sql.includes('INSERT INTO user_custom_fields')) {
-                  const userId = args[0];
-                  const user = mockUsers.get(userId);
-                  if (user) {
-                    user.custom_fields = user.custom_fields || {};
-                    user.custom_fields[args[1]] = args[2];
-                  }
-                  return { success: true };
-                }
-                if (sql.includes('DELETE FROM user_custom_fields')) {
-                  const userId = args[0];
-                  const user = mockUsers.get(userId);
-                  if (user?.custom_fields) {
-                    delete user.custom_fields[args[2]];
-                  }
-                  return { success: true };
-                }
-                if (sql.includes('INSERT INTO roles')) {
-                  const groupId = args[0];
-                  mockGroups.set(groupId, {
-                    id: groupId,
-                    tenant_id: args[1],
-                    name: args[2],
-                    description: args[3],
-                    external_id: args[5],
-                    created_at: args[6],
-                  });
-                  return { success: true };
-                }
-                if (sql.includes('UPDATE roles SET')) {
-                  const groupId = sql.includes('tenant_id = ?')
-                    ? args[args.length - 2]
-                    : args[args.length - 1];
-                  const group = mockGroups.get(groupId);
-                  if (group) {
-                    group.name = args[0];
-                    group.description = args[1];
-                  }
-                  return { success: true };
-                }
-                if (sql.includes('DELETE FROM roles')) {
-                  mockGroups.delete(args[0]);
-                  return { success: true };
-                }
-                if (sql.includes('DELETE FROM user_roles')) {
-                  mockUserRoles.delete(args[0]);
-                  return { success: true };
-                }
-                if (sql.includes('INSERT INTO user_roles')) {
-                  const userId = args[0];
-                  const roleId = args[1];
-                  const members = mockUserRoles.get(roleId) || [];
-                  members.push({ user_id: userId, email: mockUsers.get(userId)?.email });
-                  mockUserRoles.set(roleId, members);
-                  return { success: true };
-                }
-                return { success: true };
-              }),
-            })),
+                }),
+              };
+            }),
           };
         }),
         batch: vi.fn(async (statements: Array<{ run: () => Promise<unknown> }>) =>
@@ -1178,6 +1280,25 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.itemsPerPage).toBeLessThanOrEqual(10);
     });
 
+    it('returns no resources for count=0 while preserving totalResults', async () => {
+      const res = await app.fetch(createRequest('/scim/v2/Users?count=0'), mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        totalResults: 2,
+        itemsPerPage: 0,
+        Resources: [],
+      });
+    });
+
+    it.each(['startIndex=0', 'count=-1', 'count=1x', 'sortOrder=sideways'])(
+      'rejects invalid pagination parameter %s',
+      async (query) => {
+        const res = await app.fetch(createRequest(`/scim/v2/Users?${query}`), mockEnv as Env);
+        expect(res.status).toBe(400);
+      }
+    );
+
     it('should limit count to maximum allowed', async () => {
       const req = createRequest('/scim/v2/Users?count=5000');
       const res = await app.fetch(req, mockEnv as Env);
@@ -1206,6 +1327,16 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.scimType).toBe('invalidFilter');
     });
 
+    it.each([
+      'unknownAttribute%20eq%20%22value%22',
+      'emails%5Btype%20eq%20%22work%22%5D.value%20eq%20%22john.doe%40example.com%22',
+    ])('rejects unsupported filter %s consistently', async (filter) => {
+      const res = await app.fetch(createRequest(`/scim/v2/Users?filter=${filter}`), mockEnv as Env);
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ scimType: 'invalidFilter' });
+    });
+
     it('fails closed when a routed account PII binding is unavailable', async () => {
       delete (mockEnv as Partial<Record<keyof Env, unknown>>).DB_PII;
 
@@ -1229,6 +1360,16 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.schemas).toContain('urn:ietf:params:scim:schemas:core:2.0:User');
       expect(body.id).toBe('user-001');
       expect(body.userName).toBeDefined();
+    });
+
+    it('keeps an inactive user readable for later reactivation', async () => {
+      mockUsers.get('user-001').active = 0;
+      mockUsers.get('user-001').lifecycle_state = 'deprovisioned';
+
+      const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv as Env);
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ id: 'user-001', active: false });
     });
 
     it('should include enterprise extension when custom attributes exist', async () => {
@@ -1450,13 +1591,13 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.detail).not.toContain('capacity.user@example.com');
     });
 
-    it('publishes externalId in the tenant-scoped SCIM subject namespace', async () => {
+    it('publishes normalized userName in the tenant-scoped SCIM subject namespace', async () => {
       const req = createRequest('/scim/v2/Users', {
         method: 'POST',
         body: JSON.stringify({
           schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
           externalId: 'provider-user-42',
-          userName: 'external-user',
+          userName: 'External-User',
           emails: [{ value: 'external.user@example.com', primary: true }],
         }),
       });
@@ -1465,9 +1606,89 @@ describe('SCIM 2.0 Endpoints', () => {
 
       expect(res.status).toBe(201);
       expect(accountCreationState.calls[0]?.externalSubject).toEqual({
-        issuer: 'urn:authrim:scim:default',
-        subject: 'provider-user-42',
+        issuer: 'urn:authrim:scim:default:username',
+        subject: 'external-user',
       });
+    });
+
+    it.each(['johndoe', 'JohnDoe'])(
+      'rejects tenant-wide duplicate userName %s case-insensitively',
+      async (userName) => {
+        const res = await app.fetch(
+          createRequest('/scim/v2/Users', {
+            method: 'POST',
+            body: JSON.stringify({
+              schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+              userName,
+              emails: [{ value: `${userName.toLowerCase()}-duplicate@example.com`, primary: true }],
+            }),
+          }),
+          mockEnv as Env
+        );
+
+        expect(res.status).toBe(409);
+        await expect(res.json()).resolves.toMatchObject({ scimType: 'uniqueness' });
+        expect(accountCreationState.calls).toHaveLength(1);
+      }
+    );
+
+    it('allows duplicate externalId values', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+            externalId: 'ext-001',
+            userName: 'external-id-is-not-unique',
+            emails: [{ value: 'external.id.not.unique@example.com', primary: true }],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(201);
+    });
+
+    it.each([
+      [{ userName: 'missing-schemas' }, 'schemas'],
+      [{ schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'], userName: '   ' }, 'userName'],
+      [
+        {
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'bad-email',
+          emails: [{ value: 'not-an-email' }],
+        },
+        'emails[0].value',
+      ],
+      [
+        {
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'bad-emails-shape',
+          emails: 'not-an-array',
+        },
+        'emails',
+      ],
+    ])('rejects invalid user input with a SCIM 400 error', async (body, detail) => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users', { method: 'POST', body: JSON.stringify(body) }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        status: '400',
+        detail: expect.stringContaining(detail),
+      });
+    });
+
+    it('rejects malformed JSON with invalidSyntax instead of returning 500', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users', { method: 'POST', body: '{"schemas":[' }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ scimType: 'invalidSyntax' });
     });
 
     it('should reject SCIM password provisioning without storing a password hash', async () => {
@@ -1689,6 +1910,28 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.id).toBe('user-001');
     });
 
+    it('replaces an inactive user', async () => {
+      mockUsers.get('user-001').active = 0;
+      mockUsers.get('user-001').lifecycle_state = 'deprovisioned';
+      customClaimRoutingState.rejectAccountLookup = true;
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', {
+          method: 'PUT',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+            userName: 'johndoe',
+            emails: [{ value: 'john.doe@example.com', primary: true }],
+            active: true,
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ active: true });
+    });
+
     it('should reject SCIM password on replace without changing an existing password hash', async () => {
       mockUsers.get('user-001').password_hash = 'legacy-hash';
       const updatedUser = {
@@ -1785,10 +2028,10 @@ describe('SCIM 2.0 Endpoints', () => {
   });
 
   describe('PATCH /scim/v2/Users/:id - Partial Update', () => {
-    it('should apply patch operations', async () => {
+    it('should apply patch operation names case-insensitively', async () => {
       const patchOp = {
         schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
-        Operations: [{ op: 'replace', path: 'active', value: false }],
+        Operations: [{ op: 'Replace', path: 'active', value: false }],
       };
 
       const req = createRequest('/scim/v2/Users/user-001', {
@@ -1807,6 +2050,47 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(namespace.get.mock.results[0].value.setAccountLifecycleRpc.mock.calls[0][3]).toBe(
         'inactive'
       );
+    });
+
+    it('reactivates an inactive user', async () => {
+      mockUsers.get('user-001').active = 0;
+      mockUsers.get('user-001').lifecycle_state = 'deprovisioned';
+      customClaimRoutingState.rejectAccountLookup = true;
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+            Operations: [{ op: 'replace', path: 'active', value: true }],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ active: true });
+    });
+
+    it.each([
+      {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+      },
+      {
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+        Operations: [{ op: 'move', path: 'active', value: true }],
+      },
+    ])('rejects malformed or unsupported patch operations', async (patchOp) => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', {
+          method: 'PATCH',
+          body: JSON.stringify(patchOp),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ scimType: 'invalidSyntax' });
     });
 
     it('should reject SCIM password on patch without changing an existing password hash', async () => {
@@ -1884,6 +2168,28 @@ describe('SCIM 2.0 Endpoints', () => {
             result.value.setAccountLifecycleRpc.mock.calls[0][3]
         )
       ).toEqual(['deleting', 'deleted']);
+
+      const getAfterDelete = await app.fetch(
+        createRequest('/scim/v2/Users/user-001'),
+        mockEnv as Env
+      );
+      expect(getAfterDelete.status).toBe(404);
+    });
+
+    it('should delete a user after SCIM deactivation', async () => {
+      const deactivate = createRequest('/scim/v2/Users/user-001', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+          Operations: [{ op: 'Replace', path: 'active', value: false }],
+        }),
+      });
+      expect((await app.fetch(deactivate, mockEnv as Env)).status).toBe(200);
+
+      const remove = createRequest('/scim/v2/Users/user-001', {
+        method: 'DELETE',
+      });
+      expect((await app.fetch(remove, mockEnv as Env)).status).toBe(204);
     });
 
     it('should return 404 for non-existent user', async () => {
@@ -1919,6 +2225,18 @@ describe('SCIM 2.0 Endpoints', () => {
 
       expect(body.schemas).toContain('urn:ietf:params:scim:api:messages:2.0:ListResponse');
       expect(body.Resources).toBeDefined();
+    });
+
+    it('supports count=0 and validates pagination like the Users endpoint', async () => {
+      const zero = await app.fetch(createRequest('/scim/v2/Groups?count=0'), mockEnv as Env);
+      expect(zero.status).toBe(200);
+      await expect(zero.json()).resolves.toMatchObject({ itemsPerPage: 0, Resources: [] });
+
+      const invalid = await app.fetch(
+        createRequest('/scim/v2/Groups?startIndex=0'),
+        mockEnv as Env
+      );
+      expect(invalid.status).toBe(400);
     });
   });
 
@@ -1974,6 +2292,77 @@ describe('SCIM 2.0 Endpoints', () => {
   });
 
   describe('SCIM Bulk Operations (RFC 7644 Section 3.7)', () => {
+    it('processes independent user creates concurrently when failOnErrors is zero', async () => {
+      accountCreationState.pause = () => new Promise((resolve) => setTimeout(resolve, 20));
+      const operations = Array.from({ length: 4 }, (_, index) => ({
+        method: 'POST',
+        path: '/Users',
+        bulkId: `parallel-user-${index}`,
+        data: {
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: `parallel-user-${index}`,
+          emails: [{ value: `parallel-user-${index}@example.com`, primary: true }],
+        },
+      }));
+
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            failOnErrors: 0,
+            Operations: operations,
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations.map((operation: any) => operation.bulkId)).toEqual(
+        operations.map((operation) => operation.bulkId)
+      );
+      expect(body.Operations.every((operation: any) => operation.status === '201')).toBe(true);
+      expect(accountCreationState.maxInFlight).toBe(4);
+    });
+
+    it('keeps failOnErrors processing sequential and stops at the requested limit', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            failOnErrors: 1,
+            Operations: [
+              {
+                method: 'POST',
+                path: '/Users',
+                bulkId: 'invalid-first',
+                data: { userName: 'invalid-first' },
+              },
+              {
+                method: 'POST',
+                path: '/Users',
+                bulkId: 'must-not-run',
+                data: {
+                  schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+                  userName: 'must-not-run',
+                  emails: [{ value: 'must-not-run@example.com', primary: true }],
+                },
+              },
+            ],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.Operations).toHaveLength(1);
+      expect(body.Operations[0]).toMatchObject({ bulkId: 'invalid-first', status: '400' });
+      expect(accountCreationState.calls).toHaveLength(0);
+    });
+
     it('should process bulk POST operations', async () => {
       const bulkRequest = {
         schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
@@ -2007,6 +2396,58 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.Operations[0].status).toBe('201');
       expect(body.Operations[0].bulkId).toBe('user1');
       expect(body.Operations[0].location).toBeDefined();
+    });
+
+    it('returns per-operation 400 errors for missing resource schemas', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [
+              {
+                method: 'POST',
+                path: '/Users',
+                bulkId: 'missing-user-schema',
+                data: { userName: 'missing-user-schema' },
+              },
+            ],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        Operations: [{ status: '400', response: { scimType: 'invalidValue' } }],
+      });
+    });
+
+    it('returns a per-operation 400 error for an unsupported patch operation', async () => {
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [
+              {
+                method: 'PATCH',
+                path: '/Users/user-001',
+                data: {
+                  schemas: ['urn:ietf:params:scim:api:messages:2.0:PatchOp'],
+                  Operations: [{ op: 'move', path: 'active', value: true }],
+                },
+              },
+            ],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        Operations: [{ status: '400', response: { scimType: 'invalidSyntax' } }],
+      });
     });
 
     it('returns a per-operation 202 result for pending bulk account publication', async () => {

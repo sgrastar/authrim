@@ -169,6 +169,7 @@ import {
 } from '../core/environment-operation-policy.js';
 import { hasDatabaseTopologyChange } from '../core/environment-config-policy.js';
 import {
+  assertDatabaseOnlyWorkerCompatibility,
   calculateReleaseManifestChecksum,
   loadInstalledReleaseMigrationManifest,
   loadTargetReleaseMigrationManifest,
@@ -179,6 +180,7 @@ import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
 } from '../core/release-update.js';
+import { evaluateReleaseUpdateAvailability } from '../core/release-update-availability.js';
 import {
   withRecordedReleaseSchemaTargets,
   withReleaseUpdateState,
@@ -200,6 +202,7 @@ import { prepareAdminUiBffDeployment } from '../core/admin-ui-bff-deployment.js'
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../core/ui-deployment.js';
 import { saveUiEnv, buildInitialUiEnvConfig, mergeAndSaveUiEnv } from '../core/ui-env.js';
 import { validateSetupDomainInputs } from './domain-form-state.js';
+import { runReleaseUpdateCli } from './release-update-runner.js';
 import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
 import {
   buildCloudflareBootstrapTemplateUrl,
@@ -4908,10 +4911,29 @@ export function createApiRoutes(): Hono {
       addLocalProgress('Scanning Cloudflare account for Authrim environments...');
 
       const environments = await detectEnvironments(addLocalProgress);
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const targetVersion = await getRootProductVersion(baseDir);
+      const environmentsWithRelease = await Promise.all(
+        environments.map(async (environment) => {
+          try {
+            const { lock } = await loadLockFileAuto(baseDir, environment.env);
+            return {
+              ...environment,
+              release: evaluateReleaseUpdateAvailability(lock, targetVersion),
+            };
+          } catch {
+            return {
+              ...environment,
+              release: evaluateReleaseUpdateAvailability(undefined, targetVersion),
+            };
+          }
+        })
+      );
 
       return c.json({
         success: true,
-        environments,
+        environments: environmentsWithRelease,
+        targetVersion,
         progress,
       });
     } catch (error) {
@@ -5472,8 +5494,175 @@ export function createApiRoutes(): Hono {
   });
 
   // =============================================================================
-  // Worker Update
+  // Release and Worker Update
   // =============================================================================
+
+  api.get('/update/release/:env', async (c) => {
+    try {
+      const envResult = EnvNameSchema.safeParse(c.req.param('env'));
+      if (!envResult.success) {
+        return c.json({ success: false, error: 'Invalid environment name' }, 400);
+      }
+      const baseDir = findAuthrimBaseDir(process.cwd());
+      const targetVersion = await getRootProductVersion(baseDir);
+      const { lock } = await loadLockFileAuto(baseDir, envResult.data);
+      let databaseOnlyAvailable = false;
+      if (lock?.productVersion && Object.keys(lock.workers ?? {}).length > 0) {
+        try {
+          const release = loadTargetReleaseMigrationManifest({
+            migrationsRoot: join(baseDir, 'migrations'),
+            productVersion: targetVersion,
+            allowDraft: false,
+          }).manifest;
+          assertDatabaseOnlyWorkerCompatibility(release, lock.productVersion);
+          databaseOnlyAvailable = Object.values(lock.workers ?? {}).every(
+            (worker) => worker.version === lock.productVersion
+          );
+        } catch {
+          databaseOnlyAvailable = false;
+        }
+      }
+      return c.json({
+        success: true,
+        env: envResult.data,
+        release: {
+          ...evaluateReleaseUpdateAvailability(lock, targetVersion),
+          databaseOnlyAvailable,
+        },
+      });
+    } catch (error) {
+      return c.json({ success: false, error: sanitizeError(error) }, 500);
+    }
+  });
+
+  api.use('/update/release', validateSession);
+  api.post('/update/release', async (c) => {
+    return withLock(async () => {
+      try {
+        const body = await c.req.json();
+        const envResult = EnvNameSchema.safeParse(body.env);
+        if (!envResult.success) {
+          return c.json({ success: false, error: 'Invalid environment name' }, 400);
+        }
+        if (body.databaseOnly !== undefined && typeof body.databaseOnly !== 'boolean') {
+          return c.json({ success: false, error: 'databaseOnly must be a boolean' }, 400);
+        }
+        const env = envResult.data;
+        const databaseOnly = body.databaseOnly === true;
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const targetVersion = await getRootProductVersion(baseDir);
+        const { lock } = await loadLockFileAuto(baseDir, env);
+        const availability = evaluateReleaseUpdateAvailability(lock, targetVersion);
+
+        if (availability.status === 'up_to_date') {
+          return c.json({ success: true, env, release: availability, progress: [] });
+        }
+        if (!availability.canUpdate) {
+          return c.json(
+            {
+              success: false,
+              error: `Release update is not available while the environment is ${availability.status}.`,
+              release: availability,
+            },
+            409
+          );
+        }
+
+        state.status = 'deploying';
+        state.error = null;
+        state.deployResults = [];
+        clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
+        addProgress(
+          availability.status === 'resume_available'
+            ? `Resuming release update for ${env} to ${targetVersion}`
+            : `Starting release update for ${env}: ${availability.currentVersion ?? 'legacy'} -> ${targetVersion}`
+        );
+
+        const result = await runReleaseUpdateCli({
+          env,
+          cwd: process.cwd(),
+          databaseOnly,
+          onProgress: addProgress,
+        });
+        if (!result.success) {
+          state.status = 'error';
+          state.error = `Release update exited with code ${result.exitCode}.`;
+          await flushProgressLog();
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              release: availability,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            500
+          );
+        }
+
+        const { lock: updatedLock } = await loadLockFileAuto(baseDir, env);
+        if (
+          updatedLock?.releaseUpdate?.targetVersion === targetVersion &&
+          updatedLock.releaseUpdate.phase === 'control_handoff'
+        ) {
+          const continuing = evaluateReleaseUpdateAvailability(updatedLock, targetVersion);
+          state.status = 'idle';
+          addProgress(
+            'Database migration continues in Control; this update can be resumed safely.'
+          );
+          await flushProgressLog();
+          return c.json(
+            {
+              success: true,
+              inProgress: true,
+              env,
+              release: continuing,
+              progress: state.progress,
+              logPath: state.logPath,
+            },
+            202
+          );
+        }
+        const completedAsRequested = databaseOnly
+          ? updatedLock?.releaseUpdate?.targetVersion === targetVersion &&
+            updatedLock.releaseUpdate.phase === 'database_only_verified'
+          : updatedLock?.productVersion === targetVersion &&
+            updatedLock.releaseUpdate?.phase === 'verified';
+        if (!completedAsRequested) {
+          throw new Error('release_update_completed_without_verified_state');
+        }
+        const completed = evaluateReleaseUpdateAvailability(updatedLock, targetVersion);
+        state.status = 'complete';
+        addProgress(
+          databaseOnly
+            ? `Database-only update complete: schema ${targetVersion}; Workers retained`
+            : `Release update complete: ${targetVersion}`
+        );
+        await flushProgressLog();
+        return c.json({
+          success: true,
+          env,
+          release: completed,
+          progress: state.progress,
+          logPath: state.logPath,
+        });
+      } catch (error) {
+        state.status = 'error';
+        state.error = sanitizeError(error);
+        await flushProgressLog();
+        return c.json(
+          {
+            success: false,
+            error: state.error,
+            progress: state.progress,
+            logPath: state.logPath,
+          },
+          500
+        );
+      }
+    });
+  });
 
   // Get version comparison for an environment (no auth required - read-only, localhost only)
   api.get('/update/compare/:env', async (c) => {

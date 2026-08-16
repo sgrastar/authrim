@@ -13,6 +13,8 @@ import {
   type ControlProvisioningOperationRestoreRequest,
   type ControlProvisioningOperationRetryRequest,
   type ControlProvisioningAuthorityStatus,
+  type ControlReleaseRolloutStatus,
+  type ControlReleaseRolloutRetryTargetRequest,
   type ControlShardCleanupApprovalRequest,
   type ControlShardCleanupRetryRequest,
   type ControlShardCleanupView,
@@ -245,6 +247,34 @@ const TENANT_DR_TARGET_KEYS = new Set([
   'migrationVerifiedAt',
   'lookupReprojectedAt',
   'bindingSmokeVerifiedAt',
+]);
+const RELEASE_ROLLOUT_KEYS = new Set([
+  'operationId',
+  'sourceVersion',
+  'targetVersion',
+  'phase',
+  'completedTargets',
+  'totalTargets',
+  'adminMutationMode',
+  'lastErrorCode',
+  'updatedAt',
+  'blockedTargetCount',
+  'blockedTargets',
+]);
+const RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS = new Set([
+  'targetId',
+  'streamId',
+  'attemptCount',
+  'lastErrorCode',
+  'updatedAt',
+]);
+const RELEASE_ROLLOUT_PHASES = new Set([
+  'idle',
+  'database_rollout',
+  'blocked',
+  'awaiting_setup',
+  'verifying',
+  'completed',
 ]);
 
 interface LookupHmacVerificationStatus {
@@ -1023,6 +1053,61 @@ function parseExactEmptyBody(value: unknown): void {
   ) {
     throw new Error('control_plane_shard_cleanup_request_invalid');
   }
+}
+
+function parseReleaseRolloutStatus(value: unknown): ControlReleaseRolloutStatus {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('control_plane_release_rollout_invalid');
+  }
+  const status = value as Record<string, unknown>;
+  if (
+    !exactKeys(status, RELEASE_ROLLOUT_KEYS) ||
+    (status.operationId !== null &&
+      (typeof status.operationId !== 'string' || !SAFE_IDEMPOTENCY_KEY.test(status.operationId))) ||
+    (status.sourceVersion !== null &&
+      (typeof status.sourceVersion !== 'string' ||
+        !SAFE_IDEMPOTENCY_KEY.test(status.sourceVersion))) ||
+    (status.targetVersion !== null &&
+      (typeof status.targetVersion !== 'string' ||
+        !SAFE_IDEMPOTENCY_KEY.test(status.targetVersion))) ||
+    typeof status.phase !== 'string' ||
+    !RELEASE_ROLLOUT_PHASES.has(status.phase) ||
+    !Number.isSafeInteger(status.completedTargets) ||
+    (status.completedTargets as number) < 0 ||
+    !Number.isSafeInteger(status.totalTargets) ||
+    (status.totalTargets as number) < 0 ||
+    (status.completedTargets as number) > (status.totalTargets as number) ||
+    (status.adminMutationMode !== 'available' && status.adminMutationMode !== 'read_only') ||
+    !optionalSafeCode(status.lastErrorCode) ||
+    !optionalSafeEpoch(status.updatedAt) ||
+    !Number.isSafeInteger(status.blockedTargetCount) ||
+    (status.blockedTargetCount as number) < 0 ||
+    !Array.isArray(status.blockedTargets) ||
+    status.blockedTargets.length > 100 ||
+    status.blockedTargets.length > (status.blockedTargetCount as number) ||
+    status.blockedTargets.some(
+      (target) =>
+        !target ||
+        typeof target !== 'object' ||
+        Array.isArray(target) ||
+        !exactKeys(target as Record<string, unknown>, RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS) ||
+        typeof (target as Record<string, unknown>).targetId !== 'string' ||
+        !SAFE_IDEMPOTENCY_KEY.test((target as Record<string, unknown>).targetId as string) ||
+        !['d1-core', 'd1-pii', 'd1-lookup'].includes(
+          String((target as Record<string, unknown>).streamId)
+        ) ||
+        !Number.isSafeInteger((target as Record<string, unknown>).attemptCount) ||
+        ((target as Record<string, unknown>).attemptCount as number) < 0 ||
+        !optionalSafeCode((target as Record<string, unknown>).lastErrorCode) ||
+        (target as Record<string, unknown>).lastErrorCode === null ||
+        !optionalSafeEpoch((target as Record<string, unknown>).updatedAt) ||
+        (target as Record<string, unknown>).updatedAt === null
+    )
+  ) {
+    throw new Error('control_plane_release_rollout_invalid');
+  }
+  assertControlPlaneRecordIsSecretFree(status);
+  return status as unknown as ControlReleaseRolloutStatus;
 }
 
 function parseOperationReferenceBody(
@@ -2045,6 +2130,97 @@ controlPlaneOperationsRouter.get('/drift-findings', async (c) => {
     return error(c, 503, 'CONTROL_PLANE_DRIFT_STATUS_UNAVAILABLE');
   }
 });
+
+controlPlaneOperationsRouter.get('/release-rollout', async (c) => {
+  const control = c.env.CONTROL;
+  if (!control?.getReleaseMigrationRolloutStatus) {
+    return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
+  }
+  try {
+    const rollout = parseReleaseRolloutStatus(await control.getReleaseMigrationRolloutStatus());
+    return c.json({ rollout });
+  } catch {
+    return error(c, 503, 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE');
+  }
+});
+
+controlPlaneOperationsRouter.post(
+  '/release-rollout/:operationId/targets/:targetId/retry',
+  async (c) => {
+    const actor = auth(c);
+    if (!hasPlatformAuthority(actor)) {
+      return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
+    }
+    const isHumanActor =
+      actor.actorType === 'human' ||
+      (actor.actorType === undefined && actor.authMethod === 'session');
+    if (!isHumanActor) {
+      return error(c, 403, 'CONTROL_PLANE_HUMAN_ACTOR_REQUIRED');
+    }
+    const control = c.env.CONTROL;
+    if (!control?.retryReleaseMigrationRolloutTarget) {
+      return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
+    }
+    const operationId = c.req.param('operationId');
+    const targetId = c.req.param('targetId');
+    const idempotencyKey = c.req.header('Idempotency-Key');
+    try {
+      environmentId(c.env);
+    } catch {
+      return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
+    }
+    if (
+      !SAFE_IDEMPOTENCY_KEY.test(operationId) ||
+      !SAFE_IDEMPOTENCY_KEY.test(targetId) ||
+      !idempotencyKey ||
+      !SAFE_IDEMPOTENCY_KEY.test(idempotencyKey)
+    ) {
+      return error(c, 400, 'CONTROL_PLANE_RELEASE_ROLLOUT_RETRY_INVALID_REQUEST');
+    }
+    const request: ControlReleaseRolloutRetryTargetRequest = {
+      operationId,
+      targetId,
+      requestedById: actor.userId,
+      reasonCode: 'operator_retry_release_target',
+      idempotencyKey,
+    };
+    let auditId: string | null;
+    try {
+      auditId = await writeAdminAuditLog(c, {
+        action: 'control_plane.release_rollout.target_retry_requested',
+        resourceType: 'release_migration_target',
+        resourceId: targetId,
+        result: 'success',
+        before: { operationId, targetState: 'blocked' },
+        after: { operationId, targetState: 'queued' },
+        metadata: {
+          execution: 'control_service_binding',
+          reasonCode: request.reasonCode,
+        },
+      });
+    } catch {
+      auditId = null;
+    }
+    if (!auditId) return error(c, 503, 'CONTROL_PLANE_AUDIT_UNAVAILABLE');
+    try {
+      const rollout = parseReleaseRolloutStatus(
+        await control.retryReleaseMigrationRolloutTarget(request)
+      );
+      return c.json({ rollout, auditId }, 202);
+    } catch (caught) {
+      if (caught instanceof Error && caught.message === 'control_release_rollout_retry_conflict') {
+        return error(c, 409, 'CONTROL_PLANE_RELEASE_ROLLOUT_RETRY_CONFLICT');
+      }
+      if (
+        caught instanceof Error &&
+        caught.message === 'control_release_rollout_retry_not_retryable'
+      ) {
+        return error(c, 409, 'CONTROL_PLANE_RELEASE_ROLLOUT_RETRY_NOT_ALLOWED');
+      }
+      return error(c, 503, 'CONTROL_PLANE_RELEASE_ROLLOUT_RETRY_UNAVAILABLE');
+    }
+  }
+);
 
 controlPlaneOperationsRouter.get('/provisioning-authority', async (c) => {
   if (!hasPlatformAuthority(auth(c))) {

@@ -95,7 +95,7 @@ async function activeRoute(
         AND outbox.event_kind = 'account_created'
         AND outbox.route_generation = account.account_route_generation
       WHERE account.tenant_id = ? AND account.id = ?
-        AND account.lifecycle_state = 'active'
+        AND account.lifecycle_state IN ('active', 'deprovisioned')
         AND account.directory_publication_state = 'active'
       ORDER BY CASE outbox.status WHEN 'succeeded' THEN 0 ELSE 1 END, outbox.outbox_id
       LIMIT 1`,

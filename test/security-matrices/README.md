@@ -10,12 +10,12 @@ repository tests with no external runtime dependency.
 
 ## Suites
 
-| Suite             | Directory                  | Cases |
-| ----------------- | -------------------------- | ----: |
-| Authorization     | `authorize-matrix/`        |   269 |
-| Token             | `token-matrix/`            |   239 |
-| Runtime topology  | `runtime-topology-matrix/` |   175 |
-| State transitions | `state-transition-matrix/` |   489 |
+| Suite                                                    | Cases |
+| -------------------------------------------------------- | ----: |
+| [Authorization](./authorize-matrix/README.md)            |   269 |
+| [Token](./token-matrix/README.md)                        |   239 |
+| [Runtime topology](./runtime-topology-matrix/README.md)  |   175 |
+| [State transitions](./state-transition-matrix/README.md) |   489 |
 
 Each suite keeps its deterministic case table, production observation adapters, independent coverage
 checks, `COVERAGE.md`, and `FINDINGS.md` together. Shared Cloudflare-compatible fakes and covering-array

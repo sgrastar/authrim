@@ -394,6 +394,13 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('window.requestAnimationFrame(applyTheme)');
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
     expect(html).toContain('class="twocol ui-update-grid"');
+    expect(html).toContain('id="env-release-update"');
+    expect(html).toContain('id="btn-start-release-update"');
+    expect(html).toContain('id="btn-start-database-only-update"');
+    expect(html).toContain('startReleaseUpdate(true)');
+    expect(html).toContain('response.inProgress === true');
+    expect(html).toContain("api('/update/release'");
+    expect(html).toContain('loadReleaseUpdateStatus(env.env)');
     expect(html).toContain('class="bigtable ui-update-card"');
     expect(html).toContain('id="full-environment-deploy-card"');
     expect(html).toContain('id="btn-deploy-full-environment"');
@@ -418,6 +425,8 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('body.env-management-mode .setup-hero-number');
     expect(SETUP_WEB_UI_STYLE).toContain('.env-management-surface .tabpane.env-tab-enter');
     expect(SETUP_WEB_UI_STYLE).toContain('.env-full-deploy-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.release-update-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-release-badge');
     expect(SETUP_WEB_UI_STYLE).toContain(
       '.env-management-surface #env-control-automatic-provisioning:not(.hidden)'
     );

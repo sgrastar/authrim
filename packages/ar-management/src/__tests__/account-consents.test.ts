@@ -230,6 +230,16 @@ describe('Account Page consents API', () => {
     ['zh-Hant-TW', 'zh-TW'],
     ['fr-FR', 'fr'],
     ['id-ID', 'id'],
+    ['ar-SA', 'ar'],
+    ['it-IT', 'it'],
+    ['th-TH', 'th'],
+    ['vi-VN', 'vi'],
+    ['hi-IN', 'hi'],
+    ['bn-BD', 'bn'],
+    ['tr-TR', 'tr'],
+    ['sw-KE', 'sw'],
+    ['am-ET', 'am'],
+    ['pl-PL', 'pl'],
   ])('selects %s consent localizations with language %s', async (header, language) => {
     await listAccountConsentsHandler(
       createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_current', header)

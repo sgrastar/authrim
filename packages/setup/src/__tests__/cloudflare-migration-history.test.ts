@@ -16,6 +16,7 @@ import {
   collectManifestMigrationChecksumEvidence,
   executeD1Batch,
   getD1MigrationStatus,
+  queryD1Rows,
   runD1Migrations,
   shouldRefreshD1OAuthCredential,
 } from '../core/cloudflare.js';
@@ -320,6 +321,63 @@ describe('D1 migration history safety', () => {
       skippedCount: 1,
     });
     expect(execaMock.mock.calls.some(([, args]) => args.includes('--file'))).toBe(false);
+  });
+
+  it('falls back to the D1 API when Wrangler query output does not contain JSON', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: '[wrangler:notice] query completed without structured output',
+      stderr: '[wrangler:notice] see the dashboard for details',
+    });
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ name: 'test-db', uuid: 'database-id' }],
+          result_info: { total_count: 1 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ success: true, results: [{ state: 'ready' }] }],
+        }),
+      });
+
+    await expect(
+      queryD1Rows<{ state: string }>('test-db', 'SELECT state FROM rollout')
+    ).resolves.toEqual([{ state: 'ready' }]);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      new URL(
+        'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/d1/database/database-id/query'
+      ),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sql: 'SELECT state FROM rollout' }),
+      })
+    );
+  });
+
+  it('reports both providers when Wrangler and the D1 API query fail', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: '[wrangler:notice] no JSON payload',
+      stderr: '',
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    await expect(queryD1Rows('test-db', 'SELECT state FROM rollout')).rejects.toThrow(
+      'Could not query D1 via Wrangler (Wrangler stdout and stderr did not contain a valid D1 query result) or the Cloudflare API (Cloudflare D1 database list failed (503))'
+    );
   });
 
   it('refuses to execute migrations when applied history cannot be parsed', async () => {

@@ -693,4 +693,31 @@ describe('account directory producer', () => {
       )
     ).resolves.toMatchObject({ status: 201 });
   });
+
+  it('retries one transient immediate RPC failure with the same publication', async () => {
+    const { workerEnv } = env();
+    const publication = await buildInitialAccountDirectoryPublication(workerEnv, {
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+      residencyPolicyId: 'policy-a',
+      residencyPartition: 'jp',
+      idempotencyKey: 'create-account-a',
+      operationId: 'operation-account-a',
+    });
+    const publishAccountDirectory = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('response_lost'))
+      .mockResolvedValueOnce({
+        status: 201 as const,
+        accountId: 'account-a',
+        operationId: 'operation-account-a',
+      });
+
+    await expect(
+      attemptImmediateAccountDirectoryPublication({ publishAccountDirectory }, publication)
+    ).resolves.toMatchObject({ status: 201 });
+    expect(publishAccountDirectory).toHaveBeenCalledTimes(2);
+    expect(publishAccountDirectory).toHaveBeenNthCalledWith(1, publication);
+    expect(publishAccountDirectory).toHaveBeenNthCalledWith(2, publication);
+  });
 });

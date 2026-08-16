@@ -9,7 +9,7 @@ describe('Login UI language configuration', () => {
 	it('uses all locales and English by default', () => {
 		const config = getLoginUILanguageConfig(null);
 
-		expect(config.supportedLocales).toHaveLength(15);
+		expect(config.supportedLocales).toHaveLength(21);
 		expect(config.defaultLocale).toBe('en');
 	});
 

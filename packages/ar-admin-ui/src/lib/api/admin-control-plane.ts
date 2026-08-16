@@ -66,6 +66,36 @@ export interface ControlProvisioningAuthorityStatus {
 	activeExecutor: 'control' | 'setup_operator';
 }
 
+export type ReleaseRolloutPhase =
+	| 'idle'
+	| 'database_rollout'
+	| 'blocked'
+	| 'awaiting_setup'
+	| 'verifying'
+	| 'completed';
+
+export interface ReleaseRolloutStatus {
+	operationId: string | null;
+	sourceVersion: string | null;
+	targetVersion: string | null;
+	phase: ReleaseRolloutPhase;
+	completedTargets: number;
+	totalTargets: number;
+	adminMutationMode: 'available' | 'read_only';
+	lastErrorCode: string | null;
+	updatedAt: number | null;
+	blockedTargetCount: number;
+	blockedTargets: ReleaseRolloutBlockedTarget[];
+}
+
+export interface ReleaseRolloutBlockedTarget {
+	targetId: string;
+	streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+	attemptCount: number;
+	lastErrorCode: string;
+	updatedAt: number;
+}
+
 export type ControlCapacityProfile = 'minimum' | 'recommended' | 'extra_headroom';
 export type ControlCapacityScope = 'shared_pool' | 'tenant_exclusive';
 
@@ -338,6 +368,13 @@ const SHARD_CLEANUP_BINDING_KEYS = new Set([
 	'lastErrorCode',
 	'updatedAt'
 ]);
+const RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS = new Set([
+	'targetId',
+	'streamId',
+	'attemptCount',
+	'lastErrorCode',
+	'updatedAt'
+]);
 const SHARD_CLEANUP_ACTIONS = new Set([
 	'quarantine',
 	'retry_quarantine',
@@ -466,6 +503,28 @@ const CAPACITY_OPERATION_KEYS = new Set([
 	'createdAt',
 	'updatedAt'
 ]);
+const RELEASE_ROLLOUT_KEYS = new Set([
+	'operationId',
+	'sourceVersion',
+	'targetVersion',
+	'phase',
+	'completedTargets',
+	'totalTargets',
+	'blockedTargetCount',
+	'blockedTargets',
+	'adminMutationMode',
+	'lastErrorCode',
+	'updatedAt'
+]);
+const RELEASE_ROLLOUT_PHASES = new Set([
+	'idle',
+	'database_rollout',
+	'blocked',
+	'awaiting_setup',
+	'verifying',
+	'completed'
+]);
+const SAFE_PRODUCT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 
 export class ControlPlaneApiError extends Error {
 	constructor(
@@ -492,6 +551,61 @@ async function responseJson<T>(response: Response): Promise<T> {
 
 function invalidResponse(): never {
 	throw new ControlPlaneApiError(502, 'CONTROL_PLANE_RESPONSE_INVALID');
+}
+
+function parseReleaseRolloutResponse(value: unknown): { rollout: ReleaseRolloutStatus } {
+	if (
+		!isExactRecord(value, new Set(['rollout'])) ||
+		!isExactRecord(value.rollout, RELEASE_ROLLOUT_KEYS)
+	) {
+		invalidResponse();
+	}
+	const rollout = value.rollout;
+	if (
+		(rollout.operationId !== null &&
+			(typeof rollout.operationId !== 'string' || !SAFE_ID.test(rollout.operationId))) ||
+		(rollout.sourceVersion !== null &&
+			(typeof rollout.sourceVersion !== 'string' ||
+				!SAFE_PRODUCT_VERSION.test(rollout.sourceVersion))) ||
+		(rollout.targetVersion !== null &&
+			(typeof rollout.targetVersion !== 'string' ||
+				!SAFE_PRODUCT_VERSION.test(rollout.targetVersion))) ||
+		typeof rollout.phase !== 'string' ||
+		!RELEASE_ROLLOUT_PHASES.has(rollout.phase) ||
+		!Number.isSafeInteger(rollout.completedTargets) ||
+		(rollout.completedTargets as number) < 0 ||
+		!Number.isSafeInteger(rollout.totalTargets) ||
+		(rollout.totalTargets as number) < (rollout.completedTargets as number) ||
+		!['available', 'read_only'].includes(String(rollout.adminMutationMode)) ||
+		(rollout.lastErrorCode !== null &&
+			(typeof rollout.lastErrorCode !== 'string' || !SAFE_ID.test(rollout.lastErrorCode))) ||
+		(rollout.updatedAt !== null &&
+			(!Number.isSafeInteger(rollout.updatedAt) ||
+				(rollout.updatedAt as number) <= 0 ||
+				(rollout.updatedAt as number) > MAX_DATE_EPOCH_SECONDS)) ||
+		!Number.isSafeInteger(rollout.blockedTargetCount) ||
+		(rollout.blockedTargetCount as number) < 0 ||
+		!Array.isArray(rollout.blockedTargets) ||
+		rollout.blockedTargets.length > 100 ||
+		rollout.blockedTargets.length > (rollout.blockedTargetCount as number) ||
+		rollout.blockedTargets.some(
+			(target) =>
+				!isExactRecord(target, RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS) ||
+				typeof target.targetId !== 'string' ||
+				!SAFE_ID.test(target.targetId) ||
+				!['d1-core', 'd1-pii', 'd1-lookup'].includes(String(target.streamId)) ||
+				!Number.isSafeInteger(target.attemptCount) ||
+				(target.attemptCount as number) < 0 ||
+				typeof target.lastErrorCode !== 'string' ||
+				!SAFE_ID.test(target.lastErrorCode) ||
+				!Number.isSafeInteger(target.updatedAt) ||
+				(target.updatedAt as number) <= 0 ||
+				(target.updatedAt as number) > MAX_DATE_EPOCH_SECONDS
+		)
+	) {
+		invalidResponse();
+	}
+	return { rollout: rollout as unknown as ReleaseRolloutStatus };
 }
 
 function isExactRecord(
@@ -1137,6 +1251,39 @@ function parseCapacityMutationResponse(
 }
 
 export const adminControlPlaneAPI = {
+	async getReleaseRolloutStatus(): Promise<{ rollout: ReleaseRolloutStatus }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/platform/control-plane/release-rollout`,
+			{ skipTenantHeader: true }
+		);
+		return parseReleaseRolloutResponse(await responseJson<unknown>(response));
+	},
+
+	async retryReleaseRolloutTarget(
+		operationId: string,
+		targetId: string
+	): Promise<{ rollout: ReleaseRolloutStatus; auditId: string }> {
+		if (!SAFE_ID.test(operationId) || !SAFE_ID.test(targetId)) {
+			throw new ControlPlaneApiError(400, 'CONTROL_PLANE_RELEASE_ROLLOUT_RETRY_INVALID_REQUEST');
+		}
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/platform/control-plane/release-rollout/${encodeURIComponent(operationId)}/targets/${encodeURIComponent(targetId)}/retry`,
+			{ method: 'POST', skipTenantHeader: true }
+		);
+		const value = await responseJson<unknown>(response);
+		if (
+			!isExactRecord(value, new Set(['rollout', 'auditId'])) ||
+			typeof value.auditId !== 'string' ||
+			!SAFE_ID.test(value.auditId)
+		) {
+			invalidResponse();
+		}
+		return {
+			...parseReleaseRolloutResponse({ rollout: value.rollout }),
+			auditId: value.auditId
+		};
+	},
+
 	async previewCapacity(
 		request: ControlCapacityProfileRequest
 	): Promise<{ preview: ControlCapacityProvisioningPreview }> {

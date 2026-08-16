@@ -3,6 +3,25 @@ const adminControlPlane = {
 	admin_control_plane_title: 'コントロールプレーン',
 	admin_control_plane_description:
 		'プロビジョニング進捗とWorkerインベントリのドリフトを確認します。',
+	admin_release_rollout_banner: 'Authrimを{version}へ更新しています。',
+	admin_release_rollout_progress: '{total}件中{completed}件のデータベースが完了しました。',
+	admin_release_rollout_waiting_setup:
+		'データベース更新が完了し、セットアップの再開を待っています。',
+	admin_release_rollout_verifying: 'サービス更新後の最終確認を行っています。',
+	admin_release_rollout_blocked: '更新を続行するには確認が必要です。',
+	admin_release_rollout_read_only: '管理操作を一時的に無効化しています。',
+	admin_release_rollout_view_details: '更新の詳細を確認',
+	admin_release_rollout_versions: '{source} → {target}',
+	admin_release_rollout_updated: '最終更新: {time}',
+	admin_release_rollout_failure: '停止理由: {code}',
+	admin_release_rollout_version_path: 'バージョン経路',
+	admin_release_rollout_database_progress: 'データベース進捗',
+	admin_release_rollout_recovery_title: 'リリースDBの復旧',
+	admin_release_rollout_recovery_description:
+		'表示された原因を修正した後、停止中のDBターゲットを再試行します。',
+	admin_release_rollout_retry_target: 'ターゲットを再試行',
+	admin_release_rollout_retrying_target: '再試行中...',
+	admin_release_rollout_blocked_targets: '停止中のDBターゲット: {count}件',
 	admin_control_plane_refresh: '更新',
 	admin_control_plane_findings: 'Workerドリフト',
 	admin_control_plane_loading: 'コントロールプレーンの状態を読み込んでいます...',
@@ -120,6 +139,6 @@ const adminControlPlane = {
 	admin_control_plane_acknowledged: '通知済み',
 	admin_control_plane_review: '確認済みにする',
 	admin_control_plane_dismiss: '対象外にする'
-};
+} as const;
 
 export default adminControlPlane;

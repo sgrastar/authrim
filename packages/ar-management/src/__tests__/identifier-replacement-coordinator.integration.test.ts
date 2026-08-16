@@ -82,9 +82,14 @@ function d1(database: DatabaseSync): D1Database {
   return { ...session, withSession: () => session } as unknown as D1Database;
 }
 
-function index(generation: number, digest: string, bucket: number): LookupBlindIndex {
+function index(
+  generation: number,
+  digest: string,
+  bucket: number,
+  indexKind: LookupBlindIndex['indexKind'] = 'email_exact'
+): LookupBlindIndex {
   return {
-    indexKind: 'email_exact',
+    indexKind,
     normalizationVersion: 1,
     hmacKeyGeneration: generation,
     digest,
@@ -107,6 +112,7 @@ describe('IdentifierReplacementCoordinator', () => {
     for (const migrationPath of [
       'migrations/pii/001_pii_schema.sql',
       'migrations/pii/004_identifier_replacement_authority.sql',
+      'migrations/pii/011_allow_external_subject_identifier_replacement.sql',
     ]) {
       pii.exec(readFileSync(resolve(REPO_ROOT, migrationPath), 'utf8'));
     }
@@ -114,6 +120,7 @@ describe('IdentifierReplacementCoordinator', () => {
       for (const migrationPath of [
         'migrations/lookup/001_lookup_directory.sql',
         'migrations/lookup/002_identifier_replacement_verification_gate.sql',
+        'migrations/lookup/003_allow_external_subject_identifier_replacement.sql',
       ]) {
         database.exec(readFileSync(resolve(REPO_ROOT, migrationPath), 'utf8'));
       }
@@ -147,7 +154,7 @@ describe('IdentifierReplacementCoordinator', () => {
              account_route_generation, required_binding_route_generation, residency_policy_id,
              route_projection_json, tenant_lifecycle_state, runtime_route_status,
              lifecycle_state, created_at, updated_at
-           ) VALUES (?, 'email_exact', 1, ?, ?, 'tenant-a', 'account-a', 1, 1, 1,
+           ) VALUES (?, 'email_exact', 1, ?, ?, 'tenant-a', 'account:account-a', 1, 1, 1,
                      'global', '{}', 'active', 'active', 'active', 900, 900)`
         )
         .run(oldIndex.virtualBucket, oldIndex.hmacKeyGeneration, oldIndex.digest);
@@ -157,7 +164,7 @@ describe('IdentifierReplacementCoordinator', () => {
              virtual_bucket, tenant_id, index_kind, normalization_version,
              hmac_key_generation, identifier_blind_digest, account_id,
              reservation_state, operation_id, created_at, committed_at, updated_at
-           ) VALUES (?, 'tenant-a', 'email_exact', 1, ?, ?, 'account-a',
+           ) VALUES (?, 'tenant-a', 'email_exact', 1, ?, ?, 'account:account-a',
                      'committed', 'account-create-1', 900, 900, 900)`
         )
         .run(oldIndex.virtualBucket, oldIndex.hmacKeyGeneration, oldIndex.digest);
@@ -262,6 +269,89 @@ describe('IdentifierReplacementCoordinator', () => {
       accountId: 'account-a',
     });
     expect(revokeCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces a SCIM userName external subject and skips the email notification', async () => {
+    pii
+      .prepare(
+        `INSERT INTO identity_sensitive_values (
+           id, tenant_id, owner_type, owner_id, value_key, value_json,
+           classification, lifecycle_state, created_at, updated_at
+         ) VALUES ('username-1', 'tenant-a', 'runtime_user', 'account-a',
+                   'preferred_username', ?, 'sensitive', 'active', 900, 900)`
+      )
+      .run(JSON.stringify('OldUser'));
+    const oldIndexes = [
+      index(8, '5'.repeat(64), 8, 'external_subject'),
+      index(7, '6'.repeat(64), 9, 'external_subject'),
+    ];
+    for (const oldIndex of oldIndexes) {
+      oldLookup
+        .prepare(
+          `INSERT INTO lookup_identifiers (
+             virtual_bucket, index_kind, normalization_version, hmac_key_generation,
+             identifier_blind_digest, tenant_id, account_id, route_schema_version,
+             account_route_generation, required_binding_route_generation, residency_policy_id,
+             route_projection_json, tenant_lifecycle_state, runtime_route_status,
+             lifecycle_state, created_at, updated_at
+           ) VALUES (?, 'external_subject', 1, ?, ?, 'tenant-a', 'account:account-a', 1, 1, 1,
+                     'global', '{}', 'active', 'active', 'active', 900, 900)`
+        )
+        .run(oldIndex.virtualBucket, oldIndex.hmacKeyGeneration, oldIndex.digest);
+      oldLookup
+        .prepare(
+          `INSERT INTO lookup_identifier_reservations (
+             virtual_bucket, tenant_id, index_kind, normalization_version,
+             hmac_key_generation, identifier_blind_digest, account_id,
+             reservation_state, operation_id, created_at, committed_at, updated_at
+           ) VALUES (?, 'tenant-a', 'external_subject', 1, ?, ?, 'account:account-a',
+                     'committed', 'account-create-username', 900, 900, 900)`
+        )
+        .run(oldIndex.virtualBucket, oldIndex.hmacKeyGeneration, oldIndex.digest);
+    }
+    await repository.create({
+      operationId: 'username-replacement-1',
+      outboxId: 'username-outbox-1',
+      tenantId: 'tenant-a',
+      accountId: 'account-a',
+      authority: 'scim',
+      identifierKind: 'external_subject',
+      actorRef: 'scim-token:test',
+      idempotencyKeySha256: 'e'.repeat(64),
+      requestFingerprintSha256: 'f'.repeat(64),
+      oldValue: 'OldUser',
+      newValue: 'NewUser',
+      oldValueSha256: '7'.repeat(64),
+      newValueSha256: '8'.repeat(64),
+      oldIndexes,
+      newIndexes: [
+        index(8, '9'.repeat(64), 22, 'external_subject'),
+        index(7, 'a'.repeat(64), 23, 'external_subject'),
+      ],
+      authorityEvidence: { authority: 'scim_bearer' },
+      verificationEvidence: { method: 'scim_mapping' },
+    });
+    const notification = vi.fn(async () => {});
+
+    await expect(
+      coordinator(revokeCredentials, notification).resume({
+        operationId: 'username-replacement-1',
+        tenantId: 'tenant-a',
+        accountId: 'account-a',
+      })
+    ).resolves.toEqual({ state: 'completed' });
+    expect(
+      pii.prepare(`SELECT value_json FROM identity_sensitive_values WHERE id = 'username-1'`).get()
+    ).toEqual({ value_json: JSON.stringify('NewUser') });
+    expect(
+      newLookup
+        .prepare(
+          `SELECT DISTINCT index_kind, lifecycle_state
+             FROM lookup_identifiers WHERE index_kind = 'external_subject'`
+        )
+        .all()
+    ).toEqual([{ index_kind: 'external_subject', lifecycle_state: 'active' }]);
+    expect(notification).not.toHaveBeenCalled();
   });
 
   it('keeps the new authority and resumes forward when credential revocation fails', async () => {
@@ -391,12 +481,12 @@ describe('IdentifierReplacementCoordinator', () => {
         .all()
     ).toEqual([
       {
-        account_id: 'account-a',
+        account_id: 'account:account-a',
         operation_id: 'replacement-1',
         reservation_state: 'committed',
       },
       {
-        account_id: 'account-a',
+        account_id: 'account:account-a',
         operation_id: 'replacement-1',
         reservation_state: 'committed',
       },

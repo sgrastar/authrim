@@ -22,6 +22,21 @@ These files support both fresh installs and release-coupled in-place updates.
 Published release manifests are the immutable contract for deciding which
 migrations apply to an existing physical database.
 
+The manifest also carries a semantic rollout policy. It declares who executes managed database work,
+when schema-dependent Workers may activate, and whether Admin mutations remain compatible during the
+mixed-schema interval. It intentionally does not name UI routes or controls. Runtime rollout state is
+stored by Control and exposed as capabilities to Admin UI.
+
+Database-only deployment is disabled unless `rollout.databaseOnly.compatibleWorkerVersions` contains
+the exact installed Worker product version. The allow-list is release evidence, not a SemVer promise:
+setup also verifies that all retained Workers have that recorded version before applying any schema.
+The verified checkpoint retains the installed `productVersion`, so the full Worker update remains
+available later.
+
+A new major-version baseline may consolidate cumulative SQL for fresh installations, but it never
+replaces the tested bridge migrations used by existing installations. Baseline installation and
+in-place upgrade are separate artifacts with separate validation requirements.
+
 ## Layout
 
 | Path                                 | Target database             | Notes                                                                                             |

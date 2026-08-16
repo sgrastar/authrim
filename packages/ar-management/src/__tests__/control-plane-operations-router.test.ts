@@ -328,6 +328,26 @@ function createApp(input?: {
     reviewState: 'reviewed' as const,
   }));
   const getProvisioningOperation = vi.fn(async () => operation);
+  const getReleaseMigrationRolloutStatus = vi.fn(async () => ({
+    operationId: 'release-rollout-1',
+    sourceVersion: '0.4.0',
+    targetVersion: '0.5.0',
+    phase: 'database_rollout' as const,
+    completedTargets: 3,
+    totalTargets: 12,
+    blockedTargetCount: 0,
+    blockedTargets: [],
+    adminMutationMode: 'read_only' as const,
+    lastErrorCode: null,
+    updatedAt: 1_800_000_000,
+  }));
+  const retryReleaseMigrationRolloutTarget = vi.fn(async () => ({
+    ...(await getReleaseMigrationRolloutStatus()),
+    phase: 'database_rollout' as const,
+    lastErrorCode: null,
+    blockedTargetCount: 0,
+    blockedTargets: [],
+  }));
   const getProvisioningAuthorityStatus = vi.fn(async () => ({
     automaticProvisioningEnabled: false,
     tokenOwnership: 'none' as const,
@@ -411,6 +431,8 @@ function createApp(input?: {
     state: 'succeeded' as const,
   }));
   const control = {
+    getReleaseMigrationRolloutStatus,
+    retryReleaseMigrationRolloutTarget,
     listWorkerInventoryDriftFindings,
     reviewWorkerInventoryDriftFinding,
     getProvisioningOperation,
@@ -468,6 +490,8 @@ function createApp(input?: {
     listWorkerInventoryDriftFindings,
     reviewWorkerInventoryDriftFinding,
     getProvisioningOperation,
+    getReleaseMigrationRolloutStatus,
+    retryReleaseMigrationRolloutTarget,
     getProvisioningAuthorityStatus,
     previewCapacityProvisioning,
     requestCapacityProvisioning,
@@ -582,6 +606,82 @@ describe('control-plane operations admin router', () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain('tokenValue');
+  });
+
+  it('returns release migration progress for Admin UI polling', async () => {
+    const target = createApp({ roles: ['viewer'], permissions: [] });
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/release-rollout',
+      {},
+      target.env
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      rollout: {
+        operationId: 'release-rollout-1',
+        sourceVersion: '0.4.0',
+        targetVersion: '0.5.0',
+        phase: 'database_rollout',
+        completedTargets: 3,
+        totalTargets: 12,
+        blockedTargetCount: 0,
+        blockedTargets: [],
+        adminMutationMode: 'read_only',
+        lastErrorCode: null,
+        updatedAt: 1_800_000_000,
+      },
+    });
+    expect(target.getReleaseMigrationRolloutStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('audits and retries one blocked release target while the mutation fence is active', async () => {
+    const target = createApp();
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/release-rollout/release-rollout-1/targets/target-1/retry',
+      { method: 'POST', headers: { 'Idempotency-Key': 'retry-target-1' } },
+      target.env
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      auditId: 'audit-1',
+      rollout: { phase: 'database_rollout', blockedTargetCount: 0 },
+    });
+    expect(audit.mock.invocationCallOrder[0]).toBeLessThan(
+      target.retryReleaseMigrationRolloutTarget.mock.invocationCallOrder[0]
+    );
+    expect(target.retryReleaseMigrationRolloutTarget).toHaveBeenCalledWith({
+      operationId: 'release-rollout-1',
+      targetId: 'target-1',
+      requestedById: 'admin-1',
+      reasonCode: 'operator_retry_release_target',
+      idempotencyKey: 'retry-target-1',
+    });
+  });
+
+  it('does not retry a release target when the Admin audit cannot be persisted', async () => {
+    audit.mockResolvedValueOnce(null);
+    const target = createApp();
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/release-rollout/release-rollout-1/targets/target-1/retry',
+      { method: 'POST', headers: { 'Idempotency-Key': 'retry-target-2' } },
+      target.env
+    );
+
+    expect(response.status).toBe(503);
+    expect(target.retryReleaseMigrationRolloutTarget).not.toHaveBeenCalled();
+  });
+
+  it('rejects machine actors from release target recovery', async () => {
+    const target = createApp({ actorType: 'machine', authMethod: 'machine_access_token' });
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/release-rollout/release-rollout-1/targets/target-1/retry',
+      { method: 'POST', headers: { 'Idempotency-Key': 'retry-target-machine' } },
+      target.env
+    );
+
+    expect(response.status).toBe(403);
+    expect(target.retryReleaseMigrationRolloutTarget).not.toHaveBeenCalled();
   });
 
   it('returns bounded Lookup reprojection progress and rejects malformed Control evidence', async () => {

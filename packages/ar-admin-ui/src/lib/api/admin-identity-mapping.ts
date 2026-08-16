@@ -133,6 +133,7 @@ export interface IdentityMappingSourceProfileColumn {
 	label: string;
 	valueType: string;
 	required: boolean;
+	mappingRequired?: boolean;
 	classification: string;
 	candidates?: {
 		valueType?: string;
@@ -149,7 +150,9 @@ export interface IdentityMappingSourceProfileColumn {
 	nullable?: boolean | null;
 }
 
-export interface IdentityMappingSourceProfileSchema {
+export type IdentityMappingSourceType = 'csv' | 'scim' | 'saml' | 'directory';
+
+export interface IdentityMappingCsvSourceProfileSchema {
 	sourceType: 'csv';
 	parser?: Record<string, unknown>;
 	columns: IdentityMappingSourceProfileColumn[];
@@ -157,10 +160,35 @@ export interface IdentityMappingSourceProfileSchema {
 	summary?: Record<string, unknown>;
 }
 
+export interface IdentityMappingScimSourceAttribute {
+	name: string;
+	label: string;
+	type: string;
+	required: boolean;
+	mappingRequired?: boolean;
+	classification: string;
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
+	examples?: unknown[];
+	note?: string | null;
+}
+
+export interface IdentityMappingScimSourceProfileSchema {
+	sourceType: 'scim';
+	resourceType: 'User';
+	schemaUris: string[];
+	attributes: IdentityMappingScimSourceAttribute[];
+}
+
+export type IdentityMappingSourceProfileSchema =
+	| IdentityMappingCsvSourceProfileSchema
+	| IdentityMappingScimSourceProfileSchema
+	| (Record<string, unknown> & { sourceType: 'saml' | 'directory' });
+
 export interface IdentityMappingSourceProfileSummary {
 	id: string;
 	tenantId: string;
-	sourceType: 'csv';
+	sourceType: IdentityMappingSourceType;
 	profileKey: string;
 	displayName: string;
 	lifecycleState: string;
@@ -342,14 +370,14 @@ export interface IdentityMappingCsvParseResult {
 	tenantId: string;
 	sourceType: 'csv';
 	schemaHash: string;
-	schema: IdentityMappingSourceProfileSchema;
+	schema: IdentityMappingCsvSourceProfileSchema;
 	parserOptions: Record<string, unknown>;
 	warningSummary: Record<string, unknown>;
 	expiresAt: number;
 }
 
 export interface IdentityMappingSourceProfileCreateRequest {
-	sourceType: 'csv';
+	sourceType: IdentityMappingSourceType;
 	profileKey: string;
 	displayName: string;
 	versionLabel?: string;
@@ -361,7 +389,7 @@ export interface IdentityMappingSourceProfileCreateRequest {
 }
 
 export interface IdentityMappingSourceProfileUpdateRequest {
-	sourceType?: 'csv';
+	sourceType?: IdentityMappingSourceType;
 	profileKey?: string;
 	displayName?: string;
 	versionLabel?: string;
@@ -492,6 +520,7 @@ export interface IdentityMappingFieldMappingVersionCreateRequest {
 	versionLabel: string;
 	compatibilityRange?: string;
 	authorId?: string;
+	sourceProfileIds?: string[];
 	rules: Array<{
 		ruleKey: string;
 		ruleKind: string;

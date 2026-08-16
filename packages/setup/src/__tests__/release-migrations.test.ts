@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { AuthrimLockSchema, type AuthrimLock } from '../core/lock.js';
 import {
+  assertDatabaseOnlyWorkerCompatibility,
   assertProductVersionOpenForNewMigrations,
   assertProductVersionNotBehindPublished,
   calculateReleaseManifestChecksum,
@@ -21,7 +22,10 @@ import {
   writeReleaseMigrationManifest,
   type ReleaseMigrationManifest,
 } from '../core/release-migrations.js';
-import { buildReleaseSchemaUpdatePlan } from '../core/release-update.js';
+import {
+  buildReleaseSchemaUpdatePlan,
+  getControlManagedReleaseStreamIds,
+} from '../core/release-update.js';
 import { withVerifiedInitialReleaseState } from '../core/release-state.js';
 import {
   assertReleaseVersionMatchesRoot,
@@ -152,12 +156,51 @@ describe('release migration manifests', () => {
     ).toThrow();
   });
 
+  it('requires an explicit exact Worker compatibility contract for database-only updates', () => {
+    const manifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '1.1.0',
+      rollout: {
+        databaseExecution: 'setup_then_control',
+        workerActivation: 'after_required_databases',
+        adminMutationMode: 'read_only',
+        databaseOnly: { compatibleWorkerVersions: ['1.0.0'] },
+      },
+      streams: [],
+    });
+
+    expect(() => assertDatabaseOnlyWorkerCompatibility(manifest, '1.0.0')).not.toThrow();
+    expect(() => assertDatabaseOnlyWorkerCompatibility(manifest, '0.9.0')).toThrow(
+      'database_only_worker_version_incompatible:0.9.0:1.1.0'
+    );
+    expect(() =>
+      assertDatabaseOnlyWorkerCompatibility(
+        { ...manifest, rollout: { ...manifest.rollout, databaseOnly: undefined } },
+        '1.0.0'
+      )
+    ).toThrow('database_only_worker_version_incompatible:1.0.0:1.1.0');
+    expect(() =>
+      ReleaseMigrationManifestSchema.parse({
+        ...manifest,
+        rollout: {
+          ...manifest.rollout,
+          databaseOnly: { compatibleWorkerVersions: ['1.0.0', '1.0.0'] },
+        },
+      })
+    ).toThrow();
+  });
+
   it('generates cumulative checksummed streams and preserves published supersedes metadata', () => {
     const migrationsRoot = temporaryMigrations();
     const initial = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' });
     const core = initial.streams.find((stream) => stream.id === 'd1-core');
     expect(core?.files).toHaveLength(1);
     expect(core?.files[0].checksum).toMatch(/^[a-f0-9]{64}$/u);
+    expect(initial.rollout).toEqual({
+      databaseExecution: 'setup_then_control',
+      workerActivation: 'after_required_databases',
+      adminMutationMode: 'read_only',
+    });
 
     const previous: ReleaseMigrationManifest = {
       ...initial,
@@ -311,6 +354,34 @@ describe('release migration manifests', () => {
     expect(() =>
       syncDraftReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' })
     ).toThrow('product_version_already_published:1.0.0');
+  });
+
+  it('preserves an explicit database-only compatibility contract when refreshing a draft', () => {
+    const migrationsRoot = temporaryMigrations();
+    const draft = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'release-manifest.draft.json'), {
+      ...draft,
+      rollout: {
+        ...draft.rollout!,
+        databaseOnly: { compatibleWorkerVersions: ['1.0.0'] },
+      },
+    });
+    writeFileSync(
+      join(migrationsRoot, '002_next.sql'),
+      'ALTER TABLE sample ADD COLUMN name TEXT;\n'
+    );
+
+    const refreshed = syncDraftReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+
+    expect(refreshed.manifest.rollout?.databaseOnly).toEqual({
+      compatibleWorkerVersions: ['1.0.0'],
+    });
   });
 
   it('fails closed when a draft differs from the published manifest of the same version', () => {
@@ -573,6 +644,62 @@ describe('release migration topology', () => {
 });
 
 describe('release schema update plans', () => {
+  it('does not schedule database work for a Worker-only release', () => {
+    const migrationsRoot = temporaryMigrations();
+    const current = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' });
+    const target = { ...current, productVersion: '1.1.0' };
+    const d1Target = {
+      id: 'd1:core:d1-core',
+      streamId: 'd1-core',
+      driver: 'd1' as const,
+      scope: 'deployment' as const,
+      logicalRoles: ['core'],
+      databaseName: 'core',
+      automatic: true,
+    };
+
+    const plan = buildReleaseSchemaUpdatePlan({
+      targetManifest: target,
+      currentManifest: current,
+      targets: [d1Target],
+    });
+
+    expect(plan.targets[0]).toMatchObject({ changedFiles: [], requiresAction: false });
+    expect(plan.automaticTargets).toEqual([]);
+    expect(
+      getControlManagedReleaseStreamIds({ targetManifest: target, currentManifest: current })
+    ).toEqual([]);
+  });
+
+  it('initializes a new database even when a synthetic release stream is empty', () => {
+    const migrationsRoot = temporaryMigrations();
+    const target = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+    target.streams = target.streams.map((stream) =>
+      stream.id === 'd1-core' ? { ...stream, files: [] } : stream
+    );
+    const d1Target = {
+      id: 'd1:new-core:d1-core',
+      streamId: 'd1-core',
+      driver: 'd1' as const,
+      scope: 'deployment' as const,
+      logicalRoles: ['core'],
+      databaseName: 'new-core',
+      automatic: true,
+    };
+
+    const plan = buildReleaseSchemaUpdatePlan({
+      targetManifest: target,
+      currentManifestForTarget: () => undefined,
+      targets: [d1Target],
+    });
+
+    expect(plan.automaticTargets).toHaveLength(1);
+    expect(plan.targets[0]).toMatchObject({ changedFiles: [], requiresAction: true });
+  });
+
   it('only blocks an external target when its stream changed', () => {
     const migrationsRoot = temporaryMigrations();
     const current = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' });

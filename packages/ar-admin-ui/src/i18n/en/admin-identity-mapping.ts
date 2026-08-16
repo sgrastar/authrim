@@ -74,7 +74,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
 	admin_identity_mapping_profiles_title: 'Source & Destination Profiles',
 	admin_identity_mapping_profiles_description:
-		'Register source profiles from CSV files or manual column definitions, then select them in the Flow Editor. The built-in SCIM 2.0 User source is ready for inbound provisioning mappings; other protocol adapters will appear here as they are added.',
+		'Register source and destination profiles, then select active versions in the Flow Editor. SCIM source profiles can be created from standard inbound templates.',
 	admin_identity_mapping_profiles_inventory: 'Profile inventory',
 	admin_identity_mapping_profiles_lists_title: 'Source and destination profile lists',
 	admin_identity_mapping_profiles_loading: 'Loading source and destination profiles.',
@@ -247,7 +247,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_source_title: 'Source Profile',
 	admin_identity_mapping_profile_edit_destination_title: 'Destination Profile',
 	admin_identity_mapping_profile_edit_source_description:
-		'Register source profiles from CSV files or manual column definitions.',
+		'Register source profiles from CSV input, SCIM templates, or manual definitions.',
 	admin_identity_mapping_profile_edit_destination_description:
 		'Define destination release contracts, attribute groups, and consent settings.',
 	admin_identity_mapping_profile_edit_delete: 'Delete',
@@ -259,6 +259,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_create_source: 'Create Source Profile',
 	admin_identity_mapping_profile_edit_edit_source: 'Edit Source Profile',
 	admin_identity_mapping_profile_edit_csv_source_profile: 'CSV source profile',
+	admin_identity_mapping_profile_edit_scim_source_profile: 'SCIM source profile',
+	admin_identity_mapping_profile_edit_scim_display_placeholder: 'Workforce SCIM User',
+	admin_identity_mapping_profile_edit_scim_schema_uris: 'Schema URIs',
+	admin_identity_mapping_profile_edit_scim_attributes: 'SCIM attributes',
+	admin_identity_mapping_profile_edit_path: 'Path',
+	admin_identity_mapping_profile_edit_add_scim_attribute: 'Add SCIM attribute',
 	admin_identity_mapping_profile_edit_display_name: 'Display name',
 	admin_identity_mapping_profile_edit_csv_display_placeholder: 'Workday CSV 2026',
 	admin_identity_mapping_profile_edit_csv_file: 'CSV file',
@@ -297,6 +303,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_nullable: 'Nullable',
 	admin_identity_mapping_profile_edit_class: 'Class',
 	admin_identity_mapping_profile_edit_required: 'Required',
+	admin_identity_mapping_profile_edit_mapping_required: 'Mapping required',
 	admin_identity_mapping_profile_edit_examples: 'Examples',
 	admin_identity_mapping_profile_edit_note: 'Note',
 	admin_identity_mapping_profile_edit_allowed_values_placeholder: 'student,faculty',
@@ -308,6 +315,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_confirm_csv_warnings:
 		'Confirm PII and regulated candidates for this CSV profile version',
 	admin_identity_mapping_profile_edit_saving: 'Saving...',
+	admin_identity_mapping_profile_edit_save: 'Save',
 	admin_identity_mapping_profile_edit_save_draft_profile: 'Save draft profile',
 	admin_identity_mapping_profile_edit_reviewing: 'Reviewing...',
 	admin_identity_mapping_profile_edit_review: 'Review',
@@ -315,6 +323,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_activate: 'Activate',
 	admin_identity_mapping_profile_edit_create_method: 'Create method',
 	admin_identity_mapping_profile_edit_start_from_source: 'Start from a profile source',
+	admin_identity_mapping_profile_edit_source_method_aria: 'Source create method',
 	admin_identity_mapping_profile_edit_destination_method_aria: 'Destination create method',
 	admin_identity_mapping_profile_edit_create_from_existing: 'Create from existing',
 	admin_identity_mapping_profile_edit_create_from_template: 'Create from template',
@@ -327,6 +336,9 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_existing_destination: 'Existing {kind:string} destination',
 	admin_identity_mapping_profile_edit_choose_destination_profile: 'Choose destination profile',
 	admin_identity_mapping_profile_edit_copy: 'Copy',
+	admin_identity_mapping_profile_edit_existing_scim_source: 'Existing SCIM source',
+	admin_identity_mapping_profile_edit_choose_source_profile: 'Choose source profile',
+	admin_identity_mapping_profile_edit_source_template_browser_aria: 'SCIM source template browser',
 	admin_identity_mapping_profile_edit_template_browser_aria: 'Destination template browser',
 	admin_identity_mapping_profile_edit_template: '{kind:string} template',
 	admin_identity_mapping_profile_edit_version: 'Version',
@@ -335,6 +347,10 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_use_template: 'Use template',
 	admin_identity_mapping_profile_edit_no_templates:
 		'No templates are registered for this destination type.',
+	admin_identity_mapping_profile_edit_no_source_templates:
+		'No templates are registered for this source type.',
+	admin_identity_mapping_profile_edit_blank_scim_source:
+		'Start with a SCIM User source containing userName and primary email.',
 	admin_identity_mapping_profile_edit_blank_destination:
 		'Start with a blank {kind:string} destination profile.',
 	admin_identity_mapping_profile_edit_create_destination: 'Create Destination Profile',
@@ -429,9 +445,12 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_parse_failed: 'Failed to parse CSV',
 	admin_identity_mapping_profile_edit_save_csv_required:
 		'Parse a CSV file or add manual columns before saving.',
+	admin_identity_mapping_profile_edit_save_scim_required:
+		'Enter a display name and include the SCIM userName attribute before saving.',
 	admin_identity_mapping_profile_edit_saved_review_activate:
 		'Saved {name:string}. Review and activate it before Flow Editor use.',
 	admin_identity_mapping_profile_edit_save_csv_failed: 'Failed to save CSV source profile',
+	admin_identity_mapping_profile_edit_save_scim_failed: 'Failed to save SCIM source profile',
 	admin_identity_mapping_profile_edit_destination_required:
 		'Complete the destination profile and confirm blocking release warnings.',
 	admin_identity_mapping_profile_edit_save_destination_failed: 'Failed to save destination profile',
@@ -454,10 +473,16 @@ const adminIdentityMapping = {
 	admin_identity_mapping_profile_edit_save_attribute_field_failed: 'Failed to save attribute field',
 	admin_identity_mapping_profile_edit_existing_schema_required:
 		'Choose an existing destination profile with an editable schema.',
+	admin_identity_mapping_profile_edit_existing_source_schema_required:
+		'Choose an existing SCIM source profile with an editable schema.',
 	admin_identity_mapping_profile_edit_copied_existing:
 		'Copied {name:string}. Save it as a new destination profile.',
+	admin_identity_mapping_profile_edit_copied_existing_source:
+		'Copied {name:string}. Save it as a new SCIM source profile.',
 	admin_identity_mapping_profile_edit_copied_template:
 		'Copied template {name:string}. Save it as a new destination profile.',
+	admin_identity_mapping_profile_edit_copied_source_template:
+		'Copied template {name:string}. Save it as a new SCIM source profile.',
 	admin_identity_mapping_profile_edit_json_object_required: '{label:string} must be a JSON object',
 
 	admin_identity_mapping_flow_graph_aria: 'Mapping graph',
@@ -617,6 +642,9 @@ const adminIdentityMapping = {
 	admin_identity_mapping_flow_transform_option_omit_empty: 'Omit empty values',
 	admin_identity_mapping_flow_transform_option_include_null: 'Include null values',
 	admin_identity_mapping_flow_required_badge: 'Required',
+	admin_identity_mapping_flow_mapping_required_badge: 'Mapping required',
+	admin_identity_mapping_flow_mapping_required_not_connected:
+		'Mapping-required source fields are not connected: {fields:string}',
 	admin_identity_mapping_flow_multiple_values: 'Multiple values',
 	admin_identity_mapping_flow_single_value: 'Single value',
 	admin_identity_mapping_flow_nullable: 'Nullable',

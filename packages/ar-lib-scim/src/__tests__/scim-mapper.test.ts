@@ -12,6 +12,7 @@ import {
   applyPatchOperations,
   validateScimUser,
   validateScimGroup,
+  validateScimPatchOp,
   type InternalUser,
   type InternalGroup,
 } from '../utils/scim-mapper';
@@ -290,6 +291,26 @@ describe('SCIM Mapper', () => {
       expect(result.email).toBe('new@example.com');
     });
 
+    it('should apply patch operation names case-insensitively', () => {
+      const resource = { displayName: 'Before', active: true };
+      const operations = [
+        {
+          op: 'Replace' as unknown as 'replace',
+          path: 'displayName',
+          value: 'After',
+        },
+        {
+          op: 'REPLACE' as unknown as 'replace',
+          path: 'active',
+          value: false,
+        },
+      ];
+
+      const result = applyPatchOperations(resource, operations);
+
+      expect(result).toMatchObject({ displayName: 'After', active: false });
+    });
+
     it('should apply remove operation', () => {
       const resource = { name: 'John', email: 'john@example.com' };
       const operations = [
@@ -422,6 +443,38 @@ describe('SCIM Mapper', () => {
 
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
+    });
+
+    it.each([
+      [{ userName: '   ' }, 'userName is required'],
+      [{ userName: 'valid', emails: 'wrong-shape' }, 'emails must be an array'],
+      [{ userName: 'valid', emails: [{ value: 'not-an-email' }] }, 'emails[0].value is invalid'],
+    ])('rejects malformed user values', (user, error) => {
+      const result = validateScimUser(user as Partial<ScimUser>);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContain(error);
+    });
+  });
+
+  describe('validateScimPatchOp', () => {
+    it('accepts RFC 7644 patch operations case-insensitively', () => {
+      expect(
+        validateScimPatchOp({
+          schemas: [SCIM_SCHEMAS.PATCH_OP],
+          Operations: [{ op: 'Replace', path: 'active', value: false }],
+        })
+      ).toEqual({ valid: true, errors: [] });
+    });
+
+    it.each([
+      { schemas: [SCIM_SCHEMAS.PATCH_OP] },
+      {
+        schemas: [SCIM_SCHEMAS.PATCH_OP],
+        Operations: [{ op: 'move', path: 'active', value: true }],
+      },
+    ])('rejects incomplete or unsupported patch requests', (patch) => {
+      expect(validateScimPatchOp(patch).valid).toBe(false);
     });
   });
 

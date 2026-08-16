@@ -6,6 +6,7 @@ const HEX_64 = /^[a-f0-9]{64}$/u;
 const RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 
 export type IdentifierReplacementAuthority = 'self_service' | 'admin' | 'scim' | 'external_idp';
+export type ReplaceableIdentifierKind = 'email_exact' | 'external_subject';
 
 export interface IdentifierReplacementOperationView {
   operationId: string;
@@ -28,6 +29,7 @@ export interface CreateIdentifierReplacementOperationInput {
   tenantId: string;
   accountId: string;
   authority: IdentifierReplacementAuthority;
+  identifierKind?: ReplaceableIdentifierKind;
   actorRef: string;
   idempotencyKeySha256: string;
   requestFingerprintSha256: string;
@@ -54,7 +56,8 @@ interface OperationRow {
 
 function exactIndexes(
   indexes: LookupBlindIndex[],
-  field: 'oldIndexes' | 'newIndexes'
+  field: 'oldIndexes' | 'newIndexes',
+  identifierKind: ReplaceableIdentifierKind
 ): LookupBlindIndex[] {
   if (indexes.length < 1 || indexes.length > 2) {
     throw new Error(`identifier_replacement_${field}_invalid`);
@@ -62,7 +65,7 @@ function exactIndexes(
   const generations = new Set<number>();
   return indexes.map((index) => {
     if (
-      index.indexKind !== 'email_exact' ||
+      index.indexKind !== identifierKind ||
       !Number.isSafeInteger(index.normalizationVersion) ||
       index.normalizationVersion < 1 ||
       !Number.isSafeInteger(index.hmacKeyGeneration) ||
@@ -81,9 +84,11 @@ function exactIndexes(
 }
 
 function validateInput(input: CreateIdentifierReplacementOperationInput): {
+  identifierKind: ReplaceableIdentifierKind;
   oldIndexes: LookupBlindIndex[];
   newIndexes: LookupBlindIndex[];
 } {
+  const identifierKind = input.identifierKind ?? 'email_exact';
   for (const value of [
     input.operationId,
     input.outboxId,
@@ -102,6 +107,7 @@ function validateInput(input: CreateIdentifierReplacementOperationInput): {
     input.oldValue === input.newValue ||
     input.oldValue.length < 3 ||
     input.newValue.length < 3 ||
+    (input.authority === 'self_service' && identifierKind !== 'email_exact') ||
     (input.authority === 'self_service' &&
       (!input.challengeId ||
         !SAFE_ID.test(input.challengeId) ||
@@ -110,8 +116,8 @@ function validateInput(input: CreateIdentifierReplacementOperationInput): {
   ) {
     throw new Error('identifier_replacement_input_invalid');
   }
-  const oldIndexes = exactIndexes(input.oldIndexes, 'oldIndexes');
-  const newIndexes = exactIndexes(input.newIndexes, 'newIndexes');
+  const oldIndexes = exactIndexes(input.oldIndexes, 'oldIndexes', identifierKind);
+  const newIndexes = exactIndexes(input.newIndexes, 'newIndexes', identifierKind);
   if (
     oldIndexes.length !== newIndexes.length ||
     oldIndexes.some((oldIndex) => {
@@ -123,7 +129,7 @@ function validateInput(input: CreateIdentifierReplacementOperationInput): {
   ) {
     throw new Error('identifier_replacement_generation_mismatch');
   }
-  return { oldIndexes, newIndexes };
+  return { identifierKind, oldIndexes, newIndexes };
 }
 
 function view(row: OperationRow): IdentifierReplacementOperationView {
@@ -145,7 +151,7 @@ export class IdentifierReplacementOperationRepository {
   async create(
     input: CreateIdentifierReplacementOperationInput
   ): Promise<IdentifierReplacementOperationView> {
-    const { oldIndexes, newIndexes } = validateInput(input);
+    const { identifierKind, oldIndexes, newIndexes } = validateInput(input);
     const now = this.now();
     if (!Number.isSafeInteger(now) || now < 1) {
       throw new Error('identifier_replacement_time_invalid');
@@ -204,6 +210,7 @@ export class IdentifierReplacementOperationRepository {
       operationId: input.operationId,
       tenantId: input.tenantId,
       accountId: input.accountId,
+      identifierKind,
       projections: projections.map(({ side, index }) => ({
         side,
         normalizationVersion: index.normalizationVersion,
@@ -218,7 +225,7 @@ export class IdentifierReplacementOperationRepository {
                 operation_id, tenant_id, account_id, identifier_kind, authority,
                 idempotency_key_sha256, request_fingerprint_sha256, challenge_id,
                 initiating_session_ref, outbox_id, retry_budget_expires_at, created_at, updated_at
-              ) VALUES (?, ?, ?, 'email_exact', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              ) VALUES (?, ?, ?, '${identifierKind}', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
           input.operationId,
           input.tenantId,
@@ -300,6 +307,15 @@ export class IdentifierReplacementOperationRepository {
         adopted.operation_id !== input.operationId ||
         adopted.request_fingerprint_sha256 !== input.requestFingerprintSha256
       ) {
+        const active = await this.pii.queryOne<{ operation_id: string }>(
+          `SELECT operation_id
+             FROM identity_identifier_replacement_operations
+            WHERE tenant_id = ? AND account_id = ? AND identifier_kind = ?
+              AND state NOT IN ('completed', 'canceled')`,
+          [input.tenantId, input.accountId, identifierKind],
+          { consistencyClass: 'primary_required' }
+        );
+        if (active) throw new Error('identifier_replacement_operation_active');
         throw error;
       }
       return view(adopted);

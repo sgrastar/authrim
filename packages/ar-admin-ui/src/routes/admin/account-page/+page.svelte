@@ -70,7 +70,17 @@
 		['de', 'Deutsch'],
 		['ko', '한국어'],
 		['ru', 'Русский'],
-		['id', 'Bahasa Indonesia']
+		['id', 'Bahasa Indonesia'],
+		['ar', 'العربية'],
+		['it', 'Italiano'],
+		['th', 'ไทย'],
+		['vi', 'Tiếng Việt'],
+		['hi', 'हिन्दी'],
+		['bn', 'বাংলা'],
+		['tr', 'Türkçe'],
+		['sw', 'Kiswahili'],
+		['am', 'አማርኛ'],
+		['pl', 'Polski']
 	] as const;
 	const DEFAULT_PAGE: AccountPageDefinition = {
 		schema_version: 'authrim.account_page.v1',

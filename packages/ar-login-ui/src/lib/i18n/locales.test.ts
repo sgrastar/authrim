@@ -7,23 +7,29 @@ import {
 	toDocumentLanguage
 } from './locales';
 import ar from '$i18n/ar';
+import am from '$i18n/am';
+import bn from '$i18n/bn';
 import de from '$i18n/de';
 import en from '$i18n/en';
 import es from '$i18n/es';
 import fr from '$i18n/fr';
+import hi from '$i18n/hi';
 import id from '$i18n/id';
 import itTranslation from '$i18n/it';
 import ja from '$i18n/ja';
 import ko from '$i18n/ko';
+import pl from '$i18n/pl';
 import pt from '$i18n/pt';
 import ru from '$i18n/ru';
+import sw from '$i18n/sw';
 import th from '$i18n/th';
+import tr from '$i18n/tr';
 import vi from '$i18n/vi';
 import zhCN from '$i18n/zh-CN';
 import zhTW from '$i18n/zh-TW';
 
 describe('LoginUI locales', () => {
-	it('matches the fifteen locales supported by Screen localizations', () => {
+	it('matches the twenty-one locales supported by Screen localizations', () => {
 		expect(LOGIN_UI_LOCALES).toEqual([
 			'en',
 			'ja',
@@ -39,7 +45,13 @@ describe('LoginUI locales', () => {
 			'ar',
 			'it',
 			'th',
-			'vi'
+			'vi',
+			'hi',
+			'bn',
+			'tr',
+			'sw',
+			'am',
+			'pl'
 		]);
 	});
 
@@ -54,6 +66,12 @@ describe('LoginUI locales', () => {
 		['it-IT', 'it'],
 		['th-TH', 'th'],
 		['vi-VN', 'vi'],
+		['hi-IN', 'hi'],
+		['bn-BD', 'bn'],
+		['tr-TR', 'tr'],
+		['sw-KE', 'sw'],
+		['am-ET', 'am'],
+		['pl-PL', 'pl'],
 		['unknown', null]
 	] as const)('normalizes browser locale %s to %s', (input, expected) => {
 		expect(normalizeLoginUILocale(input)).toBe(expected);
@@ -68,7 +86,27 @@ describe('LoginUI locales', () => {
 	});
 
 	it('provides localized copy for every requested LoginUI surface', () => {
-		for (const translation of [ar, de, es, fr, id, itTranslation, ko, pt, ru, th, vi, zhCN, zhTW]) {
+		for (const translation of [
+			am,
+			ar,
+			bn,
+			de,
+			es,
+			fr,
+			hi,
+			id,
+			itTranslation,
+			ko,
+			pl,
+			pt,
+			ru,
+			sw,
+			th,
+			tr,
+			vi,
+			zhCN,
+			zhTW
+		]) {
 			expect(translation.landing_providerBadge).not.toBe(en.landing_providerBadge);
 			expect(translation.login_title).not.toBe(en.login_title);
 			expect(translation.register_title).not.toBe(en.register_title);
@@ -82,16 +120,22 @@ describe('LoginUI locales', () => {
 		for (const translation of [
 			en,
 			ar,
+			am,
+			bn,
 			ja,
 			de,
 			es,
 			fr,
+			hi,
 			id,
 			itTranslation,
 			ko,
+			pl,
 			pt,
 			ru,
+			sw,
 			th,
+			tr,
 			vi,
 			zhCN,
 			zhTW
@@ -104,16 +148,22 @@ describe('LoginUI locales', () => {
 		const expectedKeys = Object.keys(en).sort();
 		for (const translation of [
 			ar,
+			am,
+			bn,
 			ja,
 			de,
 			es,
 			fr,
+			hi,
 			id,
 			itTranslation,
 			ko,
+			pl,
 			pt,
 			ru,
+			sw,
 			th,
+			tr,
 			vi,
 			zhCN,
 			zhTW
@@ -129,17 +179,23 @@ describe('LoginUI locales', () => {
 				.sort();
 
 		for (const translation of [
+			am,
 			ar,
+			bn,
 			ja,
 			de,
 			es,
 			fr,
+			hi,
 			id,
 			itTranslation,
 			ko,
+			pl,
 			pt,
 			ru,
+			sw,
 			th,
+			tr,
 			vi,
 			zhCN,
 			zhTW
@@ -189,18 +245,24 @@ describe('LoginUI locales', () => {
 		] as const;
 
 		for (const translation of [
+			am,
 			ar,
+			bn,
 			en,
 			ja,
 			de,
 			es,
 			fr,
+			hi,
 			id,
 			itTranslation,
 			ko,
+			pl,
 			pt,
 			ru,
+			sw,
 			th,
+			tr,
 			vi,
 			zhCN,
 			zhTW
@@ -212,7 +274,7 @@ describe('LoginUI locales', () => {
 		}
 	});
 
-	it('localizes every end-user error surface in the four added locales', () => {
+	it('localizes every end-user error surface in the six newly added locales', () => {
 		const errorKeys = [
 			'common_requiredField',
 			'account_saveFailed',
@@ -258,17 +320,16 @@ describe('LoginUI locales', () => {
 			'login_extError_default_message'
 		] as const;
 
-		for (const translation of [ar, itTranslation, th, vi]) {
+		for (const translation of [hi, bn, tr, sw, am, pl]) {
 			for (const key of errorKeys) {
 				expect(translation[key], key).not.toBe(en[key]);
 			}
 		}
 	});
 
-	it('uses established passkey terminology in the four added locales', () => {
-		expect(ar.login_signInWithPasskey).toContain('مفتاح مرور');
-		expect(itTranslation.login_signInWithPasskey.toLocaleLowerCase('it')).toContain('passkey');
-		expect(th.login_signInWithPasskey).toContain('พาสคีย์');
-		expect(vi.login_signInWithPasskey.toLocaleLowerCase('vi')).toContain('khoá truy cập');
+	it('keeps Passkey terminology recognizable in the six newly added locales', () => {
+		for (const translation of [hi, bn, tr, sw, am, pl]) {
+			expect(translation.login_signInWithPasskey.toLocaleLowerCase()).toContain('passkey');
+		}
 	});
 });

@@ -364,6 +364,27 @@ describe('CrossShardAccountListService', () => {
     ]);
   });
 
+  it('counts published users across shards without loading every account projection', async () => {
+    await insertAccount(shardA, 'deprovisioned-account', 11, {
+      lifecycleState: 'deprovisioned',
+    });
+    await insertAccount(shardA, 'pending-account', 10, { publicationState: 'pending' });
+    await insertAccount(shardB, 'service-account', 9, {
+      accountType: 'service_account',
+      coreShardId: 'users-b',
+      coreBindingRef: 'TDB_USERS_B',
+      coreRouteGeneration: 4,
+    });
+    const service = new CrossShardAccountListService(env(), () => 100);
+
+    await expect(
+      service.count({ tenantId: 'tenant-a', accountType: 'user', includeInactive: true })
+    ).resolves.toBe(6);
+    await expect(
+      service.count({ tenantId: 'tenant-a', accountType: 'user', includeInactive: false })
+    ).resolves.toBe(5);
+  });
+
   it('rejects cursor tampering and reuse with a different query', async () => {
     const service = new CrossShardAccountListService(env(), () => 100);
     const first = await service.list({ tenantId: 'tenant-a', limit: 2 });
@@ -511,6 +532,32 @@ describe('CrossShardAccountListService', () => {
         emailIndex.digest,
         JSON.stringify(routeProjection)
       );
+    const userNameIndex = await createLookupBlindIndex(
+      'external_subject',
+      {
+        issuer: 'urn:authrim:scim:tenant-a:username',
+        subject: 'user-name',
+      },
+      { generation: 1, secret: hmacSecret }
+    );
+    lookup
+      .prepare(
+        `INSERT INTO lookup_identifiers (
+           virtual_bucket, index_kind, normalization_version, hmac_key_generation,
+           identifier_blind_digest, tenant_id, account_id, route_schema_version,
+           account_route_generation, required_binding_route_generation, residency_policy_id,
+           route_projection_json, tenant_lifecycle_state, runtime_route_status, lifecycle_state
+         ) VALUES (?, ?, ?, ?, ?, 'tenant-a', 'account-5', 1, 1, 5, 'default-policy', ?,
+                   'active', 'active', 'active')`
+      )
+      .run(
+        userNameIndex.virtualBucket,
+        userNameIndex.indexKind,
+        userNameIndex.normalizationVersion,
+        userNameIndex.hmacKeyGeneration,
+        userNameIndex.digest,
+        JSON.stringify(routeProjection)
+      );
     const now = Math.floor(Date.now() / 1000);
     const token = await signLookupShardRegistry({
       registry: {
@@ -578,6 +625,19 @@ describe('CrossShardAccountListService', () => {
         piiBindingRef: 'TDB_PII_A',
       }),
     ]);
+    await expect(
+      new CrossShardAccountExactSearchService(workerEnv).find({
+        tenantId: 'tenant-a',
+        identifier: 'user-name',
+        indexKind: 'external_subject',
+        externalSubjectIssuer: 'urn:authrim:scim:tenant-a:username',
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 'account-5',
+        legacyUserId: 'user-account-5',
+      }),
+    ]);
 
     shardA
       .prepare(
@@ -590,6 +650,70 @@ describe('CrossShardAccountListService', () => {
         identifier: 'user@example.com',
       })
     ).resolves.toEqual([]);
+
+    const accountIndex = await createLookupBlindIndex('account_id', 'account:user-account-5', {
+      generation: 1,
+      secret: hmacSecret,
+    });
+    const staleRouteProjection = {
+      ...routeProjection,
+      targets: routeProjection.targets.map((target) =>
+        target.dataRole === 'tenant_core/users'
+          ? {
+              ...target,
+              shardId: 'users-b',
+              bindingRef: 'TDB_USERS_B',
+              requiredBindingRouteGeneration: 4,
+            }
+          : target
+      ),
+    };
+    lookup
+      .prepare(
+        `INSERT INTO lookup_identifiers (
+           virtual_bucket, index_kind, normalization_version, hmac_key_generation,
+           identifier_blind_digest, tenant_id, account_id, route_schema_version,
+           account_route_generation, required_binding_route_generation, residency_policy_id,
+           route_projection_json, tenant_lifecycle_state, runtime_route_status, lifecycle_state
+         ) VALUES (?, ?, ?, ?, ?, 'tenant-a', 'account-5', 1, 1, 5, 'default-policy', ?,
+                   'active', 'active', 'active')`
+      )
+      .run(
+        accountIndex.virtualBucket,
+        accountIndex.indexKind,
+        accountIndex.normalizationVersion,
+        accountIndex.hmacKeyGeneration,
+        accountIndex.digest,
+        JSON.stringify(staleRouteProjection)
+      );
+
+    shardA
+      .prepare(
+        `UPDATE identity_accounts
+            SET account_type = 'user', lifecycle_state = 'deprovisioned',
+                directory_publication_state = 'active'
+          WHERE id = 'account-5'`
+      )
+      .run();
+    await expect(
+      new CrossShardAccountExactSearchService(workerEnv).find({
+        tenantId: 'tenant-a',
+        identifier: 'user-account-5',
+        purpose: 'account_lifecycle',
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: 'account-5',
+        lifecycleState: 'deprovisioned',
+      }),
+    ]);
+    await expect(
+      new CrossShardAccountExactSearchService(workerEnv).find({
+        tenantId: 'tenant-a',
+        identifier: 'user-account-5',
+        purpose: 'account_delete_retry',
+      })
+    ).resolves.toHaveLength(1);
 
     shardA
       .prepare(

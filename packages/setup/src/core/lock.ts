@@ -40,12 +40,26 @@ const WorkerEntrySchema = z.object({
 const ReleaseUpdateStateSchema = z.object({
   targetVersion: z.string().min(1),
   previousProductVersion: z.string().min(1).optional(),
-  phase: z.enum(['planned', 'schema_applied', 'workers_deployed', 'verified']),
+  phase: z.enum([
+    'planned',
+    'control_handoff',
+    'awaiting_setup',
+    'schema_applied',
+    'workers_deployed',
+    'verified',
+    'database_only_verified',
+  ]),
   manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
   startedAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   appliedTargets: z.array(z.string()).default([]),
   manualTargets: z.array(z.string()).default([]),
+  controlOperationId: z
+    .string()
+    .regex(/^op_release_rollout_[a-f0-9]{32}$/u)
+    .optional(),
+  controlCompletedTargets: z.number().int().nonnegative().optional(),
+  controlTotalTargets: z.number().int().nonnegative().optional(),
   initialWorkerRedeployRequired: z.boolean().optional(),
 });
 

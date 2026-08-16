@@ -9,10 +9,20 @@ export function withReleaseUpdateState(
   lock: AuthrimLock,
   input: {
     targetVersion: string;
-    phase: 'planned' | 'schema_applied' | 'workers_deployed' | 'verified';
+    phase:
+      | 'planned'
+      | 'control_handoff'
+      | 'awaiting_setup'
+      | 'schema_applied'
+      | 'workers_deployed'
+      | 'verified'
+      | 'database_only_verified';
     manifestChecksum: string;
     appliedTargets?: string[];
     manualTargets?: string[];
+    controlOperationId?: string;
+    controlCompletedTargets?: number;
+    controlTotalTargets?: number;
     initialWorkerRedeployRequired?: boolean;
   }
 ): AuthrimLock {
@@ -24,6 +34,10 @@ export function withReleaseUpdateState(
       : undefined;
   const initialWorkerRedeployRequired =
     input.initialWorkerRedeployRequired ?? existing?.initialWorkerRedeployRequired ?? false;
+  const controlOperationId = input.controlOperationId ?? existing?.controlOperationId;
+  const controlCompletedTargets =
+    input.controlCompletedTargets ?? existing?.controlCompletedTargets;
+  const controlTotalTargets = input.controlTotalTargets ?? existing?.controlTotalTargets;
   return {
     ...lock,
     ...(input.phase === 'verified' ? { productVersion: input.targetVersion } : {}),
@@ -38,6 +52,9 @@ export function withReleaseUpdateState(
       updatedAt: now,
       appliedTargets: input.appliedTargets ?? existing?.appliedTargets ?? [],
       manualTargets: input.manualTargets ?? existing?.manualTargets ?? [],
+      ...(controlOperationId ? { controlOperationId } : {}),
+      ...(controlCompletedTargets !== undefined ? { controlCompletedTargets } : {}),
+      ...(controlTotalTargets !== undefined ? { controlTotalTargets } : {}),
       ...(initialWorkerRedeployRequired ? { initialWorkerRedeployRequired: true } : {}),
     },
     updatedAt: now,

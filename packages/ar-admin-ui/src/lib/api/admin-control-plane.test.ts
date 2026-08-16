@@ -184,6 +184,59 @@ describe('admin control-plane API', () => {
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
+	it('loads release rollout progress for the persistent Admin banner', async () => {
+		const rollout = {
+			operationId: 'release-rollout-1',
+			sourceVersion: '0.4.0',
+			targetVersion: '0.5.0',
+			phase: 'database_rollout',
+			completedTargets: 3,
+			totalTargets: 12,
+			blockedTargetCount: 0,
+			blockedTargets: [],
+			adminMutationMode: 'read_only',
+			lastErrorCode: null,
+			updatedAt: 1_800_000_000
+		} as const;
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(JSON.stringify({ rollout })));
+
+		await expect(adminControlPlaneAPI.getReleaseRolloutStatus()).resolves.toEqual({ rollout });
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/release-rollout');
+		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('retries one blocked release target with an idempotency key', async () => {
+		const rollout = {
+			operationId: 'release-rollout-1',
+			sourceVersion: '0.4.0',
+			targetVersion: '0.5.0',
+			phase: 'database_rollout',
+			completedTargets: 3,
+			totalTargets: 12,
+			blockedTargetCount: 0,
+			blockedTargets: [],
+			adminMutationMode: 'read_only',
+			lastErrorCode: null,
+			updatedAt: 1_800_000_000
+		} as const;
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(JSON.stringify({ rollout, auditId: 'audit-1' })));
+
+		await expect(
+			adminControlPlaneAPI.retryReleaseRolloutTarget('release-rollout-1', 'target-1')
+		).resolves.toEqual({ rollout, auditId: 'audit-1' });
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(requestPath(url)).toBe(
+			'/api/admin/platform/control-plane/release-rollout/release-rollout-1/targets/target-1/retry'
+		);
+		expect(init?.method).toBe('POST');
+		expect((init?.headers as Headers).get('Idempotency-Key')).toBeTruthy();
+	});
+
 	it('previews and requests a server-owned capacity profile', async () => {
 		const operationSummary = {
 			operationId: 'capacity-operation-1',

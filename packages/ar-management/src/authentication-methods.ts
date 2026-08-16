@@ -288,6 +288,12 @@ const LOGIN_UI_LOCALES = [
   'it',
   'th',
   'vi',
+  'hi',
+  'bn',
+  'tr',
+  'sw',
+  'am',
+  'pl',
 ] as const;
 
 const LEGACY_DEFAULT_LOGIN_UI_LOCALES = [
@@ -420,6 +426,12 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     'it',
     'th',
     'vi',
+    'hi',
+    'bn',
+    'tr',
+    'sw',
+    'am',
+    'pl',
   ],
   defaultLocale: 'en',
   selfService: {

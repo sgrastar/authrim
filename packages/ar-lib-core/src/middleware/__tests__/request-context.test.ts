@@ -867,6 +867,29 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(db.prepare).not.toHaveBeenCalled();
     });
 
+    it('does not validate tenant existence for platform admin requests on a tenant API host', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`first.${BASE_DOMAIN}`, '/api/admin/platform/tenant-domain-mappings'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+
     it('requires X-Tenant-Id for tenant-scoped admin requests', async () => {
       const db = createMockDB({ tenantRow: { id: 'default' } });
       const kv = createMockKV({ cachedValue: null });

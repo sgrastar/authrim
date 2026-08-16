@@ -42,12 +42,16 @@ export interface EnvironmentOperationDecision {
   reason?: EnvironmentOperationBlockReason;
 }
 
+function releaseUpdateTerminal(release: AuthrimLock['releaseUpdate']): boolean {
+  return release?.phase === 'verified' || release?.phase === 'database_only_verified';
+}
+
 export function classifyEnvironmentLifecycle(lock?: AuthrimLock | null): EnvironmentLifecycle {
   if (!lock) return 'absent';
 
   const workers = Object.values(lock.workers ?? {});
   const release = lock.releaseUpdate;
-  if (release && release.phase !== 'verified') return 'updating';
+  if (release && !releaseUpdateTerminal(release)) return 'updating';
   if (
     release?.phase === 'verified' &&
     (!lock.productVersion || release.targetVersion !== lock.productVersion)
@@ -144,7 +148,7 @@ export function evaluateEnvironmentOperation(input: {
       release?.targetVersion === targetVersion &&
       (release?.manifestChecksum !== releaseManifestChecksum ||
         release?.initialWorkerRedeployRequired === true) &&
-      release?.phase !== 'verified';
+      !releaseUpdateTerminal(release);
     if (initialManifestChanged) {
       return denied(operation, lifecycle, 'initial_manifest_changed');
     }
@@ -155,7 +159,7 @@ export function evaluateEnvironmentOperation(input: {
       Boolean(releaseManifestChecksum) &&
       release?.targetVersion === targetVersion &&
       release?.manifestChecksum === releaseManifestChecksum &&
-      release?.phase !== 'verified' &&
+      !releaseUpdateTerminal(release) &&
       workers.every((worker) => worker.version === targetVersion);
     if (resumableInitialDeploy) {
       return { allowed: true, lifecycle, operation };

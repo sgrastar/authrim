@@ -72,36 +72,6 @@ const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
 const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
 const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
 const DEFAULT_CANONICAL_NAMESPACE = 'authrim.canonical';
-const BUILTIN_SCIM_PROTOCOL_SCHEMA_ID = 'builtin_scim_user_schema';
-const BUILTIN_SCIM_USER_SCHEMA = {
-  sourceType: 'scim',
-  attributes: [
-    { name: 'userName', label: 'User name', type: 'string', required: true },
-    { name: 'externalId', label: 'External ID', type: 'string' },
-    { name: 'active', label: 'Active', type: 'boolean' },
-    { name: 'displayName', label: 'Display name', type: 'string' },
-    { name: 'name.formatted', label: 'Formatted name', type: 'string' },
-    { name: 'name.givenName', label: 'Given name', type: 'string' },
-    { name: 'name.familyName', label: 'Family name', type: 'string' },
-    { name: 'name.middleName', label: 'Middle name', type: 'string' },
-    { name: 'nickName', label: 'Nickname', type: 'string' },
-    { name: 'profileUrl', label: 'Profile URL', type: 'string' },
-    { name: 'title', label: 'Title', type: 'string' },
-    { name: 'userType', label: 'User type', type: 'string' },
-    { name: 'preferredLanguage', label: 'Preferred language', type: 'string' },
-    { name: 'locale', label: 'Locale', type: 'string' },
-    { name: 'timezone', label: 'Timezone', type: 'string' },
-    { name: 'emails.value', label: 'Primary email', type: 'string', required: true },
-    { name: 'phoneNumbers.value', label: 'Primary phone number', type: 'string' },
-    { name: 'addresses.primary', label: 'Primary address', type: 'json' },
-    { name: 'enterprise.employeeNumber', label: 'Employee number', type: 'string' },
-    { name: 'enterprise.costCenter', label: 'Cost center', type: 'string' },
-    { name: 'enterprise.organization', label: 'Organization', type: 'string' },
-    { name: 'enterprise.division', label: 'Division', type: 'string' },
-    { name: 'enterprise.department', label: 'Department', type: 'string' },
-    { name: 'enterprise.manager.value', label: 'Manager ID', type: 'string' },
-  ],
-};
 
 const SCHEMA_READINESS_INVENTORY: SchemaReadinessInventoryDefinition[] = [
   {
@@ -806,7 +776,7 @@ interface ParseCsvSourceProfileRequest {
 }
 
 interface CreateSourceProfileRequest {
-  sourceType: 'csv' | 'saml' | 'directory';
+  sourceType: 'csv' | 'scim' | 'saml' | 'directory';
   profileKey: string;
   displayName: string;
   versionLabel?: string;
@@ -818,7 +788,7 @@ interface CreateSourceProfileRequest {
 }
 
 interface UpdateSourceProfileRequest {
-  sourceType?: 'csv' | 'saml' | 'directory';
+  sourceType?: 'csv' | 'scim' | 'saml' | 'directory';
   profileKey?: string;
   displayName?: string;
   versionLabel?: string;
@@ -923,6 +893,7 @@ interface CreateFieldMappingVersionRequest {
   versionLabel: string;
   compatibilityRange?: string;
   authorId?: string;
+  sourceProfileIds?: string[];
   rules: FieldMappingVersionRuleInput[];
 }
 
@@ -1242,7 +1213,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
-const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml', 'directory']);
+const SOURCE_PROFILE_TYPES = new Set(['csv', 'scim', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml', 'resource_server']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
@@ -1780,27 +1751,15 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY protocol ASC, schema_key ASC, updated_at DESC`,
       [tenantId]
     );
-    return [
-      {
-        id: BUILTIN_SCIM_PROTOCOL_SCHEMA_ID,
-        tenantId,
-        protocol: 'scim',
-        schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
-        schemaVersion: '2.0',
-        displayName: 'SCIM 2.0 User (inbound)',
-        schema: BUILTIN_SCIM_USER_SCHEMA,
-        lifecycleState: 'active',
-      },
-      ...rows.map((row) => ({
-        id: row.id,
-        tenantId: row.tenant_id,
-        protocol: row.protocol,
-        schemaKey: row.schema_key,
-        schemaVersion: row.schema_version,
-        schema: JSON.parse(row.schema_json) as Record<string, unknown>,
-        lifecycleState: row.lifecycle_state,
-      })),
-    ];
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      protocol: row.protocol,
+      schemaKey: row.schema_key,
+      schemaVersion: row.schema_version,
+      schema: JSON.parse(row.schema_json) as Record<string, unknown>,
+      lifecycleState: row.lifecycle_state,
+    }));
   }
 
   async importExternalSchema(tenantId: string, input: ImportExternalSchemaRequest) {
@@ -1931,7 +1890,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
-      throw badRequest('sourceType must be csv, saml, or directory');
+      throw badRequest('sourceType must be csv, scim, saml, or directory');
     }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -2055,7 +2014,7 @@ export class IdentityMappingControlPlaneRepository {
                  FROM source_profile_versions latest
                 WHERE latest.tenant_id = p.tenant_id
                   AND latest.profile_id = p.id
-                ORDER BY latest.updated_at DESC
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
                 LIMIT 1
              ),
              p.active_version_id
@@ -2107,9 +2066,10 @@ export class IdentityMappingControlPlaneRepository {
     if (!existing) {
       throw notFound('source profile not found');
     }
-    const sourceType = input.sourceType ?? (existing.source_type as 'csv' | 'saml');
+    const sourceType =
+      input.sourceType ?? (existing.source_type as CreateSourceProfileRequest['sourceType']);
     if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
-      throw badRequest('sourceType must be csv, saml, or directory');
+      throw badRequest('sourceType must be csv, scim, saml, or directory');
     }
     const profileKey = input.profileKey ?? existing.profile_key;
     const displayName = input.displayName ?? existing.display_name;
@@ -2595,7 +2555,7 @@ export class IdentityMappingControlPlaneRepository {
                  FROM destination_profile_versions latest
                 WHERE latest.tenant_id = p.tenant_id
                   AND latest.profile_id = p.id
-                ORDER BY latest.updated_at DESC
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
                 LIMIT 1
              ),
              p.active_version_id
@@ -3415,12 +3375,22 @@ export class IdentityMappingControlPlaneRepository {
     if (!Array.isArray(input.rules)) {
       throw badRequest('rules must be an array');
     }
+    if (
+      input.sourceProfileIds !== undefined &&
+      (!Array.isArray(input.sourceProfileIds) ||
+        input.sourceProfileIds.some(
+          (profileId) => typeof profileId !== 'string' || !profileId.trim()
+        ))
+    ) {
+      throw badRequest('sourceProfileIds must be an array of non-empty strings');
+    }
     assertFieldMappingVersionRequestSafe(input);
 
     const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
     if (!fieldMappingSet) {
       throw notFound('field mapping set not found');
     }
+    await this.assertMappingRequiredSourceFieldsConnected(tenantId, input);
     const existingVersion = await this.adapter.queryOne<{ id: string }>(
       `SELECT id FROM field_mapping_versions
         WHERE tenant_id = ? AND field_mapping_set_id = ? AND version_label = ?`,
@@ -3472,6 +3442,84 @@ export class IdentityMappingControlPlaneRepository {
       fieldMappingHash,
       compatibilityRange: input.compatibilityRange ?? null,
     };
+  }
+
+  private async assertMappingRequiredSourceFieldsConnected(
+    tenantId: string,
+    input: CreateFieldMappingVersionRequest
+  ): Promise<void> {
+    const sourceRefs = input.rules.flatMap((rule) =>
+      (rule.edges ?? []).map((edge) => edge.sourceRef)
+    );
+    const profileRefs = new Set(input.sourceProfileIds ?? []);
+    for (const sourceRef of sourceRefs) {
+      const profileId = readStringValue(sourceRef.profileId);
+      if (profileId && isSourceProfileMappingReference(profileId)) {
+        profileRefs.add(profileId);
+      }
+    }
+    if (profileRefs.size === 0) return;
+
+    const rows = await this.adapter.query<{
+      id: string;
+      profile_key: string;
+      source_type: string;
+      schema_json: string | null;
+    }>(
+      `SELECT p.id, p.profile_key, p.source_type, v.schema_json
+         FROM source_profiles p
+         LEFT JOIN source_profile_versions v
+           ON v.id = COALESCE(
+             (
+               SELECT latest.id
+                 FROM source_profile_versions latest
+                WHERE latest.tenant_id = p.tenant_id
+                  AND latest.profile_id = p.id
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
+                LIMIT 1
+             ),
+             p.active_version_id
+           )
+        WHERE p.tenant_id = ?`,
+      [tenantId]
+    );
+
+    const missing: string[] = [];
+    for (const profileRef of profileRefs) {
+      if (!isSourceProfileMappingReference(profileRef)) continue;
+      const candidates = sourceProfileReferenceCandidates(profileRef);
+      const profile = rows.find((row) => candidates.includes(row.id));
+      if (!profile?.schema_json) {
+        throw badRequest(`source profile referenced by mapping was not found: ${profileRef}`);
+      }
+      const schema = parseJsonObject(profile.schema_json, {});
+      const requiredFields = mappingRequiredSourceFields(schema);
+      if (requiredFields.length === 0) continue;
+
+      const connectedPaths = new Set(
+        sourceRefs.flatMap((sourceRef) => {
+          const sourceRefProfileId = readStringValue(sourceRef.profileId);
+          if (
+            sourceRefProfileId &&
+            !sourceProfileReferenceCandidates(sourceRefProfileId).includes(profile.id)
+          ) {
+            return [];
+          }
+          if (!sourceRefProfileId && profileRefs.size > 1) return [];
+          const path = readStringValue(sourceRef.path);
+          return path ? [path] : [];
+        })
+      );
+      for (const field of requiredFields) {
+        if (!field.aliases.some((alias) => connectedPaths.has(alias))) {
+          missing.push(`${profile.profile_key}:${field.displayName}`);
+        }
+      }
+    }
+
+    if (missing.length > 0) {
+      throw badRequest(`mapping-required source fields are not connected: ${missing.join(', ')}`);
+    }
   }
 
   async publishFieldMappingVersion(
@@ -7854,6 +7902,66 @@ function validateFieldConstraintDefinition(
   if (definition.required !== undefined && typeof definition.required !== 'boolean') {
     report(`${path}.required must be boolean`);
   }
+  if (definition.mappingRequired !== undefined && typeof definition.mappingRequired !== 'boolean') {
+    report(`${path}.mappingRequired must be boolean`);
+  }
+}
+
+interface MappingRequiredSourceField {
+  displayName: string;
+  aliases: string[];
+}
+
+function mappingRequiredSourceFields(
+  schema: Record<string, unknown>
+): MappingRequiredSourceField[] {
+  const fields = [schema.attributes, schema.fields, schema.columns].flatMap((definitions) =>
+    Array.isArray(definitions)
+      ? definitions.filter(isRecord).flatMap(mappingRequiredSourceFieldFromDefinition)
+      : []
+  );
+  for (const value of [schema.claims, schema.properties]) {
+    if (!isRecord(value)) continue;
+    fields.push(
+      ...Object.entries(value).flatMap(([key, definition]) => {
+        if (!isRecord(definition) || definition.mappingRequired !== true) return [];
+        return [{ displayName: key, aliases: [key] }];
+      })
+    );
+  }
+  return fields;
+}
+
+function mappingRequiredSourceFieldFromDefinition(
+  definition: Record<string, unknown>
+): MappingRequiredSourceField[] {
+  if (definition.mappingRequired !== true) return [];
+  const aliases = [
+    definition.name,
+    definition.key,
+    definition.claimName,
+    definition.columnName,
+    definition.headerName,
+    definition.id,
+    definition.stableColumnId,
+  ]
+    .map(readStringValue)
+    .filter((value): value is string => value !== null);
+  const uniqueAliases = [...new Set(aliases)];
+  if (uniqueAliases.length === 0) return [];
+  return [{ displayName: uniqueAliases[0], aliases: uniqueAliases }];
+}
+
+function isSourceProfileMappingReference(profileId: string): boolean {
+  return profileId.startsWith('source-profile-') || profileId.startsWith('source_profile_');
+}
+
+function sourceProfileReferenceCandidates(profileId: string): string[] {
+  const candidates = new Set([profileId]);
+  if (profileId.startsWith('source-profile-')) {
+    candidates.add(profileId.slice('source-profile-'.length));
+  }
+  return [...candidates];
 }
 
 function isDestinationProfileMappingReference(profileId: string | null): boolean {

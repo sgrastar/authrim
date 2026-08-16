@@ -87,6 +87,105 @@ describe('SCIM inbound identity mapping', () => {
     );
   });
 
+  it('maps the SCIM auto-map catalog targets to writable user fields', async () => {
+    mocks.resolveBinding.mockResolvedValueOnce({
+      id: 'activation-scim',
+      tenantId: 'tenant-a',
+      fieldMappingSetId: 'mapping-scim',
+      fieldMappingVersionId: 'mapping-version-1',
+      mappingSnapshotHash: 'snapshot-hash',
+      catalog: {
+        identity: {
+          id: 'catalog-1',
+          version: '1',
+          contentHash: 'hash',
+          compatibilityRange: '*',
+        },
+        entries: [],
+      },
+      edges: [
+        edge('email', 'emails.value'),
+        edge('preferred_username', 'userName'),
+        edge('display_name', 'displayName'),
+        edge('scim_active', 'active'),
+        edge('scim_external_id', 'externalId'),
+      ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'mapping-version-1', rules: [] },
+      activationScope: { protocol: 'scim', role: 'receiver' },
+      destinationProfileIds: [],
+    });
+
+    const result = await applyScimInboundIdentityMapping({
+      env: { DB_ADMIN: {} } as never,
+      tenantId: 'tenant-a',
+      user: {
+        userName: 'ada',
+        externalId: 'external-ada',
+        active: false,
+        displayName: 'Ada Lovelace',
+        emails: [{ value: 'ada@example.test', primary: true }],
+      },
+    });
+
+    expect(result).toMatchObject({
+      email: 'ada@example.test',
+      preferred_username: 'ada',
+      name: 'Ada Lovelace',
+      active: 0,
+      external_id: 'external-ada',
+    });
+    expect(result.custom_attributes_json).toBeUndefined();
+  });
+
+  it('ignores enterprise and unknown attributes that are not connected by the selected Mapping Set', async () => {
+    mocks.resolveBinding.mockResolvedValueOnce({
+      id: 'activation-scim',
+      tenantId: 'tenant-a',
+      fieldMappingSetId: 'mapping-scim',
+      fieldMappingVersionId: 'mapping-version-1',
+      mappingSnapshotHash: 'snapshot-hash',
+      catalog: {
+        identity: {
+          id: 'catalog-1',
+          version: '1',
+          contentHash: 'hash',
+          compatibilityRange: '*',
+        },
+        entries: [],
+      },
+      edges: [edge('email', 'emails.value'), edge('preferred_username', 'userName')],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'mapping-version-1', rules: [] },
+      activationScope: { protocol: 'scim', role: 'receiver' },
+      destinationProfileIds: [],
+    });
+
+    const result = await applyScimInboundIdentityMapping({
+      env: { DB_ADMIN: {} } as never,
+      tenantId: 'tenant-a',
+      user: {
+        userName: 'unicode-user',
+        emails: [
+          { value: 'fallback@example.test' },
+          { value: 'primary.é@example.test', primary: true },
+        ],
+        [enterpriseSchema]: {
+          employeeNumber: '未接続-E-001',
+          costCenter: '未接続-CC-001',
+        },
+        unknownAttribute: 'must-not-map',
+      } as never,
+    });
+
+    expect(result).toEqual({
+      email: 'primary.é@example.test',
+      preferred_username: 'unicode-user',
+    });
+  });
+
   it('fails closed when no inbound Mapping Set is selected', async () => {
     mocks.settings.mockResolvedValueOnce({ mappingSetId: null });
 

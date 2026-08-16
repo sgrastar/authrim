@@ -11,6 +11,7 @@ const cloudflareMocks = vi.hoisted(() => ({
   deleteEnvironment: vi.fn(),
   hasControlManagedResourcesForEnvironment: vi.fn(),
 }));
+const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../core/cloudflare.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/cloudflare.js')>();
@@ -22,6 +23,10 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
       cloudflareMocks.hasControlManagedResourcesForEnvironment,
   };
 });
+
+vi.mock('../web/release-update-runner.js', () => ({
+  runReleaseUpdateCli: runReleaseUpdateCliMock,
+}));
 
 const originalCwd = process.cwd();
 let root: string;
@@ -80,6 +85,7 @@ describe('setup web basic API contracts', () => {
       errors: [],
     });
     cloudflareMocks.hasControlManagedResourcesForEnvironment.mockReset().mockResolvedValue(false);
+    runReleaseUpdateCliMock.mockReset();
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-basic-')));
     process.chdir(root);
   });
@@ -120,12 +126,179 @@ describe('setup web basic API contracts', () => {
       ['/r2/prod/provision', {}],
       ['/environments/prod/delete', {}],
       ['/migrations/apply', {}],
+      ['/update/release', {}],
     ] as const) {
       const missing = await app.request(path, post(path, body));
       expect(missing.status, path).toBe(401);
       const stale = await app.request(path, post(path, body, first));
       expect(stale.status, path).toBe(401);
     }
+  });
+
+  it('reports an available product release for detected environments', async () => {
+    await writeDeployedLock('prod');
+    await writeFile(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.5.0' }, null, 2)}\n`
+    );
+    cloudflareMocks.detectEnvironments.mockResolvedValue([
+      { env: 'prod', workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+    ]);
+
+    const response = await createApiRoutes().request('/environments');
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      targetVersion: '0.5.0',
+      environments: [
+        {
+          env: 'prod',
+          release: {
+            status: 'update_available',
+            currentVersion: '0.4.0',
+            targetVersion: '0.5.0',
+            canUpdate: true,
+          },
+        },
+      ],
+    });
+  });
+
+  it('runs the canonical release update from the authenticated Web action', async () => {
+    await writeDeployedLock('prod');
+    await writeFile(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.5.0' }, null, 2)}\n`
+    );
+    runReleaseUpdateCliMock.mockImplementation(async ({ env, onProgress }) => {
+      onProgress?.('Database schemas applied');
+      const lockPath = join(root, '.authrim', env, 'lock.json');
+      const current = JSON.parse(await readFile(lockPath, 'utf-8'));
+      await writeFile(
+        lockPath,
+        `${JSON.stringify(
+          {
+            ...current,
+            productVersion: '0.5.0',
+            releaseUpdate: {
+              targetVersion: '0.5.0',
+              previousProductVersion: '0.4.0',
+              phase: 'verified',
+              manifestChecksum: 'a'.repeat(64),
+              startedAt: '2026-08-16T00:00:00.000Z',
+              updatedAt: '2026-08-16T00:01:00.000Z',
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      return { success: true, exitCode: 0 };
+    });
+    const token = generateSessionToken();
+    const response = await createApiRoutes().request(
+      '/update/release',
+      post('/update/release', { env: 'prod' }, token)
+    );
+
+    expect(response.status).toBe(200);
+    expect(runReleaseUpdateCliMock).toHaveBeenCalledWith(
+      expect.objectContaining({ env: 'prod', cwd: root, onProgress: expect.any(Function) })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      release: { status: 'up_to_date', targetVersion: '0.5.0' },
+      progress: expect.arrayContaining(['Database schemas applied']),
+    });
+  });
+
+  it('returns 202 while a durable Control handoff continues', async () => {
+    await writeDeployedLock('prod');
+    await writeFile(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.5.0' }, null, 2)}\n`
+    );
+    runReleaseUpdateCliMock.mockImplementation(async ({ env }) => {
+      const lockPath = join(root, '.authrim', env, 'lock.json');
+      const current = JSON.parse(await readFile(lockPath, 'utf-8'));
+      await writeFile(
+        lockPath,
+        `${JSON.stringify(
+          {
+            ...current,
+            releaseUpdate: {
+              targetVersion: '0.5.0',
+              previousProductVersion: '0.4.0',
+              phase: 'control_handoff',
+              manifestChecksum: 'a'.repeat(64),
+              controlOperationId: `op_release_rollout_${'b'.repeat(32)}`,
+              startedAt: '2026-08-16T00:00:00.000Z',
+              updatedAt: '2026-08-16T00:01:00.000Z',
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      return { success: true, exitCode: 0 };
+    });
+
+    const response = await createApiRoutes().request(
+      '/update/release',
+      post('/update/release', { env: 'prod' }, generateSessionToken())
+    );
+
+    expect(response.status).toBe(202);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      inProgress: true,
+      release: { status: 'resume_available', phase: 'control_handoff' },
+    });
+  });
+
+  it('passes the explicit database-only mode and accepts its verified checkpoint', async () => {
+    await writeDeployedLock('prod');
+    await writeFile(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'authrim-test', version: '0.5.0' }, null, 2)}\n`
+    );
+    runReleaseUpdateCliMock.mockImplementation(async ({ env }) => {
+      const lockPath = join(root, '.authrim', env, 'lock.json');
+      const current = JSON.parse(await readFile(lockPath, 'utf-8'));
+      await writeFile(
+        lockPath,
+        `${JSON.stringify(
+          {
+            ...current,
+            releaseUpdate: {
+              targetVersion: '0.5.0',
+              previousProductVersion: '0.4.0',
+              phase: 'database_only_verified',
+              manifestChecksum: 'a'.repeat(64),
+              startedAt: '2026-08-16T00:00:00.000Z',
+              updatedAt: '2026-08-16T00:01:00.000Z',
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      return { success: true, exitCode: 0 };
+    });
+
+    const response = await createApiRoutes().request(
+      '/update/release',
+      post('/update/release', { env: 'prod', databaseOnly: true }, generateSessionToken())
+    );
+
+    expect(response.status).toBe(200);
+    expect(runReleaseUpdateCliMock).toHaveBeenCalledWith(
+      expect.objectContaining({ databaseOnly: true })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      release: { status: 'update_available', currentVersion: '0.4.0' },
+    });
   });
 
   it('rejects deletion when the environment has no lock file', async () => {

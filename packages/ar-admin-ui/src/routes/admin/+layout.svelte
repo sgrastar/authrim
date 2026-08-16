@@ -5,6 +5,7 @@
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { themeStore } from '$lib/stores/theme.svelte';
 	import { adminBrandStore } from '$lib/stores/admin-brand.svelte';
+	import { releaseRolloutStore } from '$lib/stores/release-rollout.svelte';
 	import FloatingNav from '$lib/components/admin/FloatingNav.svelte';
 	import NavSection from '$lib/components/admin/NavSection.svelte';
 	import NavItem from '$lib/components/admin/NavItem.svelte';
@@ -428,7 +429,39 @@
 
 		await ensureAdminContextReady();
 		await loadLoggingAlertBadge();
+		await releaseRolloutStore.refresh();
 	});
+
+	onMount(() => {
+		const timer = window.setInterval(() => {
+			if (adminAuth.isAuthenticated && releaseRolloutStore.shouldPoll) {
+				void releaseRolloutStore.refresh();
+			}
+		}, 5000);
+		return () => window.clearInterval(timer);
+	});
+
+	function releaseRolloutMessage(): string {
+		if (!releaseRolloutStore.available) return $LL.admin_release_rollout_blocked();
+		const status = releaseRolloutStore.status;
+		if (status.phase === 'blocked') return $LL.admin_release_rollout_blocked();
+		if (status.phase === 'awaiting_setup') return $LL.admin_release_rollout_waiting_setup();
+		if (status.phase === 'verifying') return $LL.admin_release_rollout_verifying();
+		if (status.totalTargets > 0) {
+			return $LL.admin_release_rollout_progress({
+				completed: status.completedTargets,
+				total: status.totalTargets
+			});
+		}
+		return '';
+	}
+
+	function releaseRolloutUpdatedAt(): string {
+		const value = releaseRolloutStore.status.updatedAt;
+		if (!value) return '—';
+		const date = new Date(value * 1000);
+		return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+	}
 
 	$effect(() => {
 		const tenantId = settingsContext.tenantId;
@@ -774,6 +807,53 @@
 			/>
 
 			<div class="page-content">
+				{#if releaseRolloutStore.active}
+					<div
+						class:release-rollout-blocked={releaseRolloutStore.status.phase === 'blocked'}
+						class="release-rollout-banner"
+						role="status"
+					>
+						<i class="i-ph-arrows-clockwise" aria-hidden="true"></i>
+						<div>
+							<strong>
+								{$LL.admin_release_rollout_banner({
+									version: releaseRolloutStore.status.targetVersion ?? '—'
+								})}
+							</strong>
+							<span>
+								{$LL.admin_release_rollout_versions({
+									source: releaseRolloutStore.status.sourceVersion ?? '—',
+									target: releaseRolloutStore.status.targetVersion ?? '—'
+								})}
+							</span>
+							{#if releaseRolloutMessage()}
+								<span>{releaseRolloutMessage()}</span>
+							{/if}
+							<span>
+								{$LL.admin_release_rollout_updated({ time: releaseRolloutUpdatedAt() })}
+							</span>
+							{#if releaseRolloutStore.status.phase === 'blocked' && releaseRolloutStore.status.lastErrorCode}
+								<span class="code-value">
+									{$LL.admin_release_rollout_failure({
+										code: releaseRolloutStore.status.lastErrorCode
+									})}
+								</span>
+							{/if}
+							{#if releaseRolloutStore.readOnly}
+								<span>{$LL.admin_release_rollout_read_only()}</span>
+							{/if}
+						</div>
+						<a
+							href={`/admin/control-plane${
+								releaseRolloutStore.status.operationId
+									? `?operation=${encodeURIComponent(releaseRolloutStore.status.operationId)}`
+									: ''
+							}`}
+						>
+							{$LL.admin_release_rollout_view_details()}
+						</a>
+					</div>
+				{/if}
 				{#if controlPlaneDriftAlertCount > 0}
 					<div class="control-drift-warning" role="status">
 						<i class="i-ph-warning-circle" aria-hidden="true"></i>
@@ -787,7 +867,13 @@
 						</a>
 					</div>
 				{/if}
-				{@render children()}
+				<fieldset
+					class="release-mutation-fence"
+					disabled={releaseRolloutStore.readOnly &&
+						!$page.url.pathname.startsWith('/admin/control-plane')}
+				>
+					{@render children()}
+				</fieldset>
 			</div>
 		</main>
 	</div>
@@ -836,6 +922,87 @@
 		background: var(--color-warning-subtle, #fff8e6);
 		color: var(--color-text, #20242a);
 		font-size: 14px;
+	}
+
+	.release-rollout-banner {
+		--release-rollout-accent: var(--color-warning, #9a6400);
+		--release-rollout-background: color-mix(
+			in srgb,
+			var(--release-rollout-accent) 12%,
+			var(--color-surface, #fffdf8)
+		);
+		--release-rollout-border: color-mix(
+			in srgb,
+			var(--release-rollout-accent) 72%,
+			var(--color-border, transparent)
+		);
+		--release-rollout-emphasis: color-mix(
+			in srgb,
+			var(--release-rollout-accent) 72%,
+			var(--color-text, #20242a)
+		);
+		display: flex;
+		align-items: flex-start;
+		gap: 12px;
+		margin-bottom: 18px;
+		padding: 12px 14px;
+		border: 1px solid var(--release-rollout-border);
+		border-left-width: 4px;
+		background: var(--release-rollout-background);
+		color: var(--color-text, #20242a);
+	}
+
+	.release-rollout-banner.release-rollout-blocked {
+		--release-rollout-accent: var(--color-danger, #b42318);
+	}
+
+	.release-rollout-banner > i {
+		font-size: 22px;
+		color: var(--release-rollout-emphasis);
+	}
+
+	.release-rollout-banner > div {
+		display: flex;
+		min-width: 0;
+		flex: 1;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.release-rollout-banner span {
+		font-size: 13px;
+		color: var(--color-text-muted, #5f6670);
+	}
+
+	.release-rollout-banner a {
+		flex: 0 0 auto;
+		color: var(--release-rollout-emphasis);
+		font-weight: 600;
+		text-underline-offset: 3px;
+	}
+
+	.release-rollout-banner a:hover {
+		color: var(--color-text, #20242a);
+	}
+
+	.release-rollout-banner a:focus-visible {
+		outline: 2px solid var(--release-rollout-emphasis);
+		outline-offset: 3px;
+	}
+
+	.release-mutation-fence {
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	.release-mutation-fence:disabled :global(button),
+	.release-mutation-fence:disabled :global(input),
+	.release-mutation-fence:disabled :global(select),
+	.release-mutation-fence:disabled :global(textarea) {
+		opacity: 0.58;
+		cursor: not-allowed;
 	}
 
 	.control-drift-warning i {

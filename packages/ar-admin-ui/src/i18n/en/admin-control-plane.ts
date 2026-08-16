@@ -2,6 +2,25 @@ const adminControlPlane = {
 	admin_control_plane_page_title: 'Control Plane - Authrim',
 	admin_control_plane_title: 'Control Plane',
 	admin_control_plane_description: 'Inspect provisioning progress and Worker inventory drift.',
+	admin_release_rollout_banner: 'Authrim is updating to {version:string}.',
+	admin_release_rollout_progress: '{completed:number} of {total:number} databases are ready.',
+	admin_release_rollout_waiting_setup:
+		'Database updates are complete. Waiting for setup to continue.',
+	admin_release_rollout_verifying: 'Services are updated. Final verification is in progress.',
+	admin_release_rollout_blocked: 'The update needs attention before it can continue.',
+	admin_release_rollout_read_only: 'Administrative changes are temporarily disabled.',
+	admin_release_rollout_view_details: 'View update details',
+	admin_release_rollout_versions: '{source:string} → {target:string}',
+	admin_release_rollout_updated: 'Last updated: {time:string}',
+	admin_release_rollout_failure: 'Blocked reason: {code:string}',
+	admin_release_rollout_version_path: 'Version path',
+	admin_release_rollout_database_progress: 'Database progress',
+	admin_release_rollout_recovery_title: 'Release database recovery',
+	admin_release_rollout_recovery_description:
+		'Retry a blocked database target after correcting the reported cause.',
+	admin_release_rollout_retry_target: 'Retry target',
+	admin_release_rollout_retrying_target: 'Retrying...',
+	admin_release_rollout_blocked_targets: '{count:number} blocked database targets',
 	admin_control_plane_refresh: 'Refresh',
 	admin_control_plane_findings: 'Worker drift findings',
 	admin_control_plane_loading: 'Loading control-plane status...',
@@ -119,6 +138,6 @@ const adminControlPlane = {
 	admin_control_plane_acknowledged: 'Acknowledged',
 	admin_control_plane_review: 'Mark reviewed',
 	admin_control_plane_dismiss: 'Dismiss'
-};
+} as const;
 
 export default adminControlPlane;

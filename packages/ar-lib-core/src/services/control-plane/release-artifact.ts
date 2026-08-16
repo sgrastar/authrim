@@ -4,6 +4,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const STREAM_ID_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/u;
 const MAX_STREAM_ID_BYTES = 255;
 const RELEASE_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,127}$/u;
+const PRODUCT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const MIGRATION_PATH_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._/-]*\.sql$/u;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_SQL_OBJECT_BYTES = 1024 * 1024;
@@ -28,7 +29,17 @@ export interface MigrationArtifactFile {
 export interface LoadedMigrationRelease {
   pin: MigrationReleasePin;
   productVersion: string;
+  rollout: MigrationReleaseRolloutPolicy;
   files: MigrationArtifactFile[];
+}
+
+export interface MigrationReleaseRolloutPolicy {
+  databaseExecution: 'setup_then_control';
+  workerActivation: 'after_required_databases';
+  adminMutationMode: 'available' | 'read_only';
+  databaseOnly?: {
+    compatibleWorkerVersions: string[];
+  };
 }
 
 export interface ReleaseArtifactObject {
@@ -60,8 +71,15 @@ interface ManifestStream {
 interface MigrationManifest {
   formatVersion: 1;
   productVersion: string;
+  rollout: MigrationReleaseRolloutPolicy;
   streams: ManifestStream[];
 }
+
+const DEFAULT_ROLLOUT_POLICY: MigrationReleaseRolloutPolicy = {
+  databaseExecution: 'setup_then_control',
+  workerActivation: 'after_required_databases',
+  adminMutationMode: 'read_only',
+};
 
 function isValidStreamId(value: string): boolean {
   if (value.length === 0 || value.length > MAX_STREAM_ID_BYTES) return false;
@@ -155,7 +173,42 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
   if (new Set(streams.map((stream) => stream.id)).size !== streams.length) {
     throw new Error('migration_artifact_manifest_duplicate_stream');
   }
-  return { formatVersion: 1, productVersion: value.productVersion, streams };
+  let rollout = DEFAULT_ROLLOUT_POLICY;
+  if (value.rollout !== undefined) {
+    const rolloutRecord = isRecord(value.rollout) ? value.rollout : undefined;
+    const rolloutKeys = rolloutRecord ? Object.keys(rolloutRecord) : [];
+    const databaseOnly = rolloutRecord?.databaseOnly;
+    const compatibleWorkerVersions = isRecord(databaseOnly)
+      ? databaseOnly.compatibleWorkerVersions
+      : undefined;
+    if (
+      !isRecord(value.rollout) ||
+      (rolloutKeys.length !== 3 && rolloutKeys.length !== 4) ||
+      rolloutKeys.some(
+        (key) =>
+          !['databaseExecution', 'workerActivation', 'adminMutationMode', 'databaseOnly'].includes(
+            key
+          )
+      ) ||
+      value.rollout.databaseExecution !== 'setup_then_control' ||
+      value.rollout.workerActivation !== 'after_required_databases' ||
+      !['available', 'read_only'].includes(String(value.rollout.adminMutationMode)) ||
+      (databaseOnly !== undefined &&
+        (!isRecord(databaseOnly) ||
+          Object.keys(databaseOnly).length !== 1 ||
+          !Array.isArray(compatibleWorkerVersions) ||
+          compatibleWorkerVersions.length < 1 ||
+          compatibleWorkerVersions.length > 100 ||
+          compatibleWorkerVersions.some(
+            (version) => typeof version !== 'string' || !PRODUCT_VERSION_PATTERN.test(version)
+          ) ||
+          new Set(compatibleWorkerVersions).size !== compatibleWorkerVersions.length))
+    ) {
+      throw new Error('migration_artifact_manifest_invalid');
+    }
+    rollout = value.rollout as unknown as MigrationReleaseRolloutPolicy;
+  }
+  return { formatVersion: 1, productVersion: value.productVersion, rollout, streams };
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {
@@ -254,7 +307,12 @@ export class MigrationReleaseArtifactReader {
       }
       files.push({ ...file, sql });
     }
-    return { pin: { ...pin }, productVersion: manifest.productVersion, files };
+    return {
+      pin: { ...pin },
+      productVersion: manifest.productVersion,
+      rollout: manifest.rollout,
+      files,
+    };
   }
 }
 

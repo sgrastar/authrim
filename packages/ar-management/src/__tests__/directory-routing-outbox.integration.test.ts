@@ -16,7 +16,10 @@ import {
 } from '@authrim/ar-lib-core';
 import { exportJWK, generateKeyPair, type JWK } from 'jose';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoutingOutboxProcessor } from '../directory-scheduled';
+import {
+  createRoutingOutboxProcessor,
+  processAccountLifecycleEventForOperation,
+} from '../directory-scheduled';
 import { AccountCreationOperationRepository } from '../account-creation-operation';
 
 type SqlValue = string | number | null | Uint8Array;
@@ -438,7 +441,10 @@ describe('directory routing outbox processor', () => {
         nowMs: () => NOW * 1000,
       });
 
-    await expect(invoke()).resolves.toMatchObject({ processedRows: 1 });
+    await expect(invoke()).resolves.toMatchObject({
+      cursor: { after_shard_id: null },
+      processedRows: 1,
+    });
     expect(resolveAccountEventInstallations).toHaveBeenCalledTimes(1);
     expect(
       tenantDatabase
@@ -479,6 +485,136 @@ describe('directory routing outbox processor', () => {
     expect(
       tenantDatabase.prepare(`SELECT COUNT(*) AS count FROM plugin_hook_outbox`).get()
     ).toEqual({ count: 1 });
+  });
+
+  it('delivers the completed account lifecycle event immediately and idempotently', async () => {
+    insertOutbox();
+    await operationRepository().recordDirectoryOutcome({
+      publication: value,
+      outcome: 'succeeded',
+      now: NOW,
+    });
+    const resolveAccountEventInstallations = vi.fn(async () => []);
+    const settings = new Map<string, string>();
+    const workerEnv = env() as Env & Record<string, unknown>;
+    workerEnv.PLUGIN_RUNNER = {
+      resolveAccountEventInstallations,
+    } as unknown as Env['PLUGIN_RUNNER'];
+    workerEnv.SETTINGS = {
+      get: async (key: string) => settings.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        settings.set(key, value);
+      },
+    } as unknown as Env['SETTINGS'];
+
+    await expect(
+      processAccountLifecycleEventForOperation(workerEnv, tenant.binding, {
+        tenantId: value.tenantId,
+        operationId: value.operationId,
+        now: NOW,
+      })
+    ).resolves.toBe(true);
+    await expect(
+      processAccountLifecycleEventForOperation(workerEnv, tenant.binding, {
+        tenantId: value.tenantId,
+        operationId: value.operationId,
+        now: NOW,
+      })
+    ).resolves.toBe(false);
+    expect(resolveAccountEventInstallations).toHaveBeenCalledTimes(1);
+    expect(
+      tenantDatabase
+        .prepare(`SELECT status, attempt_count FROM account_lifecycle_event_outbox LIMIT 1`)
+        .get()
+    ).toEqual({ status: 'succeeded', attempt_count: 1 });
+  });
+
+  it('does not let lifecycle event backlog consume the entire routing shard visit', async () => {
+    insertOutbox();
+    insertIdentifierReservation();
+    await operationRepository().recordDirectoryOutcome({
+      publication: value,
+      outcome: 'succeeded',
+      now: NOW,
+    });
+    tenantDatabase.exec(
+      `INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
+       VALUES ('subject:user-b', 'tenant-a', 'active', ${NOW});
+       INSERT INTO identity_accounts (
+         id, tenant_id, legacy_user_id, account_type, lifecycle_state,
+         primary_subject_id, created_at, updated_at
+       ) VALUES (
+         'account:user-b', 'tenant-a', 'user-b', 'end_user', 'active',
+         'subject:user-b', ${NOW - 1}, ${NOW}
+       );
+       INSERT INTO account_creation_operations (
+         operation_id, tenant_id, actor_id, idempotency_key,
+         allocation_idempotency_key, request_hash, user_id, account_id,
+         status, publication_json, created_at, completed_at, updated_at
+       ) VALUES (
+         'operation-account-b', 'tenant-a', 'admin-b', 'source-request-b',
+         'account-create:${'c'.repeat(64)}', '${'d'.repeat(64)}', 'user-b', 'account:user-b',
+         'succeeded', NULL, ${NOW - 1}, ${NOW - 1}, ${NOW - 1}
+       );
+       INSERT INTO account_lifecycle_event_outbox (
+         event_id, tenant_id, account_id, operation_id, event_type,
+         event_version, payload_json, status, attempt_count, created_at, updated_at
+       ) VALUES (
+         'account-event:user-b', 'tenant-a', 'account:user-b', 'operation-account-b',
+         'account.created', 1,
+         '{"tenantId":"tenant-a","accountId":"account:user-b","userId":"user-b","eventType":"account.created","eventVersion":1}',
+         'pending', 0, ${NOW - 1}, ${NOW - 1}
+       );`
+    );
+    let nowMs = NOW * 1000;
+    const workerEnv = env() as Env & Record<string, unknown>;
+    workerEnv.PLUGIN_RUNNER = {
+      resolveAccountEventInstallations: vi.fn(async () => {
+        nowMs += 1600;
+        return [];
+      }),
+    } as unknown as Env['PLUGIN_RUNNER'];
+    const settings = new Map<string, string>();
+    workerEnv.SETTINGS = {
+      get: async (key: string) => settings.get(key) ?? null,
+      put: async (key: string, value: string) => {
+        settings.set(key, value);
+      },
+    } as unknown as Env['SETTINGS'];
+
+    const result = await createRoutingOutboxProcessor(workerEnv, {
+      operationRepositoryForTenant: async () => operationRepository(),
+    })({
+      adapter: {} as DatabaseAdapter,
+      jobClass: 'routing_outbox',
+      cursor: {},
+      rowLimit: 100,
+      deadlineMs: NOW * 1000 + 3000,
+      ownerId: 'directory-owner',
+      fencingToken: 1,
+      nowMs: () => nowMs,
+    });
+
+    expect(result.processedRows).toBe(2);
+    expect(result.cursor).toEqual({ after_shard_id: 'users-1' });
+    expect(
+      tenantDatabase
+        .prepare(
+          `SELECT status FROM account_routing_outbox
+            WHERE outbox_id = 'account-routing:operation-account-a'`
+        )
+        .get()
+    ).toEqual({ status: 'succeeded' });
+    expect(
+      tenantDatabase
+        .prepare(
+          `SELECT status, COUNT(*) AS count FROM account_lifecycle_event_outbox GROUP BY status`
+        )
+        .all()
+    ).toEqual([
+      { status: 'pending', count: 1 },
+      { status: 'succeeded', count: 1 },
+    ]);
   });
 
   it('processes a lifecycle event for a canonical symbol-prefixed NanoID', async () => {

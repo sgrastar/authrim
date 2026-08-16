@@ -1,14 +1,16 @@
 {
   "formatVersion": 1,
   "productVersion": "0.4.0",
+  "rollout": {
+    "databaseExecution": "setup_then_control",
+    "workerActivation": "after_required_databases",
+    "adminMutationMode": "read_only"
+  },
   "streams": [
     {
       "id": "d1-core",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "core",
-        "tenant_core"
-      ],
+      "logicalRoles": ["core", "tenant_core"],
       "files": [
         {
           "path": "001_core_foundation.sql",
@@ -193,16 +195,17 @@
         {
           "path": "048_custom_claim_cardinality.sql",
           "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
+        },
+        {
+          "path": "049_scim_group_external_id.sql",
+          "checksum": "cae275ad770fc74125da70e9e655bf96e9a45c3c01917b0c08d39519c31d5edc"
         }
       ]
     },
     {
       "id": "d1-pii",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "pii",
-        "tenant_pii"
-      ],
+      "logicalRoles": ["pii", "tenant_pii"],
       "files": [
         {
           "path": "001_pii_schema.sql",
@@ -235,15 +238,17 @@
         {
           "path": "010_custom_claim_field_values.sql",
           "checksum": "d63bc14f7dfe7e633261c4d55f2bbd5c4aeb7dfa873c8d5946b4555c5a58dfc4"
+        },
+        {
+          "path": "011_allow_external_subject_identifier_replacement.sql",
+          "checksum": "4f6d99a72349c8102fb08b8139a66f8e32c4e19898fda78325967f2296528387"
         }
       ]
     },
     {
       "id": "d1-admin",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "admin"
-      ],
+      "logicalRoles": ["admin"],
       "files": [
         {
           "path": "001_admin_users_rbac_security.sql",
@@ -402,9 +407,7 @@
     {
       "id": "d1-control",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "control"
-      ],
+      "logicalRoles": ["control"],
       "files": [
         {
           "path": "001_control_plane.sql",
@@ -497,15 +500,17 @@
         {
           "path": "023_bootstrap_accelerator.sql",
           "checksum": "8a54db86e9797f8ca20297f3a84beaa9420be4193b1a126e47e3be3988076369"
+        },
+        {
+          "path": "024_release_migration_rollout.sql",
+          "checksum": "4a9d1e35bd67289243d5764b9f04180a2b31ff7daedcc2ab028b3ce3cd08aa6e"
         }
       ]
     },
     {
       "id": "d1-lookup",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "lookup"
-      ],
+      "logicalRoles": ["lookup"],
       "files": [
         {
           "path": "001_lookup_directory.sql",
@@ -514,15 +519,17 @@
         {
           "path": "002_identifier_replacement_verification_gate.sql",
           "checksum": "3fdb62956052905118aa82cd4b9d066d338f0b9e684d71a9d4ce1b62856fb353"
+        },
+        {
+          "path": "003_allow_external_subject_identifier_replacement.sql",
+          "checksum": "b602c9452d7b1dfe746bc754b716e355214aa6d5130be3da9ab775c29aaede95"
         }
       ]
     },
     {
       "id": "d1-plugin-runner",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "plugin_runner"
-      ],
+      "logicalRoles": ["plugin_runner"],
       "files": [
         {
           "path": "001_plugin_runner.sql",
@@ -569,11 +576,7 @@
     {
       "id": "external-postgres-core",
       "dialect": "postgres",
-      "logicalRoles": [
-        "core",
-        "custom",
-        "policy"
-      ],
+      "logicalRoles": ["core", "custom", "policy"],
       "files": [
         {
           "path": "001_external_durable_core.sql",
@@ -642,15 +645,17 @@
         {
           "path": "022_external_custom_claim_field_values.sql",
           "checksum": "a30a99406b2b97950a0a4b34527f435c78431f82c286cffbc9037ddc98203685"
+        },
+        {
+          "path": "023_external_scim_group_external_id.sql",
+          "checksum": "d53907df266e90a6ce248f7826dfb1000fd29e1c79a0843dec0116e0d59b98fc"
         }
       ]
     },
     {
       "id": "external-postgres-pii",
       "dialect": "postgres",
-      "logicalRoles": [
-        "pii"
-      ],
+      "logicalRoles": ["pii"],
       "files": [
         {
           "path": "002_external_durable_pii.sql",

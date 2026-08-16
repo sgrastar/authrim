@@ -48,6 +48,8 @@ This framework measures the performance and capacity of Authrim OIDC endpoints:
 - **Refresh Token Rotation** (`POST /token`) - Token refresh with rotation
 - **Audit-heavy Token Activity** (`POST /token`) - refresh-token activity with audit sink focus
 - **Full Login Flows** - Complete OAuth flows with Mail OTP or Passkey
+- **SCIM Provisioning** (`POST/GET/PATCH /scim/v2/Users`) - single-resource lifecycle load
+- **SCIM Bulk Provisioning** (`POST /scim/v2/Bulk`) - batched account creation load
 
 ### Performance Highlights
 
@@ -227,6 +229,74 @@ the selected seed or benchmark, scope it to `TENANT_ID`, and start the run befor
 | Audit-heavy Token   | `POST /token`                | `seed-refresh-tokens.js` | `test-audit-heavy-benchmark.js`         |
 | Mail OTP Login      | 5-step OAuth flow            | `seed-otp-users.js`      | `test-mail-otp-full-login-benchmark.js` |
 | Passkey Login       | 6-step OAuth flow            | `seed-passkey-users.js`  | `test-passkey-full-login-benchmark.js`  |
+| SCIM Provisioning   | User create/get/lifecycle    | None                     | `test-scim-provisioning-benchmark.js`   |
+| SCIM Scale Seed     | Controlled single-user POSTs | None                     | `test-scim-scale-provision.js`          |
+| SCIM Bulk           | `POST /scim/v2/Bulk`         | None                     | `test-scim-bulk-benchmark.js`           |
+
+### SCIM Provisioning
+
+Use a dedicated, short-lived SCIM bearer token. The scripts do not print the token. Run the
+single-resource lifecycle benchmark first, and only then increase Bulk throughput.
+
+```bash
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env TARGET_USERS=1000 \
+  --env VUS=3 \
+  scripts/benchmarks/test-scim-scale-provision.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=smoke \
+  scripts/benchmarks/test-scim-provisioning-benchmark.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=smoke \
+  --env BULK_SIZE=20 \
+  scripts/benchmarks/test-scim-bulk-benchmark.js
+```
+
+Each run uses a unique `RUN_ID` by default. Set it explicitly when correlating a run with
+Cloudflare Analytics. These benchmarks intentionally retain their provisioned users so that
+post-run directory and lifecycle consistency can be inspected.
+
+The Bulk benchmark defaults to a 30-second p95 and 60-second p99 request guardrail and fails when
+the arrival-rate executor drops a batch. Override `P95_LIMIT_MS` and `P99_LIMIT_MS` when validating
+an explicitly agreed environment SLO. `FAIL_ON_ERRORS=0` allows independent `/Users` creates to use
+the server's bounded parallel path; non-zero values retain RFC stop-after-error sequencing.
+
+Mapped SCIM attribute updates have separate PATCH benchmarks:
+
+```bash
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=rps14 \
+  --env POOL_SIZE=1000 \
+  scripts/benchmarks/test-scim-attribute-update-benchmark.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=rps30 \
+  --env POOL_SIZE=2000 \
+  --env BULK_SIZE=20 \
+  scripts/benchmarks/test-scim-bulk-attribute-update-benchmark.js
+```
+
+The default update payload changes `displayName`, which is part of the Minimal SCIM mapping set.
+Identifier changes (`userName` and primary email) use the durable identifier-replacement workflow
+and should be benchmarked separately. Deep `startIndex` pool loading is setup work and is excluded
+from update throughput; for repeated long runs, generate and reuse a dedicated user-ID pool.
 
 ### Token Introspection / Token Exchange / UserInfo
 
@@ -410,6 +480,7 @@ Notes:
 
 Detailed load test reports with performance analysis:
 
+- [SCIM Attribute Update Benchmark](./reports/Aug2026/scim-attribute-update.md)
 - [Silent Auth Benchmark](./reports/Dec2025/silent-auth.md)
 - [UserInfo Benchmark](./reports/Dec2025/userinfo.md)
 - [Token Exchange Benchmark](./reports/Dec2025/token-exchange.md)
@@ -427,7 +498,9 @@ See [Reports Index](./reports/Dec2025/README.md) for performance summary across 
 load-testing/
 ├── README.md
 ├── reports/
-│   └── Dec2025/                    # Load test reports
+│   ├── Aug2026/
+│   │   └── scim-attribute-update.md  # SCIM update capacity report
+│   └── Dec2025/                    # OIDC load test reports
 │       ├── README.md               # Performance summary
 │       ├── silent-auth.md
 │       ├── userinfo.md

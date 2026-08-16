@@ -7228,23 +7228,6 @@ async function handleFlows(event: RequestEvent, segments: string[]): Promise<Res
 function sampleProtocolSchemas() {
 	return [
 		{
-			id: 'schema-scim-user',
-			tenantId: TENANT_ID,
-			protocol: 'scim',
-			schemaKey: 'urn:ietf:params:scim:schemas:core:2.0:User',
-			displayName: 'SCIM 2.0 User (inbound)',
-			schemaVersion: '2.0',
-			lifecycleState: 'active',
-			schema: {
-				attributes: [
-					{ name: 'userName', label: 'User name', type: 'string', required: true },
-					{ name: 'emails.value', label: 'Primary email', type: 'string', required: true },
-					{ name: 'enterprise.employeeNumber', label: 'Employee number', type: 'string' },
-					{ name: 'enterprise.costCenter', label: 'Cost center', type: 'string' }
-				]
-			}
-		},
-		{
 			id: 'schema-oidc-core',
 			tenantId: TENANT_ID,
 			protocol: 'oidc',
@@ -10589,6 +10572,29 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			},
 			202
 		);
+	}
+	if (
+		method === 'GET' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'release-rollout' &&
+		segments.length === 3
+	) {
+		return json({
+			rollout: {
+				operationId: null,
+				sourceVersion: null,
+				targetVersion: null,
+				phase: 'idle',
+				completedTargets: 0,
+				totalTargets: 0,
+				adminMutationMode: 'available',
+				lastErrorCode: null,
+				updatedAt: null,
+				blockedTargetCount: 0,
+				blockedTargets: []
+			}
+		});
 	}
 	if (
 		method === 'GET' &&

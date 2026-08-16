@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-08-13
+date: 2026-08-15
 description: 'Configure tenant-scoped inbound SCIM provisioning and identity mapping.'
 type: guide
 tags:
@@ -34,9 +34,26 @@ keys use lowercase snake_case. For the SCIM enterprise extension, use fields suc
 Do not create `employeeNumber` or `costCenter` as canonical field keys. The SCIM adapter reads the
 camelCase protocol attributes and the Mapping Set explicitly maps them to snake_case storage keys.
 
-## 2. Create the inbound Mapping Set
+## 2. Create and activate a SCIM source profile
 
-In **Field Mapping**, create a Mapping Set and select **SCIM 2.0 User (inbound)** as the source.
+Open **Source & Destination**, select **SCIM**, and choose **Create from template**. Authrim
+provides these starting points:
+
+- **Minimal SCIM User** for account status, display name, and primary email.
+- **SCIM Core User** for the supported core User attributes.
+- **SCIM Enterprise User** for core attributes plus workforce extension attributes.
+
+Use the template, adjust its attribute list when necessary, then save the source profile. The current
+simplified Admin workflow saves, reviews, and activates it in one operation. Templates are starting
+points and do not appear in the Flow Editor until a tenant saves and activates a profile.
+
+`Required` and `Mapping required` are separate controls. `Required` describes whether the inbound
+source value is required. `Mapping required` requires the field to have an outgoing Mapping Set edge
+when the mapping version is saved. The SCIM templates mark `userName` as mapping-required by default.
+
+## 3. Create the inbound Mapping Set
+
+In **Field Mapping**, create a Mapping Set and select the active SCIM source profile.
 Map only the attributes the tenant accepts. A recommended baseline is:
 
 | SCIM source                     | Authrim destination  | Notes                                                                                     |
@@ -60,12 +77,18 @@ Map only the attributes the tenant accepts. A recommended baseline is:
 | `enterprise.organization`       | `organization`       | Optional                                                                                  |
 | `enterprise.division`           | `division`           | Optional                                                                                  |
 | `enterprise.department`         | `department`         | Optional                                                                                  |
-| `enterprise.manager.value`      | `manager`            | Optional                                                                                  |
+| `enterprise.manager.value`      | `manager_id`         | Optional                                                                                  |
+
+Within a tenant, `userName` is the SCIM login identifier and is unique without regard to letter
+case. It may be a conventional login name, an upstream identifier, or an email address. Authrim
+stores `externalId` as the source system's correlation identifier but does not require it to be
+unique; multiple source records may therefore use the same `externalId` when the upstream system
+allows that.
 
 Review, compile, and activate the Mapping Set. Activation for a SCIM source is registered with the
 tenant-scoped `scim` / `receiver` runtime binding.
 
-## 3. Enable the tenant
+## 4. Enable the tenant
 
 Open **SCIM Tokens** in Admin UI and configure **Inbound provisioning**:
 
@@ -77,7 +100,7 @@ Open **SCIM Tokens** in Admin UI and configure **Inbound provisioning**:
 
 The SCIM discovery endpoint publishes the configured Bulk support and limits.
 
-## 4. Platform security settings
+## 5. Platform security settings
 
 Authentication abuse controls remain deployment settings rather than tenant-admin settings:
 
@@ -97,6 +120,9 @@ General API rate limits and Cloudflare platform protections also remain deployme
 - Mapping Sets currently transform User attributes. Group resources map directly to Authrim roles and
   memberships.
 - SCIM valuePath filters are rejected. Simple `eq`, `co`, `sw`, and `ew` filters are supported.
+- Deactivated users remain readable and can be updated or reactivated. A deleted user returns 404.
+- Malformed JSON, missing resource schemas, invalid attribute types, and invalid email values return
+  SCIM 400 errors. `count=0` returns an empty page while preserving `totalResults`.
 - User list queries currently aggregate a bounded cross-shard result set before filtering and
   pagination; large-directory scalability requires further work before high-volume list testing.
 - User `groups` readback reports direct Authrim role memberships. Nested or indirect group
