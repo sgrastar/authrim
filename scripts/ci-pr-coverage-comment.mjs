@@ -294,12 +294,14 @@ async function collectRepositorySuiteStats() {
   const definitions = [
     {
       name: 'Canonical integration',
+      readmePath: 'test/integration/README.md',
       purpose: 'Cross-package protocol, tenant, and runtime flows',
       evidence: '308-row constrained 3-wise tenant matrix + lifecycle flows',
       result: integration,
     },
     {
       name: 'OAuth/OIDC regressions',
+      readmePath: 'test/regression-gates/oauth-oidc/README.md',
       purpose: 'Confirmed security finding regressions',
       evidence: oauth.reported
         ? `${oauth.total} manifest-defined regression checks`
@@ -308,29 +310,39 @@ async function collectRepositorySuiteStats() {
     },
     {
       name: 'Authorization matrix',
+      readmePath: 'test/security-matrices/authorize-matrix/README.md',
       purpose: 'SSO, session, consent, PAR, JAR, PKCE, redirects, JARM',
       evidence: '100% legal pairs + selected 3-wise (meta-tested)',
       pathFragment: '/test/security-matrices/authorize-matrix/',
     },
     {
       name: 'Token matrix',
+      readmePath: 'test/security-matrices/token-matrix/README.md',
       purpose: 'Client auth, code state, PKCE, DPoP, issuance failures',
       evidence: '100% legal pairs + selected 3-wise (meta-tested)',
       pathFragment: '/test/security-matrices/token-matrix/',
     },
     {
       name: 'Runtime-topology matrix',
+      readmePath: 'test/security-matrices/runtime-topology-matrix/README.md',
       purpose: 'Host, tenant, registry, issuer, cache, service bindings',
       evidence: '5 matrices; 6 required 3-wise groups + legal pairs',
       pathFragment: '/test/security-matrices/runtime-topology-matrix/',
     },
     {
       name: 'State-transition matrix',
+      readmePath: 'test/security-matrices/state-transition-matrix/README.md',
       purpose: 'Refresh, Device, CIBA, Queue transitions and side effects',
       evidence: '8 matrices; legal pairs + selected 3-wise',
       pathFragment: '/test/security-matrices/state-transition-matrix/',
     },
   ];
+
+  for (const definition of definitions) {
+    if (!(await pathExists(path.resolve(process.cwd(), definition.readmePath)))) {
+      throw new Error(`Repository suite README does not exist: ${definition.readmePath}`);
+    }
+  }
 
   return definitions.map((definition) => ({
     ...definition,
@@ -340,6 +352,18 @@ async function collectRepositorySuiteStats() {
         ? summarizeVitestReport(matricesReport, definition.pathFragment)
         : unreportedSuite()),
   }));
+}
+
+function formatSuiteName(name, readmePath) {
+  const repository = process.env.GITHUB_REPOSITORY?.trim();
+  const revision = process.env.GITHUB_SHA?.trim();
+  const serverUrl = process.env.GITHUB_SERVER_URL?.trim() || 'https://github.com';
+
+  if (!repository || !revision) {
+    return `[${name}](${readmePath})`;
+  }
+
+  return `[${name}](${serverUrl}/${repository}/blob/${revision}/${readmePath})`;
 }
 
 function buildComment({ packages, totals, repositorySuites }) {
@@ -368,13 +392,15 @@ function buildComment({ packages, totals, repositorySuites }) {
       formatPct(coverage?.statements?.pct),
     ];
   });
-  const repositorySuiteRows = repositorySuites.map(({ name, purpose, evidence, result }) => [
-    name,
-    result.reported ? (result.success ? 'passed' : 'failed') : 'not reported',
-    result.total ?? '-',
-    purpose,
-    evidence,
-  ]);
+  const repositorySuiteRows = repositorySuites.map(
+    ({ name, readmePath, purpose, evidence, result }) => [
+      formatSuiteName(name, readmePath),
+      result.reported ? (result.success ? 'passed' : 'failed') : 'not reported',
+      result.total ?? '-',
+      purpose,
+      evidence,
+    ]
+  );
 
   return `${MARKER}
 ## Coverage Summary
