@@ -2518,8 +2518,26 @@ export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string
 ): Promise<T[]> {
-  const result = await executeD1Command(dbName, sql, { json: true });
-  return parseD1RowsFromWranglerResult<T>(result);
+  let wranglerError: unknown;
+  try {
+    const result = await executeD1Command(dbName, sql, { json: true });
+    return parseD1RowsFromWranglerResult<T>(result);
+  } catch (error) {
+    wranglerError = error;
+  }
+
+  try {
+    const apiRows = await queryD1RowsViaApi<T>(dbName, sql);
+    if (apiRows) return apiRows;
+  } catch (apiError) {
+    const wranglerMessage = describeInventoryError(wranglerError, 'unknown Wrangler error');
+    const apiMessage = describeInventoryError(apiError, 'unknown API error');
+    throw new Error(
+      `Could not query D1 via Wrangler (${wranglerMessage}) or the Cloudflare API (${apiMessage})`
+    );
+  }
+
+  throw wranglerError;
 }
 
 async function queryD1RowsViaApi<T extends Record<string, unknown>>(

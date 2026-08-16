@@ -462,7 +462,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       isMultiTenantEnabled(c.env) &&
       !!tenantId &&
       (requestClass === 'tenant_scoped_admin' ||
-        ((requestClass !== 'platform_admin' && requestClass !== 'tenant_inventory_admin') &&
+        (requestClass !== 'platform_admin' &&
+          requestClass !== 'tenant_inventory_admin' &&
           tenantResult.success));
 
     let tenantMetadataContext: TenantMetadataContext | undefined;
