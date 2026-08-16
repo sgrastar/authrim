@@ -45,11 +45,29 @@ export const ReleaseMigrationStreamSchema = z
     message: 'Migration paths must be unique within a stream',
   });
 
+export const ReleaseRolloutPolicySchema = z.object({
+  databaseExecution: z.literal('setup_then_control'),
+  workerActivation: z.literal('after_required_databases'),
+  adminMutationMode: z.enum(['available', 'read_only']),
+  databaseOnly: z
+    .object({
+      compatibleWorkerVersions: z
+        .array(ProductVersionSchema)
+        .min(1)
+        .max(100)
+        .refine((versions) => new Set(versions).size === versions.length, {
+          message: 'Database-only compatible Worker versions must be unique',
+        }),
+    })
+    .optional(),
+});
+
 export const ReleaseMigrationManifestSchema = z
   .object({
     formatVersion: z.literal(RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION),
     productVersion: ProductVersionSchema,
     minimumProductVersion: ProductVersionSchema.optional(),
+    rollout: ReleaseRolloutPolicySchema.optional(),
     streams: z.array(ReleaseMigrationStreamSchema),
   })
   .refine(
@@ -61,6 +79,28 @@ export const ReleaseMigrationManifestSchema = z
 export type ReleaseMigrationFile = z.infer<typeof ReleaseMigrationFileSchema>;
 export type ReleaseMigrationStream = z.infer<typeof ReleaseMigrationStreamSchema>;
 export type ReleaseMigrationManifest = z.infer<typeof ReleaseMigrationManifestSchema>;
+export type ReleaseRolloutPolicy = z.infer<typeof ReleaseRolloutPolicySchema>;
+
+export const DEFAULT_RELEASE_ROLLOUT_POLICY: ReleaseRolloutPolicy = {
+  databaseExecution: 'setup_then_control',
+  workerActivation: 'after_required_databases',
+  adminMutationMode: 'read_only',
+};
+
+export function assertDatabaseOnlyWorkerCompatibility(
+  manifest: ReleaseMigrationManifest,
+  installedWorkerVersion: string | undefined
+): void {
+  if (!installedWorkerVersion || !ProductVersionSchema.safeParse(installedWorkerVersion).success) {
+    throw new Error('database_only_installed_worker_version_required');
+  }
+  const compatibleVersions = manifest.rollout?.databaseOnly?.compatibleWorkerVersions;
+  if (!compatibleVersions?.includes(installedWorkerVersion)) {
+    throw new Error(
+      `database_only_worker_version_incompatible:${installedWorkerVersion}:${manifest.productVersion}`
+    );
+  }
+}
 
 export interface MigrationStreamDefinition {
   id: string;
@@ -229,6 +269,11 @@ export function generateReleaseMigrationManifest(input: {
     formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
     productVersion: input.productVersion,
     ...(minimumProductVersion ? { minimumProductVersion } : {}),
+    rollout:
+      input.previousManifest?.productVersion === input.productVersion &&
+      input.previousManifest.rollout
+        ? input.previousManifest.rollout
+        : DEFAULT_RELEASE_ROLLOUT_POLICY,
     streams,
   });
 }
@@ -257,8 +302,12 @@ export function syncDraftReleaseMigrationManifest(input: {
   migrationsRoot: string;
   productVersion: string;
 }): { path: string; manifest: ReleaseMigrationManifest } {
-  const previousManifest = findLatestReleaseMigrationManifest(input.migrationsRoot)?.manifest;
-  assertProductVersionNotBehindPublished(input.productVersion, previousManifest?.productVersion);
+  const publishedManifest = findLatestReleaseMigrationManifest(input.migrationsRoot)?.manifest;
+  assertProductVersionNotBehindPublished(input.productVersion, publishedManifest?.productVersion);
+  const path = join(input.migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
+  const currentDraft = existsSync(path) ? readReleaseMigrationManifest(path) : undefined;
+  const previousManifest =
+    currentDraft?.productVersion === input.productVersion ? currentDraft : publishedManifest;
   const manifest = generateReleaseMigrationManifest({
     migrationsRoot: input.migrationsRoot,
     productVersion: input.productVersion,
@@ -279,7 +328,6 @@ export function syncDraftReleaseMigrationManifest(input: {
       );
     }
   }
-  const path = join(input.migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
   writeReleaseMigrationManifest(path, manifest);
   return { path, manifest };
 }

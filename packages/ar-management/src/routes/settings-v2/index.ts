@@ -413,6 +413,12 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
     'it',
     'th',
     'vi',
+    'hi',
+    'bn',
+    'tr',
+    'sw',
+    'am',
+    'pl',
   ];
   const supportedLocales = body.set?.['login-ui.supported_locales'];
   const defaultLocale = body.set?.['login-ui.default_locale'];

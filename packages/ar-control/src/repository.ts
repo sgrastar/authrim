@@ -15,6 +15,9 @@ import type {
   ControlProvisioningOperationRestoreRequest,
   ControlProvisioningOperationRetryRequest,
   ControlProvisioningOperationStepSummary,
+  ControlOperationStatus,
+  ControlReleaseRolloutRetryTargetRequest,
+  ControlReleaseRolloutStatus,
   ControlCapacityPlannerInput,
   ControlCapacityTargetInput,
   ControlTenantShardCapacityTarget,
@@ -238,6 +241,12 @@ export interface ControlRepository {
     requestedByType: 'admin' | 'scheduler'
   ): Promise<ControlOperationView>;
   getOperation(operationId: string, environmentId?: string): Promise<ControlOperationView | null>;
+  getReleaseMigrationRolloutStatus?(environmentId: string): Promise<ControlReleaseRolloutStatus>;
+  retryReleaseMigrationRolloutTarget?(
+    input: ControlReleaseRolloutRetryTargetRequest,
+    environmentId: string,
+    now: number
+  ): Promise<ControlReleaseRolloutStatus>;
   getProvisioningOperation?(
     operationId: string,
     environmentId: string
@@ -689,7 +698,7 @@ export class D1ControlRepository implements ControlRepository {
         .bind(now, operationId),
       this.db
         .prepare(
-          `INSERT OR IGNORE INTO control_audit_events (
+          `INSERT INTO control_audit_events (
              event_id, environment_id, operation_id, event_type, actor_type,
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
            ) SELECT 'audit:' || operation_id || ':operator-action-required', environment_id,
@@ -1627,6 +1636,321 @@ export class D1ControlRepository implements ControlRepository {
           .bind(operationId);
     const row = await statement.first<OperationRow>();
     return row ? operationView(row) : null;
+  }
+
+  async getReleaseMigrationRolloutStatus(
+    environmentId: string
+  ): Promise<ControlReleaseRolloutStatus> {
+    const operation = await this.db
+      .prepare(
+        `SELECT operation.operation_id, operation.status, operation.release_id,
+                operation.last_error_code, operation.updated_at,
+                rollout.source_version, rollout.target_version, rollout.handoff_state,
+                rollout.admin_mutation_mode
+           FROM control_operations operation
+      LEFT JOIN control_release_migration_rollouts rollout
+             ON rollout.operation_id = operation.operation_id
+            AND rollout.environment_id = operation.environment_id
+          WHERE operation.environment_id = ?
+            AND operation.operation_kind = 'release_migration_rollout'
+          ORDER BY CASE
+                     WHEN rollout.handoff_state IS NOT NULL
+                      AND rollout.handoff_state <> 'completed' THEN 0
+                     ELSE 1
+                   END,
+                   operation.created_at DESC,
+                   operation.operation_id DESC
+          LIMIT 1`
+      )
+      .bind(environmentId)
+      .first<{
+        operation_id: string;
+        status: ControlOperationStatus;
+        release_id: string | null;
+        last_error_code: string | null;
+        updated_at: number;
+        source_version: string | null;
+        target_version: string | null;
+        handoff_state: string | null;
+        admin_mutation_mode: 'available' | 'read_only' | null;
+      }>();
+    if (!operation) {
+      return {
+        operationId: null,
+        sourceVersion: null,
+        targetVersion: null,
+        phase: 'idle',
+        completedTargets: 0,
+        totalTargets: 0,
+        adminMutationMode: 'available',
+        lastErrorCode: null,
+        updatedAt: null,
+        blockedTargetCount: 0,
+        blockedTargets: [],
+      };
+    }
+    const [steps, blockedTargets, blockedTargetCount] = await Promise.all([
+      this.db
+        .prepare(
+          `SELECT step_key, status, progress_current, progress_total
+             FROM control_operation_steps
+            WHERE operation_id = ?
+              AND step_key IN ('apply_managed_migrations', 'await_setup', 'verify_release')`
+        )
+        .bind(operation.operation_id)
+        .all<{
+          step_key: string;
+          status: string;
+          progress_current: number | null;
+          progress_total: number | null;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT target_id, stream_id, attempt_count, last_error_code, updated_at
+             FROM control_release_migration_targets
+            WHERE operation_id = ? AND state = 'blocked' AND last_error_code IS NOT NULL
+            ORDER BY updated_at, target_id
+            LIMIT 100`
+        )
+        .bind(operation.operation_id)
+        .all<{
+          target_id: string;
+          stream_id: 'd1-core' | 'd1-pii' | 'd1-lookup';
+          attempt_count: number;
+          last_error_code: string;
+          updated_at: number;
+        }>(),
+      this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_release_migration_targets
+            WHERE operation_id = ? AND state = 'blocked'`
+        )
+        .bind(operation.operation_id)
+        .first<{ count: number }>(),
+    ]);
+    const byKey = new Map(steps.results.map((step) => [step.step_key, step]));
+    const databaseStep = byKey.get('apply_managed_migrations');
+    const setupStep = byKey.get('await_setup');
+    const verificationStep = byKey.get('verify_release');
+    const persistedPhase = operation.handoff_state;
+    const numericProgressConsistent =
+      databaseStep !== undefined &&
+      Number.isSafeInteger(databaseStep.progress_current) &&
+      Number.isSafeInteger(databaseStep.progress_total) &&
+      (databaseStep.progress_current ?? -1) >= 0 &&
+      (databaseStep.progress_total ?? -1) >= (databaseStep.progress_current ?? 0);
+    const progressConsistent =
+      (persistedPhase === 'requested' &&
+        databaseStep?.progress_current === null &&
+        databaseStep.progress_total === null) ||
+      numericProgressConsistent;
+    const stateConsistent =
+      progressConsistent &&
+      setupStep !== undefined &&
+      verificationStep !== undefined &&
+      ((persistedPhase === 'requested' &&
+        (operation.status === 'queued' || operation.status === 'running') &&
+        databaseStep.status === 'queued' &&
+        setupStep.status === 'queued' &&
+        verificationStep.status === 'queued') ||
+        (persistedPhase === 'database_rollout' &&
+          operation.status === 'running' &&
+          databaseStep.status === 'running' &&
+          setupStep.status === 'queued' &&
+          verificationStep.status === 'queued') ||
+        (persistedPhase === 'blocked' &&
+          operation.status === 'blocked' &&
+          databaseStep.status === 'blocked' &&
+          setupStep.status === 'queued' &&
+          verificationStep.status === 'queued') ||
+        (persistedPhase === 'awaiting_setup' &&
+          operation.status === 'running' &&
+          databaseStep.status === 'succeeded' &&
+          setupStep.status === 'running' &&
+          verificationStep.status === 'queued') ||
+        (persistedPhase === 'verifying' &&
+          operation.status === 'running' &&
+          databaseStep.status === 'succeeded' &&
+          setupStep.status === 'succeeded' &&
+          verificationStep.status === 'running') ||
+        (persistedPhase === 'completed' &&
+          operation.status === 'succeeded' &&
+          databaseStep.status === 'succeeded' &&
+          databaseStep.progress_current === databaseStep.progress_total &&
+          setupStep.status === 'succeeded' &&
+          verificationStep.status === 'succeeded'));
+    const persistedDerivedPhase: ControlReleaseRolloutStatus['phase'] = !stateConsistent
+      ? 'blocked'
+      : persistedPhase === 'requested'
+        ? 'database_rollout'
+        : persistedPhase === 'database_rollout' ||
+            persistedPhase === 'blocked' ||
+            persistedPhase === 'awaiting_setup' ||
+            persistedPhase === 'verifying' ||
+            persistedPhase === 'completed'
+          ? persistedPhase
+          : 'blocked';
+    const phase: ControlReleaseRolloutStatus['phase'] =
+      stateConsistent && (blockedTargetCount?.count ?? 0) > 0 ? 'blocked' : persistedDerivedPhase;
+    const lastErrorCode = stateConsistent
+      ? (operation.last_error_code ?? blockedTargets.results[0]?.last_error_code ?? null)
+      : 'release_rollout_state_inconsistent';
+    return {
+      operationId: operation.operation_id,
+      sourceVersion: operation.source_version,
+      targetVersion: operation.target_version ?? operation.release_id,
+      phase,
+      completedTargets: databaseStep?.progress_current ?? 0,
+      totalTargets: databaseStep?.progress_total ?? 0,
+      adminMutationMode:
+        stateConsistent && phase === 'completed'
+          ? 'available'
+          : (operation.admin_mutation_mode ?? 'read_only'),
+      lastErrorCode,
+      updatedAt: operation.updated_at,
+      blockedTargetCount: blockedTargetCount?.count ?? 0,
+      blockedTargets: blockedTargets.results.map((target) => ({
+        targetId: target.target_id,
+        streamId: target.stream_id,
+        attemptCount: target.attempt_count,
+        lastErrorCode: target.last_error_code,
+        updatedAt: target.updated_at,
+      })),
+    };
+  }
+
+  async retryReleaseMigrationRolloutTarget(
+    input: ControlReleaseRolloutRetryTargetRequest,
+    environmentId: string,
+    now: number
+  ): Promise<ControlReleaseRolloutStatus> {
+    const eventId = `audit:${environmentId}:release-target-retry:${input.idempotencyKey}`;
+    const payload = JSON.stringify({
+      target_id: input.targetId,
+      reason_code: input.reasonCode,
+      idempotency_key: input.idempotencyKey,
+      before: { operation_status: 'blocked', target_state: 'blocked' },
+      after: { operation_status: 'running', target_state: 'queued' },
+    });
+    const existing = await this.db
+      .prepare(
+        `SELECT environment_id, operation_id, actor_id, resource_id, redacted_payload_json
+           FROM control_audit_events WHERE event_id = ?`
+      )
+      .bind(eventId)
+      .first<OperatorRetryAuditRow>();
+    if (existing) {
+      if (
+        existing.environment_id !== environmentId ||
+        existing.operation_id !== input.operationId ||
+        existing.actor_id !== input.requestedById ||
+        existing.resource_id !== input.targetId ||
+        existing.redacted_payload_json !== payload
+      ) {
+        throw new Error('control_release_rollout_retry_conflict');
+      }
+      return this.getReleaseMigrationRolloutStatus(environmentId);
+    }
+    const auditGuard = `EXISTS (
+      SELECT 1 FROM control_audit_events audit
+       WHERE audit.event_id = ? AND audit.environment_id = ? AND audit.operation_id = ?
+         AND audit.actor_id = ? AND audit.resource_id = ? AND audit.redacted_payload_json = ?
+    )`;
+    const auditGuardParams = [
+      eventId,
+      environmentId,
+      input.operationId,
+      input.requestedById,
+      input.targetId,
+      payload,
+    ] as const;
+
+    await this.db.batch([
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_audit_events (
+             event_id, environment_id, operation_id, event_type, actor_type, actor_id,
+             resource_kind, resource_id, outcome, redacted_payload_json, created_at
+           )
+           SELECT ?, operation.environment_id, operation.operation_id,
+                  'control.release_migration.target_retry', 'admin', ?,
+                  'release_migration_target', target.target_id, 'succeeded', ?, ?
+             FROM control_operations operation
+             JOIN control_release_migration_rollouts rollout
+               ON rollout.operation_id = operation.operation_id
+              AND rollout.environment_id = operation.environment_id
+             JOIN control_release_migration_targets target
+               ON target.operation_id = rollout.operation_id
+            WHERE operation.operation_id = ? AND operation.environment_id = ?
+              AND operation.operation_kind = 'release_migration_rollout'
+              AND operation.status = 'blocked' AND rollout.handoff_state = 'blocked'
+              AND target.target_id = ? AND target.state = 'blocked'`
+        )
+        .bind(
+          eventId,
+          input.requestedById,
+          payload,
+          now,
+          input.operationId,
+          environmentId,
+          input.targetId
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_release_migration_targets
+              SET state = 'queued', retry_budget_started_at = ?, next_attempt_at = NULL,
+                  last_error_code = NULL, lease_owner = NULL, lease_expires_at = NULL,
+                  updated_at = ?
+            WHERE operation_id = ? AND target_id = ? AND state = 'blocked'
+              AND ${auditGuard}`
+        )
+        .bind(now, now, input.operationId, input.targetId, ...auditGuardParams),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET status = 'running', attempt_count = attempt_count + 1,
+                  last_error_code = NULL, completed_at = NULL, updated_at = ?
+            WHERE operation_id = ? AND step_key = 'apply_managed_migrations'
+              AND status = 'blocked'
+              AND ${auditGuard}`
+        )
+        .bind(now, input.operationId, ...auditGuardParams),
+      this.db
+        .prepare(
+          `UPDATE control_operations
+              SET status = 'running', last_error_code = NULL, next_attempt_at = NULL,
+                  completed_at = NULL, updated_at = ?
+            WHERE operation_id = ? AND environment_id = ? AND status = 'blocked'
+              AND ${auditGuard}`
+        )
+        .bind(now, input.operationId, environmentId, ...auditGuardParams),
+      this.db
+        .prepare(
+          `UPDATE control_release_migration_rollouts
+              SET handoff_state = 'database_rollout', updated_at = ?
+            WHERE operation_id = ? AND environment_id = ? AND handoff_state = 'blocked'
+              AND ${auditGuard}`
+        )
+        .bind(now, input.operationId, environmentId, ...auditGuardParams),
+    ]);
+    const recorded = await this.db
+      .prepare(
+        `SELECT environment_id, operation_id, actor_id, resource_id, redacted_payload_json
+           FROM control_audit_events WHERE event_id = ?`
+      )
+      .bind(eventId)
+      .first<OperatorRetryAuditRow>();
+    if (
+      !recorded ||
+      recorded.environment_id !== environmentId ||
+      recorded.operation_id !== input.operationId ||
+      recorded.actor_id !== input.requestedById ||
+      recorded.resource_id !== input.targetId ||
+      recorded.redacted_payload_json !== payload
+    ) {
+      throw new Error('control_release_rollout_retry_not_retryable');
+    }
+    return this.getReleaseMigrationRolloutStatus(environmentId);
   }
 
   async getProvisioningOperation(

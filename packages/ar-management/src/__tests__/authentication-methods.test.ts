@@ -247,6 +247,12 @@ describe('Authentication Methods API', () => {
         'it',
         'th',
         'vi',
+        'hi',
+        'bn',
+        'tr',
+        'sw',
+        'am',
+        'pl',
       ]);
       expect(body.ui.selfService).toEqual({
         accountPageEnabled: true,
@@ -1176,6 +1182,12 @@ describe('Authentication Methods API', () => {
         'it',
         'th',
         'vi',
+        'hi',
+        'bn',
+        'tr',
+        'sw',
+        'am',
+        'pl',
       ]);
       expect(body.ui.defaultLocale).toBe('en');
     });

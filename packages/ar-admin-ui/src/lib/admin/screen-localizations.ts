@@ -13,7 +13,13 @@ export const SCREEN_LOCALIZATION_LANGUAGES = [
 	'ar',
 	'it',
 	'th',
-	'vi'
+	'vi',
+	'hi',
+	'bn',
+	'tr',
+	'sw',
+	'am',
+	'pl'
 ] as const;
 
 export type ScreenLocalizationLanguage = (typeof SCREEN_LOCALIZATION_LANGUAGES)[number];
@@ -35,7 +41,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تسجيل الدخول باستخدام مفتاح المرور',
 		it: 'Accedi con una passkey',
 		th: 'เข้าสู่ระบบด้วย Passkey',
-		vi: 'Đăng nhập bằng Passkey'
+		vi: 'Đăng nhập bằng Passkey',
+		hi: 'Passkey से साइन इन करें',
+		bn: 'Passkey দিয়ে সাইন ইন করুন',
+		tr: 'Passkey ile giriş yap',
+		sw: 'Ingia na Passkey',
+		am: 'በPasskey ይግቡ',
+		pl: 'Zaloguj się za pomocą Passkey'
 	},
 	'Create Account with Passkey': {
 		en: 'Create Account with Passkey',
@@ -52,7 +64,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'إنشاء حساب باستخدام مفتاح المرور',
 		it: 'Crea un account con una passkey',
 		th: 'สร้างบัญชีด้วย Passkey',
-		vi: 'Tạo tài khoản bằng Passkey'
+		vi: 'Tạo tài khoản bằng Passkey',
+		hi: 'Passkey के साथ खाता बनाएं',
+		bn: 'Passkey দিয়ে অ্যাকাউন্ট তৈরি করুন',
+		tr: 'Passkey ile Hesap Oluştur',
+		sw: 'Unda Akaunti na Passkey',
+		am: 'Passkey ን በመጠቀም መለያ ይፍጠሩ',
+		pl: 'Tworzenie konta przy użyciu Passkey'
 	},
 	'Create your account': {
 		en: 'Create your account',
@@ -69,7 +87,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'إنشاء حسابك',
 		it: 'Crea il tuo account',
 		th: 'สร้างบัญชีของคุณ',
-		vi: 'Tạo tài khoản'
+		vi: 'Tạo tài khoản',
+		hi: 'अपना खाता बनाएं',
+		bn: 'আপনার অ্যাকাউন্ট তৈরি করুন',
+		tr: 'Hesabınızı oluşturun',
+		sw: 'Unda akaunti yako',
+		am: 'መለያዎን ይፍጠሩ',
+		pl: 'Utwórz konto'
 	},
 	'Send code by email': {
 		en: 'Send code by email',
@@ -86,7 +110,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'إرسال رمز عبر البريد الإلكتروني',
 		it: 'Invia codice via email',
 		th: 'ส่งรหัสทางอีเมล',
-		vi: 'Gửi mã qua email'
+		vi: 'Gửi mã qua email',
+		hi: 'ईमेल द्वारा कोड भेजें',
+		bn: 'ইমেইলের মাধ্যমে কোড পাঠান',
+		tr: 'E-posta ile kod gönder',
+		sw: 'Kutuma nambari kwa barua pepe',
+		am: 'ኮዱን በኢሜይል ይላኩ',
+		pl: 'Wysyłanie kodu pocztą elektroniczną'
 	},
 	'Mail OTP + authenticator app': {
 		en: 'Mail OTP + authenticator app',
@@ -103,7 +133,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'رمز بريد إلكتروني + تطبيق مصادقة',
 		it: 'OTP via email + app di autenticazione',
 		th: 'OTP ทางอีเมล + แอปยืนยันตัวตน',
-		vi: 'OTP qua email + ứng dụng xác thực'
+		vi: 'OTP qua email + ứng dụng xác thực',
+		hi: 'मेल ओटीपी + प्रमाणीकरण ऐप',
+		bn: 'মেইল ওটিপি + প্রমাণীকরণ অ্যাপ',
+		tr: 'E-posta OTP + doğrulama uygulaması',
+		sw: 'Barua OTP + authenticator programu',
+		am: 'የመልእክት OTP + የማረጋገጫ መተግበሪያ',
+		pl: 'Aplikacja e-mail OTP + uwierzytelniacz'
 	},
 	'Sign in with authenticator app': {
 		en: 'Sign in with authenticator app',
@@ -120,7 +156,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تسجيل الدخول باستخدام تطبيق المصادقة',
 		it: 'Accedi con l’app di autenticazione',
 		th: 'เข้าสู่ระบบด้วยแอปยืนยันตัวตน',
-		vi: 'Đăng nhập bằng ứng dụng xác thực'
+		vi: 'Đăng nhập bằng ứng dụng xác thực',
+		hi: 'प्रमाणीकरण ऐप के साथ साइन इन करें',
+		bn: 'প্রমাণীকরণ অ্যাপ্লিকেশন দিয়ে লগইন করুন',
+		tr: 'Kimlik doğrulama uygulaması ile giriş yap',
+		sw: 'Ingia kwa kutumia programu ya uthibitishaji',
+		am: 'በማረጋገጫ አፕሊኬሽኑ መግባት',
+		pl: 'Zaloguj się za pomocą aplikacji uwierzytelniającej'
 	},
 	'Create account with authenticator app': {
 		en: 'Create account with authenticator app',
@@ -137,7 +179,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'إنشاء حساب باستخدام تطبيق المصادقة',
 		it: 'Crea un account con l’app di autenticazione',
 		th: 'สร้างบัญชีด้วยแอปยืนยันตัวตน',
-		vi: 'Tạo tài khoản bằng ứng dụng xác thực'
+		vi: 'Tạo tài khoản bằng ứng dụng xác thực',
+		hi: 'प्रमाणीकरण ऐप के साथ खाता बनाएं',
+		bn: 'প্রমাণীকরণ অ্যাপ্লিকেশন দিয়ে অ্যাকাউন্ট তৈরি করুন',
+		tr: 'Kimlik doğrulama uygulaması ile hesap oluştur',
+		sw: 'Unda akaunti na programu ya uthibitishaji',
+		am: 'በማረጋገጫ መተግበሪያ አማካኝነት መለያ ይፍጠሩ',
+		pl: 'Tworzenie konta za pomocą aplikacji uwierzytelniacza'
 	},
 	'Authentication code': {
 		en: 'Authentication code',
@@ -154,7 +202,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'رمز المصادقة',
 		it: 'Codice di autenticazione',
 		th: 'รหัสยืนยันตัวตน',
-		vi: 'Mã xác thực'
+		vi: 'Mã xác thực',
+		hi: 'प्रमाणीकरण कोड',
+		bn: 'প্রমাণীকরণ কোড',
+		tr: 'Doğrulama kodu',
+		sw: 'Nambari ya uthibitisho',
+		am: 'የማረጋገጫ ኮድ',
+		pl: 'Kod uwierzytelniania'
 	},
 	'Enter verification code': {
 		en: 'Enter verification code',
@@ -171,7 +225,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'أدخل رمز التحقق',
 		it: 'Inserisci il codice di verifica',
 		th: 'กรอกรหัสยืนยัน',
-		vi: 'Nhập mã xác minh'
+		vi: 'Nhập mã xác minh',
+		hi: 'सत्यापन कोड दर्ज करें',
+		bn: 'যাচাইকরণ কোড লিখুন',
+		tr: 'Verifikasyon kodunu girin',
+		sw: 'Ingiza nambari ya uthibitisho',
+		am: 'የማረጋገጫ ኮድ ያስገቡ',
+		pl: 'Wprowadzenie kodu weryfikacyjnego'
 	},
 	'Email verification code': {
 		en: 'Email verification code',
@@ -188,7 +248,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'رمز التحقق عبر البريد الإلكتروني',
 		it: 'Codice di verifica ricevuto via email',
 		th: 'รหัสยืนยันทางอีเมล',
-		vi: 'Mã xác minh qua email'
+		vi: 'Mã xác minh qua email',
+		hi: 'ईमेल सत्यापन कोड',
+		bn: 'ইমেইল যাচাইকরণ কোড',
+		tr: 'E-posta doğrulama kodu',
+		sw: 'Nambari ya uthibitisho wa barua pepe',
+		am: 'የኢሜይል ማረጋገጫ ኮድ',
+		pl: 'Kod weryfikacji poczty elektronicznej'
 	},
 	'Authenticator app code': {
 		en: 'Authenticator app code',
@@ -205,7 +271,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'رمز تطبيق المصادقة',
 		it: 'Codice dell’app di autenticazione',
 		th: 'รหัสจากแอปยืนยันตัวตน',
-		vi: 'Mã ứng dụng xác thực'
+		vi: 'Mã ứng dụng xác thực',
+		hi: 'प्रमाणीकरण ऐप कोड',
+		bn: 'প্রমাণীকরণ অ্যাপ্লিকেশন কোড',
+		tr: 'Kimlik doğrulama uygulaması kodu',
+		sw: 'Nambari ya programu ya uthibitishaji',
+		am: 'የማረጋገጫ መተግበሪያ ኮድ',
+		pl: 'Kod aplikacji uwierzytelniającej'
 	},
 	'Enter the code from your email or authenticator app.': {
 		en: 'Enter the code from your email or authenticator app.',
@@ -222,7 +294,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'أدخل الرمز الوارد في بريدك الإلكتروني أو الظاهر في تطبيق المصادقة.',
 		it: 'Inserisci il codice ricevuto via email o generato dall’app di autenticazione.',
 		th: 'กรอกรหัสจากอีเมลหรือแอปยืนยันตัวตนของคุณ',
-		vi: 'Nhập mã trong email hoặc ứng dụng xác thực của bạn.'
+		vi: 'Nhập mã trong email hoặc ứng dụng xác thực của bạn.',
+		hi: 'अपने ईमेल या प्रमाणीकरण ऐप से कोड दर्ज करें।',
+		bn: 'আপনার ইমেইল বা প্রমাণীকরণ অ্যাপ থেকে কোড লিখুন।',
+		tr: 'E-posta veya kimlik doğrulama uygulamanızdan kod girin.',
+		sw: 'Ingiza msimbo kutoka barua pepe yako au programu ya uthibitishaji.',
+		am: 'ከኢሜይል ወይም ከማረጋገጫ መተግበሪያዎ ኮዱን ያስገቡ።',
+		pl: 'Wprowadź kod z e-maila lub aplikacji uwierzytelniającej.'
 	},
 	or: {
 		en: 'or',
@@ -239,7 +317,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'أو',
 		it: 'oppure',
 		th: 'หรือ',
-		vi: 'hoặc'
+		vi: 'hoặc',
+		hi: 'या',
+		bn: 'অথবা',
+		tr: 'veya',
+		sw: 'au',
+		am: 'ወይም',
+		pl: 'lub'
 	},
 	'Continue with another account': {
 		en: 'Continue with another account',
@@ -256,7 +340,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'المتابعة باستخدام حساب آخر',
 		it: 'Continua con un altro account',
 		th: 'ดำเนินการต่อด้วยบัญชีอื่น',
-		vi: 'Tiếp tục bằng tài khoản khác'
+		vi: 'Tiếp tục bằng tài khoản khác',
+		hi: 'एक और खाते के साथ जारी रखें',
+		bn: 'অন্য অ্যাকাউন্ট দিয়ে চালিয়ে যান',
+		tr: 'Başka bir hesapla devam edin .',
+		sw: 'Endelea na akaunti nyingine',
+		am: 'በሌላ መለያ ይቀጥሉ',
+		pl: 'Kontynuuj z innym kontem'
 	},
 	'Continue with external IdP': {
 		en: 'Continue with external IdP',
@@ -273,7 +363,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'المتابعة باستخدام موفّر هوية خارجي',
 		it: 'Continua con un provider di identità esterno',
 		th: 'ดำเนินการต่อด้วยผู้ให้บริการข้อมูลประจำตัวภายนอก',
-		vi: 'Tiếp tục với nhà cung cấp danh tính bên ngoài'
+		vi: 'Tiếp tục với nhà cung cấp danh tính bên ngoài',
+		hi: 'बाहरी आईडीपी के साथ जारी रखें',
+		bn: 'বাহ্যিক আইডিপি দিয়ে চালিয়ে যান',
+		tr: 'Dış IdP ile devam edin',
+		sw: 'Endelea na IdP nje',
+		am: 'የውጭ IdP ጋር መቀጠል',
+		pl: 'Kontynuuj z zewnętrznym IdP'
 	},
 	'Ext. IdP': {
 		en: 'Ext. IdP',
@@ -290,7 +386,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'موفّر هوية خارجي',
 		it: 'IdP esterno',
 		th: 'IdP ภายนอก',
-		vi: 'IdP bên ngoài'
+		vi: 'IdP bên ngoài',
+		hi: 'एक्स. आईडीपी',
+		bn: 'এক্সট্রা আইডিপি',
+		tr: 'Ekstr. IdP',
+		sw: 'Ex. IdP',
+		am: 'ኤክስ. አይዲፒ',
+		pl: 'Eks. IdP'
 	},
 	'Sign in': {
 		en: 'Sign in',
@@ -307,7 +409,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تسجيل الدخول',
 		it: 'Accedi',
 		th: 'เข้าสู่ระบบ',
-		vi: 'Đăng nhập'
+		vi: 'Đăng nhập',
+		hi: 'साइन इन करें',
+		bn: 'সাইন ইন করুন',
+		tr: 'Giriş yap .',
+		sw: 'Saini katika',
+		am: 'ይመዝገቡ',
+		pl: 'Zaloguj się'
 	},
 	'Sign in with directory password': {
 		en: 'Sign in with directory password',
@@ -324,7 +432,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تسجيل الدخول باستخدام كلمة مرور الدليل',
 		it: 'Accedi con la password della directory',
 		th: 'เข้าสู่ระบบด้วยรหัสผ่านไดเรกทอรี',
-		vi: 'Đăng nhập bằng mật khẩu thư mục'
+		vi: 'Đăng nhập bằng mật khẩu thư mục',
+		hi: 'निर्देशिका पासवर्ड के साथ साइन इन करें',
+		bn: 'ডিরেক্টরি পাসওয়ার্ড দিয়ে লগইন করুন',
+		tr: 'Dizin şifresini kullanarak giriş yap',
+		sw: 'Ingia na nenosiri la saraka',
+		am: 'የመረጃ ቋት የይለፍ ቃል በመጠቀም ይግቡ',
+		pl: 'Zaloguj się za pomocą hasła katalogowego'
 	},
 	Email: {
 		en: 'Email',
@@ -341,7 +455,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'البريد الإلكتروني',
 		it: 'Email',
 		th: 'อีเมล',
-		vi: 'Email'
+		vi: 'Email',
+		hi: 'ईमेल',
+		bn: 'ইমেইল',
+		tr: 'E-posta',
+		sw: 'Barua pepe',
+		am: 'ኢሜይል',
+		pl: 'Wysyłanie poczty elektronicznej'
 	},
 	Name: {
 		en: 'Name',
@@ -358,7 +478,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'الاسم',
 		it: 'Nome',
 		th: 'ชื่อ',
-		vi: 'Tên'
+		vi: 'Tên',
+		hi: 'नाम',
+		bn: 'নাম',
+		tr: 'Adı',
+		sw: 'Jina',
+		am: 'ስም',
+		pl: 'Nazwa'
 	},
 	'First Name': {
 		en: 'First Name',
@@ -375,7 +501,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'الاسم الأول',
 		it: 'Nome',
 		th: 'ชื่อ',
-		vi: 'Tên'
+		vi: 'Tên',
+		hi: 'प्रथम नाम',
+		bn: 'প্রথম নাম',
+		tr: 'İlk Adı',
+		sw: 'Jina la Kwanza',
+		am: 'የመጀመሪያ ስም',
+		pl: 'Nazwa pierwsza'
 	},
 	'Last Name': {
 		en: 'Last Name',
@@ -392,7 +524,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'اسم العائلة',
 		it: 'Cognome',
 		th: 'นามสกุล',
-		vi: 'Họ'
+		vi: 'Họ',
+		hi: 'उपनाम',
+		bn: 'উপনাম',
+		tr: 'Soyadı',
+		sw: 'Jina la mwisho',
+		am: 'የአያት ስም',
+		pl: 'Nazwa i nazwisko'
 	},
 	'Preferred username': {
 		en: 'Preferred username',
@@ -409,7 +547,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'اسم المستخدم المفضّل',
 		it: 'Nome utente preferito',
 		th: 'ชื่อผู้ใช้ที่ต้องการ',
-		vi: 'Tên người dùng mong muốn'
+		vi: 'Tên người dùng mong muốn',
+		hi: 'पसंदीदा उपयोगकर्ता नाम',
+		bn: 'পছন্দসই ব্যবহারকারীর নাম',
+		tr: 'Tercih edilen kullanıcı adı',
+		sw: 'Jina la mtumiaji lililochaguliwa',
+		am: 'ተመራጭ የተጠቃሚ ስም',
+		pl: 'Preferowane nazwisko użytkownika'
 	},
 	'Consent confirmation': {
 		en: 'Consent confirmation',
@@ -426,7 +570,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تأكيد الموافقة',
 		it: 'Conferma del consenso',
 		th: 'ยืนยันความยินยอม',
-		vi: 'Xác nhận sự đồng ý'
+		vi: 'Xác nhận sự đồng ý',
+		hi: 'सहमति की पुष्टि',
+		bn: 'সম্মতি নিশ্চিতকরণ',
+		tr: 'İznin onaylanması',
+		sw: 'Uthibitisho wa idhini',
+		am: 'የስምምነት ማረጋገጫ',
+		pl: 'Potwierdzenie zgody'
 	},
 	'Review the consent items required for this step.': {
 		en: 'Review the consent items required for this step.',
@@ -443,7 +593,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'راجع بنود الموافقة المطلوبة لهذه الخطوة.',
 		it: 'Controlla i consensi richiesti per questo passaggio.',
 		th: 'ตรวจสอบรายการความยินยอมที่จำเป็นสำหรับขั้นตอนนี้',
-		vi: 'Xem lại các mục đồng ý bắt buộc cho bước này.'
+		vi: 'Xem lại các mục đồng ý bắt buộc cho bước này.',
+		hi: 'इस कदम के लिए आवश्यक सहमति के बिंदुओं की समीक्षा करें।',
+		bn: 'এই পদক্ষেপের জন্য প্রয়োজনীয় সম্মতি পয়েন্টগুলি পর্যালোচনা করুন।',
+		tr: 'Bu adım için gerekli onay noktalarını gözden geçirin.',
+		sw: 'Angalia mambo yanayohitajika kwa ajili ya hatua hii.',
+		am: 'ለዚህ እርምጃ የሚያስፈልጉትን ስምምነት ነጥቦች ተመልከት።',
+		pl: 'Przejrzyj pozycje zgody wymagane dla tego kroku.'
 	},
 	'The consent policy selected on the Flow node is rendered here.': {
 		en: 'The consent policy selected on the Flow node is rendered here.',
@@ -460,7 +616,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'تظهر هنا سياسة الموافقة المحددة في عقدة التدفق.',
 		it: 'Qui viene mostrata la politica di consenso selezionata nel nodo del flusso.',
 		th: 'นโยบายความยินยอมที่เลือกในโหนด Flow จะแสดงที่นี่',
-		vi: 'Chính sách đồng ý được chọn trong nút Flow sẽ hiển thị tại đây.'
+		vi: 'Chính sách đồng ý được chọn trong nút Flow sẽ hiển thị tại đây.',
+		hi: 'प्रवाह नोड पर चयनित सहमति नीति यहाँ प्रस्तुत की गई है।',
+		bn: 'ফ্লো নোডে নির্বাচিত সম্মতি নীতি এখানে প্রদর্শিত হয়।',
+		tr: 'Akış düğümünde seçilen onay politikası burada gösterilmiştir.',
+		sw: 'Sera ya idhini iliyochaguliwa kwenye node ya Mtiririko imeonyeshwa hapa.',
+		am: 'በ Flow node ላይ የተመረጠው የስምምነት ፖሊሲ እዚህ ቀርቧል.',
+		pl: 'Polityka zgody wybrana na węzle przepływu jest przedstawiona tutaj.'
 	},
 	'Security check': {
 		en: 'Security check',
@@ -477,7 +639,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'فحص الأمان',
 		it: 'Controllo di sicurezza',
 		th: 'การตรวจสอบความปลอดภัย',
-		vi: 'Kiểm tra bảo mật'
+		vi: 'Kiểm tra bảo mật',
+		hi: 'सुरक्षा जांच',
+		bn: 'নিরাপত্তা পরীক্ষা',
+		tr: 'Güvenlik kontrolü',
+		sw: 'Ukaguzi wa usalama',
+		am: 'የደህንነት ማረጋገጫ',
+		pl: 'Kontrola bezpieczeństwa'
 	},
 	'I am human': {
 		en: 'I am human',
@@ -494,7 +662,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'أنا إنسان',
 		it: 'Sono una persona',
 		th: 'ฉันเป็นมนุษย์',
-		vi: 'Tôi là con người'
+		vi: 'Tôi là con người',
+		hi: 'मैं मानव हूँ',
+		bn: 'আমি মানুষ',
+		tr: 'Ben insanım.',
+		sw: 'Mimi ni binadamu',
+		am: 'እኔ ሰው ነኝ',
+		pl: 'Jestem człowiekiem.'
 	},
 	Divider: {
 		en: 'Divider',
@@ -511,7 +685,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'فاصل',
 		it: 'Separatore',
 		th: 'เส้นคั่น',
-		vi: 'Dòng phân cách'
+		vi: 'Dòng phân cách',
+		hi: 'विभाजक',
+		bn: 'বিভাজক',
+		tr: 'Bölücü',
+		sw: 'Kigawanyiko',
+		am: 'አከፋፋይ',
+		pl: 'Podział'
 	},
 	'Layout row': {
 		en: 'Layout row',
@@ -528,7 +708,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'صف التخطيط',
 		it: 'Riga del layout',
 		th: 'แถวเค้าโครง',
-		vi: 'Hàng bố cục'
+		vi: 'Hàng bố cục',
+		hi: 'लेआउट पंक्ति',
+		bn: 'লেআউট সারি',
+		tr: 'Yapılandırma satırı',
+		sw: 'Layout mstari',
+		am: 'አቀማመጥ ረድፍ',
+		pl: 'Rzęd rozmiaru'
 	},
 	Heading: {
 		en: 'Heading',
@@ -545,7 +731,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'عنوان',
 		it: 'Titolo',
 		th: 'หัวเรื่อง',
-		vi: 'Tiêu đề'
+		vi: 'Tiêu đề',
+		hi: 'शीर्षक',
+		bn: 'শিরোনাম',
+		tr: 'Başlık',
+		sw: 'Kichwa',
+		am: 'አርእስቶች',
+		pl: 'Poniesienie'
 	},
 	Text: {
 		en: 'Text',
@@ -562,7 +754,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'نص',
 		it: 'Testo',
 		th: 'ข้อความ',
-		vi: 'Văn bản'
+		vi: 'Văn bản',
+		hi: 'पाठ',
+		bn: 'পাঠ্য',
+		tr: 'Metin',
+		sw: 'Maandishi',
+		am: 'ጽሑፍ',
+		pl: 'Tekst'
 	},
 	'Add helper text here.': {
 		en: 'Add helper text here.',
@@ -579,7 +777,13 @@ const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
 		ar: 'أضف نصًا توضيحيًا هنا.',
 		it: 'Aggiungi qui un testo di supporto.',
 		th: 'เพิ่มข้อความช่วยเหลือที่นี่',
-		vi: 'Thêm nội dung hướng dẫn tại đây.'
+		vi: 'Thêm nội dung hướng dẫn tại đây.',
+		hi: 'यहाँ सहायक संदेश जोड़ें।',
+		bn: 'এখানে সাহায্যকারী মেসেজ যোগ করুন।',
+		tr: 'Yardımcı mesajını buraya ekle.',
+		sw: 'Ongeza ujumbe wa msaidizi hapa.',
+		am: 'የእርዳታ መልዕክት እዚህ ይጨምሩ.',
+		pl: 'Dodaj pomocniczą wiadomość tutaj.'
 	}
 };
 

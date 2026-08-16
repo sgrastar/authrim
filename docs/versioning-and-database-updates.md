@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-07-23
+date: 2026-08-16
 description: 'Steps for preparing, testing, publishing, deploying, and verifying an Authrim release.'
 type: guide
 tags:
@@ -288,6 +288,69 @@ gh release create v0.4.0 \
 ```
 
 ## 10. Update production
+
+### 10.0 Understand the update coordinator
+
+The operator always starts one update through setup. Setup decides the internal execution path from
+the release manifest and the installed per-target schema evidence:
+
+| Release contents                           | Database work                                                                                   | Worker work                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Workers only                               | None                                                                                            | Deploy only the changed Workers and enabled UIs |
+| Database and Workers                       | Setup updates bootstrap-critical databases, then delegates Control-managed databases to Control | Deploy after every required database is ready   |
+| Database only, explicit advanced operation | Apply the database rollout and retain compatible Workers                                        | No Worker deployment                            |
+
+The normal user experience remains one update action. Setup publishes and pins the checksummed
+migration artifact before delegation. Control then owns the durable fan-out across tenant and shard
+databases, including batching, retries, resume state, and aggregate progress. Setup continues after
+Control reports `awaiting_setup`, deploys Workers, verifies readiness, and records completion.
+
+During a delegated rollout, Admin UI shows progress independently of the setup process. When the
+manifest declares `adminMutationMode: read_only`, Admin settings and other covered mutations are
+disabled and the Management API rejects equivalent writes. Read-only inspection, audit, logout,
+rollout status, and authorized recovery remain available. The restriction remains until the complete
+release—not only its database portion—is verified.
+
+For an intentionally decoupled schema rollout, the release manifest must opt in with an exact Worker
+version allow-list:
+
+```json
+{
+  "rollout": {
+    "databaseExecution": "setup_then_control",
+    "workerActivation": "after_required_databases",
+    "adminMutationMode": "read_only",
+    "databaseOnly": {
+      "compatibleWorkerVersions": ["1.0.0"]
+    }
+  }
+}
+```
+
+Its absence means database-only update is forbidden. Setup also verifies that every recorded Worker
+is at the installed product version. Run the advanced operation explicitly:
+
+```sh
+pnpm run setup update --env prod --database-only --yes
+```
+
+The Web setup screen exposes the same advanced action with a confirmation. On success, the schema is
+verified at the target release while Workers and `productVersion` remain unchanged; the ordinary full
+update remains available afterward. Exact versions are used deliberately—SemVer ranges or inferred
+compatibility are not accepted.
+
+Setup observes a handed-off rollout for a bounded interval. Reaching that observation limit returns a
+successful `inProgress` result rather than failing a healthy large fleet. Control continues the pinned
+operation, and setup or Admin UI can resume observation by operation ID. If a target becomes blocked,
+a platform administrator can retry that specific target from Admin UI; both Management and Control
+write audit evidence, and the mutation fence allows only this narrow recovery endpoint.
+
+For a major release, the published cumulative SQL may be reorganized into a new clean baseline for
+fresh 2.x installations. That baseline is not the 1.x-to-2.x upgrade program. Existing 1.x databases
+must use an immutable, explicitly tested bridge path (normally expand, migrate/backfill, switch
+compatible Workers, verify, then contract). The manifest's `minimumProductVersion` declares the oldest
+directly supported source. Older installations must update through a supported intermediate release
+or use a separately documented export/import procedure.
 
 ### 10.1 Production prechecks
 

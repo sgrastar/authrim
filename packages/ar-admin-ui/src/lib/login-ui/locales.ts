@@ -13,7 +13,13 @@ export const LOGIN_UI_LOCALE_OPTIONS = [
 	{ code: 'ar', label: 'Arabic' },
 	{ code: 'it', label: 'Italian' },
 	{ code: 'th', label: 'Thai' },
-	{ code: 'vi', label: 'Vietnamese' }
+	{ code: 'vi', label: 'Vietnamese' },
+	{ code: 'hi', label: 'Hindi' },
+	{ code: 'bn', label: 'Bengali' },
+	{ code: 'tr', label: 'Turkish' },
+	{ code: 'sw', label: 'Swahili' },
+	{ code: 'am', label: 'Amharic' },
+	{ code: 'pl', label: 'Polish' }
 ] as const;
 
 export type LoginUILocale = (typeof LOGIN_UI_LOCALE_OPTIONS)[number]['code'];
@@ -35,7 +41,13 @@ export const DEFAULT_LOGIN_UI_TAGLINES: Record<LoginUILocale, string> = {
 	ar: 'الهوية والوصول في كل مكان.',
 	it: 'Identità e accesso ovunque.',
 	th: 'อัตลักษณ์และการเข้าถึงได้จากทุกที่',
-	vi: 'Danh tính và quyền truy cập ở mọi nơi.'
+	vi: 'Danh tính và quyền truy cập ở mọi nơi.',
+	hi: 'हर जगह पहचान और पहुँच।',
+	bn: 'সর্বত্র পরিচয় ও প্রবেশাধিকার।',
+	tr: 'Her yerde kimlik ve erişim.',
+	sw: 'Utambulisho na ufikiaji kila mahali.',
+	am: 'ማንነት እና መዳረሻ በሁሉም ቦታ።',
+	pl: 'Tożsamość i dostęp wszędzie.'
 };
 
 const AUTHRIM_FOOTER_LINK = '<a href="https://authrim.com/">Authrim</a>';
@@ -55,7 +67,13 @@ export const DEFAULT_LOGIN_UI_FOOTER_TEXTS: Record<LoginUILocale, string> = {
 	ar: `مدعوم من ${AUTHRIM_FOOTER_LINK}`,
 	it: `Basato su ${AUTHRIM_FOOTER_LINK}`,
 	th: `ขับเคลื่อนโดย ${AUTHRIM_FOOTER_LINK}`,
-	vi: `Được cung cấp bởi ${AUTHRIM_FOOTER_LINK}`
+	vi: `Được cung cấp bởi ${AUTHRIM_FOOTER_LINK}`,
+	hi: `${AUTHRIM_FOOTER_LINK} द्वारा संचालित`,
+	bn: `${AUTHRIM_FOOTER_LINK} দ্বারা পরিচালিত`,
+	tr: `${AUTHRIM_FOOTER_LINK} tarafından desteklenmektedir`,
+	sw: `Inaendeshwa na ${AUTHRIM_FOOTER_LINK}`,
+	am: `በ${AUTHRIM_FOOTER_LINK} የተጎላበተ`,
+	pl: `Obsługiwane przez ${AUTHRIM_FOOTER_LINK}`
 };
 
 export type LoginUIPageTitleDefaults = {
@@ -123,7 +141,29 @@ export const DEFAULT_LOGIN_UI_PAGE_TITLES: Record<LoginUILocale, LoginUIPageTitl
 		loginTitle: 'Chào mừng bạn trở lại',
 		registrationTitle: 'Tạo tài khoản',
 		accountTitle: 'Tài khoản'
-	}
+	},
+	hi: {
+		loginTitle: 'वापसी पर स्वागत है',
+		registrationTitle: 'अपना खाता बनाएँ',
+		accountTitle: 'खाता'
+	},
+	bn: {
+		loginTitle: 'আবার স্বাগতম',
+		registrationTitle: 'আপনার অ্যাকাউন্ট তৈরি করুন',
+		accountTitle: 'অ্যাকাউন্ট'
+	},
+	tr: {
+		loginTitle: 'Tekrar hoş geldiniz',
+		registrationTitle: 'Hesabınızı oluşturun',
+		accountTitle: 'Hesap'
+	},
+	sw: {
+		loginTitle: 'Karibu tena',
+		registrationTitle: 'Fungua akaunti yako',
+		accountTitle: 'Akaunti'
+	},
+	am: { loginTitle: 'እንኳን ደህና መጡ', registrationTitle: 'መለያዎን ይፍጠሩ', accountTitle: 'መለያ' },
+	pl: { loginTitle: 'Witamy ponownie', registrationTitle: 'Utwórz konto', accountTitle: 'Konto' }
 };
 
 const LEGACY_DEFAULT_LOGIN_UI_LOCALES: LoginUILocale[] = [

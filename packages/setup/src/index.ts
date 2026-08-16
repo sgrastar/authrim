@@ -117,6 +117,10 @@ program
   .option('--skip-build', 'Skip building packages')
   .option('--allow-draft-manifest', 'Allow a development draft migration manifest')
   .option(
+    '--database-only',
+    'Apply the schema update without deploying Workers when the manifest explicitly allows it'
+  )
+  .option(
     '--external-schema-ready',
     'Confirm required external database migrations were applied with operator-managed tooling'
   )

@@ -461,7 +461,9 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     const shouldValidateTenantExists =
       isMultiTenantEnabled(c.env) &&
       !!tenantId &&
-      (requestClass === 'tenant_scoped_admin' || tenantResult.success);
+      (requestClass === 'tenant_scoped_admin' ||
+        ((requestClass !== 'platform_admin' && requestClass !== 'tenant_inventory_admin') &&
+          tenantResult.success));
 
     let tenantMetadataContext: TenantMetadataContext | undefined;
     if (shouldResolveTenantDataContexts(requestClass, c.req.path)) {

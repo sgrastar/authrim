@@ -13,7 +13,13 @@ export const LOGIN_UI_LOCALES = [
 	'ar',
 	'it',
 	'th',
-	'vi'
+	'vi',
+	'hi',
+	'bn',
+	'tr',
+	'sw',
+	'am',
+	'pl'
 ] as const;
 
 export type LoginUILocale = (typeof LOGIN_UI_LOCALES)[number];
@@ -33,7 +39,13 @@ export const LOGIN_UI_LOCALE_LABELS: Record<LoginUILocale, string> = {
 	ar: 'العربية',
 	it: 'Italiano',
 	th: 'ไทย',
-	vi: 'Tiếng Việt'
+	vi: 'Tiếng Việt',
+	hi: 'हिन्दी',
+	bn: 'বাংলা',
+	tr: 'Türkçe',
+	sw: 'Kiswahili',
+	am: 'አማርኛ',
+	pl: 'Polski'
 };
 
 const RTL_LOGIN_UI_LOCALES = new Set<LoginUILocale>(['ar']);

@@ -426,6 +426,7 @@ function buildReleaseManifest(input: {
       formatVersion: 1,
       productVersion: input.version,
       ...(input.minimumVersion ? { minimumProductVersion: input.minimumVersion } : {}),
+      ...(input.current.rollout ? { rollout: input.current.rollout } : {}),
       streams,
     },
     operations,
@@ -563,14 +564,15 @@ export function runReleaseMigrationsCli(): void {
     validatePublishedReleaseMigrationManifests(migrationsRoot);
     const draftPath = join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
     if (!existsSync(draftPath)) throw new Error(`Draft manifest is missing: ${draftPath}`);
-    const previous = findLatestReleaseMigrationManifest(migrationsRoot)?.manifest;
-    assertProductVersionNotBehindPublished(version, previous?.productVersion);
+    const publishedPrevious = findLatestReleaseMigrationManifest(migrationsRoot)?.manifest;
+    assertProductVersionNotBehindPublished(version, publishedPrevious?.productVersion);
+    const actual = readReleaseMigrationManifest(draftPath);
+    const previous = actual.productVersion === version ? actual : publishedPrevious;
     const expected = generateReleaseMigrationManifest({
       migrationsRoot,
       productVersion: version,
       previousManifest: previous,
     });
-    const actual = readReleaseMigrationManifest(draftPath);
     const publishedSameVersionPath = join(migrationsRoot, 'releases', `${version}.json`);
     if (existsSync(publishedSameVersionPath)) {
       const published = readReleaseMigrationManifest(publishedSameVersionPath);

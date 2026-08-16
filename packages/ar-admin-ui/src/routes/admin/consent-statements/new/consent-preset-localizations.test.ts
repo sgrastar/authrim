@@ -17,7 +17,13 @@ const REQUIRED_LANGUAGES = [
 	'ar',
 	'it',
 	'th',
-	'vi'
+	'vi',
+	'hi',
+	'bn',
+	'tr',
+	'sw',
+	'am',
+	'pl'
 ].sort();
 
 const PRESET_LOCALIZATION_FUNCTIONS = [
@@ -106,20 +112,23 @@ describe('consent preset localizations', () => {
 		expect(languages).toEqual(REQUIRED_LANGUAGES);
 	});
 
-	it.each(PRESET_LOCALIZATION_FUNCTIONS)('%s supplies copy for all fifteen languages', (name) => {
-		const fn = findFunction(name);
-		expect(fn, name).toBeDefined();
-		if (!fn) return;
-		const maps = returnedLanguageMaps(fn);
-		expect(maps.length, name).toBeGreaterThan(0);
-		for (const map of maps) {
-			const languages = map.properties
-				.map(propertyName)
-				.filter((language): language is string => Boolean(language))
-				.sort();
-			expect(languages, name).toEqual(REQUIRED_LANGUAGES);
+	it.each(PRESET_LOCALIZATION_FUNCTIONS)(
+		'%s supplies copy for all twenty-one languages',
+		(name) => {
+			const fn = findFunction(name);
+			expect(fn, name).toBeDefined();
+			if (!fn) return;
+			const maps = returnedLanguageMaps(fn);
+			expect(maps.length, name).toBeGreaterThan(0);
+			for (const map of maps) {
+				const languages = map.properties
+					.map(propertyName)
+					.filter((language): language is string => Boolean(language))
+					.sort();
+				expect(languages, name).toEqual(REQUIRED_LANGUAGES);
+			}
 		}
-	});
+	);
 
 	it('previews Arabic consent copy in RTL direction', () => {
 		expect(componentSource).toContain("dir={selectedLanguage === 'ar' ? 'rtl' : 'ltr'}");

@@ -161,6 +161,38 @@ describe('apiProxy', () => {
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
+	it('reports an idle release rollout from the loopback Admin UI dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('http://localhost:5173/api/admin/platform/control-plane/release-rollout'),
+			request: new Request(
+				'http://localhost:5173/api/admin/platform/control-plane/release-rollout'
+			),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			rollout: {
+				operationId: null,
+				sourceVersion: null,
+				targetVersion: null,
+				phase: 'idle',
+				completedTargets: 0,
+				totalTargets: 0,
+				adminMutationMode: 'available',
+				lastErrorCode: null,
+				updatedAt: null,
+				blockedTargetCount: 0,
+				blockedTargets: []
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('serves strict capacity preview and request fixtures from the loopback dev mock', async () => {
 		const resolve = vi.fn(async () => new Response('resolved'));
 		const request = async (

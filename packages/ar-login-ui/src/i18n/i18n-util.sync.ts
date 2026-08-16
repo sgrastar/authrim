@@ -5,35 +5,47 @@ import { initFormatters } from './formatters'
 import type { Locales, Translations } from './i18n-types'
 import { loadedFormatters, loadedLocales, locales } from './i18n-util'
 
+import am from './am'
 import ar from './ar'
+import bn from './bn'
 import de from './de'
 import en from './en'
 import es from './es'
 import fr from './fr'
+import hi from './hi'
 import id from './id'
 import it from './it'
 import ja from './ja'
 import ko from './ko'
+import pl from './pl'
 import pt from './pt'
 import ru from './ru'
+import sw from './sw'
 import th from './th'
+import tr from './tr'
 import vi from './vi'
 import zh_CN from './zh-CN'
 import zh_TW from './zh-TW'
 
 const localeTranslations = {
+	am,
 	ar,
+	bn,
 	de,
 	en,
 	es,
 	fr,
+	hi,
 	id,
 	it,
 	ja,
 	ko,
+	pl,
 	pt,
 	ru,
+	sw,
 	th,
+	tr,
 	vi,
 	'zh-CN': zh_CN,
 	'zh-TW': zh_TW,

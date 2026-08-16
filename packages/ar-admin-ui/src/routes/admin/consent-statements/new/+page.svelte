@@ -46,7 +46,13 @@
 		| 'ar'
 		| 'it'
 		| 'th'
-		| 'vi';
+		| 'vi'
+		| 'hi'
+		| 'bn'
+		| 'tr'
+		| 'sw'
+		| 'am'
+		| 'pl';
 	type ContentLink = {
 		id: string;
 		href: string;
@@ -77,7 +83,13 @@
 		{ code: 'ar', label: 'Arabic (ar)' },
 		{ code: 'it', label: 'Italian (it)' },
 		{ code: 'th', label: 'Thai (th)' },
-		{ code: 'vi', label: 'Vietnamese (vi)' }
+		{ code: 'vi', label: 'Vietnamese (vi)' },
+		{ code: 'hi', label: 'Hindi (hi)' },
+		{ code: 'bn', label: 'Bengali (bn)' },
+		{ code: 'tr', label: 'Turkish (tr)' },
+		{ code: 'sw', label: 'Swahili (sw)' },
+		{ code: 'am', label: 'Amharic (am)' },
+		{ code: 'pl', label: 'Polish (pl)' }
 	];
 
 	const templates: Array<{
@@ -890,7 +902,13 @@
 			ar: 'لقد قرأت %link1% وأوافق عليها.',
 			it: 'Ho letto e accetto i %link1%.',
 			th: 'ฉันได้อ่านและยอมรับ%link1%แล้ว',
-			vi: 'Tôi đã đọc và đồng ý với %link1%.'
+			vi: 'Tôi đã đọc và đồng ý với %link1%.',
+			hi: 'मैंने %link1% पढ़ लिया है और उससे सहमत हूँ।',
+			bn: 'আমি %link1% পড়েছি এবং এতে সম্মত।',
+			tr: '%link1% belgesini okudum ve kabul ediyorum.',
+			sw: 'Nimesoma na kukubaliana na %link1%.',
+			am: '%link1%ን አንብቤ ተስማምቻለሁ።',
+			pl: 'Zapoznałem(-am) się z dokumentem %link1% i akceptuję jego treść.'
 		};
 	}
 
@@ -910,7 +928,13 @@
 			ar: 'لقد قرأت %link1% وأوافق عليها.',
 			it: 'Ho letto e accetto l’%link1%.',
 			th: 'ฉันได้อ่านและยอมรับ%link1%แล้ว',
-			vi: 'Tôi đã đọc và đồng ý với %link1%.'
+			vi: 'Tôi đã đọc và đồng ý với %link1%.',
+			hi: 'मैंने %link1% पढ़ लिया है और उससे सहमत हूँ।',
+			bn: 'আমি %link1% পড়েছি এবং এতে সম্মত।',
+			tr: '%link1% belgesini okudum ve kabul ediyorum.',
+			sw: 'Nimesoma na kukubaliana na %link1%.',
+			am: '%link1%ን አንብቤ ተስማምቻለሁ።',
+			pl: 'Zapoznałem(-am) się z dokumentem %link1% i akceptuję jego treść.'
 		};
 	}
 
@@ -930,7 +954,13 @@
 			ar: 'اختر كيفية التعامل مع إرسال السمات المطلوبة إلى هذه الخدمة.',
 			it: 'Scegli come gestire il rilascio degli attributi richiesti a questo servizio.',
 			th: 'เลือกวิธีจัดการการส่งแอตทริบิวต์ที่บริการนี้ร้องขอ',
-			vi: 'Chọn cách xử lý việc cung cấp các thuộc tính mà dịch vụ này yêu cầu.'
+			vi: 'Chọn cách xử lý việc cung cấp các thuộc tính mà dịch vụ này yêu cầu.',
+			hi: 'इस सेवा के लिए अनुरोधित विशेषता रिलीज़ को संभालने का तरीका चुनें।',
+			bn: 'এই সার্ভিসের জন্য অনুরোধ করা অ্যাট্রিবিউট রিলিজ কিভাবে পরিচালনা করবেন তা নির্বাচন করুন।',
+			tr: 'Bu hizmet için istenen özelliği serbest bırakmayı nasıl ele alacağınızı seçin.',
+			sw: 'Chagua jinsi ya kushughulikia kutolewa sifa aliuliza kwa huduma hii.',
+			am: 'ለዚህ አገልግሎት የተጠየቀውን የአትሪቢዩት ልቀት እንዴት ማስተናገድ እንደሚቻል ይምረጡ።',
+			pl: 'Wybierz sposób zarządzania żądanym wypuszczeniem atrybutów dla tej usługi.'
 		};
 	}
 
@@ -991,7 +1021,13 @@
 				ar: 'أوافق',
 				it: 'Accetto',
 				th: 'ยอมรับ',
-				vi: 'Tôi đồng ý'
+				vi: 'Tôi đồng ý',
+				hi: 'मैं सहमत हूँ',
+				bn: 'আমি একমত',
+				tr: 'Katılıyorum.',
+				sw: 'Nakubaliana',
+				am: 'እስማማለሁ',
+				pl: 'Zgadzam się.'
 			};
 		}
 
@@ -1010,7 +1046,13 @@
 			ar: `الخيار ${index}`,
 			it: `Opzione ${index}`,
 			th: `ตัวเลือก ${index}`,
-			vi: `Tùy chọn ${index}`
+			vi: `Tùy chọn ${index}`,
+			hi: `विकल्प ${index}`,
+			bn: `বিকল্প ${index}`,
+			tr: `Seçenek ${index}`,
+			sw: `Chaguo ${index}`,
+			am: `አማራጭ ${index}`,
+			pl: `Opcja ${index}`
 		};
 	}
 
@@ -1030,7 +1072,13 @@
 			ar: 'السماح لهذه المرة فقط',
 			it: 'Consenti solo questa volta',
 			th: 'อนุญาตเฉพาะครั้งนี้',
-			vi: 'Chỉ cho phép lần này'
+			vi: 'Chỉ cho phép lần này',
+			hi: 'केवल इस बार अनुमति दें',
+			bn: 'এইবার শুধু অনুমতি দিন',
+			tr: 'Sadece bu sefer izin ver.',
+			sw: 'Kuruhusu mara hii tu',
+			am: 'በዚህ ጊዜ ብቻ ይሁን',
+			pl: 'Pozwólcie tym razem tylko'
 		};
 	}
 
@@ -1050,7 +1098,13 @@
 			ar: 'السماح بإرسال هذه السمات لعملية تسجيل الدخول الحالية فقط.',
 			it: 'Consenti il rilascio di questi attributi solo per l’accesso corrente.',
 			th: 'อนุญาตให้ส่งแอตทริบิวต์เหล่านี้เฉพาะการเข้าสู่ระบบครั้งนี้',
-			vi: 'Chỉ cho phép cung cấp các thuộc tính này trong lần đăng nhập hiện tại.'
+			vi: 'Chỉ cho phép cung cấp các thuộc tính này trong lần đăng nhập hiện tại.',
+			hi: 'इस विशेषता को केवल वर्तमान साइन-इन के लिए रिलीज़ करने की अनुमति दें।',
+			bn: 'এই অ্যাট্রিবিউটটি শুধুমাত্র বর্তমান সাইন-ইন এর জন্য প্রকাশ করার অনুমতি দিন।',
+			tr: 'Bu özelliği yalnızca mevcut giriş için serbest bırakın.',
+			sw: 'Ruhusu sifa hii kutolewa tu kwa sasa kuingia.',
+			am: 'ይህ ባህሪ አሁን ላለው መግቢያ ብቻ እንዲለቀቅ ይፍቀዱ ።',
+			pl: 'Pozwól uwolnić ten atrybut tylko w przypadku obecnego logowania.'
 		};
 	}
 
@@ -1070,7 +1124,13 @@
 			ar: 'السماح دائمًا لهذه الخدمة',
 			it: 'Consenti sempre per questo servizio',
 			th: 'อนุญาตสำหรับบริการนี้เสมอ',
-			vi: 'Luôn cho phép đối với dịch vụ này'
+			vi: 'Luôn cho phép đối với dịch vụ này',
+			hi: 'हमेशा इस सेवा के लिए अनुमति दें',
+			bn: 'সর্বদা এই সেবা করার অনুমতি দিন',
+			tr: 'Bu hizmete her zaman izin verin .',
+			sw: 'Daima kuruhusu huduma hii',
+			am: 'ሁሌም ይህንን አገልግሎት ይፍቀዱ',
+			pl: 'Zawsze pozwalaj na tę obsługę'
 		};
 	}
 
@@ -1090,7 +1150,13 @@
 			ar: 'تذكّر هذا الاختيار لعمليات تسجيل الدخول القادمة إلى هذه الخدمة.',
 			it: 'Ricorda questa scelta per i prossimi accessi a questo servizio.',
 			th: 'จดจำตัวเลือกนี้สำหรับการเข้าสู่ระบบบริการนี้ในครั้งต่อไป',
-			vi: 'Ghi nhớ lựa chọn này cho những lần đăng nhập sau vào dịch vụ này.'
+			vi: 'Ghi nhớ lựa chọn này cho những lần đăng nhập sau vào dịch vụ này.',
+			hi: 'इस सेवा के लिए भविष्य के साइन-इन के लिए इस विकल्प को याद रखें।',
+			bn: 'ভবিষ্যতে এই পরিষেবাতে সাইন ইন করার জন্য এই পছন্দটি মনে রাখবেন।',
+			tr: 'Bu hizmete gelecekte kaydolmak için bu seçeneği hatırlayın.',
+			sw: 'Kumbuka uchaguzi huu kwa ajili ya kumbukumbu ya baadaye kwa huduma hii.',
+			am: 'ለወደፊቱ በዚህ አገልግሎት ለመመዝገብ ይህንን ምርጫ አስታውስ።',
+			pl: 'Pamiętaj o tym wyborze dla przyszłych zapisów do tej usługi.'
 		};
 	}
 
@@ -1110,7 +1176,13 @@
 			ar: 'عدم السماح',
 			it: 'Non consentire',
 			th: 'ไม่อนุญาต',
-			vi: 'Không cho phép'
+			vi: 'Không cho phép',
+			hi: 'अनुमति न दें',
+			bn: 'অনুমতি দেবেন না',
+			tr: 'İzin vermeyin.',
+			sw: 'Usiruhusu',
+			am: 'አትፍቀዱ',
+			pl: 'Nie pozwalaj'
 		};
 	}
 
@@ -1130,7 +1202,13 @@
 			ar: 'عدم إرسال هذه السمات.',
 			it: 'Non rilasciare questi attributi.',
 			th: 'ไม่ส่งแอตทริบิวต์เหล่านี้',
-			vi: 'Không cung cấp các thuộc tính này.'
+			vi: 'Không cung cấp các thuộc tính này.',
+			hi: 'इन गुणों को मुक्त न करें।',
+			bn: 'এই বৈশিষ্ট্যগুলো প্রকাশ করবেন না।',
+			tr: 'Bu özellikleri serbest bırakmayın.',
+			sw: 'Usiondoe sifa hizo.',
+			am: 'እነዚህን ባሕርያት አትለቅቁ።',
+			pl: 'Nie uwalniaj tych atrybutów.'
 		};
 	}
 
@@ -1150,7 +1228,13 @@
 			ar: 'مشاركة جميع المعلومات المطلوبة',
 			it: 'Condividi tutte le informazioni richieste',
 			th: 'เปิดเผยข้อมูลทั้งหมดที่ร้องขอ',
-			vi: 'Cung cấp toàn bộ thông tin được yêu cầu'
+			vi: 'Cung cấp toàn bộ thông tin được yêu cầu',
+			hi: 'सभी अनुरोधित जानकारी जारी करें',
+			bn: 'সমস্ত অনুরোধ করা তথ্য প্রকাশ করুন',
+			tr: 'İstediğiniz tüm bilgileri açıklayın',
+			sw: 'Kutoa taarifa zote zinazohitajika',
+			am: 'የተጠየቁትን መረጃዎች ሁሉ ያቅርቡ',
+			pl: 'Ujawnienie wszystkich wymaganych informacji'
 		};
 	}
 
@@ -1170,7 +1254,13 @@
 			ar: 'مشاركة جميع الحقول التي تطلبها هذه الخدمة.',
 			it: 'Condividi tutti i campi richiesti da questo servizio.',
 			th: 'เปิดเผยช่องข้อมูลทั้งหมดที่บริการนี้ร้องขอ',
-			vi: 'Cung cấp tất cả các trường mà dịch vụ này yêu cầu.'
+			vi: 'Cung cấp tất cả các trường mà dịch vụ này yêu cầu.',
+			hi: 'इस सेवा द्वारा अनुरोधित सभी फ़ील्ड जारी करें।',
+			bn: 'এই পরিষেবা দ্বারা অনুরোধ করা সমস্ত ক্ষেত্র মুছে ফেলুন।',
+			tr: 'Bu hizmet tarafından talep edilen tüm alanları serbest bırakın.',
+			sw: 'Kufungua mashamba yote yaliyoombwa na huduma hii.',
+			am: 'በዚህ አገልግሎት የተጠየቁትን መስኮች ሁሉ መልቀቅ።',
+			pl: 'Uwolnij wszystkie pola wymagane przez tę usługę.'
 		};
 	}
 
@@ -1190,7 +1280,13 @@
 			ar: 'مشاركة الحد الأدنى من المعلومات فقط',
 			it: 'Condividi solo le informazioni minime',
 			th: 'เปิดเผยเฉพาะข้อมูลขั้นต่ำ',
-			vi: 'Chỉ cung cấp thông tin tối thiểu'
+			vi: 'Chỉ cung cấp thông tin tối thiểu',
+			hi: 'केवल न्यूनतम जानकारी जारी करें',
+			bn: 'শুধুমাত্র ন্যূনতম তথ্য প্রকাশ করুন',
+			tr: 'Sadece en az bilgiyi açıklayın',
+			sw: 'Taarifa ndogo tu za kutolewa',
+			am: 'አነስተኛ መረጃዎችን ብቻ ይለጥፉ',
+			pl: 'Ujawnić tylko minimalne informacje'
 		};
 	}
 
@@ -1210,7 +1306,13 @@
 			ar: 'مشاركة الحد الأدنى من الحقول اللازمة للمتابعة.',
 			it: 'Condividi solo i campi indispensabili per continuare.',
 			th: 'เปิดเผยเฉพาะช่องข้อมูลขั้นต่ำที่จำเป็นต่อการดำเนินการต่อ',
-			vi: 'Chỉ cung cấp các trường tối thiểu cần thiết để tiếp tục.'
+			vi: 'Chỉ cung cấp các trường tối thiểu cần thiết để tiếp tục.',
+			hi: 'आगे बढ़ने के लिए केवल न्यूनतम फ़ील्ड जारी करें।',
+			bn: 'চালিয়ে যাওয়ার জন্য কেবলমাত্র ন্যূনতম ক্ষেত্রগুলি মুছে ফেলুন।',
+			tr: 'Sadece devam etmek için gerekli olan minimum alanları serbest bırakın.',
+			sw: 'Kufungua tu maeneo ya chini required kuendelea.',
+			am: 'ለመቀጠል የሚያስፈልጉትን ዝቅተኛ መስኮች ብቻ ይለቁ።',
+			pl: 'Uwolnij tylko minimalne pola niezbędne do kontynuacji.'
 		};
 	}
 
@@ -1230,7 +1332,13 @@
 			ar: 'عدم مشاركة المعلومات',
 			it: 'Non condividere informazioni',
 			th: 'ไม่เปิดเผยข้อมูล',
-			vi: 'Không cung cấp thông tin'
+			vi: 'Không cung cấp thông tin',
+			hi: 'जानकारी जारी न करें',
+			bn: 'তথ্য প্রকাশ করবেন না',
+			tr: 'Bilgiyi yayınlamayın',
+			sw: 'Usitoe habari',
+			am: 'መረጃ አይለቁ',
+			pl: 'Nie ujawniaj informacji'
 		};
 	}
 
@@ -1250,7 +1358,13 @@
 			ar: 'عدم مشاركة المعلومات الاختيارية.',
 			it: 'Non condividere le informazioni facoltative.',
 			th: 'ไม่เปิดเผยข้อมูลที่ไม่บังคับ',
-			vi: 'Không cung cấp thông tin không bắt buộc.'
+			vi: 'Không cung cấp thông tin không bắt buộc.',
+			hi: 'वैकल्पिक जानकारी जारी न करें।',
+			bn: 'ঐচ্ছিক তথ্য প্রকাশ করবেন না।',
+			tr: 'Önemli bilgileri yayınlamayın.',
+			sw: 'Usitoe habari ya hiari.',
+			am: 'አማራጭ መረጃዎችን አይለቅቁ።',
+			pl: 'Nie ujawniaj opcjonalnych informacji.'
 		};
 	}
 
@@ -1276,7 +1390,13 @@
 							ar: 'أوافق',
 							it: 'Accetto',
 							th: 'ยอมรับ',
-							vi: 'Tôi đồng ý'
+							vi: 'Tôi đồng ý',
+							hi: 'मैं सहमत हूँ',
+							bn: 'আমি একমত',
+							tr: 'Katılıyorum.',
+							sw: 'Nakubaliana',
+							am: 'እስማማለሁ',
+							pl: 'Zgadzam się.'
 						},
 						termsAgreementText()
 					)
@@ -1301,7 +1421,13 @@
 							ar: 'أوافق',
 							it: 'Acconsento',
 							th: 'ยินยอม',
-							vi: 'Tôi đồng ý'
+							vi: 'Tôi đồng ý',
+							hi: 'मैं सहमत हूँ',
+							bn: 'আমি সম্মত',
+							tr: 'Kabul ediyorum.',
+							sw: 'Ninakubali',
+							am: 'እስማማለሁ',
+							pl: 'Zgadzam się .'
 						},
 						privacyAgreementText()
 					)
@@ -1385,7 +1511,13 @@
 							ar: 'شروط الخدمة',
 							it: 'Termini di servizio',
 							th: 'ข้อกำหนดการให้บริการ',
-							vi: 'Điều khoản dịch vụ'
+							vi: 'Điều khoản dịch vụ',
+							hi: 'सेवा की शर्तें',
+							bn: 'পরিষেবার শর্তাবলী',
+							tr: 'Hizmet Şartları',
+							sw: 'Masharti ya Huduma',
+							am: 'የአገልግሎት ውል',
+							pl: 'Warunki użytkowania'
 						}
 					}
 				];
@@ -1409,7 +1541,13 @@
 							ar: 'سياسة الخصوصية',
 							it: 'Informativa sulla privacy',
 							th: 'นโยบายความเป็นส่วนตัว',
-							vi: 'Chính sách quyền riêng tư'
+							vi: 'Chính sách quyền riêng tư',
+							hi: 'गोपनीयता नीति',
+							bn: 'গোপনীয়তা নীতি',
+							tr: 'Gizlilik Politikası',
+							sw: 'Sera ya faragha',
+							am: 'የግላዊነት ፖሊሲ',
+							pl: 'Polityka prywatności'
 						}
 					}
 				];
@@ -1703,6 +1841,18 @@
 				return 'ผู้ใช้ที่เข้าสู่ระบบ';
 			case 'vi':
 				return 'người dùng đã đăng nhập';
+			case 'hi':
+				return 'साइन इन किया हुआ उपयोगकर्ता';
+			case 'bn':
+				return 'সাইন ইন করা ব্যবহারকারী';
+			case 'tr':
+				return 'oturum açmış kullanıcı';
+			case 'sw':
+				return 'mtumiaji aliyeingia';
+			case 'am':
+				return 'የገባው ተጠቃሚ';
+			case 'pl':
+				return 'zalogowany użytkownik';
 			case 'en':
 			default:
 				return 'the signed-in subject';

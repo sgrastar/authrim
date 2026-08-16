@@ -6,7 +6,7 @@ import {
 } from './screen-localizations';
 
 describe('screen localizations', () => {
-	it('uses the same fifteen-language contract as Login UI', () => {
+	it('uses the same twenty-one-language contract as Login UI', () => {
 		expect(SCREEN_LOCALIZATION_LANGUAGES).toEqual([
 			'en',
 			'ja',
@@ -22,7 +22,13 @@ describe('screen localizations', () => {
 			'ar',
 			'it',
 			'th',
-			'vi'
+			'vi',
+			'hi',
+			'bn',
+			'tr',
+			'sw',
+			'am',
+			'pl'
 		]);
 	});
 
@@ -30,7 +36,13 @@ describe('screen localizations', () => {
 		['ar', 'تسجيل الدخول باستخدام مفتاح المرور'],
 		['it', 'Accedi con una passkey'],
 		['th', 'เข้าสู่ระบบด้วย Passkey'],
-		['vi', 'Đăng nhập bằng Passkey']
+		['vi', 'Đăng nhập bằng Passkey'],
+		['hi', 'Passkey से साइन इन करें'],
+		['bn', 'Passkey দিয়ে সাইন ইন করুন'],
+		['tr', 'Passkey ile giriş yap'],
+		['sw', 'Ingia na Passkey'],
+		['am', 'በPasskey ይግቡ'],
+		['pl', 'Zaloguj się za pomocą Passkey']
 	] as const)('localizes built-in screen copy in %s', (language, expected) => {
 		expect(localizeDefaultScreenText('Sign in with Passkey', language)).toBe(expected);
 	});

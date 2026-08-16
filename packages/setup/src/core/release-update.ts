@@ -29,7 +29,7 @@ function streamFiles(
   return new Map((stream?.files ?? []).map((file) => [file.path, file.checksum]));
 }
 
-function streamChangedFiles(
+export function releaseMigrationStreamChangedFiles(
   targetManifest: ReleaseMigrationManifest,
   currentManifest: ReleaseMigrationManifest | undefined,
   streamId: string | null
@@ -65,13 +65,14 @@ export function buildReleaseSchemaUpdatePlan(input: {
     const targetStream = target.streamId
       ? input.targetManifest.streams.find((stream) => stream.id === target.streamId)
       : undefined;
-    const changedFiles = streamChangedFiles(
+    const changedFiles = releaseMigrationStreamChangedFiles(
       input.targetManifest,
       targetCurrentManifest,
       target.streamId
     );
     const missingStream = !target.streamId || !targetStream;
-    const requiresAction = target.driver === 'd1' || missingStream || changedFiles.length > 0;
+    const requiresAction =
+      missingStream || targetCurrentManifest === undefined || changedFiles.length > 0;
     const blockedReason = missingStream
       ? target.streamId
         ? `release_migration_stream_not_found:${target.streamId}`
@@ -92,6 +93,19 @@ export function buildReleaseSchemaUpdatePlan(input: {
     ),
     blockedTargets: targets.filter((plan) => Boolean(plan.blockedReason)),
   };
+}
+
+const CONTROL_MANAGED_RELEASE_STREAMS = ['d1-core', 'd1-pii', 'd1-lookup'] as const;
+
+export function getControlManagedReleaseStreamIds(input: {
+  targetManifest: ReleaseMigrationManifest;
+  currentManifest?: ReleaseMigrationManifest;
+}): Array<(typeof CONTROL_MANAGED_RELEASE_STREAMS)[number]> {
+  return CONTROL_MANAGED_RELEASE_STREAMS.filter(
+    (streamId) =>
+      releaseMigrationStreamChangedFiles(input.targetManifest, input.currentManifest, streamId)
+        .length > 0
+  );
 }
 
 export interface ReleaseSchemaTargetResult {

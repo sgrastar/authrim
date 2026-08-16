@@ -10,6 +10,7 @@ import {
   type ControlProvisioningOperationCancelRequest,
   type ControlProvisioningOperationRestoreRequest,
   type ControlProvisioningOperationRetryRequest,
+  type ControlReleaseRolloutRetryTargetRequest,
   type ControlShardCleanupApprovalRequest,
   type ControlShardCleanupRetryRequest,
   type ControlShardQuarantineRequest,
@@ -79,6 +80,7 @@ import {
   advanceInitialBootstrap,
   releaseInitialBootstrapAcceleration,
 } from './bootstrap-accelerator';
+import { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
 
 function service(env: ControlEnv): ControlService {
   return new ControlService({
@@ -89,7 +91,7 @@ function service(env: ControlEnv): ControlService {
 }
 
 const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
 
 async function rpcResult<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -218,6 +220,32 @@ function provisioningOperationRetry(input: unknown): ControlProvisioningOperatio
   return {
     operationId: provisioningOperationId(value.operationId),
     stepKey: value.stepKey,
+    requestedById: value.requestedById,
+    reasonCode: value.reasonCode,
+    idempotencyKey: value.idempotencyKey,
+  };
+}
+
+function releaseRolloutRetryTarget(input: unknown): ControlReleaseRolloutRetryTargetRequest {
+  const value = exactInput(
+    input,
+    ['operationId', 'targetId', 'requestedById', 'reasonCode', 'idempotencyKey'],
+    'invalid_release_rollout_retry_request'
+  );
+  if (
+    value.reasonCode !== 'operator_retry_release_target' ||
+    typeof value.requestedById !== 'string' ||
+    value.requestedById.length < 1 ||
+    value.requestedById.length > 200 ||
+    Array.from(value.requestedById).some((character) => character.charCodeAt(0) < 0x20) ||
+    typeof value.idempotencyKey !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u.test(value.idempotencyKey)
+  ) {
+    throw new Error('invalid_release_rollout_retry_request');
+  }
+  return {
+    operationId: provisioningOperationId(value.operationId),
+    targetId: provisioningOperationId(value.targetId),
     requestedById: value.requestedById,
     reasonCode: value.reasonCode,
     idempotencyKey: value.idempotencyKey,
@@ -1350,6 +1378,33 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  getReleaseMigrationRolloutStatus() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new D1ControlRepository(
+        this.env.CONTROL_DB
+      ).getReleaseMigrationRolloutStatus(caller.environmentId);
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
+  retryReleaseMigrationRolloutTarget(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const request = releaseRolloutRetryTarget(input);
+      const result = await new D1ControlRepository(
+        this.env.CONTROL_DB
+      ).retryReleaseMigrationRolloutTarget(
+        request,
+        caller.environmentId,
+        Math.floor(Date.now() / 1000)
+      );
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
   retryProvisioningOperationStep(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
@@ -2281,6 +2336,26 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       }
     }
     const apiClients = createControlApiClients(this.env);
+    const releaseMigrationEngine = d1Token
+      ? new ApiMigrationEngine(
+          new MigrationReleaseArtifactReader(
+            new R2ReleaseArtifactStore(this.env.MIGRATION_RELEASES)
+          ),
+          cloudflareMigrationExecutor(apiClients.d1),
+          () => Date.now()
+        )
+      : null;
+    tasks.push(
+      scheduledTask(
+        'release_migration_rollout',
+        new ReleaseMigrationRolloutReconciler(
+          this.env.CONTROL_DB,
+          releaseMigrationEngine,
+          () => Math.floor(Date.now() / 1000),
+          { executorAvailable: Boolean(d1Token) }
+        ).reconcile()
+      )
+    );
     const workerBindingReconciler = new WorkerBindingReconciler(
       new D1WorkerBindingRepository(this.env.CONTROL_DB),
       repository,
@@ -2437,6 +2512,7 @@ export { ApiMigrationEngine } from './migration-engine';
 export { PluginResourceReconciler } from './plugin-resource-reconciler';
 export { PluginResourceMigrationReconciler } from './plugin-resource-migration-reconciler';
 export { PluginResourceBindingReconciler } from './plugin-resource-binding-reconciler';
+export { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
 export { PluginResourceCleanupService } from './plugin-resource-cleanup';
 export { handoffPluginResourceOperationsToSetup } from './plugin-resource-operator-handoff';
 export { createControlApiClients } from './control-api-clients';

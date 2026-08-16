@@ -6,6 +6,44 @@ export type ControlOperationStatus =
   | 'blocked'
   | 'canceled';
 
+export type ControlReleaseRolloutPhase =
+  | 'idle'
+  | 'database_rollout'
+  | 'blocked'
+  | 'awaiting_setup'
+  | 'verifying'
+  | 'completed';
+
+export interface ControlReleaseRolloutStatus {
+  operationId: string | null;
+  sourceVersion: string | null;
+  targetVersion: string | null;
+  phase: ControlReleaseRolloutPhase;
+  completedTargets: number;
+  totalTargets: number;
+  adminMutationMode: 'available' | 'read_only';
+  lastErrorCode: string | null;
+  updatedAt: number | null;
+  blockedTargetCount: number;
+  blockedTargets: ControlReleaseRolloutBlockedTarget[];
+}
+
+export interface ControlReleaseRolloutBlockedTarget {
+  targetId: string;
+  streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  attemptCount: number;
+  lastErrorCode: string;
+  updatedAt: number;
+}
+
+export interface ControlReleaseRolloutRetryTargetRequest {
+  operationId: string;
+  targetId: string;
+  requestedById: string;
+  reasonCode: 'operator_retry_release_target';
+  idempotencyKey: string;
+}
+
 export type LookupLifecycleState = 'pending' | 'active' | 'disabled';
 export type AccountDirectoryPublicationState =
   | 'pending'
@@ -1148,6 +1186,10 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  getReleaseMigrationRolloutStatus?(): Promise<ControlReleaseRolloutStatus>;
+  retryReleaseMigrationRolloutTarget?(
+    request: ControlReleaseRolloutRetryTargetRequest
+  ): Promise<ControlReleaseRolloutStatus>;
   getProvisioningAuthorityStatus?(): Promise<ControlProvisioningAuthorityStatus>;
   previewCapacityProvisioning(
     request: ControlCapacityProfileRequest

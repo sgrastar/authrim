@@ -1206,6 +1206,12 @@ components:
                   - it
                   - th
                   - vi
+                  - hi
+                  - bn
+                  - tr
+                  - sw
+                  - am
+                  - pl
             defaultLocale:
               type: string
               description: Fallback locale. The value is always included in supportedLocales.
@@ -1225,6 +1231,12 @@ components:
                 - it
                 - th
                 - vi
+                - hi
+                - bn
+                - tr
+                - sw
+                - am
+                - pl
             appearance:
               type: object
               additionalProperties: true

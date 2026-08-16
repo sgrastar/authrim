@@ -73,6 +73,7 @@ import { processScheduledIdentifierReplacements } from './identifier-replacement
 import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import { MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
+import { releaseRolloutMutationFenceMiddleware } from './release-rollout-mutation-fence';
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -1522,6 +1523,7 @@ app.use(
   adminAuthMiddleware({ plane: 'tenant', authenticateBearer: authenticateAgentDownscopeBearer })
 );
 app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_admin_auth'));
+app.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads

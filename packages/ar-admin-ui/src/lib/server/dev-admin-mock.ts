@@ -10577,6 +10577,29 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		method === 'GET' &&
 		segments[0] === 'platform' &&
 		segments[1] === 'control-plane' &&
+		segments[2] === 'release-rollout' &&
+		segments.length === 3
+	) {
+		return json({
+			rollout: {
+				operationId: null,
+				sourceVersion: null,
+				targetVersion: null,
+				phase: 'idle',
+				completedTargets: 0,
+				totalTargets: 0,
+				adminMutationMode: 'available',
+				lastErrorCode: null,
+				updatedAt: null,
+				blockedTargetCount: 0,
+				blockedTargets: []
+			}
+		});
+	}
+	if (
+		method === 'GET' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
 		segments[2] === 'provisioning-authority' &&
 		segments.length === 3
 	) {

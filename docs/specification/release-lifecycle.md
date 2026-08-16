@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-07-21
+date: 2026-08-16
 description: 'Normative release, schema, topology, and deployment lifecycle for setup-managed environments.'
 type: specification
 tags:
@@ -66,6 +66,121 @@ Worker shard provisioning, external database registration, and R2 binding change
 `topology_change` operations. Reapplying a pinned release to an existing target is a
 `manual_migration` recovery operation and does not change Worker topology. A route name or UI
 workflow does not change these rules.
+
+## Release update ownership
+
+Authrim exposes one release update operation to the operator. The operator must not have to choose
+whether setup or Control applies a database migration. Setup owns the release decision and delegates
+work according to database ownership:
+
+- setup applies bootstrap-critical and fixed platform databases that Control cannot safely migrate
+  itself, publishes the immutable migration release artifact, deploys Workers, verifies readiness,
+  and commits the installed product version;
+- Control applies the pinned artifact to databases in its durable inventory, including tenant and
+  shard databases created after the previous product release;
+- external databases remain operator-applied unless an authenticated executor and target inventory
+  have been registered explicitly.
+
+A Worker-only release follows the same `release_update` state machine with an empty schema delta. It
+must not contact or mutate databases merely because the product version changes. A release containing
+database changes performs the setup-owned database work, delegates the managed fleet to Control,
+waits for every required target, and only then activates schema-dependent Workers.
+
+Delegation is a durable handoff, not one long HTTP request. Control records an operation ID, the
+pinned release and manifest digest, target inventory, per-target state, aggregate progress, retry
+state, and the administrative mutation policy. Closing setup or Admin UI must not cancel the rollout.
+Starting setup again resumes observation of the same operation.
+
+Control must not update or deploy itself. When a newer coordinator is required, setup first applies a
+backward-compatible Control schema expansion and deploys a Control version that can operate against
+both the old and expanded schema. Destructive contraction occurs only after the managed fleet and
+all Workers have crossed the compatibility boundary.
+
+## Release manifest rollout policy
+
+The migration release manifest carries machine-readable rollout policy in addition to checksummed SQL:
+
+```json
+{
+  "rollout": {
+    "databaseExecution": "setup_then_control",
+    "workerActivation": "after_required_databases",
+    "adminMutationMode": "read_only",
+    "databaseOnly": {
+      "compatibleWorkerVersions": ["1.0.0"]
+    }
+  }
+}
+```
+
+These values are semantic contracts, not UI route names. A manifest must not contain Admin UI paths,
+component selectors, button IDs, or translated messages. Control persists the policy snapshot with
+the rollout operation, and Management exposes capabilities derived from the current operation.
+Admin UI renders those capabilities. This separation allows UI routes to change without changing the
+meaning of a published manifest.
+
+`adminMutationMode = read_only` keeps Admin inspection, audit, progress, logout, and explicitly
+defined release-recovery operations available while rejecting schema-dependent Admin mutations.
+The server must enforce the restriction; disabled controls in Admin UI are explanatory and are not a
+security boundary. `available` may be used only when the release has demonstrated that Admin writes
+are compatible throughout the complete mixed-schema interval.
+
+Unknown rollout policy, contradictory status, or a target omitted from the pinned inventory must fail
+closed before schema-dependent Worker activation.
+
+`databaseOnly` is an optional, exact allow-list. Its absence prohibits database-only rollout. Setup
+accepts `--database-only` only when every deployed Worker is still at the installed product version
+and that exact version appears in `compatibleWorkerVersions`. A successful database-only rollout
+records `database_only_verified`, retains both the Workers and installed `productVersion`, and leaves
+the normal full update available. Compatibility is never inferred from schema shape or a SemVer range.
+
+## Managed database rollout
+
+Control must snapshot the eligible target inventory when accepting the handoff. Targets discovered
+later are provisioned directly at the active release and do not silently join an existing snapshot.
+Each target has a stable ID and records the database ID, stream ID, release ID, manifest digest,
+attempt count, last error code, and completion evidence.
+
+The rollout proceeds in bounded batches. A release may define an implementation-independent canary
+policy, but correctness never depends on a particular batch size. A target is complete only when the
+database migration history and release sentinel match the pinned artifact. Successful targets are not
+reapplied after interruption. A checksum mismatch, partial supersedence, unknown commit state, or
+missing target blocks the release.
+
+Control reports at least these externally visible phases:
+
+1. `database_rollout` — managed databases are being migrated;
+2. `blocked` — at least one required target needs retry or operator action;
+3. `awaiting_setup` — every delegated database is ready and setup must continue Worker deployment;
+4. `verifying` — setup has deployed Workers and is completing readiness checks;
+5. `completed` — databases and Workers are verified at the target version.
+
+The installed `productVersion` does not advance while the operation is in any phase other than
+`completed`.
+
+Setup may stop actively observing after a bounded UI/CLI observation window, but this is not a rollout
+failure. It returns an in-progress handoff result and later resumes the same operation ID. Control's
+durable operation continues regardless of either UI process. `completed` is trustworthy only when the
+operation and all three required steps succeeded and completed/total target counts agree; any
+contradiction is exposed as `blocked` with a redacted `release_rollout_state_inconsistent` code.
+
+## Admin visibility and mutation fence
+
+After handoff, Admin UI must show the source and target versions, current phase, completed and total
+database counts, last update time, and a redacted failure reason when blocked. It polls a read-only
+Management endpoint backed by Control; it does not inspect setup's local lock file.
+
+While the persisted policy restricts mutations, Management rejects covered non-read requests even if
+they bypass Admin UI. Admin UI displays a persistent rollout banner and disables affected settings and
+other mutation controls. The Control Plane page remains available for progress and authorized
+recovery. The restriction ends only after setup records final verification, not merely when the last
+database reports success.
+
+For a blocked database target, the Control Plane page exposes a platform-admin, human-only retry for
+that exact target. Management must persist the Admin audit before invoking Control. Control then
+persists its own idempotent audit event and requeues only the selected blocked target. This narrowly
+defined endpoint remains available through the mutation fence; similarly shaped or broader writes do
+not.
 
 Before its first externally visible mutation can affect a later deployment, a topology command must
 persist a `preparing` journal. A topology change that replaces `config.json` must first durably write a
@@ -209,6 +324,17 @@ The implementation must include behavior tests, not source-text presence checks.
 - Individual API and UI deployment waits for visibility.
 - Reachable Workers wait for HTTP readiness.
 - Visibility/HTTP failure returns failure and does not report the operation complete.
+
+### Delegated rollout tests
+
+- A Worker-only release creates no database work and still reaches verified release state.
+- Setup-owned database failure prevents handoff and Worker publication.
+- Handoff snapshots every Control-managed target and is idempotent by environment and release.
+- Closing setup does not cancel the Control operation; a later setup process resumes it.
+- Bounded retries never reapply a target whose release sentinel is already ready.
+- Admin progress remains readable while restricted mutations are rejected by Management.
+- `awaiting_setup` does not advance the installed product version or remove the Admin mutation fence.
+- Worker readiness failure preserves the operation for deterministic setup retry.
 
 ## Release gate
 

@@ -5,6 +5,7 @@
 		type ControlProvisioningAuthorityStatus,
 		type ControlProvisioningOperation,
 		type ControlProvisioningOperationStep,
+		type ReleaseRolloutStatus,
 		type ShardCleanupCandidate,
 		type TenantDisasterRecovery,
 		type WorkerInventoryDriftFinding,
@@ -51,25 +52,32 @@
 	let restoreReference = $state('');
 	let restoreCompletedAt = $state('');
 	let recoveryReactivateConfirmation = $state('');
+	let releaseRollout = $state<ReleaseRolloutStatus | null>(null);
+	let releaseRetryTargetId = $state('');
+	let releaseRetryError = $state('');
 
 	async function load() {
 		loading = true;
 		error = '';
 		cleanupError = '';
 		try {
-			const [authorityResponse, driftResponse, cleanupResponse] = await Promise.all([
-				adminControlPlaneAPI.getProvisioningAuthorityStatus(),
-				adminControlPlaneAPI.listDriftFindings(),
-				adminControlPlaneAPI.listShardCleanupCandidates()
-			]);
+			const [authorityResponse, driftResponse, cleanupResponse, releaseResponse] =
+				await Promise.all([
+					adminControlPlaneAPI.getProvisioningAuthorityStatus(),
+					adminControlPlaneAPI.listDriftFindings(),
+					adminControlPlaneAPI.listShardCleanupCandidates(),
+					adminControlPlaneAPI.getReleaseRolloutStatus()
+				]);
 			provisioningAuthority = authorityResponse.authority;
 			findings = driftResponse.items;
 			cleanupCandidates = cleanupResponse.items;
+			releaseRollout = releaseResponse.rollout;
 		} catch (caught) {
 			error = caught instanceof Error ? caught.message : $LL.admin_control_plane_load_failed();
 			provisioningAuthority = null;
 			findings = [];
 			cleanupCandidates = [];
+			releaseRollout = null;
 		} finally {
 			loading = false;
 		}
@@ -111,6 +119,9 @@
 			) {
 				void inspectRecovery(true);
 			}
+			if (releaseRollout && !['idle', 'completed'].includes(releaseRollout.phase)) {
+				void refreshReleaseRollout();
+			}
 		}, 5000);
 		return () => window.clearInterval(timer);
 	});
@@ -127,6 +138,29 @@
 				.map((byte) => byte.toString(16).padStart(2, '0'))
 				.join('');
 		return `${prefix}:${suffix}`;
+	}
+
+	async function refreshReleaseRollout() {
+		try {
+			releaseRollout = (await adminControlPlaneAPI.getReleaseRolloutStatus()).rollout;
+		} catch {
+			// The persistent global banner reports Control unavailability fail-closed.
+		}
+	}
+
+	async function retryReleaseTarget(targetId: string) {
+		if (!releaseRollout?.operationId || releaseRetryTargetId) return;
+		releaseRetryTargetId = targetId;
+		releaseRetryError = '';
+		try {
+			releaseRollout = (
+				await adminControlPlaneAPI.retryReleaseRolloutTarget(releaseRollout.operationId, targetId)
+			).rollout;
+		} catch (caught) {
+			releaseRetryError = caught instanceof Error ? caught.message : 'Release target retry failed';
+		} finally {
+			releaseRetryTargetId = '';
+		}
 	}
 
 	async function startRecovery() {
@@ -838,6 +872,95 @@
 			</AdminDataTable>
 		{/if}
 	</AdminSection>
+
+	{#if releaseRollout && releaseRollout.phase !== 'idle'}
+		<AdminSection title={$LL.admin_release_rollout_recovery_title()}>
+			<p>{$LL.admin_release_rollout_recovery_description()}</p>
+			<dl class="operation-summary">
+				<div>
+					<dt>{$LL.admin_release_rollout_version_path()}</dt>
+					<dd class="code-value">
+						{$LL.admin_release_rollout_versions({
+							source: releaseRollout.sourceVersion ?? '-',
+							target: releaseRollout.targetVersion ?? '-'
+						})}
+					</dd>
+				</div>
+				<div>
+					<dt>{$LL.admin_release_rollout_database_progress()}</dt>
+					<dd>
+						{$LL.admin_release_rollout_progress({
+							completed: releaseRollout.completedTargets,
+							total: releaseRollout.totalTargets
+						})}
+					</dd>
+				</div>
+				<div>
+					<dt>{$LL.admin_control_plane_operation_status()}</dt>
+					<dd><span class="badge badge-neutral">{releaseRollout.phase}</span></dd>
+				</div>
+				<div>
+					<dt>{$LL.admin_control_plane_operation_id()}</dt>
+					<dd class="code-value">{releaseRollout.operationId ?? '-'}</dd>
+				</div>
+				<div>
+					<dt>{$LL.admin_control_plane_updated()}</dt>
+					<dd>{releaseRollout.updatedAt ? formatDate(releaseRollout.updatedAt) : '-'}</dd>
+				</div>
+				<div>
+					<dt>{$LL.admin_control_plane_last_error()}</dt>
+					<dd class="code-value">{releaseRollout.lastErrorCode ?? '-'}</dd>
+				</div>
+			</dl>
+			{#if releaseRetryError}
+				<div class="alert alert-error" role="alert">{releaseRetryError}</div>
+			{/if}
+			{#if releaseRollout.blockedTargetCount > 0}
+				<h3>
+					{$LL.admin_release_rollout_blocked_targets({
+						count: releaseRollout.blockedTargetCount
+					})}
+				</h3>
+				<AdminDataTable width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_control_plane_cleanup_shard()}</th>
+							<th>{$LL.admin_control_plane_step()}</th>
+							<th>{$LL.admin_control_plane_attempts()}</th>
+							<th>{$LL.admin_control_plane_last_error()}</th>
+							<th>{$LL.admin_control_plane_updated()}</th>
+							<th><span class="sr-only">{$LL.admin_release_rollout_retry_target()}</span></th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each releaseRollout.blockedTargets as target (target.targetId)}
+							<tr>
+								<td class="code-value">{target.targetId}</td>
+								<td class="code-value">{target.streamId}</td>
+								<td>{target.attemptCount}</td>
+								<td class="code-value">{target.lastErrorCode}</td>
+								<td>{formatDate(target.updatedAt)}</td>
+								<td>
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={() => retryReleaseTarget(target.targetId)}
+										disabled={Boolean(releaseRetryTargetId)}
+									>
+										<i class="i-ph-arrow-clockwise" aria-hidden="true"></i>
+										<span>
+											{releaseRetryTargetId === target.targetId
+												? $LL.admin_release_rollout_retrying_target()
+												: $LL.admin_release_rollout_retry_target()}
+										</span>
+									</button>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
+			{/if}
+		</AdminSection>
+	{/if}
 
 	<AdminSection title={$LL.admin_control_plane_operation_inspection()}>
 		<form

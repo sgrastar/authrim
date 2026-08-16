@@ -14073,6 +14073,158 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/control-plane/release-rollout:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneReleaseRollout
+      summary: Inspect the current release migration rollout.
+      description: >-
+        Returns the secret-free, environment-scoped rollout phase, database progress, target product
+        version, and Admin mutation capability derived from Control's durable operation state.
+      responses:
+        '200':
+          description: Current release rollout status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [rollout]
+                properties:
+                  rollout:
+                    type: object
+                    additionalProperties: false
+                    required:
+                      - operationId
+                      - sourceVersion
+                      - targetVersion
+                      - phase
+                      - completedTargets
+                      - totalTargets
+                      - adminMutationMode
+                      - lastErrorCode
+                      - updatedAt
+                      - blockedTargetCount
+                      - blockedTargets
+                    properties:
+                      operationId:
+                        type: [string, 'null']
+                      sourceVersion:
+                        type: [string, 'null']
+                      targetVersion:
+                        type: [string, 'null']
+                      phase:
+                        type: string
+                        enum:
+                          [idle, database_rollout, blocked, awaiting_setup, verifying, completed]
+                      completedTargets:
+                        type: integer
+                        minimum: 0
+                      totalTargets:
+                        type: integer
+                        minimum: 0
+                      adminMutationMode:
+                        type: string
+                        enum: [available, read_only]
+                      lastErrorCode:
+                        type: [string, 'null']
+                      updatedAt:
+                        type: [integer, 'null']
+                        minimum: 1
+                      blockedTargetCount:
+                        type: integer
+                        minimum: 0
+                      blockedTargets:
+                        type: array
+                        maxItems: 100
+                        items:
+                          type: object
+                          additionalProperties: false
+                          required: [targetId, streamId, attemptCount, lastErrorCode, updatedAt]
+                          properties:
+                            targetId:
+                              type: string
+                            streamId:
+                              type: string
+                              enum: [d1-core, d1-pii, d1-lookup]
+                            attemptCount:
+                              type: integer
+                              minimum: 0
+                            lastErrorCode:
+                              type: string
+                            updatedAt:
+                              type: integer
+                              minimum: 1
+        '401':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/control-plane/release-rollout/{operationId}/targets/{targetId}/retry':
+    post:
+      tags:
+        - Database Connections
+      operationId: postApiAdminPlatformControlPlaneReleaseRolloutTargetRetry
+      summary: Retry one blocked release migration target.
+      description: >-
+        Opens a new bounded retry window for one blocked database target. This recovery action is
+        environment-scoped, idempotent, restricted to a human platform administrator, and remains
+        available while normal Admin mutations are fenced.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+            pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'
+      responses:
+        '202':
+          description: Target retry accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [rollout, auditId]
+                properties:
+                  rollout:
+                    $ref: '#/components/schemas/AdminControlReleaseRolloutStatus'
+                  auditId:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/platform/control-plane/provisioning-authority:
     get:
       tags:
@@ -43519,6 +43671,69 @@ components:
             created_at: 1770000000000
             updated_at: 1770000000000
   schemas:
+    AdminControlReleaseRolloutStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - sourceVersion
+        - targetVersion
+        - phase
+        - completedTargets
+        - totalTargets
+        - adminMutationMode
+        - lastErrorCode
+        - updatedAt
+        - blockedTargetCount
+        - blockedTargets
+      properties:
+        operationId:
+          type: [string, 'null']
+        sourceVersion:
+          type: [string, 'null']
+        targetVersion:
+          type: [string, 'null']
+        phase:
+          type: string
+          enum: [idle, database_rollout, blocked, awaiting_setup, verifying, completed]
+        completedTargets:
+          type: integer
+          minimum: 0
+        totalTargets:
+          type: integer
+          minimum: 0
+        adminMutationMode:
+          type: string
+          enum: [available, read_only]
+        lastErrorCode:
+          type: [string, 'null']
+        updatedAt:
+          type: [integer, 'null']
+          minimum: 1
+        blockedTargetCount:
+          type: integer
+          minimum: 0
+        blockedTargets:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [targetId, streamId, attemptCount, lastErrorCode, updatedAt]
+            properties:
+              targetId:
+                type: string
+              streamId:
+                type: string
+                enum: [d1-core, d1-pii, d1-lookup]
+              attemptCount:
+                type: integer
+                minimum: 0
+              lastErrorCode:
+                type: string
+              updatedAt:
+                type: integer
+                minimum: 1
     AdminInvitationCreate:
       type: object
       required: [email, role_id]

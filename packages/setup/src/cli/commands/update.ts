@@ -69,7 +69,10 @@ import {
   registerExternalCapabilities,
 } from '../../core/external-capability-registration.js';
 import { publishDynamicPluginWorkerBundles } from '../../core/dynamic-plugin-publication.js';
-import { publishAndActivateMigrationRelease } from '../../core/migration-release-publication.js';
+import {
+  publishAndActivateMigrationRelease,
+  type MigrationReleaseArtifactPlan,
+} from '../../core/migration-release-publication.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
 import {
@@ -80,6 +83,7 @@ import {
 } from '../../core/url-config.js';
 import {
   calculateReleaseManifestChecksum,
+  assertDatabaseOnlyWorkerCompatibility,
   compareProductVersions,
   isProductVersion,
   loadTargetReleaseMigrationManifest,
@@ -90,8 +94,17 @@ import {
 import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
+  getControlManagedReleaseStreamIds,
+  releaseMigrationStreamChangedFiles,
   type ReleaseSchemaUpdatePlan,
 } from '../../core/release-update.js';
+import {
+  beginReleaseRolloutVerification,
+  completeReleaseRolloutHandoff,
+  createReleaseRolloutHandoff,
+  getReleaseRolloutHandoffStatus,
+  waitForReleaseRolloutAwaitingSetup,
+} from '../../core/release-rollout-handoff.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForWorkerDeploymentsReady,
@@ -121,11 +134,13 @@ export interface UpdateCommandOptions {
   dryRun?: boolean;
   skipBuild?: boolean;
   allowDraftManifest?: boolean;
+  databaseOnly?: boolean;
   externalSchemaReady?: boolean;
   yes?: boolean;
 }
 
 const CONTROL_COORDINATOR_SETTLE_MS = 65_000;
+const RELEASE_ROLLOUT_OBSERVATION_MS = 30_000;
 
 // =============================================================================
 // Helpers
@@ -134,13 +149,169 @@ const CONTROL_COORDINATOR_SETTLE_MS = 65_000;
 export function splitReleaseDeploymentForControlCoordinator(
   components: readonly WorkerComponent[]
 ): { coordinator: WorkerComponent[]; remaining: WorkerComponent[] } {
-  if (components.length <= 1 || !components.includes('ar-control')) {
+  if (!components.includes('ar-control')) {
     return { coordinator: [], remaining: [...components] };
   }
   return {
     coordinator: ['ar-control'],
     remaining: components.filter((component) => component !== 'ar-control'),
   };
+}
+
+export function includeRequiredReleaseControlCoordinator(
+  components: readonly WorkerComponent[],
+  controlManagedStreamIds: readonly string[],
+  databaseOnly: boolean
+): WorkerComponent[] {
+  if (databaseOnly || controlManagedStreamIds.length === 0 || components.includes('ar-control')) {
+    return [...components];
+  }
+  return [...components, 'ar-control'];
+}
+
+export function includeRequiredReleaseManagement(
+  components: readonly WorkerComponent[],
+  hasReleaseSchemaDelta: boolean,
+  databaseOnly: boolean
+): WorkerComponent[] {
+  if (databaseOnly || !hasReleaseSchemaDelta || components.includes('ar-management')) {
+    return [...components];
+  }
+  return [...components, 'ar-management'];
+}
+
+export function splitReleaseSchemaTargetsForControlHandoff(
+  targets: ReleaseSchemaUpdatePlan['automaticTargets']
+): {
+  controlSchemaTargets: ReleaseSchemaUpdatePlan['automaticTargets'];
+  remainingSetupTargets: ReleaseSchemaUpdatePlan['automaticTargets'];
+} {
+  const setupOwnedTargets = targets.filter((target) => target.target.scope !== 'tenant');
+  return {
+    controlSchemaTargets: setupOwnedTargets.filter(
+      (target) => target.target.streamId === 'd1-control'
+    ),
+    remainingSetupTargets: setupOwnedTargets.filter(
+      (target) => target.target.streamId !== 'd1-control'
+    ),
+  };
+}
+
+async function awaitControlManagedReleaseRollout(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  sourceVersion?: string;
+  productVersion: string;
+  manifestChecksum: string;
+  manifest: ReleaseMigrationManifest;
+  artifact: MigrationReleaseArtifactPlan;
+  managedStreamIds: readonly string[];
+  lock: AuthrimLock;
+  lockPath: string;
+}): Promise<{ lock: AuthrimLock; ready: boolean }> {
+  const spinner = ora('Handing managed database migrations to Control...').start();
+  try {
+    const created = await createReleaseRolloutHandoff({
+      controlDatabaseId: input.controlDatabaseId,
+      environmentId: input.environmentId,
+      sourceVersion: input.sourceVersion,
+      targetVersion: input.productVersion,
+      artifact: input.artifact,
+      manifest: input.manifest,
+      managedStreamIds: input.managedStreamIds,
+      actorId: 'setup:update',
+    });
+    let workingLock = withReleaseUpdateState(input.lock, {
+      targetVersion: input.productVersion,
+      phase: 'control_handoff',
+      manifestChecksum: input.manifestChecksum,
+      controlOperationId: created.operationId,
+      controlCompletedTargets: created.completedTargets,
+      controlTotalTargets: created.totalTargets,
+    });
+    await saveLockFile(workingLock, input.lockPath);
+    const ready = await waitForReleaseRolloutAwaitingSetup({
+      controlDatabaseId: input.controlDatabaseId,
+      environmentId: input.environmentId,
+      operationId: created.operationId,
+      timeoutMs: RELEASE_ROLLOUT_OBSERVATION_MS,
+      onProgress: (status) => {
+        spinner.text = `Control database rollout: ${status.completedTargets}/${status.totalTargets} (${status.phase})`;
+      },
+    });
+    if (
+      ready.phase !== 'awaiting_setup' &&
+      ready.phase !== 'verifying' &&
+      ready.phase !== 'completed'
+    ) {
+      workingLock = withReleaseUpdateState(workingLock, {
+        targetVersion: input.productVersion,
+        phase: 'control_handoff',
+        manifestChecksum: input.manifestChecksum,
+        controlOperationId: ready.operationId,
+        controlCompletedTargets: ready.completedTargets,
+        controlTotalTargets: ready.totalTargets,
+      });
+      await saveLockFile(workingLock, input.lockPath);
+      spinner.warn(
+        `Control continues the database rollout in the background (${ready.completedTargets}/${ready.totalTargets})`
+      );
+      return { lock: workingLock, ready: false };
+    }
+    workingLock = withReleaseUpdateState(workingLock, {
+      targetVersion: input.productVersion,
+      phase: 'awaiting_setup',
+      manifestChecksum: input.manifestChecksum,
+      controlOperationId: ready.operationId,
+      controlCompletedTargets: ready.completedTargets,
+      controlTotalTargets: ready.totalTargets,
+    });
+    await saveLockFile(workingLock, input.lockPath);
+    if (ready.phase !== 'completed') {
+      await beginReleaseRolloutVerification({
+        controlDatabaseId: input.controlDatabaseId,
+        environmentId: input.environmentId,
+        operationId: ready.operationId,
+        actorId: 'setup:update',
+      });
+    }
+    workingLock = withReleaseUpdateState(workingLock, {
+      targetVersion: input.productVersion,
+      phase: 'schema_applied',
+      manifestChecksum: input.manifestChecksum,
+      controlOperationId: ready.operationId,
+      controlCompletedTargets: ready.completedTargets,
+      controlTotalTargets: ready.totalTargets,
+    });
+    await saveLockFile(workingLock, input.lockPath);
+    spinner.succeed(
+      `Control-managed databases are ready (${ready.completedTargets}/${ready.totalTargets})`
+    );
+    return { lock: workingLock, ready: true };
+  } catch (error) {
+    spinner.fail('Control-managed database rollout did not become ready');
+    throw error;
+  }
+}
+
+async function completeControlManagedReleaseRollout(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  operationId: string | undefined;
+}): Promise<void> {
+  if (!input.operationId) return;
+  const current = await getReleaseRolloutHandoffStatus({
+    controlDatabaseId: input.controlDatabaseId,
+    environmentId: input.environmentId,
+    operationId: input.operationId,
+  });
+  if (current.phase === 'completed') return;
+  await completeReleaseRolloutHandoff({
+    controlDatabaseId: input.controlDatabaseId,
+    environmentId: input.environmentId,
+    operationId: input.operationId,
+    actorId: 'setup:update',
+  });
 }
 
 function mergeDeploymentSummaries(
@@ -821,10 +992,83 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   });
   spinner.succeed('Release migration plan resolved');
   displaySchemaUpdatePlan(schemaPlan);
-  if (
-    schemaPlan.targets.some((target) => target.requiresAction) &&
-    !componentsToUpdate.includes('ar-management')
-  ) {
+  const hasReleaseSchemaDelta = targetManifestResult.manifest.streams.some(
+    (stream) =>
+      releaseMigrationStreamChangedFiles(targetManifestResult.manifest, currentManifest, stream.id)
+        .length > 0
+  );
+  if (options.databaseOnly) {
+    if (options.all) {
+      spinner.fail('--database-only cannot be combined with --all');
+      process.exit(1);
+    }
+    if (!hasReleaseSchemaDelta) {
+      spinner.fail('The target release has no database schema changes');
+      process.exit(1);
+    }
+    try {
+      assertDatabaseOnlyWorkerCompatibility(
+        targetManifestResult.manifest,
+        workingLock.productVersion
+      );
+    } catch (error) {
+      spinner.fail('The current Workers are not compatible with the target database schema');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
+    }
+    const inconsistentWorkers = Object.entries(workingLock.workers ?? {}).filter(
+      ([, worker]) => worker.version !== workingLock.productVersion
+    );
+    if (inconsistentWorkers.length > 0 || Object.keys(workingLock.workers ?? {}).length === 0) {
+      spinner.fail('Exact current Worker version evidence is required for a database-only update');
+      console.error(
+        chalk.red(
+          `Expected ${workingLock.productVersion ?? 'unknown'}; mismatched: ${
+            inconsistentWorkers.map(([component]) => component).join(', ') ||
+            'no deployed Workers recorded'
+          }`
+        )
+      );
+      process.exit(1);
+    }
+    componentsToUpdate.splice(0, componentsToUpdate.length);
+    uiComponentsToUpdate.splice(0, uiComponentsToUpdate.length);
+    updateCount = 0;
+    console.log(
+      chalk.yellow(
+        `  Database-only mode: retaining Workers at ${workingLock.productVersion}; productVersion will not advance.`
+      )
+    );
+  }
+  const controlManagedStreamIds = getControlManagedReleaseStreamIds({
+    targetManifest: targetManifestResult.manifest,
+    currentManifest,
+  });
+  const componentsWithCoordinator = includeRequiredReleaseControlCoordinator(
+    componentsToUpdate,
+    controlManagedStreamIds,
+    options.databaseOnly === true
+  );
+  if (componentsWithCoordinator.length !== componentsToUpdate.length) {
+    componentsToUpdate.push('ar-control');
+    updateCount += 1;
+    console.log(
+      chalk.gray('  ar-control will be redeployed first to coordinate managed database migrations.')
+    );
+  }
+  if (controlManagedStreamIds.length > 0) {
+    console.log(
+      chalk.gray(
+        `  Control will snapshot and migrate managed databases for: ${controlManagedStreamIds.join(', ')}`
+      )
+    );
+  }
+  const componentsWithManagement = includeRequiredReleaseManagement(
+    componentsToUpdate,
+    hasReleaseSchemaDelta,
+    options.databaseOnly === true
+  );
+  if (componentsWithManagement.length !== componentsToUpdate.length) {
     componentsToUpdate.push('ar-management');
     updateCount += 1;
     console.log(
@@ -860,7 +1104,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     const confirmed = await confirm({
       message: options.dryRun
         ? 'Show the complete release update plan?'
-        : `Update schema targets and ${updateCount} worker(s) to ${productVersion}?`,
+        : options.databaseOnly
+          ? `Update database schemas to ${productVersion} and retain Workers at ${workingLock.productVersion}?`
+          : `Update schema targets and ${updateCount} worker(s) to ${productVersion}?`,
       default: true,
     });
 
@@ -926,38 +1172,44 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     await saveLockFile(workingLock, lockPath);
 
-    const acknowledgedBlockedTargets = schemaPlan.blockedTargets.filter((target) =>
-      acknowledgedManualTargets.has(target.target.id)
-    );
-    const executableSchemaPlan: ReleaseSchemaUpdatePlan = {
-      ...schemaPlan,
-      automaticTargets: schemaExecutionState.automaticTargets,
-      manualTargets: [...schemaPlan.manualTargets, ...acknowledgedBlockedTargets],
-      blockedTargets: remainingBlockedTargets,
-    };
-    const migrationSpinner = ora('Updating database schemas...').start();
-    const migrationResult = await applyReleaseSchemaUpdatePlan({
-      plan: executableSchemaPlan,
-      manifest: targetManifestResult.manifest,
-      migrationsRoot,
-      concurrency: 2,
-      backfillLegacyChecksums: !targetManifestResult.draft,
-      onProgress: (message) => {
-        migrationSpinner.text = message;
-      },
-    });
-    if (!migrationResult.success) {
-      migrationSpinner.fail('Database schema update failed');
-      for (const result of migrationResult.results.filter((item) => !item.success)) {
-        console.error(chalk.red(`  ${result.targetId}: ${result.error ?? 'unknown error'}`));
+    const { controlSchemaTargets, remainingSetupTargets } =
+      splitReleaseSchemaTargetsForControlHandoff(schemaExecutionState.automaticTargets);
+    const migrationResults: Awaited<ReturnType<typeof applyReleaseSchemaUpdatePlan>>['results'] =
+      [];
+    const applySetupTargets = async (
+      targets: ReleaseSchemaUpdatePlan['automaticTargets'],
+      label: string
+    ): Promise<void> => {
+      if (targets.length === 0) return;
+      const migrationSpinner = ora(label).start();
+      const result = await applyReleaseSchemaUpdatePlan({
+        plan: {
+          ...schemaPlan,
+          automaticTargets: targets,
+          manualTargets: [],
+          blockedTargets: [],
+        },
+        manifest: targetManifestResult.manifest,
+        migrationsRoot,
+        concurrency: 2,
+        backfillLegacyChecksums: !targetManifestResult.draft,
+        onProgress: (message) => {
+          migrationSpinner.text = message;
+        },
+      });
+      migrationResults.push(...result.results);
+      if (!result.success) {
+        migrationSpinner.fail('Database schema update failed');
+        for (const failure of result.results.filter((item) => !item.success)) {
+          console.error(chalk.red(`  ${failure.targetId}: ${failure.error ?? 'unknown error'}`));
+        }
+        throw new Error('release_setup_schema_update_failed');
       }
-      process.exit(1);
-    }
-    migrationSpinner.succeed('Database schemas are ready');
-    const appliedTargetIds = [
+      migrationSpinner.succeed(label.replace(/\.\.\.$/u, ' complete'));
+    };
+    const baseAppliedTargetIds = [
       ...new Set([
         ...(resumableRelease?.appliedTargets ?? []),
-        ...migrationResult.results.map((result) => result.targetId),
         ...acknowledgedManualTargets,
         ...schemaPlan.targets
           .filter((target) => !target.requiresAction)
@@ -970,6 +1222,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         .filter((target) => !target.requiresAction && !target.target.automatic)
         .map((target) => target.target.id),
     ]);
+
+    await applySetupTargets(controlSchemaTargets, 'Updating the Control database schema...');
+    let appliedTargetIds = [
+      ...new Set([...baseAppliedTargetIds, ...migrationResults.map((result) => result.targetId)]),
+    ];
     workingLock = withSchemaTargetStates(workingLock, {
       targetIds: appliedTargetIds,
       manualTargetIds: operatorTargetIds,
@@ -980,7 +1237,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
-      phase: 'schema_applied',
+      phase: 'control_handoff',
       manifestChecksum,
       appliedTargets: appliedTargetIds,
       manualTargets: [...acknowledgedManualTargets],
@@ -988,35 +1245,116 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     await saveLockFile(workingLock, lockPath);
 
     const controlDatabase = workingLock.d1.CONTROL_DB;
-    const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
-    if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
-    if (!migrationReleaseBucket) {
-      throw new Error('migration_release_bucket_required_for_release_publication');
-    }
-    const releasePublicationSpinner = ora('Publishing migration release artifact...').start();
-    try {
-      const publication = await publishAndActivateMigrationRelease({
-        migrationsRoot,
-        manifestPath: targetManifestResult.path,
-        bucketName: migrationReleaseBucket.name,
-        controlDatabaseId: controlDatabase.id,
-        environmentId: env,
-        actorId: 'setup:update',
-        onProgress: (message) => {
-          releasePublicationSpinner.text = message;
-        },
-      });
-      releasePublicationSpinner.succeed(
-        `Migration release ${publication.artifact.releaseId} published (${publication.artifact.streamIds.length} D1 streams)`
-      );
-    } catch (error) {
-      releasePublicationSpinner.fail('Migration release publication failed');
-      throw error;
+    let migrationReleaseArtifact: MigrationReleaseArtifactPlan | undefined;
+    if (hasReleaseSchemaDelta) {
+      const migrationReleaseBucket = workingLock.r2?.MIGRATION_RELEASES;
+      if (!controlDatabase) throw new Error('control_database_required_for_release_publication');
+      if (!migrationReleaseBucket) {
+        throw new Error('migration_release_bucket_required_for_release_publication');
+      }
+      const releasePublicationSpinner = ora('Publishing migration release artifact...').start();
+      try {
+        const publication = await publishAndActivateMigrationRelease({
+          migrationsRoot,
+          manifestPath: targetManifestResult.path,
+          bucketName: migrationReleaseBucket.name,
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          actorId: 'setup:update',
+          onProgress: (message) => {
+            releasePublicationSpinner.text = message;
+          },
+        });
+        migrationReleaseArtifact = publication.artifact;
+        releasePublicationSpinner.succeed(
+          `Migration release ${publication.artifact.releaseId} published (${publication.artifact.streamIds.length} D1 streams)`
+        );
+      } catch (error) {
+        releasePublicationSpinner.fail('Migration release publication failed');
+        throw error;
+      }
     }
 
+    if (controlManagedStreamIds.length > 0) {
+      if (!controlDatabase || !migrationReleaseArtifact) {
+        throw new Error('release_rollout_handoff_prerequisite_missing');
+      }
+      const handoff = await createReleaseRolloutHandoff({
+        controlDatabaseId: controlDatabase.id,
+        environmentId: env,
+        sourceVersion: resumableRelease?.previousProductVersion ?? workingLock.productVersion,
+        targetVersion: productVersion,
+        artifact: migrationReleaseArtifact,
+        manifest: targetManifestResult.manifest,
+        managedStreamIds: controlManagedStreamIds,
+        actorId: 'setup:update',
+      });
+      workingLock = withReleaseUpdateState(workingLock, {
+        targetVersion: productVersion,
+        phase: 'control_handoff',
+        manifestChecksum,
+        appliedTargets: appliedTargetIds,
+        manualTargets: [...acknowledgedManualTargets],
+        controlOperationId: handoff.operationId,
+        controlCompletedTargets: handoff.completedTargets,
+        controlTotalTargets: handoff.totalTargets,
+      });
+      await saveLockFile(workingLock, lockPath);
+    }
+
+    await applySetupTargets(remainingSetupTargets, 'Updating setup-owned database schemas...');
+    appliedTargetIds = [
+      ...new Set([...baseAppliedTargetIds, ...migrationResults.map((result) => result.targetId)]),
+    ];
+    workingLock = withSchemaTargetStates(workingLock, {
+      targetIds: appliedTargetIds,
+      manualTargetIds: operatorTargetIds,
+      productVersion,
+      manifestChecksum,
+      targetStreamIds: new Map(physicalTargets.map((target) => [target.id, target.streamId])),
+      manifest: targetManifestResult.manifest,
+    });
+    workingLock = withReleaseUpdateState(workingLock, {
+      targetVersion: productVersion,
+      phase: controlManagedStreamIds.length > 0 ? 'control_handoff' : 'schema_applied',
+      manifestChecksum,
+      appliedTargets: appliedTargetIds,
+      manualTargets: [...acknowledgedManualTargets],
+    });
+    await saveLockFile(workingLock, lockPath);
+
     if (componentsToUpdate.length === 0) {
+      if (controlManagedStreamIds.length > 0) {
+        if (!controlDatabase || !migrationReleaseArtifact) {
+          throw new Error('release_rollout_handoff_prerequisite_missing');
+        }
+        const observation = await awaitControlManagedReleaseRollout({
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          sourceVersion: resumableRelease?.previousProductVersion ?? workingLock.productVersion,
+          productVersion,
+          manifestChecksum,
+          manifest: targetManifestResult.manifest,
+          artifact: migrationReleaseArtifact,
+          managedStreamIds: controlManagedStreamIds,
+          lock: workingLock,
+          lockPath,
+        });
+        workingLock = observation.lock;
+        if (!observation.ready) {
+          console.log(
+            chalk.cyan(
+              '\nDatabase migration continues safely in Control. Run this update again later to resume Worker activation.'
+            )
+          );
+          return;
+        }
+      }
+      const retainedWorkerVersion = options.databaseOnly
+        ? workingLock.productVersion
+        : productVersion;
       const lockedWorkers = Object.values(workingLock.workers ?? {}).filter(
-        (worker) => worker.version === productVersion
+        (worker) => worker.version === retainedWorkerVersion
       );
       const verificationSpinner = ora('Verifying existing Worker deployments...').start();
       const deploymentVerification = await waitForWorkerDeploymentsReady({
@@ -1065,14 +1403,28 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
       }
+      if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
+        throw new Error('control_database_required_for_release_rollout_completion');
+      }
+      if (controlDatabase) {
+        await completeControlManagedReleaseRollout({
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          operationId: workingLock.releaseUpdate?.controlOperationId,
+        });
+      }
       workingLock = withReleaseUpdateState(workingLock, {
         targetVersion: productVersion,
-        phase: 'verified',
+        phase: options.databaseOnly ? 'database_only_verified' : 'verified',
         manifestChecksum,
       });
       await saveLockFile(workingLock, lockPath);
       console.log(
-        chalk.green('\n✅ Database schemas and all enabled Workers are at the target release.')
+        chalk.green(
+          options.databaseOnly
+            ? `\n✅ Database schemas are at ${productVersion}; Workers remain at ${retainedWorkerVersion}.`
+            : '\n✅ Database schemas and all enabled Workers are at the target release.'
+        )
       );
       return;
     }
@@ -1271,6 +1623,40 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
 
     const deploymentGroups = splitReleaseDeploymentForControlCoordinator(componentsToUpdate);
+    let controlRolloutReady = false;
+    const ensureControlRolloutReady = async (): Promise<boolean> => {
+      if (controlRolloutReady || controlManagedStreamIds.length === 0) return true;
+      if (!controlDatabase || !migrationReleaseArtifact) {
+        throw new Error('release_rollout_handoff_prerequisite_missing');
+      }
+      const coordinator = workingLock.workers?.['ar-control'];
+      if (!coordinator || coordinator.version !== productVersion) {
+        throw new Error('release_rollout_control_coordinator_not_updated');
+      }
+      const coordinatorReady = await waitForWorkerDeploymentsReady({
+        targets: [{ workerName: coordinator.name, deployedAt: coordinator.deployedAt }],
+      });
+      if (!coordinatorReady.ready) {
+        throw new Error(
+          `release_rollout_control_coordinator_not_ready:${coordinatorReady.error ?? 'unknown'}`
+        );
+      }
+      const observation = await awaitControlManagedReleaseRollout({
+        controlDatabaseId: controlDatabase.id,
+        environmentId: env,
+        sourceVersion: resumableRelease?.previousProductVersion ?? workingLock.productVersion,
+        productVersion,
+        manifestChecksum,
+        manifest: targetManifestResult.manifest,
+        artifact: migrationReleaseArtifact,
+        managedStreamIds: controlManagedStreamIds,
+        lock: workingLock,
+        lockPath,
+      });
+      workingLock = observation.lock;
+      controlRolloutReady = observation.ready;
+      return observation.ready;
+    };
     let summary: DeploymentSummary;
     if (!options.dryRun && deploymentGroups.coordinator.length > 0) {
       console.log(
@@ -1286,6 +1672,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           localVersions
         );
         await saveLockFile(workingLock, lockPath);
+        if (!(await ensureControlRolloutReady())) {
+          console.log(
+            chalk.cyan(
+              '\nDatabase migration continues safely in Control. Run this update again later to resume Worker activation.'
+            )
+          );
+          return;
+        }
         let remainingSummary: DeploymentSummary;
         try {
           remainingSummary = await deployAll(deployOptions, deploymentGroups.remaining);
@@ -1302,6 +1696,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         summary = mergeDeploymentSummaries(coordinatorSummary, remainingSummary);
       }
     } else {
+      if (!(await ensureControlRolloutReady())) {
+        console.log(
+          chalk.cyan(
+            '\nDatabase migration continues safely in Control. Run this update again later to resume Worker activation.'
+          )
+        );
+        return;
+      }
       summary = await deployAll(deployOptions, componentsToUpdate);
     }
 
@@ -1389,6 +1791,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         verificationSpinner.fail('UI Worker release deployment failed');
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
+      }
+      if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
+        throw new Error('control_database_required_for_release_rollout_completion');
+      }
+      if (controlDatabase) {
+        await completeControlManagedReleaseRollout({
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          operationId: workingLock.releaseUpdate?.controlOperationId,
+        });
       }
       workingLock = withReleaseUpdateState(workingLock, {
         targetVersion: productVersion,

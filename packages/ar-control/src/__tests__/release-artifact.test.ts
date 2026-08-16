@@ -65,9 +65,52 @@ describe('MigrationReleaseArtifactReader', () => {
     await expect(new MigrationReleaseArtifactReader(store).load(pin)).resolves.toEqual({
       pin,
       productVersion: '0.4.0',
+      rollout: {
+        databaseExecution: 'setup_then_control',
+        workerActivation: 'after_required_databases',
+        adminMutationMode: 'read_only',
+      },
       files: [{ path: '001_core.sql', checksum: digest(sql), sql }],
     });
     expect(store.reads).toEqual([pin.manifestObjectKey, `${base}streams/d1-core/001_core.sql`]);
+  });
+
+  it('accepts the exact database-only Worker compatibility allow-list', async () => {
+    const { pin, sql } = fixture();
+    const encoded = JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      rollout: {
+        databaseExecution: 'setup_then_control',
+        workerActivation: 'after_required_databases',
+        adminMutationMode: 'read_only',
+        databaseOnly: { compatibleWorkerVersions: ['0.3.3'] },
+      },
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          logicalRoles: ['tenant_core'],
+          files: [{ path: '001_core.sql', checksum: digest(sql) }],
+        },
+      ],
+    });
+    const nextPin = {
+      ...pin,
+      manifestDigest: digest(encoded),
+      manifestObjectKey: `releases/${pin.releaseId}/${digest(encoded)}/manifest.json`,
+    };
+    const base = nextPin.manifestObjectKey.slice(0, nextPin.manifestObjectKey.lastIndexOf('/') + 1);
+    const store = new MemoryArtifactStore(
+      new Map([
+        [nextPin.manifestObjectKey, encoded],
+        [`${base}streams/d1-core/001_core.sql`, sql],
+      ])
+    );
+
+    await expect(new MigrationReleaseArtifactReader(store).load(nextPin)).resolves.toMatchObject({
+      rollout: { databaseOnly: { compatibleWorkerVersions: ['0.3.3'] } },
+    });
   });
 
   it('accepts only the content-addressed draft identity for an unpublished manifest', async () => {

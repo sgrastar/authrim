@@ -2242,6 +2242,23 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resources',
           'web.envDetail.updates': 'Updates',
+          'web.envDetail.releaseUpdateAvailable': 'A new Authrim version is available',
+          'web.envDetail.releaseUpdateResume': 'Continue the interrupted update',
+          'web.envDetail.releaseUpdateDesc': 'Setup will apply required database changes when present, update the services, and verify the result. Your settings and data are preserved.',
+          'web.envDetail.releaseUpdateBlocked': 'This update cannot start until the previous operation is resolved.',
+          'web.envDetail.releaseUpdateOlderTool': 'This setup source is older than the installed environment. Start setup again with the latest package.',
+          'web.envDetail.releaseUpdateAction': 'Update now',
+          'web.envDetail.releaseUpdateDatabaseOnlyAction': 'Update databases only (advanced)',
+          'web.envDetail.releaseUpdateDatabaseOnlyConfirm': 'Update databases without updating Workers? This is allowed only when the release manifest explicitly declares the installed Worker version compatible with the new schema.',
+          'web.envDetail.releaseUpdateResumeAction': 'Continue update',
+          'web.envDetail.releaseUpdatePreparing': 'Preparing the update...',
+          'web.envDetail.releaseUpdateDatabase': 'Updating databases...',
+          'web.envDetail.releaseUpdateServices': 'Updating services...',
+          'web.envDetail.releaseUpdateVerifying': 'Verifying the update...',
+          'web.envDetail.releaseUpdateComplete': 'Authrim is up to date.',
+          'web.envDetail.releaseUpdateContinuing': 'Database migration continues safely in Control. You can close Setup and monitor or retry from Admin UI.',
+          'web.envDetail.releaseUpdateFailed': 'The update stopped. You can safely retry from this screen.',
+          'web.envDetail.releaseUpdateDetails': 'Show update details',
           'web.envDetail.verified': 'Deployment verified ✓',
           'web.envDetail.deploymentChecking': 'Checking deployment status...',
           'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
@@ -2360,6 +2377,23 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'メール',
           'web.envDetail.resources': 'リソース一覧',
           'web.envDetail.updates': '更新可能',
+          'web.envDetail.releaseUpdateAvailable': '新しいAuthrimがあります',
+          'web.envDetail.releaseUpdateResume': '中断した更新を続けられます',
+          'web.envDetail.releaseUpdateDesc': '必要なデータベース変更がある場合だけ先に適用し、サービスを更新して、最後に動作を確認します。設定とデータは維持されます。',
+          'web.envDetail.releaseUpdateBlocked': '前回の処理を解決するまで、この更新は開始できません。',
+          'web.envDetail.releaseUpdateOlderTool': 'セットアップソースが導入済み環境より古いため、最新のnpx @authrim/setupを起動してください。',
+          'web.envDetail.releaseUpdateAction': '今すぐ更新',
+          'web.envDetail.releaseUpdateDatabaseOnlyAction': 'データベースのみ更新（詳細設定）',
+          'web.envDetail.releaseUpdateDatabaseOnlyConfirm': 'Workersを更新せずにデータベースだけ更新しますか？リリースmanifestが、現在のWorkerバージョンと更新後スキーマの互換性を明示している場合にのみ実行できます。',
+          'web.envDetail.releaseUpdateResumeAction': '更新を続ける',
+          'web.envDetail.releaseUpdatePreparing': '更新を準備しています…',
+          'web.envDetail.releaseUpdateDatabase': 'データベースを更新しています…',
+          'web.envDetail.releaseUpdateServices': 'サービスを更新しています…',
+          'web.envDetail.releaseUpdateVerifying': '更新結果を確認しています…',
+          'web.envDetail.releaseUpdateComplete': '最新バージョンになりました。',
+          'web.envDetail.releaseUpdateContinuing': 'データベース更新はControlで安全に継続しています。Setupを閉じても、Admin UIから監視・再試行できます。',
+          'web.envDetail.releaseUpdateFailed': '更新が途中で停止しました。この画面から安全に再開できます。',
+          'web.envDetail.releaseUpdateDetails': '更新の詳細を表示',
           'web.envDetail.verified': 'デプロイ検証済み ✓',
           'web.envDetail.deploymentChecking': 'デプロイ状態を確認中…',
           'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
@@ -5477,6 +5511,29 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="stat"><div class="s-k">D1 / KV</div><div class="s-v"><span id="detail-stat-d1">0</span> <small>/ <span id="detail-stat-kv">0</span></small></div></div>
           <div class="stat"><div class="s-k" data-i18n="web.envDetail.updates">Updates</div><div class="s-v hot" id="detail-stat-updates">0</div></div>
           <div class="stat"><div class="s-k" data-i18n="web.loadConfig.environment">Environment</div><div class="s-v env-code" id="detail-env-name">-</div></div>
+        </div>
+
+        <div id="env-release-update" class="release-update-card hidden" aria-live="polite">
+          <div class="release-update-main">
+            <div>
+              <div class="release-version-flow"><span id="release-current-version">—</span><span aria-hidden="true">→</span><strong id="release-target-version">—</strong></div>
+              <div class="a-head" id="release-update-title" data-i18n="web.envDetail.releaseUpdateAvailable">A new Authrim version is available</div>
+              <p id="release-update-message" data-i18n="web.envDetail.releaseUpdateDesc">Setup will apply required database changes when present, update the services, and verify the result. Your settings and data are preserved.</p>
+            </div>
+            <button type="button" class="btn btn-next" id="btn-start-release-update" aria-busy="false">
+              <span class="inline-action-spinner hidden" aria-hidden="true"></span>
+              <span data-release-update-label data-i18n="web.envDetail.releaseUpdateAction">Update now</span>
+              <span class="arr" aria-hidden="true">→</span>
+            </button>
+            <button type="button" class="btn sm hidden" id="btn-start-database-only-update" aria-busy="false" data-i18n="web.envDetail.releaseUpdateDatabaseOnlyAction">Update databases only (advanced)</button>
+          </div>
+          <div id="release-update-progress" class="release-update-progress hidden">
+            <div class="release-progress-line"><span id="release-update-stage" data-i18n="web.envDetail.releaseUpdatePreparing">Preparing the update...</span><i></i></div>
+            <details>
+              <summary data-i18n="web.envDetail.releaseUpdateDetails">Show update details</summary>
+              <pre id="release-update-log"></pre>
+            </details>
+          </div>
         </div>
 
         <div id="env-initial-deploy-recovery" class="alert warn hidden">
@@ -10963,6 +11020,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         name.textContent = env.env;
         head.appendChild(name);
 
+        if (env.release?.canUpdate) {
+          const releaseBadge = document.createElement('span');
+          releaseBadge.className = 'env-release-badge';
+          releaseBadge.textContent = 'v' + env.release.targetVersion + ' update';
+          head.appendChild(releaseBadge);
+        }
+
         card.appendChild(head);
 
         const body = document.createElement('div');
@@ -11040,6 +11104,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       selectedEnvDetailConfig = null;
       selectedEnvRecoveryStatus = null;
       renderEnvDetailDeploymentStatus(null);
+      resetReleaseUpdateCard();
 
       const totalResources =
         (env.workers?.length || 0) +
@@ -11066,6 +11131,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       loadInitialDeploymentRecovery(env.env);
       loadEnvEmailStatus(env.env);
       loadServiceSiteStatus(env.env);
+      loadReleaseUpdateStatus(env.env);
       document.getElementById('env-email-progress').classList.add('hidden');
       document.getElementById('env-email-log').textContent = '';
       document.getElementById('env-service-site-progress').classList.add('hidden');
@@ -11141,6 +11207,203 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       // Load details asynchronously
       loadResourceDetails(env);
+    }
+
+    function resetReleaseUpdateCard() {
+      const card = document.getElementById('env-release-update');
+      if (!card) return;
+      card.classList.add('hidden');
+      card.dataset.state = '';
+      document.getElementById('release-update-progress')?.classList.add('hidden');
+      const log = document.getElementById('release-update-log');
+      if (log) log.textContent = '';
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('hidden');
+        button.setAttribute('aria-busy', 'false');
+        button.querySelector('.inline-action-spinner')?.classList.add('hidden');
+      }
+      if (databaseOnlyButton) {
+        databaseOnlyButton.disabled = false;
+        databaseOnlyButton.classList.remove('hidden');
+      }
+      const updates = document.getElementById('detail-stat-updates');
+      if (updates) updates.textContent = '0';
+    }
+
+    function renderReleaseUpdateStatus(release) {
+      const card = document.getElementById('env-release-update');
+      const title = document.getElementById('release-update-title');
+      const message = document.getElementById('release-update-message');
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      const label = button?.querySelector('[data-release-update-label]');
+      if (!card || !release) return;
+
+      const visibleStatuses = [
+        'update_available',
+        'resume_available',
+        'reconciliation_required',
+        'setup_tool_older',
+        'blocked',
+      ];
+      card.classList.toggle('hidden', !visibleStatuses.includes(release.status));
+      document.getElementById('release-current-version').textContent =
+        release.currentVersion ? 'v' + release.currentVersion : 'legacy';
+      document.getElementById('release-target-version').textContent = 'v' + release.targetVersion;
+      const updates = document.getElementById('detail-stat-updates');
+      if (updates) updates.textContent = release.canUpdate ? '1' : '0';
+
+      card.dataset.state = release.canUpdate ? 'available' : 'blocked';
+      button?.classList.toggle('hidden', !release.canUpdate);
+      databaseOnlyButton?.classList.toggle(
+        'hidden',
+        !release.canUpdate || release.databaseOnlyAvailable !== true
+      );
+      if (release.status === 'resume_available') {
+        title.textContent = t('web.envDetail.releaseUpdateResume');
+        message.textContent = t('web.envDetail.releaseUpdateDesc');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateResumeAction');
+      } else if (release.status === 'setup_tool_older') {
+        title.textContent = t('web.envDetail.releaseUpdateBlocked');
+        message.textContent = t('web.envDetail.releaseUpdateOlderTool');
+      } else if (release.status === 'blocked') {
+        title.textContent = t('web.envDetail.releaseUpdateBlocked');
+        message.textContent = t('web.envDetail.releaseUpdateBlocked');
+      } else {
+        title.textContent = t('web.envDetail.releaseUpdateAvailable');
+        message.textContent = t('web.envDetail.releaseUpdateDesc');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateAction');
+      }
+    }
+
+    async function loadReleaseUpdateStatus(envName) {
+      try {
+        const response = await api('/update/release/' + encodeURIComponent(envName));
+        if (selectedEnvForDetail?.env !== envName || response.success !== true) return;
+        renderReleaseUpdateStatus(response.release);
+      } catch (error) {
+        console.warn('Failed to load release update status:', error);
+      }
+    }
+
+    function releaseUpdateStageFromProgress(progress) {
+      const recent = (Array.isArray(progress) ? progress.slice(-20) : [])
+        .join('\\n')
+        .toLowerCase();
+      if (/verif|health|readiness|healthy/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateVerifying');
+      }
+      if (/deploy|worker|wrangler/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateServices');
+      }
+      if (/migrat|schema|database|d1/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateDatabase');
+      }
+      return t('web.envDetail.releaseUpdatePreparing');
+    }
+
+    async function startReleaseUpdate(databaseOnly = false) {
+      if (!selectedEnvForDetail) return;
+      if (databaseOnly && !window.confirm(t('web.envDetail.releaseUpdateDatabaseOnlyConfirm'))) {
+        return;
+      }
+      const envName = selectedEnvForDetail.env;
+      const card = document.getElementById('env-release-update');
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      const spinner = button?.querySelector('.inline-action-spinner');
+      const progressPanel = document.getElementById('release-update-progress');
+      const stage = document.getElementById('release-update-stage');
+      const log = document.getElementById('release-update-log');
+      button.disabled = true;
+      if (databaseOnlyButton) databaseOnlyButton.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      spinner?.classList.remove('hidden');
+      progressPanel?.classList.remove('hidden');
+      card.dataset.state = 'updating';
+      if (stage) stage.textContent = t('web.envDetail.releaseUpdatePreparing');
+      if (log) log.textContent = '';
+
+      let lastProgressLength = 0;
+      const appendProgress = (messages) => {
+        if (!Array.isArray(messages)) return;
+        if (messages.length < lastProgressLength) lastProgressLength = 0;
+        if (messages.length > lastProgressLength && log) {
+          const next = messages
+            .slice(lastProgressLength)
+            .map((message) => formatProgressMessageForDisplay(message))
+            .join('\\n');
+          log.textContent += (log.textContent ? '\\n' : '') + next;
+          log.scrollTop = log.scrollHeight;
+          lastProgressLength = messages.length;
+        }
+        if (stage) stage.textContent = releaseUpdateStageFromProgress(messages);
+      };
+      const poll = async () => {
+        try {
+          const result = await api('/deploy/status');
+          appendProgress(result.progress || []);
+        } catch {
+          // The update request provides the final result.
+        }
+      };
+      const pollTimer = window.setInterval(poll, 1000);
+      window.setTimeout(poll, 250);
+
+      try {
+        const response = await api('/update/release', {
+          method: 'POST',
+          body: JSON.stringify({ env: envName, databaseOnly }),
+        });
+        appendProgress(response.progress || []);
+        if (response.success !== true) {
+          throw new Error(response.error || t('web.envDetail.releaseUpdateFailed'));
+        }
+        if (response.inProgress === true) {
+          card.dataset.state = 'updating';
+          document.getElementById('release-update-title').textContent =
+            t('web.envDetail.releaseUpdateResume');
+          document.getElementById('release-update-message').textContent =
+            t('web.envDetail.releaseUpdateContinuing');
+          if (stage) stage.textContent = t('web.envDetail.releaseUpdateDatabase');
+          button.disabled = false;
+          const continuingLabel = button.querySelector('[data-release-update-label]');
+          if (continuingLabel) continuingLabel.textContent = t('web.envDetail.releaseUpdateResumeAction');
+          return;
+        }
+        card.dataset.state = 'complete';
+        document.getElementById('release-update-title').textContent =
+          t('web.envDetail.releaseUpdateComplete');
+        document.getElementById('release-update-message').textContent =
+          t('web.envDetail.releaseUpdateDesc');
+        if (stage) stage.textContent = t('web.envDetail.releaseUpdateComplete');
+        button.classList.add('hidden');
+        databaseOnlyButton?.classList.add('hidden');
+        document.getElementById('detail-stat-updates').textContent = '0';
+        selectedEnvForDetail.release = response.release;
+        const detected = detectedEnvironments.find((environment) => environment.env === envName);
+        if (detected) detected.release = response.release;
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        card.dataset.state = 'blocked';
+        document.getElementById('release-update-title').textContent =
+          t('web.envDetail.releaseUpdateFailed');
+        document.getElementById('release-update-message').textContent =
+          error instanceof Error ? error.message : String(error);
+        if (stage) stage.textContent = t('web.envDetail.releaseUpdateFailed');
+        button.disabled = false;
+        if (databaseOnlyButton) databaseOnlyButton.disabled = false;
+        const label = button.querySelector('[data-release-update-label]');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateResumeAction');
+      } finally {
+        window.clearInterval(pollTimer);
+        await poll();
+        button.setAttribute('aria-busy', 'false');
+        spinner?.classList.add('hidden');
+      }
     }
 
     function describeInitialDeploymentRecovery(result) {
@@ -13486,6 +13749,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     document.getElementById('btn-resume-initial-deploy')?.addEventListener('click', () => {
       resumeInitialDeploymentFromEnvironment();
+    });
+
+    document.getElementById('btn-start-release-update')?.addEventListener('click', () => {
+      startReleaseUpdate();
+    });
+    document.getElementById('btn-start-database-only-update')?.addEventListener('click', () => {
+      startReleaseUpdate(true);
     });
 
     // Admin setup button

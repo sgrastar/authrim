@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   assertProductUpgradeAllowed,
   getWorkspaceVersionMismatches,
+  includeRequiredReleaseControlCoordinator,
+  includeRequiredReleaseManagement,
   resolveLegacyDeploymentVersion,
   resolveSchemaExecutionState,
   splitReleaseDeploymentForControlCoordinator,
+  splitReleaseSchemaTargetsForControlHandoff,
   getUiComponentsToUpdate,
   isUpdateSourceLockUnchanged,
   withReleaseUpdateState,
@@ -85,12 +88,81 @@ describe('release update orchestration', () => {
       remaining: ['ar-auth', 'ar-userinfo'],
     });
     expect(splitReleaseDeploymentForControlCoordinator(['ar-control'])).toEqual({
-      coordinator: [],
-      remaining: ['ar-control'],
+      coordinator: ['ar-control'],
+      remaining: [],
     });
     expect(splitReleaseDeploymentForControlCoordinator(['ar-auth', 'ar-userinfo'])).toEqual({
       coordinator: [],
       remaining: ['ar-auth', 'ar-userinfo'],
+    });
+  });
+
+  it('redeploys Control when managed schema work exists even at the same product version', () => {
+    expect(
+      includeRequiredReleaseControlCoordinator(['ar-management'], ['d1-core', 'd1-pii'], false)
+    ).toEqual(['ar-management', 'ar-control']);
+    expect(
+      includeRequiredReleaseControlCoordinator(['ar-control', 'ar-management'], ['d1-core'], false)
+    ).toEqual(['ar-control', 'ar-management']);
+    expect(includeRequiredReleaseControlCoordinator(['ar-management'], [], false)).toEqual([
+      'ar-management',
+    ]);
+    expect(includeRequiredReleaseControlCoordinator(['ar-management'], ['d1-core'], true)).toEqual([
+      'ar-management',
+    ]);
+  });
+
+  it('redeploys Management while resuming a release with schema changes', () => {
+    expect(includeRequiredReleaseManagement(['ar-control'], true, false)).toEqual([
+      'ar-control',
+      'ar-management',
+    ]);
+    expect(includeRequiredReleaseManagement(['ar-management'], true, false)).toEqual([
+      'ar-management',
+    ]);
+    expect(includeRequiredReleaseManagement(['ar-control'], false, false)).toEqual(['ar-control']);
+    expect(includeRequiredReleaseManagement(['ar-control'], true, true)).toEqual(['ar-control']);
+  });
+
+  it('applies the Control schema before other setup-owned schemas and excludes tenant targets', () => {
+    const control = {
+      target: {
+        id: 'd1:control:d1-control',
+        streamId: 'd1-control',
+        driver: 'd1' as const,
+        scope: 'deployment' as const,
+        logicalRoles: ['control'],
+        databaseName: 'control',
+        automatic: true,
+      },
+      changedFiles: ['024_release_migration_rollout.sql'],
+      requiresAction: true,
+    };
+    const admin = {
+      ...control,
+      target: {
+        ...control.target,
+        id: 'd1:admin:d1-admin',
+        streamId: 'd1-admin',
+        logicalRoles: ['admin'],
+        databaseName: 'admin',
+      },
+    };
+    const tenant = {
+      ...control,
+      target: {
+        ...control.target,
+        id: 'tenant:core:d1-core',
+        streamId: 'd1-core',
+        scope: 'tenant' as const,
+        logicalRoles: ['core'],
+        databaseName: 'tenant-core',
+      },
+    };
+
+    expect(splitReleaseSchemaTargetsForControlHandoff([admin, tenant, control])).toEqual({
+      controlSchemaTargets: [control],
+      remainingSetupTargets: [admin],
     });
   });
 
@@ -293,5 +365,13 @@ describe('release update orchestration', () => {
       manifestChecksum: checksum,
     });
     expect(verified.productVersion).toBe('1.1.0');
+
+    const databaseOnlyVerified = withReleaseUpdateState(schemaApplied, {
+      targetVersion: '1.1.0',
+      phase: 'database_only_verified',
+      manifestChecksum: checksum,
+    });
+    expect(databaseOnlyVerified.productVersion).toBe('1.0.0');
+    expect(databaseOnlyVerified.releaseUpdate?.phase).toBe('database_only_verified');
   });
 });

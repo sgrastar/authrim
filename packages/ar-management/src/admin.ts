@@ -2112,6 +2112,12 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
           'it',
           'th',
           'vi',
+          'hi',
+          'bn',
+          'tr',
+          'sw',
+          'am',
+          'pl',
         ],
       },
     };

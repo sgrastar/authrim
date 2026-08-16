@@ -1,14 +1,16 @@
 {
   "formatVersion": 1,
   "productVersion": "0.4.0",
+  "rollout": {
+    "databaseExecution": "setup_then_control",
+    "workerActivation": "after_required_databases",
+    "adminMutationMode": "read_only"
+  },
   "streams": [
     {
       "id": "d1-core",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "core",
-        "tenant_core"
-      ],
+      "logicalRoles": ["core", "tenant_core"],
       "files": [
         {
           "path": "001_core_foundation.sql",
@@ -203,10 +205,7 @@
     {
       "id": "d1-pii",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "pii",
-        "tenant_pii"
-      ],
+      "logicalRoles": ["pii", "tenant_pii"],
       "files": [
         {
           "path": "001_pii_schema.sql",
@@ -249,9 +248,7 @@
     {
       "id": "d1-admin",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "admin"
-      ],
+      "logicalRoles": ["admin"],
       "files": [
         {
           "path": "001_admin_users_rbac_security.sql",
@@ -410,9 +407,7 @@
     {
       "id": "d1-control",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "control"
-      ],
+      "logicalRoles": ["control"],
       "files": [
         {
           "path": "001_control_plane.sql",
@@ -505,15 +500,17 @@
         {
           "path": "023_bootstrap_accelerator.sql",
           "checksum": "8a54db86e9797f8ca20297f3a84beaa9420be4193b1a126e47e3be3988076369"
+        },
+        {
+          "path": "024_release_migration_rollout.sql",
+          "checksum": "4a9d1e35bd67289243d5764b9f04180a2b31ff7daedcc2ab028b3ce3cd08aa6e"
         }
       ]
     },
     {
       "id": "d1-lookup",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "lookup"
-      ],
+      "logicalRoles": ["lookup"],
       "files": [
         {
           "path": "001_lookup_directory.sql",
@@ -532,9 +529,7 @@
     {
       "id": "d1-plugin-runner",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "plugin_runner"
-      ],
+      "logicalRoles": ["plugin_runner"],
       "files": [
         {
           "path": "001_plugin_runner.sql",
@@ -581,11 +576,7 @@
     {
       "id": "external-postgres-core",
       "dialect": "postgres",
-      "logicalRoles": [
-        "core",
-        "custom",
-        "policy"
-      ],
+      "logicalRoles": ["core", "custom", "policy"],
       "files": [
         {
           "path": "001_external_durable_core.sql",
@@ -664,9 +655,7 @@
     {
       "id": "external-postgres-pii",
       "dialect": "postgres",
-      "logicalRoles": [
-        "pii"
-      ],
+      "logicalRoles": ["pii"],
       "files": [
         {
           "path": "002_external_durable_pii.sql",

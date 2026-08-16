@@ -304,7 +304,13 @@
 		ar: { labelJa: 'アラビア語 (ar)', labelEn: 'Arabic (ar)' },
 		it: { labelJa: 'イタリア語 (it)', labelEn: 'Italian (it)' },
 		th: { labelJa: 'タイ語 (th)', labelEn: 'Thai (th)' },
-		vi: { labelJa: 'ベトナム語 (vi)', labelEn: 'Vietnamese (vi)' }
+		vi: { labelJa: 'ベトナム語 (vi)', labelEn: 'Vietnamese (vi)' },
+		hi: { labelJa: 'ヒンディー語 (hi)', labelEn: 'Hindi (hi)' },
+		bn: { labelJa: 'ベンガル語 (bn)', labelEn: 'Bengali (bn)' },
+		tr: { labelJa: 'トルコ語 (tr)', labelEn: 'Turkish (tr)' },
+		sw: { labelJa: 'スワヒリ語 (sw)', labelEn: 'Swahili (sw)' },
+		am: { labelJa: 'アムハラ語 (am)', labelEn: 'Amharic (am)' },
+		pl: { labelJa: 'ポーランド語 (pl)', labelEn: 'Polish (pl)' }
 	};
 	const localizationLanguages = SCREEN_LOCALIZATION_LANGUAGES.map((code) => ({
 		code,

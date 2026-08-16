@@ -106,7 +106,28 @@ function getPreferredLanguage(c: Context<{ Bindings: Env }>): string {
     return 'zh-TW';
   }
   const base = lower.split('-')[0];
-  return base && ['en', 'ja', 'es', 'pt', 'fr', 'de', 'ko', 'ru', 'id'].includes(base)
+  return base &&
+    [
+      'en',
+      'ja',
+      'es',
+      'pt',
+      'fr',
+      'de',
+      'ko',
+      'ru',
+      'id',
+      'ar',
+      'it',
+      'th',
+      'vi',
+      'hi',
+      'bn',
+      'tr',
+      'sw',
+      'am',
+      'pl',
+    ].includes(base)
     ? base
     : 'en';
 }

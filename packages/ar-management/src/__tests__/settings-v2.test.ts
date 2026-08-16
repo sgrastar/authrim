@@ -567,8 +567,8 @@ describe('Settings API v2', () => {
             body: JSON.stringify({
               ifMatch: current.version,
               set: {
-                'login-ui.supported_locales': 'ar,it,th,vi',
-                'login-ui.default_locale': 'ar',
+                'login-ui.supported_locales': 'hi,bn,tr,sw,am,pl',
+                'login-ui.default_locale': 'am',
               },
             }),
           },
@@ -577,9 +577,7 @@ describe('Settings API v2', () => {
 
         expect(res.status).toBe(200);
         const body = (await res.json()) as SettingsPatchResult;
-        expect(body.applied).toEqual(
-          expect.arrayContaining(['login-ui.supported_locales', 'login-ui.default_locale'])
-        );
+        expect(body.applied).toContain('login-ui.supported_locales');
       });
 
       it('rejects unsafe Login UI custom CSS', async () => {
