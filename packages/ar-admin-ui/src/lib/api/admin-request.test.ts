@@ -44,10 +44,9 @@ describe('buildAdminHeaders', () => {
 
 		await settingsContext.initialize();
 
-		expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-			'/api/admin/tenants',
-			'/api/admin/tenants/first/clients'
-		]);
+		expect(
+			fetchMock.mock.calls.map(([input]) => new URL(String(input), 'http://localhost').pathname)
+		).toEqual(['/api/admin/tenants', '/api/admin/tenants/first/clients']);
 		expect(settingsContext.scopeContext).toEqual({
 			level: 'client',
 			tenantId: 'first',
