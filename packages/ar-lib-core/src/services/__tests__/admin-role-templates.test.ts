@@ -28,6 +28,12 @@ describe('admin-role-templates', () => {
     expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ);
     expect(support?.permissions).not.toContain(ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ);
     expect(support?.permissions).not.toContain(ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ);
+    expect(support?.permissions).toContain(
+      ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_MASKED_READ
+    );
+    expect(support?.permissions).not.toContain(
+      ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_FULL_READ
+    );
   });
 
   it('includes explicit detail capabilities for investigation roles', () => {
@@ -43,6 +49,20 @@ describe('admin-role-templates', () => {
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.OPERATIONAL_LOGS_DETAIL_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.APPROVALS_DETAIL_READ);
     expect(investigator?.permissions).toContain(ADMIN_PERMISSIONS.APPROVALS_GRANT_ISSUE);
+    expect(investigator?.permissions).toContain(
+      ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_FULL_READ
+    );
+  });
+
+  it('lets account-governance roles open the user detail surface that hosts their controls', () => {
+    const templates = getBuiltinAdminRoleTemplates();
+    const support = templates.find((template) => template.key === 'support_operator');
+    const compliance = templates.find((template) => template.key === 'compliance_reviewer');
+
+    expect(support?.permissions).toContain(ADMIN_PERMISSIONS.USERS_READ);
+    expect(support?.permissions).toContain(ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE);
+    expect(compliance?.permissions).toContain(ADMIN_PERMISSIONS.USERS_READ);
+    expect(compliance?.permissions).toContain(ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE);
   });
 
   it('separates storage destination viewing from credential updates', () => {

@@ -190,6 +190,8 @@ export interface LoginUIConfig {
 	};
 	supportedLocales: string[];
 	defaultLocale: string;
+	primaryLocales?: string[];
+	showEnglishLanguageNames?: boolean;
 	selfService?: {
 		accountPageEnabled: boolean;
 		accountPagePath: string;

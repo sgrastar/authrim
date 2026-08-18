@@ -1,7 +1,10 @@
 import type { D1Database, D1DatabaseSession, D1Result } from '@cloudflare/workers-types';
-import { encryptNotificationIntentPayload } from './notification-intent-envelope';
+import {
+  encryptNotificationIntentPayload,
+  notificationIntentEnvelopeKeyId,
+} from './notification-intent-envelope';
 
-const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_KIND = /^[a-z][a-z0-9._:-]{0,127}$/u;
 const SAFE_IDEMPOTENCY_KEY = /^[\x21-\x7e]{1,256}$/u;
 const EVENT_TYPE = 'notification.delivery.requested';
@@ -35,14 +38,22 @@ export interface NotificationProviderPlan {
 export interface CreateNotificationDeliveryIntentInput {
   db: D1Database;
   environmentId: string;
-  publicJwks: string;
-  activeKeyId: string;
+  publicJwks?: string;
+  activeKeyId?: string;
+  preparedEnvelope?: {
+    keyId: string;
+    envelope: string;
+  };
   idempotencyHmacKey: string;
   tenantId: string;
   intentId: string;
   outboxId: string;
   providerOrder: NotificationProviderPlan;
   notificationKind: string;
+  accountId?: string;
+  recipientMasked?: string;
+  recipientEncrypted?: string;
+  recipientEncryptionKeyVersion?: number;
   idempotencyKey: string;
   expiresAt: number;
   payload: NotificationDeliveryPayload;
@@ -70,6 +81,8 @@ interface IntentRow {
   provider_started_at: number | string;
   channel: string;
   notification_kind: string;
+  account_id: string | null;
+  recipient_masked: string | null;
   payload_version: number | string;
   payload_key_id: string | null;
   idempotency_key: string;
@@ -294,6 +307,8 @@ async function requestFingerprint(input: CreateNotificationDeliveryIntentInput):
       input.outboxId,
       input.providerOrder,
       input.notificationKind,
+      input.accountId ?? null,
+      input.recipientMasked ?? null,
       input.idempotencyKey,
       input.expiresAt,
       input.payload,
@@ -352,6 +367,8 @@ function assertReflection(input: {
     integer(intent.provider_started_at, 'notification_intent_reflection_invalid') < 1 ||
     intent.channel !== expected.payload.channel ||
     intent.notification_kind !== expected.notificationKind ||
+    intent.account_id !== (expected.accountId ?? null) ||
+    intent.recipient_masked !== (expected.recipientMasked ?? null) ||
     integer(intent.payload_version, 'notification_intent_reflection_invalid') !== 1 ||
     intent.idempotency_key !== expected.idempotencyKey ||
     intent.request_fingerprint !== requestFingerprint ||
@@ -406,6 +423,12 @@ export async function createNotificationDeliveryIntent(
     !SAFE_ID.test(input.intentId) ||
     !SAFE_ID.test(input.outboxId) ||
     !SAFE_KIND.test(input.notificationKind) ||
+    (input.accountId !== undefined && !SAFE_ID.test(input.accountId)) ||
+    (input.recipientMasked !== undefined && input.recipientMasked.length > 2_048) ||
+    (input.recipientEncrypted !== undefined && input.recipientEncrypted.length > 8_192) ||
+    (input.recipientEncrypted !== undefined &&
+      (!Number.isSafeInteger(input.recipientEncryptionKeyVersion) ||
+        (input.recipientEncryptionKeyVersion ?? 0) < 1)) ||
     !SAFE_IDEMPOTENCY_KEY.test(input.idempotencyKey) ||
     !Number.isSafeInteger(now) ||
     now < 1 ||
@@ -424,18 +447,38 @@ export async function createNotificationDeliveryIntent(
     eventVersion: EVENT_VERSION,
   });
   const fingerprint = await requestFingerprint(normalizedInput);
-  const envelope = await encryptNotificationIntentPayload({
-    publicJwks: input.publicJwks,
-    activeKeyId: input.activeKeyId,
-    context: {
-      environmentId: input.environmentId,
-      tenantId: input.tenantId,
-      intentId: input.intentId,
-      notificationKind: input.notificationKind,
-      payloadVersion: 1,
-    },
-    payload,
-  });
+  const context = {
+    environmentId: input.environmentId,
+    tenantId: input.tenantId,
+    intentId: input.intentId,
+    notificationKind: input.notificationKind,
+    payloadVersion: 1 as const,
+  };
+  let payloadKeyId: string;
+  let envelope: string;
+  if (input.preparedEnvelope) {
+    if (
+      input.publicJwks !== undefined ||
+      input.activeKeyId !== undefined ||
+      notificationIntentEnvelopeKeyId(input.preparedEnvelope.envelope) !==
+        input.preparedEnvelope.keyId
+    ) {
+      throw new Error('notification_encryption_key_invalid');
+    }
+    payloadKeyId = input.preparedEnvelope.keyId;
+    envelope = input.preparedEnvelope.envelope;
+  } else {
+    if (input.publicJwks === undefined || input.activeKeyId === undefined) {
+      throw new Error('notification_encryption_key_invalid');
+    }
+    payloadKeyId = input.activeKeyId;
+    envelope = await encryptNotificationIntentPayload({
+      publicJwks: input.publicJwks,
+      activeKeyId: input.activeKeyId,
+      context,
+      payload,
+    });
+  }
   const session = primary(input.db);
   try {
     const results = await session.batch([
@@ -445,10 +488,11 @@ export async function createNotificationDeliveryIntent(
            intent_id, tenant_id, plugin_installation_id, provider_order_version,
            provider_installation_ids_json, active_provider_index, provider_started_at,
            channel, notification_kind,
+           account_id, recipient_masked, recipient_encrypted, recipient_encryption_key_version,
            payload_version, payload_key_id, payload_envelope_json, idempotency_key,
            request_fingerprint, fingerprint_key_id, state, expires_at, delete_after,
            created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`
         )
         .bind(
           input.intentId,
@@ -459,13 +503,17 @@ export async function createNotificationDeliveryIntent(
           now,
           payload.channel,
           input.notificationKind,
-          input.activeKeyId,
+          input.accountId ?? null,
+          input.recipientMasked ?? null,
+          input.recipientEncrypted ?? null,
+          input.recipientEncryptionKeyVersion ?? null,
+          payloadKeyId,
           envelope,
           input.idempotencyKey,
           fingerprint,
           FINGERPRINT_KEY_ID,
           input.expiresAt,
-          input.expiresAt,
+          Math.max(input.expiresAt, now + 90 * 24 * 60 * 60),
           now,
           now
         ),
@@ -500,6 +548,7 @@ export async function createNotificationDeliveryIntent(
         `SELECT intent_id, tenant_id, plugin_installation_id, provider_order_version,
                 provider_installation_ids_json, active_provider_index, provider_started_at,
                 channel, notification_kind,
+                account_id, recipient_masked,
                 payload_version, payload_key_id, idempotency_key, state, expires_at
                 , request_fingerprint, fingerprint_key_id
            FROM notification_delivery_intents

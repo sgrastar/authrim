@@ -64,6 +64,7 @@
 		"yaml": "2.8.3"
 	},
 	"dependencies": {
+		"@authrim/ar-lib-core": "workspace:*",
 		"@simplewebauthn/browser": "^13.2.2",
 		"@xyflow/svelte": "^1.5.0",
 		"d3": "^7.9.0",

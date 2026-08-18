@@ -42,6 +42,7 @@ tags:
   - name: Data Retention
   - name: Database Connections
   - name: Diagnostic Logging
+  - name: Email Delivery
   - name: External Providers
   - name: Field Mapping
   - name: Flows
@@ -291,7 +292,10 @@ paths:
           $ref: '#/components/responses/AdminStats'
       description: >-
         Return the Admin UI dashboard summary for users, clients, logins, PII health, and recent
-        registrations in the current tenant.
+        user registrations, logins, and client registrations in the current tenant. Active users
+        are distinct users whose canonical account records a login in the preceding 30 days, while
+        loginsToday is the number of distinct users whose latest recorded login is today. The
+        response aggregates all active routed user shards assigned to the tenant.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -438,11 +442,227 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminDeleteResult'
+        '409':
+          $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
       description: >-
         Delete User in the Users area. The operation changes tenant state and should be protected by
-        the documented admin authorization and audit controls.
+        the documented admin authorization and audit controls. An active account legal hold rejects
+        deletion with 409.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/support-context':
+    get:
+      tags: [Users]
+      summary: Get an account support context.
+      description: >-
+        Returns the bounded Admin-only support document for the canonical account. This resource is
+        not account metadata and is never projected into tokens, public APIs, or Lookup.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Current support context, or an empty version-zero document when absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountSupportContextView'
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags: [Users]
+      summary: Replace an account support context.
+      description: >-
+        Replaces the typed support document using optimistic versioning. Summaries and external
+        reference values are not copied into Admin audit metadata.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountSupportContextReplaceRequest'
+      responses:
+        '200':
+          description: Updated support context.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountSupportContextView'
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/legal-holds':
+    get:
+      tags: [Users, Compliance]
+      summary: List account legal holds.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Account legal-hold history, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 100
+                    items:
+                      $ref: '#/components/schemas/AccountLegalHold'
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags: [Users, Compliance]
+      summary: Create an account legal hold.
+      description: >-
+        Creates one active account-scoped hold and enqueues its non-PII Control projection. Omitted
+        expiry means the hold remains active until an authorized audited transition.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountLegalHoldCreateRequest'
+      responses:
+        '201':
+          description: Legal hold created, or the same idempotent result replayed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountLegalHold'
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/legal-holds/{holdId}/release':
+    post:
+      tags: [Users, Compliance]
+      summary: Release an account legal hold.
+      description: >-
+        Performs the audited active-to-released transition using an expected hold version and
+        enqueues the next monotonic Control projection.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+        - name: holdId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^legal-hold:[a-f0-9]{64}$' }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountLegalHoldReleaseRequest'
+      responses:
+        '200':
+          description: Released legal hold.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountLegalHold'
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/email-deliveries:
+    get:
+      tags: [Email Delivery]
+      summary: List tenant email delivery diagnostics.
+      description: >-
+        Returns persistent evidence that Authrim recorded a send request and that a configured
+        provider accepted it. A provider acceptance is not represented as final inbox delivery.
+        Recipient values are omitted, masked, or fully decrypted according to separate Admin
+        permissions. Message bodies, template variables, and authentication codes are never returned.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              [
+                requested,
+                retrying,
+                provider_accepted,
+                delivered,
+                deferred,
+                bounced,
+                failed,
+                rejected,
+                complained,
+                unknown,
+                expired,
+                canceled,
+              ]
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmailDeliveryHistory'
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/email-deliveries':
+    get:
+      tags: [Email Delivery, Users]
+      summary: List email delivery diagnostics for one end user.
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - $ref: '#/components/parameters/Id'
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          $ref: '#/components/responses/EmailDeliveryHistory'
+        '400': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -5529,7 +5749,7 @@ paths:
       summary: Delete an anonymous user.
       description: >-
         Deletes an anonymous user and all anonymous devices for that user. Upgrade history is
-        preserved for audit purposes.
+        preserved for audit purposes. An active account legal hold rejects deletion with 409.
       responses:
         '200':
           $ref: '#/components/responses/AnonymousUserDelete'
@@ -5540,6 +5760,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -8199,7 +8421,11 @@ paths:
       summary: Update a data retention category.
       description: >-
         Updates the retention period for one supported data retention category in the tenant
-        settings JSON and records an audit log entry. `retention_days` must be between 1 and 3650.
+        settings and records an audit log entry. `lookup_directory` defaults to 180 days, requires
+        30-3650 days, and commits a typed policy generation with a durable Control projection.
+        Other categories accept 1-3650 days. Shortening a period requires `confirm_shortening=true`
+        and the current period in `expected_current_retention_days`; stale or unconfirmed requests
+        fail with 409.
       responses:
         '200':
           $ref: '#/components/responses/DataRetentionCategoryUpdate'
@@ -8208,6 +8434,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -8219,7 +8447,7 @@ paths:
             type: string
           description: >-
             Retention category key such as `audit_logs`, `session_data`, `tombstones`, `auth_codes`,
-            `refresh_tokens`, or `access_tokens`.
+            `refresh_tokens`, `access_tokens`, or `lookup_directory`.
       requestBody:
         $ref: '#/components/requestBodies/DataRetentionCategoryUpdate'
       security:
@@ -8232,9 +8460,10 @@ paths:
       operationId: postApiAdminDataRetentionCleanup
       summary: Run data retention cleanup.
       description: >-
-        Synchronously deletes expired rows for the requested categories, or for all supported
-        categories when `categories` is omitted. The response contains per-category deletion counts
-        and may be `partial_success` if one category fails while others continue.
+        Synchronously deletes expired rows only when every selected category is tenant-local. A
+        request selecting `lookup_directory` (including an omitted category list) fails closed with
+        503 and performs no deletion until the durable Control purge executor is enabled. Successful
+        local-only responses contain per-category deletion counts and may be `partial_success`.
       responses:
         '200':
           $ref: '#/components/responses/DataRetentionCleanupRun'
@@ -8243,6 +8472,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -20576,7 +20807,8 @@ paths:
       summary: Update region shard config
       description: >-
         Updates region shard distribution and optional colocation groups, creating a new generation
-        when the effective config changes.
+        when the effective config changes. The total shard count must be a positive multiple of the
+        number of regions whose distribution is greater than zero.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsRegionShardsUpdate'
@@ -23555,7 +23787,7 @@ paths:
       summary: Anonymize user
       description: >-
         Permanently deletes user PII and account linkage, revokes sessions, creates a tombstone, and
-        returns only a hashed user ID.
+        returns only a hashed user ID. An active account legal hold rejects anonymization with 409.
       responses:
         '200':
           $ref: '#/components/responses/UserAnonymize'
@@ -23564,6 +23796,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -23607,7 +23841,9 @@ paths:
         - Users
       operationId: deleteApiAdminUsersByIdPii
       summary: Delete user PII
-      description: 'Deletes only the user PII values, creates a tombstone, and leaves the account active.'
+      description: >-
+        Deletes only the user PII values, creates a tombstone, and leaves the account active. An
+        active account legal hold rejects deletion with 409.
       responses:
         '200':
           $ref: '#/components/responses/UserPiiDelete'
@@ -23616,6 +23852,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -23836,7 +24074,10 @@ paths:
         - Users
       operationId: postApiAdminUsersByIdSendEmail
       summary: Send email to user
-      description: Queues a templated email job for the user when the user has an email address.
+      description: >-
+        Records a durable delivery intent for a templated user email and dispatches it through the
+        configured notification provider. The response distinguishes a queued attempt from provider
+        acceptance; neither state asserts final inbox delivery.
       responses:
         '200':
           $ref: '#/components/responses/UserSendEmail'
@@ -23845,6 +24086,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '502':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -32892,7 +33135,7 @@ components:
             expires_at: null
     UserSendEmail:
       required: true
-      description: Email template and template variables to enqueue for a user.
+      description: Email template and template variables to dispatch through the notification pipeline.
       content:
         application/json:
           schema:
@@ -34535,6 +34778,74 @@ components:
             priority: 20
             is_active: true
   responses:
+    EmailDeliveryHistory:
+      description: Privacy-projected email delivery history.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [items, recipient_visibility]
+            properties:
+              recipient_visibility:
+                type: string
+                enum: [full, masked, none]
+              items:
+                type: array
+                maxItems: 100
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - intent_id
+                    - account_id
+                    - notification_kind
+                    - recipient
+                    - recipient_visibility
+                    - api_status
+                    - provider_installation_id
+                    - provider_message_id
+                    - status
+                    - final_delivery_tracked
+                    - attempts
+                    - last_error_code
+                    - requested_at
+                    - provider_accepted_at
+                    - status_updated_at
+                  properties:
+                    intent_id: { type: string }
+                    account_id: { type: [string, 'null'] }
+                    notification_kind: { type: string }
+                    recipient:
+                      type: [string, 'null']
+                      description: Omitted, masked, or full according to recipient_visibility.
+                    recipient_visibility: { type: string, enum: [full, masked, none] }
+                    api_status: { type: string, enum: [recorded] }
+                    provider_installation_id: { type: string }
+                    provider_message_id: { type: [string, 'null'] }
+                    status:
+                      type: string
+                      enum:
+                        [
+                          requested,
+                          retrying,
+                          provider_accepted,
+                          delivered,
+                          deferred,
+                          bounced,
+                          failed,
+                          rejected,
+                          complained,
+                          unknown,
+                          expired,
+                          canceled,
+                        ]
+                    final_delivery_tracked: { type: boolean }
+                    attempts: { type: integer, minimum: 0 }
+                    last_error_code: { type: [string, 'null'] }
+                    requested_at: { type: [integer, 'null'] }
+                    provider_accepted_at: { type: [integer, 'null'] }
+                    status_updated_at: { type: [integer, 'null'] }
     AdminLookupHmacRotationMutation:
       description: Lookup HMAC rotation state after the audited fenced transition.
       content:
@@ -40405,7 +40716,7 @@ components:
             success: true
             message: Role assignment removed successfully
     UserSendEmail:
-      description: Queued user email job.
+      description: Durable user email delivery request.
       content:
         application/json:
           schema:
@@ -44664,6 +44975,8 @@ components:
                 type: string
                 enum:
                   - user_registration
+                  - login
+                  - client_registration
               userId:
                 type: string
               email:
@@ -46077,7 +46390,10 @@ components:
         set:
           type: object
           additionalProperties: true
-          description: Setting keys and values to apply.
+          description: >-
+            Setting keys and values to apply. For login-ui.primary_locales, use null for automatic
+            defaults or an array of zero to six unique supported locale codes. The
+            login-ui.show_english_language_names value must be boolean.
         clear:
           type: array
           items:
@@ -52165,6 +52481,158 @@ components:
             - type: string
               enum:
                 - default
+    AccountSupportExternalReference:
+      type: object
+      additionalProperties: false
+      required: [system, kind, reference]
+      properties:
+        system:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9._-]{0,63}$'
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9._-]{0,63}$'
+        reference:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Opaque identifier in the named support system; arbitrary URLs are rejected.
+    AccountSupportContextDocument:
+      type: object
+      additionalProperties: false
+      required: [schema_version, external_references]
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        external_references:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/AccountSupportExternalReference'
+    AccountSupportContextView:
+      type: object
+      additionalProperties: false
+      required: [context, version, created_by, updated_by, created_at, updated_at]
+      properties:
+        context:
+          $ref: '#/components/schemas/AccountSupportContextDocument'
+        version:
+          type: integer
+          minimum: 0
+        created_by:
+          type: [string, 'null']
+        updated_by:
+          type: [string, 'null']
+        created_at:
+          type: [integer, 'null']
+        updated_at:
+          type: [integer, 'null']
+    AccountSupportContextReplaceRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, context]
+      properties:
+        expected_version:
+          type: integer
+          minimum: 0
+        context:
+          $ref: '#/components/schemas/AccountSupportContextDocument'
+    AccountLegalHold:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - subject_type
+        - account_id
+        - state
+        - reason_code
+        - case_reference
+        - expires_at
+        - version
+        - created_by
+        - created_at
+        - released_by
+        - released_at
+        - release_reason
+        - updated_at
+      properties:
+        id:
+          type: string
+          pattern: '^legal-hold:[a-f0-9]{64}$'
+        subject_type:
+          type: string
+          enum: [account]
+        account_id:
+          type: string
+        state:
+          type: string
+          enum: [active, released, expired]
+        reason_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9._-]{0,63}$'
+        case_reference:
+          type: [string, 'null']
+          maxLength: 256
+        expires_at:
+          type: [integer, 'null']
+          description: Unix epoch milliseconds; null means no automatic expiry.
+        version:
+          type: integer
+          minimum: 1
+        created_by:
+          type: string
+        created_at:
+          type: integer
+        released_by:
+          type: [string, 'null']
+        released_at:
+          type: [integer, 'null']
+        release_reason:
+          type: [string, 'null']
+        updated_at:
+          type: integer
+    AccountLegalHoldCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [reason_code]
+      properties:
+        reason_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9._-]{0,63}$'
+        case_reference:
+          type: string
+          minLength: 1
+          maxLength: 256
+        expires_at:
+          type: string
+          format: date-time
+    AccountLegalHoldReleaseRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_version, reason_code]
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        reason_code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[a-z0-9][a-z0-9._-]{0,63}$'
     DataRetentionCategoriesResponse:
       type: object
       additionalProperties: false
@@ -52185,6 +52653,14 @@ components:
           type: integer
           minimum: 1
           maximum: 3650
+        confirm_shortening:
+          type: boolean
+          description: Must be true when the requested period is shorter than the effective period.
+        expected_current_retention_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          description: Current effective period observed with the impact estimate.
     DataRetentionCategoryUpdateResponse:
       type: object
       additionalProperties: false
@@ -52301,6 +52777,9 @@ components:
                 type: integer
               estimated_storage_mb:
                 type: number
+              estimate_status:
+                type: string
+                enum: [available, durable_projection_pending]
         total_records_to_delete:
           type: integer
         total_estimated_storage_mb:
@@ -61879,6 +62358,7 @@ components:
         totalShards:
           type: integer
           minimum: 1
+          description: Must be a positive multiple of the number of active regions.
         regionDistribution:
           type: object
           additionalProperties:
@@ -64886,6 +65366,7 @@ components:
           type: string
         status:
           type: string
+          enum: [queued, provider_accepted]
         created_at:
           type: string
           format: date-time
@@ -69210,6 +69691,9 @@ components:
           type: integer
         hot_query_status:
           type: string
+        execution_status:
+          type: string
+          enum: [available, durable_projection_pending]
     DeviceSecretRevokeRequest:
       type: object
       additionalProperties: false

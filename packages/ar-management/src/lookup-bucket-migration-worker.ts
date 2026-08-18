@@ -65,6 +65,7 @@ const SPECS: readonly TableSpec[] = [
       'created_at',
       'updated_at',
       'disabled_at',
+      'disabled_at',
     ],
     keyColumns: [
       'index_kind',
@@ -450,10 +451,10 @@ export class LookupBucketMigrationWorker {
       .withSession('first-primary')
       .prepare(
         `SELECT challenge_id FROM lookup_discovery_otp_challenges
-          WHERE challenge_id LIKE ? ESCAPE '\\' AND consumed_at IS NULL
+          WHERE virtual_bucket = ? AND consumed_at IS NULL
             AND delivery_state = 'sent' AND expires_at >= ? LIMIT 1`
       )
-      .bind(`discovery-${view.virtualBucket}-%`, now)
+      .bind(view.virtualBucket, now)
       .first<{ challenge_id: string }>();
     if (challenge) throw new Error('lookup_bucket_migration_challenge_grace_active');
     await this.source.batch([

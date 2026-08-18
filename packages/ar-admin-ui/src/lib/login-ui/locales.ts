@@ -1,30 +1,30 @@
-export const LOGIN_UI_LOCALE_OPTIONS = [
-	{ code: 'en', label: 'English' },
-	{ code: 'ja', label: 'Japanese' },
-	{ code: 'zh-CN', label: 'Chinese (Simplified)' },
-	{ code: 'zh-TW', label: 'Chinese (Traditional)' },
-	{ code: 'es', label: 'Spanish' },
-	{ code: 'pt', label: 'Portuguese' },
-	{ code: 'fr', label: 'French' },
-	{ code: 'de', label: 'German' },
-	{ code: 'ko', label: 'Korean' },
-	{ code: 'ru', label: 'Russian' },
-	{ code: 'id', label: 'Indonesian' },
-	{ code: 'ar', label: 'Arabic' },
-	{ code: 'it', label: 'Italian' },
-	{ code: 'th', label: 'Thai' },
-	{ code: 'vi', label: 'Vietnamese' },
-	{ code: 'hi', label: 'Hindi' },
-	{ code: 'bn', label: 'Bengali' },
-	{ code: 'tr', label: 'Turkish' },
-	{ code: 'sw', label: 'Swahili' },
-	{ code: 'am', label: 'Amharic' },
-	{ code: 'pl', label: 'Polish' }
-] as const;
+import {
+	LOGIN_UI_LANGUAGE_METADATA,
+	LOGIN_UI_LANGUAGE_GROUPING_THRESHOLD,
+	MAX_LOGIN_UI_PRIMARY_LOCALES,
+	parseConfiguredPrimaryLoginUILocales,
+	selectDefaultPrimaryLoginUILocales,
+	sortLoginUILocalesByEnglishName,
+	type LoginUILocale
+} from '@authrim/ar-lib-core/types/login-ui-languages';
 
-export type LoginUILocale = (typeof LOGIN_UI_LOCALE_OPTIONS)[number]['code'];
+export {
+	LOGIN_UI_LANGUAGE_GROUPING_THRESHOLD,
+	MAX_LOGIN_UI_PRIMARY_LOCALES,
+	parseConfiguredPrimaryLoginUILocales,
+	selectDefaultPrimaryLoginUILocales,
+	type LoginUILocale
+};
 
-export const ALL_LOGIN_UI_LOCALES = LOGIN_UI_LOCALE_OPTIONS.map((locale) => locale.code);
+export const LOGIN_UI_LOCALE_OPTIONS = LOGIN_UI_LANGUAGE_METADATA.map((metadata) => ({
+	code: metadata.localeCode,
+	label: metadata.englishName,
+	metadata
+})).sort((left, right) => left.label.localeCompare(right.label, 'en', { sensitivity: 'base' }));
+
+export const ALL_LOGIN_UI_LOCALES = sortLoginUILocalesByEnglishName(
+	LOGIN_UI_LANGUAGE_METADATA.map(({ localeCode }) => localeCode)
+);
 
 export const DEFAULT_LOGIN_UI_TAGLINES: Record<LoginUILocale, string> = {
 	en: 'Identity & Access at the edge of everywhere.',
@@ -197,4 +197,19 @@ export function resolveEnabledLoginUILocales(value: unknown): LoginUILocale[] {
 		unique.length === LEGACY_DEFAULT_LOGIN_UI_LOCALES.length &&
 		LEGACY_DEFAULT_LOGIN_UI_LOCALES.every((locale) => unique.includes(locale));
 	return unique.length === 0 || isLegacyDefault ? [...ALL_LOGIN_UI_LOCALES] : unique;
+}
+
+export function resolveEnabledLoginUILocalesByEnglishName(value: unknown): LoginUILocale[] {
+	return sortLoginUILocalesByEnglishName(resolveEnabledLoginUILocales(value));
+}
+
+export function resolveDefaultLoginUILocale(
+	value: unknown,
+	enabledLocales: readonly LoginUILocale[]
+): LoginUILocale {
+	return isLoginUILocale(value) && enabledLocales.includes(value)
+		? value
+		: enabledLocales.includes('en')
+			? 'en'
+			: (enabledLocales[0] ?? 'en');
 }

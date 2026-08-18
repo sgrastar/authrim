@@ -1619,6 +1619,55 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
   });
 
+  it('keeps the accepted response indistinguishable when delivery fails or the account is absent', async () => {
+    mocks.userPII.findByTenantAndEmail.mockResolvedValueOnce({
+      id: 'user_existing',
+      email: 'same@example.com',
+      name: 'Existing User',
+    });
+    mocks.emailNotifier.send.mockResolvedValueOnce({ success: false });
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+    const request = () =>
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'same@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        ),
+        {},
+        { 'authentication-methods.email_otp.signup_enabled': false }
+      );
+
+    const deliveryFailureResponse = await directEmailCodeSendHandler(request() as never);
+    const deliveryFailureBody = (await deliveryFailureResponse.json()) as Record<string, unknown>;
+
+    mocks.userPII.findByTenantAndEmail.mockResolvedValueOnce(null);
+    const absentAccountResponse = await directEmailCodeSendHandler(request() as never);
+    const absentAccountBody = (await absentAccountResponse.json()) as Record<string, unknown>;
+
+    expect(deliveryFailureResponse.status).toBe(200);
+    expect(absentAccountResponse.status).toBe(200);
+    expect(deliveryFailureBody).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 's***e@example.com',
+    });
+    expect(absentAccountBody).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 's***e@example.com',
+    });
+    expect(Object.keys(deliveryFailureBody).sort()).toEqual(Object.keys(absentAccountBody).sort());
+    expect(mocks.challengeStore.deleteChallengeRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^direct_email_code:/)
+    );
+  });
+
   it('returns 202 without sending an OTP while a tenant-D1 account route is pending', async () => {
     mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono.mockRejectedValueOnce(
       new Error('account_data_route_not_found')
@@ -2353,7 +2402,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
-  it('does not return email codes when no email notifier is configured', async () => {
+  it('returns the generic accepted envelope when no email notifier is configured', async () => {
     mocks.getNotifier.mockReturnValue(null);
     const { directEmailCodeSendHandler } = await import('../direct-auth');
 
@@ -2373,12 +2422,21 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
     expect(body).not.toHaveProperty('_dev_code');
     expect(body).not.toHaveProperty('code');
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.challengeStore.deleteChallengeRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^direct_email_code:/)
+    );
   });
 
-  it('does not return an accepted response when the email provider rejects delivery', async () => {
+  it('returns the generic accepted envelope without provider details when delivery is rejected', async () => {
     mocks.emailNotifier.send.mockResolvedValueOnce({
       success: false,
       error: 'provider secret detail',
@@ -2401,11 +2459,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     );
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
     expect(JSON.stringify(body)).not.toContain('provider secret detail');
   });
 
-  it('rejects email-code send when OTP_HMAC_SECRET is missing', async () => {
+  it('keeps the accepted email-code response generic when OTP_HMAC_SECRET is missing', async () => {
     const { directEmailCodeSendHandler } = await import('../direct-auth');
     const ctx = enableEmailOtp(
       createContext(
@@ -2423,8 +2487,46 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
     const response = await directEmailCodeSendHandler(ctx as never);
 
-    expect(response.status).toBe(500);
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
     expect(mocks.hashEmailCode).not.toHaveBeenCalled();
+  });
+
+  it('keeps the accepted email-code response generic when challenge persistence fails', async () => {
+    mocks.challengeStore.storeChallengeRpc.mockRejectedValueOnce(new Error('storage unavailable'));
+    const { directEmailCodeSendHandler } = await import('../direct-auth');
+
+    const response = await directEmailCodeSendHandler(
+      enableEmailOtp(
+        createContext(
+          {
+            client_id: 'web-client',
+            email: 'new@example.com',
+            code_challenge: 'email-pkce-challenge',
+            code_challenge_method: 'S256',
+            channel: 'browser',
+          },
+          webHeaders()
+        )
+      ) as never
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      attempt_id: expect.any(String),
+      expires_in: 300,
+      masked_email: 'n***w@example.com',
+    });
+    expect(body).not.toHaveProperty('error');
+    expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
   it('allows email-code signup from a tenant Login UI proxy origin not present in registry', async () => {

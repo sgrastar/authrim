@@ -361,12 +361,21 @@ describe('admin compliance APIs', () => {
     mocks.settings.mockResolvedValueOnce(settings);
     mocks.core.queryOne
       .mockResolvedValueOnce({ total: 3, oldest_date: 100 })
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ pending: 1 });
     const body = (await (await adminDataRetentionStatusHandler(context())).json()) as {
       policy: { enabled: boolean };
+      categories: Array<{ category: string; retention_days: number; execution_status?: string }>;
       summary: { total_records: number; records_pending_deletion: number };
     };
     expect(body.policy.enabled).toBe(enabled);
+    expect(body.categories).toContainEqual(
+      expect.objectContaining({
+        category: 'lookup_directory',
+        retention_days: 180,
+        execution_status: 'durable_projection_pending',
+      })
+    );
     expect(body.summary).toMatchObject({ total_records: 3, records_pending_deletion: 0 });
     const coreSql = mocks.core.queryOne.mock.calls.map(([sql]) => String(sql)).join('\n');
     expect(coreSql).toContain('FROM identity_accounts');
@@ -392,6 +401,15 @@ describe('admin compliance APIs', () => {
       records_pending_deletion: 2,
       hot_query_status: 'supported',
     });
+  });
+
+  it('fails closed when the typed Lookup retention policy is malformed', async () => {
+    mocks.core.queryOne
+      .mockResolvedValueOnce({ total: 0, oldest_date: null })
+      .mockResolvedValueOnce({ retention_days: 29 });
+
+    expect((await adminDataRetentionStatusHandler(context())).status).toBe(500);
+    expect(mocks.logger.error).toHaveBeenCalled();
   });
 
   it('handles data-retention storage failures', async () => {

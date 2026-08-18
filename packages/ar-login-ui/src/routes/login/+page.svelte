@@ -235,6 +235,9 @@
 	);
 	const authActionDisabled = $derived(authActionLoading || runtimeAuthorizationChallengeBlocked);
 	const passkeyProgressMessage = $derived(getPasskeyProgressMessage(passkeyProgress));
+	const emailCodeProgressMessage = $derived(
+		emailCodeLoading ? `${$LL.login_sendCode()} — ${$LL.common_loading()}` : ''
+	);
 
 	// Authentication methods (from API)
 	let fetchedAuthenticationMethodsState = $state<AuthenticationMethodsViewState | null>(null);
@@ -2287,6 +2290,13 @@
 							<div class="auth-progress mb-4" role="status" aria-live="polite">
 								<span class="auth-progress__spinner" aria-hidden="true"></span>
 								<span>{passkeyProgressMessage}</span>
+							</div>
+						{/if}
+
+						{#if emailCodeProgressMessage}
+							<div class="auth-progress mb-4" role="status" aria-live="polite">
+								<span class="auth-progress__spinner" aria-hidden="true"></span>
+								<span>{emailCodeProgressMessage}</span>
 							</div>
 						{/if}
 

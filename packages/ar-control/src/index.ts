@@ -6,7 +6,9 @@ import {
   MigrationReleaseArtifactReader,
   R2ReleaseArtifactStore,
   type ControlCapacityProvisioningPreview,
+  type ControlAccountLegalHoldProjectionRequest,
   type ControlAccountDataRole,
+  type ControlLookupRetentionPolicyProjectionRequest,
   type ControlProvisioningOperationCancelRequest,
   type ControlProvisioningOperationRestoreRequest,
   type ControlProvisioningOperationRetryRequest,
@@ -49,6 +51,7 @@ import { LookupHmacKeyStatePublisher } from './lookup-hmac-key-state-publisher';
 import { LookupHmacKeyStateService, validateLookupHmacKeyMetadata } from './lookup-hmac-key-state';
 import { PluginRunnerRegistryPublisher } from './plugin-runner-registry-publisher';
 import { LookupBucketMigrationService } from './lookup-bucket-migration';
+import { LookupRetentionProjectionService } from './lookup-retention-projection';
 import { ReadReplicationService } from './read-replication';
 import {
   runtimeRegistrySignerMetadata,
@@ -91,7 +94,7 @@ function service(env: ControlEnv): ControlService {
 }
 
 const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
 
 async function rpcResult<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -901,6 +904,7 @@ function lookupBucketLoadSnapshot(input: unknown) {
           'lookupShardId',
           'assignmentGeneration',
           'activeIdentifierCount',
+          'activeAliasCount',
           'counterUpdatedAt',
         ],
         'invalid_lookup_bucket_load_observation'
@@ -1903,6 +1907,39 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
         Math.floor(Date.now() / 1000)
       ).planNextAutomaticMigration(caller.environmentId, lookupBucketLoadSnapshot(input));
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
+  applyLookupRetentionPolicyProjection(input: ControlLookupRetentionPolicyProjectionRequest) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new LookupRetentionProjectionService(this.env.CONTROL_DB, () =>
+        Date.now()
+      ).applyPolicy(caller.environmentId, input);
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
+  applyAccountLegalHoldProjection(input: ControlAccountLegalHoldProjectionRequest) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new LookupRetentionProjectionService(this.env.CONTROL_DB, () =>
+        Date.now()
+      ).applyLegalHold(caller.environmentId, input);
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
+  getLookupRetentionProjectionStatus(input: { tenantId: string; accountId: string }) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new LookupRetentionProjectionService(this.env.CONTROL_DB, () =>
+        Date.now()
+      ).status(caller.environmentId, input.tenantId, input.accountId);
       assertControlPlaneRecordIsSecretFree(result);
       return result;
     });

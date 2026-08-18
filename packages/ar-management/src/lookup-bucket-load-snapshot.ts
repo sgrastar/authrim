@@ -14,6 +14,7 @@ const QUERY_CONCURRENCY = 4;
 interface CounterRow {
   virtual_bucket: number;
   active_identifier_count: number;
+  active_alias_count: number;
   counter_updated_at: number;
 }
 
@@ -45,6 +46,7 @@ async function counters(env: Env, bindingRef: string): Promise<Map<number, Count
     .prepare(
       `SELECT virtual_bucket,
               estimated_active_identifier_count AS active_identifier_count,
+              estimated_active_alias_count AS active_alias_count,
               updated_at AS counter_updated_at
          FROM lookup_bucket_counters
         ORDER BY virtual_bucket
@@ -66,6 +68,7 @@ async function counters(env: Env, bindingRef: string): Promise<Map<number, Count
         0,
         'lookup_bucket_load_counter_invalid'
       ),
+      active_alias_count: integer(row.active_alias_count, 0, 'lookup_bucket_load_counter_invalid'),
       counter_updated_at: integer(row.counter_updated_at, 1, 'lookup_bucket_load_counter_invalid'),
     });
   }
@@ -144,6 +147,7 @@ export async function collectLookupBucketLoadSnapshot(
       lookupShardId: assignment.lookupShardId,
       assignmentGeneration: assignment.assignmentGeneration,
       activeIdentifierCount: row.active_identifier_count,
+      activeAliasCount: row.active_alias_count,
       counterUpdatedAt: row.counter_updated_at,
     });
   }

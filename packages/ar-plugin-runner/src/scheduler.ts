@@ -21,6 +21,7 @@ import {
   cleanupExpiredNotificationDeliveryIntents,
   D1NotificationIntentDeliveryStore,
   notificationPrivateJwksFromEnv,
+  notificationPayloadSymmetricKeysFromEnv,
 } from './notification-intent';
 import { D1PluginRunnerStateRepository, type ClaimedRunnerShard } from './registry-state';
 import type { PluginRunnerEnv } from './types';
@@ -186,7 +187,8 @@ export class PluginRunnerScheduler {
           new D1NotificationIntentDeliveryStore(
             db,
             this.env.AUTHRIM_ENVIRONMENT_NAME,
-            notificationPrivateJwksFromEnv(this.env)
+            notificationPrivateJwksFromEnv(this.env),
+            notificationPayloadSymmetricKeysFromEnv(this.env).all
           ),
           () => now
         ),

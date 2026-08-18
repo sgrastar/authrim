@@ -149,6 +149,9 @@
 			runtimeFlowLoading
 	);
 	const passkeyProgressMessage = $derived(getPasskeyProgressMessage(passkeyProgress));
+	const emailCodeProgressMessage = $derived(
+		emailCodeLoading ? `${$LL.register_sendCode()} — ${$LL.common_loading()}` : ''
+	);
 
 	// Authentication methods (from API)
 	let methodsLoading = $state(!initialAuthenticationMethods);
@@ -1832,6 +1835,13 @@
 							<div class="auth-progress mb-4" role="status" aria-live="polite">
 								<span class="auth-progress__spinner" aria-hidden="true"></span>
 								<span>{passkeyProgressMessage}</span>
+							</div>
+						{/if}
+
+						{#if emailCodeProgressMessage}
+							<div class="auth-progress mb-4" role="status" aria-live="polite">
+								<span class="auth-progress__spinner" aria-hidden="true"></span>
+								<span>{emailCodeProgressMessage}</span>
 							</div>
 						{/if}
 

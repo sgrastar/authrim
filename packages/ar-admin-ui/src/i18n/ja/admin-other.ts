@@ -329,6 +329,21 @@ const adminOther = {
 	admin_theme_page_titles_account: 'アカウントページ',
 	admin_theme_page_titles_help:
 		'再認証、同意、端末認証、メール確認、エラー、完了画面のタイトルは、状況に応じたシステムメッセージを使用します。',
+	admin_authentication_methods_page_title: '認証方式プロフィール',
+	admin_authentication_methods_page_description:
+		'ログイン、登録、再認証、アカウント連携で使う認証方式のプロフィールを管理します。現在のテナント: {tenant}',
+	admin_authentication_methods_profiles_title: 'プロフィール',
+	admin_authentication_methods_profiles_description:
+		'Flowではここで定義したプロフィールを選択します。認証方式の細かい有効・無効は各プロフィールの詳細画面で管理します。',
+	admin_authentication_methods_builtin_label: '組み込み',
+	admin_authentication_methods_default_profile_title: 'デフォルトプロフィール',
+	admin_authentication_methods_default_label: 'デフォルト',
+	admin_authentication_methods_default_profile_description:
+		'既存の認証方式設定を含み、Flowから選択できるDefault profileとして扱います。',
+	admin_authentication_methods_list_cache_notice:
+		'変更がLogin UIに反映されるまで最大3分かかる場合があります。',
+	admin_authentication_methods_back_to_list: 'プロフィール一覧へ戻る',
+	admin_authentication_methods_none: 'なし',
 	admin_authentication_methods_error_load: '認証方法設定を読み込めませんでした',
 	admin_authentication_methods_error_save: '認証方法設定を保存できませんでした',
 	admin_authentication_methods_saved: '認証方法設定を保存しました。',
@@ -427,6 +442,13 @@ const adminOther = {
 	admin_login_ui_language_enable: '{language}を有効にする',
 	admin_login_ui_language_make_default: '{language}をデフォルト言語に設定する',
 	admin_login_ui_language_default_label: 'デフォルト言語',
+	admin_login_ui_language_show_english: '英語表記を併記する',
+	admin_login_ui_language_show_english_description:
+		'有効にすると、Login UIで英語名の後に現地語名を表示します。名称が同じ場合は重複表示しません。',
+	admin_login_ui_language_make_primary: '{language}をメイン言語に設定する',
+	admin_login_ui_language_primary_description:
+		'有効な言語が11件以上の場合に利用できます。最大{count}件を選択でき、Login UIの先頭に表示されます。',
+	admin_login_ui_language_primary_limit: 'メイン言語は最大{count}件まで選択できます。',
 	admin_login_ui_language_select_all: '全て選択',
 	admin_login_ui_language_clear_all: '全て解除',
 	admin_login_ui_language_help:
@@ -744,7 +766,47 @@ const adminOther = {
 	admin_consent_requirements_rules: '条件付きルール (JSON)',
 	admin_consent_requirements_not_configured: '未設定',
 	admin_consent_requirements_enforcement_block: 'ブロック（同意必須）',
-	admin_consent_requirements_enforcement_allow_continue: '続行を許可'
+	admin_consent_requirements_enforcement_allow_continue: '続行を許可',
+	admin_nav_email_deliveries: 'メール送信状況',
+	admin_email_deliveries_head_title: 'メール送信状況 - Authrim管理画面',
+	admin_email_deliveries_title: 'メール送信状況',
+	admin_email_deliveries_description:
+		'Authrimがメール送信要求を記録したか、配信プロバイダーが受理したかを確認できます。',
+	admin_email_deliveries_history: '送信履歴',
+	admin_email_deliveries_history_description:
+		'プロバイダーによる受付は受信箱への配信完了を意味しません。最終配信はプロバイダーから通知された場合のみ表示します。',
+	admin_email_deliveries_loading: 'メール送信履歴を読み込んでいます...',
+	admin_email_deliveries_load_failed: 'メール送信履歴の読み込みに失敗しました。',
+	admin_email_deliveries_refresh: '更新',
+	admin_email_deliveries_filter_status: '状態',
+	admin_email_deliveries_all_statuses: 'すべての状態',
+	admin_email_deliveries_empty: 'メール送信履歴はありません。',
+	admin_email_deliveries_requested_at: '要求日時',
+	admin_email_deliveries_user: 'ユーザー',
+	admin_email_deliveries_recipient: '宛先',
+	admin_email_deliveries_recipient_hidden: '権限により非表示',
+	admin_email_deliveries_purpose: '用途',
+	admin_email_deliveries_api: 'Authrim API',
+	admin_email_deliveries_api_recorded: '記録済み',
+	admin_email_deliveries_provider: 'プロバイダー',
+	admin_email_deliveries_final_delivery: '最終配信',
+	admin_email_deliveries_not_tracked: '未追跡',
+	admin_email_deliveries_attempts: '試行回数',
+	admin_email_deliveries_evidence: '受付ID / エラー',
+	admin_email_deliveries_status_requested: '送信要求済み',
+	admin_email_deliveries_status_retrying: '再試行中',
+	admin_email_deliveries_status_provider_accepted: 'プロバイダー受付済み',
+	admin_email_deliveries_status_delivered: '配信済み',
+	admin_email_deliveries_status_deferred: '配信保留',
+	admin_email_deliveries_status_bounced: 'バウンス',
+	admin_email_deliveries_status_failed: '失敗',
+	admin_email_deliveries_status_rejected: '拒否',
+	admin_email_deliveries_status_complained: '迷惑メール報告',
+	admin_email_deliveries_status_unknown: '不明',
+	admin_email_deliveries_status_expired: '期限切れ',
+	admin_email_deliveries_status_canceled: 'キャンセル済み',
+	admin_email_deliveries_open_status: 'メール送信状況',
+	admin_user_detail_tab_email_deliveries: 'メール'
 } as const;
 
 export default adminOther;

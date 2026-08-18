@@ -815,6 +815,18 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.USERS_WRITE, description: 'Create and update end users' },
     { key: ADMIN_PERMISSIONS.USERS_SUSPEND, description: 'Suspend end users' },
     { key: ADMIN_PERMISSIONS.USERS_DELETE, description: 'Delete end users' },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+      description: 'View email delivery status without recipient addresses',
+    },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_MASKED_READ,
+      description: 'View masked recipients in email delivery status',
+    },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_FULL_READ,
+      description: 'View full recipients in email delivery status',
+    },
     { key: ADMIN_PERMISSIONS.CLIENTS_READ, description: 'View OAuth clients' },
     { key: ADMIN_PERMISSIONS.CLIENTS_WRITE, description: 'Create and update OAuth clients' },
     { key: ADMIN_PERMISSIONS.CLIENTS_CREATE, description: 'Create OAuth clients' },

@@ -82,6 +82,7 @@ interface PlanAssignmentRow {
 interface PlanShardRow {
   lookup_shard_id: string;
   residency_partition: string;
+  capacity_weight: number | string;
 }
 
 function primary(db: D1Database): D1DatabaseSession {
@@ -198,7 +199,7 @@ export class LookupBucketMigrationService {
         .all<PlanAssignmentRow>(),
       session
         .prepare(
-          `SELECT shard.lookup_shard_id, shard.residency_partition
+          `SELECT shard.lookup_shard_id, shard.residency_partition, shard.capacity_weight
              FROM control_lookup_physical_shards shard
              JOIN control_environments environment
                ON environment.environment_id = shard.environment_id
@@ -223,6 +224,8 @@ export class LookupBucketMigrationService {
         observation.assignmentGeneration < 1 ||
         !Number.isSafeInteger(observation.activeIdentifierCount) ||
         observation.activeIdentifierCount < 0 ||
+        !Number.isSafeInteger(observation.activeAliasCount) ||
+        observation.activeAliasCount < 0 ||
         !Number.isSafeInteger(observation.counterUpdatedAt) ||
         observation.counterUpdatedAt < input.observedAt - 24 * 60 * 60 ||
         observation.counterUpdatedAt > input.observedAt + 5
@@ -236,17 +239,25 @@ export class LookupBucketMigrationService {
       {
         lookupShardId: string;
         residencyPartition: string;
+        capacityWeight: number;
         total: number;
         buckets: { virtualBucket: number; assignmentGeneration: number; count: number }[];
       }
     >();
     for (const row of shardResult.results) {
-      if (!SAFE_ID.test(row.lookup_shard_id) || !SAFE_ID.test(row.residency_partition)) {
+      const capacityWeight = Number(row.capacity_weight);
+      if (
+        !SAFE_ID.test(row.lookup_shard_id) ||
+        !SAFE_ID.test(row.residency_partition) ||
+        !Number.isFinite(capacityWeight) ||
+        capacityWeight <= 0
+      ) {
         throw new Error('control_lookup_bucket_migration_load_invalid');
       }
       shards.set(row.lookup_shard_id, {
         lookupShardId: row.lookup_shard_id,
         residencyPartition: row.residency_partition,
+        capacityWeight,
         total: 0,
         buckets: [],
       });
@@ -265,14 +276,15 @@ export class LookupBucketMigrationService {
       ) {
         throw new Error('control_lookup_bucket_load_assignment_mismatch');
       }
-      const total = shard.total + observation.activeIdentifierCount;
+      const routeCount = observation.activeIdentifierCount + observation.activeAliasCount;
+      const total = shard.total + routeCount;
       if (!Number.isSafeInteger(total))
         throw new Error('control_lookup_bucket_migration_load_invalid');
       shard.total = total;
       shard.buckets.push({
         virtualBucket,
         assignmentGeneration: Number(assignment.assignment_generation),
-        count: observation.activeIdentifierCount,
+        count: routeCount,
       });
     }
     let selected:
@@ -291,13 +303,16 @@ export class LookupBucketMigrationService {
         if (
           source.lookupShardId === target.lookupShardId ||
           source.residencyPartition !== target.residencyPartition ||
-          source.total <= target.total
+          source.total / source.capacityWeight <= target.total / target.capacityWeight
         ) {
           continue;
         }
-        const before = source.total - target.total;
+        const before = source.total / source.capacityWeight - target.total / target.capacityWeight;
         for (const candidate of source.buckets) {
-          const after = Math.abs(source.total - candidate.count - (target.total + candidate.count));
+          const after = Math.abs(
+            (source.total - candidate.count) / source.capacityWeight -
+              (target.total + candidate.count) / target.capacityWeight
+          );
           const improvement = before - after;
           if (improvement <= 0) continue;
           const next = {

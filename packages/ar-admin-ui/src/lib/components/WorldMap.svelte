@@ -15,6 +15,12 @@
 	import * as d3 from 'd3';
 	import type { FeatureCollection, Feature, Geometry } from 'geojson';
 	import { LL } from '$i18n/i18n-svelte';
+	import {
+		NATIVE_DO_PLACEMENT_REGIONS,
+		isLocationHintRegion,
+		isNativeDoPlacementRegion,
+		resolveNativeDoPlacementRegions
+	} from '$lib/region-map';
 
 	// =========================================================================
 	// Types
@@ -53,9 +59,9 @@
 	// Constants
 	// =========================================================================
 
-	// Cloudflare DO datacenter locations (isDOCapable: true only)
+	// Representative Cloudflare DO placement locations used by the visualization.
 	// Source: https://where.durableobjects.live
-	// Note: AFR and ME regions have no DO-capable datacenters
+	// AFR and ME are valid hints, but Cloudflare currently places their DOs in a nearby region.
 	const CF_DATACENTERS: Datacenter[] = [
 		// APAC (Asia Pacific) - 5 DCs
 		{ region: 'apac', city: 'Tokyo', lat: 35.76, lon: 140.39 }, // NRT
@@ -80,14 +86,15 @@
 		{ region: 'weur', city: 'London', lat: 51.47, lon: -0.46 }, // LHR
 		{ region: 'weur', city: 'Paris', lat: 49.01, lon: 2.55 }, // CDG
 		{ region: 'weur', city: 'Stockholm', lat: 59.65, lon: 17.93 }, // ARN
-		{ region: 'weur', city: 'Warsaw', lat: 52.17, lon: 20.97 }, // WAW
-		{ region: 'weur', city: 'Vienna', lat: 48.11, lon: 16.57 }, // VIE
 		{ region: 'weur', city: 'Zurich', lat: 47.46, lon: 8.55 }, // ZRH
-		{ region: 'weur', city: 'Prague', lat: 50.1, lon: 14.26 }, // PRG
 		{ region: 'weur', city: 'Lisbon', lat: 38.78, lon: -9.14 }, // LIS
 		{ region: 'weur', city: 'Madrid', lat: 40.47, lon: -3.56 }, // MAD
 		{ region: 'weur', city: 'Marseille', lat: 43.44, lon: 5.21 }, // MRS
 		{ region: 'weur', city: 'Milan', lat: 45.63, lon: 8.73 }, // MXP
+		// EEUR (Eastern Europe) - representative placement locations
+		{ region: 'eeur', city: 'Warsaw', lat: 52.17, lon: 20.97 }, // WAW
+		{ region: 'eeur', city: 'Vienna', lat: 48.11, lon: 16.57 }, // VIE
+		{ region: 'eeur', city: 'Prague', lat: 50.1, lon: 14.26 }, // PRG
 		// OC (Oceania) - 4 DCs
 		{ region: 'oc', city: 'Sydney', lat: -33.95, lon: 151.18 }, // SYD
 		{ region: 'oc', city: 'Auckland', lat: -37.01, lon: 174.79 }, // AKL
@@ -394,6 +401,34 @@
 			return 'me';
 		}
 
+		const easternEuropeCountries = [
+			'Albania',
+			'Austria',
+			'Belarus',
+			'Bosnia and Herz.',
+			'Bulgaria',
+			'Croatia',
+			'Czechia',
+			'Estonia',
+			'Greece',
+			'Hungary',
+			'Latvia',
+			'Lithuania',
+			'Moldova',
+			'Montenegro',
+			'North Macedonia',
+			'Poland',
+			'Romania',
+			'Russia',
+			'Serbia',
+			'Slovakia',
+			'Slovenia',
+			'Ukraine'
+		];
+		if (easternEuropeCountries.includes(name)) {
+			return 'eeur';
+		}
+
 		return CONTINENT_TO_REGION[continent] || 'apac';
 	}
 
@@ -417,7 +452,7 @@
 		}
 		// Europe (including Russia west of Urals)
 		if (lon >= -10 && lon <= 60 && lat >= 35 && lat <= 72) {
-			return 'weur';
+			return lon >= 14 ? 'eeur' : 'weur';
 		}
 		// North America
 		if (lon >= -170 && lon <= -50 && lat >= 15 && lat <= 72) {
@@ -431,22 +466,9 @@
 		return 'apac';
 	}
 
-	// DO-capable regions only (AFR and ME have no DO-capable DCs)
-	const DO_CAPABLE_REGIONS = ['apac', 'enam', 'wnam', 'weur', 'oc'];
-
-	// Map non-DO-capable regions to their nearest DO-capable alternatives
-	function mapToDoCapableRegion(region: string): string[] {
-		switch (region) {
-			case 'afr':
-				// Africa routes to Western Europe (closest DO-capable region)
-				return ['weur'];
-			case 'me':
-				// Middle East routes to Western Europe (closest DO-capable region)
-				return ['weur'];
-			default:
-				return [region];
-		}
-	}
+	let selectedNativePlacementRegions = $derived([
+		...new Set(selectedRegions.flatMap(resolveNativeDoPlacementRegions))
+	]);
 
 	function findNearestDatacenter(
 		sourceLat: number,
@@ -457,12 +479,12 @@
 		let regionsToSearch: string[];
 
 		if (targetRegions && targetRegions.length > 0) {
-			// Map any non-DO-capable regions to their DO-capable alternatives
-			regionsToSearch = targetRegions.flatMap(mapToDoCapableRegion);
+			// Map nearby-placement hints to the native region used by this visualization.
+			regionsToSearch = targetRegions.flatMap(resolveNativeDoPlacementRegions);
 			// Remove duplicates
 			regionsToSearch = [...new Set(regionsToSearch)];
 		} else {
-			regionsToSearch = DO_CAPABLE_REGIONS;
+			regionsToSearch = [...NATIVE_DO_PLACEMENT_REGIONS];
 		}
 
 		let nearestDc: Datacenter | null = null;
@@ -616,21 +638,22 @@
 					{#each geoData.features as feature, i (feature.properties?.ISO_A3 && feature.properties.ISO_A3 !== '-99' ? feature.properties.ISO_A3 : `unknown-${i}`)}
 						{@const region = getRegionFromFeature(feature as Feature<Geometry, CountryProperties>)}
 						{@const isSelected = isRegionSelected(region)}
-						{@const isDoCapable = DO_CAPABLE_REGIONS.includes(region)}
+						{@const isHintSupported = isLocationHintRegion(region)}
+						{@const isNativePlacement = isNativeDoPlacementRegion(region)}
 						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 						<path
 							d={pathGenerator(feature) || ''}
 							class="country-path"
 							class:selected={isSelected}
-							class:non-do-capable={!isDoCapable}
+							class:non-do-capable={!isNativePlacement}
 							data-region={region}
-							onclick={() => isDoCapable && onRegionClick?.(region)}
-							role={isDoCapable ? 'button' : 'img'}
-							tabindex={isDoCapable ? 0 : -1}
+							onclick={() => isHintSupported && onRegionClick?.(region)}
+							role={isHintSupported ? 'button' : 'img'}
+							tabindex={isHintSupported ? 0 : -1}
 							aria-label={`${feature.properties?.NAME || $LL.admin_scale_map_unknown()} - ${region}${
-								isDoCapable ? '' : ` (${$LL.admin_scale_map_no_do_support()})`
+								isNativePlacement ? '' : ` (${$LL.admin_scale_region_nearby_placement()})`
 							}`}
-							onkeydown={(e) => isDoCapable && e.key === 'Enter' && onRegionClick?.(region)}
+							onkeydown={(e) => isHintSupported && e.key === 'Enter' && onRegionClick?.(region)}
 						/>
 					{/each}
 				</g>
@@ -686,7 +709,7 @@
 			<g class="datacenters">
 				{#each CF_DATACENTERS as dc (dc.city)}
 					{@const pos = projection([dc.lon, dc.lat])}
-					{@const isSelected = selectedRegions.includes(dc.region)}
+					{@const isSelected = selectedNativePlacementRegions.includes(dc.region)}
 					{#if pos}
 						{#if isSelected}
 							<g class="dc-group">

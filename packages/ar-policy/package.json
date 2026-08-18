@@ -15,7 +15,7 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-policy": "workspace:*",
-    "hono": "4.12.29"
+    "hono": "4.13.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251121.0",

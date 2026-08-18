@@ -1167,29 +1167,31 @@ describe('Authentication Methods API', () => {
 
       expect(res.status).toBe(200);
       expect(body.ui.supportedLocales).toEqual([
-        'en',
-        'ja',
+        'am',
+        'ar',
+        'bn',
         'zh-CN',
         'zh-TW',
-        'es',
-        'pt',
+        'en',
         'fr',
         'de',
-        'ko',
-        'ru',
-        'id',
-        'ar',
-        'it',
-        'th',
-        'vi',
         'hi',
-        'bn',
-        'tr',
-        'sw',
-        'am',
+        'id',
+        'it',
+        'ja',
+        'ko',
         'pl',
+        'pt',
+        'ru',
+        'es',
+        'sw',
+        'th',
+        'tr',
+        'vi',
       ]);
       expect(body.ui.defaultLocale).toBe('en');
+      expect(body.ui.primaryLocales).toEqual(['en', 'zh-CN', 'hi', 'es', 'ar', 'fr']);
+      expect(body.ui.showEnglishLanguageNames).toBe(false);
     });
 
     it('inherits platform language settings when tenant settings are absent', async () => {
@@ -1207,6 +1209,58 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       expect(body.ui.supportedLocales).toEqual(['en', 'de']);
       expect(body.ui.defaultLocale).toBe('de');
+      expect(body.ui.primaryLocales).toEqual([]);
+    });
+
+    it('preserves manually configured primary languages instead of recalculating them', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.primary_locales': ['pl', 'ja'],
+          'login-ui.show_english_language_names': true,
+        }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.brand_name': 'Tenant Brand',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual(['ja', 'pl']);
+      expect(body.ui.showEnglishLanguageNames).toBe(true);
+    });
+
+    it('preserves an explicit zero-primary-language selection', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.primary_locales': [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual([]);
+    });
+
+    it('does not expose disabled configured languages as primary languages', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,ar',
+          'login-ui.primary_locales': ['pl', 'en'],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual(['en']);
     });
 
     it('applies client Login UI overrides for DCR-generated client identifiers', async () => {

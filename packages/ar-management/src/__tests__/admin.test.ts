@@ -18,6 +18,8 @@ const {
   executeDurableAccountCreation,
   resolveAccountCreationTargets,
   listCrossShardAccounts,
+  dashboardCrossShardAccounts,
+  recentCrossShardLogins,
   findExactCrossShardAccounts,
   resolveOtpAccountCoreDataContextByIdentifier,
   resolveAccountDataContextByIdentifier,
@@ -26,6 +28,7 @@ const {
   markAccountRemovalsReady,
   attemptAccountRemovals,
   eraseAccountPii,
+  produceNotificationDelivery,
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
@@ -42,6 +45,8 @@ const {
   executeDurableAccountCreation: vi.fn(),
   resolveAccountCreationTargets: vi.fn(),
   listCrossShardAccounts: vi.fn(),
+  dashboardCrossShardAccounts: vi.fn(),
+  recentCrossShardLogins: vi.fn(),
   findExactCrossShardAccounts: vi.fn(),
   resolveOtpAccountCoreDataContextByIdentifier: vi.fn(),
   resolveAccountDataContextByIdentifier: vi.fn(),
@@ -56,6 +61,7 @@ const {
   markAccountRemovalsReady: vi.fn(),
   attemptAccountRemovals: vi.fn(),
   eraseAccountPii: vi.fn(),
+  produceNotificationDelivery: vi.fn(),
 }));
 
 vi.mock('../account-directory-producer', () => ({
@@ -93,6 +99,8 @@ vi.mock('../tenant-alias-directory', () => ({
 vi.mock('../cross-shard-account-list', () => ({
   CrossShardAccountListService: class {
     list = listCrossShardAccounts;
+    dashboardStats = dashboardCrossShardAccounts;
+    recentLogins = recentCrossShardLogins;
   },
   CrossShardAccountExactSearchService: class {
     find = findExactCrossShardAccounts;
@@ -167,6 +175,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     transitionAccountAuthenticationState: vi.fn(async (_env, input) => ({
       lifecycle: input.lifecycle,
     })),
+    produceNotificationDelivery,
     resolveRuntimeIdentityMappingBinding: resolveIdentityMappingBinding,
     loadDestinationProfileConsentDescriptor: loadDestinationProfileDescriptor,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
@@ -511,6 +520,7 @@ import {
   adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserDeletePiiHandler,
   adminUserAnonymizeHandler,
   adminUserSendEmailHandler,
   adminAuditLogListHandler,
@@ -906,10 +916,26 @@ describe('Admin API Handlers', () => {
     mockPostgresAdapterFactory.mockReset();
     canonicalRuntimeUsers.clear();
     listCrossShardAccounts.mockReset();
+    dashboardCrossShardAccounts.mockReset();
+    recentCrossShardLogins.mockReset();
     findExactCrossShardAccounts.mockReset();
     resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
+    produceNotificationDelivery.mockReset().mockResolvedValue({
+      reference: {
+        tenantId: 'default',
+        intentId: 'admin-user-email:delivery-a',
+        outboxId: 'notification:delivery-a',
+        pluginInstallationId: 'provider-a',
+        notificationKind: 'admin.user-email.welcome',
+        channel: 'email',
+        expiresAt: 2_000_000_000,
+        state: 'pending',
+      },
+      bindingRef: 'TDB_DEFAULT_CORE',
+      delivery: 'pending',
+    });
     executeDurableAccountCreation.mockImplementation(async (_env, input) => {
       const accountId = `account:${input.candidateUserId}`;
       const operationId = input.candidateOperationId;
@@ -1232,16 +1258,77 @@ describe('Admin API Handlers', () => {
     });
 
     it('should include active users count from last 30 days', async () => {
-      const mockDB = createMockDB({
-        firstResult: { count: 25 },
-        allResults: [],
+      const mockDB = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('AS total_users')) {
+          return {
+            total_users: 80,
+            new_users_today: 3,
+            active_users: 25,
+            logins_today: 7,
+          };
+        }
+        if (op === 'first' && sql.includes('FROM oauth_clients')) {
+          return { count: 4 };
+        }
+        return op === 'all' ? [] : null;
       });
 
       const c = createMockContext({ db: mockDB });
 
       await adminStatsHandler(c);
 
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('identity_accounts'));
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stats: expect.objectContaining({
+            activeUsers: 25,
+            totalUsers: 80,
+            registeredClients: 4,
+            newUsersToday: 3,
+            loginsToday: 7,
+          }),
+        })
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('$.last_login_at'));
+    });
+
+    it('aggregates tenant-exclusive user shards for dashboard statistics', async () => {
+      dashboardCrossShardAccounts.mockResolvedValue({
+        activeUsers: 12,
+        totalUsers: 1795,
+        newUsersToday: 1,
+        loginsToday: 14,
+      });
+      listCrossShardAccounts.mockResolvedValue({ items: [], nextCursor: null });
+      recentCrossShardLogins.mockResolvedValue([]);
+      const mockDB = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('FROM oauth_clients')) return { count: 4 };
+        return op === 'all' ? [] : null;
+      });
+      const c = createMockContext({
+        db: mockDB,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          coreDb: mockDB,
+          route: { allocationScope: 'tenant_exclusive', source: mockDB },
+        },
+      });
+
+      await adminStatsHandler(c);
+
+      expect(dashboardCrossShardAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'default' })
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stats: expect.objectContaining({
+            activeUsers: 12,
+            totalUsers: 1795,
+            registeredClients: 4,
+            newUsersToday: 1,
+            loginsToday: 14,
+          }),
+        })
+      );
     });
 
     it('should include recent activity in response', async () => {
@@ -1299,6 +1386,57 @@ describe('Admin API Handlers', () => {
   });
 
   describe('archive-only audit hot query guard', () => {
+    it('resolves the account data shard before filtering audit logs by user', async () => {
+      const userId = '_WdnkLInMNDz8yJNZUlzA';
+      const coreDb = createSqlAwareMockDB((sql, params, op) => {
+        if (sql.includes('FROM sqlite_master')) return { name: 'event_log' };
+        if (op === 'first' && sql.includes('COUNT(*) as total')) return { total: 1 };
+        if (op === 'all' && sql.includes('FROM event_log')) {
+          expect(params).toContain('anon-user-1');
+          return [
+            {
+              id: 'event-1',
+              anonymized_user_id: 'anon-user-1',
+              event_type: 'user.login',
+              event_category: 'auth',
+              result: 'success',
+              severity: 'info',
+              error_code: null,
+              error_message: null,
+              client_id: null,
+              session_id: null,
+              request_id: null,
+              details_json: '{}',
+              created_at: 1_710_000_000_000,
+            },
+          ];
+        }
+        return null;
+      });
+      const piiDb = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('SELECT anonymized_user_id')) {
+          return { anonymized_user_id: 'anon-user-1' };
+        }
+        if (op === 'all' && sql.includes('FROM user_anonymization_map')) {
+          return [{ anonymized_user_id: 'anon-user-1', user_id: userId }];
+        }
+        return null;
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '10', user_id: userId },
+        db: coreDb,
+        dbPII: piiDb,
+      });
+
+      const response = await adminAuditLogListHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, userId);
+      await expect(response.json()).resolves.toMatchObject({
+        entries: [expect.objectContaining({ id: 'event-1', userId })],
+      });
+    });
+
     it('returns archive-backed audit log entries when archive-only profile is active', async () => {
       const archiveBucket = createMockR2Bucket([
         {
@@ -1479,6 +1617,7 @@ describe('Admin API Handlers', () => {
 
       const response = await adminUserActivityLogHandler(c);
       expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, 'user-1');
       const body = (await response.json()) as {
         data: Array<{
           action: string;
@@ -3051,6 +3190,39 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserDeleteHandler', () => {
+    it('blocks deletion when the account has an active legal hold', async () => {
+      const userId = 'user-held-delete';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'held@example.com',
+      });
+      const mockDB = createSqlAwareMockDB(async (sql) => {
+        if (sql.includes('FROM legal_holds hold')) {
+          return { hold_id: 'legal-hold:held', reason_code: 'litigation' };
+        }
+        return null;
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        dbPII: createMockDB({ firstResult: null }),
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active', hold_id: 'legal-hold:held' }),
+        409
+      );
+      expect(prepareAccountRemoval).not.toHaveBeenCalled();
+      expect(eraseAccountPii).not.toHaveBeenCalled();
+      expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ lifecycle_state: 'active' });
+    });
+
     it('deletes a tenant-D1 user through the routed removal saga', async () => {
       const userId = 'user-routed-delete';
       const core = createMockDB({ firstResult: null, runResult: { success: true } });
@@ -3303,6 +3475,38 @@ describe('Admin API Handlers', () => {
     });
   });
 
+  describe('adminUserDeletePiiHandler', () => {
+    it('blocks PII deletion when the account has an active legal hold', async () => {
+      const userId = 'user-held-pii';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'held-pii@example.com',
+      });
+      const mockDB = createSqlAwareMockDB(async (sql) => {
+        if (sql.includes('FROM legal_holds hold')) {
+          return { hold_id: 'legal-hold:held-pii', reason_code: 'regulatory_review' };
+        }
+        return null;
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        dbPII: createMockDB({ firstResult: null }),
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active', hold_id: 'legal-hold:held-pii' }),
+        409
+      );
+    });
+  });
+
   describe('adminUserAnonymizeHandler', () => {
     it('should anonymize using current schema tables and avoid legacy SQL', async () => {
       const userId = 'user-anon-1';
@@ -3319,7 +3523,11 @@ describe('Admin API Handlers', () => {
               updated_at: Date.now(),
             };
           }
-          if (sql.includes('SELECT id, reason FROM legal_holds')) {
+          if (
+            sql.includes('FROM legal_holds hold') &&
+            sql.includes("hold.subject_type = 'account'") &&
+            sql.includes("hold.state = 'active'")
+          ) {
             return null;
           }
           return undefined;
@@ -3416,8 +3624,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserSendEmailHandler', () => {
-    it('should load email from users_pii by id and tenant_id before enqueuing email', async () => {
-      const userId = 'user-mail-1';
+    function createUserEmailContext(userId = 'user-mail-1') {
       const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
         if (op === 'first' && sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
           return {
@@ -3443,19 +3650,28 @@ describe('Admin API Handlers', () => {
         return op === 'run' ? { success: true } : undefined;
       });
 
-      const c = createMockContext({
-        method: 'POST',
-        params: { id: userId },
-        body: {
-          template: 'welcome',
-          subject: 'hello',
-          variables: { locale: 'ja' },
-        },
-        db: coreDb,
-        dbPII: piiDb,
-      });
+      return {
+        userId,
+        coreDb,
+        piiDb,
+        context: createMockContext({
+          method: 'POST',
+          params: { id: userId },
+          body: {
+            template: 'welcome',
+            subject: 'hello',
+            variables: { locale: 'ja' },
+          },
+          db: coreDb,
+          dbPII: piiDb,
+        }),
+      };
+    }
 
-      const res = await adminUserSendEmailHandler(c);
+    it('loads the recipient from PII and delegates durable delivery to the notification producer', async () => {
+      const { userId, coreDb, piiDb, context } = createUserEmailContext();
+
+      const res = await adminUserSendEmailHandler(context);
       expect(res.status).toBe(200);
 
       const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
@@ -3463,7 +3679,70 @@ describe('Admin API Handlers', () => {
 
       expect(piiSqls).toContainEqual(expect.stringContaining('identity_sensitive_values'));
       expect(piiSqls).not.toContainEqual(expect.stringContaining('WHERE user_id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('INSERT INTO email_queue'));
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('INSERT INTO email_queue'));
+      expect(produceNotificationDelivery).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          owner: { owner: 'tenant', tenantId: 'default' },
+          notificationKind: 'admin.user-email.welcome',
+          accountId: userId,
+          payload: expect.objectContaining({
+            channel: 'email',
+            to: 'mail@example.com',
+            subject: 'hello',
+          }),
+        })
+      );
+      await expect(res.json()).resolves.toMatchObject({ success: true, status: 'queued' });
+    });
+
+    it('reports provider acceptance without claiming final inbox delivery', async () => {
+      produceNotificationDelivery.mockResolvedValueOnce({
+        reference: {
+          tenantId: 'default',
+          intentId: 'admin-user-email:delivery-b',
+          outboxId: 'notification:delivery-b',
+          pluginInstallationId: 'provider-a',
+          notificationKind: 'admin.user-email.welcome',
+          channel: 'email',
+          expiresAt: 2_000_000_000,
+          state: 'delivered',
+        },
+        bindingRef: 'TDB_DEFAULT_CORE',
+        delivery: 'delivered',
+      });
+      const { context } = createUserEmailContext();
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        success: true,
+        status: 'provider_accepted',
+      });
+    });
+
+    it('returns a delivery error when the provider permanently rejects the request', async () => {
+      produceNotificationDelivery.mockResolvedValueOnce({
+        reference: {
+          tenantId: 'default',
+          intentId: 'admin-user-email:delivery-c',
+          outboxId: 'notification:delivery-c',
+          pluginInstallationId: 'provider-a',
+          notificationKind: 'admin.user-email.welcome',
+          channel: 'email',
+          expiresAt: 2_000_000_000,
+          state: 'dead_letter',
+        },
+        bindingRef: 'TDB_DEFAULT_CORE',
+        delivery: 'permanent_failure',
+      });
+      const { context } = createUserEmailContext();
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toMatchObject({ error: 'email_delivery_failed' });
     });
   });
 

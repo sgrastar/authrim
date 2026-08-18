@@ -24,8 +24,8 @@
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-plugin": "workspace:*",
     "@simplewebauthn/server": "^13.2.2",
-    "hono": "4.12.29",
-    "jose": "^6.1.2",
+    "hono": "4.13.2",
+    "jose": "^6.2.9",
     "resend": "^6.5.2",
     "tslib": "^2.8.1"
   },

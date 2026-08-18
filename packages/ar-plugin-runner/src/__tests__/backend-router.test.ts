@@ -166,6 +166,7 @@ describe('PluginHookBackendRouter', () => {
       tenantId: 'tenant-a',
       intentId: 'intent-a',
       pluginInstallationId: 'installation-a',
+      providerMessageId: undefined,
       now: 1_100,
     });
   });
@@ -284,5 +285,35 @@ describe('PluginHookBackendRouter', () => {
       'plugin_hook_transient_failure'
     );
     expect(load).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['notification_intent_key_unavailable', 'plugin_notification_key_unavailable'],
+    ['notification_intent_key_unwrap_failed', 'plugin_notification_key_unwrap_failed'],
+    [
+      'notification_intent_payload_authentication_failed',
+      'plugin_notification_payload_authentication_failed',
+    ],
+    ['notification_intent_decryption_failed', 'plugin_notification_decryption_failed'],
+    ['notification_intent_envelope_invalid', 'plugin_notification_envelope_invalid'],
+    ['notification_intent_payload_invalid', 'plugin_notification_payload_invalid'],
+  ])('preserves safe notification diagnostics for %s', async (sourceCode, expectedCode) => {
+    const router = new PluginHookBackendRouter(
+      environment(),
+      {
+        resolveBackend: async () => ({
+          pluginId: 'plugin-a',
+          backendKind: 'dynamic_worker',
+          timeoutMs: 1_000,
+        }),
+      } as never,
+      { invoke: vi.fn() },
+      new StaticInProcessPluginRegistry(),
+      undefined,
+      { load: async () => Promise.reject(new Error(sourceCode)) } as never,
+      () => 1_100
+    );
+
+    await expect(router.invoke(notificationInvocation)).rejects.toThrow(expectedCode);
   });
 });

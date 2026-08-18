@@ -185,6 +185,11 @@
 				label: $LL.admin_nav_email_settings(),
 				icon: 'i-ph-envelope-simple'
 			},
+			{
+				path: '/admin/email-deliveries',
+				label: $LL.admin_nav_email_deliveries(),
+				icon: 'i-ph-envelope-open'
+			},
 			{ path: '/admin/plugins', label: $LL.admin_nav_plugins(), icon: 'i-ph-puzzle-piece' }
 		]
 	});

@@ -16,6 +16,7 @@ export * from './types/support-ops';
 export * from './types/runtime-profile';
 export * from './types/approval';
 export * from './types/screens';
+export * from './types/login-ui-languages';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
 export * from './services/notification-intent-routing';

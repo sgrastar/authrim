@@ -101,7 +101,7 @@ export async function adminAccessControlStatsHandler(c: Context<{ Bindings: Env 
           [tenantId]
         ),
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM user_roles WHERE tenant_id = ?',
+          'SELECT COUNT(*) as count FROM role_assignments WHERE tenant_id = ?',
           [tenantId]
         ),
       ]),
@@ -109,11 +109,11 @@ export async function adminAccessControlStatsHandler(c: Context<{ Bindings: Env 
       // ABAC: count attributes (total and active)
       Promise.all([
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM user_attributes WHERE tenant_id = ?',
+          'SELECT COUNT(*) as count FROM user_verified_attributes WHERE tenant_id = ?',
           [tenantId]
         ),
         adapter.queryOne<{ count: number }>(
-          `SELECT COUNT(*) as count FROM user_attributes
+          `SELECT COUNT(*) as count FROM user_verified_attributes
            WHERE tenant_id = ?
            AND (expires_at IS NULL OR expires_at > ?)`,
           [tenantId, Math.floor(Date.now() / 1000)]
@@ -123,11 +123,11 @@ export async function adminAccessControlStatsHandler(c: Context<{ Bindings: Env 
       // ReBAC: count relation definitions and tuples
       Promise.all([
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM rebac_relation_definitions WHERE tenant_id = ?',
+          'SELECT COUNT(*) as count FROM relation_definitions WHERE tenant_id = ?',
           [tenantId]
         ),
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM rebac_relationship_tuples WHERE tenant_id = ?',
+          'SELECT COUNT(*) as count FROM relationships WHERE tenant_id = ?',
           [tenantId]
         ),
       ]),
@@ -135,11 +135,11 @@ export async function adminAccessControlStatsHandler(c: Context<{ Bindings: Env 
       // Policies: count total and active
       Promise.all([
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM policies WHERE tenant_id = ?',
+          'SELECT COUNT(*) as count FROM policy_rules WHERE tenant_id = ?',
           [tenantId]
         ),
         adapter.queryOne<{ count: number }>(
-          'SELECT COUNT(*) as count FROM policies WHERE tenant_id = ? AND is_active = 1',
+          'SELECT COUNT(*) as count FROM policy_rules WHERE tenant_id = ? AND enabled = 1',
           [tenantId]
         ),
       ]),

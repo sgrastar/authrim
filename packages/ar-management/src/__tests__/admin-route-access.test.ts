@@ -35,6 +35,13 @@ function createHarness(permissions: string[], roles: string[] = []) {
   registerDeclaredAdminRouteAccessMiddleware(app);
 
   app.get('/api/admin/users', (c) => c.json({ ok: true }));
+  app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
+  app.get('/api/admin/users/user-1/email-deliveries', (c) => c.json({ ok: true }));
+  app.get('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
+  app.put('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
+  app.get('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/legal-holds', (c) => c.json({ ok: true }));
+  app.post('/api/admin/users/user-1/legal-holds/hold-1/release', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1', (c) => c.json({ ok: true }));
   app.post('/api/admin/users/user-1/totp/reset', (c) => c.json({ ok: true }));
   app.delete('/api/admin/users/user-1/roles/assignment-1', (c) => c.json({ ok: true }));
@@ -171,6 +178,43 @@ describe('declared admin route access', () => {
     expect(allowedTotpReset.status).toBe(200);
     expect(deniedUpdateSettings.status).toBe(403);
     expect(allowedUpdateSettings.status).toBe(200);
+  });
+
+  it('keeps support context and legal holds behind their dedicated permissions', async () => {
+    const userReader = createHarness([ADMIN_PERMISSIONS.USERS_READ]);
+    const supportReader = createHarness([ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_READ]);
+    const supportWriter = createHarness([ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE]);
+    const holdReader = createHarness([ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_READ]);
+    const holdWriter = createHarness([ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE]);
+
+    await expect(
+      userReader.request('/api/admin/users/user-1/support-context')
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      supportReader.request('/api/admin/users/user-1/support-context')
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      supportReader.request('/api/admin/users/user-1/support-context', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      supportWriter.request('/api/admin/users/user-1/support-context', { method: 'PUT' })
+    ).resolves.toMatchObject({ status: 200 });
+
+    await expect(userReader.request('/api/admin/users/user-1/legal-holds')).resolves.toMatchObject({
+      status: 403,
+    });
+    await expect(holdReader.request('/api/admin/users/user-1/legal-holds')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      holdReader.request('/api/admin/users/user-1/legal-holds', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(
+      holdWriter.request('/api/admin/users/user-1/legal-holds', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      holdWriter.request('/api/admin/users/user-1/legal-holds/hold-1/release', { method: 'POST' })
+    ).resolves.toMatchObject({ status: 200 });
   });
 
   it('uses the dedicated Agent settings permission ahead of the generic settings wildcard', async () => {
@@ -334,6 +378,24 @@ describe('declared admin route access', () => {
     });
 
     expect(response.status).toBe(200);
+  });
+
+  it('keeps email delivery diagnostics separate from ordinary user read access', async () => {
+    const userReader = createHarness([ADMIN_PERMISSIONS.USERS_READ]);
+    const deliveryReader = createHarness([ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ]);
+
+    await expect(userReader.request('/api/admin/email-deliveries')).resolves.toMatchObject({
+      status: 403,
+    });
+    await expect(
+      userReader.request('/api/admin/users/user-1/email-deliveries')
+    ).resolves.toMatchObject({ status: 403 });
+    await expect(deliveryReader.request('/api/admin/email-deliveries')).resolves.toMatchObject({
+      status: 200,
+    });
+    await expect(
+      deliveryReader.request('/api/admin/users/user-1/email-deliveries')
+    ).resolves.toMatchObject({ status: 200 });
   });
 
   it('enforces consent policy read and write permissions across policy controls', async () => {

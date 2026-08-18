@@ -1,8 +1,8 @@
 const adminDashboard = {
-	admin_dashboard_activeUsers: 'アクティブユーザー',
+	admin_dashboard_activeUsers: '過去30日のアクティブユーザー',
 	admin_dashboard_totalUsers: '総ユーザー数',
 	admin_dashboard_clients: 'OAuthクライアント',
-	admin_dashboard_todayLogins: '今日のログイン',
+	admin_dashboard_todayLogins: '今日ログインしたユーザー',
 	admin_dashboard_recentActivity: '最近のアクティビティ',
 	admin_dashboard_page_title: '管理ダッシュボード - Authrim',
 	admin_dashboard_welcome_title: 'おかえりなさい',

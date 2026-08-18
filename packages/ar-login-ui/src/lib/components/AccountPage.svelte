@@ -40,7 +40,7 @@
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
 	import type { APIError } from '$lib/api/client';
-	import { messageForCaughtError } from '$lib/errors/display-error';
+	import { appendApiSupportReference, messageForCaughtError } from '$lib/errors/display-error';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
@@ -138,21 +138,28 @@
 
 	function localizeApiError(error: APIError | null | undefined, fallback: string): string {
 		if (!error) return fallback;
+		let message: string;
 		switch (error.error) {
 			case 'invalid_request':
-				return $LL.error_invalid_request();
+				message = $LL.error_invalid_request();
+				break;
 			case 'access_denied':
-				return $LL.error_access_denied();
+				message = $LL.error_access_denied();
+				break;
 			case 'temporarily_unavailable':
-				return $LL.error_temporarily_unavailable();
+				message = $LL.error_temporarily_unavailable();
+				break;
 			case 'server_error':
-				return $LL.error_server_error();
+				message = $LL.error_server_error();
+				break;
 			case 'login_required':
 			case 'reauthentication_required':
-				return $LL.account_reauthRequired();
+				message = $LL.account_reauthRequired();
+				break;
 			default:
-				return fallback;
+				message = fallback;
 		}
+		return appendApiSupportReference(message, $LL.error_errorCode(), error);
 	}
 
 	let passkeyReauthAvailable = $derived(
@@ -827,12 +834,16 @@
 	}
 
 	async function refreshProfileAfterEmailChange() {
-		const result = await accountAPI.getProfile();
+		const [result, operationsResult] = await Promise.all([
+			accountAPI.getProfile(),
+			accountAPI.getOperations()
+		]);
 		if (!result.data) {
 			emailChangeError = localizeApiError(result.error, $LL.account_loadFailed());
 			return;
 		}
 		profile = result.data.profile;
+		operations = operationsResult.data?.operations ?? operations;
 		syncAuthFromAccountProfile(result.data.profile, result.data.session);
 		await signalCurrentUserDetails(profile);
 	}
@@ -1133,10 +1144,12 @@
 	async function handleLogout() {
 		if (logoutLoading) return;
 		logoutLoading = true;
+		accountError = '';
 		try {
 			await auth.logout();
 			window.location.href = '/';
 		} catch {
+			accountError = $LL.account_actionFailed();
 			logoutLoading = false;
 		}
 	}
@@ -1179,6 +1192,7 @@
 							id={placement.id}
 							class="account-screen"
 							class:full={placement.width === 'full'}
+							class:overview={screen.screen_key === 'account_overview'}
 						>
 							{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
 								{#if field.block_type !== 'layout_row'}
@@ -1727,6 +1741,14 @@
 	.account-screen.full {
 		grid-column: 1 / -1;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.account-screen.overview {
+		border: 1px solid var(--border-glass);
+		border-radius: var(--card-radius, var(--radius-xl));
+		background: var(--account-card-bg);
+		box-shadow: none;
+		padding: var(--auth-card-padding, var(--card-padding, 24px));
 	}
 
 	.account-screen__block {

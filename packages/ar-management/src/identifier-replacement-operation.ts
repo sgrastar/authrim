@@ -1,7 +1,7 @@
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import type { LookupBlindIndex } from '@authrim/ar-lib-core';
 
-const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,127}$/u;
 const HEX_64 = /^[a-f0-9]{64}$/u;
 const RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 

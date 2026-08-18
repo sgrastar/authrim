@@ -21,7 +21,7 @@
 		DEFAULT_LOGIN_UI_TAGLINES,
 		LOGIN_UI_LOCALE_OPTIONS,
 		isLoginUILocale,
-		resolveEnabledLoginUILocales,
+		resolveEnabledLoginUILocalesByEnglishName,
 		type LoginUILocale
 	} from '$lib/login-ui/locales';
 	import { sanitizeFooterHtml } from '$lib/login-ui/footer-html';
@@ -215,6 +215,7 @@
 		'login-ui.title_color',
 		'login-ui.text_color',
 		'login-ui.copy_color',
+		'login-ui.brand_name',
 		'login-ui.logo_url',
 		'login-ui.background_image_url',
 		'login-ui.login_panel_background_image_url',
@@ -428,7 +429,7 @@
 	);
 	let publishedThemeVersion = $derived(getNumberSetting('login-ui.published_version', 0));
 	let enabledTextEditorLocales = $derived(
-		resolveEnabledLoginUILocales(getCurrentValue('login-ui.supported_locales'))
+		resolveEnabledLoginUILocalesByEnglishName(getCurrentValue('login-ui.supported_locales'))
 	);
 	let footerLinks = $derived(getPreviewFooterLinks());
 	let logoUrl = $derived(

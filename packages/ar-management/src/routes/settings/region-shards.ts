@@ -117,7 +117,7 @@ export async function getRegionShards(c: Context) {
  *
  * Validation Rules:
  * - regionDistribution must sum to 100
- * - totalShards must be >= number of active regions (percentage > 0)
+ * - totalShards must be a positive multiple of the active region count (percentage > 0)
  * - Each region with percentage > 0 must get at least 1 shard
  * - Regions with 0% are allowed (disabled regions)
  */

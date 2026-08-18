@@ -447,6 +447,24 @@ function getTenantAwareUiQueryParams(
   }
 }
 
+function getChallengeUiQueryParams(
+  challengeId: string,
+  uiLocales: string | undefined
+): Record<string, string> {
+  const normalizedUiLocales = uiLocales?.trim();
+  return {
+    challenge_id: challengeId,
+    ...(normalizedUiLocales ? { ui_locales: normalizedUiLocales } : {}),
+  };
+}
+
+function buildBuiltinUiRedirectUrl(
+  fallbackPath: string,
+  queryParams: Record<string, string>
+): string {
+  return `${fallbackPath}?${new URLSearchParams(queryParams).toString()}`;
+}
+
 function createLocalUiUnavailableResponse(
   c: Context<{ Bindings: Env }>,
   title = 'Authorization UI Unavailable',
@@ -3377,12 +3395,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Client-specific UI: use client's login_ui_url
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
+    const reauthUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     const reauthTarget = await getUIRedirectTarget(
       c.env,
       'reauth',
-      getTenantAwareUiQueryParams(c, {
-        challenge_id: challengeId,
-      }),
+      getTenantAwareUiQueryParams(c, reauthUiQueryParams),
       tenantId,
       undefined,
       getRequestIssuer(c),
@@ -3396,7 +3413,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
     // Builtin forms: redirect to local confirm endpoint
     return c.redirect(
-      `${reauthTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+      buildBuiltinUiRedirectUrl(reauthTarget.fallbackPath, reauthUiQueryParams),
       302
     );
   }
@@ -3473,12 +3490,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Client-specific UI: use client's login_ui_url
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
+    const loginUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     const loginTarget = await getUIRedirectTarget(
       c.env,
       'login',
-      getTenantAwareUiQueryParams(c, {
-        challenge_id: challengeId,
-      }),
+      getTenantAwareUiQueryParams(c, loginUiQueryParams),
       tenantId,
       clientMetadata?.login_ui_url,
       getRequestIssuer(c),
@@ -3491,10 +3507,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
     // Builtin forms: redirect to local login endpoint
-    return c.redirect(
-      `${loginTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
-      302
-    );
+    return c.redirect(buildBuiltinUiRedirectUrl(loginTarget.fallbackPath, loginUiQueryParams), 302);
   }
 
   // Determine user identifier (sub)
@@ -3831,12 +3844,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Client-specific UI: use client's login_ui_url
         // Global UI configured: redirect to external UI
         // Neither: return configuration error
+        const consentUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
         const consentTarget = await getUIRedirectTarget(
           c.env,
           'consent',
-          getTenantAwareUiQueryParams(c, {
-            challenge_id: challengeId,
-          }),
+          getTenantAwareUiQueryParams(c, consentUiQueryParams),
           tenantId,
           undefined,
           getRequestIssuer(c),
@@ -3850,7 +3862,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
         // Builtin forms: redirect to local consent endpoint
         return c.redirect(
-          `${consentTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+          buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
           302
         );
       }
@@ -3987,10 +3999,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             });
 
             const clientMetadata = await getClientCached(c, c.env, validClientId);
+            const consentUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
             const consentTarget = await getUIRedirectTarget(
               c.env,
               'consent',
-              getTenantAwareUiQueryParams(c, { challenge_id: challengeId }),
+              getTenantAwareUiQueryParams(c, consentUiQueryParams),
               tenantId,
               undefined,
               getRequestIssuer(c),
@@ -4003,7 +4016,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               return sendError('temporarily_unavailable', 'Login UI is not configured');
             }
             return c.redirect(
-              `${consentTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+              buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
               302
             );
           }

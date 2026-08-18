@@ -599,6 +599,7 @@ describe('Control Worker boundary', () => {
             lookupShardId: 'lookup-a',
             assignmentGeneration: 1,
             activeIdentifierCount: 10,
+            activeAliasCount: 0,
             counterUpdatedAt: NOW,
             rawIdentifier: 'must-not-cross-the-boundary',
           },

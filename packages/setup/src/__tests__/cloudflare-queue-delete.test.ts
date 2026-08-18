@@ -299,6 +299,7 @@ describe('Cloudflare Queue deletion helpers', () => {
       [{ id: 'test-ar-auth' }, { id: 'test-ar-management' }]
     );
 
+    const resourceProgress: Array<{ current: number; total: number }> = [];
     const result = await deleteEnvironment({
       env: 'test',
       deleteWorkers: true,
@@ -310,11 +311,18 @@ describe('Cloudflare Queue deletion helpers', () => {
       queueConsumerDetachPropagationDelayMs: 0,
       workerDeletePropagationDelayMs: 0,
       onProgress: () => {},
+      onResourceProgress: (progress) => resourceProgress.push(progress),
     });
 
     expect(result.success).toBe(true);
     expect(result.deleted.workers).toEqual(['test-ar-auth', 'test-ar-management']);
     expect(result.deleted.queues).toEqual(['test-audit-queue']);
+    expect(resourceProgress).toEqual([
+      { current: 0, total: 3 },
+      { current: 1, total: 3 },
+      { current: 2, total: 3 },
+      { current: 3, total: 3 },
+    ]);
 
     const wranglerCalls = execaMock.mock.calls
       .map(([, args]) => args as string[])

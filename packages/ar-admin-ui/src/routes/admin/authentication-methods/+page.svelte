@@ -122,36 +122,46 @@
 	}
 
 	function formatMethodList(methods: string[]): string {
-		if (methods.length === 0) return 'なし';
+		if (methods.length === 0) return $LL.admin_authentication_methods_none();
 		return methods.slice(0, 3).join(', ') + (methods.length > 3 ? ` +${methods.length - 3}` : '');
 	}
 
 	function humanVerificationSummary(): string {
 		const enabled: string[] = [];
-		if (humanVerification.signupEnabled) enabled.push('登録');
-		if (humanVerification.loginEnabled) enabled.push('ログイン');
-		if (humanVerification.reauthEnabled) enabled.push('再認証');
-		return enabled.length > 0 ? enabled.join(', ') : '無効';
+		if (humanVerification.signupEnabled) {
+			enabled.push($LL.admin_authentication_methods_signup_enabled());
+		}
+		if (humanVerification.loginEnabled) {
+			enabled.push($LL.admin_authentication_methods_login_enabled());
+		}
+		if (humanVerification.reauthEnabled) {
+			enabled.push($LL.admin_authentication_methods_reauth_enabled());
+		}
+		return enabled.length > 0 ? enabled.join(', ') : $LL.admin_authentication_methods_disabled();
 	}
 </script>
 
 <svelte:head>
-	<title>認証方式プロフィール - Admin Dashboard - Authrim</title>
+	<title>{$LL.admin_authentication_methods_page_title()} - Admin Dashboard - Authrim</title>
 </svelte:head>
 
 <AdminPageShell>
 	<AdminPageHeader
-		title="認証方式プロフィール"
-		description={`ログイン、登録、再認証、アカウント連携で使う認証方式のプロフィールを管理します。現在のテナント: ${currentTenantId || '-'}`}
+		title={$LL.admin_authentication_methods_page_title()}
+		description={$LL.admin_authentication_methods_page_description({
+			tenant: currentTenantId || '-'
+		})}
 	>
 		{#snippet actions()}
-			<span class="cache-notice">変更がLoginUIに反映されるまで最大3分かかる場合があります。</span>
+			<span class="cache-notice">
+				{$LL.admin_authentication_methods_list_cache_notice()}
+			</span>
 		{/snippet}
 	</AdminPageHeader>
 
 	{#if loading}
 		<AdminSection>
-			<div class="state">読み込み中...</div>
+			<div class="state">{$LL.admin_authentication_methods_loading()}</div>
 		</AdminSection>
 	{:else}
 		{#if error}
@@ -159,41 +169,48 @@
 		{/if}
 
 		<AdminSection
-			title="Profiles"
-			description="Flowではここで定義したプロフィールを選択します。認証方式の細かい有効/無効はプロフィール詳細で管理します。"
+			title={$LL.admin_authentication_methods_profiles_title()}
+			description={$LL.admin_authentication_methods_profiles_description()}
 		>
 			<div class="profile-grid">
 				<a class="profile-card" href="/admin/authentication-methods/default">
 					<div class="profile-card__header">
 						<div>
-							<p class="profile-card__eyebrow">Built-in</p>
-							<h2>Default profile</h2>
+							<p class="profile-card__eyebrow">
+								{$LL.admin_authentication_methods_builtin_label()}
+							</p>
+							<h2>{$LL.admin_authentication_methods_default_profile_title()}</h2>
 						</div>
-						<span class="status-badge">Default</span>
+						<span class="status-badge">
+							{$LL.admin_authentication_methods_default_label()}
+						</span>
 					</div>
 					<p class="profile-card__description">
-						既存の認証方式設定です。Flowから選択するDefault profileとして扱います。
+						{$LL.admin_authentication_methods_default_profile_description()}
 					</p>
 					<div class="profile-card__matrix">
 						<div>
-							<span>登録</span>
+							<span>{$LL.admin_authentication_methods_signup_enabled()}</span>
 							<strong>{formatMethodList(signupMethods)}</strong>
 						</div>
 						<div>
-							<span>ログイン</span>
+							<span>{$LL.admin_authentication_methods_login_enabled()}</span>
 							<strong>{formatMethodList(loginMethods)}</strong>
 						</div>
 						<div>
-							<span>再認証</span>
+							<span>{$LL.admin_authentication_methods_reauth_enabled()}</span>
 							<strong>{formatMethodList(reauthMethods)}</strong>
 						</div>
 						<div>
-							<span>連携</span>
+							<span>{$LL.admin_authentication_methods_account_link_enabled()}</span>
 							<strong>{formatMethodList(accountLinkMethods)}</strong>
 						</div>
 					</div>
 					<div class="profile-card__footer">
-						<span>Human verification: {humanVerificationSummary()}</span>
+						<span>
+							{$LL.admin_authentication_methods_human_verification_title()}:
+							{humanVerificationSummary()}
+						</span>
 						<i class="i-ph-arrow-right" aria-hidden="true"></i>
 					</div>
 				</a>

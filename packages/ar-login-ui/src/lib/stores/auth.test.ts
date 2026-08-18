@@ -59,7 +59,7 @@ describe('auth store storage policy', () => {
 		expect(localStorageMock.setItem).not.toHaveBeenCalled();
 	});
 
-	it('clears memory state on logout without removing auth data from localStorage', async () => {
+	it('ends the server session before clearing memory state on logout', async () => {
 		const { auth } = await loadAuthStore();
 		auth.login('session-123', {
 			userId: 'user-123',
@@ -74,14 +74,36 @@ describe('auth store storage policy', () => {
 			user: null
 		});
 		expect(fetch).toHaveBeenCalledWith(
-			'/logout',
+			'/api/v1/auth/direct/logout',
 			expect.objectContaining({
-				method: 'GET',
+				method: 'POST',
 				credentials: 'include',
-				redirect: 'manual'
+				body: '{}'
 			})
 		);
+		const request = vi.mocked(fetch).mock.calls[0]?.[1];
+		expect(new Headers(request?.headers).get('Content-Type')).toBe('application/json');
 		expect(localStorageMock.removeItem).not.toHaveBeenCalled();
+	});
+
+	it('keeps the authenticated state when the server logout request fails', async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 500 }));
+		const { auth } = await loadAuthStore();
+		auth.login('session-123', {
+			userId: 'user-123',
+			email: 'user@example.com'
+		});
+
+		await expect(auth.logout()).rejects.toThrow('Logout request failed');
+
+		expect(get(auth)).toEqual({
+			isAuthenticated: true,
+			sessionId: 'session-123',
+			user: {
+				userId: 'user-123',
+				email: 'user@example.com'
+			}
+		});
 	});
 
 	it('refreshes from the session cookie without localStorage persistence', async () => {

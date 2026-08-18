@@ -4,7 +4,9 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 const mocked = vi.hoisted(() => ({
   getTenantIdFromContext: vi.fn(),
   createAuthContextFromHono: vi.fn(),
+  createAccountAuthContextFromHono: vi.fn(),
   createPIIContextFromHono: vi.fn(),
+  resolveAccountDataContextFromHono: vi.fn(),
   hasPIIDatabase: vi.fn(),
 }));
 
@@ -15,15 +17,17 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     getTenantIdFromContext: mocked.getTenantIdFromContext,
     createAuthContextFromHono: mocked.createAuthContextFromHono,
+    createAccountAuthContextFromHono: mocked.createAccountAuthContextFromHono,
     createPIIContextFromHono: mocked.createPIIContextFromHono,
+    resolveAccountDataContextFromHono: mocked.resolveAccountDataContextFromHono,
     hasPIIDatabase: mocked.hasPIIDatabase,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
-        if (userId !== 'user-1') {
+        if (userId !== 'user-1' && userId !== '_WdnkLInMNDz8yJNZUlzA') {
           return null;
         }
         return {
-          id: 'user-1',
+          id: userId,
           email: 'member@example.com',
           name: 'Member User',
         };
@@ -40,6 +44,7 @@ import {
   adminOrganizationMembersListHandler,
   adminUserEffectivePermissionsHandler,
   adminUserRoleAssignHandler,
+  adminUserRolesListHandler,
 } from '../admin-rbac';
 
 function createMockAdapter(
@@ -104,6 +109,33 @@ describe('admin-rbac schema alignment', () => {
     mocked.getTenantIdFromContext.mockReturnValue('default');
     mocked.hasPIIDatabase.mockReturnValue(false);
     mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: null });
+    mocked.createAccountAuthContextFromHono.mockImplementation((...args) =>
+      mocked.createAuthContextFromHono(...args)
+    );
+    mocked.resolveAccountDataContextFromHono.mockImplementation(async (c) => {
+      c.set('accountDataContext', { tenantId: 'default', coreDb: {}, piiDb: {} });
+    });
+  });
+
+  it('resolves the account shard before listing roles for underscore-prefixed user IDs', async () => {
+    const coreAdapter = createMockAdapter({ query: () => [] });
+    const piiAdapter = createMockAdapter();
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.createAccountAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: piiAdapter });
+    const c = createMockContext({ params: { id: '_WdnkLInMNDz8yJNZUlzA' } });
+
+    const response = await adminUserRolesListHandler(c);
+
+    expect(response.status).toBe(200);
+    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      c,
+      '_WdnkLInMNDz8yJNZUlzA'
+    );
+    expect(mocked.resolveAccountDataContextFromHono.mock.invocationCallOrder[0]).toBeLessThan(
+      mocked.createPIIContextFromHono.mock.invocationCallOrder[0]!
+    );
   });
 
   it('uses subject_org_membership for organization hierarchy member counts', async () => {

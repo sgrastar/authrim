@@ -198,6 +198,93 @@ describe('Login UI proxy hooks', () => {
 		expect(event.locals).toMatchObject({ locale: 'de' });
 	});
 
+	it('does not read the removed legacy lang cookie', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'fr-FR' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'lang' ? 'ja' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'fr' });
+	});
+
+	it('prefers a saved user choice over the OIDC locale hint', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?ui_locales=ja%20en');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'preferredLanguage' ? 'fr' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'fr' });
+	});
+
+	it('uses the first enabled OIDC locale before Accept-Language without persisting the hint', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?ui_locales=unsupported%20zh-Hant-TW%20ja');
+		const setCookie = vi.fn();
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: setCookie }
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'zh-TW' });
+		expect(setCookie).not.toHaveBeenCalledWith(
+			'preferredLanguage',
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('prefers an explicit lang query over saved, OIDC, and browser preferences', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?lang=ja&ui_locales=fr');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'preferredLanguage' ? 'en' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'ja' });
+	});
+
 	it('preserves Set-Cookie headers from proxied auth responses', async () => {
 		const { buildProxyResponse } = await import('../hooks.server');
 		const upstream = new Response(JSON.stringify({ ok: true }), {
@@ -565,6 +652,20 @@ describe('Login UI proxy hooks', () => {
 
 		expect(shouldBootstrapLoginUITheme('/login')).toBe(true);
 		expect(shouldBootstrapLoginUITheme('/signup')).toBe(true);
+		for (const pathname of [
+			'/callback',
+			'/ciba',
+			'/consent',
+			'/device',
+			'/device/authorize',
+			'/error',
+			'/logged-out',
+			'/logout-complete',
+			'/reauth',
+			'/verify-email-code'
+		]) {
+			expect(shouldBootstrapLoginUITheme(pathname)).toBe(true);
+		}
 		expect(shouldBootstrapLoginUITheme('/discover')).toBe(false);
 		expect(shouldResolveLoginChallengeThemeTarget('/login')).toBe(true);
 		expect(shouldResolveLoginChallengeThemeTarget('/signup')).toBe(true);
@@ -1167,5 +1268,23 @@ describe('Login UI proxy hooks', () => {
 			emailVerificationProtocolEnabled: true,
 			authenticationMethods: null
 		});
+	});
+
+	it('does not persist an OIDC transaction locale from root layout data', async () => {
+		const { load } = await import('../routes/+layout.server');
+		const setCookie = vi.fn();
+		const data = await load({
+			url: new URL('https://login.example.com/login?ui_locales=zh-Hant-TW%20en'),
+			cookies: { get: () => undefined, set: setCookie },
+			route: { id: '/login' },
+			locals: {
+				locale: 'zh-TW',
+				emailVerificationProtocolEnabled: false,
+				authenticationMethods: null
+			}
+		} as never);
+
+		expect(data).toMatchObject({ preferredLanguage: 'zh-TW' });
+		expect(setCookie).not.toHaveBeenCalled();
 	});
 });

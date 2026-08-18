@@ -82,10 +82,12 @@ function pluginOutboxSchema(): string {
 }
 
 function notificationIntentSchema(): string {
-  return readFileSync(
-    resolve(REPO_ROOT, 'migrations/035_notification_delivery_intents.sql'),
-    'utf8'
-  );
+  return [
+    'migrations/035_notification_delivery_intents.sql',
+    'migrations/050_email_delivery_history.sql',
+  ]
+    .map((path) => readFileSync(resolve(REPO_ROOT, path), 'utf8'))
+    .join('\n');
 }
 
 function insertNotification(database: DatabaseSync, providerInstallationIds = ['installation-a']) {

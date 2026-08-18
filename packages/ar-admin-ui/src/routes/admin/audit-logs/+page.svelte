@@ -16,11 +16,20 @@
 	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
+	import {
+		adminEmailDeliveriesAPI,
+		type EmailDeliveryRecord
+	} from '$lib/api/admin-email-deliveries';
+	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
 
 	let entries: AuditLogEntry[] = $state([]);
 	let pagination: Pagination | null = $state(null);
 	let loading = $state(true);
 	let error = $state('');
+	let emailDeliveries = $state<EmailDeliveryRecord[]>([]);
+	let emailDeliveriesLoading = $state(false);
+	let emailDeliveriesAvailable = $state(true);
 
 	// Filter state
 	let userIdFilter = $state('');
@@ -81,6 +90,18 @@
 		}
 	}
 
+	async function loadEmailDeliveries() {
+		emailDeliveriesLoading = true;
+		try {
+			emailDeliveries = (await adminEmailDeliveriesAPI.list()).items.slice(0, 20);
+			emailDeliveriesAvailable = true;
+		} catch {
+			emailDeliveriesAvailable = false;
+		} finally {
+			emailDeliveriesLoading = false;
+		}
+	}
+
 	onMount(async () => {
 		await settingsContext.initialize();
 	});
@@ -90,7 +111,7 @@
 		if (!tenantId || tenantId === loadedTenantId) return;
 		loadedTenantId = tenantId;
 		currentPage = 1;
-		loadAuditLogs();
+		void Promise.all([loadAuditLogs(), loadEmailDeliveries()]);
 	});
 
 	function handleUserIdSearch() {
@@ -127,18 +148,9 @@
 	}
 
 	function formatAction(action: string): string {
-		const ja = getLocale() === 'ja';
+		const accountAction = formatAccountAuditAction(action, getLocale());
+		if (accountAction) return accountAction;
 		switch (action) {
-			case 'account.profile.name_updated':
-				return ja ? 'アカウントページ: 名前変更' : 'Account Page: Name changed';
-			case 'account.passkey.created':
-				return ja ? 'アカウントページ: Passkey追加' : 'Account Page: Passkey added';
-			case 'account.passkey.updated':
-				return ja ? 'アカウントページ: Passkey名変更' : 'Account Page: Passkey renamed';
-			case 'account.passkey.deleted':
-				return ja ? 'アカウントページ: Passkey削除' : 'Account Page: Passkey deleted';
-			case 'account.session.revoked':
-				return ja ? 'アカウントページ: セッションログアウト' : 'Account Page: Session logged out';
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
 			case 'user.logout':
@@ -281,6 +293,9 @@
 </svelte:head>
 
 {#snippet headerActions()}
+	<a class="btn btn-secondary" href="/admin/email-deliveries">
+		<i class="i-ph-envelope-open"></i>{$LL.admin_email_deliveries_open_status()}
+	</a>
 	<button class="btn btn-secondary" onclick={() => (showFilters = !showFilters)}>
 		<i class={showFilters ? 'i-ph-funnel-simple-x' : 'i-ph-funnel-simple'}></i>
 		{showFilters ? $LL.admin_audit_logs_hide_filters() : $LL.admin_audit_logs_show_filters()}
@@ -466,6 +481,19 @@
 				onNext={() => goToPage(currentPage + 1)}
 			/>
 		{/if}
+	{/if}
+
+	{#if emailDeliveriesAvailable}
+		<AdminSection
+			title={$LL.admin_email_deliveries_history()}
+			description={$LL.admin_email_deliveries_history_description()}
+		>
+			{#if emailDeliveriesLoading}
+				<p class="state-text">{$LL.admin_email_deliveries_loading()}</p>
+			{:else}
+				<EmailDeliveryTable items={emailDeliveries} />
+			{/if}
+		</AdminSection>
 	{/if}
 </AdminPageShell>
 

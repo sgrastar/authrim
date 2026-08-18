@@ -309,6 +309,19 @@ export interface PluginRunnerServiceBinding {
   resolveNotificationProviderOrder(
     input: ResolveNotificationProviderOrderInput
   ): Promise<NotificationProviderOrder>;
+  encryptNotificationPayload(input: {
+    context: {
+      environmentId: string;
+      tenantId: string;
+      intentId: string;
+      notificationKind: string;
+      payloadVersion: 1;
+    };
+    payload: unknown;
+  }): Promise<{
+    activeKeyId: string;
+    envelope: string;
+  }>;
   resolveAccountEventInstallations(
     input: ResolveAccountEventInstallationsInput
   ): Promise<AccountEventInstallation[]>;

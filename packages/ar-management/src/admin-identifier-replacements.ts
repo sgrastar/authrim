@@ -9,7 +9,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { resumeIdentifierReplacementOperation } from './account-identifier-replacement';
 
-const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,255}$/u;
 const OPERATION_ID = /^identifier-replacement:[a-f0-9-]{36}$/u;
 const RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 const OPERATION_STATES = new Set([

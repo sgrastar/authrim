@@ -22,6 +22,9 @@ tags:
 
 # Tenant D1 Control Plane 実装計画
 
+Lookup D1 の新規 shard 先行割り当て、bounded rebalance、物理 retention purge の追加設計は
+[LOOKUP_SCALE_OUT_AND_RETENTION.md](./LOOKUP_SCALE_OUT_AND_RETENTION.md)を参照する。
+
 ## 目的
 
 Tenant D1 構成を、初回 setup 時の事前 slot 作成モデルから、Admin UI / Management Worker 起点で

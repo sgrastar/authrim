@@ -171,6 +171,34 @@ describe('PluginHookOutboxDispatcher', () => {
     });
   });
 
+  it.each([
+    'plugin_notification_key_unavailable',
+    'plugin_notification_key_unwrap_failed',
+    'plugin_notification_payload_authentication_failed',
+    'plugin_notification_decryption_failed',
+    'plugin_notification_envelope_invalid',
+    'plugin_notification_payload_invalid',
+  ])('persists the safe notification diagnostic %s', async (errorCode) => {
+    const outbox = store(claim());
+    const dispatcher = new PluginHookOutboxDispatcher(
+      outbox,
+      { invoke: async () => Promise.reject(new Error(errorCode)) },
+      policy(),
+      limiter()
+    );
+
+    await expect(dispatcher.processOne({ ownerId: 'runner-a', now: 100 })).resolves.toBe(
+      'dead_letter'
+    );
+    expect(outbox.fail).toHaveBeenCalledWith(claim(), {
+      now: 100,
+      errorCode,
+      retryable: false,
+      maxAttempts: 5,
+      failureScope: 'message',
+    });
+  });
+
   it('marks an explicit provider rejection as failover eligible', async () => {
     const outbox = store(claim());
     const dispatcher = new PluginHookOutboxDispatcher(

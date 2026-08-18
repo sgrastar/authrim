@@ -976,6 +976,7 @@ interface CategoryRetentionInfo {
   last_cleanup_date: string | null;
   records_deleted_last_30_days: number;
   hot_query_status?: 'supported' | 'not_supported' | 'pending_runtime_support';
+  execution_status?: 'available' | 'durable_projection_pending';
 }
 
 /**
@@ -1032,6 +1033,10 @@ const DEFAULT_RETENTION_CATEGORIES: Record<
   analytics_data: { retention_days: 365, description: 'Usage analytics and statistics' },
   webhook_deliveries: { retention_days: 30, description: 'Webhook delivery logs' },
   rate_limit_data: { retention_days: 1, description: 'Rate limiting counters' },
+  lookup_directory: {
+    retention_days: 180,
+    description: 'Inactive account discovery and routing records',
+  },
 };
 
 /**
@@ -1186,6 +1191,33 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
       records_deleted_last_30_days: 0,
     });
 
+    const lookupRetentionPolicy = await adapter.queryOne<{ retention_days: number | string }>(
+      `SELECT retention_days FROM lookup_retention_policies WHERE tenant_id = ?`,
+      [tenantId],
+      { consistencyClass: 'primary_required' }
+    );
+    const lookupRetentionDays = lookupRetentionPolicy
+      ? Number(lookupRetentionPolicy.retention_days)
+      : 180;
+    if (
+      !Number.isSafeInteger(lookupRetentionDays) ||
+      lookupRetentionDays < 30 ||
+      lookupRetentionDays > 3650
+    ) {
+      throw new Error('lookup_retention_policy_invalid');
+    }
+    categories.push({
+      category: 'lookup_directory',
+      retention_days: lookupRetentionDays,
+      total_records: 0,
+      records_pending_deletion: 0,
+      oldest_record_date: null,
+      next_cleanup_date: null,
+      last_cleanup_date: null,
+      records_deleted_last_30_days: 0,
+      execution_status: 'durable_projection_pending',
+    });
+
     // Pending erasure requests
     const erasureRequests = await adapter.queryOne<{ pending: number }>(
       `SELECT COUNT(*) as pending
@@ -1220,6 +1252,10 @@ export async function adminDataRetentionStatusHandler(c: Context<{ Bindings: Env
           session_data: {
             retention_days: sessionRetentionDays,
             description: DEFAULT_RETENTION_CATEGORIES.session_data.description,
+          },
+          lookup_directory: {
+            retention_days: lookupRetentionDays,
+            description: DEFAULT_RETENTION_CATEGORIES.lookup_directory.description,
           },
         },
         cleanup_schedule: 'daily',

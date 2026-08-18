@@ -92,7 +92,8 @@ export function getCategoryDisplayName(category: string): string {
 		tombstones: 'Deletion Records (Tombstones)',
 		auth_codes: 'Authorization Codes',
 		refresh_tokens: 'Refresh Tokens',
-		access_tokens: 'Access Tokens'
+		access_tokens: 'Access Tokens',
+		lookup_directory: 'Lookup Directory'
 	};
 	return names[category] || category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 }
@@ -107,7 +108,8 @@ export function getCategoryDescription(category: string): string {
 		tombstones: 'Records of deleted data for GDPR compliance (deletion proof)',
 		auth_codes: 'OAuth authorization codes (short-lived)',
 		refresh_tokens: 'OAuth refresh tokens for session renewal',
-		access_tokens: 'OAuth access tokens for API authentication'
+		access_tokens: 'OAuth access tokens for API authentication',
+		lookup_directory: 'Inactive account lookup records stored across shared Lookup shards'
 	};
 	return descriptions[category] || 'Data retention category';
 }
@@ -246,7 +248,11 @@ export const adminDataRetentionAPI = {
 	 */
 	async updateCategory(
 		category: string,
-		retentionDays: number
+		retentionDays: number,
+		confirmation?: {
+			confirmShortening: boolean;
+			expectedCurrentRetentionDays: number;
+		}
 	): Promise<{ category: string; retention_days: number; updated_at: string }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/data-retention/categories/${encodeURIComponent(category)}`,
@@ -254,7 +260,15 @@ export const adminDataRetentionAPI = {
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'include',
-				body: JSON.stringify({ retention_days: retentionDays })
+				body: JSON.stringify({
+					retention_days: retentionDays,
+					...(confirmation
+						? {
+								confirm_shortening: confirmation.confirmShortening,
+								expected_current_retention_days: confirmation.expectedCurrentRetentionDays
+							}
+						: {})
+				})
 			}
 		);
 

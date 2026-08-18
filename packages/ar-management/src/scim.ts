@@ -75,6 +75,7 @@ import {
 import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './scim-identity-mapping';
 import { getScimInboundSettings } from './scim-settings';
 import { syncScimIdentifierReplacements } from './scim-identifier-replacement';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -2816,6 +2817,11 @@ app.delete('/Users/:id', async (c) => {
       return scimError(c, 404, 'The requested resource was not found');
     }
 
+    const legalHold = await findActiveAccountLegalHold(coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return scimError(c, 409, 'User is under legal hold and cannot be deleted');
+    }
+
     // Check ETag if If-Match header is present
     const ifMatch = c.req.header('If-Match');
     if (ifMatch) {
@@ -4347,6 +4353,19 @@ async function processUserOperation(
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '404',
             detail: 'Resource not found',
+          },
+        };
+      }
+
+      const legalHold = await findActiveAccountLegalHold(coreAdapter, tenantId, resourceId!);
+      if (legalHold) {
+        return {
+          method: 'DELETE',
+          status: '409',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '409',
+            detail: 'User is under legal hold and cannot be deleted',
           },
         };
       }

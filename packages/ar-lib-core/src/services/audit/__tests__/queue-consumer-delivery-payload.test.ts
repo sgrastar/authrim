@@ -963,6 +963,62 @@ describe('logging delivery queue consumer', () => {
     expect(message.retry).not.toHaveBeenCalled();
   });
 
+  it('acknowledges legacy platform-default R2 fanout without destination lookup or notification', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('unexpected HTTP delivery'));
+    vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
+    const message = createMessage({
+      payload_type: 'delivery_fanout',
+      schema_version: 1,
+      payload_id: 'qpl_platform_default_legacy',
+      tenant_key: 'tk_123',
+      lane: 'critical',
+      created_at: 1779148800000,
+      catalog_id: 'obj_platform_default_1',
+      object_key: 'logs/v1/tk_123/archive/admin_audit/chunk.jsonl.gz',
+      destination_id: 'platform_default_r2_archive',
+      log_type: 'admin_audit',
+      plane: 'archive',
+      record_count: 1,
+    });
+
+    await processLoggingDeliveryQueue(
+      {
+        messages: [message],
+        queue: 'LOGGING_DELIVERY_CRITICAL_QUEUE',
+      } as unknown as MessageBatch<unknown>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+      }
+    );
+
+    expect(adminDb.queryOne).not.toHaveBeenCalledWith(
+      expect.stringContaining('FROM admin_destinations'),
+      expect.anything()
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(adminDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO logging_delivery_events'),
+      expect.arrayContaining([
+        'tk_123',
+        'platform_default_r2_archive',
+        'admin_audit',
+        'archive',
+        'critical',
+        'delivered',
+      ])
+    );
+    expect(
+      adminDb.execute.mock.calls.some(([sql]) =>
+        String(sql).includes('INSERT INTO internal_notification_events')
+      )
+    ).toBe(false);
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
   it('retries supported HTTP sink batch payloads on retryable status', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 503,

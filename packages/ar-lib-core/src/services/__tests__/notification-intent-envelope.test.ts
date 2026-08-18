@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   decryptNotificationIntentPayload,
   encryptNotificationIntentPayload,
+  encryptNotificationIntentPayloadWithSecret,
   type NotificationIntentEnvelopeContext,
 } from '../notification-intent-envelope';
 import { parseNotificationDeliveryPayload } from '../notification-delivery-intent';
@@ -42,6 +43,54 @@ beforeAll(async () => {
 });
 
 describe('notification intent envelope', () => {
+  it('round-trips a v2 payload with a domain-separated symmetric key', async () => {
+    const secret = 'notification-payload-symmetric-test-secret';
+    const payload = {
+      channel: 'email',
+      to: 'person@example.test',
+      subject: 'Sign-in code',
+      body: 'Code: 123456',
+    };
+    const envelope = await encryptNotificationIntentPayloadWithSecret({
+      secret,
+      keyId: 'notification:v1',
+      context: CONTEXT,
+      payload,
+    });
+
+    expect(JSON.parse(envelope)).toMatchObject({ version: 2, algorithm: 'A256GCM' });
+    expect(envelope).not.toContain(payload.to);
+    await expect(
+      decryptNotificationIntentPayload({
+        symmetricKeys: [{ keyId: 'notification:v1', secret }],
+        context: CONTEXT,
+        envelope,
+      })
+    ).resolves.toEqual(payload);
+  });
+
+  it('rejects a v2 payload under an unavailable or incorrect symmetric key', async () => {
+    const envelope = await encryptNotificationIntentPayloadWithSecret({
+      secret: 'notification-payload-symmetric-test-secret',
+      keyId: 'notification:v1',
+      context: CONTEXT,
+      payload: { channel: 'email', to: 'person@example.test', body: 'secret' },
+    });
+
+    await expect(
+      decryptNotificationIntentPayload({ symmetricKeys: [], context: CONTEXT, envelope })
+    ).rejects.toThrow('notification_encryption_key_unavailable');
+    await expect(
+      decryptNotificationIntentPayload({
+        symmetricKeys: [
+          { keyId: 'notification:v1', secret: 'different-symmetric-test-secret-value' },
+        ],
+        context: CONTEXT,
+        envelope,
+      })
+    ).rejects.toThrow('notification_envelope_payload_authentication_failed');
+  });
+
   it('round-trips a protected notification payload', async () => {
     const payload = {
       channel: 'email',
@@ -82,7 +131,7 @@ describe('notification intent envelope', () => {
         context: { ...CONTEXT, [field]: value },
         envelope,
       })
-    ).rejects.toThrow('notification_envelope_authentication_failed');
+    ).rejects.toThrow('notification_envelope_payload_authentication_failed');
   });
 
   it('rejects ciphertext tampering without exposing crypto details', async () => {
@@ -101,7 +150,26 @@ describe('notification intent envelope', () => {
         context: CONTEXT,
         envelope: JSON.stringify(parsed),
       })
-    ).rejects.toThrow('notification_envelope_authentication_failed');
+    ).rejects.toThrow('notification_envelope_payload_authentication_failed');
+  });
+
+  it('distinguishes wrapped content-key tampering from payload authentication failure', async () => {
+    const envelope = await encryptNotificationIntentPayload({
+      publicJwks,
+      activeKeyId: KEY_ID,
+      context: CONTEXT,
+      payload: { channel: 'email', to: 'person@example.test', body: 'secret' },
+    });
+    const parsed = JSON.parse(envelope) as { wrappedKey: string };
+    parsed.wrappedKey = `${parsed.wrappedKey.startsWith('A') ? 'B' : 'A'}${parsed.wrappedKey.slice(1)}`;
+
+    await expect(
+      decryptNotificationIntentPayload({
+        privateJwks,
+        context: CONTEXT,
+        envelope: JSON.stringify(parsed),
+      })
+    ).rejects.toThrow('notification_envelope_key_unwrap_failed');
   });
 
   it('rejects an unavailable key id without trying another key', async () => {

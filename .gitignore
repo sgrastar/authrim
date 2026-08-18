@@ -83,6 +83,7 @@ packages/setup/.tmp-tests/
 
 # Cryptographic keys and certificates (NEVER commit these!)
 .keys/
+/keys/
 .authrim-keys/
 *.pem
 *.key

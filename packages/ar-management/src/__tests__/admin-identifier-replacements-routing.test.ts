@@ -32,10 +32,10 @@ import {
   adminUserIdentifierReplacementsHandler,
 } from '../admin-identifier-replacements';
 
-function context(operationId?: string) {
+function context(operationId?: string, accountId = 'account-a') {
   return {
     req: {
-      param: vi.fn((name: string) => (name === 'operationId' ? operationId : 'account-a')),
+      param: vi.fn((name: string) => (name === 'operationId' ? operationId : accountId)),
     },
     env: {},
     json: vi.fn((body: unknown, status = 200) => Response.json(body, { status })),
@@ -69,6 +69,15 @@ describe('Admin identifier replacement shard routing', () => {
     );
     expect(mocks.routedPii.query).toHaveBeenCalledOnce();
     expect(mocks.defaultPii.query).not.toHaveBeenCalled();
+  });
+
+  it('accepts persisted user IDs that begin with an underscore', async () => {
+    const response = await adminUserIdentifierReplacementsHandler(
+      context(undefined, '_WdnkLInMNDz8yJNZUlzA')
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveAccount).toHaveBeenCalledWith(expect.anything(), '_WdnkLInMNDz8yJNZUlzA');
   });
 
   it('fails closed when the account route cannot be resolved', async () => {

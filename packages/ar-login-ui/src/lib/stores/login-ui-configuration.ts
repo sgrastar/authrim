@@ -13,7 +13,9 @@ export function applyAuthenticationMethodsToLoginUI(
 	const { brandingStore, languageStore, loginUIPageStore, themeStore } = stores;
 	languageStore.setConfig(
 		authenticationMethods.ui.supportedLocales,
-		authenticationMethods.ui.defaultLocale
+		authenticationMethods.ui.defaultLocale,
+		authenticationMethods.ui.primaryLocales,
+		authenticationMethods.ui.showEnglishLanguageNames
 	);
 	if (!languageStore.isEnabled(getLocale())) {
 		setLocale(languageStore.defaultLocale);

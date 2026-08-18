@@ -11,11 +11,27 @@ export function createLanguageStore() {
 		get defaultLocale() {
 			return config.defaultLocale;
 		},
+		get primaryLocales() {
+			return config.primaryLocales;
+		},
+		get showEnglishLanguageNames() {
+			return config.showEnglishLanguageNames;
+		},
 		isEnabled(locale: LoginUILocale) {
 			return config.supportedLocales.includes(locale);
 		},
-		setConfig(supportedLocales: readonly string[] | undefined, defaultLocale: string | undefined) {
-			config = getLoginUILanguageConfig({ supportedLocales, defaultLocale });
+		setConfig(
+			supportedLocales: readonly string[] | undefined,
+			defaultLocale: string | undefined,
+			primaryLocales?: readonly string[],
+			showEnglishLanguageNames?: boolean
+		) {
+			config = getLoginUILanguageConfig({
+				supportedLocales,
+				defaultLocale,
+				primaryLocales,
+				showEnglishLanguageNames
+			});
 		}
 	};
 }

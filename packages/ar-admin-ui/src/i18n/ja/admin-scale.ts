@@ -12,12 +12,16 @@ const adminScale = {
 	admin_scale_system_scale_help:
 		'想定される最大負荷に基づいてshard数を設定します。少なすぎると高トラフィック時にエラーが発生し、多すぎると応答遅延が増える可能性があります。',
 	admin_scale_shards_unit: 'shards',
+	admin_scale_region_shard_step: '有効な{count}リージョン単位で増減します。',
+	admin_scale_region_shard_multiple_error: 'Shard数は有効な{count}リージョンの倍数にしてください。',
 	admin_scale_region_distribution: 'リージョン分散',
 	admin_scale_region_distribution_help:
 		'認証データ（sessions、tokens）を保存する場所を設定します。ユーザーの地理分布に基づいて割合を設定してください。例: ユーザーの50%がアジアにいる場合、APACを約50%にします。',
 	admin_scale_region_distribution_description: 'リージョンを選択し、{ratio}を設定します。',
 	admin_scale_request_routing_ratio: 'request routing ratio',
 	admin_scale_slider_note: 'Note: 1つのsliderを調整すると、他の値は自動で再配分されます。',
+	admin_scale_region_nearby_placement: '近隣リージョンへ配置',
+	admin_scale_region_unavailable_do: 'Durable Objectsでは利用できません',
 	admin_scale_advanced_settings: '詳細設定',
 	admin_scale_estimation_model: '推定モデル',
 	admin_scale_estimation_model_description:
@@ -43,7 +47,6 @@ const adminScale = {
 	admin_scale_load_failed: '設定の読み込みに失敗しました',
 	admin_scale_save_failed: '設定の保存に失敗しました',
 	admin_scale_map_unknown: '不明',
-	admin_scale_map_no_do_support: 'DO未対応',
 	admin_scale_map_active_region: '有効なリージョン',
 	admin_scale_map_inactive: '無効',
 	admin_scale_map_traffic_flow: 'Traffic Flow',

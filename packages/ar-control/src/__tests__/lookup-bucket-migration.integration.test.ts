@@ -113,6 +113,12 @@ describe('LookupBucketMigrationService', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/025_lookup_scale_out_and_retention.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('test', 'test', 'urn:authrim:control:test', 'active', 1, 1);
@@ -159,7 +165,7 @@ describe('LookupBucketMigrationService', () => {
 
   afterEach(() => database.close());
 
-  it('automatically moves the bucket that best improves active-identifier load', async () => {
+  it('automatically moves the bucket that best improves active route-bearing load', async () => {
     const snapshot = {
       ownerId: 'management-planner',
       observedAt: now,
@@ -169,6 +175,7 @@ describe('LookupBucketMigrationService', () => {
           lookupShardId: 'lookup-a',
           assignmentGeneration: 3,
           activeIdentifierCount: 90,
+          activeAliasCount: 0,
           counterUpdatedAt: now,
         },
         {
@@ -176,6 +183,7 @@ describe('LookupBucketMigrationService', () => {
           lookupShardId: 'lookup-a',
           assignmentGeneration: 1,
           activeIdentifierCount: 1,
+          activeAliasCount: 0,
           counterUpdatedAt: now,
         },
         {
@@ -183,6 +191,7 @@ describe('LookupBucketMigrationService', () => {
           lookupShardId: 'lookup-a',
           assignmentGeneration: 1,
           activeIdentifierCount: 9,
+          activeAliasCount: 0,
           counterUpdatedAt: now,
         },
       ],
@@ -206,6 +215,48 @@ describe('LookupBucketMigrationService', () => {
       state: 'dual_write',
     });
     await expect(service.planNextAutomaticMigration('test', snapshot)).resolves.toBeNull();
+  });
+
+  it('compares shard load after normalizing by configured capacity weight', async () => {
+    database.exec(
+      `UPDATE control_lookup_physical_shards SET capacity_weight = 2
+        WHERE lookup_shard_id = 'lookup-a';
+       UPDATE control_lookup_bucket_assignments SET lookup_shard_id = 'lookup-b'
+        WHERE virtual_bucket = 8;`
+    );
+
+    await expect(
+      service.planNextAutomaticMigration('test', {
+        ownerId: 'management-planner',
+        observedAt: now,
+        buckets: [
+          {
+            virtualBucket: 7,
+            lookupShardId: 'lookup-a',
+            assignmentGeneration: 3,
+            activeIdentifierCount: 90,
+            activeAliasCount: 0,
+            counterUpdatedAt: now,
+          },
+          {
+            virtualBucket: 8,
+            lookupShardId: 'lookup-b',
+            assignmentGeneration: 1,
+            activeIdentifierCount: 60,
+            activeAliasCount: 0,
+            counterUpdatedAt: now,
+          },
+          {
+            virtualBucket: 9,
+            lookupShardId: 'lookup-a',
+            assignmentGeneration: 1,
+            activeIdentifierCount: 9,
+            activeAliasCount: 0,
+            counterUpdatedAt: now,
+          },
+        ],
+      })
+    ).resolves.toBeNull();
   });
 
   it('starts dual-write atomically and adopts the exact idempotent retry', async () => {

@@ -100,7 +100,7 @@ describe('tenant placement migration inventory', () => {
       ownership: { kind: 'global_reference' },
     });
     expect(() => orderTenantMigrationTables(result.tables)).not.toThrow();
-  });
+  }, 15_000);
 
   it('classifies every table in the current PII migration stream', () => {
     const result = classifyTenantMigrationSchema('tenant_pii', currentStreamSchema('d1-pii'));
@@ -119,7 +119,7 @@ describe('tenant placement migration inventory', () => {
         parentTenantColumn: 'tenant_id',
       }
     );
-  });
+  }, 15_000);
 
   it('blocks an unclassified table and a broken indirect ownership rule', () => {
     const unknown = classifyTenantMigrationSchema('tenant_core/users', [

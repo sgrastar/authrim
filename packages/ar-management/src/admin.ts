@@ -13,6 +13,7 @@ import {
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
   createPIIContextFromHono,
+  resolveAccountDataContextFromHono,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
   hasPIIDatabase,
@@ -46,6 +47,7 @@ import {
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   createDataTemporarilyUnavailableResponse,
   transitionAccountAuthenticationState,
+  produceNotificationDelivery,
   type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
@@ -79,6 +81,7 @@ import {
   prepareAccountDirectoryRemoval,
 } from './account-directory-removal-producer';
 import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -349,6 +352,7 @@ async function resolveAuditUserAnonymizedId(
   tenantId: string,
   userId: string
 ): Promise<string | null> {
+  await resolveAccountDataContextFromHono(c, userId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const row = await piiCtx.defaultPiiAdapter.queryOne<{ anonymized_user_id: string }>(
     'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
@@ -1236,25 +1240,14 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Check for legal hold (block anonymization if active)
-    let legalHold: { id: string; reason: string } | null = null;
-    try {
-      legalHold = await authCtx.coreAdapter.queryOne<{ id: string; reason: string }>(
-        `SELECT id, reason FROM legal_holds
-         WHERE tenant_id = ? AND subject_type = 'user' AND subject_id = ?
-         AND (expires_at IS NULL OR expires_at > ?)`,
-        [tenantId, userId, nowTs]
-      );
-    } catch {
-      legalHold = null;
-    }
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
 
     if (legalHold) {
       return c.json(
         {
           error: 'legal_hold_active',
           error_description: 'User is under legal hold and cannot be anonymized',
-          hold_id: legalHold.id,
+          hold_id: legalHold.holdId,
         },
         409
       );
@@ -3506,6 +3499,53 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
 // Phase 3: Send Email to User
 // =============================================================================
 
+const ADMIN_USER_EMAIL_SUBJECTS: Record<string, string> = {
+  password_reset: 'Reset your password',
+  welcome: 'Welcome to Authrim',
+  verification: 'Verify your email address',
+  notification: 'Account notification',
+  security_alert: 'Security alert',
+  account_locked: 'Your account was locked',
+  account_suspended: 'Your account was suspended',
+};
+
+function escapeAdminEmailHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function adminUserEmailContent(
+  template: string,
+  subject: string | undefined,
+  variables: Record<string, string> | undefined
+): { subject: string; html: string; text: string } {
+  const fallbackSubject = ADMIN_USER_EMAIL_SUBJECTS[template] ?? 'Account notification';
+  const normalizedSubject = (subject ?? fallbackSubject).replace(/[\r\n]+/gu, ' ').trim();
+  const safeSubject = (normalizedSubject || fallbackSubject).slice(0, 998);
+  const entries = Object.entries(variables ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  const textDetails = entries.map(([key, value]) => `${key}: ${value}`).join('\n');
+  const htmlDetails = entries.length
+    ? `<dl>${entries
+        .map(
+          ([key, value]) =>
+            `<dt><strong>${escapeAdminEmailHtml(key)}</strong></dt><dd>${escapeAdminEmailHtml(value)}</dd>`
+        )
+        .join('')}</dl>`
+    : '';
+  const text = [safeSubject, textDetails].filter(Boolean).join('\n\n');
+  return {
+    subject: safeSubject,
+    html: `<!doctype html><html><body><h1>${escapeAdminEmailHtml(safeSubject)}</h1>${htmlDetails}</body></html>`,
+    text,
+  };
+}
+
 /**
  * POST /api/admin/users/:id/send-email
  * Send an email to a user (password reset, notification, etc.)
@@ -3547,8 +3587,6 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,
     });
@@ -3566,30 +3604,51 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Create email job (queued for async processing)
     const emailJobId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
+    const content = adminUserEmailContent(body.template, body.subject, body.variables);
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId },
+      intentId: `admin-user-email:${emailJobId}`,
+      outboxId: `notification:${emailJobId}`,
+      notificationKind: `admin.user-email.${body.template}`,
+      accountId: userId,
+      idempotencyKey: `admin-user-email:${emailJobId}`,
+      expiresAt: nowTs + 24 * 60 * 60,
+      payload: {
+        channel: 'email',
+        to: userEmail,
+        from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
+        subject: content.subject,
+        body: content.html,
+        metadata: { textBody: content.text, template: body.template },
+      },
+    });
 
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO email_queue (
-        id, tenant_id, user_id, template, subject, variables, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        emailJobId,
-        tenantId,
-        userId,
-        body.template,
-        body.subject ?? null,
-        body.variables ? JSON.stringify(body.variables) : null,
-        'pending',
-        nowTs,
-      ]
-    );
+    if (delivery.delivery === 'permanent_failure') {
+      await createAuditLogFromContext(c, 'email.delivery_failed', 'user', userId, {
+        template: body.template,
+        email_job_id: emailJobId,
+        delivery_intent_id: delivery.reference.intentId,
+      });
+      return c.json(
+        {
+          error: 'email_delivery_failed',
+          error_description: 'The email delivery provider rejected the message.',
+          email_job_id: emailJobId,
+        },
+        502
+      );
+    }
+
+    const deliveryStatus = delivery.delivery === 'delivered' ? 'provider_accepted' : 'queued';
 
     // Write audit log
     await createAuditLogFromContext(c, 'email.queued', 'user', userId, {
       template: body.template,
       email_job_id: emailJobId,
+      delivery_intent_id: delivery.reference.intentId,
+      delivery_status: deliveryStatus,
     });
 
     return c.json({
@@ -3597,7 +3656,7 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       email_job_id: emailJobId,
       user_id: userId,
       template: body.template,
-      status: 'queued',
+      status: deliveryStatus,
       created_at: new Date(nowTs * 1000).toISOString(),
     });
   } catch (error) {

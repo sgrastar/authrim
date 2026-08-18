@@ -172,12 +172,16 @@ describe('DiscoveryEmailOtpService', () => {
     resetLookupHmacRuntimeKeyCacheForTest();
     database = new DatabaseSync(':memory:');
     targetDatabase = new DatabaseSync(':memory:');
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
-    );
-    targetDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
-    );
+    for (const target of [database, targetDatabase]) {
+      for (const filename of [
+        '001_lookup_directory.sql',
+        '002_identifier_replacement_verification_gate.sql',
+        '003_allow_external_subject_identifier_replacement.sql',
+        '004_lookup_retention_and_otp_bucket.sql',
+      ]) {
+        target.exec(readFileSync(resolve(REPO_ROOT, 'migrations/lookup', filename), 'utf8'));
+      }
+    }
     lookup = new SqliteD1(database);
     targetLookup = new SqliteD1(targetDatabase);
     emailSend = vi.fn(async () => ({ messageId: 'message-1' }));

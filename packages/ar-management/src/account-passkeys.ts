@@ -748,7 +748,21 @@ export async function completeAccountPasskeyReauthHandler(
           });
       })
   );
-  return refreshAccountReauthSession(c, accountSession, 'passkey', proofVerifiedAtMs);
+  const response = await refreshAccountReauthSession(
+    c,
+    accountSession,
+    'passkey',
+    proofVerifiedAtMs
+  );
+  if (response.status === 200) {
+    await recordAccountOperation(c, {
+      userId: accountSession.userId,
+      action: 'account.passkey.reauthenticated',
+      resourceType: 'passkey',
+      resourceId: passkey.id,
+    });
+  }
+  return response;
 }
 
 export async function sendAccountEmailCodeReauthHandler(
@@ -844,6 +858,7 @@ export async function sendAccountEmailCodeReauthHandler(
     intentId: `account-email-reauth:${challengeId}`,
     outboxId: `notification:${challengeId}`,
     notificationKind: 'account.email-reauth',
+    accountId: accountSession.userId,
     idempotencyKey: `account-email-reauth:${challengeId}`,
     expiresAt: Math.floor(issuedAt / 1000) + EMAIL_REAUTH_TTL_SECONDS,
     payload: {
@@ -1004,7 +1019,16 @@ export async function completeAccountEmailCodeReauthHandler(
     );
   }
 
-  return refreshAccountReauthSession(c, accountSession, 'email_code', Date.now());
+  const response = await refreshAccountReauthSession(c, accountSession, 'email_code', Date.now());
+  if (response.status === 200) {
+    await recordAccountOperation(c, {
+      userId: accountSession.userId,
+      action: 'account.email.reauthenticated',
+      resourceType: 'session',
+      resourceId: accountSession.sessionId,
+    });
+  }
+  return response;
 }
 
 async function isEmailCodeLoginAvailable(env: Env, tenantId: string): Promise<boolean> {

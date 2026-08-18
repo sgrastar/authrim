@@ -812,9 +812,9 @@ describe('Authorization Handler', () => {
       );
       expect(response.status).toBe(302);
       const location = response.headers.get('location');
-      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
-        'challenge_id'
-      );
+      const loginUrl = new URL(location!, 'https://test.example.com');
+      expect(loginUrl.searchParams.get('ui_locales')).toBe('ja en');
+      const challengeId = loginUrl.searchParams.get('challenge_id');
       const challenge = getChallengeMap(env).get(challengeId!) as {
         metadata?: Record<string, unknown>;
       };
@@ -1715,7 +1715,7 @@ describe('Authorization Handler', () => {
         seedSession(env);
 
         const response = await app.request(
-          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=prompt-login-state&prompt=login',
+          '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=prompt-login-state&prompt=login&ui_locales=fr-CA%20fr%20en',
           {
             method: 'GET',
             headers: {
@@ -1728,6 +1728,7 @@ describe('Authorization Handler', () => {
         expect(response.status).toBe(302);
         const location = new URL(response.headers.get('Location')!);
         expect(location.origin + location.pathname).toBe('https://login.example.com/reauth');
+        expect(location.searchParams.get('ui_locales')).toBe('fr-CA fr en');
         const challengeId = location.searchParams.get('challenge_id');
         expect(challengeId).toBeTruthy();
         expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
@@ -2361,7 +2362,7 @@ describe('Authorization Handler', () => {
       seedSession(env);
 
       const response = await app.request(
-        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20email&state=needs-consent',
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid%20email&state=needs-consent&ui_locales=de%20en',
         {
           method: 'GET',
           headers: {
@@ -2374,9 +2375,9 @@ describe('Authorization Handler', () => {
       expect(response.status).toBe(302);
       const location = response.headers.get('Location');
       expect(location).toContain('/auth/consent');
-      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
-        'challenge_id'
-      );
+      const consentUrl = new URL(location!, 'https://test.example.com');
+      expect(consentUrl.searchParams.get('ui_locales')).toBe('de en');
+      const challengeId = consentUrl.searchParams.get('challenge_id');
       expect(challengeId).toBeTruthy();
       expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
         type: 'consent',
@@ -2387,6 +2388,7 @@ describe('Authorization Handler', () => {
           redirect_uri: 'https://example.com/callback',
           scope: 'openid email',
           state: 'needs-consent',
+          ui_locales: 'de en',
           sessionUserId: 'test-user',
         }),
       });

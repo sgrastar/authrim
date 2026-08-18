@@ -45,8 +45,8 @@
 	);
 
 	// Handle scope change
-	function handleScopeChange(level: SettingScopeLevel) {
-		settingsContext.setLevel(level);
+	async function handleScopeChange(level: SettingScopeLevel) {
+		await settingsContext.setLevel(level);
 		notifyChange();
 	}
 
@@ -108,7 +108,7 @@
 				class="scope-tab"
 				class:active={isActive}
 				class:disabled={!settingsContext.canAccessScope(scope.level)}
-				onclick={() => handleScopeChange(scope.level)}
+				onclick={() => void handleScopeChange(scope.level)}
 				title={getScopeDescription(scope.level)}
 			>
 				<i class="scope-icon {scope.icon}" aria-hidden="true"></i>

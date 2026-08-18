@@ -249,8 +249,8 @@ paths:
       tags:
         - Account Page
       operationId: postApiAccountIdentifierReplacementsStart
-      summary: Start an email address replacement.
-      description: Requires authentication within the last five minutes and sends a one-time code to the new address.
+      summary: Start an email address addition or replacement.
+      description: Requires authentication within the last five minutes and sends a one-time code to the new address. Adds the first email address when the account does not have one; otherwise replaces the current address.
       responses:
         '202':
           description: Verification challenge accepted.
@@ -294,8 +294,8 @@ paths:
       tags:
         - Account Page
       operationId: postApiAccountIdentifierReplacementsComplete
-      summary: Verify and apply an email address replacement.
-      description: Consumes the new-address code, creates a durable replacement operation, and returns only after completion or durable forward repair handoff.
+      summary: Verify and apply an email address addition or replacement.
+      description: Consumes the new-address code. Initial additions publish the verified email route and complete immediately; replacements create a durable replacement operation and return after completion or durable forward repair handoff.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -3069,6 +3069,14 @@ components:
           type: string
         error_description:
           type: string
+        error_code:
+          type: string
+          pattern: '^AR[0-9]{6}$'
+          description: Stable Authrim error category that can be provided to support.
+        error_id:
+          type: string
+          format: uuid
+          description: Opaque occurrence identifier that can be provided to support for correlation.
     UserConsent:
       type: object
       required:

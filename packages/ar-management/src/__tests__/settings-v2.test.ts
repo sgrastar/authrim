@@ -580,6 +580,70 @@ describe('Settings API v2', () => {
         expect(body.applied).toContain('login-ui.supported_locales');
       });
 
+      it('stores an explicit empty primary-language selection', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const patchRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.primary_locales': [] },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(patchRes.status).toBe(200);
+        const savedRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const saved = (await savedRes.json()) as SettingsGetResult;
+        expect(saved.values['login-ui.primary_locales']).toEqual([]);
+        expect(saved.sources['login-ui.primary_locales']).toBe('kv');
+      });
+
+      it('rejects a seventh primary Login UI language', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = (await getRes.json()) as SettingsGetResult;
+
+        const res = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: {
+                'login-ui.primary_locales': ['en', 'ja', 'de', 'fr', 'es', 'pt', 'it'],
+              },
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as ApiResponse;
+        expect(body.error).toBe('validation_failed');
+      });
+
       it('rejects unsafe Login UI custom CSS', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });

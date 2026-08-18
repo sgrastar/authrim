@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   warn: vi.fn(),
   repositoryCreate: vi.fn(),
   createBlindIndexes: vi.fn(),
+  coreQueryOne: vi.fn(),
+  coreExecute: vi.fn(),
+  publishEmailAddition: vi.fn(),
+  recordAccountOperation: vi.fn(),
 }));
 
 vi.mock('../account-page', () => ({
@@ -45,11 +49,24 @@ vi.mock('../identifier-replacement-operation', () => ({
   }),
 }));
 
+vi.mock('../account-identifier-addition', () => ({
+  publishAccountEmailAddition: mocks.publishEmailAddition,
+}));
+
+vi.mock('../account-operation-log', () => ({
+  recordAccountOperation: mocks.recordAccountOperation,
+}));
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+    createAccountAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: {
+        queryOne: mocks.coreQueryOne,
+        execute: mocks.coreExecute,
+      },
+    })),
     createPIIContextFromHono: vi.fn(() => ({
       defaultPiiAdapter: {
         queryOne: mocks.queryOne,
@@ -58,6 +75,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
+    getAccountDataContextFromHono: vi.fn(() => ({
+      tenantId: 'tenant-a',
+      accountId: 'account:account-a',
+      legacyUserId: 'account-a',
+      membership: {
+        routeProjection: {
+          schemaVersion: 1,
+          accountRouteGeneration: 1,
+          residencyPolicyId: 'default-policy',
+          targets: [],
+        },
+      },
+    })),
     CanonicalRuntimeUserStore: vi.fn(function RuntimeUserStoreMock() {
       return { findById: mocks.findById };
     }),
@@ -81,6 +111,7 @@ function context(input: { body?: unknown; id?: string; idempotencyKey?: string }
     env: {
       OTP_HMAC_SECRET: 'test-identifier-replacement-secret-32-bytes',
       EMAIL_FROM: 'noreply@example.com',
+      ACCOUNT_DIRECTORY: { publishAccountDirectory: vi.fn() },
     },
     req: {
       json: vi.fn(async () => input.body ?? {}),
@@ -111,6 +142,20 @@ describe('account identifier replacement handlers', () => {
     vi.clearAllMocks();
     mocks.requireAccountSession.mockResolvedValue(currentSession());
     mocks.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.coreExecute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.coreQueryOne.mockImplementation(async (sql: string) =>
+      sql.includes('FROM contact_points')
+        ? {
+            account_id: 'account:account-a',
+            subject_id: 'subject:account-a',
+            verification_state: 'verified',
+            lifecycle_state: 'active',
+          }
+        : {
+            id: 'account:account-a',
+            primary_subject_id: 'subject:account-a',
+          }
+    );
     mocks.findById.mockResolvedValue({ email: 'old@example.com' });
     mocks.notification.mockResolvedValue({ delivery: 'delivered' });
     mocks.resume.mockResolvedValue({ state: 'completed' });
@@ -124,6 +169,97 @@ describe('account identifier replacement handlers', () => {
         digest: 'a'.repeat(64),
       },
     ]);
+    mocks.publishEmailAddition.mockResolvedValue({
+      status: 201,
+      operationId: 'account-email-addition:00000000-0000-4000-8000-000000000000',
+      accountId: 'account:account-a',
+    });
+  });
+
+  it('starts an initial email addition when the account has no email', async () => {
+    mocks.findById.mockResolvedValueOnce({ email: null });
+
+    const response = await startAccountIdentifierReplacementHandler(
+      context({ body: { email: 'new@example.com' } }) as never
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.execute.mock.calls[0]?.[0]).toContain('operation_mode');
+    expect(mocks.execute.mock.calls[0]?.[1]).toContain('addition');
+  });
+
+  it('publishes and persists a verified first email after OTP verification', async () => {
+    const challengeId = 'identifier-replacement-00000000-0000-4000-8000-000000000000';
+    const code = '123456';
+    const now = Math.floor(Date.now() / 1000);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode('test-identifier-replacement-secret-32-bytes'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(`${challengeId}\0${code}`)
+    );
+    const verifier = Array.from(new Uint8Array(signature), (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('');
+    mocks.findById.mockResolvedValueOnce({ email: null });
+    mocks.queryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        tenant_id: 'tenant-a',
+        account_id: 'account-a',
+        normalized_value_json: JSON.stringify('new@example.com'),
+        value_sha256: 'b'.repeat(64),
+        otp_verifier: verifier,
+        delivery_state: 'sent',
+        attempt_count: 0,
+        attempt_limit: 5,
+        expires_at: now + 300,
+        consumed_at: null,
+        initiating_session_ref: 'session-current',
+        recent_reauth_verified_at: now,
+        operation_mode: 'addition',
+      })
+      .mockResolvedValueOnce({ value_json: JSON.stringify('new@example.com') });
+
+    const response = await completeAccountIdentifierReplacementHandler(
+      context({
+        body: { challenge_id: challengeId, code },
+        idempotencyKey: 'addition-key-00000000',
+      }) as never
+    );
+    const body = (await response.json()) as { operation: { id: string; state: string } };
+
+    expect(response.status).toBe(200);
+    expect(body.operation).toEqual({
+      id: 'account-email-addition:00000000-0000-4000-8000-000000000000',
+      state: 'completed',
+    });
+    expect(mocks.publishEmailAddition).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        accountId: 'account:account-a',
+        email: 'new@example.com',
+      }),
+      expect.anything()
+    );
+    expect(mocks.coreExecute).toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT INTO contact_points[\s\S]*verification_state = 'verified'/u),
+      expect.arrayContaining(['canonical-sensitive://tenant-a/account-a/email'])
+    );
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_sensitive_values'),
+      expect.arrayContaining([JSON.stringify('new@example.com')])
+    );
+    expect(mocks.recordAccountOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'account.email.added' })
+    );
   });
 
   it('requires recent reauthentication before persisting a challenge', async () => {
@@ -155,6 +291,63 @@ describe('account identifier replacement handlers', () => {
     expect(mocks.execute).toHaveBeenCalledTimes(2);
     expect(mocks.execute.mock.calls[1]?.[0]).toContain('SET delivery_state = ?');
     expect(mocks.execute.mock.calls[1]?.[1]?.[0]).toBe('failed');
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'temporarily_unavailable',
+      error_code: 'AR030007',
+      error_id: expect.stringMatching(/^[a-f0-9-]{36}$/u),
+    });
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'Email verification delivery failed',
+      expect.objectContaining({
+        errorCode: 'AR030007',
+        errorId: expect.stringMatching(/^[a-f0-9-]{36}$/u),
+        deliveryFailureCode: 'notification_delivery_dispatch_exception',
+      })
+    );
+    expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain('provider secret leaked in error');
+  });
+
+  it('returns the same support code for a permanent notification delivery failure', async () => {
+    mocks.notification.mockResolvedValue({ delivery: 'permanent_failure' });
+
+    const response = await startAccountIdentifierReplacementHandler(
+      context({ body: { email: 'new@example.com' } }) as never
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'temporarily_unavailable',
+      error_code: 'AR030007',
+      error_id: expect.stringMatching(/^[a-f0-9-]{36}$/u),
+    });
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'Email verification delivery failed',
+      expect.objectContaining({
+        deliveryFailureCode: 'notification_delivery_permanent_failure',
+      })
+    );
+  });
+
+  it('does not report success while notification delivery is still pending', async () => {
+    mocks.notification.mockResolvedValue({ delivery: 'pending' });
+
+    const response = await startAccountIdentifierReplacementHandler(
+      context({ body: { email: 'new@example.com' } }) as never
+    );
+
+    expect(response.status).toBe(503);
+    expect(mocks.execute.mock.calls[1]?.[1]?.[0]).toBe('failed');
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'temporarily_unavailable',
+      error_code: 'AR030007',
+      error_id: expect.stringMatching(/^[a-f0-9-]{36}$/u),
+    });
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'Email verification delivery failed',
+      expect.objectContaining({
+        deliveryFailureCode: 'notification_delivery_pending',
+      })
+    );
   });
 
   it('recovers operation creation from a correctly consumed challenge without consuming twice', async () => {
@@ -200,6 +393,14 @@ describe('account identifier replacement handlers', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.repositoryCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.recordAccountOperation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'account-a',
+        action: 'account.email.changed',
+        resourceType: 'email',
+      })
+    );
     expect(
       mocks.execute.mock.calls.some(([sql]) =>
         String(sql).includes('UPDATE identity_identifier_replacement_challenges')
@@ -247,6 +448,32 @@ describe('account identifier replacement handlers', () => {
       expect.any(String),
       expect.objectContaining({ errorCode: 'identifier_replacement_resume_failed' })
     );
+  });
+
+  it('records an email change when polling completes a self-service replacement', async () => {
+    const operationId = 'identifier-replacement:00000000-0000-4000-8000-000000000000';
+    mocks.queryOne
+      .mockResolvedValueOnce({ operation_id: operationId, state: 'revocation_pending' })
+      .mockResolvedValueOnce({
+        operation_id: operationId,
+        state: 'completed',
+        error_code: null,
+        created_at: 1,
+        updated_at: 2,
+        completed_at: 2,
+      });
+
+    const response = await getAccountIdentifierReplacementHandler(
+      context({ id: operationId }) as never
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.recordAccountOperation).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'account-a',
+      action: 'account.email.changed',
+      resourceType: 'email',
+      resourceId: operationId,
+    });
   });
 
   it('does not rerun a failed coordinator before its retry deadline', async () => {

@@ -2333,7 +2333,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Custom domain DNS records are not deleted automatically. Remove them manually in Cloudflare if they are no longer needed.',
           'web.delete.deleteLog': 'Delete log',
           'web.delete.deleteTarget': 'Delete target',
-          'web.delete.resourcesIrreversible': 'resources - irreversible',
+          'web.delete.resourcesLabel': 'resources',
           'web.delete.deletePermanently': 'Delete permanently',
           'web.delete.manualR2Title': 'Large R2 buckets were not deleted automatically. Empty them in Cloudflare Dashboard:',
           'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
@@ -2468,7 +2468,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'カスタムドメインのDNSレコードは削除されません。不要であればCloudflareダッシュボードから手動で削除してください。',
           'web.delete.deleteLog': '削除ログ',
           'web.delete.deleteTarget': '削除対象',
-          'web.delete.resourcesIrreversible': 'リソース - 戻すことはできません',
+          'web.delete.resourcesLabel': 'リソース',
           'web.delete.deletePermanently': '完全に削除する',
           'web.delete.manualR2Title': '大容量のR2バケットは自動削除していません。Cloudflare DashboardでEmpty Bucketを実行してください：',
           'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
@@ -2513,7 +2513,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '自定义域名的 DNS 记录不会自动删除。如不再需要，请在 Cloudflare 手动删除。',
           'web.delete.deleteLog': '删除日志',
           'web.delete.deleteTarget': '删除目标',
-          'web.delete.resourcesIrreversible': '资源 - 不可恢复',
+          'web.delete.resourcesLabel': '资源',
           'web.delete.deletePermanently': '永久删除',
         },
         'zh-TW': {
@@ -2556,7 +2556,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '自訂網域的 DNS 記錄不會自動刪除。如不再需要，請在 Cloudflare 手動刪除。',
           'web.delete.deleteLog': '刪除日誌',
           'web.delete.deleteTarget': '刪除目標',
-          'web.delete.resourcesIrreversible': '資源 - 無法復原',
+          'web.delete.resourcesLabel': '資源',
           'web.delete.deletePermanently': '永久刪除',
         },
         es: {
@@ -2599,7 +2599,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Los registros DNS de dominios personalizados no se eliminan automáticamente. Elimínalos manualmente en Cloudflare si ya no son necesarios.',
           'web.delete.deleteLog': 'Log de eliminación',
           'web.delete.deleteTarget': 'Objetivo',
-          'web.delete.resourcesIrreversible': 'recursos - irreversible',
+          'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Eliminar definitivamente',
         },
         pt: {
@@ -2642,7 +2642,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Registros DNS de domínios personalizados não são excluídos automaticamente. Remova manualmente no Cloudflare se não forem mais necessários.',
           'web.delete.deleteLog': 'Log de exclusão',
           'web.delete.deleteTarget': 'Alvo',
-          'web.delete.resourcesIrreversible': 'recursos - irreversível',
+          'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Excluir permanentemente',
         },
         fr: {
@@ -2685,7 +2685,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Les enregistrements DNS des domaines personnalisés ne sont pas supprimés automatiquement. Supprimez-les manuellement dans Cloudflare si nécessaire.',
           'web.delete.deleteLog': 'Journal de suppression',
           'web.delete.deleteTarget': 'Cible',
-          'web.delete.resourcesIrreversible': 'ressources - irréversible',
+          'web.delete.resourcesLabel': 'ressources',
           'web.delete.deletePermanently': 'Supprimer définitivement',
         },
         de: {
@@ -2728,7 +2728,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'DNS-Einträge für Custom Domains werden nicht automatisch gelöscht. Entfernen Sie sie bei Bedarf manuell in Cloudflare.',
           'web.delete.deleteLog': 'Löschprotokoll',
           'web.delete.deleteTarget': 'Ziel',
-          'web.delete.resourcesIrreversible': 'Ressourcen - unumkehrbar',
+          'web.delete.resourcesLabel': 'Ressourcen',
           'web.delete.deletePermanently': 'Endgültig löschen',
         },
         ko: {
@@ -2771,7 +2771,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '사용자 지정 도메인의 DNS 레코드는 자동 삭제되지 않습니다. 필요 없으면 Cloudflare에서 수동으로 삭제하세요.',
           'web.delete.deleteLog': '삭제 로그',
           'web.delete.deleteTarget': '삭제 대상',
-          'web.delete.resourcesIrreversible': '리소스 - 되돌릴 수 없음',
+          'web.delete.resourcesLabel': '리소스',
           'web.delete.deletePermanently': '영구 삭제',
         },
         ru: {
@@ -2814,7 +2814,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'DNS-записи custom domains не удаляются автоматически. Удалите их вручную в Cloudflare, если они больше не нужны.',
           'web.delete.deleteLog': 'Лог удаления',
           'web.delete.deleteTarget': 'Цель удаления',
-          'web.delete.resourcesIrreversible': 'ресурсы - необратимо',
+          'web.delete.resourcesLabel': 'ресурсов',
           'web.delete.deletePermanently': 'Удалить навсегда',
         },
         id: {
@@ -2857,7 +2857,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Record DNS domain kustom tidak dihapus otomatis. Hapus manual di Cloudflare jika tidak diperlukan.',
           'web.delete.deleteLog': 'Log penghapusan',
           'web.delete.deleteTarget': 'Target hapus',
-          'web.delete.resourcesIrreversible': 'resource - tidak dapat dibatalkan',
+          'web.delete.resourcesLabel': 'resource',
           'web.delete.deletePermanently': 'Hapus permanen',
         },
       };
@@ -5943,7 +5943,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div id="delete-result" class="hidden"></div>
 
       <div class="actions setup-env-actions">
-        <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesIrreversible">resources - irreversible</span></span>
+        <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesLabel">resources</span></span>
         <span class="spacer"></span>
         <button class="btn btn-back" id="btn-back-env-delete">← <span data-i18n="common.cancel">Cancel</span></button>
         <button class="btn-danger-solid" id="btn-confirm-delete" disabled><span data-i18n="web.delete.deletePermanently">Delete permanently</span></button>
@@ -6950,9 +6950,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const percentEl = document.getElementById(prefix + '-percent');
 
       if (progressBar && total > 0) {
-        const percent = Math.min(Math.round((current / total) * 100), 100);
-        progressBar.style.width = percent + '%';
-        if (percentEl) percentEl.textContent = String(percent);
+        const isIndeterminate = prefix === 'delete' && current === 0;
+        progressBar.classList.toggle('indeterminate', isIndeterminate);
+        if (isIndeterminate) {
+          progressBar.style.width = '28%';
+        } else {
+          const percent = Math.min(Math.round((current / total) * 100), 100);
+          progressBar.style.width = percent + '%';
+          if (percentEl) percentEl.textContent = String(percent);
+        }
       }
       if (progressText) {
         // For deploy, show percentage; for others, show count
@@ -7316,6 +7322,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const percentEl = document.getElementById(prefix + '-percent');
 
       if (progressBar) progressBar.style.width = '0%';
+      if (progressBar) progressBar.classList.remove('indeterminate');
       if (percentEl) percentEl.textContent = '0';
       if (spinner) spinner.style.display = 'block';
       if (progressDiv) progressDiv.classList.add('hidden');
@@ -13928,6 +13935,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          const structuredProgress = statusResult.operationProgress?.operation === 'delete'
+            ? statusResult.operationProgress
+            : null;
+          if (structuredProgress) {
+            deleteCompleted = Math.max(0, Number(structuredProgress.current) || 0);
+            if (Number(structuredProgress.total) > 0) {
+              totalToDelete = Number(structuredProgress.total);
+            }
+            updateProgressUI('delete', deleteCompleted, totalToDelete);
+          }
           if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
             const newMessages = statusResult.progress.slice(lastProgressLength);
             newMessages.forEach(msg => {
@@ -13938,9 +13955,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo);
               }
               // Count completed items (lines with checkmark)
-              if (msg.includes('✓') || msg.includes('✅') || msg.includes('Deleted')) {
+              if (!structuredProgress && (msg.includes('✓') || msg.includes('✅'))) {
                 deleteCompleted++;
-                 updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo || t('web.delete.deletedItems', { count: deleteCompleted }));
+                updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo || t('web.delete.deletedItems', { count: deleteCompleted }));
               }
             });
             lastProgressLength = statusResult.progress.length;
@@ -13960,6 +13977,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         // Show final progress
         if (deleteResult.progress) {
           output.textContent = deleteResult.progress.map(formatProgressMessageForDisplay).join('\\n');
+        }
+
+        const finalStructuredProgress = deleteResult.operationProgress?.operation === 'delete'
+          ? deleteResult.operationProgress
+          : null;
+        if (finalStructuredProgress && Number(finalStructuredProgress.total) > 0) {
+          deleteCompleted = Math.max(0, Number(finalStructuredProgress.current) || 0);
+          totalToDelete = Number(finalStructuredProgress.total);
+          updateProgressUI('delete', deleteCompleted, totalToDelete);
         }
 
         result.classList.remove('hidden');

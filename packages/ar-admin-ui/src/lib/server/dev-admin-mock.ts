@@ -2649,6 +2649,13 @@ const devShardSettings: Record<string, number> = {
 	'challenge-shards': 16,
 	'refresh-token-sharding': 16
 };
+let devRegionShardTotal = 16;
+let devRegionShardDistribution: Record<string, unknown> = {
+	apac: 25,
+	enam: 25,
+	weur: 25,
+	wnam: 25
+};
 let devReadReplicationEnabled = false;
 let devControlPlaneDriftReviewState: 'unreviewed' | 'reviewed' | 'dismissed' = 'unreviewed';
 let devControlPlaneOperationRetried = false;
@@ -5626,6 +5633,68 @@ async function handleEndUsers(event: RequestEvent, segments: string[]): Promise<
 	}
 
 	return null;
+}
+
+function devEmailDeliveryItems() {
+	const users = [...endUsers.values()];
+	const primaryUser = users[0];
+	const secondaryUser = users[1] ?? primaryUser;
+	return [
+		{
+			intent_id: 'notification-intent-dev-provider-accepted',
+			account_id: primaryUser?.id ?? null,
+			notification_kind: 'identifier_replacement_verification',
+			recipient: primaryUser?.email ?? 'al•••@example.test',
+			recipient_visibility: 'full',
+			api_status: 'recorded',
+			provider_installation_id: 'cloudflare-email',
+			provider_message_id: 'dev-email-message-accepted',
+			status: 'provider_accepted',
+			final_delivery_tracked: false,
+			attempts: 1,
+			last_error_code: null,
+			requested_at: Math.floor((NOW - 12 * 60 * 1000) / 1000),
+			provider_accepted_at: Math.floor((NOW - 11 * 60 * 1000) / 1000),
+			status_updated_at: Math.floor((NOW - 11 * 60 * 1000) / 1000)
+		},
+		{
+			intent_id: 'notification-intent-dev-retrying',
+			account_id: secondaryUser?.id ?? null,
+			notification_kind: 'email_otp',
+			recipient: secondaryUser?.email ?? 'bo•••@example.test',
+			recipient_visibility: 'full',
+			api_status: 'recorded',
+			provider_installation_id: 'cloudflare-email',
+			provider_message_id: null,
+			status: 'retrying',
+			final_delivery_tracked: false,
+			attempts: 2,
+			last_error_code: 'provider_delivery_failed',
+			requested_at: Math.floor((NOW - 35 * 60 * 1000) / 1000),
+			provider_accepted_at: null,
+			status_updated_at: Math.floor((NOW - 30 * 60 * 1000) / 1000)
+		}
+	];
+}
+
+async function handleEmailDeliveries(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	if (event.request.method !== 'GET') return null;
+	const isList = segments.length === 1 && segments[0] === 'email-deliveries';
+	const isUserList =
+		segments.length === 3 && segments[0] === 'users' && segments[2] === 'email-deliveries';
+	if (!isList && !isUserList) return null;
+
+	const accountId = isUserList ? segments[1] : null;
+	const status = event.url.searchParams.get('status')?.trim();
+	const items = devEmailDeliveryItems().filter((item) => {
+		if (accountId && item.account_id !== accountId) return false;
+		if (status && item.status !== status) return false;
+		return true;
+	});
+	return json({ items, recipient_visibility: 'full' });
 }
 
 function adminRoleListItem(role: DevRole) {
@@ -10975,14 +11044,24 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				const totalShards =
 					typeof input.totalShards === 'number' && Number.isFinite(input.totalShards)
 						? Math.max(1, Math.floor(input.totalShards))
-						: 16;
+						: devRegionShardTotal;
 				const distribution =
-					input.distribution && typeof input.distribution === 'object'
-						? (input.distribution as Record<string, unknown>)
-						: { apac: 25, enam: 25, weur: 25, wnam: 25 };
+					input.regionDistribution && typeof input.regionDistribution === 'object'
+						? (input.regionDistribution as Record<string, unknown>)
+						: devRegionShardDistribution;
+				const activeRegionCount = Object.values(distribution).filter(
+					(value) => typeof value === 'number' && Number.isFinite(value) && value > 0
+				).length;
+				if (activeRegionCount < 1 || totalShards % activeRegionCount !== 0) {
+					return json({ error: 'invalid_region_shard_multiple' }, 400);
+				}
+				devRegionShardTotal = totalShards;
+				devRegionShardDistribution = { ...distribution };
 				return json(devRegionShardConfig(totalShards, distribution, now));
 			}
-			return json(devRegionShardConfig(16, { apac: 25, enam: 25, weur: 25, wnam: 25 }, now - 3600));
+			return json(
+				devRegionShardConfig(devRegionShardTotal, devRegionShardDistribution, now - 3600)
+			);
 		}
 		if (segments[1] === 'meta' && segments[2]) {
 			return json(settingsMetaResponse(segments[2]));
@@ -12969,6 +13048,8 @@ export async function handleDevAdminMock(
 	if (directoryConnectorsResponse) return directoryConnectorsResponse;
 	const sessionsResponse = await handleSessions(event, segments);
 	if (sessionsResponse) return sessionsResponse;
+	const emailDeliveriesResponse = await handleEmailDeliveries(event, segments);
+	if (emailDeliveriesResponse) return emailDeliveriesResponse;
 	const endUsersResponse = await handleEndUsers(event, segments);
 	if (endUsersResponse) return endUsersResponse;
 	const adminUsersResponse = await handleAdminUsers(event, segments);

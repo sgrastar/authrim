@@ -20,6 +20,7 @@
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import { shouldShowProviderProjectionStatus } from '$lib/admin/provider-projection';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);
@@ -177,7 +178,7 @@
 		try {
 			const response = await adminPluginsAPI.getProviderProjectionStatus();
 			providerProjectionJobs = response.jobs;
-			providerProjectionVisible = response.jobs.length > 0;
+			providerProjectionVisible = shouldShowProviderProjectionStatus(response.jobs);
 			if (response.jobs.some((job) => job.status === 'pending' || job.status === 'processing')) {
 				providerProjectionTimer = setTimeout(() => void loadProviderProjectionStatus(), 5000);
 			}

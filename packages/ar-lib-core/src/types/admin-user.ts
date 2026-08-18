@@ -504,6 +504,22 @@ export const ADMIN_PERMISSIONS = {
   USERS_UNLOCK: 'admin:users:unlock',
   USERS_ALL: 'admin:users:*',
 
+  // Account support context (confidential Admin-only data)
+  ACCOUNT_SUPPORT_CONTEXT_READ: 'admin:account_support_context:read',
+  ACCOUNT_SUPPORT_CONTEXT_WRITE: 'admin:account_support_context:write',
+  ACCOUNT_SUPPORT_CONTEXT_ALL: 'admin:account_support_context:*',
+
+  // Account legal holds
+  ACCOUNT_LEGAL_HOLDS_READ: 'admin:account_legal_holds:read',
+  ACCOUNT_LEGAL_HOLDS_WRITE: 'admin:account_legal_holds:write',
+  ACCOUNT_LEGAL_HOLDS_ALL: 'admin:account_legal_holds:*',
+
+  // Email delivery diagnostics
+  EMAIL_DELIVERIES_READ: 'admin:email_deliveries:read',
+  EMAIL_DELIVERIES_RECIPIENT_MASKED_READ: 'admin:email_deliveries:recipient:masked:read',
+  EMAIL_DELIVERIES_RECIPIENT_FULL_READ: 'admin:email_deliveries:recipient:full:read',
+  EMAIL_DELIVERIES_ALL: 'admin:email_deliveries:*',
+
   // Client management
   CLIENTS_READ: 'admin:clients:read',
   CLIENTS_WRITE: 'admin:clients:write',

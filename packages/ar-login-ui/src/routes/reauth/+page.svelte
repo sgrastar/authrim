@@ -2,8 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { Button, Card, Alert, Input, TurnstileWidget } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { passkeyAPI, emailCodeAPI, loginChallengeAPI, totpAPI } from '$lib/api/client';
@@ -338,178 +337,162 @@
 	<title>{$LL.reauth_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
+<AuthPageShell>
+	{#if loading}
+		<Card class="text-center py-8">
+			<div
+				class="h-8 w-8 border-3 rounded-full animate-spin mx-auto mb-3"
+				style="border-color: var(--border); border-top-color: var(--primary);"
+			></div>
+			<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
+		</Card>
+	{:else}
+		<Card class="mb-6">
+			<!-- Icon -->
+			<div class="auth-icon-badge">
+				<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
+					<div class="i-heroicons-shield-exclamation h-9 w-9 auth-icon-badge__icon"></div>
+				</div>
+			</div>
 
-	<div class="auth-container">
-		<!-- Header -->
-		<div class="auth-header">
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-		</div>
+			<h2 class="auth-section-title text-center">
+				{$LL.reauth_title()}
+			</h2>
+			<p class="auth-section-subtitle text-center mb-6">
+				{$LL.reauth_subtitle()}
+			</p>
 
-		{#if loading}
-			<Card class="text-center py-8">
-				<div
-					class="h-8 w-8 border-3 rounded-full animate-spin mx-auto mb-3"
-					style="border-color: var(--border); border-top-color: var(--primary);"
-				></div>
-				<p style="color: var(--text-muted); font-size: 0.875rem;">{$LL.common_loading()}</p>
-			</Card>
-		{:else}
-			<Card class="mb-6">
-				<!-- Icon -->
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle auth-icon-badge__circle--warning">
-						<div class="i-heroicons-shield-exclamation h-9 w-9 auth-icon-badge__icon"></div>
+			<!-- Challenge Info -->
+			{#if challengeData}
+				<div class="auth-info-box mb-6">
+					<div class="flex items-center gap-3">
+						{#if challengeData.client.logo_uri && isValidImageUrl(challengeData.client.logo_uri)}
+							<img
+								src={challengeData.client.logo_uri}
+								alt={challengeData.client.client_name}
+								class="h-10 w-10 rounded-lg"
+							/>
+						{/if}
+						<div>
+							<p class="auth-info-box__value">
+								{challengeData.client.client_name}
+							</p>
+							{#if challengeData.user}
+								<p class="auth-info-box__label" style="margin: 0;">
+									{challengeData.user.email}
+								</p>
+							{/if}
+						</div>
 					</div>
 				</div>
+			{/if}
 
-				<h2 class="auth-section-title text-center">
-					{$LL.reauth_title()}
-				</h2>
-				<p class="auth-section-subtitle text-center mb-6">
-					{$LL.reauth_subtitle()}
-				</p>
+			{#if error}
+				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
+					{error}
+				</Alert>
+			{/if}
 
-				<!-- Challenge Info -->
-				{#if challengeData}
-					<div class="auth-info-box mb-6">
-						<div class="flex items-center gap-3">
-							{#if challengeData.client.logo_uri && isValidImageUrl(challengeData.client.logo_uri)}
-								<img
-									src={challengeData.client.logo_uri}
-									alt={challengeData.client.client_name}
-									class="h-10 w-10 rounded-lg"
-								/>
-							{/if}
-							<div>
-								<p class="auth-info-box__value">
-									{challengeData.client.client_name}
-								</p>
-								{#if challengeData.user}
-									<p class="auth-info-box__label" style="margin: 0;">
-										{challengeData.user.email}
-									</p>
-								{/if}
-							</div>
-						</div>
+			<!-- Passkey Button -->
+			{#if showPasskey}
+				<Button
+					variant="primary"
+					class="w-full mb-3"
+					loading={passkeyLoading}
+					disabled={emailCodeLoading}
+					onclick={handlePasskeyReauth}
+				>
+					<div class="i-heroicons-key h-5 w-5"></div>
+					{$LL.reauth_verifyWithPasskey()}
+				</Button>
+				{#if showTurnstileFor('passkey') && turnstileSiteKey}
+					<TurnstileWidget
+						siteKey={turnstileSiteKey}
+						provider={humanVerificationProvider}
+						mode={humanVerificationMode}
+						action={turnstileAction}
+						theme={turnstileTheme}
+						language={turnstileLanguage}
+						bind:token={turnstileToken}
+						disabled={authActionLoading}
+						loadingLabel={$LL.login_humanVerificationLoading()}
+						errorLabel={$LL.login_humanVerificationLoadFailed()}
+					/>
+				{/if}
+
+				{#if emailCodeEnabled}
+					<div class="auth-divider">
+						<div class="auth-divider__line"></div>
+						<span class="auth-divider__text">{$LL.common_or()}</span>
+						<div class="auth-divider__line"></div>
+					</div>
+				{/if}
+			{/if}
+
+			<!-- Email Code Button -->
+			{#if emailCodeEnabled}
+				<Button
+					variant="secondary"
+					class="w-full"
+					loading={emailCodeLoading}
+					disabled={passkeyLoading}
+					onclick={handleEmailCodeReauth}
+				>
+					<div class="i-heroicons-envelope h-5 w-5"></div>
+					{$LL.reauth_verifyWithEmailCode()}
+				</Button>
+				{#if showTurnstileFor('email-code') && turnstileSiteKey}
+					<TurnstileWidget
+						siteKey={turnstileSiteKey}
+						provider={humanVerificationProvider}
+						mode={humanVerificationMode}
+						action={turnstileAction}
+						theme={turnstileTheme}
+						language={turnstileLanguage}
+						bind:token={turnstileToken}
+						disabled={authActionLoading}
+						loadingLabel={$LL.login_humanVerificationLoading()}
+						errorLabel={$LL.login_humanVerificationLoadFailed()}
+					/>
+				{/if}
+			{/if}
+
+			<!-- Authenticator App (TOTP) -->
+			{#if totpEnabled}
+				{#if showPasskey || emailCodeEnabled}
+					<div class="auth-divider">
+						<div class="auth-divider__line"></div>
+						<span class="auth-divider__text">{$LL.common_or()}</span>
+						<div class="auth-divider__line"></div>
 					</div>
 				{/if}
 
-				{#if error}
-					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
-						{error}
-					</Alert>
+				{#if totpCodeRequested}
+					<Input
+						label={$LL.login_totpCodeLabel()}
+						type="text"
+						placeholder={$LL.login_totpCodePlaceholder()}
+						bind:value={totpCode}
+						onkeypress={handleTotpKeyPress}
+						autocomplete="one-time-code"
+						inputmode="numeric"
+						maxlength={8}
+						disabled={authActionLoading}
+						required
+					/>
 				{/if}
 
-				<!-- Passkey Button -->
-				{#if showPasskey}
-					<Button
-						variant="primary"
-						class="w-full mb-3"
-						loading={passkeyLoading}
-						disabled={emailCodeLoading}
-						onclick={handlePasskeyReauth}
-					>
-						<div class="i-heroicons-key h-5 w-5"></div>
-						{$LL.reauth_verifyWithPasskey()}
-					</Button>
-					{#if showTurnstileFor('passkey') && turnstileSiteKey}
-						<TurnstileWidget
-							siteKey={turnstileSiteKey}
-							provider={humanVerificationProvider}
-							mode={humanVerificationMode}
-							action={turnstileAction}
-							theme={turnstileTheme}
-							language={turnstileLanguage}
-							bind:token={turnstileToken}
-							disabled={authActionLoading}
-							loadingLabel={$LL.login_humanVerificationLoading()}
-							errorLabel={$LL.login_humanVerificationLoadFailed()}
-						/>
-					{/if}
-
-					{#if emailCodeEnabled}
-						<div class="auth-divider">
-							<div class="auth-divider__line"></div>
-							<span class="auth-divider__text">{$LL.common_or()}</span>
-							<div class="auth-divider__line"></div>
-						</div>
-					{/if}
-				{/if}
-
-				<!-- Email Code Button -->
-				{#if emailCodeEnabled}
-					<Button
-						variant="secondary"
-						class="w-full"
-						loading={emailCodeLoading}
-						disabled={passkeyLoading}
-						onclick={handleEmailCodeReauth}
-					>
-						<div class="i-heroicons-envelope h-5 w-5"></div>
-						{$LL.reauth_verifyWithEmailCode()}
-					</Button>
-					{#if showTurnstileFor('email-code') && turnstileSiteKey}
-						<TurnstileWidget
-							siteKey={turnstileSiteKey}
-							provider={humanVerificationProvider}
-							mode={humanVerificationMode}
-							action={turnstileAction}
-							theme={turnstileTheme}
-							language={turnstileLanguage}
-							bind:token={turnstileToken}
-							disabled={authActionLoading}
-							loadingLabel={$LL.login_humanVerificationLoading()}
-							errorLabel={$LL.login_humanVerificationLoadFailed()}
-						/>
-					{/if}
-				{/if}
-
-				<!-- Authenticator App (TOTP) -->
-				{#if totpEnabled}
-					{#if showPasskey || emailCodeEnabled}
-						<div class="auth-divider">
-							<div class="auth-divider__line"></div>
-							<span class="auth-divider__text">{$LL.common_or()}</span>
-							<div class="auth-divider__line"></div>
-						</div>
-					{/if}
-
-					{#if totpCodeRequested}
-						<Input
-							label={$LL.login_totpCodeLabel()}
-							type="text"
-							placeholder={$LL.login_totpCodePlaceholder()}
-							bind:value={totpCode}
-							onkeypress={handleTotpKeyPress}
-							autocomplete="one-time-code"
-							inputmode="numeric"
-							maxlength={8}
-							disabled={authActionLoading}
-							required
-						/>
-					{/if}
-
-					<Button
-						variant="secondary"
-						class="w-full"
-						loading={totpLoading}
-						disabled={passkeyLoading || emailCodeLoading}
-						onclick={totpCodeRequested ? handleTotpVerify : handleTotpStart}
-					>
-						<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
-						{totpCodeRequested ? $LL.login_totpVerify() : $LL.reauth_verifyWithTotp()}
-					</Button>
-				{/if}
-			</Card>
-		{/if}
-	</div>
-
-	<!-- Footer -->
-	<footer class="auth-footer">
-		<FooterText value={$LL.footer_stack()} />
-	</footer>
-</div>
+				<Button
+					variant="secondary"
+					class="w-full"
+					loading={totpLoading}
+					disabled={passkeyLoading || emailCodeLoading}
+					onclick={totpCodeRequested ? handleTotpVerify : handleTotpStart}
+				>
+					<div class="i-heroicons-device-phone-mobile h-5 w-5"></div>
+					{totpCodeRequested ? $LL.login_totpVerify() : $LL.reauth_verifyWithTotp()}
+				</Button>
+			{/if}
+		</Card>
+	{/if}
+</AuthPageShell>

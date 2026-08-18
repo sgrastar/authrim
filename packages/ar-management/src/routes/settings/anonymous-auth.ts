@@ -29,6 +29,7 @@ import {
   transitionAccountAuthenticationState,
   type Env,
 } from '@authrim/ar-lib-core';
+import { findActiveAccountLegalHold } from '../../account-legal-hold-guard';
 
 function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
   const authCtx = createAuthContextFromHono(c, tenantId);
@@ -511,6 +512,18 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'Anonymous user is under legal hold and cannot be deleted',
+          hold_id: legalHold.holdId,
+        },
+        409
+      );
+    }
+
     const deletingVersionMs = Date.now();
     await transitionAccountAuthenticationState(c.env, {
       tenantId,
@@ -629,6 +642,10 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
       );
 
       if (!activeDevice) {
+        const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+        if (legalHold) {
+          continue;
+        }
         const deletingVersionMs = Date.now();
         await transitionAccountAuthenticationState(c.env, {
           tenantId,

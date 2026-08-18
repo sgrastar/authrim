@@ -67,6 +67,7 @@ import {
   CrossShardAccountListService,
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -521,99 +522,210 @@ export async function adminStatsHandler(c: Context<{ Bindings: Env }>) {
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
-    );
-    if (!projectionRepository) {
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const todayStart = new Date().setHours(0, 0, 0, 0);
 
-    const [
-      activeUsersResult,
-      totalUsersResult,
-      totalClientsResult,
-      newUsersTodayResult,
-      loginsTodayResult,
-      piiStatusRows,
-      recentUsersCoreResult,
-    ] = await Promise.all([
-      authCtx.coreAdapter.queryOne<{ count: number }>(
-        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND updated_at > ? AND lifecycle_state = 'active'",
-        [tenantId, thirtyDaysAgo]
-      ),
-      authCtx.coreAdapter.queryOne<{ count: number }>(
-        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'",
-        [tenantId]
-      ),
-      authCtx.coreAdapter.queryOne<{ count: number }>(
-        'SELECT COUNT(*) as count FROM oauth_clients WHERE tenant_id = ?',
-        [tenantId]
-      ),
-      authCtx.coreAdapter.queryOne<{ count: number }>(
-        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND created_at >= ? AND lifecycle_state = 'active'",
-        [tenantId, todayStart]
-      ),
-      authCtx.coreAdapter.queryOne<{ count: number }>(
-        "SELECT COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND updated_at >= ? AND lifecycle_state = 'active'",
-        [tenantId, todayStart]
-      ),
-      authCtx.coreAdapter.query<{ pii_status: string; count: number }>(
-        "SELECT 'active' as pii_status, COUNT(*) as count FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active'",
-        [tenantId]
-      ),
-      authCtx.coreAdapter.query<{ id: string; created_at: number }>(
-        "SELECT legacy_user_id as id, created_at FROM identity_accounts WHERE tenant_id = ? AND lifecycle_state = 'active' AND legacy_user_id IS NOT NULL ORDER BY created_at DESC LIMIT 10",
-        [tenantId]
-      ),
-    ]);
-
-    const piiStatusCounts = {
-      none: 0,
-      pending: 0,
-      active: 0,
-      failed: 0,
-      deleted: 0,
-    };
-    for (const row of piiStatusRows) {
-      if (row.pii_status in piiStatusCounts) {
-        piiStatusCounts[row.pii_status as keyof typeof piiStatusCounts] = Number(row.count) || 0;
-      }
-    }
-
-    let recentActivity: {
+    type RecentActivity = {
       type: string;
       userId: string;
       email: string | null;
       name: string | null;
       timestamp: number;
-    }[] = [];
+    };
 
-    if (recentUsersCoreResult.length > 0) {
-      recentActivity = await Promise.all(
-        recentUsersCoreResult.map(async (user) => {
-          const projection = await projectionRepository.findByLegacyUserId(user.id);
-          return {
-            type: 'user_registration',
-            userId: user.id,
-            email: projection?.email ?? null,
-            name: projection?.name ?? null,
-            timestamp: toMilliseconds(user.created_at) ?? 0,
-          };
-        })
+    const [totalClientsResult, recentClients] = await Promise.all([
+      authCtx.coreAdapter.queryOne<{ count: number }>(
+        'SELECT COUNT(*) as count FROM oauth_clients WHERE tenant_id = ?',
+        [tenantId]
+      ),
+      authCtx.coreAdapter.query<{
+        client_id: string;
+        client_name: string;
+        created_at: number;
+      }>(
+        `SELECT client_id, client_name, created_at
+           FROM oauth_clients
+          WHERE tenant_id = ?
+          ORDER BY created_at DESC, client_id DESC
+          LIMIT 10`,
+        [tenantId]
+      ),
+    ]);
+
+    let dashboardStats: {
+      activeUsers: number;
+      totalUsers: number;
+      newUsersToday: number;
+      loginsToday: number;
+    };
+    let userActivity: RecentActivity[];
+
+    if (usesTenantD1Storage(c)) {
+      const accountService = new CrossShardAccountListService(c.env, () =>
+        Math.floor(Date.now() / 1000)
       );
+      const [shardedStats, recentRegistrations, recentLogins] = await Promise.all([
+        accountService.dashboardStats({
+          tenantId,
+          activeSince: thirtyDaysAgo,
+          todayStart,
+        }),
+        accountService.list({ tenantId, limit: 10, accountType: 'user' }),
+        accountService.recentLogins({ tenantId, limit: 10 }),
+      ]);
+      dashboardStats = shardedStats;
+      const [registrationUsers, loginUsers] = await Promise.all([
+        mapAdminUsersConcurrent(recentRegistrations.items, 4, (item) =>
+          projectCrossShardAdminUser(c.env, tenantId, item)
+        ),
+        mapAdminUsersConcurrent(recentLogins, 4, (login) =>
+          projectCrossShardAdminUser(c.env, tenantId, login.account)
+        ),
+      ]);
+      userActivity = [
+        ...recentRegistrations.items.map((item, index) => ({
+          type: 'user_registration',
+          userId: item.legacyUserId,
+          email: registrationUsers[index].email,
+          name: registrationUsers[index].name,
+          timestamp: item.createdAt,
+        })),
+        ...recentLogins.map((login, index) => ({
+          type: 'login',
+          userId: login.account.legacyUserId,
+          email: loginUsers[index].email,
+          name: loginUsers[index].name,
+          timestamp: login.timestamp,
+        })),
+      ];
+    } else {
+      const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
+        c,
+        authCtx.coreAdapter,
+        tenantId
+      );
+      if (!projectionRepository) {
+        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      }
+      const [accountStats, recentRegistrations, recentLogins] = await Promise.all([
+        authCtx.coreAdapter.queryOne<{
+          total_users: number;
+          new_users_today: number;
+          active_users: number;
+          logins_today: number;
+        }>(
+          `SELECT COUNT(*) AS total_users,
+                  COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0)
+                    AS new_users_today,
+                  COALESCE(SUM(CASE WHEN CAST(json_extract(
+                    CASE WHEN json_valid(metadata_json) THEN metadata_json ELSE '{}' END,
+                    '$.last_login_at'
+                  ) AS INTEGER) >= ? THEN 1 ELSE 0 END), 0) AS active_users,
+                  COALESCE(SUM(CASE WHEN CAST(json_extract(
+                    CASE WHEN json_valid(metadata_json) THEN metadata_json ELSE '{}' END,
+                    '$.last_login_at'
+                  ) AS INTEGER) >= ? THEN 1 ELSE 0 END), 0) AS logins_today
+             FROM identity_accounts
+            WHERE tenant_id = ?
+              AND account_type = 'user'
+              AND lifecycle_state = 'active'`,
+          [todayStart, thirtyDaysAgo, todayStart, tenantId]
+        ),
+        authCtx.coreAdapter.query<{ id: string; created_at: number }>(
+          `SELECT legacy_user_id as id, created_at
+             FROM identity_accounts
+            WHERE tenant_id = ?
+              AND account_type = 'user'
+              AND lifecycle_state = 'active'
+              AND legacy_user_id IS NOT NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 10`,
+          [tenantId]
+        ),
+        authCtx.coreAdapter.query<{ id: string; created_at: number }>(
+          `SELECT legacy_user_id as id,
+                  CAST(json_extract(metadata_json, '$.last_login_at') AS INTEGER) AS created_at
+             FROM identity_accounts
+            WHERE tenant_id = ?
+              AND account_type = 'user'
+              AND lifecycle_state = 'active'
+              AND legacy_user_id IS NOT NULL
+              AND json_valid(metadata_json)
+              AND json_type(metadata_json, '$.last_login_at') IN ('integer', 'real')
+            ORDER BY created_at DESC, id DESC
+            LIMIT 10`,
+          [tenantId]
+        ),
+      ]);
+      dashboardStats = {
+        activeUsers: Number(accountStats?.active_users ?? 0),
+        totalUsers: Number(accountStats?.total_users ?? 0),
+        newUsersToday: Number(accountStats?.new_users_today ?? 0),
+        loginsToday: Number(accountStats?.logins_today ?? 0),
+      };
+      const ids = [...new Set([...recentRegistrations, ...recentLogins].map((row) => row.id))];
+      const projections = new Map(
+        await Promise.all(
+          ids.map(async (id) => [id, await projectionRepository.findByLegacyUserId(id)] as const)
+        )
+      );
+      userActivity = [
+        ...recentRegistrations.map((user) => ({
+          type: 'user_registration',
+          userId: user.id,
+          email: projections.get(user.id)?.email ?? null,
+          name: projections.get(user.id)?.name ?? null,
+          timestamp: toMilliseconds(user.created_at) ?? 0,
+        })),
+        ...recentLogins.map((login) => ({
+          type: 'login',
+          userId: login.id,
+          email: projections.get(login.id)?.email ?? null,
+          name: projections.get(login.id)?.name ?? null,
+          timestamp: toMilliseconds(login.created_at) ?? 0,
+        })),
+      ];
     }
+
+    const recentActivity = [
+      ...userActivity,
+      ...recentClients.flatMap<RecentActivity>((client) => {
+        const timestamp = toMilliseconds(client.created_at);
+        return typeof client.client_id === 'string' &&
+          typeof client.client_name === 'string' &&
+          timestamp !== null
+          ? [
+              {
+                type: 'client_registration',
+                userId: client.client_id,
+                email: null,
+                name: client.client_name,
+                timestamp,
+              },
+            ]
+          : [];
+      }),
+    ]
+      .sort(
+        (left, right) => right.timestamp - left.timestamp || left.userId.localeCompare(right.userId)
+      )
+      .slice(0, 10);
+
+    const piiStatusCounts = {
+      none: 0,
+      pending: 0,
+      active: dashboardStats.totalUsers,
+      failed: 0,
+      deleted: 0,
+    };
 
     return c.json({
       stats: {
-        activeUsers: activeUsersResult?.count || 0,
-        totalUsers: totalUsersResult?.count || 0,
-        registeredClients: totalClientsResult?.count || 0,
-        newUsersToday: newUsersTodayResult?.count || 0,
-        loginsToday: loginsTodayResult?.count || 0,
+        activeUsers: dashboardStats.activeUsers,
+        totalUsers: dashboardStats.totalUsers,
+        registeredClients: Number(totalClientsResult?.count ?? 0),
+        newUsersToday: dashboardStats.newUsersToday,
+        loginsToday: dashboardStats.loginsToday,
         piiHealth: {
           statusCounts: piiStatusCounts,
           repairNeeded: piiStatusCounts.pending + piiStatusCounts.failed,
@@ -1511,6 +1623,17 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       ) {
         throw new Error('admin_user_route_projection_invalid');
       }
+      const legalHold = await findActiveAccountLegalHold(core, tenantId, userId);
+      if (legalHold) {
+        return c.json(
+          {
+            error: 'legal_hold_active',
+            error_description: 'User is under legal hold and cannot be deleted',
+            hold_id: legalHold.holdId,
+          },
+          409
+        );
+      }
       const deletingVersionMs = Date.now();
       await transitionAccountAuthenticationState(c.env, {
         tenantId,
@@ -1584,6 +1707,18 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'The requested resource was not found',
         },
         404
+      );
+    }
+
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'User is under legal hold and cannot be deleted',
+          hold_id: legalHold.holdId,
+        },
+        409
       );
     }
 
@@ -1817,6 +1952,18 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'The requested resource was not found',
         },
         404
+      );
+    }
+
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'User is under legal hold and PII cannot be deleted',
+          hold_id: legalHold.holdId,
+        },
+        409
       );
     }
 

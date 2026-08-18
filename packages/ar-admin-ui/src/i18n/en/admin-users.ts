@@ -82,6 +82,7 @@ const adminUsers = {
 	admin_user_detail_tab_authentication_methods: 'Authentication Methods',
 	admin_user_detail_tab_sessions: 'Sessions',
 	admin_user_detail_tab_audit_logs: 'Audit Logs',
+	admin_user_detail_tab_support: 'Support & Retention',
 	admin_user_detail_tab_roles: 'Roles',
 	admin_user_detail_tab_consents: 'Consents',
 	admin_user_detail_tab_actions: 'Actions',
@@ -202,7 +203,46 @@ const adminUsers = {
 	admin_user_detail_status_denied: 'Denied',
 	admin_user_detail_status_withdrawn: 'Withdrawn',
 	admin_user_detail_status_expired: 'Expired',
-	admin_user_detail_action_version_upgraded: 'Version Upgraded'
+	admin_user_detail_action_version_upgraded: 'Version Upgraded',
+	admin_user_detail_support_loading: 'Loading support and retention controls...',
+	admin_user_detail_support_load_error: 'Failed to load support and retention controls',
+	admin_user_detail_support_save_error: 'Failed to save support context',
+	admin_user_detail_support_context: 'Support Context',
+	admin_user_detail_support_context_desc:
+		'Store structured operational context and external case references without changing profile data.',
+	admin_user_detail_support_summary: 'Operational Summary',
+	admin_user_detail_support_external_references: 'External References',
+	admin_user_detail_support_add_reference: 'Add Reference',
+	admin_user_detail_support_reference_system: 'External system',
+	admin_user_detail_support_reference_kind: 'Reference type',
+	admin_user_detail_support_reference_value: 'Reference value',
+	admin_user_detail_support_reference_system_placeholder: 'e.g. zendesk',
+	admin_user_detail_support_reference_kind_placeholder: 'e.g. ticket',
+	admin_user_detail_support_reference_value_placeholder: 'e.g. 12345',
+	admin_user_detail_support_remove_reference: 'Remove reference',
+	admin_user_detail_support_saving: 'Saving...',
+	admin_user_detail_support_save: 'Save Support Context',
+	admin_user_detail_support_version: 'Version {version:number}',
+	admin_user_detail_legal_holds: 'Legal Holds',
+	admin_user_detail_legal_holds_desc:
+		'Prevent physical retention cleanup for this account until the hold is released or expires.',
+	admin_user_detail_legal_hold_reason_placeholder: 'Reason code (for example, litigation)',
+	admin_user_detail_legal_hold_case_placeholder: 'Case reference (optional)',
+	admin_user_detail_legal_hold_expiry: 'Legal hold expiry',
+	admin_user_detail_legal_hold_create: 'Create Legal Hold',
+	admin_user_detail_legal_hold_none: 'No legal holds have been recorded for this account.',
+	admin_user_detail_legal_hold_expires: 'Expires {date:string}',
+	admin_user_detail_legal_hold_release: 'Release',
+	admin_user_detail_legal_hold_release_confirm: 'Release this legal hold?',
+	admin_user_detail_legal_hold_release_reason_placeholder:
+		'Release reason code (for example, case_closed)',
+	admin_user_detail_legal_hold_reason_invalid:
+		'Reason code must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens.',
+	admin_user_detail_legal_hold_create_error: 'Failed to create legal hold',
+	admin_user_detail_legal_hold_release_error: 'Failed to release legal hold',
+	admin_user_detail_legal_hold_state_active: 'Active',
+	admin_user_detail_legal_hold_state_released: 'Released',
+	admin_user_detail_legal_hold_state_expired: 'Expired'
 } as const;
 
 export default adminUsers;

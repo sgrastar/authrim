@@ -6540,13 +6540,18 @@ tr.expired {
 	justify-self: stretch;
 	align-self: stretch;
 	align-items: center;
+	align-items: safe center;
 	justify-content: flex-start;
 	min-width: 0;
 	min-height: 0;
 	height: 100%;
 	padding: 48px;
 	position: relative;
-	overflow: hidden;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior-y: contain;
+	-webkit-overflow-scrolling: touch;
+	touch-action: pan-y;
 	border-radius: 0;
 	background-image: linear-gradient(150deg, #22346e 0%, #101a38 55%, #0b1226 100%);
 	background-position: center;
@@ -6606,6 +6611,7 @@ tr.expired {
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
+	justify-content: safe center;
 	width: 100%;
 	max-width: none;
 	min-width: 0;
@@ -6618,6 +6624,9 @@ tr.expired {
 	isolation: isolate;
 	overflow-x: hidden;
 	overflow-y: auto;
+	overscroll-behavior-y: contain;
+	-webkit-overflow-scrolling: touch;
+	touch-action: pan-y;
 }
 
 [data-page-layout='split_panel'] .auth-container::before {
@@ -6752,10 +6761,12 @@ tr.expired {
 
 [data-brand-position='center'] .auth-brand-panel {
 	align-items: center;
+	align-items: safe center;
 }
 
 [data-brand-position='bottom'] .auth-brand-panel {
 	align-items: flex-end;
+	align-items: safe flex-end;
 }
 
 [data-brand-align='left'] .auth-brand-panel__content {
@@ -7735,7 +7746,8 @@ tr.expired {
 
 	.auth-main > .auth-topbar {
 		align-self: flex-end;
-		max-width: calc(100vw - 24px);
+		max-width: calc(100% - 24px);
+		margin-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right));
 	}
 
 	[data-topbar-position='top_right'] .auth-main > .auth-topbar,

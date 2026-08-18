@@ -104,6 +104,8 @@ const adminCompliance = {
 	admin_compliance_deleting: '削除中...',
 	admin_compliance_delete_expired: '期限切れdataを削除',
 	admin_compliance_cleanup_failed: 'Cleanupの実行に失敗しました',
+	admin_compliance_cleanup_no_local_categories:
+		'実行可能なtenant-local cleanup categoryがありません。',
 	admin_compliance_framework_checks: 'Compliance Checks',
 	admin_compliance_planned_checks: 'Planned Checks',
 	admin_compliance_planned: 'Planned',
@@ -206,11 +208,16 @@ const adminCompliance = {
 	admin_compliance_category_refresh_tokens_desc: 'Session renewal用のOAuth refresh tokens',
 	admin_compliance_category_access_tokens: 'Access Tokens',
 	admin_compliance_category_access_tokens_desc: 'API authentication用のOAuth access tokens',
+	admin_compliance_category_lookup_directory: 'Lookupディレクトリ',
+	admin_compliance_category_lookup_directory_desc:
+		'共有Lookupシャードに保存された無効状態のアカウント検索レコード',
 	admin_compliance_category_unknown_desc: 'Data retention category',
 	admin_compliance_edit_retention_title: 'Retention Policyを編集',
 	admin_compliance_retention_period_days: 'Retention Period（日）',
 	admin_compliance_retention_help:
 		'これより古いrecordsは削除対象になります。範囲: 1-3650日（10年）',
+	admin_compliance_lookup_retention_help:
+		'これより古い無効状態のLookupレコードが永続的なクリーンアップの対象になります。範囲: 30-3650日。',
 	admin_compliance_quick_select: 'Quick select:',
 	admin_compliance_preset_7_days: '7日',
 	admin_compliance_preset_30_days: '30日',
@@ -226,9 +233,15 @@ const adminCompliance = {
 	admin_compliance_short_retention_warning_title: 'Warning:',
 	admin_compliance_short_retention_warning:
 		'短いretention periodはcompliance requirementsに影響する可能性があります。組織のdata retention policiesを満たしていることを確認してください。',
+	admin_compliance_retention_shortening_confirm:
+		'Estimateを確認し、保持期間を{current}日から{requested}日に短縮することを確認します。',
+	admin_compliance_retention_shortening_confirmation_required:
+		'保存する前にEstimateを確認し、保持期間の短縮を明示的に確認してください。',
 	admin_compliance_save_failed: 'Retention policyの保存に失敗しました',
 	admin_compliance_retention_days_invalid:
 		'Retention daysは1から3650（10年）の範囲で指定してください',
+	admin_compliance_lookup_retention_days_invalid:
+		'Lookupの保持日数は30から3650（10年）の範囲で指定してください',
 	admin_compliance_saving: '保存中...',
 	admin_compliance_save_changes: '変更を保存'
 } as const;

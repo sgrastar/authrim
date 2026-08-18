@@ -71,6 +71,10 @@ import {
   bumpAuthenticationMethodsCacheRevision,
   resolveClientTrustPolicy,
 } from '@authrim/ar-lib-core';
+import {
+  MAX_LOGIN_UI_PRIMARY_LOCALES,
+  isLoginUILocale,
+} from '@authrim/ar-lib-core/types/login-ui-languages';
 import type { JsonObject, JsonValue } from '@authrim/ar-agent-access/core';
 import { ensureSupportedTenantId } from '../../single-tenant-guard';
 import { agentElevatedExecutionMiddleware } from '../../agent-elevated-execution';
@@ -397,31 +401,10 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
   message?: string;
   details?: Record<string, unknown>;
 } {
-  const supportedLoginUILocales = [
-    'en',
-    'ja',
-    'zh-CN',
-    'zh-TW',
-    'es',
-    'pt',
-    'fr',
-    'de',
-    'ko',
-    'ru',
-    'id',
-    'ar',
-    'it',
-    'th',
-    'vi',
-    'hi',
-    'bn',
-    'tr',
-    'sw',
-    'am',
-    'pl',
-  ];
   const supportedLocales = body.set?.['login-ui.supported_locales'];
   const defaultLocale = body.set?.['login-ui.default_locale'];
+  const primaryLocales = body.set?.['login-ui.primary_locales'];
+  const showEnglishLanguageNames = body.set?.['login-ui.show_english_language_names'];
   let parsedSupportedLocales: string[] | undefined;
 
   if (supportedLocales !== undefined) {
@@ -435,7 +418,7 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
     if (
       parsedSupportedLocales.length === 0 ||
       new Set(parsedSupportedLocales).size !== parsedSupportedLocales.length ||
-      parsedSupportedLocales.some((locale) => !supportedLoginUILocales.includes(locale))
+      parsedSupportedLocales.some((locale) => !isLoginUILocale(locale))
     ) {
       return {
         ok: false,
@@ -446,7 +429,7 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
 
   if (
     defaultLocale !== undefined &&
-    (typeof defaultLocale !== 'string' || !supportedLoginUILocales.includes(defaultLocale))
+    (typeof defaultLocale !== 'string' || !isLoginUILocale(defaultLocale))
   ) {
     return { ok: false, message: 'login-ui.default_locale must be a supported locale' };
   }
@@ -456,6 +439,27 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
     !parsedSupportedLocales.includes(defaultLocale)
   ) {
     return { ok: false, message: 'login-ui.default_locale must be enabled in supported_locales' };
+  }
+
+  if (
+    primaryLocales !== undefined &&
+    primaryLocales !== null &&
+    (!Array.isArray(primaryLocales) ||
+      primaryLocales.length > MAX_LOGIN_UI_PRIMARY_LOCALES ||
+      new Set(primaryLocales).size !== primaryLocales.length ||
+      primaryLocales.some((locale) => !isLoginUILocale(locale)))
+  ) {
+    return {
+      ok: false,
+      message: `login-ui.primary_locales must be null or an array of up to ${MAX_LOGIN_UI_PRIMARY_LOCALES} unique supported locales`,
+    };
+  }
+
+  if (showEnglishLanguageNames !== undefined && typeof showEnglishLanguageNames !== 'boolean') {
+    return {
+      ok: false,
+      message: 'login-ui.show_english_language_names must be a boolean',
+    };
   }
 
   const customCss = body.set?.['login-ui.custom_css'];
