@@ -16,15 +16,30 @@ function walkSvelteFiles(directory: string): string[] {
 	});
 }
 
-function stripNonMarkup(content: string): string {
-	return content
-		.replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, '')
-		.replace(/<style\b[\s\S]*?<\/style\b[^>]*>/gi, '')
-		.replace(/<!--[\s\S]*?-->/g, '');
+function maskNonMarkup(content: string): string {
+	const ranges = [
+		...content.matchAll(/<script\b[\s\S]*?<\/script\b[^>]*>/gi),
+		...content.matchAll(/<style\b[\s\S]*?<\/style\b[^>]*>/gi),
+		...content.matchAll(/<!--[\s\S]*?-->/g)
+	]
+		.map((match) => ({ start: match.index, end: match.index + match[0].length }))
+		.sort((left, right) => left.start - right.start);
+
+	let cursor = 0;
+	let markup = '';
+
+	for (const range of ranges) {
+		if (range.start < cursor) continue;
+		markup += content.slice(cursor, range.start);
+		markup += ' ';
+		cursor = range.end;
+	}
+
+	return markup + content.slice(cursor);
 }
 
 function staticJapaneseMarkup(content: string): string[] {
-	const markup = stripNonMarkup(content);
+	const markup = maskNonMarkup(content);
 	const findings: string[] = [];
 
 	for (const match of markup.matchAll(/>\s*([^<>{}][^<>{}]*)\s*</g)) {
@@ -41,6 +56,17 @@ function staticJapaneseMarkup(content: string): string[] {
 }
 
 describe('Admin UI Japanese literal guard', () => {
+	it('ignores Japanese text in script, style, and comment regions without joining boundaries', () => {
+		expect(
+			staticJapaneseMarkup(
+				'<script>const label = "日本語";</script><p>English</p><!-- 日本語 --><style>.日本語 {}</style>'
+			)
+		).toEqual([]);
+		expect(staticJapaneseMarkup('<script>const label = "日本語";</script><p>保存</p>')).toEqual([
+			'保存'
+		]);
+	});
+
 	it('does not render static Japanese text independently of the selected locale', () => {
 		const findings = walkSvelteFiles(srcRoot).flatMap((path) =>
 			staticJapaneseMarkup(readFileSync(path, 'utf8')).map((value) => ({ path, value }))
