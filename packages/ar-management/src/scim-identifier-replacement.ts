@@ -133,6 +133,7 @@ export async function syncScimIdentifierReplacements(
         intentId: `identifier-replaced:${replacement.operationId}`,
         outboxId: `notification:${replacement.operationId}`,
         notificationKind: 'account.identifier-replaced',
+        accountId: input.accountId,
         idempotencyKey: `identifier-replaced:${replacement.operationId}`,
         expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
         payload: {

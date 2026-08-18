@@ -895,9 +895,14 @@
 						class="runtime-auth-button secondary"
 						type={emailVerificationProtocolEnabled ? 'submit' : 'button'}
 						disabled={authButtonDisabled(method) || authMethodBusy(method)}
+						aria-busy={authMethodBusy(method)}
 						onclick={emailVerificationProtocolEnabled ? undefined : () => onAuthAction?.(method)}
 					>
-						<span class="i-ph-envelope-simple"></span>
+						{#if authMethodBusy(method)}
+							<span class="runtime-auth-spinner i-ph-circle-notch" aria-hidden="true"></span>
+						{:else}
+							<span class="i-ph-envelope-simple"></span>
+						{/if}
 						{authWidgetLabel(field)}
 					</button>
 				{:else if method === 'mail_otp_totp'}
@@ -906,9 +911,14 @@
 							class="runtime-auth-button secondary"
 							type="button"
 							disabled={authButtonDisabled('mail_otp') || authMethodBusy('mail_otp')}
+							aria-busy={authMethodBusy('mail_otp')}
 							onclick={() => onAuthAction?.('mail_otp', 'send_mail_otp')}
 						>
-							<span class="i-ph-envelope-simple"></span>
+							{#if authMethodBusy('mail_otp')}
+								<span class="runtime-auth-spinner i-ph-circle-notch" aria-hidden="true"></span>
+							{:else}
+								<span class="i-ph-envelope-simple"></span>
+							{/if}
 							{$LL.login_sendCode()}
 						</button>
 					{/if}
@@ -1238,6 +1248,16 @@
 
 	.runtime-auth-button > :global(span) {
 		flex: 0 0 auto;
+	}
+
+	.runtime-auth-spinner {
+		animation: runtime-auth-spin 0.8s linear infinite;
+	}
+
+	@keyframes runtime-auth-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.runtime-auth-button.secondary {

@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Card, Alert, Spinner } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
@@ -312,80 +311,64 @@
 	<title>{$LL.callback_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
-
-	<div class="auth-container">
-		<!-- Header -->
-		<div class="auth-header">
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-		</div>
-
-		<Card class="text-center">
-			{#if status === 'processing'}
-				<!-- Processing -->
-				<div class="py-8">
-					<Spinner size="lg" color="primary" class="mb-4" />
-					<h2 class="auth-section-title text-center">
-						{$LL.callback_processing()}
-					</h2>
-					<p class="auth-section-subtitle text-center">
-						{$LL.callback_pleaseWait()}
-					</p>
-				</div>
-			{:else if status === 'success'}
-				<!-- Success -->
-				<div class="py-8">
-					<div class="auth-icon-badge">
-						<div class="auth-icon-badge__circle">
-							<span class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></span>
-						</div>
-					</div>
-					<h2 class="auth-section-title text-center">
-						{$LL.callback_success()}
-					</h2>
-					<p class="auth-section-subtitle text-center">
-						{$LL.callback_redirecting()}
-					</p>
-				</div>
-			{:else}
-				<!-- Error -->
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-						<span class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></span>
-					</div>
-				</div>
-
+<AuthPageShell>
+	<Card class="text-center">
+		{#if status === 'processing'}
+			<!-- Processing -->
+			<div class="py-8">
+				<Spinner size="lg" color="primary" class="mb-4" />
 				<h2 class="auth-section-title text-center">
-					{$LL.callback_errorTitle()}
+					{$LL.callback_processing()}
 				</h2>
-
-				<Alert variant="error" class="mb-4 text-left">
-					<p>{errorMessage}</p>
-				</Alert>
-
-				{#if errorCode}
-					<div class="auth-error-code-box mb-6">
-						<p class="auth-error-code-box__label">
-							{$LL.error_errorCode()}
-						</p>
-						<p class="auth-error-code-box__value">
-							{errorCode}
-						</p>
+				<p class="auth-section-subtitle text-center">
+					{$LL.callback_pleaseWait()}
+				</p>
+			</div>
+		{:else if status === 'success'}
+			<!-- Success -->
+			<div class="py-8">
+				<div class="auth-icon-badge">
+					<div class="auth-icon-badge__circle">
+						<span class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></span>
 					</div>
-				{/if}
+				</div>
+				<h2 class="auth-section-title text-center">
+					{$LL.callback_success()}
+				</h2>
+				<p class="auth-section-subtitle text-center">
+					{$LL.callback_redirecting()}
+				</p>
+			</div>
+		{:else}
+			<!-- Error -->
+			<div class="auth-icon-badge">
+				<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
+					<span class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></span>
+				</div>
+			</div>
 
-				<button class="btn-primary w-full" onclick={handleRetry}>
-					{$LL.common_backToLogin()}
-				</button>
+			<h2 class="auth-section-title text-center">
+				{$LL.callback_errorTitle()}
+			</h2>
+
+			<Alert variant="error" class="mb-4 text-left">
+				<p>{errorMessage}</p>
+			</Alert>
+
+			{#if errorCode}
+				<div class="auth-error-code-box mb-6">
+					<p class="auth-error-code-box__label">
+						{$LL.error_errorCode()}
+					</p>
+					<p class="auth-error-code-box__value">
+						{errorCode}
+					</p>
+				</div>
 			{/if}
-		</Card>
-	</div>
 
-	<!-- Footer -->
-	<footer class="auth-footer">
-		<FooterText value={$LL.footer_stack()} />
-	</footer>
-</div>
+			<button class="btn-primary w-full" onclick={handleRetry}>
+				{$LL.common_backToLogin()}
+			</button>
+		{/if}
+	</Card>
+</AuthPageShell>

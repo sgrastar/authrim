@@ -221,6 +221,24 @@ describe('getHtmlTemplate', () => {
     });
   });
 
+  it('renders deletion progress from structured resource counts without irreversible footer copy', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      true,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('data-i18n="web.delete.resourcesLabel">resources</span>');
+    expect(html).not.toContain('web.delete.resourcesIrreversible');
+    expect(html).not.toContain('リソース - 戻すことはできません');
+    expect(html).toContain("statusResult.operationProgress?.operation === 'delete'");
+    expect(html).toContain("progressBar.classList.toggle('indeterminate', isIndeterminate)");
+    expect(SETUP_WEB_UI_STYLE).toContain('.progress-bar.indeterminate');
+    expect(SETUP_WEB_UI_STYLE).toContain('@keyframes delete-progress-indeterminate');
+  });
+
   it('offers in-place initial deployment recovery after a failed deploy request', () => {
     const html = getHtmlTemplate(
       'session-token',

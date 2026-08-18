@@ -27,7 +27,11 @@ import {
 } from '$lib/server/authentication-methods-cache';
 import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
 import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
-import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
+import {
+	getLoginUILanguageConfig,
+	resolveEnabledLoginUILocale,
+	resolveEnabledLoginUILocalePreferenceList
+} from '$lib/i18n/config';
 import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
 import {
 	loadAccountPageInitialData,
@@ -518,11 +522,15 @@ function isAuthShellPath(pathname: string): boolean {
 export function shouldPrefetchLoginUITheme(pathname: string): boolean {
 	return (
 		isAuthShellPath(pathname) ||
+		pathname === '/callback' ||
 		pathname === '/consent' ||
 		pathname === '/device' ||
+		pathname === '/device/authorize' ||
 		pathname === '/ciba' ||
 		pathname === '/invite' ||
 		pathname === '/error' ||
+		pathname === '/logged-out' ||
+		pathname === '/logout-complete' ||
 		pathname === '/account' ||
 		pathname.startsWith('/account/')
 	);
@@ -1221,11 +1229,19 @@ export const localeHandle: Handle = async ({ event, resolve }) => {
 	}
 
 	const cookieLocale = resolveEnabledLoginUILocale(
-		event.cookies.get('preferredLanguage') ?? event.cookies.get('lang'),
+		event.cookies.get('preferredLanguage'),
 		languageConfig
 	);
 	if (cookieLocale) {
 		return resolveWithLocale(cookieLocale);
+	}
+
+	const oidcLocale = resolveEnabledLoginUILocalePreferenceList(
+		event.url.searchParams.get('ui_locales'),
+		languageConfig
+	);
+	if (oidcLocale) {
+		return resolveWithLocale(oidcLocale);
 	}
 
 	const acceptLanguage = event.request.headers.get('accept-language') || '';

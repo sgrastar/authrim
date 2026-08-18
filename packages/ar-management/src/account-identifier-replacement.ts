@@ -1,9 +1,12 @@
 import type { Context } from 'hono';
 import {
   CanonicalRuntimeUserStore,
-  createAuthContextFromHono,
+  AR_ERROR_CODES,
+  createAccountAuthContextFromHono,
+  encodeCanonicalSensitiveValueRef,
   createLookupBlindIndexes,
   createPIIContextFromHono,
+  getAccountDataContextFromHono,
   getLogger,
   getTenantIdFromContext,
   normalizeLookupEmail,
@@ -19,6 +22,8 @@ import {
 } from './identifier-replacement-coordinator';
 import { revokeIdentifierReplacementCredentials } from './identifier-replacement-credential-revocation';
 import { IdentifierReplacementOperationRepository } from './identifier-replacement-operation';
+import { publishAccountEmailAddition } from './account-identifier-addition';
+import { recordAccountOperation } from './account-operation-log';
 
 const REAUTH_TTL_SECONDS = 5 * 60;
 const CHALLENGE_TTL_SECONDS = 10 * 60;
@@ -39,6 +44,7 @@ interface ChallengeRow {
   consumed_at: number | null;
   initiating_session_ref: string;
   recent_reauth_verified_at: number;
+  operation_mode: 'addition' | 'replacement';
 }
 
 interface ExistingOperationRow {
@@ -107,7 +113,7 @@ function constantTimeHexEqual(left: string, right: string): boolean {
 }
 
 async function runtimeUser(c: Context<{ Bindings: Env }>, tenantId: string, accountId: string) {
-  const auth = createAuthContextFromHono(c, tenantId);
+  const auth = createAccountAuthContextFromHono(c, tenantId);
   const pii = createPIIContextFromHono(c, tenantId);
   const store = new CanonicalRuntimeUserStore({
     coreAdapter: auth.coreAdapter,
@@ -118,7 +124,7 @@ async function runtimeUser(c: Context<{ Bindings: Env }>, tenantId: string, acco
 }
 
 async function coordinatorFor(c: Context<{ Bindings: Env }>, tenantId: string) {
-  const auth = createAuthContextFromHono(c, tenantId);
+  const auth = createAccountAuthContextFromHono(c, tenantId);
   const pii = createPIIContextFromHono(c, tenantId);
   const lookupForBucket = await createLookupBucketWriteResolver(c.env);
   return new IdentifierReplacementCoordinator({
@@ -132,6 +138,7 @@ async function coordinatorFor(c: Context<{ Bindings: Env }>, tenantId: string) {
         intentId: `identifier-replaced:${input.operationId}`,
         outboxId: `notification:${input.operationId}`,
         notificationKind: 'account.identifier-replaced',
+        accountId: input.accountId,
         idempotencyKey: `identifier-replaced:${input.operationId}`,
         expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
         payload: {
@@ -144,6 +151,146 @@ async function coordinatorFor(c: Context<{ Bindings: Env }>, tenantId: string) {
       });
     },
   });
+}
+
+function emailAdditionOperationId(challengeId: string): string {
+  return `account-email-addition:${challengeId.slice('identifier-replacement-'.length)}`;
+}
+
+async function addVerifiedAccountEmail(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    tenantId: string;
+    accountId: string;
+    challengeId: string;
+    email: string;
+    idempotencyKeySha256: string;
+  }
+): Promise<string> {
+  const accountData = getAccountDataContextFromHono(c);
+  if (!accountData || accountData.legacyUserId !== input.accountId) {
+    throw new Error('account_email_addition_context_invalid');
+  }
+  const auth = createAccountAuthContextFromHono(c, input.tenantId);
+  const pii = createPIIContextFromHono(c, input.tenantId);
+  if (!c.env.ACCOUNT_DIRECTORY) throw new Error('account_email_addition_directory_unavailable');
+  const operationId = emailAdditionOperationId(input.challengeId);
+
+  await publishAccountEmailAddition(
+    c.env,
+    {
+      operationId,
+      idempotencyKey: input.idempotencyKeySha256,
+      tenantId: input.tenantId,
+      accountId: accountData.accountId,
+      email: input.email,
+      routeProjection: accountData.membership.routeProjection,
+    },
+    {
+      tenantCoreUsers: auth.coreAdapter,
+      directory: c.env.ACCOUNT_DIRECTORY,
+    }
+  );
+
+  const account = await auth.coreAdapter.queryOne<{
+    id: string;
+    primary_subject_id: string;
+  }>(
+    `SELECT id, primary_subject_id FROM identity_accounts
+      WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state = 'active'
+      LIMIT 1`,
+    [input.tenantId, input.accountId],
+    { consistencyClass: 'primary_required' }
+  );
+  if (!account || account.id !== accountData.accountId) {
+    throw new Error('account_email_addition_account_not_found');
+  }
+  const now = Date.now();
+  await auth.coreAdapter.execute(
+    `INSERT INTO contact_points (
+       id, tenant_id, subject_id, account_id, contact_type, purpose, normalized_hash,
+       value_storage_ref, display_label, is_primary, verification_state, lifecycle_state,
+       created_at, updated_at, deleted_at
+     ) VALUES (?, ?, ?, ?, 'email', 'primary', ?, ?, NULL, 1, 'verified', 'active', ?, ?, NULL)
+     ON CONFLICT(id) DO UPDATE SET
+       subject_id = excluded.subject_id,
+       account_id = excluded.account_id,
+       normalized_hash = excluded.normalized_hash,
+       value_storage_ref = excluded.value_storage_ref,
+       is_primary = 1,
+       verification_state = 'verified',
+       lifecycle_state = 'active',
+       updated_at = excluded.updated_at,
+       deleted_at = NULL
+     WHERE contact_points.tenant_id = excluded.tenant_id
+       AND contact_points.contact_type = 'email'`,
+    [
+      `contact:${input.accountId}:email`,
+      input.tenantId,
+      account.primary_subject_id,
+      account.id,
+      `canonical-sensitive:${input.accountId}:email`,
+      encodeCanonicalSensitiveValueRef({
+        tenantId: input.tenantId,
+        userId: input.accountId,
+        field: 'email',
+      }),
+      now,
+      now,
+    ]
+  );
+  const contact = await auth.coreAdapter.queryOne<{
+    account_id: string;
+    subject_id: string;
+    verification_state: string;
+    lifecycle_state: string;
+  }>(
+    `SELECT account_id, subject_id, verification_state, lifecycle_state
+       FROM contact_points WHERE id = ? AND tenant_id = ? AND contact_type = 'email'`,
+    [`contact:${input.accountId}:email`, input.tenantId],
+    { consistencyClass: 'primary_required' }
+  );
+  if (
+    contact?.account_id !== account.id ||
+    contact.subject_id !== account.primary_subject_id ||
+    contact.verification_state !== 'verified' ||
+    contact.lifecycle_state !== 'active'
+  ) {
+    throw new Error('account_email_addition_contact_conflict');
+  }
+  await pii.defaultPiiAdapter.execute(
+    `INSERT INTO identity_sensitive_values (
+       id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
+       classification, lifecycle_state, created_at, updated_at
+     ) VALUES (?, ?, 'runtime_user', ?, 'email', ?, NULL, 'sensitive', 'active', ?, ?)
+     ON CONFLICT(tenant_id, owner_type, owner_id, value_key) DO UPDATE SET
+       value_json = excluded.value_json,
+       value_hash = NULL,
+       classification = 'sensitive',
+       lifecycle_state = 'active',
+       updated_at = excluded.updated_at
+     WHERE identity_sensitive_values.lifecycle_state <> 'active'
+        OR identity_sensitive_values.value_json = excluded.value_json`,
+    [
+      `sensitive-value:${input.accountId}:email`,
+      input.tenantId,
+      input.accountId,
+      JSON.stringify(input.email),
+      now,
+      now,
+    ]
+  );
+  const reflected = await pii.defaultPiiAdapter.queryOne<{ value_json: string }>(
+    `SELECT value_json FROM identity_sensitive_values
+      WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ?
+        AND value_key = 'email' AND lifecycle_state = 'active'`,
+    [input.tenantId, input.accountId],
+    { consistencyClass: 'primary_required' }
+  );
+  if (reflected?.value_json !== JSON.stringify(input.email)) {
+    throw new Error('account_email_addition_authoritative_conflict');
+  }
+  return operationId;
 }
 
 export async function startAccountIdentifierReplacementHandler(
@@ -189,10 +336,10 @@ export async function startAccountIdentifierReplacementHandler(
   }
   const tenantId = getTenantIdFromContext(c);
   const { pii, user } = await runtimeUser(c, tenantId, accountSession.userId);
-  if (!user?.email) {
-    return c.json({ error: 'not_found', error_description: 'Account email was not found' }, 404);
+  if (!user) {
+    return c.json({ error: 'not_found', error_description: 'Account was not found' }, 404);
   }
-  if (normalizeLookupEmail(user.email) === newEmail) {
+  if (user.email && normalizeLookupEmail(user.email) === newEmail) {
     return c.json({ error: 'invalid_request', error_description: 'Email is unchanged' }, 400);
   }
   const secret = otpSecret(c.env);
@@ -204,8 +351,8 @@ export async function startAccountIdentifierReplacementHandler(
     `INSERT INTO identity_identifier_replacement_challenges (
        challenge_id, tenant_id, account_id, identifier_kind, normalized_value_json,
        value_sha256, otp_verifier, delivery_state, attempt_limit, expires_at,
-       initiating_session_ref, recent_reauth_verified_at, created_at, updated_at
-     ) VALUES (?, ?, ?, 'email_exact', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)`,
+       initiating_session_ref, recent_reauth_verified_at, operation_mode, created_at, updated_at
+     ) VALUES (?, ?, ?, 'email_exact', ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
     [
       challengeId,
       tenantId,
@@ -217,17 +364,20 @@ export async function startAccountIdentifierReplacementHandler(
       now + CHALLENGE_TTL_SECONDS,
       accountSession.sessionId,
       accountSession.authTime,
+      user.email ? 'replacement' : 'addition',
       now,
       now,
     ]
   );
   let deliveryState: 'sent' | 'failed' = 'failed';
+  let deliveryFailureCode = 'notification_delivery_dispatch_exception';
   try {
     const delivery = await produceNotificationDelivery(c.env, {
       owner: { owner: 'tenant', tenantId },
       intentId: `identifier-replacement-otp:${challengeId}`,
       outboxId: `notification:${challengeId}`,
       notificationKind: 'account.identifier-replacement-otp',
+      accountId: accountSession.userId,
       idempotencyKey: `identifier-replacement-otp:${challengeId}`,
       expiresAt: now + CHALLENGE_TTL_SECONDS,
       payload: {
@@ -238,7 +388,12 @@ export async function startAccountIdentifierReplacementHandler(
         body: `Your confirmation code is ${code}. It expires in 10 minutes.`,
       },
     });
-    deliveryState = delivery.delivery === 'permanent_failure' ? 'failed' : 'sent';
+    deliveryState = delivery.delivery === 'delivered' ? 'sent' : 'failed';
+    if (delivery.delivery === 'permanent_failure') {
+      deliveryFailureCode = 'notification_delivery_permanent_failure';
+    } else if (delivery.delivery === 'pending') {
+      deliveryFailureCode = 'notification_delivery_pending';
+    }
   } catch {
     deliveryState = 'failed';
   }
@@ -249,8 +404,23 @@ export async function startAccountIdentifierReplacementHandler(
     [deliveryState, now, challengeId]
   );
   if (deliveryState === 'failed') {
+    const errorId = challengeId.slice('identifier-replacement-'.length);
+    getLogger(c)
+      .module('ACCOUNT-IDENTIFIER-REPLACEMENT')
+      .warn('Email verification delivery failed', {
+        action: 'identifier_replacement_verification_delivery',
+        errorCode: AR_ERROR_CODES.USER_EMAIL_DELIVERY_FAILED,
+        errorId,
+        challengeId,
+        deliveryFailureCode,
+      });
     return c.json(
-      { error: 'temporarily_unavailable', error_description: 'Email delivery failed' },
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Email delivery failed',
+        error_code: AR_ERROR_CODES.USER_EMAIL_DELIVERY_FAILED,
+        error_id: errorId,
+      },
       503
     );
   }
@@ -363,6 +533,14 @@ async function operationResponse(
   input: { operationId: string; tenantId: string; accountId: string }
 ): Promise<Response> {
   let state = await resumeIdentifierReplacementOperation(c, input);
+  if (state === 'completed') {
+    await recordAccountOperation(c, {
+      userId: input.accountId,
+      action: 'account.email.changed',
+      resourceType: 'email',
+      resourceId: input.operationId,
+    });
+  }
   if (!state) {
     const pii = createPIIContextFromHono(c, input.tenantId);
     const reflected = await pii.defaultPiiAdapter.queryOne<{ state: string }>(
@@ -451,7 +629,7 @@ export async function completeAccountIdentifierReplacementHandler(
   const challenge = await pii.defaultPiiAdapter.queryOne<ChallengeRow>(
     `SELECT tenant_id, account_id, normalized_value_json, value_sha256, otp_verifier,
             delivery_state, attempt_count, attempt_limit, expires_at, consumed_at,
-            initiating_session_ref, recent_reauth_verified_at
+            initiating_session_ref, recent_reauth_verified_at, operation_mode
        FROM identity_identifier_replacement_challenges
       WHERE challenge_id = ?`,
     [body.challenge_id],
@@ -496,7 +674,54 @@ export async function completeAccountIdentifierReplacementHandler(
     return c.json({ error: 'server_error', error_description: 'Challenge is invalid' }, 500);
   }
   const { pii: runtimePii, user } = await runtimeUser(c, tenantId, accountSession.userId);
-  if (!user?.email) {
+  if (!user) {
+    return c.json({ error: 'not_found', error_description: 'Account was not found' }, 404);
+  }
+  if (challenge.operation_mode === 'addition') {
+    if (user.email && normalizeLookupEmail(user.email) !== newEmail) {
+      return c.json(
+        { error: 'conflict', error_description: 'An email address was added concurrently' },
+        409
+      );
+    }
+    const emailWasAlreadyAdded = Boolean(user.email);
+    let operationId: string;
+    try {
+      operationId = await addVerifiedAccountEmail(c, {
+        tenantId,
+        accountId: accountSession.userId,
+        challengeId: body.challenge_id,
+        email: newEmail,
+        idempotencyKeySha256,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          'directory_identifier_reservation_conflict',
+          'account_identifier_addition_outbox_conflict',
+          'account_email_addition_contact_conflict',
+          'account_email_addition_authoritative_conflict',
+        ].includes(error.message)
+      ) {
+        return c.json(
+          { error: 'conflict', error_description: 'Email address is already in use' },
+          409
+        );
+      }
+      throw error;
+    }
+    if (!emailWasAlreadyAdded) {
+      await recordAccountOperation(c, {
+        userId: accountSession.userId,
+        action: 'account.email.added',
+        resourceType: 'email',
+        resourceId: operationId,
+      });
+    }
+    return c.json({ operation: { id: operationId, state: 'completed' } });
+  }
+  if (!user.email) {
     return c.json({ error: 'not_found', error_description: 'Account email was not found' }, 404);
   }
   const oldEmail = normalizeLookupEmail(user.email);
@@ -590,11 +815,19 @@ export async function getAccountIdentifierReplacementHandler(
     return c.json({ error: 'not_found', error_description: 'Operation was not found' }, 404);
   }
   if (!['completed', 'canceled', 'blocked_forward_repair'].includes(operationScope.state)) {
-    await resumeIdentifierReplacementOperation(c, {
+    const resumedState = await resumeIdentifierReplacementOperation(c, {
       operationId,
       tenantId,
       accountId: accountSession.userId,
     });
+    if (resumedState === 'completed') {
+      await recordAccountOperation(c, {
+        userId: accountSession.userId,
+        action: 'account.email.changed',
+        resourceType: 'email',
+        resourceId: operationId,
+      });
+    }
   }
   const row = await pii.defaultPiiAdapter.queryOne<{
     operation_id: string;

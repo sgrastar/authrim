@@ -407,6 +407,11 @@ interface SetupState {
   error: string | null;
   deployResults: DeployResult[];
   logPath: string | null;
+  operationProgress: {
+    operation: 'delete';
+    current: number;
+    total: number;
+  } | null;
 }
 
 interface ProgressLogState {
@@ -423,6 +428,7 @@ const state: SetupState = {
   error: null,
   deployResults: [],
   logPath: null,
+  operationProgress: null,
 };
 
 let progressLogState: ProgressLogState | null = null;
@@ -737,6 +743,7 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
 
 function clearProgress(): void {
   state.progress = [];
+  state.operationProgress = null;
 }
 
 /**
@@ -4340,6 +4347,7 @@ export function createApiRoutes(): Hono {
       error: state.error,
       results: state.deployResults,
       logPath: state.logPath,
+      operationProgress: state.operationProgress,
     });
   });
 
@@ -4354,6 +4362,7 @@ export function createApiRoutes(): Hono {
       state.error = null;
       state.deployResults = [];
       state.logPath = null;
+      state.operationProgress = null;
 
       return c.json({ success: true });
     });
@@ -5397,6 +5406,7 @@ export function createApiRoutes(): Hono {
         state.error = null;
         state.deployResults = [];
         clearProgress();
+        state.operationProgress = { operation: 'delete', current: 0, total: 0 };
         state.logPath = await beginProgressLog(env, 'delete');
         addProgress(`Preparing to delete environment: ${env}`);
 
@@ -5451,6 +5461,9 @@ export function createApiRoutes(): Hono {
             ? Object.values(operationLock.lock.queues).map((entry) => entry.name)
             : [],
           onProgress: addProgress,
+          onResourceProgress: ({ current, total }) => {
+            state.operationProgress = { operation: 'delete', current, total };
+          },
         });
 
         const cleanupResult = await cleanupLocalEnvironmentArtifacts({
@@ -5480,6 +5493,7 @@ export function createApiRoutes(): Hono {
           manualR2: result.manualR2,
           errors: result.errors,
           progress: state.progress,
+          operationProgress: state.operationProgress,
           logPath: state.logPath,
         });
       } catch (error) {

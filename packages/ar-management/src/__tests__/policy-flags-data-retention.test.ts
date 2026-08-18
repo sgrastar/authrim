@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { queryOne: vi.fn(), execute: vi.fn() },
+  adapter: { queryOne: vi.fn(), execute: vi.fn(), batch: vi.fn() },
   audit: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock('../admin-tenant-access', () => ({
+  getAdminAuth: vi.fn(() => ({ userId: 'admin-a' })),
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -59,8 +62,12 @@ describe('policy flags and data retention', () => {
     vi.clearAllMocks();
     mocks.adapter.queryOne.mockReset();
     mocks.adapter.execute.mockReset();
+    mocks.adapter.batch.mockReset();
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.adapter.batch.mockImplementation(async (statements: unknown[]) =>
+      statements.map(() => ({ success: true, rowsAffected: 1 }))
+    );
     mocks.audit.mockResolvedValue(undefined);
   });
 
@@ -134,7 +141,7 @@ describe('policy flags and data retention', () => {
       estimates: unknown[];
       total_records_to_delete: number;
     };
-    expect(body.estimates).toHaveLength(6);
+    expect(body.estimates).toHaveLength(7);
     expect(body.total_records_to_delete).toBe(18);
   });
 
@@ -156,6 +163,64 @@ describe('policy flags and data retention', () => {
     expect((await updateCategoryRetention(context({ param: category, body }))).status).toBe(400);
   });
 
+  it('enforces the Lookup retention minimum and writes a typed projection outbox', async () => {
+    expect(
+      (
+        await updateCategoryRetention(
+          context({ param: 'lookup_directory', body: { retention_days: 29 } })
+        )
+      ).status
+    ).toBe(400);
+    mocks.adapter.queryOne.mockResolvedValueOnce({ settings: null });
+    const response = await updateCategoryRetention(
+      context({ param: 'lookup_directory', body: { retention_days: 180 } })
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.adapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ sql: expect.stringContaining('lookup_retention_policies') }),
+        expect.objectContaining({
+          sql: expect.stringContaining('lookup_retention_policy_projection_outbox'),
+        }),
+        expect.objectContaining({ sql: expect.stringContaining('settings_history') }),
+      ])
+    );
+  });
+
+  it('requires a fresh explicit confirmation before shortening retention', async () => {
+    mocks.adapter.queryOne.mockResolvedValue({
+      settings: JSON.stringify({
+        data_retention: { categories: { lookup_directory: { retention_days: 180 } } },
+      }),
+    });
+    const missing = await updateCategoryRetention(
+      context({ param: 'lookup_directory', body: { retention_days: 90 } })
+    );
+    expect(missing.status).toBe(409);
+    const stale = await updateCategoryRetention(
+      context({
+        param: 'lookup_directory',
+        body: {
+          retention_days: 90,
+          confirm_shortening: true,
+          expected_current_retention_days: 365,
+        },
+      })
+    );
+    expect(stale.status).toBe(409);
+    const confirmed = await updateCategoryRetention(
+      context({
+        param: 'lookup_directory',
+        body: {
+          retention_days: 90,
+          confirm_shortening: true,
+          expected_current_retention_days: 180,
+        },
+      })
+    );
+    expect(confirmed.status).toBe(200);
+  });
+
   it.each([
     null,
     JSON.stringify({
@@ -165,12 +230,28 @@ describe('policy flags and data retention', () => {
   ])('updates category settings from stored=%s', async (settings) => {
     mocks.adapter.queryOne.mockResolvedValueOnce(settings ? { settings } : null);
     const response = await updateCategoryRetention(
-      context({ param: 'audit_logs', body: { retention_days: 30 } })
+      context({
+        param: 'audit_logs',
+        body: {
+          retention_days: 30,
+          confirm_shortening: true,
+          expected_current_retention_days: 90,
+        },
+      })
     );
     expect(response.status).toBe(200);
     expect(mocks.audit).toHaveBeenCalled();
-    const saved = JSON.parse(mocks.adapter.execute.mock.calls[0][1][0]);
+    const statements = mocks.adapter.batch.mock.calls[0][0] as Array<{
+      sql: string;
+      params: unknown[];
+    }>;
+    const saved = JSON.parse(String(statements[0].params[0]));
     expect(saved.data_retention.categories.audit_logs.retention_days).toBe(30);
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sql: expect.stringContaining('settings_history') }),
+      ])
+    );
   });
 
   it('handles category update persistence/corrupt settings errors', async () => {
@@ -197,19 +278,29 @@ describe('policy flags and data retention', () => {
     ).toBe(400);
   });
 
-  it.each([undefined, ['audit_logs', 'unknown']])(
-    'runs cleanup categories=%s',
-    async (categories) => {
-      mocks.adapter.queryOne.mockResolvedValueOnce({ settings: null });
-      const response = await runDataRetentionCleanup(
-        context({ body: { categories, idempotency_key: 'key-1' } })
-      );
-      const body = (await response.json()) as { status: string; categories: string[] };
-      expect(body.status).toBe('completed');
-      expect(body.categories).toHaveLength(categories ? 1 : 6);
-      expect(mocks.audit).toHaveBeenCalled();
-    }
-  );
+  it('runs tenant-local cleanup without selecting Lookup', async () => {
+    const categories = ['audit_logs', 'unknown'];
+    mocks.adapter.queryOne.mockResolvedValueOnce({ settings: null });
+    const response = await runDataRetentionCleanup(
+      context({ body: { categories, idempotency_key: 'key-1' } })
+    );
+    const body = (await response.json()) as { status: string; categories: string[] };
+    expect(body.status).toBe('completed');
+    expect(body.categories).toHaveLength(categories ? 1 : 6);
+    expect(mocks.audit).toHaveBeenCalled();
+  });
+
+  it('keeps Lookup cleanup dry-run-only until Control projections are ready', async () => {
+    expect((await runDataRetentionCleanup(context({ body: {} }))).status).toBe(503);
+    expect(
+      (
+        await runDataRetentionCleanup(
+          context({ body: { categories: ['audit_logs', 'lookup_directory'] } })
+        )
+      ).status
+    ).toBe(503);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
 
   it('continues cleanup after one category fails and reports partial success', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ settings: null });
@@ -242,7 +333,7 @@ describe('policy flags and data retention', () => {
     const body = (await (await listRetentionCategories(context())).json()) as {
       categories: Array<Record<string, unknown>>;
     };
-    expect(body.categories).toHaveLength(6);
+    expect(body.categories).toHaveLength(7);
     expect(body.categories).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

@@ -209,6 +209,17 @@ describe('anonymous auth administration', () => {
       expect(response.status).toBe(!value ? 404 : value.account_type === 'anonymous' ? 200 : 400);
     }
   );
+  it('blocks anonymous user deletion while an account legal hold is active', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    mocks.adapter.queryOne.mockResolvedValueOnce({
+      hold_id: 'legal-hold:anonymous',
+      reason_code: 'litigation',
+    });
+    const response = await deleteAnonymousUser(context({ id: 'user-1' }));
+    expect(response.status).toBe(409);
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
+  });
   it('formats absent upgrade and expired device', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
     mocks.adapter.query.mockResolvedValueOnce([
@@ -280,13 +291,28 @@ describe('anonymous auth administration', () => {
       { user_id: 'u1', device_id: 'd2', expires_at: 2 },
       { user_id: 'u2', device_id: 'd3', expires_at: 3 },
     ]);
-    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'active' });
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'active' });
     const body = await (
       await cleanupExpiredAnonymousUsers(context({ body: { dry_run: false, limit: 10 } }))
     ).json();
     expect(body).toMatchObject({ deleted_users: 1, deleted_devices: 3, deactivated_only: 3 });
     expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
     expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
+  });
+  it('skips scheduled anonymous cleanup while an account legal hold is active', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([{ user_id: 'u1', device_id: 'd1', expires_at: 1 }]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      hold_id: 'legal-hold:anonymous-cleanup',
+      reason_code: 'regulatory_review',
+    });
+    const body = await (
+      await cleanupExpiredAnonymousUsers(context({ body: { dry_run: false, limit: 10 } }))
+    ).json();
+    expect(body).toMatchObject({ deleted_users: 0 });
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
   });
   it('deduplicates cleanup user IDs and handles cleanup errors', async () => {
     mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));

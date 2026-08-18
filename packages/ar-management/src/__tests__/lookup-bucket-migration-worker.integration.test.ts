@@ -112,6 +112,8 @@ describe('LookupBucketMigrationWorker', () => {
     const schema = [
       'migrations/lookup/001_lookup_directory.sql',
       'migrations/lookup/002_identifier_replacement_verification_gate.sql',
+      'migrations/lookup/003_allow_external_subject_identifier_replacement.sql',
+      'migrations/lookup/004_lookup_retention_and_otp_bucket.sql',
     ]
       .map((path) => readFileSync(resolve(REPO_ROOT, path), 'utf8'))
       .join('\n');
@@ -362,13 +364,15 @@ describe('LookupBucketMigrationWorker', () => {
       .prepare(
         `INSERT INTO lookup_discovery_otp_challenges (
            challenge_id, normalization_version, email_blind_digest, hmac_key_generation,
+           virtual_bucket,
            otp_verifier, delivery_state, attempt_count, attempt_limit, expires_at,
            consumed_at, created_at, updated_at
-         ) VALUES (?, 1, ?, 1, ?, 'sent', 0, 5, ?, NULL, ?, ?)`
+         ) VALUES (?, 1, ?, 1, ?, ?, 'sent', 0, 5, ?, NULL, ?, ?)`
       )
       .run(
         `discovery-${BUCKET}-1-00000000-0000-4000-8000-000000000001`,
         '1'.repeat(64),
+        BUCKET,
         '2'.repeat(64),
         2_000,
         100,

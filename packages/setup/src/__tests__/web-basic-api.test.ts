@@ -372,6 +372,60 @@ describe('setup web basic API contracts', () => {
     );
   });
 
+  it('publishes structured resource progress while deleting an environment', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env);
+    let finishDeletion: (() => void) | undefined;
+    const deletionPaused = new Promise<void>((resolve) => {
+      finishDeletion = resolve;
+    });
+    cloudflareMocks.deleteEnvironment.mockImplementationOnce(
+      async (options: {
+        onResourceProgress?: (progress: { current: number; total: number }) => void;
+      }) => {
+        options.onResourceProgress?.({ current: 0, total: 2 });
+        options.onResourceProgress?.({ current: 1, total: 2 });
+        await deletionPaused;
+        options.onResourceProgress?.({ current: 2, total: 2 });
+        return {
+          success: true,
+          deleted: {
+            workers: ['prod-ar-auth'],
+            d1: ['prod-authrim-core-db'],
+            kv: [],
+            queues: [],
+            r2: [],
+            pages: [],
+          },
+          manualR2: [],
+          errors: [],
+        };
+      }
+    );
+
+    const app = createApiRoutes();
+    const responsePromise = app.request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+    await vi.waitFor(async () => {
+      await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+        operationProgress: { operation: 'delete', current: 1, total: 2 },
+      });
+    });
+    finishDeletion?.();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      operationProgress: { operation: 'delete', current: 2, total: 2 },
+    });
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      operationProgress: { operation: 'delete', current: 2, total: 2 },
+    });
+  });
+
   it('returns read-only state, deploy status, and component inventory without a token', async () => {
     const app = createApiRoutes();
     await expect((await app.request('/state')).json()).resolves.toMatchObject({

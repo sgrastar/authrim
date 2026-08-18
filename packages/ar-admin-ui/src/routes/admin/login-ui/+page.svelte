@@ -20,8 +20,12 @@
 	import {
 		ALL_LOGIN_UI_LOCALES,
 		LOGIN_UI_LOCALE_OPTIONS,
-		isLoginUILocale,
+		LOGIN_UI_LANGUAGE_GROUPING_THRESHOLD,
+		MAX_LOGIN_UI_PRIMARY_LOCALES,
+		parseConfiguredPrimaryLoginUILocales,
+		resolveDefaultLoginUILocale,
 		resolveEnabledLoginUILocales,
+		selectDefaultPrimaryLoginUILocales,
 		type LoginUILocale
 	} from '$lib/login-ui/locales';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
@@ -42,6 +46,12 @@
 	let initialEnabledLocales = $state<LoginUILocale[]>([...ALL_LOGIN_UI_LOCALES]);
 	let defaultLocale = $state<LoginUILocale>('en');
 	let initialDefaultLocale = $state<LoginUILocale>('en');
+	let primaryLocales = $state<LoginUILocale[]>([]);
+	let initialPrimaryLocales = $state<LoginUILocale[]>([]);
+	let primaryLocalesExplicit = $state(false);
+	let initialPrimaryLocalesExplicit = $state(false);
+	let showEnglishLanguageNames = $state(false);
+	let initialShowEnglishLanguageNames = $state(false);
 	let tenantSettings = $state<CategorySettings | null>(null);
 	let postLoginSettings = $state<CategorySettings | null>(null);
 	let selfServiceSettings = $state<CategorySettings | null>(null);
@@ -115,7 +125,16 @@
 	);
 	const hasLanguageChanges = $derived(
 		enabledLocales.join(',') !== initialEnabledLocales.join(',') ||
-			defaultLocale !== initialDefaultLocale
+			defaultLocale !== initialDefaultLocale ||
+			primaryLocales.join(',') !== initialPrimaryLocales.join(',') ||
+			primaryLocalesExplicit !== initialPrimaryLocalesExplicit ||
+			showEnglishLanguageNames !== initialShowEnglishLanguageNames
+	);
+	const languageGroupingEnabled = $derived(
+		enabledLocales.length >= LOGIN_UI_LANGUAGE_GROUPING_THRESHOLD
+	);
+	const effectivePrimaryLocales = $derived(
+		primaryLocales.filter((locale) => enabledLocales.includes(locale))
 	);
 	const trustedOriginsDraft = $derived.by(() => parseTrustedOriginsDraft(trustedOriginsInput));
 	const selectedAppLoginRedirectUris = $derived(
@@ -250,12 +269,19 @@
 			settingsResult.values['login-ui.supported_locales']
 		);
 		const storedDefault = settingsResult.values['login-ui.default_locale'];
-		defaultLocale =
-			isLoginUILocale(storedDefault) && enabledLocales.includes(storedDefault)
-				? storedDefault
-				: (enabledLocales[0] ?? 'en');
+		defaultLocale = resolveDefaultLoginUILocale(storedDefault, enabledLocales);
+		const configuredPrimaryLocales = parseConfiguredPrimaryLoginUILocales(
+			settingsResult.values['login-ui.primary_locales']
+		);
+		primaryLocalesExplicit = configuredPrimaryLocales !== null;
+		primaryLocales = configuredPrimaryLocales ?? selectDefaultPrimaryLoginUILocales(enabledLocales);
+		showEnglishLanguageNames =
+			settingsResult.values['login-ui.show_english_language_names'] === true;
 		initialEnabledLocales = [...enabledLocales];
 		initialDefaultLocale = defaultLocale;
+		initialPrimaryLocales = [...primaryLocales];
+		initialPrimaryLocalesExplicit = primaryLocalesExplicit;
+		initialShowEnglishLanguageNames = showEnglishLanguageNames;
 	}
 
 	function toggleLocale(locale: LoginUILocale, enabled: boolean) {
@@ -263,6 +289,9 @@
 			enabledLocales = ALL_LOGIN_UI_LOCALES.filter(
 				(candidate) => candidate === locale || enabledLocales.includes(candidate)
 			);
+			if (!primaryLocalesExplicit) {
+				primaryLocales = selectDefaultPrimaryLoginUILocales(enabledLocales);
+			}
 			return;
 		}
 		if (enabledLocales.length === 1) {
@@ -270,9 +299,36 @@
 			return;
 		}
 		enabledLocales = enabledLocales.filter((candidate) => candidate !== locale);
+		if (!primaryLocalesExplicit) {
+			primaryLocales = selectDefaultPrimaryLoginUILocales(enabledLocales);
+		} else if (enabledLocales.length >= LOGIN_UI_LANGUAGE_GROUPING_THRESHOLD) {
+			primaryLocales = primaryLocales.filter((candidate) => candidate !== locale);
+		}
 		if (defaultLocale === locale) {
 			defaultLocale = enabledLocales[0] ?? 'en';
 		}
+		languageError = '';
+	}
+
+	function togglePrimaryLocale(locale: LoginUILocale, selected: boolean) {
+		if (!languageGroupingEnabled || !enabledLocales.includes(locale)) return;
+		const enabledSelection = primaryLocales.filter((candidate) =>
+			enabledLocales.includes(candidate)
+		);
+		if (
+			selected &&
+			!enabledSelection.includes(locale) &&
+			enabledSelection.length >= MAX_LOGIN_UI_PRIMARY_LOCALES
+		) {
+			languageError = $LL.admin_login_ui_language_primary_limit({
+				count: MAX_LOGIN_UI_PRIMARY_LOCALES
+			});
+			return;
+		}
+		primaryLocalesExplicit = true;
+		primaryLocales = selected
+			? [...enabledSelection, locale]
+			: enabledSelection.filter((candidate) => candidate !== locale);
 		languageError = '';
 	}
 
@@ -286,6 +342,9 @@
 
 	function selectAllLocales() {
 		enabledLocales = [...ALL_LOGIN_UI_LOCALES];
+		if (!primaryLocalesExplicit) {
+			primaryLocales = selectDefaultPrimaryLoginUILocales(enabledLocales);
+		}
 		languageError = '';
 	}
 
@@ -297,6 +356,9 @@
 	function discardLanguageChanges() {
 		enabledLocales = [...initialEnabledLocales];
 		defaultLocale = initialDefaultLocale;
+		primaryLocales = [...initialPrimaryLocales];
+		primaryLocalesExplicit = initialPrimaryLocalesExplicit;
+		showEnglishLanguageNames = initialShowEnglishLanguageNames;
 		languageError = '';
 	}
 
@@ -306,12 +368,20 @@
 		languageError = '';
 		languageSuccessMessage = '';
 		try {
+			const set: Record<string, unknown> = {
+				'login-ui.supported_locales': enabledLocales.join(','),
+				'login-ui.default_locale': defaultLocale,
+				'login-ui.show_english_language_names': showEnglishLanguageNames
+			};
+			if (
+				primaryLocalesExplicit !== initialPrimaryLocalesExplicit ||
+				primaryLocales.join(',') !== initialPrimaryLocales.join(',')
+			) {
+				set['login-ui.primary_locales'] = primaryLocalesExplicit ? primaryLocales : null;
+			}
 			await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
 				ifMatch: settings.version,
-				set: {
-					'login-ui.supported_locales': enabledLocales.join(','),
-					'login-ui.default_locale': defaultLocale
-				}
+				set
 			});
 			languageSuccessMessage = $LL.admin_login_ui_language_updated();
 			await loadData();
@@ -835,7 +905,37 @@
 					</button>
 				</div>
 
-				<div class="language-grid" aria-label={$LL.admin_login_ui_language_list_label()}>
+				<div class="language-display-setting">
+					<input
+						id="show-english-language-names"
+						type="checkbox"
+						bind:checked={showEnglishLanguageNames}
+						disabled={!canEditLoginUiSettings}
+						aria-describedby="show-english-language-names-description"
+					/>
+					<div>
+						<label for="show-english-language-names" class="setting-label">
+							{$LL.admin_login_ui_language_show_english()}
+						</label>
+						<p id="show-english-language-names-description" class="setting-description">
+							{$LL.admin_login_ui_language_show_english_description()}
+						</p>
+					</div>
+				</div>
+
+				{#if languageGroupingEnabled}
+					<p id="primary-language-help" class="language-primary-help">
+						{$LL.admin_login_ui_language_primary_description({
+							count: MAX_LOGIN_UI_PRIMARY_LOCALES
+						})}
+					</p>
+				{/if}
+
+				<div
+					class="language-grid"
+					class:grouped={languageGroupingEnabled}
+					aria-label={$LL.admin_login_ui_language_list_label()}
+				>
 					{#each LOGIN_UI_LOCALE_OPTIONS as locale (locale.code)}
 						<div class="language-option" class:default={defaultLocale === locale.code}>
 							<label
@@ -867,6 +967,32 @@
 									{$LL.admin_login_ui_language_make_default({ language: locale.label })}
 								</span>
 							</label>
+							{#if languageGroupingEnabled}
+								{#if enabledLocales.includes(locale.code)}
+									<label
+										class="language-control"
+										title={$LL.admin_login_ui_language_make_primary({
+											language: locale.label
+										})}
+									>
+										<input
+											type="checkbox"
+											checked={effectivePrimaryLocales.includes(locale.code)}
+											disabled={!canEditLoginUiSettings ||
+												(effectivePrimaryLocales.length >= MAX_LOGIN_UI_PRIMARY_LOCALES &&
+													!effectivePrimaryLocales.includes(locale.code))}
+											aria-describedby="primary-language-help"
+											onchange={(event) =>
+												togglePrimaryLocale(locale.code, event.currentTarget.checked)}
+										/>
+										<span class="sr-only">
+											{$LL.admin_login_ui_language_make_primary({ language: locale.label })}
+										</span>
+									</label>
+								{:else}
+									<span class="language-control-placeholder" aria-hidden="true"></span>
+								{/if}
+							{/if}
 							<span class="language-name">
 								{locale.label}{#if defaultLocale === locale.code}<span
 										class="default-language-label"
@@ -1499,6 +1625,32 @@
 		font-size: 11px;
 	}
 
+	.language-display-setting {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		margin-top: 14px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-control, 8px);
+		background: var(--color-surface);
+	}
+
+	.language-display-setting input {
+		margin-top: 3px;
+	}
+
+	.language-display-setting .setting-description {
+		margin: 3px 0 0;
+	}
+
+	.language-primary-help {
+		margin: 14px 0 0;
+		font-size: 12px;
+		line-height: 1.5;
+		color: var(--color-text-muted);
+	}
+
 	.language-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1519,6 +1671,15 @@
 		border-right: 1px solid var(--color-border);
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-surface);
+	}
+
+	.language-grid.grouped .language-option {
+		grid-template-columns: auto auto auto minmax(0, 1fr);
+	}
+
+	.language-control-placeholder {
+		display: inline-block;
+		width: 13px;
 	}
 
 	.language-option:nth-child(3n) {

@@ -57,6 +57,8 @@ export interface LoginUISettings {
   // Locales
   'login-ui.supported_locales': string;
   'login-ui.default_locale': string;
+  'login-ui.primary_locales': string[] | null;
+  'login-ui.show_english_language_names': boolean;
 
   // Appearance
   'login-ui.background_image_url': string;
@@ -335,6 +337,25 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'pl',
     ],
     visibility: 'public',
+  },
+  'login-ui.primary_locales': {
+    key: 'login-ui.primary_locales',
+    type: 'json',
+    default: null,
+    envKey: 'LOGIN_UI_PRIMARY_LOCALES',
+    label: 'Primary Languages',
+    description:
+      'Up to six primary Login UI locales. Null selects defaults by speaker count; an empty array explicitly selects none',
+    visibility: 'page',
+  },
+  'login-ui.show_english_language_names': {
+    key: 'login-ui.show_english_language_names',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_SHOW_ENGLISH_LANGUAGE_NAMES',
+    label: 'Show English Language Names',
+    description: 'Display English names alongside native language names in the Login UI selector',
+    visibility: 'page',
   },
   'login-ui.favicon_url': {
     key: 'login-ui.favicon_url',
@@ -752,6 +773,8 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.supported_locales':
     'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id,ar,it,th,vi,hi,bn,tr,sw,am,pl',
   'login-ui.default_locale': 'en',
+  'login-ui.primary_locales': null,
+  'login-ui.show_english_language_names': false,
   'login-ui.background_image_url': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.custom_css': '',

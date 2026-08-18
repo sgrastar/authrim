@@ -187,9 +187,12 @@ describe('PluginRunnerScheduler integration', () => {
       );
     }
     tenantDatabase.exec(pluginOutboxSchema());
-    tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/035_notification_delivery_intents.sql'), 'utf8')
-    );
+    for (const migration of [
+      'migrations/035_notification_delivery_intents.sql',
+      'migrations/050_email_delivery_history.sql',
+    ]) {
+      tenantDatabase.exec(readFileSync(resolve(REPO_ROOT, migration), 'utf8'));
+    }
     runnerDatabase.exec(
       `INSERT INTO plugin_runner_installations (
          installation_id, tenant_id, plugin_id, backend_kind, script_name,

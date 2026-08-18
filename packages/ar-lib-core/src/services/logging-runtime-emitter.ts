@@ -490,6 +490,7 @@ async function emitArchiveChunk(input: {
   lane: LoggingDeliveryLane;
   target: Extract<RuntimeLoggingDestinationTarget, { type: 'r2' }>;
   policyMetadata: RuntimePolicyDeliveryMetadata;
+  requiresDeliveryFanout: boolean;
   records: RuntimeLogRecord[];
 }): Promise<RuntimeLogEmitTargetResult> {
   const bucket = getBucketBinding(input.env, input.target.bucketRef);
@@ -528,20 +529,22 @@ async function emitArchiveChunk(input: {
       plane: input.plane,
     }),
   });
-  const enqueueResult = await enqueueDeliveryPayload(input.env, {
-    payload_type: 'delivery_fanout',
-    schema_version: 1,
-    payload_id: `qpl_${crypto.randomUUID()}`,
-    tenant_key: input.tenantKey,
-    lane: input.lane,
-    created_at: result.createdAt,
-    catalog_id: result.objectCatalogId,
-    object_key: result.objectKey,
-    destination_id: input.target.destinationId,
-    log_type: input.logType,
-    plane: input.plane,
-    record_count: result.recordCount,
-  });
+  const enqueueResult = input.requiresDeliveryFanout
+    ? await enqueueDeliveryPayload(input.env, {
+        payload_type: 'delivery_fanout',
+        schema_version: 1,
+        payload_id: `qpl_${crypto.randomUUID()}`,
+        tenant_key: input.tenantKey,
+        lane: input.lane,
+        created_at: result.createdAt,
+        catalog_id: result.objectCatalogId,
+        object_key: result.objectKey,
+        destination_id: input.target.destinationId,
+        log_type: input.logType,
+        plane: input.plane,
+        record_count: result.recordCount,
+      })
+    : null;
   const status = statusForEnqueueResult(enqueueResult);
   await recordDeliveryEvent({
     env: input.env,
@@ -557,9 +560,9 @@ async function emitArchiveChunk(input: {
     metadata: {
       chunk_id: result.chunkId,
       ...policyDeliveryMetadataObject(input.policyMetadata),
-      delivery_queue_binding: enqueueResult.bindingName,
-      delivery_queue_fallback_used: enqueueResult.fallbackUsed,
-      delivery_queue_attempted_bindings: enqueueResult.attemptedBindingNames,
+      delivery_queue_binding: enqueueResult?.bindingName ?? null,
+      delivery_queue_fallback_used: enqueueResult?.fallbackUsed ?? false,
+      delivery_queue_attempted_bindings: enqueueResult?.attemptedBindingNames ?? null,
     },
   });
   return {
@@ -568,7 +571,7 @@ async function emitArchiveChunk(input: {
     lane: input.lane,
     status,
     objectCatalogId: result.objectCatalogId,
-    queued: enqueueResult.queued,
+    queued: enqueueResult?.queued ?? false,
   };
 }
 
@@ -778,6 +781,7 @@ export async function emitRuntimeLogRecords(
           lane,
           target: resolved.target,
           policyMetadata,
+          requiresDeliveryFanout: resolved.requiresDeliveryFanout,
           records: input.records,
         })
       );

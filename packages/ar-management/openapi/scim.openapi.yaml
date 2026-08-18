@@ -226,6 +226,7 @@ paths:
       tags:
         - SCIM Users
       summary: Delete a SCIM user.
+      description: An active account legal hold rejects deletion with a SCIM 409 response.
       parameters:
         - $ref: '#/components/parameters/Id'
         - $ref: '#/components/parameters/IfMatch'
@@ -233,6 +234,8 @@ paths:
         '204':
           description: User deleted.
         '404':
+          $ref: '#/components/responses/ScimError'
+        '409':
           $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
@@ -338,6 +341,10 @@ paths:
       tags:
         - SCIM Bulk
       summary: Execute SCIM bulk operations.
+      description: >-
+        Executes supported SCIM operations and returns each operation's status in the bulk response.
+        A user DELETE operation returns an operation-level 409 error while the account has an active
+        legal hold.
       requestBody:
         $ref: '#/components/requestBodies/ScimBulkRequest'
       responses:

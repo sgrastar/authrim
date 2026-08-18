@@ -33,6 +33,15 @@ const input = {
   now: 1_000,
 };
 
+const preparedEnvelope = JSON.stringify({
+  version: 1,
+  algorithm: 'RSA-OAEP-256+A256GCM',
+  keyId: 'runner-notification-key',
+  wrappedKey: 'wrapped',
+  iv: 'nonce',
+  ciphertext: 'ciphertext',
+});
+
 function environment(
   deliverNotification = vi.fn(async () => 'delivered' as const),
   resolveNotificationProviderOrder = vi.fn(async () => ({
@@ -41,6 +50,10 @@ function environment(
     configVersion: 3,
     state: 'enabled' as const,
     installationIds: ['installation-a', 'installation-b'],
+  })),
+  encryptNotificationPayload = vi.fn(async () => ({
+    activeKeyId: 'runner-notification-key',
+    envelope: preparedEnvelope,
   }))
 ) {
   return {
@@ -49,7 +62,11 @@ function environment(
     NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS: '{"keys":[]}',
     NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID: 'notification-key-a',
     NOTIFICATION_INTENT_HMAC_KEY: 'notification-intent-hmac-key-value',
-    PLUGIN_RUNNER: { deliverNotification, resolveNotificationProviderOrder },
+    PLUGIN_RUNNER: {
+      deliverNotification,
+      encryptNotificationPayload,
+      resolveNotificationProviderOrder,
+    },
   } as never;
 }
 
@@ -99,6 +116,10 @@ describe('notification delivery producer', () => {
     expect(order).toEqual(['commit', 'rpc']);
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({
+        preparedEnvelope: {
+          keyId: 'runner-notification-key',
+          envelope: preparedEnvelope,
+        },
         providerOrder: {
           configVersion: 3,
           installationIds: ['installation-a', 'installation-b'],
@@ -114,6 +135,27 @@ describe('notification delivery producer', () => {
     });
     expect(JSON.stringify(deliver.mock.calls)).not.toContain('user@example.com');
     expect(JSON.stringify(deliver.mock.calls)).not.toContain('123456');
+  });
+
+  it('stores an encrypted recipient, masked fallback, and account correlation without the body', async () => {
+    const env = environment() as ReturnType<typeof environment> & {
+      PII_ENCRYPTION_KEY: string;
+      PII_ENCRYPTION_KEY_VERSION: string;
+    };
+    env.PII_ENCRYPTION_KEY = '12'.repeat(32);
+    env.PII_ENCRYPTION_KEY_VERSION = '4';
+    await produceNotificationDelivery(env, { ...input, accountId: '_account-a' });
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: '_account-a',
+        recipientMasked: 'us***@example.com',
+        recipientEncrypted: expect.stringMatching(/^enc:v4:gcm:/u),
+        recipientEncryptionKeyVersion: 4,
+      })
+    );
+    const persisted = mocks.create.mock.calls.at(-1)?.[0];
+    expect(persisted?.recipientEncrypted).not.toContain('user@example.com');
+    expect(persisted?.recipientEncrypted).not.toContain('123456');
   });
 
   it('keeps a committed intent pending after RPC failure or malformed output', async () => {
@@ -182,6 +224,20 @@ describe('notification delivery producer', () => {
         input
       )
     ).rejects.toThrow('notification_delivery_provider_order_unavailable');
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before intent creation when Runner cannot prepare an encrypted envelope', async () => {
+    await expect(
+      produceNotificationDelivery(
+        environment(
+          undefined,
+          undefined,
+          vi.fn(async () => Promise.reject(new Error('missing')))
+        ),
+        input
+      )
+    ).rejects.toThrow('notification_delivery_encryption_key_unavailable');
     expect(mocks.create).not.toHaveBeenCalled();
   });
 

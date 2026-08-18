@@ -86,6 +86,44 @@ export interface UserMissingRequiredField {
 	field_type: string;
 }
 
+export interface AccountSupportExternalReference {
+	system: string;
+	kind: string;
+	reference: string;
+}
+
+export interface AccountSupportContextDocument {
+	schema_version: 1;
+	summary?: string;
+	external_references: AccountSupportExternalReference[];
+}
+
+export interface AccountSupportContextView {
+	context: AccountSupportContextDocument;
+	version: number;
+	created_by: string | null;
+	updated_by: string | null;
+	created_at: number | null;
+	updated_at: number | null;
+}
+
+export interface AccountLegalHold {
+	id: string;
+	subject_type: 'account';
+	account_id: string;
+	state: 'active' | 'released' | 'expired';
+	reason_code: string;
+	case_reference: string | null;
+	expires_at: number | null;
+	version: number;
+	created_by: string;
+	created_at: number;
+	released_by: string | null;
+	released_at: number | null;
+	release_reason: string | null;
+	updated_at: number;
+}
+
 /**
  * Pagination info
  */
@@ -426,6 +464,72 @@ export const adminUsersAPI = {
 			state: IdentifierReplacementOperationState;
 			attention_required: boolean;
 		};
+	},
+
+	async getSupportContext(id: string): Promise<AccountSupportContextView> {
+		const response = await adminFetch(`${adminUserPath(id)}/support-context`);
+		if (!response.ok) throw new Error('Failed to fetch account support context');
+		return response.json();
+	},
+
+	async replaceSupportContext(
+		id: string,
+		input: { expected_version: number; context: AccountSupportContextDocument }
+	): Promise<AccountSupportContextView> {
+		const response = await adminFetch(`${adminUserPath(id)}/support-context`, {
+			method: 'PUT',
+			includeJsonContentType: true,
+			body: JSON.stringify(input)
+		});
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to save support context');
+		}
+		return response.json();
+	},
+
+	async listLegalHolds(id: string): Promise<AccountLegalHold[]> {
+		const response = await adminFetch(`${adminUserPath(id)}/legal-holds`);
+		if (!response.ok) throw new Error('Failed to fetch account legal holds');
+		const result = (await response.json()) as { items?: AccountLegalHold[] };
+		if (!Array.isArray(result.items)) throw new Error('Invalid account legal hold response');
+		return result.items;
+	},
+
+	async createLegalHold(
+		id: string,
+		input: { reason_code: string; case_reference?: string; expires_at?: string }
+	): Promise<AccountLegalHold> {
+		const response = await adminFetch(`${adminUserPath(id)}/legal-holds`, {
+			method: 'POST',
+			includeJsonContentType: true,
+			body: JSON.stringify(input)
+		});
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to create legal hold');
+		}
+		return response.json();
+	},
+
+	async releaseLegalHold(
+		id: string,
+		holdId: string,
+		input: { expected_version: number; reason_code: string }
+	): Promise<AccountLegalHold> {
+		const response = await adminFetch(
+			`${adminUserPath(id)}/legal-holds/${encodeURIComponent(holdId)}/release`,
+			{
+				method: 'POST',
+				includeJsonContentType: true,
+				body: JSON.stringify(input)
+			}
+		);
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({ error: 'unknown_error' }));
+			throw new Error(error.error_description || error.error || 'Failed to release legal hold');
+		}
+		return response.json();
 	},
 
 	/**

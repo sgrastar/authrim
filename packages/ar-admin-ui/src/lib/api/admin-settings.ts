@@ -54,7 +54,7 @@ export interface CategorySettings {
  */
 export interface SettingMetaItem {
 	key: string;
-	type: 'number' | 'boolean' | 'string' | 'duration' | 'enum';
+	type: 'number' | 'boolean' | 'string' | 'duration' | 'enum' | 'json';
 	default: unknown;
 	envKey?: string;
 	label: string;

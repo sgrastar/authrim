@@ -74,6 +74,7 @@ describe('collectLookupBucketLoadSnapshot', () => {
         `CREATE TABLE lookup_bucket_counters (
            virtual_bucket INTEGER PRIMARY KEY,
            estimated_active_identifier_count INTEGER NOT NULL,
+           estimated_active_alias_count INTEGER NOT NULL DEFAULT 0,
            updated_at INTEGER NOT NULL
          );`
       );
@@ -83,13 +84,14 @@ describe('collectLookupBucketLoadSnapshot', () => {
          SELECT 0 UNION ALL SELECT value + 1 FROM bucket WHERE value < 2047
        )
        INSERT INTO lookup_bucket_counters
-       SELECT value, CASE WHEN value = 7 THEN 900 ELSE 1 END, ${now} FROM bucket;`
+       SELECT value, CASE WHEN value = 7 THEN 900 ELSE 1 END,
+              CASE WHEN value = 7 THEN 4 ELSE 0 END, ${now} FROM bucket;`
     );
     lookupB.exec(
       `WITH RECURSIVE bucket(value) AS (
          SELECT 2048 UNION ALL SELECT value + 1 FROM bucket WHERE value < 4095
        )
-       INSERT INTO lookup_bucket_counters SELECT value, 2, ${now} FROM bucket;`
+       INSERT INTO lookup_bucket_counters SELECT value, 2, 0, ${now} FROM bucket;`
     );
   });
 
@@ -150,12 +152,14 @@ describe('collectLookupBucketLoadSnapshot', () => {
       lookupShardId: 'lookup-a',
       assignmentGeneration: 3,
       activeIdentifierCount: 900,
+      activeAliasCount: 4,
       counterUpdatedAt: now,
     });
     expect(result.buckets[2048]).toMatchObject({
       lookupShardId: 'lookup-b',
       assignmentGeneration: 4,
       activeIdentifierCount: 2,
+      activeAliasCount: 0,
     });
     expect(JSON.stringify(result)).not.toContain('bindingRef');
   });

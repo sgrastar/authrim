@@ -36,7 +36,7 @@ export interface InProcessPluginAccess {
 export type InProcessPluginHookHandler = (
   invocation: PluginHookExecutionInvocation,
   access: InProcessPluginAccess
-) => Promise<void>;
+) => Promise<{ providerMessageId?: string } | void>;
 
 export interface InProcessPluginRegistry {
   resolve(pluginId: string, capability: string): InProcessPluginHookHandler | null;
@@ -104,13 +104,25 @@ export class PluginHookBackendRouter implements PluginHookBackend {
           },
         };
       } catch (error) {
+        if (error instanceof Error) {
+          const notificationErrorCodes: Record<string, string> = {
+            notification_intent_key_unavailable: 'plugin_notification_key_unavailable',
+            notification_intent_key_unwrap_failed: 'plugin_notification_key_unwrap_failed',
+            notification_intent_payload_authentication_failed:
+              'plugin_notification_payload_authentication_failed',
+            notification_intent_decryption_failed: 'plugin_notification_decryption_failed',
+            notification_intent_envelope_invalid: 'plugin_notification_envelope_invalid',
+            notification_intent_payload_invalid: 'plugin_notification_payload_invalid',
+          };
+          const normalized = notificationErrorCodes[error.message];
+          if (normalized) throw new Error(normalized);
+        }
         if (
           error instanceof Error &&
           [
             'notification_intent_unavailable',
             'notification_intent_terminal',
             'notification_intent_expired',
-            'notification_intent_authentication_failed',
             'notification_intent_row_invalid',
             'notification_intent_delivery_input_invalid',
           ].includes(error.message)
@@ -123,7 +135,7 @@ export class PluginHookBackendRouter implements PluginHookBackend {
       if (!('accountId' in invocation.payload)) throw new Error('plugin_hook_rejected');
       execution = { ...invocation, payload: invocation.payload };
     }
-    const invoke = async (): Promise<void> => {
+    const invoke = async (): Promise<{ providerMessageId?: string } | void> => {
       if (target.backendKind === 'dynamic_worker') {
         return this.dynamicBackend.invoke(execution);
       }
@@ -153,7 +165,7 @@ export class PluginHookBackendRouter implements PluginHookBackend {
           : {}),
       };
       try {
-        await Promise.race([
+        return await Promise.race([
           handler(execution, {
             signal,
             fetchExternal: (request) =>
@@ -181,13 +193,14 @@ export class PluginHookBackendRouter implements PluginHookBackend {
         throw new Error('plugin_hook_transient_failure');
       }
     };
-    await invoke();
+    const executionResult = await invoke();
     if (notificationReference && this.notificationIntents) {
       try {
         await this.notificationIntents.complete({
           tenantId: invocation.tenantId,
           intentId: invocation.payload.intentId,
           pluginInstallationId: invocation.pluginInstallationId,
+          providerMessageId: executionResult?.providerMessageId,
           now,
         });
       } catch {

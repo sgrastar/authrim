@@ -899,6 +899,34 @@ describe('Router Worker', () => {
       expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledOnce();
     });
 
+    it.each(['/logged-out', '/logout-complete'])(
+      'should preserve the Login UI CSP on the %s issuer-hosted completion page',
+      async (path) => {
+        const upstreamCsp = "default-src 'self'; style-src 'self' 'unsafe-inline'";
+        const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+        loginUiWorker.fetch.mockResolvedValueOnce(
+          new Response('logout complete', {
+            headers: { 'Content-Security-Policy': upstreamCsp },
+          })
+        );
+        const envWithIssuerLoginUiPaths = {
+          ...mockEnv,
+          ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+          ENABLE_LOGIN_UI_PROXY: 'false',
+          AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+          LOGIN_UI_WORKER: loginUiWorker,
+        };
+
+        const response = await app.fetch(
+          new Request(`https://test.example.com${path}`),
+          envWithIssuerLoginUiPaths
+        );
+
+        expect(response.headers.get('Content-Security-Policy')).toBe(upstreamCsp);
+        expect(loginUiWorker.fetch).toHaveBeenCalledOnce();
+      }
+    );
+
     it('should NOT apply CSP to /flow/* paths', async () => {
       const req = new Request('https://example.com/flow/confirm');
       const res = await app.fetch(req, mockEnv);

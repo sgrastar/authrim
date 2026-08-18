@@ -1138,6 +1138,7 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       intentId: `directory-email-code:${challengeId}`,
       outboxId: `notification:${challengeId}`,
       notificationKind: 'auth.directory-email-code',
+      accountId: transaction.user_id,
       idempotencyKey: `directory-email-code:${challengeId}`,
       expiresAt: Math.floor(issuedAt / 1000) + MIGRATION_EMAIL_CODE_TTL_SECONDS,
       payload: {

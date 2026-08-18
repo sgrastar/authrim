@@ -67,6 +67,7 @@ import { createLogger, type Logger } from '../../utils/logger';
 import { readR2ObjectTextWithLimit } from '../../utils/body-limits';
 import { createAuditPrimaryStorageAdapter } from './external-primary';
 import { resolveTenantRuntimeProfilesFromEnv } from '../runtime-profile-resolver';
+import { PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID } from '../logging-runtime-policy';
 import {
   buildCanonicalAuditArchiveRecordFromEntry,
   buildCanonicalAuditBatch,
@@ -2885,7 +2886,19 @@ async function processDeliveryFanoutPayload(input: {
   };
 
   try {
-    const destination = await loadLoggingDestinationForDelivery(env, payload.destination_id);
+    const isLegacyPlatformDefaultArchive =
+      payload.destination_id === PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID &&
+      payload.plane === 'archive';
+    const destination: RuntimeDeliveryDestination | null = isLegacyPlatformDefaultArchive
+      ? {
+          id: PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID,
+          provider: 'r2',
+          lifecycle_status: 'active',
+          provider_config: null,
+          credential_ref: null,
+          credential_version: null,
+        }
+      : await loadLoggingDestinationForDelivery(env, payload.destination_id);
     if (!destination) {
       throw new Error('logging_delivery_destination_not_found');
     }

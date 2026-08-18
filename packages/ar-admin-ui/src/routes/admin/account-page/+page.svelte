@@ -5,6 +5,7 @@
 	import { adminScreensAPI, type Screen, type ScreenField } from '$lib/api/admin-screens';
 	import { adminSettingsAPI, type CategorySettings } from '$lib/api/admin-settings';
 	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
+	import { LOGIN_UI_LOCALE_OPTIONS, type LoginUILocale } from '$lib/login-ui/locales';
 
 	type PlacementWidth = 'full' | 'half';
 	type VisibilityCondition =
@@ -59,29 +60,6 @@
 	const DRAFT_KEY = 'login-ui.account_page_draft';
 	const PUBLISHED_KEY = 'login-ui.account_page_published';
 	const PAGES_KEY = 'login-ui.account_pages';
-	const PAGE_LOCALES = [
-		['en', 'English'],
-		['ja', '日本語'],
-		['zh-CN', '简体中文'],
-		['zh-TW', '繁體中文'],
-		['es', 'Español'],
-		['pt', 'Português'],
-		['fr', 'Français'],
-		['de', 'Deutsch'],
-		['ko', '한국어'],
-		['ru', 'Русский'],
-		['id', 'Bahasa Indonesia'],
-		['ar', 'العربية'],
-		['it', 'Italiano'],
-		['th', 'ไทย'],
-		['vi', 'Tiếng Việt'],
-		['hi', 'हिन्दी'],
-		['bn', 'বাংলা'],
-		['tr', 'Türkçe'],
-		['sw', 'Kiswahili'],
-		['am', 'አማርኛ'],
-		['pl', 'Polski']
-	] as const;
 	const DEFAULT_PAGE: AccountPageDefinition = {
 		schema_version: 'authrim.account_page.v1',
 		base_preset_id: 'authrim-default',
@@ -162,7 +140,7 @@
 		pages: []
 	});
 	let selectedPageId = $state('');
-	let editorLocale = $state(getLocale());
+	let editorLocale = $state<LoginUILocale>(getLocale());
 	let previewViewport = $state<'desktop' | 'mobile'>('desktop');
 	let draggedIndex = $state<number | null>(null);
 
@@ -821,8 +799,8 @@
 			<label>
 				<span>{t('編集ロケール', 'Editing locale')}</span>
 				<select bind:value={editorLocale}>
-					{#each PAGE_LOCALES as locale (locale[0])}<option value={locale[0]}
-							>{locale[1]} ({locale[0]})</option
+					{#each LOGIN_UI_LOCALE_OPTIONS as locale (locale.code)}<option value={locale.code}
+							>{locale.label} ({locale.code})</option
 						>{/each}
 				</select>
 			</label>

@@ -136,4 +136,14 @@ describe('theme preview page shell', () => {
 			"handleEditorChange('login-ui.brand_name', event.currentTarget.value.trim())"
 		);
 	});
+
+	it('retains the brand name in saved and published custom theme values', () => {
+		const themeValueKeysStart = source.indexOf('const THEME_VALUE_KEYS = new Set([');
+		const themeValueKeysEnd = source.indexOf(']);', themeValueKeysStart);
+		const themeValueKeys = source.slice(themeValueKeysStart, themeValueKeysEnd);
+
+		expect(themeValueKeys).toContain("'login-ui.brand_name'");
+		expect(source).toContain('if (THEME_VALUE_KEYS.has(key)) values[key] = value;');
+		expect(source).toContain('for (const key of THEME_VALUE_KEYS)');
+	});
 });

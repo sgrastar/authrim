@@ -1,15 +1,86 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('$app/environment', () => ({ browser: true }));
+
 import { adminFetch, buildAdminHeaders } from './admin-request';
 import { settingsContext } from '$lib/stores/settings-context.svelte';
+import { adminAuth } from '$lib/stores/admin-auth.svelte';
 
 describe('buildAdminHeaders', () => {
 	beforeEach(() => {
 		localStorage.clear();
 		sessionStorage.clear();
 		settingsContext.reset();
+		adminAuth.clearAuth();
 		vi.restoreAllMocks();
+	});
+
+	it('repairs a persisted client scope that no longer has a selected client', async () => {
+		adminAuth.setAuthenticated({
+			userId: 'admin-1',
+			tenantId: 'first',
+			email: 'admin@example.test',
+			roles: ['system_admin'],
+			permissions: ['*'],
+			adminScope: 'tenant',
+			isPlatformAdmin: false
+		});
+		sessionStorage.setItem('settings_scope_level', 'client');
+		sessionStorage.setItem('settings_tenant_id', 'first');
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/api/admin/tenants')) {
+				return Response.json({ tenants: [{ id: 'first', name: 'First' }] });
+			}
+			if (url.endsWith('/api/admin/tenants/first/clients')) {
+				return Response.json({ clients: [{ client_id: 'client-a', client_name: 'Client A' }] });
+			}
+			return Response.json({}, { status: 404 });
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		expect(settingsContext.canAccessScope('client')).toBe(true);
+
+		await settingsContext.initialize();
+
+		expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+			'/api/admin/tenants',
+			'/api/admin/tenants/first/clients'
+		]);
+		expect(settingsContext.scopeContext).toEqual({
+			level: 'client',
+			tenantId: 'first',
+			clientId: 'client-a'
+		});
+		expect(sessionStorage.getItem('settings_client_id')).toBe('client-a');
+	});
+
+	it('loads and selects a client when switching from tenant to client scope', async () => {
+		adminAuth.setAuthenticated({
+			userId: 'admin-1',
+			tenantId: 'first',
+			email: 'admin@example.test',
+			roles: ['system_admin'],
+			permissions: ['*'],
+			adminScope: 'tenant',
+			isPlatformAdmin: false
+		});
+		await settingsContext.setTenantId('first');
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				Response.json({ clients: [{ client_id: 'client-a', client_name: 'Client A' }] })
+			)
+		);
+
+		await settingsContext.setLevel('client');
+
+		expect(settingsContext.scopeContext).toEqual({
+			level: 'client',
+			tenantId: 'first',
+			clientId: 'client-a'
+		});
 	});
 
 	it('uses the persisted tenant selection when store initialization has not completed yet', () => {

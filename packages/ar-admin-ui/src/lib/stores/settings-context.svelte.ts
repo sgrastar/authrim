@@ -121,6 +121,15 @@ function createSettingsContextStore() {
 		return getPermissionForScope(state.currentLevel, userRoles) === 'edit';
 	}
 
+	function leaveInvalidClientScope(): void {
+		state.clientId = null;
+		state.currentLevel = 'tenant';
+		if (browser) {
+			sessionStorage.removeItem('settings_client_id');
+			sessionStorage.setItem('settings_scope_level', 'tenant');
+		}
+	}
+
 	return {
 		/**
 		 * Resolve the effective tenant ID for API calls.
@@ -234,7 +243,7 @@ function createSettingsContextStore() {
 		/**
 		 * Set scope level
 		 */
-		setLevel(level: SettingScopeLevel): void {
+		async setLevel(level: SettingScopeLevel): Promise<void> {
 			if (!canAccessScope(level)) {
 				state.error = `You don't have permission to access ${level} settings`;
 				return;
@@ -251,6 +260,10 @@ function createSettingsContextStore() {
 			// Save to session storage for persistence
 			if (browser) {
 				sessionStorage.setItem('settings_scope_level', level);
+			}
+
+			if (level === 'client') {
+				await this.loadClients();
 			}
 		},
 
@@ -372,12 +385,29 @@ function createSettingsContextStore() {
 							name: c.client_name || c.client_id
 						})
 					);
+					if (state.currentLevel === 'client') {
+						const selectedClient = state.availableClients.some(
+							(client) => client.id === state.clientId
+						)
+							? state.clientId
+							: (state.availableClients[0]?.id ?? null);
+						state.clientId = selectedClient;
+						if (browser) {
+							if (selectedClient) {
+								sessionStorage.setItem('settings_client_id', selectedClient);
+							} else {
+								leaveInvalidClientScope();
+							}
+						}
+					}
 				} else {
 					state.availableClients = [];
+					if (state.currentLevel === 'client') leaveInvalidClientScope();
 				}
 			} catch (err) {
 				console.warn('Failed to load clients:', err);
 				state.availableClients = [];
+				if (state.currentLevel === 'client') leaveInvalidClientScope();
 			} finally {
 				state.isLoading = false;
 			}
@@ -421,8 +451,11 @@ function createSettingsContextStore() {
 		 */
 		reset(): void {
 			state.currentLevel = 'tenant';
-			state.tenantId = state.availableTenants[0]?.id || adminAuth.user?.tenantId || '';
+			state.tenantId = adminAuth.user?.tenantId || '';
 			state.clientId = null;
+			state.availableTenants = [];
+			state.availableClients = [];
+			state.isLoading = false;
 			state.error = null;
 
 			if (browser) {

@@ -1,4 +1,5 @@
 import {
+  createAuditLog,
   ensureDatabaseAdapter,
   produceNotificationDelivery,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -250,6 +251,7 @@ function coordinator(env: Env, pii: DatabaseAdapter): IdentifierReplacementCoord
         intentId: `identifier-replaced:${input.operationId}`,
         outboxId: `notification:${input.operationId}`,
         notificationKind: 'account.identifier-replaced',
+        accountId: input.accountId,
         idempotencyKey: `identifier-replaced:${input.operationId}`,
         expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
         payload: {
@@ -262,6 +264,46 @@ function coordinator(env: Env, pii: DatabaseAdapter): IdentifierReplacementCoord
       });
     },
   });
+}
+
+async function recordScheduledAccountEmailChange(
+  env: Env,
+  pii: DatabaseAdapter,
+  log: IdentifierReplacementScheduledLogger,
+  claim: OutboxClaimRow
+): Promise<void> {
+  try {
+    const operation = await pii.queryOne<{
+      authority: string;
+      identifier_kind: string;
+    }>(
+      `SELECT authority, identifier_kind
+         FROM identity_identifier_replacement_operations
+        WHERE operation_id = ? AND tenant_id = ? AND account_id = ?`,
+      [claim.operation_id, claim.tenant_id, claim.account_id],
+      { consistencyClass: 'primary_required' }
+    );
+    if (operation?.authority !== 'self_service' || operation.identifier_kind !== 'email_exact') {
+      return;
+    }
+
+    await createAuditLog(env, {
+      tenantId: claim.tenant_id,
+      userId: claim.account_id,
+      action: 'account.email.changed',
+      resource: 'email',
+      resourceId: claim.operation_id,
+      ipAddress: 'unknown',
+      userAgent: 'identifier-replacement-scheduler',
+      metadata: JSON.stringify({ completion_source: 'scheduled_retry' }),
+      severity: 'info',
+    });
+  } catch {
+    log.warn('Completed account email change audit could not be recorded', {
+      operationId: claim.operation_id,
+      errorCode: 'account_email_change_audit_failed',
+    });
+  }
 }
 
 export async function processScheduledIdentifierReplacements(
@@ -329,11 +371,14 @@ export async function processScheduledIdentifierReplacements(
           }
           processedOperations += 1;
           try {
-            await coordinator(env, pii).resume({
+            const result = await coordinator(env, pii).resume({
               operationId: claim.operation_id,
               tenantId: claim.tenant_id,
               accountId: claim.account_id,
             });
+            if (result.state === 'completed') {
+              await recordScheduledAccountEmailChange(env, pii, log, claim);
+            }
           } catch (error) {
             await releaseOutboxFailure(pii, claim, ownerId, Math.floor(nowMs() / 1000), error);
           }

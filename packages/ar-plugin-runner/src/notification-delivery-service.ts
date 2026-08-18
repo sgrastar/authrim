@@ -13,6 +13,7 @@ import { D1PluginInstallationResolver } from './installations';
 import {
   D1NotificationIntentDeliveryStore,
   notificationPrivateJwksFromEnv,
+  notificationPayloadSymmetricKeysFromEnv,
 } from './notification-intent';
 import { D1PluginHookOutboxStore, PluginHookOutboxDispatcher } from './outbox';
 import type { PluginRunnerEnv } from './types';
@@ -91,7 +92,8 @@ export class ImmediateNotificationDeliveryService {
         new D1NotificationIntentDeliveryStore(
           db,
           this.env.AUTHRIM_ENVIRONMENT_NAME,
-          notificationPrivateJwksFromEnv(this.env)
+          notificationPrivateJwksFromEnv(this.env),
+          notificationPayloadSymmetricKeysFromEnv(this.env).all
         ),
         () => now
       ),

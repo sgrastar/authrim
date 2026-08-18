@@ -3,12 +3,8 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
-	import {
-		LOGIN_UI_LOCALE_LABELS,
-		isLoginUILocale,
-		toDocumentDirection,
-		toDocumentLanguage
-	} from '$lib/i18n/locales';
+	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
+	import { buildLoginUILanguageSelectorModel } from '$lib/i18n/language-selector';
 
 	const { languageStore, themeStore } = useLoginUIStores();
 
@@ -17,8 +13,15 @@
 		showLanguageSelect = true
 	}: { showThemeToggle?: boolean; showLanguageSelect?: boolean } = $props();
 
-	const availableLocales = $derived(languageStore.supportedLocales as Locales[]);
 	let currentLang = $state<Locales>(getLocale());
+	const selectorModel = $derived(
+		buildLoginUILanguageSelectorModel(
+			languageStore.supportedLocales,
+			languageStore.primaryLocales,
+			languageStore.showEnglishLanguageNames,
+			currentLang
+		)
+	);
 
 	$effect(() => {
 		if (!languageStore.isEnabled(currentLang)) {
@@ -78,9 +81,20 @@
 				aria-label={$LL.language_switch()}
 				class="auth-lang-select"
 			>
-				{#each availableLocales as lang (lang)}
-					<option value={lang}>{LOGIN_UI_LOCALE_LABELS[lang]}</option>
-				{/each}
+				{#if selectorModel.grouped}
+					{#each selectorModel.mainOptions as option (option.locale)}
+						<option value={option.locale}>{option.label}</option>
+					{/each}
+					<optgroup label={selectorModel.allLanguagesLabel}>
+						{#each selectorModel.allLanguageOptions as option (option.locale)}
+							<option value={option.locale}>{option.label}</option>
+						{/each}
+					</optgroup>
+				{:else}
+					{#each selectorModel.flatOptions as option (option.locale)}
+						<option value={option.locale}>{option.label}</option>
+					{/each}
+				{/if}
 			</select>
 		</div>
 	{/if}

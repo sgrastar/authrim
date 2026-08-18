@@ -627,7 +627,7 @@ export interface RegionShardValidationResult {
  *
  * Rules:
  * 1. regionDistribution must sum to 100
- * 2. totalShards >= active region count
+ * 2. totalShards is a positive multiple of active region count
  * 3. shardCount = 0 regions are allowed
  * 4. totalShards and regionDistribution must be consistent
  *
@@ -666,6 +666,13 @@ export function validateRegionShardRequest(body: {
     return {
       valid: false,
       error: `Total shards (${totalShards}) must be >= active region count (${activeRegions})`,
+    };
+  }
+
+  if (activeRegions > 0 && totalShards % activeRegions !== 0) {
+    return {
+      valid: false,
+      error: `Total shards (${totalShards}) must be a multiple of active region count (${activeRegions})`,
     };
   }
 

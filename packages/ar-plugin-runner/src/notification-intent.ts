@@ -1,10 +1,12 @@
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import {
   decryptNotificationIntentPayload,
+  encryptNotificationIntentPayloadWithSecret,
   parseNotificationDeliveryPayload,
   type NotificationDeliveryPayload,
 } from '@authrim/ar-lib-core';
 import type { PluginNotificationHookReferencePayload, PluginRunnerEnv } from './types';
+import { validatePluginEncryptionKeyring } from './encryption-keyring';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_KIND = /^[a-z][a-z0-9._:-]{0,127}$/u;
@@ -61,6 +63,27 @@ function integer(value: number | string, code: string): number {
   const parsed = typeof value === 'number' ? value : Number(value);
   if (!Number.isSafeInteger(parsed)) throw new Error(code);
   return parsed;
+}
+
+function notificationIntentDecryptionError(error: unknown): string {
+  if (!(error instanceof Error)) return 'notification_intent_decryption_failed';
+  if (error.message === 'notification_encryption_key_unavailable') {
+    return 'notification_intent_key_unavailable';
+  }
+  if (
+    error.message === 'notification_encryption_key_invalid' ||
+    error.message === 'notification_envelope_invalid' ||
+    error.message === 'notification_envelope_context_invalid'
+  ) {
+    return 'notification_intent_envelope_invalid';
+  }
+  if (error.message === 'notification_envelope_key_unwrap_failed') {
+    return 'notification_intent_key_unwrap_failed';
+  }
+  if (error.message === 'notification_envelope_payload_authentication_failed') {
+    return 'notification_intent_payload_authentication_failed';
+  }
+  return 'notification_intent_decryption_failed';
 }
 
 function activeProvider(row: NotificationIntentRow): string {
@@ -135,6 +158,159 @@ export function notificationPrivateJwksFromEnv(
   return JSON.stringify({ keys });
 }
 
+export function notificationPayloadEncryptionKeyFromEnv(
+  env: Pick<PluginRunnerEnv, 'NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A'>
+): { activeKeyId: string; publicJwks: string } {
+  const privateKey = parsePrivateJwk(env.NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A, 'A');
+  const activeKeyId = privateKey.kid as string;
+  const publicKey = {
+    kty: privateKey.kty,
+    n: privateKey.n,
+    e: privateKey.e,
+    kid: activeKeyId,
+    use: privateKey.use,
+    alg: privateKey.alg,
+    key_ops: ['encrypt'],
+  };
+  return {
+    activeKeyId,
+    publicJwks: JSON.stringify({ keys: [publicKey] }),
+  };
+}
+
+type NotificationPayloadSymmetricKeyEnv = Pick<
+  PluginRunnerEnv,
+  | 'PLUGIN_ENCRYPTION_KEY'
+  | 'PLUGIN_ENCRYPTION_ACTIVE_KEY_ID'
+  | 'PLUGIN_ENCRYPTION_KEY_PREVIOUS'
+  | 'PLUGIN_ENCRYPTION_PREVIOUS_KEY_ID'
+>;
+
+export function notificationPayloadSymmetricKeysFromEnv(env: NotificationPayloadSymmetricKeyEnv): {
+  active: { keyId: string; secret: string };
+  all: Array<{ keyId: string; secret: string }>;
+} {
+  const previousId = env.PLUGIN_ENCRYPTION_PREVIOUS_KEY_ID;
+  const previousSecret = env.PLUGIN_ENCRYPTION_KEY_PREVIOUS;
+  if ((previousId === undefined) !== (previousSecret === undefined)) {
+    throw new Error('plugin_notification_symmetric_keyring_invalid');
+  }
+  const keyring = validatePluginEncryptionKeyring({
+    active: {
+      id: env.PLUGIN_ENCRYPTION_ACTIVE_KEY_ID ?? 'v1',
+      secret: env.PLUGIN_ENCRYPTION_KEY,
+    },
+    ...(previousId && previousSecret
+      ? { previous: { id: previousId, secret: previousSecret } }
+      : {}),
+  });
+  const active = {
+    keyId: `notification:${keyring.active.id}`,
+    secret: keyring.active.secret,
+  };
+  return {
+    active,
+    all: [
+      active,
+      ...(keyring.previous
+        ? [
+            {
+              keyId: `notification:${keyring.previous.id}`,
+              secret: keyring.previous.secret,
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
+export async function encryptNotificationPayloadFromEnv(
+  env: Pick<
+    PluginRunnerEnv,
+    | 'AUTHRIM_ENVIRONMENT_NAME'
+    | 'PLUGIN_ENCRYPTION_KEY'
+    | 'PLUGIN_ENCRYPTION_ACTIVE_KEY_ID'
+    | 'PLUGIN_ENCRYPTION_KEY_PREVIOUS'
+    | 'PLUGIN_ENCRYPTION_PREVIOUS_KEY_ID'
+  >,
+  input: unknown
+): Promise<{ activeKeyId: string; envelope: string }> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('plugin_notification_encryption_input_invalid');
+  }
+  const record = input as Record<string, unknown>;
+  if (Object.keys(record).sort().join(',') !== 'context,payload') {
+    throw new Error('plugin_notification_encryption_input_invalid');
+  }
+  const context = record.context;
+  if (!context || typeof context !== 'object' || Array.isArray(context)) {
+    throw new Error('plugin_notification_encryption_input_invalid');
+  }
+  const rawContext = context as Record<string, unknown>;
+  if (
+    Object.keys(rawContext).sort().join(',') !==
+      'environmentId,intentId,notificationKind,payloadVersion,tenantId' ||
+    rawContext.environmentId !== env.AUTHRIM_ENVIRONMENT_NAME ||
+    typeof rawContext.tenantId !== 'string' ||
+    typeof rawContext.intentId !== 'string' ||
+    typeof rawContext.notificationKind !== 'string' ||
+    rawContext.payloadVersion !== 1
+  ) {
+    throw new Error('plugin_notification_encryption_input_invalid');
+  }
+  const payload = parseNotificationDeliveryPayload(record.payload);
+  const envelopeContext = {
+    environmentId: rawContext.environmentId,
+    tenantId: rawContext.tenantId,
+    intentId: rawContext.intentId,
+    notificationKind: rawContext.notificationKind,
+    payloadVersion: 1 as const,
+  };
+  let keyring: ReturnType<typeof notificationPayloadSymmetricKeysFromEnv>;
+  try {
+    keyring = notificationPayloadSymmetricKeysFromEnv(env);
+  } catch {
+    throw new Error('plugin_notification_key_configuration_invalid');
+  }
+  let envelope: string;
+  try {
+    envelope = await encryptNotificationIntentPayloadWithSecret({
+      secret: keyring.active.secret,
+      keyId: keyring.active.keyId,
+      context: envelopeContext,
+      payload,
+    });
+  } catch {
+    throw new Error('plugin_notification_payload_encryption_failed');
+  }
+  let reflected: unknown;
+  try {
+    // Validate the active live key before returning an envelope to another Worker.
+    // This keeps a bad key from creating a durable dead-letter intent.
+    reflected = await decryptNotificationIntentPayload({
+      symmetricKeys: keyring.all,
+      context: envelopeContext,
+      envelope,
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === 'notification_envelope_private_key_import_failed') {
+        throw new Error('plugin_notification_private_key_import_failed');
+      }
+      if (error.message === 'notification_envelope_payload_authentication_failed') {
+        throw new Error('plugin_notification_payload_authentication_failed');
+      }
+    }
+    throw new Error('plugin_notification_encryption_round_trip_failed');
+  }
+  try {
+    parseNotificationDeliveryPayload(reflected, payload.channel);
+    return { activeKeyId: keyring.active.keyId, envelope };
+  } catch {
+    throw new Error('plugin_notification_payload_round_trip_invalid');
+  }
+}
+
 export async function cleanupExpiredNotificationDeliveryIntents(
   db: D1Database,
   input: { now: number; limit?: number }
@@ -180,7 +356,8 @@ export class D1NotificationIntentDeliveryStore {
   constructor(
     private readonly db: D1Database,
     private readonly environmentId: string,
-    private readonly privateJwks: string
+    private readonly privateJwks: string,
+    private readonly symmetricKeys: Array<{ keyId: string; secret: string }> = []
   ) {
     if (!SAFE_ID.test(environmentId)) throw new Error('notification_intent_environment_invalid');
   }
@@ -252,6 +429,7 @@ export class D1NotificationIntentDeliveryStore {
     try {
       decrypted = await decryptNotificationIntentPayload({
         privateJwks: this.privateJwks,
+        symmetricKeys: this.symmetricKeys,
         context: {
           environmentId: this.environmentId,
           tenantId: row.tenant_id,
@@ -261,32 +439,41 @@ export class D1NotificationIntentDeliveryStore {
         },
         envelope: row.payload_envelope_json,
       });
-      return {
-        state: 'pending',
-        intentId: row.intent_id,
-        tenantId: row.tenant_id,
-        pluginInstallationId: activePluginInstallationId,
-        notificationKind: row.notification_kind,
-        idempotencyKey: row.idempotency_key,
-        payload: parseNotificationDeliveryPayload(decrypted, row.channel),
-        expiresAt,
-      };
+    } catch (error) {
+      await this.wipePending(session, row, 'dead_letter', input.now);
+      throw new Error(notificationIntentDecryptionError(error));
+    }
+    let payload: NotificationDeliveryPayload;
+    try {
+      payload = parseNotificationDeliveryPayload(decrypted, row.channel);
     } catch {
       await this.wipePending(session, row, 'dead_letter', input.now);
-      throw new Error('notification_intent_authentication_failed');
+      throw new Error('notification_intent_payload_invalid');
     }
+    return {
+      state: 'pending',
+      intentId: row.intent_id,
+      tenantId: row.tenant_id,
+      pluginInstallationId: activePluginInstallationId,
+      notificationKind: row.notification_kind,
+      idempotencyKey: row.idempotency_key,
+      payload,
+      expiresAt,
+    };
   }
 
   async complete(input: {
     tenantId: string;
     intentId: string;
     pluginInstallationId: string;
+    providerMessageId?: string;
     now: number;
   }): Promise<void> {
     if (
       !SAFE_ID.test(input.tenantId) ||
       !SAFE_ID.test(input.intentId) ||
       !SAFE_ID.test(input.pluginInstallationId) ||
+      (input.providerMessageId !== undefined && input.providerMessageId.length > 512) ||
       !Number.isSafeInteger(input.now) ||
       input.now < 1
     ) {
@@ -296,7 +483,9 @@ export class D1NotificationIntentDeliveryStore {
       .prepare(
         `UPDATE notification_delivery_intents
             SET state = 'delivered', payload_key_id = NULL, payload_envelope_json = NULL,
-                delivered_at = ?, updated_at = ?
+                delivered_at = ?, provider_accepted_at = ?, provider_message_id = ?,
+                delivery_status = 'provider_accepted', delivery_status_updated_at = ?,
+                attempt_count = attempt_count + 1, last_error_code = NULL, updated_at = ?
           WHERE intent_id = ? AND tenant_id = ?
             AND json_extract(
               provider_installation_ids_json,
@@ -304,7 +493,16 @@ export class D1NotificationIntentDeliveryStore {
             ) = ?
             AND state = 'pending'`
       )
-      .bind(input.now, input.now, input.intentId, input.tenantId, input.pluginInstallationId)
+      .bind(
+        input.now,
+        input.now,
+        input.providerMessageId ?? null,
+        input.now,
+        input.now,
+        input.intentId,
+        input.tenantId,
+        input.pluginInstallationId
+      )
       .run();
     if ((result.meta.changes ?? 0) === 1) return;
     const reflected = await primary(this.db)

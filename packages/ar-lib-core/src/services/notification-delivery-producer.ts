@@ -1,4 +1,5 @@
 import type { ImmediateNotificationDeliveryResult, PluginRunnerServiceBinding } from '../types/env';
+import { encryptValue } from '../utils/pii-encryption';
 import {
   createNotificationDeliveryIntent,
   type NotificationDeliveryIntentReference,
@@ -15,12 +16,14 @@ const SAFE_ENVIRONMENT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 export interface NotificationDeliveryProducerEnv extends NotificationIntentRoutingEnv {
   PLUGIN_RUNNER?: Pick<
     PluginRunnerServiceBinding,
-    'deliverNotification' | 'resolveNotificationProviderOrder'
+    'deliverNotification' | 'encryptNotificationPayload' | 'resolveNotificationProviderOrder'
   >;
   AUTHRIM_ENVIRONMENT_NAME?: string;
   NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS?: string;
   NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID?: string;
   NOTIFICATION_INTENT_HMAC_KEY?: string;
+  PII_ENCRYPTION_KEY?: string;
+  PII_ENCRYPTION_KEY_VERSION?: string;
 }
 
 export interface ProduceNotificationDeliveryInput {
@@ -32,6 +35,7 @@ export interface ProduceNotificationDeliveryInput {
   expiresAt: number;
   payload: NotificationDeliveryPayload;
   requiredInstallationId?: string;
+  accountId?: string;
   now?: number;
 }
 
@@ -43,19 +47,19 @@ export interface ProduceNotificationDeliveryResult {
 
 function configuration(env: NotificationDeliveryProducerEnv) {
   const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
-  const publicJwks = env.NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS;
-  const activeKeyId = env.NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID;
   const idempotencyHmacKey = env.NOTIFICATION_INTENT_HMAC_KEY;
-  if (
-    !environmentId ||
-    !SAFE_ENVIRONMENT.test(environmentId) ||
-    !publicJwks ||
-    !activeKeyId ||
-    !idempotencyHmacKey
-  ) {
+  if (!environmentId || !SAFE_ENVIRONMENT.test(environmentId) || !idempotencyHmacKey) {
     throw new Error('notification_delivery_producer_configuration_invalid');
   }
-  return { environmentId, publicJwks, activeKeyId, idempotencyHmacKey };
+  return { environmentId, idempotencyHmacKey };
+}
+
+function maskRecipient(value: string): string {
+  const separator = value.lastIndexOf('@');
+  if (separator < 1) return '***';
+  const local = value.slice(0, separator);
+  const domain = value.slice(separator + 1);
+  return `${local.slice(0, Math.min(2, local.length))}${'*'.repeat(Math.max(3, local.length - 2))}@${domain}`;
 }
 
 export async function produceNotificationDelivery(
@@ -67,10 +71,22 @@ export async function produceNotificationDelivery(
   if (!env.PLUGIN_RUNNER) {
     throw new Error('notification_delivery_provider_order_unavailable');
   }
-  const providerOrder = await env.PLUGIN_RUNNER.resolveNotificationProviderOrder({
-    tenantId: target.tenantId,
-    channel: input.payload.channel,
-  }).catch(() => null);
+  const [providerOrder, encryptedPayload] = await Promise.all([
+    env.PLUGIN_RUNNER.resolveNotificationProviderOrder({
+      tenantId: target.tenantId,
+      channel: input.payload.channel,
+    }).catch(() => null),
+    env.PLUGIN_RUNNER.encryptNotificationPayload({
+      context: {
+        environmentId: config.environmentId,
+        tenantId: target.tenantId,
+        intentId: input.intentId,
+        notificationKind: input.notificationKind,
+        payloadVersion: 1,
+      },
+      payload: input.payload,
+    }).catch(() => null),
+  ]);
   if (
     !providerOrder ||
     providerOrder.tenantId !== target.tenantId ||
@@ -84,6 +100,13 @@ export async function produceNotificationDelivery(
   ) {
     throw new Error('notification_delivery_provider_order_unavailable');
   }
+  if (
+    !encryptedPayload ||
+    typeof encryptedPayload.activeKeyId !== 'string' ||
+    typeof encryptedPayload.envelope !== 'string'
+  ) {
+    throw new Error('notification_delivery_encryption_key_unavailable');
+  }
   const installationIds = input.requiredInstallationId
     ? providerOrder.installationIds.includes(input.requiredInstallationId)
       ? [input.requiredInstallationId]
@@ -92,9 +115,29 @@ export async function produceNotificationDelivery(
   if (!installationIds) {
     throw new Error('notification_delivery_provider_order_unavailable');
   }
+  const recipientMasked = maskRecipient(input.payload.to);
+  let recipientEncrypted: string | undefined;
+  let recipientEncryptionKeyVersion: number | undefined;
+  if (env.PII_ENCRYPTION_KEY) {
+    const configuredVersion = Number.parseInt(env.PII_ENCRYPTION_KEY_VERSION ?? '1', 10);
+    recipientEncryptionKeyVersion =
+      Number.isSafeInteger(configuredVersion) && configuredVersion > 0 ? configuredVersion : 1;
+    recipientEncrypted = (
+      await encryptValue(
+        input.payload.to,
+        env.PII_ENCRYPTION_KEY,
+        'AES-256-GCM',
+        recipientEncryptionKeyVersion
+      )
+    ).encrypted;
+  }
   const reference = await createNotificationDeliveryIntent({
     db: target.db,
     ...config,
+    preparedEnvelope: {
+      keyId: encryptedPayload.activeKeyId,
+      envelope: encryptedPayload.envelope,
+    },
     tenantId: target.tenantId,
     intentId: input.intentId,
     outboxId: input.outboxId,
@@ -103,6 +146,10 @@ export async function produceNotificationDelivery(
       installationIds,
     },
     notificationKind: input.notificationKind,
+    accountId: input.accountId,
+    recipientMasked,
+    recipientEncrypted,
+    recipientEncryptionKeyVersion,
     idempotencyKey: input.idempotencyKey,
     expiresAt: input.expiresAt,
     payload: input.payload,

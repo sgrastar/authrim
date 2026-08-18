@@ -30,6 +30,30 @@ function createSnapshotStores() {
 }
 
 describe('runtime logging policy resolver', () => {
+  it('marks the fresh-environment R2 archive as direct delivery', async () => {
+    const { bucket } = createSnapshotStores();
+
+    const resolved = await resolveRuntimeLoggingPolicyTargetFromEnv(
+      { AUDIT_ARCHIVE: bucket },
+      {
+        tenantId: 'tenant-fresh-environment',
+        logType: 'admin_audit',
+        plane: 'archive',
+      }
+    );
+
+    expect(resolved).toMatchObject({
+      destinationId: 'platform_default_r2_archive',
+      destination: null,
+      requiresDeliveryFanout: false,
+      target: {
+        type: 'r2',
+        destinationId: 'platform_default_r2_archive',
+        bucketRef: 'AUDIT_ARCHIVE',
+      },
+    });
+  });
+
   it('resolves webhook external sink targets from tenant snapshots without repeated KV reads', async () => {
     const tenantId = 'tenant-webhook-runtime';
     const { kv, bucket } = createSnapshotStores();
@@ -105,6 +129,7 @@ describe('runtime logging policy resolver', () => {
 
     expect(first?.destinationId).toBe('dest_webhook_http');
     expect(first?.source).toBe('tenant_assignment');
+    expect(first?.requiresDeliveryFanout).toBe(true);
     expect(first?.target).toEqual({
       type: 'http',
       destinationId: 'dest_webhook_http',

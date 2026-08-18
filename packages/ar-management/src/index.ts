@@ -309,6 +309,13 @@ import {
 } from './admin-consent-policies';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
+  adminAccountLegalHoldCreateHandler,
+  adminAccountLegalHoldReleaseHandler,
+  adminAccountLegalHoldsListHandler,
+  adminAccountSupportContextGetHandler,
+  adminAccountSupportContextPutHandler,
+} from './admin-account-governance';
+import {
   serveAvatarHandler,
   adminStatsHandler,
   adminUsersListHandler,
@@ -1067,6 +1074,10 @@ import {
   updateTenantEmailSettingsHandler,
 } from './routes/email-settings';
 import {
+  adminEmailDeliveriesListHandler,
+  adminUserEmailDeliveriesHandler,
+} from './admin-email-deliveries';
+import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
@@ -1564,6 +1575,12 @@ app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
 app.get('/api/admin/users/operations/:operationId', adminUserCreationOperationHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
+app.get('/api/admin/users/:id/support-context', adminAccountSupportContextGetHandler);
+app.put('/api/admin/users/:id/support-context', adminAccountSupportContextPutHandler);
+app.get('/api/admin/users/:id/legal-holds', adminAccountLegalHoldsListHandler);
+app.post('/api/admin/users/:id/legal-holds', adminAccountLegalHoldCreateHandler);
+app.post('/api/admin/users/:id/legal-holds/:holdId/release', adminAccountLegalHoldReleaseHandler);
+app.get('/api/admin/users/:id/email-deliveries', adminUserEmailDeliveriesHandler);
 app.get('/api/admin/users/:id/identifier-replacements', adminUserIdentifierReplacementsHandler);
 app.post(
   '/api/admin/users/:id/identifier-replacements/:operationId/resume',
@@ -1677,6 +1694,7 @@ app.post('/api/admin/users/:id/send-email', adminUserSendEmailHandler);
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-logs', adminAuditLogListHandler);
 app.get('/api/admin/audit-logs/:id', adminAuditLogGetHandler);
+app.get('/api/admin/email-deliveries', adminEmailDeliveriesListHandler);
 
 // Admin Settings endpoints (legacy - will be deprecated)
 app.get('/api/admin/settings', adminSettingsGetHandler);

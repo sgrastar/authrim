@@ -345,6 +345,38 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
 
   ...byMethod(
+    '/api/admin/email-deliveries',
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    'email delivery diagnostics',
+    TENANT_ADMIN_ROLES
+  ),
+  readOnly(
+    '/api/admin/users/:id/email-deliveries',
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    'user email delivery diagnostics'
+  ),
+  ...byMethod(
+    '/api/admin/users/:id/support-context',
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_READ,
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE,
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE,
+    'account support context'
+  ),
+  ...byMethod(
+    '/api/admin/users/:id/legal-holds',
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_READ,
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    'account legal holds'
+  ),
+  writeOnly(
+    '/api/admin/users/:id/legal-holds/*',
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    'account legal hold lifecycle'
+  ),
+  ...byMethod(
     '/api/admin/users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,

@@ -563,6 +563,7 @@ describe('SCIM 2.0 Endpoints', () => {
   let mockGroups: Map<string, any>;
   let mockUserRoles: Map<string, any[]>;
   let mockCustomClaimSchemas: Array<Record<string, unknown>>;
+  let activeLegalHolds: Map<string, string>;
   let sessionRevocationStates: Map<
     string,
     { lifecycle: string; lifecycleVersionMs: number | null }
@@ -618,6 +619,7 @@ describe('SCIM 2.0 Endpoints', () => {
     mockGroups = new Map();
     mockUserRoles = new Map();
     mockCustomClaimSchemas = [];
+    activeLegalHolds = new Map();
     sessionRevocationStates = new Map();
 
     // Seed some test data (timestamps as Unix seconds, matching D1 database format)
@@ -672,6 +674,10 @@ describe('SCIM 2.0 Endpoints', () => {
               }
               return {
                 first: vi.fn().mockImplementation(async () => {
+                  if (sql.includes('FROM legal_holds hold')) {
+                    const holdId = activeLegalHolds.get(args[1]);
+                    return holdId ? { hold_id: holdId, reason_code: 'litigation' } : null;
+                  }
                   if (sql.includes('FROM identity_accounts')) {
                     const userId = sql.includes('legacy_user_id = ?') ? args[0] : args[0];
                     const user = mockUsers.get(userId);
@@ -2153,6 +2159,22 @@ describe('SCIM 2.0 Endpoints', () => {
   });
 
   describe('DELETE /scim/v2/Users/:id - Delete User', () => {
+    it('blocks deletion when the account has an active legal hold', async () => {
+      activeLegalHolds.set('user-001', 'legal-hold:scim-held');
+      const res = await app.fetch(
+        createRequest('/scim/v2/Users/user-001', { method: 'DELETE' }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(409);
+      await expect(res.json()).resolves.toMatchObject({
+        status: '409',
+        detail: 'User is under legal hold and cannot be deleted',
+      });
+      expect(accountRemovalState.prepare).not.toHaveBeenCalled();
+      expect(mockUsers.get('user-001')).toMatchObject({ active: 1 });
+    });
+
     it('should delete user', async () => {
       const req = createRequest('/scim/v2/Users/user-001', {
         method: 'DELETE',
@@ -2292,6 +2314,36 @@ describe('SCIM 2.0 Endpoints', () => {
   });
 
   describe('SCIM Bulk Operations (RFC 7644 Section 3.7)', () => {
+    it('blocks a bulk user deletion when the account has an active legal hold', async () => {
+      activeLegalHolds.set('user-001', 'legal-hold:scim-bulk-held');
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [{ method: 'DELETE', path: '/Users/user-001' }],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        Operations: [
+          {
+            method: 'DELETE',
+            status: '409',
+            response: {
+              status: '409',
+              detail: 'User is under legal hold and cannot be deleted',
+            },
+          },
+        ],
+      });
+      expect(accountRemovalState.prepare).not.toHaveBeenCalled();
+      expect(mockUsers.get('user-001')).toMatchObject({ active: 1 });
+    });
+
     it('processes independent user creates concurrently when failOnErrors is zero', async () => {
       accountCreationState.pause = () => new Promise((resolve) => setTimeout(resolve, 20));
       const operations = Array.from({ length: 4 }, (_, index) => ({

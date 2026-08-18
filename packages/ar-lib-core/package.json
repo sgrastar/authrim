@@ -27,6 +27,11 @@
       "import": "./dist/types/*.js",
       "default": "./src/types/*.ts"
     },
+    "./types/login-ui-languages": {
+      "import": "./src/types/login-ui-languages.ts",
+      "types": "./src/types/login-ui-languages.ts",
+      "default": "./src/types/login-ui-languages.ts"
+    },
     "./db/adapter": {
       "import": "./dist/db/adapter.js",
       "types": "./dist/db/adapter.d.ts",

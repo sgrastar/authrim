@@ -281,14 +281,16 @@ export class DiscoveryEmailOtpService {
     await primary
       .prepare(
         `INSERT INTO lookup_discovery_otp_challenges (
-           challenge_id, normalization_version, email_blind_digest, hmac_key_generation,
+           challenge_id, virtual_bucket, normalization_version, email_blind_digest,
+           hmac_key_generation,
            previous_email_blind_digest, previous_hmac_key_generation, previous_virtual_bucket,
            otp_verifier, delivery_state, attempt_count, attempt_limit, expires_at,
            consumed_at, rate_limit_ip_digest, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, NULL, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, NULL, ?, ?, ?)`
       )
       .bind(
         challengeId,
+        index.virtualBucket,
         index.normalizationVersion,
         index.digest,
         index.hmacKeyGeneration,

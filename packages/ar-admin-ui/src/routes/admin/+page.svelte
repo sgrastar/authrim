@@ -5,7 +5,6 @@
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import Card from '$lib/components/Card.svelte';
 	import StatCard from '$lib/components/StatCard.svelte';
-	import Button from '$lib/components/Button.svelte';
 	import Alert from '$lib/components/Alert.svelte';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
@@ -131,7 +130,6 @@
 					label={$LL.admin_dashboard_activeUsers()}
 					icon="i-ph-users"
 					iconColor="pink"
-					change={{ value: '+12%', positive: true }}
 				/>
 				<StatCard
 					value={stats.stats.totalUsers}
@@ -144,7 +142,6 @@
 					label={$LL.admin_dashboard_clients()}
 					icon="i-ph-monitor"
 					iconColor="green"
-					change={{ value: '+5', positive: true }}
 				/>
 				<StatCard
 					value={stats.stats.loginsToday}
@@ -161,7 +158,9 @@
 			<Card>
 				{#snippet header()}
 					<h3 class="card-title">{$LL.admin_dashboard_recentActivity()}</h3>
-					<Button variant="ghost" size="sm">{$LL.admin_dashboard_view_all()}</Button>
+					<a class="view-all-link" href="/admin/audit-logs">
+						{$LL.admin_dashboard_view_all()}
+					</a>
 				{/snippet}
 
 				{#if stats.recentActivity.length === 0}
@@ -366,6 +365,29 @@
 		font-weight: 700;
 		color: var(--color-text);
 		margin: 0;
+	}
+
+	.view-all-link {
+		padding: 8px 14px;
+		border-radius: var(--radius-control, var(--radius-lg));
+		color: var(--color-text-muted);
+		font-family: var(--button-font, var(--font-display));
+		font-size: 0.8125rem;
+		font-weight: 600;
+		text-decoration: none;
+		transition:
+			background var(--transition-fast),
+			color var(--transition-fast);
+	}
+
+	.view-all-link:hover {
+		background: var(--color-accent-muted);
+		color: var(--color-accent);
+	}
+
+	.view-all-link:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
 	}
 
 	/* Empty State */

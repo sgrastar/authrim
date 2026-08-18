@@ -404,7 +404,7 @@ describe('admin-shared audit detail externalization', () => {
     });
   });
 
-  it('emits admin audit D-format archive chunks to AUDIT_ARCHIVE when standard archive storage is configured', async () => {
+  it('writes admin audit D-format chunks directly to the standard AUDIT_ARCHIVE', async () => {
     const archiveStore = createMockBucket();
     const { c, loggingQueue } = createMockContext({
       AUDIT_ARCHIVE: archiveStore.bucket,
@@ -427,14 +427,16 @@ describe('admin-shared audit detail externalization', () => {
     );
     expect(object.contentType).toBe('application/authrim.log-chunk+encrypted');
     expect(object.body.byteLength).toBeGreaterThan(0);
-    expect(loggingQueue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload_type: 'delivery_fanout',
-        destination_id: 'platform_default_r2_archive',
-        log_type: 'admin_audit',
-        plane: 'archive',
-        record_count: 1,
-      })
+    expect(loggingQueue.send).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO logging_delivery_events'),
+      expect.arrayContaining([
+        'platform_default_r2_archive',
+        'admin_audit',
+        'archive',
+        'critical',
+        'delivered',
+      ])
     );
   });
 

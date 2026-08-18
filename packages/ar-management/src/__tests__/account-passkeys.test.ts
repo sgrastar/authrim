@@ -20,6 +20,7 @@ const {
   mockVerifyAuthenticationResponse,
   mockVerifyRegistrationResponse,
   mockAdvancePasskeyAuthenticationState,
+  mockCreateAuditLog,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -72,6 +73,7 @@ const {
       counter: 13,
       advanced: true,
     })),
+    mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -107,7 +109,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantMetadataContextFromHono: vi.fn(() => undefined),
     createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
-    createAuditLog: vi.fn().mockResolvedValue(undefined),
+    createAuditLog: mockCreateAuditLog,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
@@ -510,6 +512,15 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.expires_at).toBe(body.reauth.authenticated_at + 300);
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-001',
+        action: 'account.passkey.reauthenticated',
+        resource: 'passkey',
+        resourceId: 'pk_001',
+      })
+    );
   });
 
   it('fails closed with 503 when Passkey authentication authority is unavailable', async () => {
@@ -729,6 +740,15 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.methods).toEqual(['email_code']);
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-001',
+        action: 'account.email.reauthenticated',
+        resource: 'session',
+        resourceId: 'g1:apac:3:session_current',
+      })
+    );
   });
 
   it('creates registration options with a stored one-time challenge', async () => {

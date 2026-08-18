@@ -1,5 +1,7 @@
 const ENVELOPE_VERSION = 1 as const;
 const ENVELOPE_ALGORITHM = 'RSA-OAEP-256+A256GCM' as const;
+const SYMMETRIC_ENVELOPE_VERSION = 2 as const;
+const SYMMETRIC_ENVELOPE_ALGORITHM = 'A256GCM' as const;
 const MAX_PLAINTEXT_BYTES = 128 * 1024;
 const MAX_ENVELOPE_BYTES = 192 * 1024;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
@@ -20,6 +22,14 @@ export interface NotificationIntentEnvelopeV1 {
   algorithm: typeof ENVELOPE_ALGORITHM;
   keyId: string;
   wrappedKey: string;
+  iv: string;
+  ciphertext: string;
+}
+
+export interface NotificationIntentEnvelopeV2 {
+  version: typeof SYMMETRIC_ENVELOPE_VERSION;
+  algorithm: typeof SYMMETRIC_ENVELOPE_ALGORITHM;
+  keyId: string;
   iv: string;
   ciphertext: string;
 }
@@ -79,12 +89,15 @@ function assertContext(context: NotificationIntentEnvelopeContext): void {
   }
 }
 
-function aad(context: NotificationIntentEnvelopeContext): Uint8Array {
+function aad(
+  context: NotificationIntentEnvelopeContext,
+  envelopeVersion: 1 | 2 = ENVELOPE_VERSION
+): Uint8Array {
   assertContext(context);
   return encoder.encode(
     JSON.stringify([
       'authrim-notification-intent',
-      ENVELOPE_VERSION,
+      envelopeVersion,
       context.environmentId,
       context.tenantId,
       context.intentId,
@@ -177,7 +190,7 @@ function assertRsaJwk(jwk: NotificationJsonWebKey, keyId: string, privateKey: bo
   }
 }
 
-function parseEnvelope(value: string): NotificationIntentEnvelopeV1 {
+function parseEnvelope(value: string): NotificationIntentEnvelopeV1 | NotificationIntentEnvelopeV2 {
   if (value.length < 1 || value.length > MAX_ENVELOPE_BYTES) {
     throw new Error('notification_envelope_invalid');
   }
@@ -191,26 +204,110 @@ function parseEnvelope(value: string): NotificationIntentEnvelopeV1 {
     throw new Error('notification_envelope_invalid');
   }
   const envelope = parsed as Record<string, unknown>;
-  if (
-    Object.keys(envelope).sort().join(',') !== 'algorithm,ciphertext,iv,keyId,version,wrappedKey' ||
-    envelope.version !== ENVELOPE_VERSION ||
-    envelope.algorithm !== ENVELOPE_ALGORITHM ||
+  const sharedValid =
     typeof envelope.keyId !== 'string' ||
     !SAFE_KEY_ID.test(envelope.keyId) ||
-    typeof envelope.wrappedKey !== 'string' ||
     typeof envelope.iv !== 'string' ||
-    typeof envelope.ciphertext !== 'string'
-  ) {
+    typeof envelope.ciphertext !== 'string';
+  if (sharedValid) {
     throw new Error('notification_envelope_invalid');
   }
-  return {
-    version: ENVELOPE_VERSION,
-    algorithm: ENVELOPE_ALGORITHM,
-    keyId: envelope.keyId,
-    wrappedKey: envelope.wrappedKey,
-    iv: envelope.iv,
-    ciphertext: envelope.ciphertext,
-  };
+  const keyId = envelope.keyId as string;
+  const iv = envelope.iv as string;
+  const ciphertext = envelope.ciphertext as string;
+  if (
+    envelope.version === ENVELOPE_VERSION &&
+    envelope.algorithm === ENVELOPE_ALGORITHM &&
+    Object.keys(envelope).sort().join(',') === 'algorithm,ciphertext,iv,keyId,version,wrappedKey' &&
+    typeof envelope.wrappedKey === 'string'
+  ) {
+    return {
+      version: ENVELOPE_VERSION,
+      algorithm: ENVELOPE_ALGORITHM,
+      keyId,
+      wrappedKey: envelope.wrappedKey,
+      iv,
+      ciphertext,
+    };
+  }
+  if (
+    envelope.version === SYMMETRIC_ENVELOPE_VERSION &&
+    envelope.algorithm === SYMMETRIC_ENVELOPE_ALGORITHM &&
+    Object.keys(envelope).sort().join(',') === 'algorithm,ciphertext,iv,keyId,version'
+  ) {
+    return {
+      version: SYMMETRIC_ENVELOPE_VERSION,
+      algorithm: SYMMETRIC_ENVELOPE_ALGORITHM,
+      keyId,
+      iv,
+      ciphertext,
+    };
+  }
+  throw new Error('notification_envelope_invalid');
+}
+
+export function notificationIntentEnvelopeKeyId(value: string): string {
+  return parseEnvelope(value).keyId;
+}
+
+async function deriveNotificationPayloadKey(secret: string): Promise<CryptoKey> {
+  if (secret.length < 32 || secret.length > 16_384) {
+    throw new Error('notification_encryption_key_invalid');
+  }
+  const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(secret), 'HKDF', false, [
+    'deriveKey',
+  ]);
+  return crypto.subtle.deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: encoder.encode('authrim-notification-payload-salt-v2'),
+      info: encoder.encode('authrim-notification-payload-a256gcm-v2'),
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function encryptNotificationIntentPayloadWithSecret(input: {
+  secret: string;
+  keyId: string;
+  context: NotificationIntentEnvelopeContext;
+  payload: unknown;
+}): Promise<string> {
+  if (!SAFE_KEY_ID.test(input.keyId)) throw new Error('notification_encryption_key_invalid');
+  let plaintext: Uint8Array;
+  try {
+    plaintext = encoder.encode(JSON.stringify(input.payload));
+  } catch {
+    throw new Error('notification_payload_invalid');
+  }
+  if (plaintext.length < 2 || plaintext.length > MAX_PLAINTEXT_BYTES) {
+    throw new Error('notification_payload_invalid');
+  }
+  const key = await deriveNotificationPayloadKey(input.secret);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv,
+      additionalData: aad(input.context, SYMMETRIC_ENVELOPE_VERSION),
+      tagLength: 128,
+    },
+    key,
+    plaintext
+  );
+  const encoded = JSON.stringify({
+    version: SYMMETRIC_ENVELOPE_VERSION,
+    algorithm: SYMMETRIC_ENVELOPE_ALGORITHM,
+    keyId: input.keyId,
+    iv: base64url(iv),
+    ciphertext: base64url(new Uint8Array(ciphertext)),
+  } satisfies NotificationIntentEnvelopeV2);
+  if (encoded.length > MAX_ENVELOPE_BYTES) throw new Error('notification_payload_invalid');
+  return encoded;
 }
 
 export async function encryptNotificationIntentPayload(input: {
@@ -244,13 +341,6 @@ export async function encryptNotificationIntentPayload(input: {
   if (!('type' in generatedContentKey)) throw new Error('notification_encryption_failed');
   const contentKey = generatedContentKey;
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const wrappingKey = await crypto.subtle.importKey(
-    'jwk',
-    key,
-    { name: 'RSA-OAEP', hash: 'SHA-256' },
-    false,
-    ['encrypt']
-  );
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: aad(input.context), tagLength: 128 },
     contentKey,
@@ -260,6 +350,13 @@ export async function encryptNotificationIntentPayload(input: {
   if (!(exportedContentKey instanceof ArrayBuffer))
     throw new Error('notification_encryption_failed');
   const rawContentKey = exportedContentKey;
+  const wrappingKey = await crypto.subtle.importKey(
+    'jwk',
+    key,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    false,
+    ['encrypt']
+  );
   const wrappedKey = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, wrappingKey, rawContentKey);
   const envelope: NotificationIntentEnvelopeV1 = {
     version: ENVELOPE_VERSION,
@@ -275,29 +372,80 @@ export async function encryptNotificationIntentPayload(input: {
 }
 
 export async function decryptNotificationIntentPayload(input: {
-  privateJwks: string;
+  privateJwks?: string;
+  symmetricKeys?: Array<{ keyId: string; secret: string }>;
   context: NotificationIntentEnvelopeContext;
   envelope: string;
 }): Promise<unknown> {
   const envelope = parseEnvelope(input.envelope);
+  if (envelope.version === SYMMETRIC_ENVELOPE_VERSION) {
+    const symmetricKey = input.symmetricKeys?.find(
+      (candidate) => candidate.keyId === envelope.keyId
+    );
+    if (!symmetricKey) throw new Error('notification_encryption_key_unavailable');
+    let plaintext: ArrayBuffer;
+    try {
+      const key = await deriveNotificationPayloadKey(symmetricKey.secret);
+      plaintext = await crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: fromBase64url(envelope.iv),
+          additionalData: aad(input.context, SYMMETRIC_ENVELOPE_VERSION),
+          tagLength: 128,
+        },
+        key,
+        fromBase64url(envelope.ciphertext)
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'notification_encryption_key_invalid') {
+        throw error;
+      }
+      if (error instanceof Error && error.message === 'notification_envelope_context_invalid') {
+        throw error;
+      }
+      if (error instanceof Error && error.message === 'notification_envelope_invalid') throw error;
+      throw new Error('notification_envelope_payload_authentication_failed');
+    }
+    if (plaintext.byteLength < 2 || plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
+      throw new Error('notification_envelope_invalid');
+    }
+    try {
+      return JSON.parse(decoder.decode(plaintext)) as unknown;
+    } catch {
+      throw new Error('notification_envelope_invalid');
+    }
+  }
+  if (!input.privateJwks) throw new Error('notification_encryption_key_unavailable');
   const key = parseJwks(input.privateJwks).keys.find(
     (candidate) => candidate.kid === envelope.keyId
   );
   if (!key) throw new Error('notification_encryption_key_unavailable');
   assertRsaJwk(key, envelope.keyId, true);
+  let unwrappingKey: CryptoKey;
   try {
-    const unwrappingKey = await crypto.subtle.importKey(
+    unwrappingKey = await crypto.subtle.importKey(
       'jwk',
       key,
       { name: 'RSA-OAEP', hash: 'SHA-256' },
       false,
       ['decrypt']
     );
-    const rawContentKey = await crypto.subtle.decrypt(
+  } catch {
+    throw new Error('notification_envelope_private_key_import_failed');
+  }
+  let rawContentKey: ArrayBuffer;
+  try {
+    rawContentKey = await crypto.subtle.decrypt(
       { name: 'RSA-OAEP' },
       unwrappingKey,
       fromBase64url(envelope.wrappedKey)
     );
+  } catch (error) {
+    if (error instanceof Error && error.message === 'notification_envelope_invalid') throw error;
+    throw new Error('notification_envelope_key_unwrap_failed');
+  }
+  let plaintext: ArrayBuffer;
+  try {
     const contentKey = await crypto.subtle.importKey(
       'raw',
       rawContentKey,
@@ -305,7 +453,7 @@ export async function decryptNotificationIntentPayload(input: {
       false,
       ['decrypt']
     );
-    const plaintext = await crypto.subtle.decrypt(
+    plaintext = await crypto.subtle.decrypt(
       {
         name: 'AES-GCM',
         iv: fromBase64url(envelope.iv),
@@ -315,18 +463,19 @@ export async function decryptNotificationIntentPayload(input: {
       contentKey,
       fromBase64url(envelope.ciphertext)
     );
-    if (plaintext.byteLength < 2 || plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
-      throw new Error('notification_envelope_invalid');
-    }
-    return JSON.parse(decoder.decode(plaintext)) as unknown;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message === 'notification_envelope_context_invalid' ||
-        error.message === 'notification_envelope_invalid')
-    ) {
+    if (error instanceof Error && error.message === 'notification_envelope_context_invalid') {
       throw error;
     }
-    throw new Error('notification_envelope_authentication_failed');
+    if (error instanceof Error && error.message === 'notification_envelope_invalid') throw error;
+    throw new Error('notification_envelope_payload_authentication_failed');
+  }
+  if (plaintext.byteLength < 2 || plaintext.byteLength > MAX_PLAINTEXT_BYTES) {
+    throw new Error('notification_envelope_invalid');
+  }
+  try {
+    return JSON.parse(decoder.decode(plaintext)) as unknown;
+  } catch {
+    throw new Error('notification_envelope_invalid');
   }
 }

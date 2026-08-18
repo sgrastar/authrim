@@ -2,6 +2,30 @@ import type { LayoutServerLoad } from './$types';
 import { fetchDiscoveryConfig, getDiscoveryRequestHeaders } from '../lib/discovery-entry';
 import { getLoginUILanguageConfig, resolveEnabledLoginUILocale } from '$lib/i18n/config';
 
+const RESOLVED_TENANT_AUTH_ROUTES = new Set([
+	'/callback',
+	'/ciba',
+	'/consent',
+	'/device',
+	'/device/authorize',
+	'/error',
+	'/login',
+	'/logged-out',
+	'/logout-complete',
+	'/reauth',
+	'/signup',
+	'/verify-email-code'
+]);
+
+export function _shouldUseResolvedTenantBranding(routeId: string | null | undefined): boolean {
+	return Boolean(
+		routeId &&
+		(RESOLVED_TENANT_AUTH_ROUTES.has(routeId) ||
+			routeId === '/account' ||
+			routeId.startsWith('/account/'))
+	);
+}
+
 export const load: LayoutServerLoad = async (event) => {
 	// Get language preference from cookie
 	const languageConfig = getLoginUILanguageConfig(event.locals.authenticationMethods?.ui);
@@ -24,11 +48,7 @@ export const load: LayoutServerLoad = async (event) => {
 		});
 	}
 	const emailVerificationProtocolEnabled = event.locals.emailVerificationProtocolEnabled === true;
-	if (
-		event.route.id === '/login' ||
-		event.route.id === '/account' ||
-		event.route.id?.startsWith('/account/')
-	) {
+	if (_shouldUseResolvedTenantBranding(event.route.id)) {
 		return {
 			preferredLanguage,
 			shouldLoadTenantBranding: true,

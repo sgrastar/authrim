@@ -7,6 +7,9 @@ import { createNotificationDeliveryIntent } from '@authrim/ar-lib-core';
 import {
   cleanupExpiredNotificationDeliveryIntents,
   D1NotificationIntentDeliveryStore,
+  encryptNotificationPayloadFromEnv,
+  notificationPayloadEncryptionKeyFromEnv,
+  notificationPayloadSymmetricKeysFromEnv,
   notificationPrivateJwksFromEnv,
 } from '../notification-intent';
 
@@ -91,11 +94,12 @@ function schema(): string {
   return `${outboxMigration.slice(outboxStart, outboxEnd)}\n${readFileSync(
     resolve(REPO_ROOT, 'migrations/035_notification_delivery_intents.sql'),
     'utf8'
-  )}`;
+  )}\n${readFileSync(resolve(REPO_ROOT, 'migrations/050_email_delivery_history.sql'), 'utf8')}`;
 }
 
 let publicJwks: string;
 let privateJwk: string;
+let unavailablePrivateJwk: string;
 
 beforeAll(async () => {
   const pair = await crypto.subtle.generateKey(
@@ -117,6 +121,13 @@ beforeAll(async () => {
   privateJwk = JSON.stringify({
     ...privateKey,
     kid: KEY_ID,
+    use: 'enc',
+    alg: 'RSA-OAEP-256',
+    key_ops: ['decrypt'],
+  });
+  unavailablePrivateJwk = JSON.stringify({
+    ...privateKey,
+    kid: 'notification-intent-unavailable',
     use: 'enc',
     alg: 'RSA-OAEP-256',
     key_ops: ['decrypt'],
@@ -345,16 +356,26 @@ describe('notification delivery intent commit', () => {
       tenantId: 'tenant-a',
       intentId: 'intent-a',
       pluginInstallationId: 'notification-router-a',
+      providerMessageId: 'provider-message-a',
       now: 1_101,
     });
     expect(
       database
         .prepare(
-          `SELECT state, payload_key_id, payload_envelope_json
+          `SELECT state, payload_key_id, payload_envelope_json, provider_message_id,
+                  delivery_status, provider_accepted_at, attempt_count
              FROM notification_delivery_intents WHERE intent_id = 'intent-a'`
         )
         .get()
-    ).toEqual({ state: 'delivered', payload_key_id: null, payload_envelope_json: null });
+    ).toEqual({
+      state: 'delivered',
+      payload_key_id: null,
+      payload_envelope_json: null,
+      provider_message_id: 'provider-message-a',
+      delivery_status: 'provider_accepted',
+      provider_accepted_at: 1_101,
+      attempt_count: 1,
+    });
     await expect(
       store.load({
         tenantId: 'tenant-a',
@@ -367,6 +388,61 @@ describe('notification delivery intent commit', () => {
       intentId: 'intent-a',
       outboxId: 'notification-outbox-a',
       state: 'delivered',
+    });
+  });
+
+  it('loads a v2 symmetric envelope prepared by Plugin Runner', async () => {
+    const keyEnv = {
+      PLUGIN_ENCRYPTION_KEY: 'notification-payload-test-secret-value',
+      PLUGIN_ENCRYPTION_ACTIVE_KEY_ID: 'v2-test',
+    };
+    const prepared = await encryptNotificationPayloadFromEnv(
+      { ...keyEnv, AUTHRIM_ENVIRONMENT_NAME: 'test' },
+      {
+        context: {
+          environmentId: 'test',
+          tenantId: 'tenant-a',
+          intentId: 'intent-a',
+          notificationKind: 'auth.email_otp',
+          payloadVersion: 1,
+        },
+        payload: {
+          channel: 'email',
+          to: 'person@example.test',
+          subject: 'Sign-in code',
+          body: 'Your code is 123456',
+        },
+      }
+    );
+    await create({
+      publicJwks: undefined,
+      activeKeyId: undefined,
+      preparedEnvelope: { keyId: prepared.activeKeyId, envelope: prepared.envelope },
+    });
+    const store = new D1NotificationIntentDeliveryStore(
+      d1(database),
+      'test',
+      notificationPrivateJwksFromEnv({
+        NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A: privateJwk,
+      }),
+      notificationPayloadSymmetricKeysFromEnv(keyEnv).all
+    );
+
+    await expect(
+      store.load({
+        tenantId: 'tenant-a',
+        pluginInstallationId: 'notification-router-a',
+        reference: {
+          tenantId: 'tenant-a',
+          intentId: 'intent-a',
+          eventType: 'notification.delivery.requested',
+          eventVersion: 1,
+        },
+        now: 1_100,
+      })
+    ).resolves.toMatchObject({
+      state: 'pending',
+      payload: { to: 'person@example.test', body: 'Your code is 123456' },
     });
   });
 
@@ -513,7 +589,37 @@ describe('notification delivery intent commit', () => {
         },
         now: 1_100,
       })
-    ).rejects.toThrow('notification_intent_authentication_failed');
+    ).rejects.toThrow('notification_intent_payload_authentication_failed');
+    expect(
+      database
+        .prepare(
+          `SELECT state, payload_key_id, payload_envelope_json
+             FROM notification_delivery_intents WHERE intent_id = 'intent-a'`
+        )
+        .get()
+    ).toEqual({ state: 'dead_letter', payload_key_id: null, payload_envelope_json: null });
+  });
+
+  it('reports and wipes an intent encrypted for an unavailable key', async () => {
+    await create();
+    const store = new D1NotificationIntentDeliveryStore(
+      d1(database),
+      'test',
+      JSON.stringify({ keys: [JSON.parse(unavailablePrivateJwk)] })
+    );
+    await expect(
+      store.load({
+        tenantId: 'tenant-a',
+        pluginInstallationId: 'notification-router-a',
+        reference: {
+          tenantId: 'tenant-a',
+          intentId: 'intent-a',
+          eventType: 'notification.delivery.requested',
+          eventVersion: 1,
+        },
+        now: 1_100,
+      })
+    ).rejects.toThrow('notification_intent_key_unavailable');
     expect(
       database
         .prepare(
@@ -538,6 +644,88 @@ describe('notification delivery intent commit', () => {
     ).toThrow('notification_decryption_key_set_invalid');
   });
 
+  it('derives only the matching public encryption key from the active private slot', () => {
+    const result = notificationPayloadEncryptionKeyFromEnv({
+      NOTIFICATION_PAYLOAD_DECRYPTION_JWK_SLOT_A: privateJwk,
+    });
+    const parsedPublicJwks: unknown = JSON.parse(result.publicJwks);
+    if (
+      parsedPublicJwks === null ||
+      typeof parsedPublicJwks !== 'object' ||
+      !('keys' in parsedPublicJwks) ||
+      !Array.isArray(parsedPublicJwks.keys)
+    ) {
+      throw new Error('Expected a public JWK set');
+    }
+    const publicKey = parsedPublicJwks.keys[0] as Record<string, unknown>;
+    const source = JSON.parse(privateJwk) as Record<string, unknown>;
+
+    expect(result.activeKeyId).toBe(KEY_ID);
+    expect(publicKey).toEqual({
+      kty: 'RSA',
+      n: source.n,
+      e: source.e,
+      kid: KEY_ID,
+      use: 'enc',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['encrypt'],
+    });
+    expect(result.publicJwks).not.toContain(String(source.d));
+  });
+
+  it('encrypts and validates a delivery payload with the active symmetric-key slot', async () => {
+    const result = await encryptNotificationPayloadFromEnv(
+      {
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        PLUGIN_ENCRYPTION_KEY: 'notification-payload-test-secret-value',
+      },
+      {
+        context: {
+          environmentId: 'test',
+          tenantId: 'tenant-a',
+          intentId: 'intent-a',
+          notificationKind: 'auth.email_otp',
+          payloadVersion: 1,
+        },
+        payload: {
+          channel: 'email',
+          to: 'person@example.test',
+          subject: 'Sign-in code',
+          body: 'Your code is 123456',
+        },
+      }
+    );
+
+    expect(result.activeKeyId).toBe('notification:v1');
+    expect(result.envelope).not.toContain('person@example.test');
+    expect(result.envelope).not.toContain('123456');
+  });
+
+  it('rejects payload encryption for a different environment', async () => {
+    await expect(
+      encryptNotificationPayloadFromEnv(
+        {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_ENCRYPTION_KEY: 'notification-payload-test-secret-value',
+        },
+        {
+          context: {
+            environmentId: 'production',
+            tenantId: 'tenant-a',
+            intentId: 'intent-a',
+            notificationKind: 'auth.email_otp',
+            payloadVersion: 1,
+          },
+          payload: {
+            channel: 'email',
+            to: 'person@example.test',
+            body: '123456',
+          },
+        }
+      )
+    ).rejects.toThrow('plugin_notification_encryption_input_invalid');
+  });
+
   it('deletes expired encrypted intents in bounded batches without reading payloads', async () => {
     await create();
     await create({
@@ -549,10 +737,16 @@ describe('notification delivery intent commit', () => {
     });
 
     await expect(
-      cleanupExpiredNotificationDeliveryIntents(d1(database), { now: 1_299, limit: 1 })
+      cleanupExpiredNotificationDeliveryIntents(d1(database), {
+        now: 1_000 + 90 * 24 * 60 * 60 - 1,
+        limit: 1,
+      })
     ).resolves.toEqual({ deleted: 0 });
     await expect(
-      cleanupExpiredNotificationDeliveryIntents(d1(database), { now: 1_400, limit: 1 })
+      cleanupExpiredNotificationDeliveryIntents(d1(database), {
+        now: 1_000 + 90 * 24 * 60 * 60,
+        limit: 1,
+      })
     ).resolves.toEqual({ deleted: 1 });
     expect(
       database
@@ -562,7 +756,10 @@ describe('notification delivery intent commit', () => {
         .all()
     ).toEqual([{ tenant_id: 'tenant-b', intent_id: 'intent-b' }]);
     await expect(
-      cleanupExpiredNotificationDeliveryIntents(d1(database), { now: 1_400, limit: 0 })
+      cleanupExpiredNotificationDeliveryIntents(d1(database), {
+        now: 1_000 + 90 * 24 * 60 * 60,
+        limit: 0,
+      })
     ).rejects.toThrow('notification_intent_cleanup_input_invalid');
   });
 });

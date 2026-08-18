@@ -67,6 +67,15 @@ describe('Admin UI route structure', () => {
 		expect(switcher).toContain('themeStore.setMode');
 	});
 
+	it('keeps dashboard statistics free of fabricated trends and links activity history', () => {
+		const dashboard = readFileSync(`${srcDir}/routes/admin/+page.svelte`, 'utf8');
+
+		expect(dashboard).not.toContain("change={{ value: '+12%'");
+		expect(dashboard).not.toContain("change={{ value: '+5'");
+		expect(dashboard).toContain('href="/admin/audit-logs"');
+		expect(dashboard).toContain('$LL.admin_dashboard_view_all()');
+	});
+
 	it('keeps Admin route tables routed through the shared AdminDataTable component', () => {
 		const adminPages = walkFiles(adminRoutesDir).filter((path) => path.endsWith('/+page.svelte'));
 

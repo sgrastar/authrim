@@ -74,6 +74,26 @@ type RootTranslation = {
 	 */
 	language_switch: string
 	/**
+	 * E​a​s​t​ ​A​s​i​a
+	 */
+	language_region_east_asia: string
+	/**
+	 * S​o​u​t​h​ ​&​ ​S​o​u​t​h​e​a​s​t​ ​A​s​i​a
+	 */
+	language_region_south_southeast_asia: string
+	/**
+	 * E​u​r​o​p​e
+	 */
+	language_region_europe: string
+	/**
+	 * M​i​d​d​l​e​ ​E​a​s​t​ ​&​ ​N​o​r​t​h​ ​A​f​r​i​c​a
+	 */
+	language_region_middle_east_north_africa: string
+	/**
+	 * S​u​b​-​S​a​h​a​r​a​n​ ​A​f​r​i​c​a
+	 */
+	language_region_sub_saharan_africa: string
+	/**
 	 * E​n​g​l​i​s​h
 	 */
 	language_english: string
@@ -1498,6 +1518,26 @@ export type TranslationFunctions = {
 	 * Switch language
 	 */
 	language_switch: () => LocalizedString
+	/**
+	 * East Asia
+	 */
+	language_region_east_asia: () => LocalizedString
+	/**
+	 * South & Southeast Asia
+	 */
+	language_region_south_southeast_asia: () => LocalizedString
+	/**
+	 * Europe
+	 */
+	language_region_europe: () => LocalizedString
+	/**
+	 * Middle East & North Africa
+	 */
+	language_region_middle_east_north_africa: () => LocalizedString
+	/**
+	 * Sub-Saharan Africa
+	 */
+	language_region_sub_saharan_africa: () => LocalizedString
 	/**
 	 * English
 	 */

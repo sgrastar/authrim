@@ -880,6 +880,7 @@ export interface ControlLookupBucketLoadObservation {
   lookupShardId: string;
   assignmentGeneration: number;
   activeIdentifierCount: number;
+  activeAliasCount: number;
   counterUpdatedAt: number;
 }
 
@@ -887,6 +888,38 @@ export interface ControlLookupBucketLoadSnapshotRequest {
   ownerId: string;
   observedAt: number;
   buckets: ControlLookupBucketLoadObservation[];
+}
+
+export interface ControlLookupRetentionPolicyProjectionRequest {
+  tenantId: string;
+  policyGeneration: number;
+  retentionDays: number;
+  sourceOperationId: string;
+  sourceUpdatedAt: number;
+}
+
+export interface ControlLookupRetentionPolicyProjectionView extends ControlLookupRetentionPolicyProjectionRequest {
+  projectedAt: number;
+}
+
+export interface ControlAccountLegalHoldProjectionRequest {
+  tenantId: string;
+  accountId: string;
+  holdId: string;
+  projectionGeneration: number;
+  holdVersion: number;
+  projectionState: 'active' | 'inactive';
+  sourceOperationId: string;
+  sourceUpdatedAt: number;
+}
+
+export interface ControlAccountLegalHoldProjectionView extends ControlAccountLegalHoldProjectionRequest {
+  projectedAt: number;
+}
+
+export interface ControlLookupRetentionProjectionStatus {
+  policy: ControlLookupRetentionPolicyProjectionView | null;
+  legalHold: ControlAccountLegalHoldProjectionView | null;
 }
 
 export interface ControlLookupHmacKeyMetadata {
@@ -1376,6 +1409,16 @@ export interface ControlServiceBinding {
   planNextLookupBucketMigration?(
     input: ControlLookupBucketLoadSnapshotRequest
   ): Promise<ControlLookupBucketMigrationView | null>;
+  applyLookupRetentionPolicyProjection?(
+    input: ControlLookupRetentionPolicyProjectionRequest
+  ): Promise<ControlLookupRetentionPolicyProjectionView>;
+  applyAccountLegalHoldProjection?(
+    input: ControlAccountLegalHoldProjectionRequest
+  ): Promise<ControlAccountLegalHoldProjectionView>;
+  getLookupRetentionProjectionStatus?(input: {
+    tenantId: string;
+    accountId: string;
+  }): Promise<ControlLookupRetentionProjectionStatus>;
   getLookupBucketWriteRoute?(input: {
     virtualBucket: number;
   }): Promise<ControlLookupBucketWriteRoute>;

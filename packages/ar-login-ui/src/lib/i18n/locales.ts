@@ -1,57 +1,22 @@
-export const LOGIN_UI_LOCALES = [
-	'en',
-	'ja',
-	'zh-CN',
-	'zh-TW',
-	'es',
-	'pt',
-	'fr',
-	'de',
-	'ko',
-	'ru',
-	'id',
-	'ar',
-	'it',
-	'th',
-	'vi',
-	'hi',
-	'bn',
-	'tr',
-	'sw',
-	'am',
-	'pl'
-] as const;
+import {
+	LOGIN_UI_LANGUAGE_METADATA,
+	LOGIN_UI_LOCALES as SHARED_LOGIN_UI_LOCALES,
+	isLoginUILocale as isSharedLoginUILocale,
+	type LoginUILocale
+} from '@authrim/ar-lib-core/types/login-ui-languages';
 
-export type LoginUILocale = (typeof LOGIN_UI_LOCALES)[number];
+export type { LoginUILocale };
 
-export const LOGIN_UI_LOCALE_LABELS: Record<LoginUILocale, string> = {
-	en: 'English',
-	ja: '日本語',
-	'zh-CN': '简体中文',
-	'zh-TW': '繁體中文',
-	es: 'Español',
-	pt: 'Português',
-	fr: 'Français',
-	de: 'Deutsch',
-	ko: '한국어',
-	ru: 'Русский',
-	id: 'Bahasa Indonesia',
-	ar: 'العربية',
-	it: 'Italiano',
-	th: 'ไทย',
-	vi: 'Tiếng Việt',
-	hi: 'हिन्दी',
-	bn: 'বাংলা',
-	tr: 'Türkçe',
-	sw: 'Kiswahili',
-	am: 'አማርኛ',
-	pl: 'Polski'
-};
+export const LOGIN_UI_LOCALES = SHARED_LOGIN_UI_LOCALES;
+
+export const LOGIN_UI_LOCALE_LABELS = Object.fromEntries(
+	LOGIN_UI_LANGUAGE_METADATA.map(({ localeCode, nativeName }) => [localeCode, nativeName])
+) as Record<LoginUILocale, string>;
 
 const RTL_LOGIN_UI_LOCALES = new Set<LoginUILocale>(['ar']);
 
 export function isLoginUILocale(value: string): value is LoginUILocale {
-	return LOGIN_UI_LOCALES.includes(value as LoginUILocale);
+	return isSharedLoginUILocale(value);
 }
 
 export function normalizeLoginUILocale(value: string | null | undefined): LoginUILocale | null {

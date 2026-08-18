@@ -105,6 +105,7 @@ const adminCompliance = {
 	admin_compliance_deleting: 'Deleting...',
 	admin_compliance_delete_expired: 'Delete Expired Data',
 	admin_compliance_cleanup_failed: 'Failed to execute cleanup',
+	admin_compliance_cleanup_no_local_categories: 'No tenant-local cleanup categories are available.',
 	admin_compliance_framework_checks: 'Compliance Checks',
 	admin_compliance_planned_checks: 'Planned Checks',
 	admin_compliance_planned: 'Planned',
@@ -210,11 +211,16 @@ const adminCompliance = {
 	admin_compliance_category_refresh_tokens_desc: 'OAuth refresh tokens for session renewal',
 	admin_compliance_category_access_tokens: 'Access Tokens',
 	admin_compliance_category_access_tokens_desc: 'OAuth access tokens for API authentication',
+	admin_compliance_category_lookup_directory: 'Lookup Directory',
+	admin_compliance_category_lookup_directory_desc:
+		'Inactive account lookup records stored across shared Lookup shards',
 	admin_compliance_category_unknown_desc: 'Data retention category',
 	admin_compliance_edit_retention_title: 'Edit Retention Policy',
 	admin_compliance_retention_period_days: 'Retention Period (days)',
 	admin_compliance_retention_help:
 		'Records older than this will be eligible for deletion. Range: 1-3650 days (10 years)',
+	admin_compliance_lookup_retention_help:
+		'Inactive Lookup records older than this become eligible for durable cleanup. Range: 30-3650 days.',
 	admin_compliance_quick_select: 'Quick select:',
 	admin_compliance_preset_7_days: '7 days',
 	admin_compliance_preset_30_days: '30 days',
@@ -230,8 +236,14 @@ const adminCompliance = {
 	admin_compliance_short_retention_warning_title: 'Warning:',
 	admin_compliance_short_retention_warning:
 		"Short retention periods may impact compliance requirements. Ensure this meets your organization's data retention policies.",
+	admin_compliance_retention_shortening_confirm:
+		'I reviewed the estimate and confirm shortening retention from {current:number} to {requested:number} days.',
+	admin_compliance_retention_shortening_confirmation_required:
+		'Review the estimate and confirm the shorter retention period before saving.',
 	admin_compliance_save_failed: 'Failed to save retention policy',
 	admin_compliance_retention_days_invalid: 'Retention days must be between 1 and 3650 (10 years)',
+	admin_compliance_lookup_retention_days_invalid:
+		'Lookup retention days must be between 30 and 3650 (10 years)',
 	admin_compliance_saving: 'Saving...',
 	admin_compliance_save_changes: 'Save Changes'
 } as const;

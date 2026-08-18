@@ -49,6 +49,19 @@ export interface CrossShardAccountListPage {
   nextCursor: string | null;
 }
 
+export interface CrossShardDashboardStats {
+  activeUsers: number;
+  totalUsers: number;
+  newUsersToday: number;
+  loginsToday: number;
+}
+
+export interface CrossShardRecentLogin {
+  account: CrossShardAccountListItem;
+  activityId: string;
+  timestamp: number;
+}
+
 interface AccountRow {
   id: string;
   legacy_user_id: string;
@@ -59,9 +72,18 @@ interface AccountRow {
   created_at: number;
   account_route_generation: number;
   payload_json: string;
+  metadata_json?: string | null;
 }
 
 interface Candidate extends CrossShardAccountListItem {
+  shardId: string;
+}
+
+interface RecentLoginRow extends AccountRow {
+  login_at: number;
+}
+
+interface RecentLoginCandidate extends CrossShardRecentLogin {
   shardId: string;
 }
 
@@ -537,6 +559,175 @@ export class CrossShardAccountListService {
       }
     );
     return counts.reduce((total, count) => total + count, 0);
+  }
+
+  async dashboardStats(input: {
+    tenantId: string;
+    activeSince: number;
+    todayStart: number;
+  }): Promise<CrossShardDashboardStats> {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('invalid_cross_shard_account_tenant');
+    if (
+      !Number.isSafeInteger(input.activeSince) ||
+      input.activeSince < 0 ||
+      !Number.isSafeInteger(input.todayStart) ||
+      input.todayStart < input.activeSince
+    ) {
+      throw new Error('invalid_cross_shard_dashboard_range');
+    }
+
+    const sources = await activeRouteSources(this.env, input.tenantId);
+    const shardStats = await mapConcurrent(
+      [...sources.core.values()],
+      FANOUT_CONCURRENCY,
+      async (shard) => {
+        const session = shard.source.withSession('first-unconstrained');
+        const accountRow = await session
+          .prepare(
+            `SELECT COUNT(*) AS total_users,
+                    COALESCE(SUM(CASE WHEN account.created_at >= ? THEN 1 ELSE 0 END), 0)
+                      AS new_users_today,
+                    COALESCE(SUM(CASE WHEN CAST(json_extract(
+                      CASE WHEN json_valid(account.metadata_json) THEN account.metadata_json ELSE '{}' END,
+                      '$.last_login_at'
+                    ) AS INTEGER) >= ? THEN 1 ELSE 0 END), 0) AS active_users,
+                    COALESCE(SUM(CASE WHEN CAST(json_extract(
+                      CASE WHEN json_valid(account.metadata_json) THEN account.metadata_json ELSE '{}' END,
+                      '$.last_login_at'
+                    ) AS INTEGER) >= ? THEN 1 ELSE 0 END), 0) AS logins_today
+               FROM identity_accounts account
+               JOIN account_routing_outbox outbox
+                 ON outbox.tenant_id = account.tenant_id
+                AND outbox.account_id = account.id
+                AND outbox.event_kind = 'account_created'
+                AND outbox.route_generation = account.account_route_generation
+                AND outbox.status = 'succeeded'
+              WHERE account.tenant_id = ?
+                AND account.account_type = 'user'
+                AND account.lifecycle_state = 'active'
+                AND account.directory_publication_state = 'active'`
+          )
+          .bind(input.todayStart, input.activeSince, input.todayStart, input.tenantId)
+          .first<{
+            total_users: number;
+            new_users_today: number;
+            active_users: number;
+            logins_today: number;
+          }>();
+        const values = {
+          activeUsers: Number(accountRow?.active_users ?? 0),
+          totalUsers: Number(accountRow?.total_users ?? 0),
+          newUsersToday: Number(accountRow?.new_users_today ?? 0),
+          loginsToday: Number(accountRow?.logins_today ?? 0),
+        };
+        if (Object.values(values).some((value) => !Number.isSafeInteger(value) || value < 0)) {
+          throw new Error('cross_shard_dashboard_stats_invalid');
+        }
+        return values;
+      }
+    );
+
+    return shardStats.reduce<CrossShardDashboardStats>(
+      (total, shard) => ({
+        activeUsers: total.activeUsers + shard.activeUsers,
+        totalUsers: total.totalUsers + shard.totalUsers,
+        newUsersToday: total.newUsersToday + shard.newUsersToday,
+        loginsToday: total.loginsToday + shard.loginsToday,
+      }),
+      { activeUsers: 0, totalUsers: 0, newUsersToday: 0, loginsToday: 0 }
+    );
+  }
+
+  async recentLogins(input: {
+    tenantId: string;
+    limit?: number;
+  }): Promise<CrossShardRecentLogin[]> {
+    if (!SAFE_ID.test(input.tenantId)) throw new Error('invalid_cross_shard_account_tenant');
+    const limit = input.limit ?? 10;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
+      throw new Error('invalid_cross_shard_account_limit');
+    }
+
+    const sources = await activeRouteSources(this.env, input.tenantId);
+    const pages = await mapConcurrent(
+      [...sources.core.values()],
+      FANOUT_CONCURRENCY,
+      async (shard) => {
+        const response = await shard.source
+          .withSession('first-unconstrained')
+          .prepare(
+            `SELECT account.id, account.legacy_user_id, account.tenant_id, account.account_type,
+                    account.lifecycle_state, account.display_label, account.created_at,
+                    account.account_route_generation, outbox.payload_json,
+                    CAST(json_extract(
+                      CASE WHEN json_valid(account.metadata_json) THEN account.metadata_json ELSE '{}' END,
+                      '$.last_login_at'
+                    ) AS INTEGER) AS login_at
+               FROM identity_accounts account
+               JOIN account_routing_outbox outbox
+                 ON outbox.tenant_id = account.tenant_id
+                AND outbox.account_id = account.id
+                AND outbox.event_kind = 'account_created'
+                AND outbox.route_generation = account.account_route_generation
+                AND outbox.status = 'succeeded'
+              WHERE account.tenant_id = ?
+                AND account.account_type = 'user'
+                AND account.lifecycle_state = 'active'
+                AND account.directory_publication_state = 'active'
+                AND json_valid(account.metadata_json)
+                AND json_type(account.metadata_json, '$.last_login_at') IN ('integer', 'real')
+              ORDER BY login_at DESC, account.id DESC
+              LIMIT ?`
+          )
+          .bind(input.tenantId, limit)
+          .all<RecentLoginRow>();
+
+        return Promise.all(
+          response.results.map<Promise<RecentLoginCandidate>>(async (row) => {
+            if (
+              !Number.isSafeInteger(row.login_at) ||
+              row.login_at < 0 ||
+              row.tenant_id !== input.tenantId ||
+              !SAFE_ID.test(row.id) ||
+              !isValidPersistedUserId(row.legacy_user_id)
+            ) {
+              throw new Error('cross_shard_recent_login_invalid');
+            }
+            const route = await validatedAccountRoute({
+              row,
+              tenantId: input.tenantId,
+              coreShard: shard,
+              piiShards: sources.pii,
+            });
+            return {
+              account: {
+                id: row.id,
+                legacyUserId: row.legacy_user_id,
+                tenantId: row.tenant_id,
+                accountType: row.account_type,
+                lifecycleState: row.lifecycle_state,
+                displayLabel: row.display_label,
+                createdAt: row.created_at,
+                coreBindingRef: route.coreBindingRef,
+                piiBindingRef: route.piiBindingRef,
+              },
+              activityId: row.id,
+              timestamp: row.login_at,
+              shardId: shard.shardId,
+            };
+          })
+        );
+      }
+    );
+
+    return pages
+      .flat()
+      .sort(
+        (left, right) =>
+          right.timestamp - left.timestamp || right.activityId.localeCompare(left.activityId)
+      )
+      .slice(0, limit)
+      .map(({ shardId: _shardId, ...item }) => item);
   }
 }
 

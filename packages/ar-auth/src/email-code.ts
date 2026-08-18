@@ -384,6 +384,7 @@ export async function emailCodeSendHandler(c: Context<{ Bindings: Env }>) {
         intentId: `email-code:${otpSessionId}`,
         outboxId: `notification:${otpSessionId}`,
         notificationKind: 'auth.email-code',
+        accountId: user.id as string,
         idempotencyKey: `email-code:${otpSessionId}`,
         expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
         payload: {

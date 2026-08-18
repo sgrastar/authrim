@@ -906,6 +906,7 @@ app.use('*', async (c, next) => {
     path === '/logout' ||
     path.endsWith('/frontchannel-logout') ||
     path === '/logged-out' ||
+    path === '/logout-complete' ||
     path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||

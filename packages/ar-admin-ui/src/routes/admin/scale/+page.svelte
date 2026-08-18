@@ -30,6 +30,12 @@
 		type ReadReplicationStatus
 	} from '$lib/api/admin-read-replication';
 	import WorldMap from '$lib/components/WorldMap.svelte';
+	import { buildRegionMapRenderKey, isScaleRegionSelectable } from '$lib/region-map';
+	import {
+		getShardScaleRange,
+		isShardCountValidForRegions,
+		normalizeShardCountForRegions
+	} from '$lib/scale-shards';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
@@ -170,13 +176,13 @@
 	// Initial LPS (for "Current" display - doesn't change with slider)
 	let initialLPS = $derived(estimateLPS(initialScaleState.unifiedScale));
 
-	// Active region count
-	let _activeRegionCount = $derived(selectedRegions.length);
-
-	// Minimum shard count = 4 (practical minimum for any meaningful load)
-	const minShardCount = 4;
-	const maxShardCount = 128;
-	const shardStep = 4;
+	// The scale must allocate a whole number of shards to every active region.
+	let activeRegionCount = $derived(selectedRegions.length);
+	let shardScaleRange = $derived(getShardScaleRange(activeRegionCount));
+	let shardScaleValid = $derived(
+		isShardCountValidForRegions(scaleState.unifiedScale, activeRegionCount)
+	);
+	let regionMapRenderKey = $derived(buildRegionMapRenderKey(selectedRegions));
 
 	// Calculate individual shard counts from unified scale
 	function calculateShardCounts(scale: ScaleState) {
@@ -224,14 +230,10 @@
 		return items;
 	});
 
-	// Enforce min/max bounds (no divisibility constraint needed - backend handles percentage-based allocation)
+	// Keep the selected capacity on a valid multiple whenever the active region set changes.
 	$effect(() => {
-		if (scaleState.unifiedScale < minShardCount) {
-			scaleState.unifiedScale = minShardCount;
-		}
-		if (scaleState.unifiedScale > maxShardCount) {
-			scaleState.unifiedScale = maxShardCount;
-		}
+		const normalized = normalizeShardCountForRegions(scaleState.unifiedScale, activeRegionCount);
+		if (normalized !== scaleState.unifiedScale) scaleState.unifiedScale = normalized;
 	});
 
 	// =========================================================================
@@ -430,7 +432,7 @@
 	// Region Functions
 	// =========================================================================
 	function toggleRegion(regionKey: string) {
-		if (!allowedRegions.includes(regionKey)) return;
+		if (!isScaleRegionSelectable(regionKey, allowedRegions)) return;
 		if (selectedRegions.includes(regionKey)) {
 			if (selectedRegions.length > 1) {
 				selectedRegions = selectedRegions.filter((r) => r !== regionKey);
@@ -512,6 +514,10 @@
 
 	async function saveAllChanges() {
 		showDiffDialog = false;
+		if (!isShardCountValidForRegions(scaleState.unifiedScale, selectedRegions.length)) {
+			error = $LL.admin_scale_region_shard_multiple_error({ count: selectedRegions.length });
+			return;
+		}
 		saving = true;
 		error = '';
 
@@ -794,11 +800,12 @@
 					<div class="scale-panel-main">
 						<input
 							type="range"
-							min={minShardCount}
-							max={maxShardCount}
-							step={shardStep}
+							min={shardScaleRange.min}
+							max={shardScaleRange.max}
+							step={shardScaleRange.step}
 							bind:value={scaleState.unifiedScale}
 							class="cyber-slider"
+							aria-describedby="scale-region-step"
 						/>
 						<div class="scale-readout">
 							<span class="shard-count">{scaleState.unifiedScale}</span>
@@ -810,6 +817,9 @@
 						<span class="lps-unit">LPS</span>
 					</div>
 				</div>
+				<p id="scale-region-step" class="scale-step-note">
+					{$LL.admin_scale_region_shard_step({ count: activeRegionCount })}
+				</p>
 				<div class="rps-mini-grid">
 					<div class="rps-mini-item">
 						<span class="rps-mini-label">Auth</span>
@@ -837,7 +847,9 @@
 
 			<!-- Section 2: World Map Visualization -->
 			<section class="map-section">
-				<WorldMap {selectedRegions} {regionDistribution} onRegionClick={toggleRegion} />
+				{#key regionMapRenderKey}
+					<WorldMap {selectedRegions} {regionDistribution} onRegionClick={toggleRegion} />
+				{/key}
 			</section>
 
 			<!-- Section 3: Region Distribution -->
@@ -864,18 +876,26 @@
 					{#each ALL_REGIONS as region (region.key)}
 						{@const isSelected = selectedRegions.includes(region.key)}
 						{@const isLastSelected = selectedRegions.length === 1 && isSelected}
-						{@const isAllowed = allowedRegions.includes(region.key)}
-						<div class="region-row" class:selected={isSelected} class:disabled={!isAllowed}>
-							<label class="toggle-switch" class:disabled={isLastSelected || !isAllowed}>
+						{@const isSelectable = isScaleRegionSelectable(region.key, allowedRegions)}
+						{@const availabilityDescriptionId = `region-${region.key.toLowerCase()}-availability`}
+						<div class="region-row" class:selected={isSelected} class:disabled={!isSelectable}>
+							<label class="toggle-switch" class:disabled={isLastSelected || !isSelectable}>
 								<input
 									type="checkbox"
 									checked={isSelected}
 									onchange={() => toggleRegion(region.key)}
-									disabled={isLastSelected || !isAllowed}
+									disabled={isLastSelected || !isSelectable}
+									aria-label={region.label}
+									aria-describedby={!isSelectable ? availabilityDescriptionId : undefined}
 								/>
 								<span class="toggle-slider"></span>
 							</label>
 							<span class="region-label">{region.label}</span>
+							{#if !isSelectable}
+								<span id={availabilityDescriptionId} class="region-placement-note">
+									{$LL.admin_scale_region_unavailable_do()}
+								</span>
+							{/if}
 							{#if isSelected && selectedRegions.length > 1}
 								<input
 									type="range"
@@ -1061,7 +1081,7 @@
 				<button
 					class="btn btn-primary"
 					onclick={handleSaveClick}
-					disabled={loading || saving || !hasChanges}
+					disabled={loading || saving || !hasChanges || !shardScaleValid}
 				>
 					{#if saving}
 						<i class="i-ph-circle-notch animate-spin"></i>
@@ -1598,6 +1618,12 @@
 		flex-wrap: wrap;
 	}
 
+	.scale-step-note {
+		margin: 8px 0 0 126px;
+		font-size: 0.6875rem;
+		color: rgba(255, 255, 255, 0.5);
+	}
+
 	.scale-panel-title {
 		display: flex;
 		align-items: center;
@@ -2096,6 +2122,12 @@
 		font-weight: 500;
 	}
 
+	.region-placement-note {
+		font-size: 0.6875rem;
+		color: var(--color-text-muted);
+		white-space: nowrap;
+	}
+
 	.region-slider {
 		flex: 1;
 		height: 6px;
@@ -2344,6 +2376,10 @@
 
 	/* Responsive */
 	@media (max-width: 768px) {
+		.scale-step-note {
+			margin-left: 0;
+		}
+
 		.lps-value {
 			font-size: 1.5rem;
 		}
@@ -2355,6 +2391,11 @@
 		.region-label {
 			width: auto;
 			flex: 1;
+		}
+
+		.region-placement-note {
+			margin-left: 56px;
+			width: calc(100% - 56px);
 		}
 
 		.region-slider {

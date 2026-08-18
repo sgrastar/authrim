@@ -325,6 +325,21 @@ const adminOther = {
 	admin_theme_page_titles_account: 'Account page',
 	admin_theme_page_titles_help:
 		'Re-authentication, consent, device verification, email verification, error, and completion titles remain contextual system messages.',
+	admin_authentication_methods_page_title: 'Authentication Method Profiles',
+	admin_authentication_methods_page_description:
+		'Manage the authentication method profiles used for login, signup, re-authentication, and account linking. Current tenant: {tenant:string}',
+	admin_authentication_methods_profiles_title: 'Profiles',
+	admin_authentication_methods_profiles_description:
+		'Select these profiles in Flows. Manage the detailed enablement of authentication methods on each profile page.',
+	admin_authentication_methods_builtin_label: 'Built-in',
+	admin_authentication_methods_default_profile_title: 'Default profile',
+	admin_authentication_methods_default_label: 'Default',
+	admin_authentication_methods_default_profile_description:
+		'This profile contains the existing authentication method settings and is available in Flows as the Default profile.',
+	admin_authentication_methods_list_cache_notice:
+		'Changes may take up to 3 minutes to appear in Login UI.',
+	admin_authentication_methods_back_to_list: 'Back to profiles',
+	admin_authentication_methods_none: 'None',
 	admin_authentication_methods_error_load: 'Failed to load authentication method settings',
 	admin_authentication_methods_error_save: 'Failed to save authentication method settings',
 	admin_authentication_methods_saved: 'Authentication method settings saved.',
@@ -427,6 +442,13 @@ const adminOther = {
 	admin_login_ui_language_enable: 'Enable {language:string}',
 	admin_login_ui_language_make_default: 'Set {language:string} as the default language',
 	admin_login_ui_language_default_label: 'Default language',
+	admin_login_ui_language_show_english: 'Show English language names',
+	admin_login_ui_language_show_english_description:
+		'When enabled, Login UI shows the English name followed by the native name. Languages with matching names are shown only once.',
+	admin_login_ui_language_make_primary: 'Set {language:string} as a primary language',
+	admin_login_ui_language_primary_description:
+		'Primary language checkboxes are available when 11 or more languages are enabled. Choose up to {count:number}; they appear first in Login UI.',
+	admin_login_ui_language_primary_limit: 'You can select up to {count:number} primary languages.',
 	admin_login_ui_language_select_all: 'Select all',
 	admin_login_ui_language_clear_all: 'Clear all',
 	admin_login_ui_language_help:
@@ -745,7 +767,47 @@ const adminOther = {
 	admin_consent_requirements_rules: 'Conditional Rules (JSON)',
 	admin_consent_requirements_not_configured: 'Not configured',
 	admin_consent_requirements_enforcement_block: 'Block (must consent)',
-	admin_consent_requirements_enforcement_allow_continue: 'Allow Continue'
+	admin_consent_requirements_enforcement_allow_continue: 'Allow Continue',
+	admin_nav_email_deliveries: 'Email delivery status',
+	admin_email_deliveries_head_title: 'Email delivery status - Admin Dashboard - Authrim',
+	admin_email_deliveries_title: 'Email delivery status',
+	admin_email_deliveries_description:
+		'Investigate whether Authrim recorded an email request and whether the delivery provider accepted it.',
+	admin_email_deliveries_history: 'Delivery history',
+	admin_email_deliveries_history_description:
+		'Provider acceptance is not the same as inbox delivery. Final delivery is shown only when the provider reports it.',
+	admin_email_deliveries_loading: 'Loading email delivery history...',
+	admin_email_deliveries_load_failed: 'Failed to load email delivery history.',
+	admin_email_deliveries_refresh: 'Refresh',
+	admin_email_deliveries_filter_status: 'Status',
+	admin_email_deliveries_all_statuses: 'All statuses',
+	admin_email_deliveries_empty: 'No email delivery records were found.',
+	admin_email_deliveries_requested_at: 'Requested',
+	admin_email_deliveries_user: 'User',
+	admin_email_deliveries_recipient: 'Recipient',
+	admin_email_deliveries_recipient_hidden: 'Hidden by permission',
+	admin_email_deliveries_purpose: 'Purpose',
+	admin_email_deliveries_api: 'Authrim API',
+	admin_email_deliveries_api_recorded: 'Recorded',
+	admin_email_deliveries_provider: 'Provider',
+	admin_email_deliveries_final_delivery: 'Final delivery',
+	admin_email_deliveries_not_tracked: 'Not tracked',
+	admin_email_deliveries_attempts: 'Attempts',
+	admin_email_deliveries_evidence: 'Evidence / error',
+	admin_email_deliveries_status_requested: 'Requested',
+	admin_email_deliveries_status_retrying: 'Retrying',
+	admin_email_deliveries_status_provider_accepted: 'Provider accepted',
+	admin_email_deliveries_status_delivered: 'Delivered',
+	admin_email_deliveries_status_deferred: 'Deferred',
+	admin_email_deliveries_status_bounced: 'Bounced',
+	admin_email_deliveries_status_failed: 'Failed',
+	admin_email_deliveries_status_rejected: 'Rejected',
+	admin_email_deliveries_status_complained: 'Spam complaint',
+	admin_email_deliveries_status_unknown: 'Unknown',
+	admin_email_deliveries_status_expired: 'Expired',
+	admin_email_deliveries_status_canceled: 'Canceled',
+	admin_email_deliveries_open_status: 'Email delivery status',
+	admin_user_detail_tab_email_deliveries: 'Emails'
 } as const;
 
 export default adminOther;

@@ -1,8 +1,8 @@
 const adminDashboard = {
-	admin_dashboard_activeUsers: 'Active Users',
+	admin_dashboard_activeUsers: '30-day Active Users',
 	admin_dashboard_totalUsers: 'Total Users',
 	admin_dashboard_clients: 'OAuth Clients',
-	admin_dashboard_todayLogins: "Today's Logins",
+	admin_dashboard_todayLogins: 'Users Logged In Today',
 	admin_dashboard_recentActivity: 'Recent Activity',
 	admin_dashboard_page_title: 'Admin Dashboard - Authrim',
 	admin_dashboard_welcome_title: 'Welcome back',

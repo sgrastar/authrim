@@ -521,7 +521,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
       session
         .prepare(
           `UPDATE notification_delivery_intents
-              SET active_provider_index = ?, provider_started_at = ?, updated_at = ?
+              SET active_provider_index = ?, provider_started_at = ?,
+                  attempt_count = attempt_count + 1, last_error_code = ?, updated_at = ?
             WHERE intent_id = ? AND tenant_id = ? AND state = 'pending'
               AND active_provider_index = ?
               AND json_extract(
@@ -532,6 +533,7 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
         .bind(
           nextIndex,
           input.now,
+          input.errorCode,
           input.now,
           intentId,
           claim.invocation.tenantId,
@@ -707,6 +709,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
             `UPDATE notification_delivery_intents
                 SET state = 'dead_letter', payload_key_id = NULL,
                     payload_envelope_json = NULL, dead_lettered_at = ?,
+                    delivery_status = 'failed', delivery_status_updated_at = ?,
+                    attempt_count = attempt_count + 1, last_error_code = ?,
                     delete_after = ?, updated_at = ?
               WHERE intent_id = ? AND tenant_id = ?
                 AND json_extract(
@@ -717,6 +721,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
           )
           .bind(
             input.now,
+            input.now,
+            input.errorCode,
             input.deleteAfter,
             input.now,
             claim.invocation.payload.intentId,
@@ -727,6 +733,33 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
       ]);
       if (
         results.some((result) => result.success !== true || result.error !== undefined) ||
+        (results[1]?.meta.changes ?? 0) !== 1
+      ) {
+        throw new Error('plugin_outbox_stale_claim');
+      }
+      return;
+    }
+    if ('intentId' in claim.invocation.payload) {
+      const results = await session.batch([
+        session
+          .prepare(
+            `UPDATE notification_delivery_intents
+                SET attempt_count = attempt_count + CASE WHEN ? = 'succeeded' THEN 0 ELSE 1 END,
+                    last_error_code = ?, updated_at = ?
+              WHERE intent_id = ? AND tenant_id = ?`
+          )
+          .bind(
+            input.status,
+            input.errorCode,
+            input.now,
+            claim.invocation.payload.intentId,
+            claim.invocation.tenantId
+          ),
+        outboxStatement,
+      ]);
+      if (
+        results.some((result) => result.success !== true || result.error !== undefined) ||
+        (results[0]?.meta.changes ?? 0) !== 1 ||
         (results[1]?.meta.changes ?? 0) !== 1
       ) {
         throw new Error('plugin_outbox_stale_claim');
@@ -794,6 +827,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
             `UPDATE notification_delivery_intents
                 SET state = 'dead_letter', payload_key_id = NULL,
                     payload_envelope_json = NULL, dead_lettered_at = ?,
+                    delivery_status = 'failed', delivery_status_updated_at = ?,
+                    last_error_code = 'plugin_outbox_payload_invalid',
                     delete_after = ?, updated_at = ?
               WHERE tenant_id = ? AND idempotency_key = ?
                 AND json_extract(
@@ -803,6 +838,7 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
                 AND state = 'pending'`
           )
           .bind(
+            now,
             now,
             now + DEAD_LETTER_RETENTION_SECONDS,
             now,
@@ -942,13 +978,23 @@ export class PluginHookOutboxDispatcher {
         const errorMessage = error instanceof Error ? error.message : '';
         const retryable = errorMessage === 'plugin_hook_transient_failure';
         const providerScoped = retryable || errorMessage === 'plugin_hook_provider_rejected';
+        const notificationErrorCodes = new Set([
+          'plugin_notification_key_unavailable',
+          'plugin_notification_key_unwrap_failed',
+          'plugin_notification_payload_authentication_failed',
+          'plugin_notification_decryption_failed',
+          'plugin_notification_envelope_invalid',
+          'plugin_notification_payload_invalid',
+        ]);
         return this.store.fail(claim, {
           now,
           errorCode: retryable
             ? 'plugin_hook_transient_failure'
             : providerScoped
               ? 'plugin_hook_provider_rejected'
-              : 'plugin_hook_rejected',
+              : notificationErrorCodes.has(errorMessage)
+                ? errorMessage
+                : 'plugin_hook_rejected',
           retryable,
           maxAttempts: policy.maxAttempts,
           failureScope: providerScoped ? 'provider' : 'message',

@@ -24,6 +24,13 @@ describe('Account Page published composition', () => {
 		expect(source).not.toContain('min-height: 100vh');
 	});
 
+	it('renders full-width overview placements as a visible card spanning the account grid', () => {
+		expect(source).toContain("class:full={placement.width === 'full'}");
+		expect(source).toContain("class:overview={screen.screen_key === 'account_overview'}");
+		expect(source).toMatch(/\.account-screen\.full\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s);
+		expect(source).toMatch(/\.account-screen\.overview\s*\{[^}]*background:/s);
+	});
+
 	it('shares the configured footer and preference controls with authentication pages', () => {
 		expect(source).toContain('<ConfiguredFooter locale={currentLocale} class="account-footer" />');
 		expect(source).toContain('{#if loginUIPageStore.showTopbar}');

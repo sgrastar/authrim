@@ -256,7 +256,7 @@ describe('Region Sharding Utilities', () => {
   describe('validateRegionShardRequest', () => {
     it('should accept valid request', () => {
       const result = validateRegionShardRequest({
-        totalShards: 20,
+        totalShards: 21,
         regionDistribution: { apac: 20, enam: 40, weur: 40 },
       });
 
@@ -303,9 +303,19 @@ describe('Region Sharding Utilities', () => {
       expect(result.error).toContain('must be >= active region count');
     });
 
+    it('should reject totalShards that is not a multiple of active regions', () => {
+      const result = validateRegionShardRequest({
+        totalShards: 4,
+        regionDistribution: { apac: 33, enam: 33, weur: 34 },
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('must be a multiple of active region count');
+    });
+
     it('should reject when percentage would result in 0 shards', () => {
       const result = validateRegionShardRequest({
-        totalShards: 10,
+        totalShards: 12,
         regionDistribution: { apac: 1, enam: 49, weur: 50 },
       });
 
@@ -627,9 +637,9 @@ describe('Region Sharding Utilities', () => {
         expect(result.error).toContain('must be >= active region count');
       });
 
-      it('should handle very large totalShards (1000)', () => {
+      it('should handle a very large valid totalShards multiple', () => {
         const result = validateRegionShardRequest({
-          totalShards: 1000,
+          totalShards: 999,
           regionDistribution: { apac: 20, enam: 40, weur: 40 },
         });
 

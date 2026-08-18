@@ -55,7 +55,9 @@ describe('built-in notifier registry', () => {
       EMAIL_FROM_NAME: 'Authrim',
     } as PluginRunnerEnv).resolve('notifier-resend', 'notifier.send');
 
-    await expect(handler?.(invocation, access(fetchExternal))).resolves.toBeUndefined();
+    await expect(handler?.(invocation, access(fetchExternal))).resolves.toEqual({
+      providerMessageId: 'message-a',
+    });
     expect(fetchExternal).toHaveBeenCalledTimes(1);
   });
 
@@ -91,7 +93,9 @@ describe('built-in notifier registry', () => {
     } as unknown as PluginRunnerEnv).resolve('notifier-cloudflare', 'notifier.send');
     const fetchExternal = vi.fn();
 
-    await expect(handler?.(invocation, access(fetchExternal))).resolves.toBeUndefined();
+    await expect(handler?.(invocation, access(fetchExternal))).resolves.toEqual({
+      providerMessageId: 'message-a',
+    });
     expect(send).toHaveBeenCalledWith({
       to: 'person@example.test',
       from: 'noreply@example.test',

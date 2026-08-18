@@ -31,27 +31,27 @@ import zhTW from '$i18n/zh-TW';
 describe('LoginUI locales', () => {
 	it('matches the twenty-one locales supported by Screen localizations', () => {
 		expect(LOGIN_UI_LOCALES).toEqual([
-			'en',
-			'ja',
+			'am',
+			'ar',
+			'bn',
 			'zh-CN',
 			'zh-TW',
-			'es',
-			'pt',
+			'en',
 			'fr',
 			'de',
-			'ko',
-			'ru',
-			'id',
-			'ar',
-			'it',
-			'th',
-			'vi',
 			'hi',
-			'bn',
-			'tr',
+			'id',
+			'it',
+			'ja',
+			'ko',
+			'pl',
+			'pt',
+			'ru',
+			'es',
 			'sw',
-			'am',
-			'pl'
+			'th',
+			'tr',
+			'vi'
 		]);
 	});
 

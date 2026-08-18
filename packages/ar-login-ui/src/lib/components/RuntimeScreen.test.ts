@@ -143,6 +143,23 @@ describe('RuntimeScreen signup email fields', () => {
 		expect(body).toMatch(/<button[^>]*type="submit"[^>]*>/);
 	});
 
+	it('shows a busy spinner while an email code request is in progress', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: {
+				screen: { fields: [mailOtpWidget] },
+				authMethodMode: 'login',
+				fieldValues: { email: 'person@example.edu' },
+				methodAvailability: { mail_otp: true },
+				methodLoading: { mail_otp: true }
+			}
+		}).body;
+
+		expect(body).toContain('aria-busy="true"');
+		expect(body).toContain('runtime-auth-spinner');
+		expect(body).not.toContain('i-ph-envelope-simple');
+	});
+
 	it('marks a wide canvas layout for the page shell to consume', () => {
 		setLocale('en');
 		const body = render(RuntimeScreen, {

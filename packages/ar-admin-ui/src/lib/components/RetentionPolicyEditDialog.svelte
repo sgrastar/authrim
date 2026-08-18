@@ -8,7 +8,12 @@
 		category: string | null;
 		currentRetentionDays: number;
 		onClose: () => void;
-		onSave: (category: string, retentionDays: number) => Promise<void>;
+		onSave: (
+			category: string,
+			retentionDays: number,
+			confirmShortening: boolean,
+			expectedCurrentRetentionDays: number
+		) => Promise<void>;
 	}
 
 	let { open, category, currentRetentionDays, onClose, onSave }: Props = $props();
@@ -19,6 +24,9 @@
 	let estimateLoading = $state(false);
 	let error = $state<string | null>(null);
 	let estimate = $state<CleanupEstimate | null>(null);
+	let shorteningConfirmed = $state(false);
+	let minimumRetentionDays = $derived(category === 'lookup_directory' ? 30 : 1);
+	let isShortening = $derived(retentionDays < currentRetentionDays);
 
 	// Reset state when dialog opens
 	$effect(() => {
@@ -26,6 +34,7 @@
 			retentionDays = currentRetentionDays;
 			error = null;
 			estimate = null;
+			shorteningConfirmed = false;
 			loadEstimate();
 		}
 	});
@@ -45,8 +54,18 @@
 	}
 
 	async function handleSave() {
-		if (!category || retentionDays < 1 || retentionDays > 3650) {
-			error = $LL.admin_compliance_retention_days_invalid();
+		if (
+			!category ||
+			retentionDays < minimumRetentionDays ||
+			retentionDays > 3650 ||
+			(isShortening && !shorteningConfirmed)
+		) {
+			error =
+				isShortening && !shorteningConfirmed
+					? $LL.admin_compliance_retention_shortening_confirmation_required()
+					: category === 'lookup_directory'
+						? $LL.admin_compliance_lookup_retention_days_invalid()
+						: $LL.admin_compliance_retention_days_invalid();
 			return;
 		}
 
@@ -54,7 +73,7 @@
 		error = null;
 
 		try {
-			await onSave(category, retentionDays);
+			await onSave(category, retentionDays, shorteningConfirmed, currentRetentionDays);
 			onClose();
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_compliance_save_failed();
@@ -87,6 +106,8 @@
 				return $LL.admin_compliance_category_refresh_tokens();
 			case 'access_tokens':
 				return $LL.admin_compliance_category_access_tokens();
+			case 'lookup_directory':
+				return $LL.admin_compliance_category_lookup_directory();
 			default:
 				return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 		}
@@ -106,6 +127,8 @@
 				return $LL.admin_compliance_category_refresh_tokens_desc();
 			case 'access_tokens':
 				return $LL.admin_compliance_category_access_tokens_desc();
+			case 'lookup_directory':
+				return $LL.admin_compliance_category_lookup_directory_desc();
 			default:
 				return $LL.admin_compliance_category_unknown_desc();
 		}
@@ -139,13 +162,15 @@
 					id="retention-days"
 					type="number"
 					bind:value={retentionDays}
-					min="1"
+					min={minimumRetentionDays}
 					max="3650"
 					disabled={loading}
 				/>
 			</div>
 			<p class="help-text">
-				{$LL.admin_compliance_retention_help()}
+				{category === 'lookup_directory'
+					? $LL.admin_compliance_lookup_retention_help()
+					: $LL.admin_compliance_retention_help()}
 			</p>
 		</div>
 
@@ -153,7 +178,7 @@
 		<div class="presets">
 			<span class="presets-label">{$LL.admin_compliance_quick_select()}</span>
 			<div class="presets-buttons">
-				{#each presets as preset (preset.value)}
+				{#each presets.filter((preset) => preset.value >= minimumRetentionDays) as preset (preset.value)}
 					<button
 						class="preset-btn"
 						class:active={retentionDays === preset.value}
@@ -199,6 +224,18 @@
 			</div>
 		{/if}
 
+		{#if isShortening}
+			<label class="shortening-confirmation">
+				<input type="checkbox" bind:checked={shorteningConfirmed} disabled={loading} />
+				<span>
+					{$LL.admin_compliance_retention_shortening_confirm({
+						current: currentRetentionDays,
+						requested: retentionDays
+					})}
+				</span>
+			</label>
+		{/if}
+
 		{#snippet footer()}
 			<button class="btn btn-secondary" onclick={onClose} disabled={loading}>
 				{$LL.admin_compliance_cancel()}
@@ -206,7 +243,10 @@
 			<button
 				class="btn btn-primary"
 				onclick={handleSave}
-				disabled={loading || retentionDays < 1 || retentionDays > 3650}
+				disabled={loading ||
+					retentionDays < minimumRetentionDays ||
+					retentionDays > 3650 ||
+					(isShortening && !shorteningConfirmed)}
 			>
 				{loading ? $LL.admin_compliance_saving() : $LL.admin_compliance_save_changes()}
 			</button>
@@ -383,6 +423,15 @@
 		padding: 12px;
 		border-radius: var(--radius-control, 6px);
 		font-size: 14px;
+	}
+
+	.shortening-confirmation {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		margin: 16px 0;
+		font-size: 14px;
+		color: var(--color-text);
 	}
 
 	.btn {

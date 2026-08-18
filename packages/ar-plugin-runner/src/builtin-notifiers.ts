@@ -75,8 +75,25 @@ function resendHandler(env: PluginRunnerEnv): InProcessPluginHookHandler {
         signal: access.signal,
       })
     );
+    if (response.status >= 200 && response.status < 300) {
+      let providerMessageId: string | undefined;
+      try {
+        const result: unknown = await response.json();
+        if (
+          result !== null &&
+          typeof result === 'object' &&
+          'id' in result &&
+          typeof result.id === 'string' &&
+          result.id.length <= 512
+        ) {
+          providerMessageId = result.id;
+        }
+      } catch {
+        // A successful provider response without a parseable receipt is still accepted.
+      }
+      return providerMessageId ? { providerMessageId } : undefined;
+    }
     await response.body?.cancel();
-    if (response.status >= 200 && response.status < 300) return;
     if (response.status === 429 || response.status >= 500) {
       throw new Error('plugin_in_process_transient_failure');
     }
@@ -91,7 +108,7 @@ function cloudflareHandler(env: PluginRunnerEnv): InProcessPluginHookHandler {
   return async (invocation) => {
     const payload = delivery(invocation);
     if (!env.EMAIL) throw new Error('plugin_in_process_provider_rejected');
-    await env.EMAIL.send({
+    const result = await env.EMAIL.send({
       to: payload.to,
       from: sender(env, payload.from),
       subject: payload.subject ?? '',
@@ -100,6 +117,8 @@ function cloudflareHandler(env: PluginRunnerEnv): InProcessPluginHookHandler {
       ...(payload.cc ? { cc: payload.cc } : {}),
       ...(payload.bcc ? { bcc: payload.bcc } : {}),
     });
+    if (!result?.messageId) throw new Error('plugin_in_process_transient_failure');
+    return { providerMessageId: result.messageId };
   };
 }
 

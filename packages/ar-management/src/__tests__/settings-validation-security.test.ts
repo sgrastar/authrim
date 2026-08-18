@@ -122,4 +122,16 @@ describe('audit and region numeric settings', () => {
     expect((response as Response).status).toBe(400);
     expect(kv.put).not.toHaveBeenCalled();
   });
+
+  it('rejects region shard counts that are not a multiple of active regions', async () => {
+    const { context: c, kv } = context({
+      body: { totalShards: 4, regionDistribution: { apac: 33, enam: 33, weur: 34 } },
+      useAuthrimConfig: true,
+    });
+
+    const response = await updateRegionShards(c);
+    expect(response).toBeInstanceOf(Response);
+    expect((response as Response).status).toBe(400);
+    expect(kv.put).not.toHaveBeenCalled();
+  });
 });

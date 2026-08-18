@@ -28,6 +28,15 @@ export interface AccountExternalSubjectAdditionInput {
   routeProjection: AccountRouteProjection;
 }
 
+export interface AccountEmailAdditionInput {
+  operationId: string;
+  idempotencyKey: string;
+  tenantId: string;
+  accountId: string;
+  email: string;
+  routeProjection: AccountRouteProjection;
+}
+
 export type AccountExternalSubjectRemovalInput = AccountExternalSubjectAdditionInput;
 
 interface IdentifierAdditionDependencies {
@@ -137,6 +146,29 @@ export async function buildAccountExternalSubjectAddition(
   env: Env,
   input: AccountExternalSubjectAdditionInput
 ): Promise<AccountDirectoryPublication> {
+  return buildAccountIdentifierAddition(env, {
+    operationId: input.operationId,
+    idempotencyKey: input.idempotencyKey,
+    tenantId: input.tenantId,
+    accountId: input.accountId,
+    identifierKind: 'external_subject',
+    identifier: input.externalSubject,
+    routeProjection: input.routeProjection,
+  });
+}
+
+async function buildAccountIdentifierAddition(
+  env: Env,
+  input: {
+    operationId: string;
+    idempotencyKey: string;
+    tenantId: string;
+    accountId: string;
+    identifierKind: 'email_exact' | 'external_subject';
+    identifier: string | { issuer: string; subject: string };
+    routeProjection: AccountRouteProjection;
+  }
+): Promise<AccountDirectoryPublication> {
   const keys = (await loadLookupHmacRuntimeKeys(env)).writeKeys;
   return validateAccountDirectoryPublication({
     operationId: input.operationId,
@@ -146,21 +178,35 @@ export async function buildAccountExternalSubjectAddition(
     routeProjection: input.routeProjection,
     indexes: [
       ...(await createLookupBlindIndexes('account_id', input.accountId, keys)),
-      ...(await createLookupBlindIndexes('external_subject', input.externalSubject, keys)),
+      ...(await createLookupBlindIndexes(input.identifierKind, input.identifier, keys)),
     ],
   });
 }
 
-export async function publishAccountExternalSubjectAddition(
+export async function buildAccountEmailAddition(
   env: Env,
-  input: AccountExternalSubjectAdditionInput,
+  input: AccountEmailAdditionInput
+): Promise<AccountDirectoryPublication> {
+  return buildAccountIdentifierAddition(env, {
+    operationId: input.operationId,
+    idempotencyKey: input.idempotencyKey,
+    tenantId: input.tenantId,
+    accountId: input.accountId,
+    identifierKind: 'email_exact',
+    identifier: input.email,
+    routeProjection: input.routeProjection,
+  });
+}
+
+async function publishAccountIdentifierAddition(
+  env: Env,
+  publication: AccountDirectoryPublication,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
   const now = dependencies.now?.() ?? Math.floor(Date.now() / 1000);
   if (!Number.isSafeInteger(now) || now < 1) {
     throw new Error('account_identifier_addition_time_invalid');
   }
-  const publication = await buildAccountExternalSubjectAddition(env, input);
   const lookupForBucket = await createLookupBucketWriteResolver(env);
   await new InitialAccountIdentifierReservationService({
     lookupForBucket,
@@ -228,4 +274,22 @@ export async function publishAccountExternalSubjectAddition(
     operationId: publication.operationId,
     accountId: publication.accountId,
   };
+}
+
+export async function publishAccountExternalSubjectAddition(
+  env: Env,
+  input: AccountExternalSubjectAdditionInput,
+  dependencies: IdentifierAdditionDependencies
+): Promise<AccountDirectoryPublishResult> {
+  const publication = await buildAccountExternalSubjectAddition(env, input);
+  return publishAccountIdentifierAddition(env, publication, dependencies);
+}
+
+export async function publishAccountEmailAddition(
+  env: Env,
+  input: AccountEmailAdditionInput,
+  dependencies: IdentifierAdditionDependencies
+): Promise<AccountDirectoryPublishResult> {
+  const publication = await buildAccountEmailAddition(env, input);
+  return publishAccountIdentifierAddition(env, publication, dependencies);
 }

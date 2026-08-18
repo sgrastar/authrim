@@ -12,12 +12,17 @@ const adminScale = {
 	admin_scale_system_scale_help:
 		"Set shards based on your service's maximum expected load. Too few may cause errors under high traffic; too many may increase response latency.",
 	admin_scale_shards_unit: 'shards',
+	admin_scale_region_shard_step: 'Adjusts in multiples of {count:number} active regions.',
+	admin_scale_region_shard_multiple_error:
+		'The shard count must be a multiple of the {count:number} active regions.',
 	admin_scale_region_distribution: 'Region Distribution',
 	admin_scale_region_distribution_help:
 		"Configure where authentication data (sessions, tokens) is stored. Set percentages based on your users' geographic distribution. Example: If 50% of users are in Asia, set APAC to ~50%.",
 	admin_scale_region_distribution_description: 'Select regions and configure {ratio:string}.',
 	admin_scale_request_routing_ratio: 'request routing ratio',
 	admin_scale_slider_note: 'Note: Adjusting one slider will auto-balance others.',
+	admin_scale_region_nearby_placement: 'Nearby placement',
+	admin_scale_region_unavailable_do: 'Unavailable for Durable Objects',
 	admin_scale_advanced_settings: 'Advanced Settings',
 	admin_scale_estimation_model: 'Estimation Model',
 	admin_scale_estimation_model_description:
@@ -43,7 +48,6 @@ const adminScale = {
 	admin_scale_load_failed: 'Failed to load configuration',
 	admin_scale_save_failed: 'Failed to save configuration',
 	admin_scale_map_unknown: 'Unknown',
-	admin_scale_map_no_do_support: 'No DO support',
 	admin_scale_map_active_region: 'Active Region',
 	admin_scale_map_inactive: 'Inactive',
 	admin_scale_map_traffic_flow: 'Traffic Flow',

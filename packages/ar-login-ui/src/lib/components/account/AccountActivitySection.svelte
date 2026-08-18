@@ -16,15 +16,40 @@
 	}>();
 
 	function formatAction(action: string): string {
+		const ja = getLocale() === 'ja';
 		switch (action) {
 			case 'account.profile.name_updated':
 				return $LL.account_operationNameUpdated();
+			case 'account.email.added':
+				return ja ? 'メールアドレスを追加' : 'Email added';
+			case 'account.email.changed':
+				return ja ? 'メールアドレスを変更' : 'Email changed';
+			case 'account.email.reauthenticated':
+				return ja ? 'メールで再認証' : 'Re-authenticated by email';
+			case 'account.device.updated':
+				return ja ? '端末名を変更' : 'Device renamed';
+			case 'account.device.unlinked':
+				return ja ? '端末を解除' : 'Device unlinked';
 			case 'account.passkey.created':
 				return $LL.account_operationPasskeyCreated();
 			case 'account.passkey.updated':
 				return $LL.account_operationPasskeyUpdated();
 			case 'account.passkey.deleted':
 				return $LL.account_operationPasskeyDeleted();
+			case 'account.passkey.reauthenticated':
+				return ja ? 'Passkeyで再認証' : 'Re-authenticated by Passkey';
+			case 'account.totp.enrollment_started':
+				return ja ? '認証アプリの設定を開始' : 'Authenticator setup started';
+			case 'account.totp.activated':
+				return ja ? '認証アプリを有効化' : 'Authenticator activated';
+			case 'account.totp.updated':
+				return ja ? '認証アプリ名を変更' : 'Authenticator renamed';
+			case 'account.totp.removed':
+				return ja ? '認証アプリを削除' : 'Authenticator removed';
+			case 'account.totp.backup_codes_regenerated':
+				return ja ? 'バックアップコードを再生成' : 'Backup codes regenerated';
+			case 'account.totp.reauthenticated':
+				return ja ? '認証アプリで再認証' : 'Re-authenticated by authenticator';
 			case 'account.session.revoked':
 				return $LL.account_operationSessionRevoked();
 			default:

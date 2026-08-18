@@ -4,7 +4,9 @@ import {
 	DEFAULT_LOGIN_UI_FOOTER_TEXTS,
 	DEFAULT_LOGIN_UI_PAGE_TITLES,
 	DEFAULT_LOGIN_UI_TAGLINES,
-	resolveEnabledLoginUILocales
+	resolveDefaultLoginUILocale,
+	resolveEnabledLoginUILocales,
+	resolveEnabledLoginUILocalesByEnglishName
 } from './locales';
 
 describe('Login UI locale settings', () => {
@@ -17,6 +19,22 @@ describe('Login UI locale settings', () => {
 		expect(resolveEnabledLoginUILocales('en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id')).toEqual(
 			ALL_LOGIN_UI_LOCALES
 		);
+	});
+
+	it('sorts enabled editing locales by English name without depending on configured order', () => {
+		expect(resolveEnabledLoginUILocalesByEnglishName('ja,ar,en,fr,am')).toEqual([
+			'am',
+			'ar',
+			'en',
+			'fr',
+			'ja'
+		]);
+	});
+
+	it('uses English as the fallback default after alphabetic locale sorting', () => {
+		expect(resolveDefaultLoginUILocale(undefined, ALL_LOGIN_UI_LOCALES)).toBe('en');
+		expect(resolveDefaultLoginUILocale('ja', ALL_LOGIN_UI_LOCALES)).toBe('ja');
+		expect(resolveDefaultLoginUILocale('en', ['ja', 'fr'])).toBe('ja');
 	});
 
 	it('provides localized theme text defaults for every supported locale', () => {

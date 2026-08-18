@@ -2587,71 +2587,105 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const attemptId = crypto.randomUUID();
     const code = generateEmailCode();
     const issuedAt = Date.now();
-    const hmacSecret = c.env.OTP_HMAC_SECRET;
-    if (!hmacSecret) {
-      log.error('OTP_HMAC_SECRET must be configured for direct email-code auth', {
-        action: 'direct_email_code_send',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
-    }
+    let failureStage = 'prepare';
+    type DirectEmailCodeChallengeStore = {
+      storeChallengeRpc(input: {
+        id: string;
+        tenantId: string;
+        type: string;
+        userId: string;
+        challenge: string;
+        ttl: number;
+        email: string;
+        metadata: Record<string, unknown>;
+      }): Promise<unknown>;
+      deleteChallengeRpc(id: string): Promise<unknown>;
+    };
+    let challengeStore: DirectEmailCodeChallengeStore | undefined;
+    try {
+      const hmacSecret = c.env.OTP_HMAC_SECRET;
+      if (!hmacSecret) {
+        throw new Error('otp_hmac_secret_missing');
+      }
 
-    const [codeHash, emailHash, challengeStore] = await Promise.all([
-      hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
-      hashEmail(normalizedEmail),
-      getChallengeStoreByChallengeId(c.env, attemptId, getTenantIdFromContext(c)),
-    ]);
+      const [codeHash, emailHash, resolvedChallengeStore] = await Promise.all([
+        hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
+        hashEmail(normalizedEmail),
+        getChallengeStoreByChallengeId(
+          c.env,
+          attemptId,
+          getTenantIdFromContext(c)
+        ) as Promise<DirectEmailCodeChallengeStore>,
+      ]);
+      challengeStore = resolvedChallengeStore;
 
-    await challengeStore.storeChallengeRpc({
-      id: `direct_email_code:${attemptId}`,
-      tenantId: getTenantIdFromContext(c),
-      type: 'direct_email_code',
-      userId: user.id,
-      challenge: codeHash,
-      ttl: EMAIL_CODE_TTL,
-      email: normalizedEmail,
-      metadata: {
-        ...emailVerificationMetadata,
-        transaction_id: attemptId,
-        email_hash: emailHash,
-        issued_at: issuedAt,
-      },
-    });
-
-    const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-    const delivery = await produceNotificationDelivery(c.env, {
-      owner: { owner: 'tenant', tenantId },
-      intentId: `direct-email-code:${attemptId}`,
-      outboxId: `notification:${attemptId}`,
-      notificationKind: 'auth.direct-email-code',
-      idempotencyKey: `direct-email-code:${attemptId}`,
-      expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
-      payload: {
-        channel: 'email',
-        to: normalizedEmail,
-        from: fromEmail,
-        subject: 'Your verification code',
-        body: getEmailCodeHtml({
-          name: user.name || undefined,
-          email: normalizedEmail,
-          code,
-          expiresInMinutes: EMAIL_CODE_TTL / 60,
-          appName: 'Authrim',
-          logoUrl: undefined,
-        }),
+      failureStage = 'challenge_store';
+      await challengeStore.storeChallengeRpc({
+        id: `direct_email_code:${attemptId}`,
+        tenantId: getTenantIdFromContext(c),
+        type: 'direct_email_code',
+        userId: user.id,
+        challenge: codeHash,
+        ttl: EMAIL_CODE_TTL,
+        email: normalizedEmail,
         metadata: {
-          textBody: getEmailCodeText({
+          ...emailVerificationMetadata,
+          transaction_id: attemptId,
+          email_hash: emailHash,
+          issued_at: issuedAt,
+        },
+      });
+
+      failureStage = 'delivery';
+      const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
+      const delivery = await produceNotificationDelivery(c.env, {
+        owner: { owner: 'tenant', tenantId },
+        intentId: `direct-email-code:${attemptId}`,
+        outboxId: `notification:${attemptId}`,
+        notificationKind: 'auth.direct-email-code',
+        accountId: user.id,
+        idempotencyKey: `direct-email-code:${attemptId}`,
+        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        payload: {
+          channel: 'email',
+          to: normalizedEmail,
+          from: fromEmail,
+          subject: 'Your verification code',
+          body: getEmailCodeHtml({
             name: user.name || undefined,
             email: normalizedEmail,
             code,
             expiresInMinutes: EMAIL_CODE_TTL / 60,
             appName: 'Authrim',
+            logoUrl: undefined,
           }),
+          metadata: {
+            textBody: getEmailCodeText({
+              name: user.name || undefined,
+              email: normalizedEmail,
+              code,
+              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              appName: 'Authrim',
+            }),
+          },
         },
-      },
-    });
-    if (delivery.delivery === 'permanent_failure') {
-      log.error('Failed to send direct email code', { action: 'email_send' });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      });
+      if (delivery.delivery === 'permanent_failure') {
+        throw new Error('notification_delivery_permanent_failure');
+      }
+    } catch (error) {
+      // Login and signup must not reveal whether the submitted address belongs to an account.
+      // Delivery failures remain available to operators through notification history and logs,
+      // while the public response stays indistinguishable from a suppressed send.
+      if (challengeStore) {
+        await challengeStore.deleteChallengeRpc(`direct_email_code:${attemptId}`).catch(() => {});
+      }
+      log.error('Failed to send direct email code', {
+        action: 'email_send',
+        failureStage,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      return acceptedEmailCodeSendResponse(c, normalizedEmail);
     }
 
     return c.json({

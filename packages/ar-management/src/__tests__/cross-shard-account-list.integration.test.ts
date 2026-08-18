@@ -107,6 +107,7 @@ async function insertAccount(
     piiShardId?: string;
     piiBindingRef?: string;
     piiRouteGeneration?: number;
+    lastLoginAt?: number;
   } = {}
 ): Promise<void> {
   const tenantId = options.tenantId ?? 'tenant-a';
@@ -152,8 +153,8 @@ async function insertAccount(
     .prepare(
       `INSERT INTO identity_accounts (
          id, legacy_user_id, tenant_id, account_type, lifecycle_state, display_label, created_at,
-         directory_publication_state, account_route_generation
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`
+         directory_publication_state, account_route_generation, metadata_json
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
     )
     .run(
       id,
@@ -163,7 +164,10 @@ async function insertAccount(
       options.lifecycleState ?? 'active',
       `Account ${id}`,
       createdAt,
-      publicationState
+      publicationState,
+      JSON.stringify(
+        options.lastLoginAt === undefined ? {} : { last_login_at: options.lastLoginAt }
+      )
     );
   database
     .prepare(
@@ -209,7 +213,8 @@ describe('CrossShardAccountListService', () => {
            display_label TEXT,
            created_at INTEGER NOT NULL,
            directory_publication_state TEXT NOT NULL,
-           account_route_generation INTEGER NOT NULL
+           account_route_generation INTEGER NOT NULL,
+           metadata_json TEXT
          );
          CREATE TABLE account_routing_outbox (
            outbox_id TEXT PRIMARY KEY,
@@ -383,6 +388,55 @@ describe('CrossShardAccountListService', () => {
     await expect(
       service.count({ tenantId: 'tenant-a', accountType: 'user', includeInactive: false })
     ).resolves.toBe(5);
+  });
+
+  it('aggregates dashboard users and canonical login timestamps across active shards', async () => {
+    await insertAccount(shardA, 'account-new', 980);
+    shardA
+      .prepare(`UPDATE identity_accounts SET metadata_json = ? WHERE id = 'account-5'`)
+      .run(JSON.stringify({ last_login_at: 950 }));
+    shardB
+      .prepare(`UPDATE identity_accounts SET metadata_json = ? WHERE id = 'account-4'`)
+      .run(JSON.stringify({ last_login_at: 1000 }));
+
+    const stats = await new CrossShardAccountListService(env(), () => 100).dashboardStats({
+      tenantId: 'tenant-a',
+      activeSince: 400,
+      todayStart: 900,
+    });
+
+    expect(stats).toEqual({
+      activeUsers: 2,
+      totalUsers: 6,
+      newUsersToday: 1,
+      loginsToday: 2,
+    });
+  });
+
+  it('merges recent login activity across shards and excludes inactive accounts', async () => {
+    await insertAccount(shardA, 'inactive-login-account', 12, {
+      lifecycleState: 'suspended',
+      lastLoginAt: 1100,
+    });
+    shardA
+      .prepare(`UPDATE identity_accounts SET metadata_json = ? WHERE id = 'account-5'`)
+      .run(JSON.stringify({ last_login_at: 900 }));
+    shardB
+      .prepare(`UPDATE identity_accounts SET metadata_json = ? WHERE id = 'account-4'`)
+      .run(JSON.stringify({ last_login_at: 1000 }));
+    shardB
+      .prepare(`UPDATE identity_accounts SET metadata_json = ? WHERE id = 'account-2'`)
+      .run(JSON.stringify({ last_login_at: 800 }));
+
+    const logins = await new CrossShardAccountListService(env(), () => 100).recentLogins({
+      tenantId: 'tenant-a',
+      limit: 2,
+    });
+
+    expect(logins.map((login) => [login.activityId, login.account.id, login.timestamp])).toEqual([
+      ['account-4', 'account-4', 1000],
+      ['account-5', 'account-5', 900],
+    ]);
   });
 
   it('rejects cursor tampering and reuse with a different query', async () => {

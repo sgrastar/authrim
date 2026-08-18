@@ -5577,6 +5577,7 @@ export interface DeleteOptions {
   queueConsumerDetachPropagationDelayMs?: number;
   workerDeletePropagationDelayMs?: number;
   onProgress?: (message: string) => void;
+  onResourceProgress?: (progress: { current: number; total: number }) => void;
 }
 
 const CONTROL_FIXED_D1_SUFFIX = /^(?:core|pii|admin|control|lookup|plugin-runner)-db$/u;
@@ -6699,6 +6700,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     queueConsumerDetachPropagationDelayMs = QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS,
     workerDeletePropagationDelayMs = WORKER_DELETE_PROPAGATION_DELAY_MS,
     onProgress = console.log,
+    onResourceProgress,
   } = options;
 
   validateEnvName(env);
@@ -6797,6 +6799,20 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     }
   }
 
+  const totalResources =
+    (deleteWorkers ? envInfo.workers.length : 0) +
+    (deleteD1 ? envInfo.d1.length : 0) +
+    (deleteKV ? envInfo.kv.length : 0) +
+    (deleteQueues ? envInfo.queues.length : 0) +
+    (deleteR2 ? envInfo.r2.length : 0) +
+    (deletePages ? envInfo.pages.length : 0);
+  let processedResources = 0;
+  const reportResourceProcessed = () => {
+    processedResources += 1;
+    onResourceProgress?.({ current: processedResources, total: totalResources });
+  };
+  onResourceProgress?.({ current: 0, total: totalResources });
+
   onProgress(`🗑️ Deleting environment: ${env}`);
   onProgress('');
 
@@ -6846,6 +6862,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete Worker: ${worker.name} (${workerResult.error})`);
         onProgress(`  ❌ ${worker.name} - ${workerResult.error}`);
       }
+      reportResourceProcessed();
     }
     if (queuesForConsumerDetach.length > 0 && workerDeletePropagationDelayMs > 0) {
       onProgress(
@@ -6887,6 +6904,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         );
         onProgress(`  ❌ ${bucket.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
@@ -6904,6 +6922,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete D1: ${db.name}`);
         onProgress(`  ❌ ${db.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
@@ -6921,6 +6940,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete KV: ${kv.name}`);
         onProgress(`  ❌ ${kv.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
@@ -6938,6 +6958,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
@@ -6956,6 +6977,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete Queue: ${queue.name}`);
         onProgress(`  ❌ ${queue.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }

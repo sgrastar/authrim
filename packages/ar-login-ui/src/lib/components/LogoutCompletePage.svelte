@@ -1,8 +1,6 @@
 <script lang="ts">
 	import { Button, Card } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
-	import FooterText from '$lib/components/FooterText.svelte';
-	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 
@@ -18,41 +16,24 @@
 	<meta name="description" content={$LL.logout_completeDescription()} />
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
-
-	<div class="auth-container">
-		<div class="auth-header">
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-			<p class="auth-header__subtitle">
-				<LocalizedTagline />
-			</p>
+<AuthPageShell>
+	<Card class="text-center">
+		<div class="auth-icon-badge">
+			<div class="auth-icon-badge__circle">
+				<div class="i-heroicons-check h-9 w-9 auth-icon-badge__icon"></div>
+			</div>
 		</div>
 
-		<Card class="text-center">
-			<div class="auth-icon-badge">
-				<div class="auth-icon-badge__circle">
-					<div class="i-heroicons-check h-9 w-9 auth-icon-badge__icon"></div>
-				</div>
-			</div>
+		<h2 class="auth-section-title text-center">
+			{$LL.logout_completeTitle()}
+		</h2>
+		<p class="auth-section-subtitle text-center mb-6">
+			{$LL.logout_completeDescription()}
+		</p>
 
-			<h2 class="auth-section-title text-center">
-				{$LL.logout_completeTitle()}
-			</h2>
-			<p class="auth-section-subtitle text-center mb-6">
-				{$LL.logout_completeDescription()}
-			</p>
-
-			<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
-				<div class="i-heroicons-arrow-left h-5 w-5"></div>
-				{$LL.common_backToLogin()}
-			</Button>
-		</Card>
-	</div>
-
-	<footer class="auth-footer">
-		<FooterText value={$LL.footer_stack()} />
-	</footer>
-</div>
+		<Button variant="primary" class="w-full" onclick={handleBackToLogin}>
+			<div class="i-heroicons-arrow-left h-5 w-5"></div>
+			{$LL.common_backToLogin()}
+		</Button>
+	</Card>
+</AuthPageShell>

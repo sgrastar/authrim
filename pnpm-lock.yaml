@@ -122,6 +122,9 @@ importers:
 
   packages/ar-admin-ui:
     dependencies:
+      '@authrim/ar-lib-core':
+        specifier: workspace:*
+        version: link:../ar-lib-core
       '@simplewebauthn/browser':
         specifier: ^13.2.2
         version: 13.2.2
@@ -577,6 +580,9 @@ importers:
 
   packages/ar-login-ui:
     dependencies:
+      '@authrim/ar-lib-core':
+        specifier: workspace:*
+        version: link:../ar-lib-core
       '@authrim/core':
         specifier: ^0.2.1
         version: 0.2.1

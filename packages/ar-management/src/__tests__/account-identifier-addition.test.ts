@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { prepareAccountExternalSubjectRemoval } from '../account-identifier-addition';
+import {
+  buildAccountEmailAddition,
+  prepareAccountExternalSubjectRemoval,
+} from '../account-identifier-addition';
 
 const { loadKeys } = vi.hoisted(() => ({
   loadKeys: vi.fn(),
@@ -48,7 +51,28 @@ describe('account external-subject removal preparation', () => {
         { generation: 2, secret: KEY_B },
         { generation: 1, secret: KEY_A },
       ],
+      writeKeys: [
+        { generation: 2, secret: KEY_B },
+        { generation: 1, secret: KEY_A },
+      ],
     });
+  });
+
+  it('builds an email addition publication without exposing the email address', async () => {
+    const publication = await buildAccountEmailAddition({} as Env, {
+      operationId: 'account-email-addition-operation-a',
+      idempotencyKey: 'email-addition-key-a',
+      tenantId: 'tenant-a',
+      accountId: 'account:user-a',
+      email: 'new@example.com',
+      routeProjection: input().routeProjection,
+    });
+
+    expect(publication.indexes.filter((index) => index.indexKind === 'account_id')).toHaveLength(2);
+    expect(publication.indexes.filter((index) => index.indexKind === 'email_exact')).toHaveLength(
+      2
+    );
+    expect(JSON.stringify(publication)).not.toContain('new@example.com');
   });
 
   it('persists only current and previous blind indexes in a prepared durable outbox', async () => {

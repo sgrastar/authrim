@@ -69,6 +69,14 @@ paths:
           in: query
           schema:
             type: string
+        - name: ui_locales
+          in: query
+          description: >-
+            Space-separated BCP 47 locale preferences in priority order. The first supported value
+            is forwarded to Login UI as a transaction-scoped hint and does not overwrite the
+            end-user's saved language preference.
+          schema:
+            type: string
       responses:
         '200':
           $ref: '#/components/responses/Any'
@@ -1277,7 +1285,9 @@ paths:
         Creates an email-code challenge for Direct Auth after validating the client, channel,
         origin, and requested email identifier. For an eligible explicit email-verification Flow,
         a valid Email Verification Protocol presentation completes verification without sending a
-        code; missing, unsupported, or invalid presentations use the normal mail-OTP response.
+        code; missing, unsupported, or invalid presentations use the normal mail-OTP response. The
+        accepted response intentionally does not disclose whether the account exists or whether the
+        delivery provider accepted the message.
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -3072,7 +3082,7 @@ components:
             expires_in: 60
             is_new_user: true
     DirectEmailCodeSend:
-      description: Successful JSON response.
+      description: Accepted response that does not confirm account existence or provider delivery.
       content:
         application/json:
           schema:
@@ -3412,6 +3422,10 @@ components:
         nonce:
           type: string
           example: nonce_123
+        ui_locales:
+          type: string
+          description: >-
+            Space-separated BCP 47 locale preferences in priority order for the authorization UI.
         request:
           type: string
           description: Signed request object JWT.

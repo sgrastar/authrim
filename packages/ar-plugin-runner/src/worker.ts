@@ -16,6 +16,7 @@ import {
 } from './notification-delivery-service';
 import { D1NotificationInstallationStore } from './notification-installations';
 import { D1NotificationProviderOrderStore } from './notification-provider-order';
+import { encryptNotificationPayloadFromEnv } from './notification-intent';
 import type { PluginRunnerEnv, PluginRunnerRpcProps } from './types';
 import { createBuiltinHumanVerificationRegistry } from './builtin-human-verification';
 import { D1HumanVerificationInstallationStore } from './human-verification-installations';
@@ -685,6 +686,13 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
       return new D1NotificationProviderOrderStore(this.env.PLUGIN_RUNNER_DB).resolve(
         notificationProviderOrderQuery(input)
       );
+    });
+  }
+
+  encryptNotificationPayload(input: unknown) {
+    return rpcResult(async () => {
+      authorized(this.env, this.ctx.props, ['ar-auth', 'ar-management']);
+      return encryptNotificationPayloadFromEnv(this.env, input);
     });
   }
 
