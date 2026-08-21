@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Async Authorization API
-  version: 0.3.3
+  version: 0.3.4
   summary: Device Authorization and CIBA endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-async`.
 servers:
@@ -65,14 +65,22 @@ paths:
       tags:
         - CIBA
       summary: List pending CIBA requests for the current user/session.
+      security:
+        - userSessionCookie: []
       responses:
         "200":
           $ref: "#/components/responses/CibaPending"
+        "401":
+          $ref: "#/components/responses/CibaAuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/CibaInsufficientPermissions"
   /api/ciba/requests/{auth_req_id}:
     get:
       tags:
         - CIBA
       summary: Get a pending CIBA request.
+      security:
+        - userSessionCookie: []
       parameters:
         - name: auth_req_id
           in: path
@@ -82,6 +90,10 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/CibaDetails"
+        "401":
+          $ref: "#/components/responses/CibaAuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/CibaInsufficientPermissions"
   /api/ciba/approve:
     post:
       tags:
@@ -97,12 +109,23 @@ paths:
       tags:
         - CIBA
       summary: Deny a CIBA request.
+      security:
+        - userSessionCookie: []
       requestBody:
         $ref: "#/components/requestBodies/CibaDecision"
       responses:
         "200":
           $ref: "#/components/responses/CibaDecision"
+        "401":
+          $ref: "#/components/responses/CibaAuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/CibaInsufficientPermissions"
 components:
+  securitySchemes:
+    userSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_session
   requestBodies:
     JsonObject:
       required: true
@@ -249,7 +272,36 @@ components:
           example:
             success: true
             message: Authentication request approved
+    CibaAuthenticationRequired:
+      description: An authenticated end-user session is required.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaErrorResponse"
+          example:
+            error: login_required
+            error_description: Authentication is required
+    CibaInsufficientPermissions:
+      description: The authenticated user does not own the CIBA request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/CibaErrorResponse"
+          example:
+            error: access_denied
+            error_description: Insufficient permissions
   schemas:
+    CibaErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+      required:
+        - error
+        - error_description
+      additionalProperties: true
     DeviceAuthorizationRequest:
       type: object
       properties:

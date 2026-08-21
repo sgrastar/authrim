@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Verifiable Credentials API
-  version: 0.3.3
+  version: 0.3.4
   summary: OpenID4VP, OpenID4VCI, status list, and DID endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-vc`.
 servers:

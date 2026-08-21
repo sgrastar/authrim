@@ -2,13 +2,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoginUIConfig } from '$lib/api/authentication-methods';
+import { createLoginUIPageStore } from './login-ui-page.svelte';
 
 vi.mock('$app/environment', () => ({ browser: true }));
-
-async function loadStore() {
-	vi.resetModules();
-	return import('./login-ui-page.svelte');
-}
 
 describe('loginUIPageStore', () => {
 	beforeEach(() => {
@@ -16,8 +12,7 @@ describe('loginUIPageStore', () => {
 		document.getElementById('authrim-login-ui-custom-css')?.remove();
 	});
 
-	it('applies every page-template setting consumed by the Login UI', async () => {
-		const { createLoginUIPageStore } = await loadStore();
+	it('applies every page-template setting consumed by the Login UI', () => {
 		const loginUIPageStore = createLoginUIPageStore();
 		const config: LoginUIConfig = {
 			theme: 'dark',

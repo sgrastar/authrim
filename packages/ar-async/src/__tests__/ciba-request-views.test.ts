@@ -24,6 +24,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: vi.fn(() => mockLogger),
     getClient: mockGetClient,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    isMockAuthEnabled: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -223,10 +224,7 @@ describe('CIBA request view APIs', () => {
 
       expect(response.status).toBe(200);
       expect(body.requests).toEqual([]);
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('user_id from query parameter'),
-        { hasLoginHint: false }
-      );
+      expect(mockLogger.warn).not.toHaveBeenCalled();
     });
 
     it('returns an empty list for non-pending request metadata', async () => {

@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim OAuth Management API
-  version: 0.3.3
+  version: 0.3.4
   summary: Dynamic client registration, token introspection, revocation, and self-service devices.
   description: >
     Initial OpenAPI contract for OAuth-adjacent management endpoints owned by
