@@ -6,6 +6,7 @@ import {
   type TenantDatabaseRegistryRepository,
 } from '../repositories/admin/tenant-database-registry';
 import { createTenantDatabaseRegistryRepository } from './tenant-database-registry-factory';
+import { isWithinTenantDatabaseProvisioningGracePeriod } from './tenant-database-reconciliation';
 import {
   loadTenantDatabaseRegistrySignatureKeysFromEnv,
   verifyTenantDatabaseRegistryRowSignature,
@@ -192,9 +193,16 @@ async function reportTenantDatabaseResolverHealthFailure(
     schemaVersion?: number | null;
     minimumSchemaVersion?: number | null;
     deploymentTarget?: string | null;
+    createdAt?: string | null;
   }
 ): Promise<void> {
   if (!env.DB_ADMIN) return;
+  if (
+    input.code === 'missing_binding' &&
+    isWithinTenantDatabaseProvisioningGracePeriod(input.createdAt)
+  ) {
+    return;
+  }
   try {
     const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-database-resolver-health');
     const notificationRepo = new InternalNotificationEventRepository(adapter);
@@ -283,6 +291,7 @@ async function getBinding(
     shardGroup?: string | null;
     shardIndex?: number | null;
     deploymentTarget?: string | null;
+    createdAt?: string | null;
   }
 ): Promise<DatabaseSource> {
   const binding = (env as Record<string, unknown>)[bindingRef];
@@ -975,6 +984,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       schemaVersion: row.schema_version,
       minimumSchemaVersion,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'schema_version_too_old',
@@ -1003,6 +1013,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'missing_binding',
@@ -1023,6 +1034,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
         shardGroup: row.shard_group,
         shardIndex: row.shard_index,
         deploymentTarget,
+        createdAt: row.created_at,
       }),
       generation: row.generation,
       runtimeGeneration: snapshot.runtimeGeneration,
@@ -1424,6 +1436,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
       schemaVersion: row.schema_version,
       minimumSchemaVersion,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'schema_version_too_old',
@@ -1453,6 +1466,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'missing_binding',
@@ -1472,6 +1486,7 @@ export async function resolveTenantDatabaseSourceFromControlRegistry(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     }),
     generation: row.generation,
     runtimeGeneration: pointer.runtime_generation,

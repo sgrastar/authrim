@@ -31,6 +31,19 @@ export interface TenantDatabaseReconciliationResult {
   findings: TenantDatabaseReconciliationFinding[];
 }
 
+export const TENANT_DATABASE_PROVISIONING_GRACE_PERIOD_MS = 10 * 60 * 1000;
+
+export function isWithinTenantDatabaseProvisioningGracePeriod(
+  createdAt: string | null | undefined,
+  now: Date = new Date()
+): boolean {
+  if (!createdAt) return false;
+  const createdAtMs = new Date(createdAt).getTime();
+  if (!Number.isFinite(createdAtMs)) return false;
+  const ageMs = now.getTime() - createdAtMs;
+  return ageMs >= 0 && ageMs < TENANT_DATABASE_PROVISIONING_GRACE_PERIOD_MS;
+}
+
 function toManifestEntry(
   row: TenantDatabaseRegistryRow
 ): TenantDatabaseDerivedBindingManifestEntry {

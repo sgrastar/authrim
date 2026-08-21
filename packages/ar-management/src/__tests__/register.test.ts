@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import { CanonicalRuntimeUserStore } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -188,6 +189,43 @@ describe('Dynamic Client Registration Handler', () => {
   });
 
   describe('Successful Registration', () => {
+    it('does not create a browser test user for certification client credentials registration', async () => {
+      const syncUser = vi.spyOn(CanonicalRuntimeUserStore.prototype, 'syncUser');
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://www.certification.openid.net/test/a/client/callback'],
+            grant_types: ['client_credentials'],
+            response_types: ['code'],
+            token_endpoint_auth_method: 'private_key_jwt',
+            client_credentials_allowed: true,
+            scope: 'fapi',
+            jwks: {
+              keys: [
+                {
+                  kty: 'EC',
+                  crv: 'P-256',
+                  x: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  y: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                  use: 'sig',
+                  alg: 'ES256',
+                  kid: 'test',
+                },
+              ],
+            },
+          }),
+        },
+        mockEnv
+      );
+
+      const responseBody = await res.json();
+      expect(res.status, JSON.stringify(responseBody)).toBe(201);
+      expect(syncUser).not.toHaveBeenCalled();
+    });
+
     it('registers a restricted Agent public client without an initial access token', async () => {
       const res = await app.request(
         '/oauth/admin-agent/register',

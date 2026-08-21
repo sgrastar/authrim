@@ -25,6 +25,7 @@ export interface TenantDatabaseStatsRefreshSummary {
   refreshed: number;
   skipped: number;
   failed: number;
+  resolved: number;
 }
 
 export const DEFAULT_TENANT_DATABASE_STATS_REFRESH_INTERVAL_HOURS = 24;
@@ -94,6 +95,28 @@ function statsKey(row: TenantDatabaseRegistryRow) {
   };
 }
 
+function statsNotificationDeduplicationKey(
+  row: TenantDatabaseRegistryRow,
+  type: 'refresh_failed' | 'warning' | 'strong_warning'
+): string {
+  const prefix =
+    type === 'refresh_failed'
+      ? 'tenant_database_stats_refresh_failed'
+      : 'tenant_database_stats_warning';
+  const parts: Array<string | number> = [
+    prefix,
+    row.tenant_id,
+    row.role,
+    row.generation,
+    row.shard_group,
+    row.shard_index,
+  ];
+  if (type !== 'refresh_failed') {
+    parts.push(type);
+  }
+  return parts.join(':');
+}
+
 async function enqueueTenantStatsNotification(
   repository: InternalNotificationEventRepository,
   logger: TenantDatabaseStatsJobLogger,
@@ -113,6 +136,7 @@ async function enqueueTenantStatsNotification(
       eventType: input.eventType,
       severity: input.severity,
       deduplicationKey: input.deduplicationKey,
+      reopenSuppressed: true,
       payload: {
         tenant_id: input.row.tenant_id,
         role: input.row.role,
@@ -241,6 +265,7 @@ export async function refreshTenantDatabaseStats(
     refreshed: 0,
     skipped: 0,
     failed: 0,
+    resolved: 0,
   };
 
   for (const row of rows) {
@@ -293,20 +318,23 @@ export async function refreshTenantDatabaseStats(
         warning_reasons_json: JSON.stringify(warning.reasons),
         stats_checked_at: checkedAt,
       });
+      const resolvedKeys = [statsNotificationDeduplicationKey(row, 'refresh_failed')];
+      if (warning.state !== 'warning') {
+        resolvedKeys.push(statsNotificationDeduplicationKey(row, 'warning'));
+      }
+      if (warning.state !== 'strong_warning') {
+        resolvedKeys.push(statsNotificationDeduplicationKey(row, 'strong_warning'));
+      }
+      summary.resolved += await notificationRepository.suppressResolvedByDeduplicationKeys(
+        resolvedKeys,
+        now
+      );
       if (warning.state !== 'ok') {
         await enqueueTenantStatsNotification(notificationRepository, logger, {
           row,
           eventType: 'tenant_database.stats.warning',
           severity: warning.state === 'strong_warning' ? 'high' : 'medium',
-          deduplicationKey: [
-            'tenant_database_stats_warning',
-            row.tenant_id,
-            row.role,
-            row.generation,
-            row.shard_group,
-            row.shard_index,
-            warning.state,
-          ].join(':'),
+          deduplicationKey: statsNotificationDeduplicationKey(row, warning.state),
           payload: {
             warning_state: warning.state,
             warning_reasons: warning.reasons,
@@ -328,14 +356,7 @@ export async function refreshTenantDatabaseStats(
         row,
         eventType: 'tenant_database.stats.refresh_failed',
         severity: 'high',
-        deduplicationKey: [
-          'tenant_database_stats_refresh_failed',
-          row.tenant_id,
-          row.role,
-          row.generation,
-          row.shard_group,
-          row.shard_index,
-        ].join(':'),
+        deduplicationKey: statsNotificationDeduplicationKey(row, 'refresh_failed'),
         payload: {
           error: error instanceof Error ? error.message : String(error),
           stats_checked_at: checkedAt,

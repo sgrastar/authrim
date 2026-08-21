@@ -511,7 +511,12 @@ describe('tenant-runtime-registry-snapshot', () => {
   });
 
   it('marks active pointers and registry rows degraded when snapshot publication fails', async () => {
-    const repository = createRepository({});
+    const pointerMetadata = JSON.stringify({ operator_note: 'keep-pointer-metadata' });
+    const row = createRegistryRow();
+    const repository = createRepository({
+      pointers: [createPointer({ metadata_json: pointerMetadata })],
+      rows: [row],
+    });
     const { privateJwk } = await generateEd25519Jwks();
     const snapshotStore = {
       put: vi.fn(async () => {
@@ -551,14 +556,48 @@ describe('tenant-runtime-registry-snapshot', () => {
       expect.stringContaining('kv_unavailable'),
       'system'
     );
+    const pointerUpdate = repository.updateActivePointerStatus.mock.calls[0];
+    expect(JSON.parse(pointerUpdate[5] as string)).toEqual(
+      expect.objectContaining({
+        operator_note: 'keep-pointer-metadata',
+        snapshot_publish_error: 'kv_unavailable',
+      })
+    );
+    const registryUpdate = repository.updateRegistryStatusAndMetadata.mock.calls[0];
+    expect(JSON.parse(registryUpdate[2] as string)).toEqual(
+      expect.objectContaining({
+        control_data_role: 'tenant_core/default',
+        control_shard_id: 'shard-tenant_core-default',
+        snapshot_publish_error: 'kv_unavailable',
+      })
+    );
     expect(repository.commitRuntimeCacheGenerationPublication).not.toHaveBeenCalled();
     expect(repository.upsertRuntimeRegistrySnapshot).not.toHaveBeenCalled();
   });
 
   it('clears degraded pending snapshot state after a successful retry', async () => {
+    const rowMetadata = {
+      ...JSON.parse(createRegistryRow().metadata_json as string),
+      snapshot_publish_error: 'kv_unavailable',
+      snapshot_publish_failed_at: '2026-05-15T23:59:00.000Z',
+    };
     const repository = createRepository({
-      pointers: [createPointer({ status: 'degraded_pending_snapshot' })],
-      rows: [createRegistryRow({ status: 'degraded_pending_snapshot' })],
+      pointers: [
+        createPointer({
+          status: 'degraded_pending_snapshot',
+          metadata_json: JSON.stringify({
+            operator_note: 'keep-pointer-metadata',
+            snapshot_publish_error: 'kv_unavailable',
+            snapshot_publish_failed_at: '2026-05-15T23:59:00.000Z',
+          }),
+        }),
+      ],
+      rows: [
+        createRegistryRow({
+          status: 'degraded_pending_snapshot',
+          metadata_json: JSON.stringify(rowMetadata),
+        }),
+      ],
     });
     const snapshotStore = createSnapshotStore();
     const { privateJwk } = await generateEd25519Jwks();
@@ -579,7 +618,7 @@ describe('tenant-runtime-registry-snapshot', () => {
       'default',
       'active',
       'system',
-      null
+      JSON.stringify({ operator_note: 'keep-pointer-metadata' })
     );
     expect(repository.updateRegistryStatusAndMetadata).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -587,8 +626,19 @@ describe('tenant-runtime-registry-snapshot', () => {
         role: 'tenant_core',
       }),
       'active',
-      null,
+      expect.any(String),
       'system'
+    );
+    const registryUpdate = repository.updateRegistryStatusAndMetadata.mock.calls[0];
+    expect(JSON.parse(registryUpdate[2] as string)).toEqual(
+      expect.objectContaining({
+        control_data_role: 'tenant_core/default',
+        control_shard_id: 'shard-tenant_core-default',
+      })
+    );
+    expect(JSON.parse(registryUpdate[2] as string)).not.toHaveProperty('snapshot_publish_error');
+    expect(JSON.parse(registryUpdate[2] as string)).not.toHaveProperty(
+      'snapshot_publish_failed_at'
     );
   });
 

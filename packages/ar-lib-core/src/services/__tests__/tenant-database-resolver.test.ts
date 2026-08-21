@@ -1270,6 +1270,36 @@ describe('tenant-database-resolver', () => {
     );
   });
 
+  it('fails closed without alerting while a new database binding is still provisioning', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-16T00:05:00.000Z'));
+    try {
+      const adminAdapter = createAdminAdapter();
+      await expectResolverCode(
+        resolveTenantDatabaseSourceFromControlRegistry(
+          { DB_ADMIN: adminAdapter },
+          { tenantId: 'tenant-a', role: 'tenant_core' },
+          createRepository({
+            pointer: createPointer(),
+            row: createRow({ created_at: '2026-05-16T00:00:00.000Z' }),
+          })
+        ),
+        'missing_binding'
+      );
+
+      expect(adminAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO internal_notification_events'),
+        expect.anything()
+      );
+      expect(adminAdapter.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('INSERT OR IGNORE INTO admin_jobs'),
+        expect.anything()
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('fails closed when the active pointer references a missing or inactive registry row', async () => {
     await expectResolverCode(
       resolveTenantDatabaseSourceFromControlRegistry(

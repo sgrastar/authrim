@@ -102,7 +102,9 @@ import {
   beginReleaseRolloutVerification,
   completeReleaseRolloutHandoff,
   createReleaseRolloutHandoff,
+  getActiveReleaseRolloutHandoffStatus,
   getReleaseRolloutHandoffStatus,
+  type ReleaseRolloutHandoffStatus,
   waitForReleaseRolloutAwaitingSetup,
 } from '../../core/release-rollout-handoff.js';
 import {
@@ -115,14 +117,49 @@ import { resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { prepareAdminUiBffDeployment } from '../../core/admin-ui-bff-deployment.js';
-import { withReleaseUpdateState, withSchemaTargetStates } from '../../core/release-state.js';
+import {
+  withRecoveredReleaseUpdateState,
+  withReleaseUpdateState,
+  withSchemaTargetStates,
+} from '../../core/release-state.js';
 import {
   environmentOperationBlockMessage,
   evaluateEnvironmentOperation,
 } from '../../core/environment-operation-policy.js';
 import { publishInitialControlPlaneRuntimeSnapshot } from '../../core/control-plane-bootstrap.js';
 
-export { withReleaseUpdateState, withSchemaTargetStates } from '../../core/release-state.js';
+export {
+  withRecoveredReleaseUpdateState,
+  withReleaseUpdateState,
+  withSchemaTargetStates,
+} from '../../core/release-state.js';
+
+export async function recoverActiveControlReleaseRollout(input: {
+  lock: AuthrimLock;
+  environmentId: string;
+  targetVersion: string;
+  manifestChecksum: string;
+  loadActiveRollout?: (input: {
+    controlDatabaseId: string;
+    environmentId: string;
+  }) => Promise<ReleaseRolloutHandoffStatus | null>;
+}): Promise<{ lock: AuthrimLock; activeRollout: ReleaseRolloutHandoffStatus | null }> {
+  const controlDatabase = input.lock.d1.CONTROL_DB;
+  if (!controlDatabase) return { lock: input.lock, activeRollout: null };
+  const activeRollout = await (input.loadActiveRollout ?? getActiveReleaseRolloutHandoffStatus)({
+    controlDatabaseId: controlDatabase.id,
+    environmentId: input.environmentId,
+  });
+  if (!activeRollout) return { lock: input.lock, activeRollout: null };
+  return {
+    lock: withRecoveredReleaseUpdateState(input.lock, {
+      targetVersion: input.targetVersion,
+      manifestChecksum: input.manifestChecksum,
+      activeRollout,
+    }),
+    activeRollout,
+  };
+}
 
 // =============================================================================
 // Types
@@ -1073,6 +1110,21 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     updateCount += 1;
     console.log(
       chalk.gray('  ar-management will be redeployed to publish refreshed schema registrations.')
+    );
+  }
+
+  const recoveredRollout = await recoverActiveControlReleaseRollout({
+    lock: workingLock,
+    environmentId: env,
+    targetVersion: productVersion,
+    manifestChecksum,
+  });
+  workingLock = recoveredRollout.lock;
+  if (recoveredRollout.activeRollout) {
+    console.log(
+      chalk.yellow(
+        `  Recovered active Control release rollout ${recoveredRollout.activeRollout.operationId} (${recoveredRollout.activeRollout.phase}).`
+      )
     );
   }
 

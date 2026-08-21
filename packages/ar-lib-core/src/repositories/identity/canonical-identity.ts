@@ -4,7 +4,10 @@ import {
   validateAccountDirectoryPublication,
   type AccountDirectoryPublication,
 } from '../../services/lookup-directory/publication';
+import { createLogger } from '../../utils/logger';
 import { generateId, getCurrentTimestamp } from '../base';
+
+const log = createLogger().module('CANONICAL-IDENTITY');
 
 export type IdentitySubjectType = 'person' | 'service_account' | 'agent' | string;
 export type IdentityAccountType = 'user' | 'admin' | 'service_account' | 'anonymous' | string;
@@ -794,10 +797,19 @@ export class CanonicalIdentityRepository {
       });
     }
     const results = await this.adapter.batch(statements);
-    if (
-      results.length !== statements.length ||
-      results.some((result) => !result.success || result.rowsAffected !== 1)
-    ) {
+    // D1's batch metadata may report zero affected rows for a successful INSERT/UPDATE even
+    // though the atomic batch was committed. The batch success flag is the authoritative signal;
+    // requiring rowsAffected === 1 here can leave a fully-written graph stuck in `pending`.
+    if (results.length !== statements.length || results.some((result) => !result.success)) {
+      log.error('Canonical identity graph batch failed', {
+        statementCount: statements.length,
+        resultCount: results.length,
+        results: results.map((result, index) => ({
+          index,
+          success: result.success,
+          rowsAffected: result.rowsAffected,
+        })),
+      });
       throw new Error('canonical_identity_graph_batch_failed');
     }
     return { subject, account, link, profile };

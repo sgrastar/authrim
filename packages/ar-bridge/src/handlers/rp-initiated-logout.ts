@@ -99,7 +99,10 @@ export async function handleRpInitiatedLogout(c: Context<{ Bindings: Env }>): Pr
     tenantId,
     clientId: provider.clientId,
   }).catch(() => null);
-  const reject = async (validationError: string): Promise<void> => {
+  const reject = async (
+    validationError: string,
+    details: Record<string, unknown> = {}
+  ): Promise<void> => {
     await recordLogoutDiagnostic(log, () =>
       diagnostic?.logAuthDecision({
         diagnosticSessionId: getDiagnosticSessionId(c),
@@ -107,7 +110,10 @@ export async function handleRpInitiatedLogout(c: Context<{ Bindings: Env }>): Pr
         decision: 'deny',
         reason: 'rp_initiated_logout_rejected',
         flow: 'rp_initiated_logout',
-        context: { validation_error: validationError },
+        context: {
+          validation_error: validationError,
+          ...details,
+        },
       })
     );
   };
@@ -121,7 +127,13 @@ export async function handleRpInitiatedLogout(c: Context<{ Bindings: Env }>): Pr
       (sessionData?.external_provider_id !== provider.id &&
         sessionData?.external_idp !== provider.id)
     ) {
-      await reject('session_provider_mismatch');
+      await reject('session_provider_mismatch', {
+        provider_id_present: Boolean(provider.id),
+        session_present: Boolean(session),
+        session_tenant_match: session?.tenantId === tenantId,
+        session_provider_id_present: typeof sessionData?.external_provider_id === 'string',
+        session_external_idp_present: typeof sessionData?.external_idp === 'string',
+      });
       return c.json({ error: 'login_required' }, 401, { 'Cache-Control': 'no-store' });
     }
 

@@ -210,6 +210,10 @@
         {
           "path": "051_account_support_context_and_legal_holds.sql",
           "checksum": "7bab3f98db4c7568fa51035b6acef207f3729480e102104f218f1cfe142af9ab"
+        },
+        {
+          "path": "052_consent_records_cross_database_client_reference.sql",
+          "checksum": "be10cbdafc39c89bbadb1a22ec76ba82303075695f773ad73911f617439c7199"
         }
       ]
     },

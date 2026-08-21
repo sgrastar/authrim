@@ -176,6 +176,33 @@ describe('tenant database health jobs', () => {
     );
   });
 
+  it('leaves a healthy database pending until its failed snapshot is republished', async () => {
+    mockRepository.listActiveRegistryRowsForRole
+      .mockResolvedValueOnce([
+        {
+          tenant_id: 'tenant-a',
+          role: 'tenant_core',
+          generation: 2,
+          shard_group: 'default',
+          shard_index: 0,
+          status: 'degraded_pending_snapshot',
+          metadata_json: JSON.stringify({
+            control_data_role: 'tenant_core/default',
+            snapshot_publish_error: 'kv_unavailable',
+          }),
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const summary = await refreshTenantDatabaseHealth({ DB_ADMIN: 'control-db' } as never, logger, {
+      checkedAt: '2026-05-16T00:00:00.000Z',
+    });
+
+    expect(summary).toEqual({ scanned: 1, healthy: 1, degraded: 0, failed: 0, skipped: 0 });
+    expect(mockRepository.updateRegistryStatus).not.toHaveBeenCalled();
+    expect(mockRepository.updateRegistryStatusAndMetadata).not.toHaveBeenCalled();
+  });
+
   it('processes pending operator-requested deep health-check jobs', async () => {
     const adapter = {
       query: vi.fn().mockResolvedValueOnce([

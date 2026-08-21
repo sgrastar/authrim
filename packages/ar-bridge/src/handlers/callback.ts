@@ -20,7 +20,7 @@ import {
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
   DIAGNOSTIC_FLOW_ID_HEADER,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   resolveAccountDataContextByIdentifier,
@@ -245,7 +245,11 @@ async function completeExternalAuthentication(
 
   const tenantId = authState.tenantId;
   if (authState.enableSso !== false) {
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    // The external identity was resolved above and attached as accountDataContext.
+    // SSO session creation must read the canonical runtime user from that same
+    // account-scoped core database; the metadata core database only contains
+    // tenant-level clients and provider configuration.
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const piiCtx = createPIIContextFromHono(c, tenantId);
     const runtimeUsers = new CanonicalRuntimeUserStore({
       coreAdapter: authCtx.coreAdapter,
@@ -1302,7 +1306,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       errorCode:
         error instanceof ExternalIdPError
           ? error.code
-          : classifyFapi2CallbackError(error) || ExternalIdPErrorCode.CALLBACK_FAILED,
+          : fapi2Flow
+            ? classifyFapi2CallbackError(error) || ExternalIdPErrorCode.CALLBACK_FAILED
+            : error instanceof Error
+              ? classifyExternalCallbackFailure(error)
+              : ExternalIdPErrorCode.CALLBACK_FAILED,
     });
 
     if (diagnosticLogger && fapi2Flow) {
@@ -1333,12 +1341,41 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
+    if (diagnosticLogger && !fapi2Flow) {
+      const validationError =
+        error instanceof ExternalIdPError
+          ? error.code
+          : error instanceof Error
+            ? classifyExternalCallbackFailure(error)
+            : ExternalIdPErrorCode.CALLBACK_FAILED;
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logAuthDecision({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          decision: 'deny',
+          reason: 'external_idp_callback_rejected',
+          flow: 'external_idp',
+          context: {
+            validation_stage: 'callback',
+            validation_error: validationError,
+          },
+        })
+      );
+    }
+
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
     if (error instanceof ExternalIdPError) {
       errorCode = error.code;
     } else if (error instanceof Error && error.message.includes('acr')) {
       errorCode = ExternalIdPErrorCode.ACR_VALUES_NOT_SATISFIED;
+    }
+    if (c.env.ENABLE_CONFORMANCE_MODE === 'true') {
+      c.header('X-Authrim-Diagnostic-Callback-Error', errorCode);
+      c.header(
+        'X-Authrim-Diagnostic-Callback-Error-Name',
+        error instanceof Error ? error.name : 'UnknownError'
+      );
     }
 
     // Publish authentication failure event (non-blocking)
@@ -1494,6 +1531,23 @@ export function classifyFapi2CallbackError(error: unknown): string {
   if (message.includes('issuer')) return 'issuer_mismatch';
   if (message.includes('signature')) return 'invalid_signature';
   return 'fapi2_validation_failed';
+}
+
+function classifyExternalCallbackFailure(error: Error): string {
+  const message = error.message.toLowerCase();
+  const patterns: Array<[RegExp, string]> = [
+    [
+      /account[_ -]?provision(?:er|ing)|external[_ -]?idp[_ -]?account[_ -]?provisioning/u,
+      'account_provisioning',
+    ],
+    [/foreign[_ -]?key|constraint|referential/u, 'database_constraint'],
+    [/database|d1|sqlite|sql/u, 'database_error'],
+    [/userinfo/u, 'userinfo_processing'],
+    [/token|authorization[_ -]?code/u, 'token_processing'],
+    [/identity|linked[_ -]?identity/u, 'identity_processing'],
+    [/email/u, 'email_processing'],
+  ];
+  return patterns.find(([pattern]) => pattern.test(message))?.[1] ?? 'callback_processing';
 }
 
 export function extractUnverifiedJarmState(responseJwt: string): string | undefined {

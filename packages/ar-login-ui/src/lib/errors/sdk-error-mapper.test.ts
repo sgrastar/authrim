@@ -41,6 +41,15 @@ describe('messageForApiError', () => {
 			)
 		).toBe('unauthorized client');
 		expect(
+			messageForApiError({ error: 'invalid_client', error_description: 'unknown client' }, messages)
+		).toBe('unauthorized client');
+		expect(
+			messageForApiError(
+				{ error: 'configuration_error', error_description: 'missing client setting' },
+				messages
+			)
+		).toBe('unauthorized client');
+		expect(
 			messageForApiError(
 				{ error: 'unsupported_response_type', error_description: 'raw response details' },
 				messages

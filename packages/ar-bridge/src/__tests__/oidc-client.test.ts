@@ -181,6 +181,25 @@ describe('OIDCRPClient', () => {
       expect(metadata.token_endpoint).toBe(mockDiscoveryDoc.token_endpoint);
     });
 
+    it('normalizes a trailing slash when constructing the discovery URL', async () => {
+      const issuer = 'https://issuer.example/tenant/';
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...mockDiscoveryDoc, issuer }),
+      });
+
+      const client = new OIDCRPClient({ ...mockConfig, issuer });
+      await client.discover();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://issuer.example/tenant/.well-known/openid-configuration',
+        expect.objectContaining({
+          maxResponseSize: 64 * 1024,
+          timeoutMs: 10000,
+        })
+      );
+    });
+
     it('should use cached metadata on subsequent calls', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

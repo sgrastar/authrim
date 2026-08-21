@@ -3146,6 +3146,35 @@ function assertNoPublicUiSourceMaps(uiDir: string): void {
   }
 }
 
+export function assertLoginUiBuildClientId(uiDir: string, expectedClientId: string): void {
+  const publicAssetsDir = join(uiDir, '.svelte-kit', 'cloudflare');
+  if (!existsSync(publicAssetsDir)) {
+    throw new Error('login_ui_build_output_missing');
+  }
+
+  const pending = [publicAssetsDir];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (!directory) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pending.push(entryPath);
+        continue;
+      }
+      if (
+        entry.isFile() &&
+        (entry.name.endsWith('.js') || entry.name.endsWith('.html')) &&
+        readFileSync(entryPath, 'utf8').includes(expectedClientId)
+      ) {
+        return;
+      }
+    }
+  }
+
+  throw new Error('login_ui_build_client_id_mismatch');
+}
+
 /**
  * Deploy a single UI package to Cloudflare Workers static assets.
  *
@@ -3296,6 +3325,10 @@ export async function deployUiWorkerComponent(
       // Browser source maps are intentionally disabled. Fail closed if stale or
       // misconfigured build output would publish source through Static Assets.
       assertNoPublicUiSourceMaps(uiDir);
+      const expectedLoginUiClientId = uiEnvConfig?.PUBLIC_LOGIN_UI_CLIENT_ID?.trim();
+      if (component === 'ar-login-ui' && expectedLoginUiClientId) {
+        assertLoginUiBuildClientId(uiDir, expectedLoginUiClientId);
+      }
     }
 
     onProgress?.('Deploying UI Worker...');

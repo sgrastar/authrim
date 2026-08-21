@@ -50,6 +50,7 @@
     "conformance:all": "node --import tsx scripts/oidf-conformance-gate/run-conformance.ts --plan all",
     "conformance:details": "node --import tsx scripts/oidf-conformance-gate/get-test-details.ts",
     "conformance:errors": "node --import tsx scripts/oidf-conformance-gate/get-test-details.ts --failed-only",
+    "conformance:openid4vc:metadata": "node --import tsx scripts/oidf-conformance-gate/check-openid4vc-metadata.ts",
     "conformance:test": "vitest run --config scripts/oidf-conformance-gate/vitest.config.ts",
     "conformance:typecheck": "tsc --noEmit -p scripts/oidf-conformance-gate/tsconfig.json",
     "control-plane:phase0-spike": "tsx scripts/control-plane/phase0-live-spike.ts",

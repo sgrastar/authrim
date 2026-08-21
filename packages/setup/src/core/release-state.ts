@@ -1,4 +1,5 @@
 import type { AuthrimLock } from './lock.js';
+import type { ReleaseRolloutHandoffStatus } from './release-rollout-handoff.js';
 import {
   calculateReleaseManifestChecksum,
   type ReleaseMigrationManifest,
@@ -59,6 +60,55 @@ export function withReleaseUpdateState(
     },
     updatedAt: now,
   };
+}
+
+export function withRecoveredReleaseUpdateState(
+  lock: AuthrimLock,
+  input: {
+    targetVersion: string;
+    manifestChecksum: string;
+    activeRollout: ReleaseRolloutHandoffStatus;
+  }
+): AuthrimLock {
+  const { activeRollout } = input;
+  if (activeRollout.targetVersion !== input.targetVersion) {
+    throw new Error(
+      `release_rollout_active_target_mismatch:${activeRollout.targetVersion}:${input.targetVersion}`
+    );
+  }
+  if (activeRollout.manifestDigest !== input.manifestChecksum) {
+    throw new Error(
+      `release_rollout_active_manifest_mismatch:${activeRollout.manifestDigest}:${input.manifestChecksum}`
+    );
+  }
+  const expectedSourceVersion =
+    lock.releaseUpdate?.previousProductVersion ?? lock.productVersion ?? null;
+  if (
+    activeRollout.sourceVersion !== null &&
+    expectedSourceVersion !== null &&
+    activeRollout.sourceVersion !== expectedSourceVersion
+  ) {
+    throw new Error(
+      `release_rollout_active_source_mismatch:${activeRollout.sourceVersion}:${expectedSourceVersion}`
+    );
+  }
+  if (activeRollout.phase === 'completed') {
+    throw new Error('release_rollout_active_phase_invalid:completed');
+  }
+  const phase =
+    activeRollout.phase === 'awaiting_setup'
+      ? 'awaiting_setup'
+      : activeRollout.phase === 'verifying'
+        ? 'schema_applied'
+        : 'control_handoff';
+  return withReleaseUpdateState(lock, {
+    targetVersion: input.targetVersion,
+    phase,
+    manifestChecksum: input.manifestChecksum,
+    controlOperationId: activeRollout.operationId,
+    controlCompletedTargets: activeRollout.completedTargets,
+    controlTotalTargets: activeRollout.totalTargets,
+  });
 }
 
 export function withSchemaTargetStates(

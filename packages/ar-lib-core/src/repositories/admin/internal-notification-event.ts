@@ -55,6 +55,7 @@ export interface InternalNotificationEventInput {
   deduplicationKey?: string | null;
   payload: Record<string, unknown>;
   routingPolicy?: Partial<InternalNotificationRoutingPolicy> | null;
+  reopenSuppressed?: boolean;
   now?: Date;
 }
 
@@ -133,6 +134,30 @@ export class InternalNotificationEventRepository {
         [deduplicationKey]
       );
       if (existing) {
+        if (input.reopenSuppressed && existing.status === 'suppressed') {
+          await this.adapter.execute(
+            `UPDATE internal_notification_events
+             SET status = 'pending',
+                 severity = ?,
+                 payload_json = ?,
+                 attempts = 0,
+                 last_error = NULL,
+                 next_attempt_at = NULL,
+                 delivered_at = NULL,
+                 updated_at = ?
+             WHERE id = ?
+               AND status = 'suppressed'`,
+            [input.severity, JSON.stringify(payload), now, existing.id]
+          );
+          const reopened = await this.adapter.queryOne<InternalNotificationEventRow>(
+            'SELECT * FROM internal_notification_events WHERE id = ?',
+            [existing.id]
+          );
+          if (!reopened) {
+            throw new Error('internal_notification_event_reopen_failed');
+          }
+          return reopened;
+        }
         return existing;
       }
     }
@@ -198,6 +223,35 @@ export class InternalNotificationEventRepository {
        WHERE id = ?`,
       [timestamp, timestamp, id]
     );
+  }
+
+  async suppressResolvedByDeduplicationKeys(
+    deduplicationKeys: string[],
+    now: Date = new Date()
+  ): Promise<number> {
+    const keys = Array.from(new Set(deduplicationKeys.filter(Boolean)));
+    if (keys.length === 0) {
+      return 0;
+    }
+
+    let suppressed = 0;
+    const timestamp = now.toISOString();
+    const batchSize = 50;
+    for (let offset = 0; offset < keys.length; offset += batchSize) {
+      const batch = keys.slice(offset, offset + batchSize);
+      const placeholders = batch.map(() => '?').join(', ');
+      const result = await this.adapter.execute(
+        `UPDATE internal_notification_events
+         SET status = 'suppressed',
+             updated_at = ?,
+             next_attempt_at = NULL
+         WHERE deduplication_key IN (${placeholders})
+           AND status IN ('pending', 'failed', 'dead_letter')`,
+        [timestamp, ...batch]
+      );
+      suppressed += result.rowsAffected ?? 0;
+    }
+    return suppressed;
   }
 
   async markDeliveryFailure(

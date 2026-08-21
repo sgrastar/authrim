@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTenantRequestPath } from '../tenant-request-policy';
+import {
+  classifyTenantRequestPath,
+  extractTenantScopedPathTenantId,
+} from '../tenant-request-policy';
 
 describe('tenant request path classification', () => {
   it.each([
@@ -17,5 +20,14 @@ describe('tenant request path classification', () => {
 
   it('keeps non-metadata protocol routes tenant-runtime scoped', () => {
     expect(classifyTenantRequestPath('/authorize')).toBe('public_protocol_or_rest');
+  });
+
+  it.each([
+    '/api/admin/tenants/fapi2/lifecycle/jobs',
+    '/api/admin/tenants/fapi2/lifecycle/suspend',
+    '/api/admin/tenants/fapi2/placement-migrations/latest',
+  ])('extracts the explicit tenant from tenant management subresources: %s', (path) => {
+    expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
+    expect(extractTenantScopedPathTenantId(path)).toBe('fapi2');
   });
 });

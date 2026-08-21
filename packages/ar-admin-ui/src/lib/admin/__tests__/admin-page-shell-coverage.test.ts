@@ -90,29 +90,22 @@ describe('Admin UI route structure', () => {
 		expect(rawTablePages).toEqual([]);
 	});
 
-	it('keeps hidden Admin routes covered by breadcrumbs and platform context detection', () => {
+	it('keeps hidden Admin routes covered by breadcrumbs and the tenant selector globally available', () => {
 		const layout = readFileSync(`${srcDir}/routes/admin/+layout.svelte`, 'utf8');
+		const header = readFileSync(`${srcDir}/lib/components/admin/AdminHeader.svelte`, 'utf8');
 		const hiddenBreadcrumbRoutes = [
 			'/admin/account-settings',
 			'/admin/role-rules',
 			'/admin/platform/tenant-domain-mappings',
 			'/admin/admin-roles'
 		];
-		const platformOnlyRoutes = [
-			'/admin/tenant-vanity-domains',
-			'/admin/platform/tenant-domain-mappings',
-			'/admin/dr-backup',
-			'/admin/approvals',
-			'/admin/operational-logs'
-		];
-
 		for (const route of hiddenBreadcrumbRoutes) {
 			expect(layout).toContain(`path: '${route}'`);
 		}
 
-		for (const route of platformOnlyRoutes) {
-			expect(layout).toContain(`'${route}'`);
-		}
+		expect(layout).not.toContain('hideTenantSelector=');
+		expect(header).toContain('{#if tenants.length > 1}');
+		expect(header).not.toContain('hideTenantSelector');
 	});
 
 	it('surfaces guarded control-plane actions without provider cleanup or registration', () => {

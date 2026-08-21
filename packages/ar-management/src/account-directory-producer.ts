@@ -1,5 +1,6 @@
 import {
   createLookupBlindIndexes,
+  createLogger,
   ensureDatabaseAdapter,
   markAccountDirectoryPublicationReady,
   validateAccountDirectoryPublication,
@@ -18,6 +19,8 @@ import {
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
+
+const log = createLogger().module('ACCOUNT-DIRECTORY-PRODUCER');
 
 export interface InitialAccountDirectoryPublicationInput {
   tenantId: string;
@@ -341,13 +344,19 @@ export async function executeDurableInitialAccountDirectoryWrite(
     operation = await dependencies.operationRepository.transition(operation, 'writing', now);
   }
   if (operation.status === 'writing') {
+    log.info('Durable account authoritative write started', { stage: 'authoritative_write_started' });
     await dependencies.writeAuthoritative({
       publication,
       tenantCoreUsers,
       tenantPii: ensureDatabaseAdapter(targets.tenantPii, 'account-directory-tenant-pii'),
       residencyPartition: targets.residencyPartition,
     });
+    log.info('Durable account authoritative write completed', {
+      stage: 'authoritative_write_completed',
+    });
+    log.info('Directory outbox ready transition started', { stage: 'outbox_ready_started' });
     await markAccountDirectoryPublicationReady(tenantCoreUsers, publication.operationId, now);
+    log.info('Directory outbox ready transition completed', { stage: 'outbox_ready_completed' });
   }
   const delivery = await attemptImmediateAccountDirectoryPublication(
     env.ACCOUNT_DIRECTORY,

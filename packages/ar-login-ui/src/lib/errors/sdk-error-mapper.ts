@@ -47,6 +47,8 @@ export function messageForApiError(
 		case 'access_denied':
 			return messages.accessDenied();
 		case 'unauthorized_client':
+		case 'invalid_client':
+		case 'configuration_error':
 			return messages.unauthorizedClient();
 		case 'unsupported_response_type':
 			return messages.unsupportedResponseType();
