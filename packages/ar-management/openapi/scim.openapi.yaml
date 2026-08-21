@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim SCIM API
-  version: 0.3.3
+  version: 0.3.4
   summary: SCIM 2.0 user and group provisioning API.
   description: >
     Initial OpenAPI contract for the SCIM 2.0 endpoints implemented by `@authrim/ar-management`. SCIM resource schemas are represented at a high level here; detailed semantics are governed by RFC 7643, RFC 7644, and the implementation tests.

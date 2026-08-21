@@ -14,8 +14,13 @@ import {
   buildDOInstanceName,
   parseCIBARequestId,
   getCIBARequestStoreById,
+  isMockAuthEnabled,
 } from '@authrim/ar-lib-core';
 import { resolveAsyncTenantId } from './tenant';
+import {
+  cibaRequestMatchesAuthenticatedUser,
+  getAuthenticatedAsyncUser,
+} from './authenticated-session';
 
 /**
  * POST /api/ciba/deny
@@ -58,6 +63,12 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
+    if (!authenticatedUser && !mockAuthEnabled) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
+
     // Get CIBA request metadata from CIBARequestStore
     const parsedCibaId = parseCIBARequestId(authReqId);
     const cibaRequestStore = parsedCibaId
@@ -88,6 +99,10 @@ export async function cibaDenyHandler(c: Context<{ Bindings: Env }>) {
     // Check if request is still pending
     if (metadata.status !== 'pending') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    if (authenticatedUser && !cibaRequestMatchesAuthenticatedUser(metadata, authenticatedUser)) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
     }
 
     // Deny the request
