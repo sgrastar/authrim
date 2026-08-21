@@ -83,23 +83,8 @@ describe('D1BootstrapHandoffRepository', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/010_bootstrap_handoff_worker_evidence.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/006_tenant_default_allocations.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/011_tenant_physical_isolation.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -386,7 +371,7 @@ describe('D1BootstrapHandoffRepository', () => {
     });
   });
 
-  it('rejects incomplete observations and immutable expectation changes', async () => {
+  it('rejects incomplete observations and freezes expectations after acceptance', async () => {
     await expect(
       repository.accept(
         handoff,
@@ -399,6 +384,13 @@ describe('D1BootstrapHandoffRepository', () => {
         .prepare('SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ?')
         .get('test')
     ).toEqual({ state: 'pending_verification' });
+    database
+      .prepare(
+        `UPDATE control_bootstrap_handoffs
+            SET state = 'accepted', verified_at = 101, accepted_at = 101, updated_at = 101
+          WHERE environment_id = 'test'`
+      )
+      .run();
     expect(() =>
       database
         .prepare(

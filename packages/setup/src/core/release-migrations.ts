@@ -67,6 +67,7 @@ export const ReleaseMigrationManifestSchema = z
     formatVersion: z.literal(RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION),
     productVersion: ProductVersionSchema,
     minimumProductVersion: ProductVersionSchema.optional(),
+    databaseCompatibility: z.enum(['fresh_install_only', 'forward_only']).optional(),
     rollout: ReleaseRolloutPolicySchema.optional(),
     streams: z.array(ReleaseMigrationStreamSchema),
   })
@@ -102,6 +103,26 @@ export function assertDatabaseOnlyWorkerCompatibility(
   }
 }
 
+export function assertReleaseDatabaseCompatibility(input: {
+  manifest: ReleaseMigrationManifest;
+  manifestChecksum: string;
+  installedProductVersion?: string;
+  installedSchemaManifestChecksums?: readonly string[];
+}): void {
+  if (input.manifest.databaseCompatibility !== 'fresh_install_only') return;
+  if (!input.installedProductVersion) return;
+  const installedChecksums = input.installedSchemaManifestChecksums ?? [];
+  const alreadyOnExactBaseline =
+    input.installedProductVersion === input.manifest.productVersion &&
+    installedChecksums.length > 0 &&
+    installedChecksums.every((checksum) => checksum === input.manifestChecksum);
+  if (!alreadyOnExactBaseline) {
+    throw new Error(
+      `fresh_install_required:${input.installedProductVersion}:${input.manifest.productVersion}`
+    );
+  }
+}
+
 export interface MigrationStreamDefinition {
   id: string;
   dialect: MigrationSqlDialect;
@@ -122,7 +143,7 @@ const CORE_EXCLUDED_DIRECTORIES = new Set([
   'releases',
 ]);
 const EXTERNAL_POSTGRES_PII_MIGRATION_PATTERN =
-  /_(?:durable_pii|totp_credentials|linked_identity|external_postgres_pii)(?:_|\.)/u;
+  /_(?:durable_pii|totp_credentials|linked_identity|idp_jit_provisioning_state|custom_claim_field_values|external_postgres_pii)(?:_|\.)/u;
 
 function isExternalPostgresPiiMigration(path: string): boolean {
   return path.startsWith('pii/') || EXTERNAL_POSTGRES_PII_MIGRATION_PATTERN.test(path);
@@ -269,6 +290,13 @@ export function generateReleaseMigrationManifest(input: {
     formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
     productVersion: input.productVersion,
     ...(minimumProductVersion ? { minimumProductVersion } : {}),
+    databaseCompatibility:
+      input.previousManifest?.productVersion === input.productVersion &&
+      input.previousManifest.databaseCompatibility
+        ? input.previousManifest.databaseCompatibility
+        : compareProductVersions(input.productVersion, '1.0.0') <= 0
+          ? 'fresh_install_only'
+          : 'forward_only',
     rollout:
       input.previousManifest?.productVersion === input.productVersion &&
       input.previousManifest.rollout

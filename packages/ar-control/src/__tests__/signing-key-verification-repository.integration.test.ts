@@ -64,11 +64,8 @@ describe('D1SigningKeyVerificationRepository', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/008_signing_key_verifications.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );

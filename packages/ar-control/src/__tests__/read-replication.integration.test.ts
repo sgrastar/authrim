@@ -169,11 +169,8 @@ describe('ReadReplicationService', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/005_read_replication_rollout_targets.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 // @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
 import { DatabaseSync } from 'node:sqlite';
@@ -14,20 +14,10 @@ describe('account governance schema', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const filename of readdirSync(resolve(REPO_ROOT, 'migrations'))
-      .filter((name) => /^00[1-8]_.*\.sql$/u.test(name))
-      .sort()) {
-      database.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations', filename), 'utf8')
-          .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-          .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
-      );
-    }
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/051_account_support_context_and_legal_holds.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     database.exec(
       `INSERT INTO identity_accounts (

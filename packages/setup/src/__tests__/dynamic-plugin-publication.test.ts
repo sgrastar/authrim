@@ -55,17 +55,8 @@ function source(path: string, bytes: Uint8Array): AggregatedExternalCapabilitySo
 function database(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/001_plugin_runner.sql'), 'utf8')
-  );
-  db.exec(
     readFileSync(
-      resolve(REPO_ROOT, 'migrations/plugin-runner/002_registry_installations_and_config.sql'),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      resolve(REPO_ROOT, 'migrations/plugin-runner/006_dynamic_worker_loader_artifacts.sql'),
+      resolve(REPO_ROOT, 'migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'),
       'utf8'
     )
   );

@@ -7,7 +7,7 @@
  *
  * Usage: npx tsx scripts/generate-tenant-migration.ts
  * Output: Writes to stdout, redirect to file:
- *         npx tsx scripts/generate-tenant-migration.ts > migrations/008_add_tenant_id_to_all_tables.sql
+ *         npx tsx scripts/generate-tenant-migration.ts > migrations/NNN_add_tenant_id_to_all_tables.sql
  *
  * Features:
  * - Auto-detects all tables from existing migration files
@@ -188,7 +188,7 @@ function main() {
   console.error('📝 To apply this migration:');
   console.error('   1. Review the generated SQL above');
   console.error(
-    '   2. Save to file: npx tsx scripts/generate-tenant-migration.ts > migrations/008_add_tenant_id_to_all_tables.sql'
+    '   2. Save to file: npx tsx scripts/generate-tenant-migration.ts > migrations/NNN_add_tenant_id_to_all_tables.sql'
   );
   console.error('   3. Test: pnpm migrate:dry-run');
   console.error('   4. Apply: pnpm migrate:up');

@@ -154,33 +154,22 @@ describe('external identifier unlink scheduled recovery', () => {
     pii = new DatabaseSync(':memory:');
     lookup = new DatabaseSync(':memory:');
     core.exec(
-      `PRAGMA foreign_keys = ON;
-       CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         lifecycle_state TEXT NOT NULL DEFAULT 'active',
-         created_at INTEGER NOT NULL,
-         updated_at INTEGER NOT NULL,
-         deleted_at INTEGER
-       );
-       INSERT INTO identity_accounts (id, tenant_id, lifecycle_state, created_at, updated_at)
-       VALUES ('account:user-a', 'tenant-a', 'active', 1, 1);`
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     core.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-        'utf8'
-      )
+      `INSERT INTO identity_accounts (
+         id, tenant_id, account_type, lifecycle_state, created_at, updated_at
+       ) VALUES ('account:user-a', 'tenant-a', 'person', 'active', 1, 1);`
     );
-    pii.exec(readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_pii_schema.sql'), 'utf8'));
     pii.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/pii/004_identifier_replacement_authority.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_pre_1_0_pii_baseline.sql'), 'utf8')
     );
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     coreD1 = new SqliteD1(core);
     piiD1 = new SqliteD1(pii);

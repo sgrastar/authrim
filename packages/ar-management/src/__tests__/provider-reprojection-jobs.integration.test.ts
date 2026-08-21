@@ -127,10 +127,9 @@ describe('provider reprojection jobs', () => {
     );
     admin = new DatabaseSync(':memory:');
     admin.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/admin/031_provider_reprojection_jobs.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/admin/001_pre_1_0_admin_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     configureHumanVerificationInstallation = vi.fn(async (input) => ({
       installationId: input.installationId,

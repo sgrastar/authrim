@@ -175,30 +175,13 @@ describe('directory routing outbox processor', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     lookupDatabase = new DatabaseSync(':memory:');
     tenantDatabase.exec(
-      `PRAGMA foreign_keys = ON;
-       CREATE TABLE identity_subjects (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         lifecycle_state TEXT NOT NULL,
-         updated_at INTEGER NOT NULL
-       );
-       CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         legacy_user_id TEXT NOT NULL,
-         account_type TEXT NOT NULL,
-         lifecycle_state TEXT NOT NULL,
-         primary_subject_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL,
-         updated_at INTEGER NOT NULL
-       );
-       CREATE TABLE webhook_configs (
-         tenant_id TEXT NOT NULL,
-         active INTEGER NOT NULL,
-         scope TEXT NOT NULL
-       );
-       INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
-       VALUES ('subject:user-a', 'tenant-a', 'active', ${NOW});
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+    );
+    tenantDatabase.exec(
+      `INSERT INTO identity_subjects (id, tenant_id, subject_type, lifecycle_state, created_at, updated_at)
+       VALUES ('subject:user-a', 'tenant-a', 'person', 'active', ${NOW}, ${NOW});
        INSERT INTO identity_accounts (
          id, tenant_id, legacy_user_id, account_type, lifecycle_state,
          primary_subject_id, created_at, updated_at
@@ -207,23 +190,10 @@ describe('directory routing outbox processor', () => {
          'subject:user-a', ${NOW}, ${NOW}
        );`
     );
-    tenantDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-        'utf8'
-      )
-    );
-    tenantDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/043_account_routing_outbox_lookup_index.sql'),
-        'utf8'
-      )
-    );
-    tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/036_account_lifecycle_event_outbox.sql'), 'utf8')
-    );
     lookupDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     tenant = new SqliteD1(tenantDatabase);
     lookup = new SqliteD1(lookupDatabase);
@@ -538,8 +508,9 @@ describe('directory routing outbox processor', () => {
       now: NOW,
     });
     tenantDatabase.exec(
-      `INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
-       VALUES ('subject:user-b', 'tenant-a', 'active', ${NOW});
+      `INSERT INTO identity_subjects (
+         id, tenant_id, subject_type, lifecycle_state, created_at, updated_at
+       ) VALUES ('subject:user-b', 'tenant-a', 'person', 'active', ${NOW}, ${NOW});
        INSERT INTO identity_accounts (
          id, tenant_id, legacy_user_id, account_type, lifecycle_state,
          primary_subject_id, created_at, updated_at
@@ -622,10 +593,11 @@ describe('directory routing outbox processor', () => {
     value = await publication(userId);
     tenantDatabase
       .prepare(
-        `INSERT INTO identity_subjects (id, tenant_id, lifecycle_state, updated_at)
-         VALUES (?, ?, 'active', ?)`
+        `INSERT INTO identity_subjects (
+           id, tenant_id, subject_type, lifecycle_state, created_at, updated_at
+         ) VALUES (?, ?, 'person', 'active', ?, ?)`
       )
-      .run(`subject:${userId}`, value.tenantId, NOW);
+      .run(`subject:${userId}`, value.tenantId, NOW, NOW);
     tenantDatabase
       .prepare(
         `INSERT INTO identity_accounts (

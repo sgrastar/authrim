@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 const mocks = vi.hoisted(() => ({
   source: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
@@ -244,12 +244,9 @@ describe('admin tenant clone', () => {
 
   it('keeps the cloned OAuth client fields aligned with the current schema', () => {
     const migrationsUrl = new URL('../../../../migrations/', import.meta.url);
-    const migration = readFileSync(
-      new URL('002_core_protocol_and_consent.sql', migrationsUrl),
-      'utf8'
-    );
+    const migration = readFileSync(new URL('001_pre_1_0_core_baseline.sql', migrationsUrl), 'utf8');
     const definition = migration.match(
-      /CREATE TABLE oauth_clients \(([\s\S]*?)\);\n\nCREATE INDEX idx_oauth_clients_trust_group/
+      /CREATE TABLE oauth_clients \(([\s\S]*?)\);\nCREATE TABLE web_origin_registry/u
     )?.[1];
     expect(definition).toBeDefined();
 
@@ -269,16 +266,6 @@ describe('admin tenant clone', () => {
             column
           )
       );
-    for (const filename of readdirSync(migrationsUrl).filter((name) => name.endsWith('.sql'))) {
-      const sql = readFileSync(new URL(filename, migrationsUrl), 'utf8');
-      for (const match of sql.matchAll(
-        /ALTER TABLE oauth_clients ADD COLUMN ([a-z_][a-z0-9_]*)/gi
-      )) {
-        const column = match[1]!.toLowerCase();
-        if (!schemaColumns.includes(column)) schemaColumns.push(column);
-      }
-    }
-
     expect(new Set([...OAUTH_CLIENT_CLONE_COLUMNS, ...OAUTH_CLIENT_NON_CLONE_COLUMNS])).toEqual(
       new Set(schemaColumns)
     );

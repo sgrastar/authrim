@@ -1,6 +1,7 @@
 {
   "formatVersion": 1,
   "productVersion": "0.4.0",
+  "databaseCompatibility": "fresh_install_only",
   "rollout": {
     "databaseExecution": "setup_then_control",
     "workerActivation": "after_required_databases",
@@ -10,712 +11,88 @@
     {
       "id": "d1-core",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "core",
-        "tenant_core"
-      ],
+      "logicalRoles": ["core", "tenant_core"],
       "files": [
         {
-          "path": "001_core_foundation.sql",
-          "checksum": "8615e7da6b56a776cbee5681b2fc5d95547f251e218c135b01125b8b384cded1"
-        },
-        {
-          "path": "002_core_protocol_and_consent.sql",
-          "checksum": "15619ffe7b3e5662e239038cbe4dbbe9749baf62466ba1f2a8c860a2a3de4b20"
-        },
-        {
-          "path": "003_core_policy_identity_tables.sql",
-          "checksum": "dd886219a34142266d6dc1dff867deac009f5cf70763d2b21ffc94f065e15ffb"
-        },
-        {
-          "path": "004_core_integrations_users_tables.sql",
-          "checksum": "9160bcd8feaa3a25bdbbd924c9da955c1656f657268235080059cf2acebe8029"
-        },
-        {
-          "path": "005_core_indexes_and_log_objects.sql",
-          "checksum": "247d819cfc1e1d974d8360c52f633b0d941401349f5dd8a7b1b5461c66403873"
-        },
-        {
-          "path": "006_core_extended_operations.sql",
-          "checksum": "23f6ca2a5622c9808f2fcecae9ec56479cfc712ee662e5debb7ea039e1cb9574"
-        },
-        {
-          "path": "007_tenant_lifecycle_state.sql",
-          "checksum": "97c43078618a33fbb1dd2c56346ed23f665767a1df96d595a7d4d2ec02fc8c46"
-        },
-        {
-          "path": "008_unified_identity_canonical_schema.sql",
-          "checksum": "8104def956dc7907c333b8cf899d43be111fdfc3f627421568d3820fb1f051c5"
-        },
-        {
-          "path": "009_custom_claim_schema_ui_metadata.sql",
-          "checksum": "fde7b03aebcae953bd49aad20cf8aa3ac863639021119e61dc46853682aa78bf"
-        },
-        {
-          "path": "010_oidc_identity_mapping_selector.sql",
-          "checksum": "cb91b8f00faf535bf9f8097b51133b0105dc743daacf04670327ec25e37923ac"
-        },
-        {
-          "path": "011_oidc_attribute_release_consent.sql",
-          "checksum": "23e9b97482d964d04920fbf7f78a3d22b7f7ae61220058a36530b42fe2e5a30c"
-        },
-        {
-          "path": "012_attribute_release_consents.sql",
-          "checksum": "6a0375b96b65d14cc15ee22e9ddffba6647bd648b1097517e3e48b549c67d3d8"
-        },
-        {
-          "path": "013_passkeys_canonical_user_binding.sql",
-          "checksum": "27bd0653c3c41ecea7eb11e87cb0d3629e6236f16c0e3667c5b9f5c5810bff59"
-        },
-        {
-          "path": "014_core_identity_sessions_authenticators.sql",
-          "checksum": "ffc761985045d590d3dfe4b35f598d3679e09734d727a283f864d4df96ac5534"
-        },
-        {
-          "path": "015_core_consent_screens_scopes.sql",
-          "checksum": "2c5b8b77b9153c6dd0bb2122671717ea902b4b712dbb6d919d3f0823bee05ed6"
-        },
-        {
-          "path": "016_core_directory_auth.sql",
-          "checksum": "296e836c4b2d5124e4e4e9a856ff1116f3cdd2c7f6fd4bc9f05d29bf23a2e90d"
-        },
-        {
-          "path": "017_core_flow_runtime.sql",
-          "checksum": "508ca3d8fcdf84a5a53ef050068d92f29ca4585f819d7c35975dffd154929b36"
-        },
-        {
-          "path": "018_repair_device_code_client_foreign_key.sql",
-          "checksum": "19eceae18469d5fe95dc97e28aa1e928dfbcefbe6bfb42d4a9f8b9a3d8872a08"
-        },
-        {
-          "path": "019_vc_verification_evidence.sql",
-          "checksum": "8041ef62a6fae42c0b6a320c9f59c1f64eef25655446c9346f3865e0440ee50d"
-        },
-        {
-          "path": "020_flow_assignment_credential_profiles.sql",
-          "checksum": "23322d542d3b5e23f7524005ad6f20ffb2d66dd4aa8adc058e4cdb7934557f53"
-        },
-        {
-          "path": "021_remove_legacy_ai_grants.sql",
-          "checksum": "9793e0a964b89e77f1855081406575e2cc3c33831e8c4ae94d38de0be6a133b2"
-        },
-        {
-          "path": "022_oauth_client_jarm_metadata.sql",
-          "checksum": "a7e79c9f5806911c6cdd36960525cbca99af4d17b6895aef15f15156fd260ae0"
-        },
-        {
-          "path": "023_oauth_client_auth_signing_algorithm.sql",
-          "checksum": "523bc7e6329d3efe89ec130257e85e9e8edf3a320b79d3bb56d5d7761e64245f"
-        },
-        {
-          "path": "024_external_provider_session_sid.sql",
-          "checksum": "36aa42804b42fc2ffd5b5212e5c6193df822a05bfb9ce6e2b8cca181a7f7a4d2"
-        },
-        {
-          "path": "025_agent_access_self_service_clients.sql",
-          "checksum": "2d852c0994ba0a27f230e50c5588355b9321b8e94f0308cdfb439636493555a8"
-        },
-        {
-          "path": "026_oauth_client_tls_certificate_binding.sql",
-          "checksum": "cb8822ffa555a5d3852a94168f42ea2c8a55af8eb40513b8ec704451b3e30da1"
-        },
-        {
-          "path": "029_account_page_customization.sql",
-          "checksum": "5169cc29fd6cd05374b7837e331670f0212a7b343ecb7e0413069a4ebc0c65c0"
-        },
-        {
-          "path": "030_saml_sp_oidc_rp_flow.sql",
-          "checksum": "c8adff7367c4a3714f22320036eecf1b82659d57f1adf5fdf04f2e54231235de"
-        },
-        {
-          "path": "031_normalize_screen_locale_tags.sql",
-          "checksum": "1aec5ec16ecd2065b5e94b01fa83e6fee238120bf98ad688d21d8bb7343ed9db"
-        },
-        {
-          "path": "032_tenant_directory_and_plugin_outboxes.sql",
-          "checksum": "684915b2bc5ac4d7acfc592fe6b71a11aaccd7ec844efc1dff69a039b25007de"
-        },
-        {
-          "path": "033_control_plane_shard_metadata.sql",
-          "checksum": "07ff763a1535b291be91e912a571777409cf3ed175fb670ab351e41fa698cbb1"
-        },
-        {
-          "path": "034_plugin_account_metadata.sql",
-          "checksum": "a599f74419e617a49e28100de33bdc64c6ad8f6521590a823d960206198020bd"
-        },
-        {
-          "path": "035_notification_delivery_intents.sql",
-          "checksum": "cda85131368cd904823e62af8a20463201993b6d75cb30744d6077b6ac1de5a2"
-        },
-        {
-          "path": "036_account_lifecycle_event_outbox.sql",
-          "checksum": "f635fad100beb6314901f6ab4b07b6102ff1c6f28025e3fa65d342708464b456"
-        },
-        {
-          "path": "037_passkey_routing_authority.sql",
-          "checksum": "a01d2f9b5d653457b842a7c3749bd6f6e44942e651382025edc4220d5d1521f5"
-        },
-        {
-          "path": "038_anonymous_device_routing_authority.sql",
-          "checksum": "6b4242d8a6ce980cfb9a9b88055af5859d21218e6340e24e4400df4291a1d226"
-        },
-        {
-          "path": "039_tenant_placement_policy.sql",
-          "checksum": "7494a2b630926cfca309a3c683ebbfbc7a88b0fba447e2bc74d89d52410809a0"
-        },
-        {
-          "path": "040_tenant_placement_migration_outbox.sql",
-          "checksum": "e1fd4b2327810b498520b9411c0e597078f4487ba912cb5257b16169338e0477"
-        },
-        {
-          "path": "041_account_lifecycle_outbox_split_shard.sql",
-          "checksum": "cb8aa2c20849ca8270b4ca94338f65ee7f25c1b2ed9f2b7a42b98423742fd81b"
-        },
-        {
-          "path": "042_rename_authentication_only_login.sql",
-          "checksum": "f1a540ccb022c6a8c0d8c98abccd4a7043e29f4b436edaa843d5409cacbcd9f4"
-        },
-        {
-          "path": "043_account_routing_outbox_lookup_index.sql",
-          "checksum": "931ab4f5a9a87c711a239a43b38ffab573fce2b6b5225a35019b6614da27cc96"
-        },
-        {
-          "path": "044_drop_legacy_session_revocation_epochs.sql",
-          "checksum": "52c8f2593405f9af3be3ed9d440bc35f7e0027a4f0a008b82958623b7fc72e05"
-        },
-        {
-          "path": "045_drop_legacy_session_clients.sql",
-          "checksum": "adf8fa09e3196e1d991003617a1bcd2556adff1d525d4490bc713562a87d40b2"
-        },
-        {
-          "path": "046_allow_environment_prefixed_tenant_bindings.sql",
-          "checksum": "e0fad80f4b53ed5db70498b71770db46691869df24cb088978c13bc03d872bfd"
-        },
-        {
-          "path": "047_align_registration_email_requirement.sql",
-          "checksum": "7c4ba530a7f701dcbaa92bdab9c5ce4dc688f2f2cd6509444ce125ff37d196b7"
-        },
-        {
-          "path": "048_custom_claim_cardinality.sql",
-          "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
-        },
-        {
-          "path": "049_scim_group_external_id.sql",
-          "checksum": "cae275ad770fc74125da70e9e655bf96e9a45c3c01917b0c08d39519c31d5edc"
-        },
-        {
-          "path": "050_email_delivery_history.sql",
-          "checksum": "3b3cd1de502258c1f4502e0bf3b4af7a2091a9d468a01f24cec28c5d2ca6b027"
-        },
-        {
-          "path": "051_account_support_context_and_legal_holds.sql",
-          "checksum": "7bab3f98db4c7568fa51035b6acef207f3729480e102104f218f1cfe142af9ab"
-        },
-        {
-          "path": "052_consent_records_cross_database_client_reference.sql",
-          "checksum": "be10cbdafc39c89bbadb1a22ec76ba82303075695f773ad73911f617439c7199"
+          "path": "001_pre_1_0_core_baseline.sql",
+          "checksum": "915f3228767f7966012a0f5830839e85d2f1ea4538b22f62da72481938a4845a"
         }
       ]
     },
     {
       "id": "d1-pii",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "pii",
-        "tenant_pii"
-      ],
+      "logicalRoles": ["pii", "tenant_pii"],
       "files": [
         {
-          "path": "001_pii_schema.sql",
-          "checksum": "4716f146372c7da6d46cca9ee0aa32bbd477ed1e8829acc5164180cf3efa04be"
-        },
-        {
-          "path": "002_linked_identity_oidc_fields.sql",
-          "checksum": "b30572bb2f9284124622312fafcd8b95dc36bcf0871f60d5cf934c92cb5feca5"
-        },
-        {
-          "path": "003_control_plane_shard_metadata.sql",
-          "checksum": "774cc84663de9482aedd330ea7a04af9a73a3b176b09f983964755bec4760c3b"
-        },
-        {
-          "path": "004_identifier_replacement_authority.sql",
-          "checksum": "8bfa167f60874372b7cbdfb0032016d28330d75e0b9b32e608b6cc0bacbfaec5"
-        },
-        {
-          "path": "007_external_idp_jit_provisioning_state.sql",
-          "checksum": "021fb08662247f61121ccd0f883689ec77c3f98499caf8f71abaee6bc431dbc5"
-        },
-        {
-          "path": "008_tenant_placement_migration_outbox.sql",
-          "checksum": "30bedfd2714654eea121f22712a8ab4de64b51ee15778cab9dac31d1e944a44a"
-        },
-        {
-          "path": "009_allow_environment_prefixed_tenant_bindings.sql",
-          "checksum": "781a8c2fec31594729c737b52991f55845a0d5f2e2228392c04731fbf243af1a"
-        },
-        {
-          "path": "010_custom_claim_field_values.sql",
-          "checksum": "d63bc14f7dfe7e633261c4d55f2bbd5c4aeb7dfa873c8d5946b4555c5a58dfc4"
-        },
-        {
-          "path": "011_allow_external_subject_identifier_replacement.sql",
-          "checksum": "4f6d99a72349c8102fb08b8139a66f8e32c4e19898fda78325967f2296528387"
-        },
-        {
-          "path": "012_identifier_replacement_addition_mode.sql",
-          "checksum": "6a653f4c5c0f009d7326f37879fa085e6d93e3240f2c10ba21e1334909a4bcfa"
+          "path": "001_pre_1_0_pii_baseline.sql",
+          "checksum": "f275d20282c0649c8fba83184334545a1bf6e90e98e915a3a69590ef57f12771"
         }
       ]
     },
     {
       "id": "d1-admin",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "admin"
-      ],
+      "logicalRoles": ["admin"],
       "files": [
         {
-          "path": "001_admin_users_rbac_security.sql",
-          "checksum": "ae0e7729142877f9e4d1e0ad2f0b5df047929da7caf287d108e5a7330b7e73ea"
-        },
-        {
-          "path": "002_admin_policy_relationships.sql",
-          "checksum": "5d3c812ea4106f50e6f75f20f33cc62fa7c2c6865888c232b9ac480377a69e72"
-        },
-        {
-          "path": "003_admin_workflows_infrastructure.sql",
-          "checksum": "799f91212cef9eecfa46f8a209bf6ca78a1e12c78e52326b799280345d6bd8da"
-        },
-        {
-          "path": "004_admin_tenant_runtime_jobs.sql",
-          "checksum": "8480ddb4e021f8f76c6542646cbd3ef9287087fb8852118c9fc7b8cfea1629f7"
-        },
-        {
-          "path": "005_admin_logging_storage.sql",
-          "checksum": "9721bedf91efded78853b19deafb019f88c13bc2a3e9de5f84e962bf1fb810a9"
-        },
-        {
-          "path": "006_admin_logging_jobs_roles.sql",
-          "checksum": "ee9daf6a0bedd477139fb010b29eba611c4d6e1227dc359e3a67f4717d0b828b"
-        },
-        {
-          "path": "007_identity_mapping_control_plane.sql",
-          "checksum": "8a263cffed07d13990ef38f704da326806075302bfb715f64d586fff7b5d5338"
-        },
-        {
-          "path": "008_persistent_identifier_profiles.sql",
-          "checksum": "dcf6a119c9a7ef0def3e2e5a74bf9527cc146b81a4fb326e7bcf504ee44bbf0c"
-        },
-        {
-          "path": "009_directory_auth_object_catalog_classes.sql",
-          "checksum": "6133f5f389f93d67dba93518cac46702615ee05e387a6f77b5682da1a96726e8"
-        },
-        {
-          "path": "010_repair_approval_object_catalog_foreign_key.sql",
-          "checksum": "297cae29eb6f1996cdc65a66fd8d39bd94f5e46823ba0a4865f724b9f76187b8"
-        },
-        {
-          "path": "011_vc_credential_profiles.sql",
-          "checksum": "0fdc4e7671a48ccc356964b124bbf367b14d63cbd6f229096529370028055348"
-        },
-        {
-          "path": "012_agent_access_control_plane.sql",
-          "checksum": "baa96815b8153f2e648635264f9854e81c96f88905b6d60f2d7e36a6253f246c"
-        },
-        {
-          "path": "013_agent_elevation_approval_link.sql",
-          "checksum": "6097ba692a449fa6b0652f40d7519204e07ac1ee1f702a63db95b0c32af6eb55"
-        },
-        {
-          "path": "014_agent_configuration_copilot.sql",
-          "checksum": "3d19ce79c9de7b807c78b2c8f85603677a7c800f588c52693239e51929c94f2c"
-        },
-        {
-          "path": "015_agent_bulk_baseline.sql",
-          "checksum": "0dafd17c26530004dfbd746bcb8396d8ebc465673017057f33ae083ceabaefad"
-        },
-        {
-          "path": "016_agent_bulk_capability_binding.sql",
-          "checksum": "653fe68997682d611bdd35bfacc8591e80f564a72f203659ce9027e79b49a562"
-        },
-        {
-          "path": "017_require_versioned_agent_grant_snapshots.sql",
-          "checksum": "762f2e697c31053a5f722bdc35a5cf23e668c392cd1530098eed75412580443e"
-        },
-        {
-          "path": "018_agent_token_family_revocation_owner.sql",
-          "checksum": "4b91c5c447b9f2eade6d389d9664ebeee2a065f76e83cd61ca1152dfafc3bfff"
-        },
-        {
-          "path": "019_split_agent_user_data_task_set.sql",
-          "checksum": "99cb69ebabb10f9d08f46a75efc114c67ff6e60e0f4a8520b564b9ac42ff52e2"
-        },
-        {
-          "path": "020_agent_access_system_managed_objects.sql",
-          "checksum": "fbd322ad90134a2950f127334ce8e7e240107fd64ee52e7cf1d8786dd759dca4"
-        },
-        {
-          "path": "021_admin_agent_login_handoffs.sql",
-          "checksum": "28f5e586d72988d668f27f66ebdf7e02ff8e18064c32b6b7e9ff4477aaca8a70"
-        },
-        {
-          "path": "022_admin_agent_derived_session_target.sql",
-          "checksum": "86356c100ad5c07fdae6d517a9c00e4c5f4fa567171783b587e4971fd8e8c604"
-        },
-        {
-          "path": "023_admin_invitations.sql",
-          "checksum": "3657274a47930d0b7c17c3c2addc5c6989e2664755282705f66b7fe53aeeee03"
-        },
-        {
-          "path": "024_agent_discovery_profile_task_set.sql",
-          "checksum": "b19d52eb1349f719e1b28924e6c089f52dc0fcba53aa1b399cf42ed7f7dc06f4"
-        },
-        {
-          "path": "025_agent_mcp_session_registry.sql",
-          "checksum": "c5b551df09f621f394f42a7c22a903be99ca531ca1113e84730b77f0d7a211f7"
-        },
-        {
-          "path": "026_agent_tool_contract_sealing.sql",
-          "checksum": "c98f07a8bdbfd4f5f401dc97c6710490d75d6f8e4c14de674f7fa6ccaf98ecd5"
-        },
-        {
-          "path": "027_agent_grant_recertification.sql",
-          "checksum": "ecbfa1f1b69b4ba1af16291af11e8cfe13124a0a8bedc06581a09259bfb41efb"
-        },
-        {
-          "path": "028_agent_authority_introspection.sql",
-          "checksum": "0702f3a071accd4a902817a8ce50cfc96498ff306337398155d17c961dde4fdf"
-        },
-        {
-          "path": "029_stale_self_service_agent_snapshots.sql",
-          "checksum": "12d5dc4341c317deed31799fad9d68835bfa3e6971d88afbd978fa967dd0367e"
-        },
-        {
-          "path": "030_control_plane_drift_notifications.sql",
-          "checksum": "9201197a3d19eadc1de6646800579c9ac54a93573c29c6ad626639770feee608"
-        },
-        {
-          "path": "031_provider_reprojection_jobs.sql",
-          "checksum": "309c3c74e74a251d310cde7994456539f6794f17a61f9933be2e3387dc2d0556"
-        },
-        {
-          "path": "032_identifier_replacement_scheduler.sql",
-          "checksum": "df5007f0f185cd2b703f24fca4713751d5b0c5cbd40e821e1e238325542bfb7d"
-        },
-        {
-          "path": "033_tenant_provisioning_operations.sql",
-          "checksum": "160afb0d7e14f179d1084911de30d045a2e5e98c3ecea99e6e037d2f68dfa031"
-        },
-        {
-          "path": "034_tenant_placement_policy.sql",
-          "checksum": "42c87ca5a81df3d8d37083f249b716ff6713a657b1cc96bdc59939f52c9f1326"
-        },
-        {
-          "path": "035_tenant_placement_migration_jobs.sql",
-          "checksum": "657431cce8dd69ece62af6f9499c2af21441709d05b667343c4611d50c3e067a"
-        },
-        {
-          "path": "036_unified_runtime_registry_snapshot.sql",
-          "checksum": "9a11db1e5d77d2cf991faf4a2dd994d97503f53091c84c6edcc709141a54f186"
-        },
-        {
-          "path": "037_unified_logging_job_topology.sql",
-          "checksum": "504f413777da6c21941ff897dc5b1423523b5e2ffb102747f93c48b7757db236"
-        },
-        {
-          "path": "038_unique_active_resource_server_profile.sql",
-          "checksum": "a38cfedf604eee5658e2702c1d2d88351360697efbcd0897fbc758f3e1ac4020"
+          "path": "001_pre_1_0_admin_baseline.sql",
+          "checksum": "eed6ad45eae2f252f3bfb68796eaa6cbcb59a8092ddc75ba2dba14710b3d5176"
         }
       ]
     },
     {
       "id": "d1-control",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "control"
-      ],
+      "logicalRoles": ["control"],
       "files": [
         {
-          "path": "001_control_plane.sql",
-          "checksum": "1ddb4ebc7f92713983f048e01bbef0542ffa3aeffe8122ae2b3979f80f119e2f"
-        },
-        {
-          "path": "002_plugin_runner_registry.sql",
-          "checksum": "fd1777f1499cc2cab804731fabe32f7f052845b9b9e3d8929fce80d0b9b0618c"
-        },
-        {
-          "path": "003_lookup_bucket_migrations.sql",
-          "checksum": "1bf5aa42442cd5da0033ef42cb21d527031c18b9bd73a112371fe959cf6b556a"
-        },
-        {
-          "path": "004_lookup_hmac_key_state.sql",
-          "checksum": "eb57f3b58ac030c3bad82b093aa4073b318b5ffd60e0434dd23699d5c324d60e"
-        },
-        {
-          "path": "005_read_replication_rollout_targets.sql",
-          "checksum": "21af8046514c8a81e4391972f73a9ca681335d70d1dcf94267c1bd5382c54afc"
-        },
-        {
-          "path": "006_tenant_default_allocations.sql",
-          "checksum": "796a3c1277a349c0c3b8ae8ce5c059a42a12cc9b0690db56a28700ca8fcd0181"
-        },
-        {
-          "path": "007_control_operation_manual_retry.sql",
-          "checksum": "eb55cac6c7d3edc37d8287d9d356f7eebf43041c15b457bec54554f238d3bcfc"
-        },
-        {
-          "path": "008_signing_key_verifications.sql",
-          "checksum": "a5490f06f07ee329188f95709b515319507deabc2d732888dfb5d5065850d725"
-        },
-        {
-          "path": "009_lookup_hmac_candidate_verifications.sql",
-          "checksum": "5a7c273d719f50fa190183a38d2b23c782888ed1086500dbd9181099c4b80f80"
-        },
-        {
-          "path": "010_bootstrap_handoff_worker_evidence.sql",
-          "checksum": "c4a54df5356accea38c9da235113f6766b5b5c7d92ca80dee7f6b393f66e7857"
-        },
-        {
-          "path": "011_tenant_physical_isolation.sql",
-          "checksum": "34158696516ebe8e836e5c914ac069a0a7f6e560f4b8cffaab02c410075d2bca"
-        },
-        {
-          "path": "012_tenant_placement_migrations.sql",
-          "checksum": "9e9c90742933e8493a95d5fa1b7d4ec60bdf1ca52bdf0ce18d235232e74aac79"
-        },
-        {
-          "path": "013_shard_quarantine_cleanup.sql",
-          "checksum": "b29d547d473de9afe4e34724e00ff1dad6655ef21b17a71c037ce2e7243c9122"
-        },
-        {
-          "path": "014_automatic_provisioning_authority.sql",
-          "checksum": "9f7e566ce57769fab409585dd27b6adf05e876f74f6415a571fc8848543ebd0d"
-        },
-        {
-          "path": "015_bootstrap_worker_evidence_refresh.sql",
-          "checksum": "be8ef18c21e779344c910daa99e7b3c419c95b6c012928103d177233b9b2786e"
-        },
-        {
-          "path": "016_worker_loader_binding_kind.sql",
-          "checksum": "f08fd51f9d657b1267dde7f251f980fa80585c4ad8a5538e4feaeb71c1d68c12"
-        },
-        {
-          "path": "017_failed_shard_cleanup.sql",
-          "checksum": "72383f341104960d560930c5e3d5a784e75191266686dde428d25ac4b692164a"
-        },
-        {
-          "path": "018_plugin_resource_cleanup.sql",
-          "checksum": "51379005b1d030b1ef1f1856486de3aa06e38d47e3aced7bac0e9c9ddfbb39e6"
-        },
-        {
-          "path": "019_tenant_disaster_recovery.sql",
-          "checksum": "78629e500076498eeaab1869cc3e37ff0da7b4c241c5e7218c7042a949d1a814"
-        },
-        {
-          "path": "020_lookup_worker_binding_reconciliations.sql",
-          "checksum": "0a9cf067d4e9503a9ecaffcc707cc876cb04ddd91129e7b1e5b227f685d54a65"
-        },
-        {
-          "path": "021_tenant_disaster_recovery_command_idempotency.sql",
-          "checksum": "b5803cc189272f58b2a1201c4b42d681ad49726430528eb7989402475d89bc65"
-        },
-        {
-          "path": "022_lookup_generated_worker_bindings.sql",
-          "checksum": "f6b61bd4abae8decf072b667fc80712f9e4f787bb5ff69d5b373fc2a7feb8888"
-        },
-        {
-          "path": "023_bootstrap_accelerator.sql",
-          "checksum": "8a54db86e9797f8ca20297f3a84beaa9420be4193b1a126e47e3be3988076369"
-        },
-        {
-          "path": "024_release_migration_rollout.sql",
-          "checksum": "4a9d1e35bd67289243d5764b9f04180a2b31ff7daedcc2ab028b3ce3cd08aa6e"
-        },
-        {
-          "path": "025_lookup_scale_out_and_retention.sql",
-          "checksum": "60fda6fa49f001a1636a7f625e8565abc5198c46c2767a7580e5d1070f70ba18"
+          "path": "001_pre_1_0_control_baseline.sql",
+          "checksum": "f77b002a5dea73735372c9f7a80127e13c7ca5d9d940ae24c217fcd8a381a3db"
         }
       ]
     },
     {
       "id": "d1-lookup",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "lookup"
-      ],
+      "logicalRoles": ["lookup"],
       "files": [
         {
-          "path": "001_lookup_directory.sql",
-          "checksum": "4a26aed640d5682d28e9a2d67b3d7cbbedacbed936d0b353c29b6aa396bc5a07"
-        },
-        {
-          "path": "002_identifier_replacement_verification_gate.sql",
-          "checksum": "3fdb62956052905118aa82cd4b9d066d338f0b9e684d71a9d4ce1b62856fb353"
-        },
-        {
-          "path": "003_allow_external_subject_identifier_replacement.sql",
-          "checksum": "b602c9452d7b1dfe746bc754b716e355214aa6d5130be3da9ab775c29aaede95"
-        },
-        {
-          "path": "004_lookup_retention_and_otp_bucket.sql",
-          "checksum": "2dab2f77b57f2568620a2597c8259ad4adf938bbab74a4356b1a46da49cd0e41"
+          "path": "001_pre_1_0_lookup_baseline.sql",
+          "checksum": "9aa3b6caa51a522dff5a1dacca1a14df53a363a8732ddc25e4a89485d69a5d84"
         }
       ]
     },
     {
       "id": "d1-plugin-runner",
       "dialect": "sqlite",
-      "logicalRoles": [
-        "plugin_runner"
-      ],
+      "logicalRoles": ["plugin_runner"],
       "files": [
         {
-          "path": "001_plugin_runner.sql",
-          "checksum": "b611e8495b83044faae331e34d69c0cc2445b9b99dda9de99ad13e5fa8de8e5b"
-        },
-        {
-          "path": "002_registry_installations_and_config.sql",
-          "checksum": "4c983c5a5e1a8b70dcfcc7b4d0dfbde34500e7085e20ff0fdee9919e9633ab9b"
-        },
-        {
-          "path": "003_sync_circuit_breaker_probe.sql",
-          "checksum": "14a1175ca49c80437861257f91eed5aa02059cc578e70ceb1b527afc86bf4452"
-        },
-        {
-          "path": "004_notification_provider_order.sql",
-          "checksum": "52fa17a25fd0658d6089a9add15b2d9f92658c0891f0051887f301786224b161"
-        },
-        {
-          "path": "005_human_verification_runtime.sql",
-          "checksum": "231c009f32eb1d0e2806d0ed9da54efadbbc81f59bb244a5d2fac84c611f4c40"
-        },
-        {
-          "path": "006_dynamic_worker_loader_artifacts.sql",
-          "checksum": "e17da3873995f44872271c61cacbf80e8a7a0fe9093ba4a784d7fb7754f30634"
-        },
-        {
-          "path": "007_replace_dynamic_rollout_partial_index.sql",
-          "checksum": "f71f0cdd7d49b68f2ccb88d449ae79451274fea4ce2d0c441085788c8efbc7e1"
-        },
-        {
-          "path": "008_dynamic_worker_resource_bindings.sql",
-          "checksum": "58b99635206e3bacf59ff5e47fd4dc86a200e711cc349d3d3918c4e5d1c8ea96"
-        },
-        {
-          "path": "009_dynamic_plugin_activation_fence.sql",
-          "checksum": "734d91bde8b65b4122e99af2ea3733f1a92b693342c130eccc39234e661681fa"
-        },
-        {
-          "path": "010_dynamic_resource_reprovision_fence.sql",
-          "checksum": "083cee97ed632eaaee2d80ac8b3a226cdb8122d331df77826a760f252f30c33c"
+          "path": "001_pre_1_0_plugin_runner_baseline.sql",
+          "checksum": "278dab4dd68e1b13b7d064e4e5fb7affc28c2615cccd3c1c82022c02ec7d0aa0"
         }
       ]
     },
     {
       "id": "external-postgres-core",
       "dialect": "postgres",
-      "logicalRoles": [
-        "core",
-        "custom",
-        "policy"
-      ],
+      "logicalRoles": ["core", "custom", "policy"],
       "files": [
         {
-          "path": "001_external_durable_core.sql",
-          "checksum": "8efc31d1841f5700143311607b7403755059115bd669ca422269ed47d0a70d0c"
-        },
-        {
-          "path": "003_external_consent_screens_scopes.sql",
-          "checksum": "21da3e5cde312bf92cebce80aae47b949ddc8f4a32764aaec142c19d3d43118e"
-        },
-        {
-          "path": "004_external_passkeys.sql",
-          "checksum": "99ed12861c8fd774903afdc30c5742e28aa34e260a5f7b34f9f3762a639f3a9c"
-        },
-        {
-          "path": "005_external_directory_auth.sql",
-          "checksum": "1d2945587b242195d8cf4156534b4a623ee74eee527990a9b4025b386652da46"
-        },
-        {
-          "path": "006_external_flow_runtime.sql",
-          "checksum": "27400fd388dc619fba21dbe0e3650ca7997efd92ac0f3387b0485a555de34e45"
-        },
-        {
-          "path": "008_external_vc_verification_evidence.sql",
-          "checksum": "8bacf5b5ff832ad06b494dcab0e6d241be5f0f094d7ead38832789f1fbbff02e"
-        },
-        {
-          "path": "009_external_flow_assignment_credential_profiles.sql",
-          "checksum": "841d5eb3b4884ce57535c5eeb90b02f719e4c7845290a1c00583047e80bf5955"
-        },
-        {
-          "path": "011_external_provider_session_sid.sql",
-          "checksum": "20bd489804e5e75eeb372e80b224863381523eee8e6220275a2aac6d060ac54b"
-        },
-        {
-          "path": "014_external_account_page_customization.sql",
-          "checksum": "99867efa2c67bc336b09955782e5bd795827af93afdcdebdd9d4140bbedc4a05"
-        },
-        {
-          "path": "015_external_saml_sp_oidc_rp_flow.sql",
-          "checksum": "16601db2c48e60266d0c3eda83e042031230845b7deacd4b3211ba57aeb0a2ed"
-        },
-        {
-          "path": "016_external_normalize_screen_locale_tags.sql",
-          "checksum": "cb451e424e4a1dea817a8acf0e8d2df3a23c2412e8d94aab898ab8788965a55a"
-        },
-        {
-          "path": "017_external_passkey_routing_authority.sql",
-          "checksum": "a9f88d5a3a4555b598a6a673109737a51f8194fbb9f1e87c10e1df671687d81c"
-        },
-        {
-          "path": "018_external_anonymous_device_routing_authority.sql",
-          "checksum": "ba903be2cbaa071bffe7def9fa023627a970c66f932476af1fee94f974e5db22"
-        },
-        {
-          "path": "019_external_idp_jit_provisioning_state.sql",
-          "checksum": "7da7f246630e4655098301968d1daff9031f7f427213dc4d5a586b46d925e675"
-        },
-        {
-          "path": "020_external_rename_authentication_only_login.sql",
-          "checksum": "71ade831c86d7ed2877d57ae8d93e7082f96723d83faba8a85b97afc53c69925"
-        },
-        {
-          "path": "021_external_custom_claim_cardinality.sql",
-          "checksum": "ac2f92914b328854959572fd128738c5dadf623367d45acae9d9c57b11646403"
-        },
-        {
-          "path": "022_external_custom_claim_field_values.sql",
-          "checksum": "a30a99406b2b97950a0a4b34527f435c78431f82c286cffbc9037ddc98203685"
-        },
-        {
-          "path": "023_external_scim_group_external_id.sql",
-          "checksum": "d53907df266e90a6ce248f7826dfb1000fd29e1c79a0843dec0116e0d59b98fc"
-        },
-        {
-          "path": "024_external_account_support_context_and_legal_holds.sql",
-          "checksum": "7ed99f8aba042bbacf25a5d94243e40635ebce6109b07f507953326e7c0acb4e"
+          "path": "001_pre_1_0_external_postgres_core_baseline.sql",
+          "checksum": "0f973c251ffcaa548e632a107f55f5da4fdceb00c152c4738695bbaabf76218e"
         }
       ]
     },
     {
       "id": "external-postgres-pii",
       "dialect": "postgres",
-      "logicalRoles": [
-        "pii"
-      ],
+      "logicalRoles": ["pii"],
       "files": [
         {
-          "path": "002_external_durable_pii.sql",
-          "checksum": "edee635d95a775ac3adb91fe8efbd5a9b470415315e447d6e807a19657942da6"
-        },
-        {
-          "path": "007_external_totp_credentials.sql",
-          "checksum": "bd9d70c4e2bd9a17e3ccdd4bf65ba5111f8669e7ea2de5eef5cdfa2252890770"
-        },
-        {
-          "path": "010_external_linked_identity_oidc_fields.sql",
-          "checksum": "e6cc7d284cedc5eeeedafc0c7dafe792f5fef360befdee1eaa2cda66c9515555"
+          "path": "002_pre_1_0_external_postgres_pii_baseline.sql",
+          "checksum": "2b45c381f63ed1840f5dc4f2cf6f2a34101c50ada762afc06065be020c8ef375"
         }
       ]
     }

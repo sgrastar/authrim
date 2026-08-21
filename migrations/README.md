@@ -18,9 +18,11 @@ This directory contains the SQL schema migrations used by Authrim setup and CI.
 The D1 runner applies files in lexical order and records applied files in each
 database's `authrim_migrations` table.
 
-These files support both fresh installs and release-coupled in-place updates.
-Published release manifests are the immutable contract for deciding which
-migrations apply to an existing physical database.
+These files support fresh installs and, after 1.0.0, release-coupled in-place updates. From 1.0.0
+onward, published release manifests are the immutable contract for deciding which migrations apply to
+an existing physical database. Pre-1.0 manifests instead declare
+`databaseCompatibility: "fresh_install_only"`; they are new-install artifacts and may be replaced by
+a newly verified semantic baseline.
 
 The manifest also carries a semantic rollout policy. It declares who executes managed database work,
 when schema-dependent Workers may activate, and whether Admin mutations remain compatible during the
@@ -37,6 +39,32 @@ A new major-version baseline may consolidate cumulative SQL for fresh installati
 replaces the tested bridge migrations used by existing installations. Baseline installation and
 in-place upgrade are separate artifacts with separate validation requirements.
 
+## Pre-1.0 semantic baseline
+
+Authrim does not support retaining or upgrading a database created by an older pre-1.0 checkout. The
+setup lock, Workers, and databases must be recreated together. This permits the migration history to
+be reorganized semantically while the schema is unstable, instead of preserving transitional table
+rebuilds and obsolete columns in the 1.0.0 fresh-install path.
+
+Preview and then write the rewrite with:
+
+```bash
+pnpm release:migrations:semantic
+pnpm release:migrations:semantic -- --write
+```
+
+The command applies every current SQLite stream to an empty SQLite database and both external streams
+to isolated PostgreSQL 17 databases. It dumps the final schema and required seed state, applies each
+generated baseline to a second empty database, and requires the resulting dump to match. Only after
+that verification does `--write` replace the source SQL, remove obsolete 0.x release manifests,
+regenerate `release-manifest.draft.json`, and write `semantic-baseline.evidence.json`. Docker must be
+available for PostgreSQL verification. The command is forbidden after a 1.0.0-or-newer manifest has
+been published.
+
+Any test environment that used replaced files must be deleted and initialized again. Do not run a
+normal update against that environment; setup rejects a different installed pre-1.0 baseline with
+`fresh_install_required`.
+
 ## Layout
 
 | Path                                 | Target database             | Notes                                                                                             |
@@ -44,98 +72,30 @@ in-place upgrade are separate artifacts with separate validation requirements.
 | `migrations/*.sql`                   | D1 core database            | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state.               |
 | `migrations/pii/*.sql`               | D1 PII database             | Personal data, linked identities, sensitive values, and PII audit rows.                           |
 | `migrations/admin/*.sql`             | D1 admin database           | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
-| `migrations/external/postgres/*.sql` | External PostgreSQL profile | Durable external core/PII schema and feature-specific PostgreSQL extensions.                      |
+| `migrations/control/*.sql`           | D1 control database         | Durable fleet inventory, rollout coordination, provisioning, and recovery state.                  |
+| `migrations/lookup/*.sql`            | D1 lookup database          | Identifier lookup, routing, bucket state, and retention controls.                                 |
+| `migrations/plugin-runner/*.sql`     | D1 plugin-runner database   | Plugin registry, activation, runtime resources, and delivery controls.                            |
+| `migrations/external/postgres/*.sql` | External PostgreSQL profile | Durable external core/PII schemas.                                                                |
 
 Top-level core migrations intentionally exclude the `admin`, `archive`,
 `external`, and `pii` directories when the D1 core runner walks this directory.
 
-## Current Core Files
+## Current pre-1.0 baseline files
 
-| File                                            | Category                                                                                                                             |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `001_core_foundation.sql`                       | Tenant foundation and trust groups.                                                                                                  |
-| `002_core_protocol_and_consent.sql`             | OAuth/OIDC, sessions, grants, consent baseline, and device credentials.                                                              |
-| `003_core_policy_identity_tables.sql`           | Policy, permissions, tenants, identity schema, and runtime identity tables.                                                          |
-| `004_core_integrations_users_tables.sql`        | Integrations, users, passkeys, custom fields, and external providers.                                                                |
-| `005_core_indexes_and_log_objects.sql`          | Indexes, logs, imports, exports, object catalog, and operational storage.                                                            |
-| `006_core_extended_operations.sql`              | Webhooks, flows, SAML, CIBA, alerts, setup tokens, and runtime support tables.                                                       |
-| `007_tenant_lifecycle_state.sql`                | Tenant lifecycle state.                                                                                                              |
-| `008_unified_identity_canonical_schema.sql`     | Unified identity canonical schema.                                                                                                   |
-| `009_custom_claim_schema_ui_metadata.sql`       | Custom claim UI metadata.                                                                                                            |
-| `010_oidc_identity_mapping_selector.sql`        | OIDC identity mapping selector.                                                                                                      |
-| `011_oidc_attribute_release_consent.sql`        | OIDC attribute release consent.                                                                                                      |
-| `012_attribute_release_consents.sql`            | Attribute release consent records.                                                                                                   |
-| `013_passkeys_canonical_user_binding.sql`       | Passkey canonical user binding.                                                                                                      |
-| `014_core_identity_sessions_authenticators.sql` | Field usage bindings, session revocation epochs, passkey AAGUID display metadata, and TOTP credentials.                              |
-| `015_core_consent_screens_scopes.sql`           | Consent policy, consent records, screen profiles, OIDC scopes, and consent canonical user IDs.                                       |
-| `016_core_directory_auth.sql`                   | Directory identity links, connector fleet, directory-auth migration/compliance tables, release channels, and object catalog classes. |
-| `017_core_flow_runtime.sql`                     | Flow runtime contract, interaction context, templates, and unique assignments.                                                       |
-| `018_repair_device_code_client_foreign_key.sql` | Repairs tenant-scoped device-code client foreign keys.                                                                               |
-| `019_vc_verification_evidence.sql`              | Adds minimized VC verification evidence, freshness/invalidation metadata, and the VC attribute scope.                                |
-| `020_flow_assignment_credential_profiles.sql`   | Extends Flow assignments with credential-profile targets without modifying the applied Flow baseline.                                |
-| `021_remove_legacy_ai_grants.sql`               | Removes the unenforced legacy core AI Grant table; Admin Agent grants move to DB_ADMIN.                                              |
-| `022_oauth_client_jarm_metadata.sql`            | Adds RFC 9102 JARM signing and encryption preferences to tenant-scoped OAuth clients.                                                |
-| `023_oauth_client_auth_signing_algorithm.sql`   | Adds the RFC 7523 private-key JWT signing preference to tenant-scoped OAuth clients.                                                 |
-| `024_external_provider_session_sid.sql`         | Adds upstream provider session identifiers for federated logout.                                                                     |
-| `025_agent_access_self_service_clients.sql`     | Adds self-service OAuth client metadata for Agent access.                                                                            |
-| `026_oauth_client_tls_certificate_binding.sql`  | Adds OAuth client mutual-TLS certificate binding metadata.                                                                           |
-| `029_account_page_customization.sql`            | Adds account page customization settings.                                                                                            |
-| `030_saml_sp_oidc_rp_flow.sql`                  | Adds a published, unassigned no-consent Login Flow for SAML SP and OIDC RP requests.                                                 |
+| Stream                   | File                                                                |
+| ------------------------ | ------------------------------------------------------------------- |
+| D1 core                  | `001_pre_1_0_core_baseline.sql`                                     |
+| D1 PII                   | `pii/001_pre_1_0_pii_baseline.sql`                                  |
+| D1 Admin                 | `admin/001_pre_1_0_admin_baseline.sql`                              |
+| D1 Control               | `control/001_pre_1_0_control_baseline.sql`                          |
+| D1 Lookup                | `lookup/001_pre_1_0_lookup_baseline.sql`                            |
+| D1 Plugin Runner         | `plugin-runner/001_pre_1_0_plugin_runner_baseline.sql`              |
+| External PostgreSQL core | `external/postgres/001_pre_1_0_external_postgres_core_baseline.sql` |
+| External PostgreSQL PII  | `external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql`  |
 
-## Current Admin Files
-
-| File                                                 | Category                                                                                                                                                |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `001_admin_users_rbac_security.sql`                  | Admin users, sessions, passkeys, RBAC, audit, and security controls.                                                                                    |
-| `002_admin_policy_relationships.sql`                 | Admin ABAC/ReBAC, setup tokens, role inheritance, and relationship definitions.                                                                         |
-| `003_admin_workflows_infrastructure.sql`             | Audit indexes, object catalog, approvals, storage resources, role templates, machine access, and role assignment normalization.                         |
-| `004_admin_tenant_runtime_jobs.sql`                  | External token refresh, tenant database registry/statistics, discovery/runtime registry, notifications, migration jobs, admin jobs, and database slots. |
-| `005_admin_logging_storage.sql`                      | Logging storage foundation.                                                                                                                             |
-| `006_admin_logging_jobs_roles.sql`                   | Logging message jobs and system role canonicalization.                                                                                                  |
-| `007_identity_mapping_control_plane.sql`             | Identity mapping, source profiles, destination profiles, and field catalog metadata.                                                                    |
-| `008_persistent_identifier_profiles.sql`             | Persistent identifier profiles and values.                                                                                                              |
-| `009_directory_auth_object_catalog_classes.sql`      | Directory-auth object catalog classes.                                                                                                                  |
-| `010_repair_approval_object_catalog_foreign_key.sql` | Repairs approval foreign keys after the object catalog rebuild.                                                                                         |
-| `011_vc_credential_profiles.sql`                     | Adds versioned Credential Profiles that pin VC flows and field mappings.                                                                                |
-| `012_agent_access_control_plane.sql`                 | Adds Admin Agent grants, consent, elevation and target execution recovery, refresh-family revocation, and Agent audit fields.                           |
-| `013_agent_elevation_approval_link.sql`              | Binds operation-scoped Agent elevation challenges to the existing Approval/CIBA workflow.                                                               |
-| `014_agent_configuration_copilot.sql`                | Adds versioned Task Sets, Scope Policies, immutable configuration Plans, confirmations, and opaque secret references.                                   |
-| `015_agent_bulk_baseline.sql`                        | Adds immutable multi-tenant Bulk Plans, tenant child executions, templates, baselines, assignments, and exceptions.                                     |
-| `016_agent_bulk_capability_binding.sql`              | Binds Bulk Plans and tenant child capabilities to authenticated Agent context and immutable source versions.                                            |
-| `017_require_versioned_agent_grant_snapshots.sql`    | Suspends legacy Agent Grants without complete versioned Task Set and Scope Policy snapshots.                                                            |
-| `018_agent_token_family_revocation_owner.sql`        | Adds the refresh-family revocation outbox ownership locator.                                                                                            |
-| `019_split_agent_user_data_task_set.sql`             | Removes user-data Tools from general built-in Task Sets by suspending v3 Grants before the v4 cut-over.                                                 |
-| `020_agent_access_system_managed_objects.sql`        | Adds system-managed Agent access objects.                                                                                                               |
-| `021_admin_agent_login_handoffs.sql`                 | Adds Admin Agent login handoff state.                                                                                                                   |
-| `022_admin_agent_derived_session_target.sql`         | Binds derived Admin Agent sessions to their target.                                                                                                     |
-| `023_admin_invitations.sql`                          | Adds one-time Admin Passkey enrollment invitations with optional per-invitation IP restrictions.                                                        |
-| `024_agent_discovery_profile_task_set.sql`           | Suspends v4 built-in Agent Grants and queues token-family revocation before the Discovery Profile-aware v5 cut-over.                                    |
-| `025_agent_mcp_session_registry.sql`                 | Adds the Admin Agent MCP session registry used for explicit session lifecycle and policy enforcement.                                                   |
-
-## Current PII Files
-
-| File                                  | Category                                                         |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `001_pii_schema.sql`                  | D1 PII baseline and cleanup from earlier mixed-database layouts. |
-| `002_linked_identity_oidc_fields.sql` | Adds OIDC token and profile metadata to linked identities.       |
-
-## Current External PostgreSQL Files
-
-| File                                                   | Category                                                                                                |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `001_external_durable_core.sql`                        | External durable core schema.                                                                           |
-| `002_external_durable_pii.sql`                         | External durable PII schema.                                                                            |
-| `003_external_consent_screens_scopes.sql`              | Consent audit snapshots, consent records, screen profiles, OIDC scopes, and consent canonical user IDs. |
-| `004_external_passkeys.sql`                            | Passkey AAGUID display metadata.                                                                        |
-| `005_external_directory_auth.sql`                      | Directory identity links, connector fleet, and release channel metadata.                                |
-| `006_external_flow_runtime.sql`                        | Flow runtime contract, interaction context, templates, and unique assignments.                          |
-| `007_external_totp_credentials.sql`                    | TOTP credentials and backup codes.                                                                      |
-| `008_external_vc_verification_evidence.sql`            | Adds VC verification evidence, freshness metadata, and the VC attribute scope for external PostgreSQL.  |
-| `009_external_flow_assignment_credential_profiles.sql` | Extends external PostgreSQL Flow assignments with credential-profile targets.                           |
-| `010_external_linked_identity_oidc_fields.sql`         | Adds OIDC token and profile metadata to linked identities.                                              |
-| `011_external_provider_session_sid.sql`                | Adds upstream provider session identifiers for external PostgreSQL.                                     |
-| `014_external_account_page_customization.sql`          | Adds PostgreSQL parity for account page customization settings.                                         |
-| `015_external_saml_sp_oidc_rp_flow.sql`                | Adds PostgreSQL parity for the SAML SP/OIDC RP Login Flow preset.                                       |
+The generated evidence file retains the paths and checksums of every source migration represented by
+each baseline. It is provenance and verification evidence, not an upgrade map for a retained 0.x
+database.
 
 ## Commands
 
@@ -147,9 +107,9 @@ DEPLOY_ENV=test node scripts/ci-run-migrations.mjs
 pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migration-status.test.ts
 ```
 
-Applied migration files are immutable because the setup runner verifies their
-recorded checksums. Add a new sequential migration for every schema change,
-including preview environments and consolidated baseline corrections.
+At and after 1.0.0, applied migration files are immutable because the setup runner verifies their
+recorded checksums. Before 1.0.0, add sequential development migrations while implementing a change,
+then regenerate the semantic fresh-install baseline and recreate disposable environments.
 
 ## Release-coupled schema updates
 
@@ -157,10 +117,12 @@ including preview environments and consolidated baseline corrections.
 stream. It records exact paths and dialect-rendered checksums for D1 core, D1 PII, D1 Admin, external
 PostgreSQL core, and external PostgreSQL PII migrations. `pnpm migrate:create` refreshes the draft
 automatically, and the root typecheck gate runs `pnpm migrate:manifest:check` so manually added or
-edited SQL cannot be forgotten. Once `releases/<version>.json` exists, that product version is closed:
-bump the root/workspace versions before creating another migration. A same-version draft that differs
-from its published manifest is rejected instead of being selected silently. Draft generation and
-manifest checks also reject a root product version older than the latest published release.
+edited SQL cannot be forgotten. At the 1.0.0 stability boundary and afterward, once
+`releases/<version>.json` exists that product version is closed: bump the root/workspace versions before
+creating another migration. A pre-1.0 semantic rewrite is the only exception and removes obsolete 0.x
+manifests because their databases are not retained. A same-version stable draft that differs from its
+published manifest is rejected instead of being selected silently. Draft generation and manifest
+checks also reject a root product version older than the latest published stable release.
 
 Before a release, preview consolidation without changing files:
 
@@ -168,11 +130,11 @@ Before a release, preview consolidation without changing files:
 pnpm release:migrations -- --version 1.1.0 --minimum-version 1.0.0
 ```
 
-When adopting this workflow for a repository that already has releases, create the non-destructive
-baseline manifest from the last published tag once:
+When adopting the forward-only workflow at or after 1.0.0 for a repository that already has stable
+releases, create the non-destructive baseline manifest from the last published tag once:
 
 ```bash
-pnpm release:migrations:baseline -- --version 0.3.3 --git-ref v0.3.3 --write
+pnpm release:migrations:baseline -- --version 1.0.0 --git-ref v1.0.0 --write
 ```
 
 After reviewing the plan, explicitly write it:

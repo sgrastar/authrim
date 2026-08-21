@@ -88,14 +88,12 @@ describe('tenant placement migration operation', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    for (const file of [
-      '001_control_plane.sql',
-      '006_tenant_default_allocations.sql',
-      '011_tenant_physical_isolation.sql',
-      '012_tenant_placement_migrations.sql',
-    ]) {
-      database.exec(readFileSync(resolve(REPO_ROOT, 'migrations/control', file), 'utf8'));
-    }
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        'utf8'
+      )
+    );
     database.exec(`
       INSERT INTO control_environments (
         environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at

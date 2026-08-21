@@ -1,6 +1,9 @@
 const MAX_MIGRATION_BYTES = 1024 * 1024;
 const MAX_STATEMENT_BYTES = 100_000;
-const MAX_STATEMENTS = 512;
+// A semantically consolidated fresh-install baseline can contain thousands of seed rows while
+// remaining bounded by MAX_MIGRATION_BYTES. Keep the statement-count guard above the largest
+// supported baseline instead of forcing release history back into artificial file fragments.
+const MAX_STATEMENTS = 8192;
 
 type LexerState =
   | 'normal'

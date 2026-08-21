@@ -101,6 +101,7 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
   'subject_type',
   'sector_identifier_uri',
   'token_endpoint_auth_method',
+  'tls_client_certificate_bound_access_tokens',
   'token_exchange_allowed',
   'allowed_subject_token_clients',
   'allowed_token_exchange_resources',

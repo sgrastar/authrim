@@ -131,7 +131,9 @@ describe('Lookup HMAC reindex processor', () => {
     core = new DatabaseSync(':memory:');
     lookup = new DatabaseSync(':memory:');
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     publication = {
       operationId: 'account-create-operation-1',

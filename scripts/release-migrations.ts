@@ -426,6 +426,9 @@ function buildReleaseManifest(input: {
       formatVersion: 1,
       productVersion: input.version,
       ...(input.minimumVersion ? { minimumProductVersion: input.minimumVersion } : {}),
+      ...(input.current.databaseCompatibility
+        ? { databaseCompatibility: input.current.databaseCompatibility }
+        : {}),
       ...(input.current.rollout ? { rollout: input.current.rollout } : {}),
       streams,
     },

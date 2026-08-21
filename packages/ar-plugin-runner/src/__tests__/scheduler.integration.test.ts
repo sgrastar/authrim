@@ -89,14 +89,9 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function pluginOutboxSchema(): string {
-  const migration = readFileSync(
-    resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-    'utf8'
-  );
-  const start = migration.indexOf('CREATE TABLE IF NOT EXISTS plugin_hook_outbox');
-  const end = migration.indexOf('CREATE TABLE IF NOT EXISTS identifier_change_notification_outbox');
-  if (start < 0 || end <= start) throw new Error('plugin_outbox_test_schema_missing');
-  return migration.slice(start, end);
+  return readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }
 
 async function dynamicWorkerFixture(database: DatabaseSync) {
@@ -174,25 +169,12 @@ describe('PluginRunnerScheduler integration', () => {
     runnerDatabase = new DatabaseSync(':memory:');
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migration of [
-      '001_plugin_runner.sql',
-      '002_registry_installations_and_config.sql',
-      '003_sync_circuit_breaker_probe.sql',
-      '006_dynamic_worker_loader_artifacts.sql',
-      '007_replace_dynamic_rollout_partial_index.sql',
-      '008_dynamic_worker_resource_bindings.sql',
-    ]) {
+    for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8')
       );
     }
     tenantDatabase.exec(pluginOutboxSchema());
-    for (const migration of [
-      'migrations/035_notification_delivery_intents.sql',
-      'migrations/050_email_delivery_history.sql',
-    ]) {
-      tenantDatabase.exec(readFileSync(resolve(REPO_ROOT, migration), 'utf8'));
-    }
     runnerDatabase.exec(
       `INSERT INTO plugin_runner_installations (
          installation_id, tenant_id, plugin_id, backend_kind, script_name,

@@ -6,6 +6,7 @@ import { createDefaultConfig } from '../core/config.js';
 import { AuthrimLockSchema, type AuthrimLock } from '../core/lock.js';
 import {
   assertDatabaseOnlyWorkerCompatibility,
+  assertReleaseDatabaseCompatibility,
   assertProductVersionOpenForNewMigrations,
   assertProductVersionNotBehindPublished,
   calculateReleaseManifestChecksum,
@@ -201,6 +202,7 @@ describe('release migration manifests', () => {
       workerActivation: 'after_required_databases',
       adminMutationMode: 'read_only',
     });
+    expect(initial.databaseCompatibility).toBe('fresh_install_only');
 
     const previous: ReleaseMigrationManifest = {
       ...initial,
@@ -224,6 +226,42 @@ describe('release migration manifests', () => {
     expect(next.streams.find((stream) => stream.id === 'd1-core')?.files[0].supersedes).toEqual([
       { path: '001_draft.sql', checksum: 'a'.repeat(64) },
     ]);
+    expect(next.databaseCompatibility).toBe('forward_only');
+  });
+
+  it('rejects pre-1.0 database upgrades unless every target already has the exact baseline', () => {
+    const migrationsRoot = temporaryMigrations();
+    const manifest = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.9.0',
+    });
+    const manifestChecksum = calculateReleaseManifestChecksum(manifest);
+
+    expect(() => assertReleaseDatabaseCompatibility({ manifest, manifestChecksum })).not.toThrow();
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        manifest,
+        manifestChecksum,
+        installedProductVersion: '0.8.0',
+        installedSchemaManifestChecksums: [manifestChecksum],
+      })
+    ).toThrow('fresh_install_required:0.8.0:0.9.0');
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        manifest,
+        manifestChecksum,
+        installedProductVersion: '0.9.0',
+        installedSchemaManifestChecksums: [manifestChecksum, manifestChecksum],
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        manifest,
+        manifestChecksum,
+        installedProductVersion: '0.9.0',
+        installedSchemaManifestChecksums: ['a'.repeat(64)],
+      })
+    ).toThrow('fresh_install_required:0.9.0:0.9.0');
   });
 
   it('preserves the minimum product version when regenerating the published version', () => {

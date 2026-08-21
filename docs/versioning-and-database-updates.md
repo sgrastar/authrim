@@ -155,8 +155,26 @@ pnpm exec tsx test/generated-environment/smoke-generated-approvals.ts --env test
 pnpm exec tsx test/generated-environment/smoke-generated-server-surfaces.ts --env test
 ```
 
-Also check the changed features through their UI or API. If a problem is found, do not fix the release
-SQL list. Correct the code or add a new SQL file, then repeat from section 4.1.
+Also check the changed features through their UI or API. If a problem is found, correct the code or add
+a new SQL file, then repeat from section 4.1.
+
+### 4.5 Pre-1.0 semantic baseline
+
+Until 1.0.0 is published, Authrim intentionally supports only new database installations. Preview and
+then write the semantic baseline:
+
+```sh
+pnpm release:migrations:semantic
+pnpm release:migrations:semantic -- --write
+pnpm migrate:manifest:check
+git diff -- migrations
+```
+
+This is not textual concatenation. The command materializes the final SQLite and PostgreSQL schemas
+and seed state, reapplies the generated baselines to empty databases, and requires equivalence before
+replacing the old files. It also removes obsolete 0.x release manifests. Delete and initialize the
+test environment after the rewrite; `setup update` deliberately rejects a different installed
+pre-1.0 baseline.
 
 ## 5. Fix the database update for the release
 
@@ -167,19 +185,23 @@ After the test environment passes, stop adding SQL files and create the release 
 This command only displays the planned file changes:
 
 ```sh
-pnpm release:migrations -- --version 0.4.0 --minimum-version 0.3.3
+pnpm release:migrations -- --version 0.4.0
 ```
 
-Review the SQL files and the proposed combined file names.
+For a pre-1.0 release, the semantic baseline from section 4.5 is the complete fresh-install artifact;
+there is no supported `minimumProductVersion` or 0.x upgrade path. For 1.1.0 and later, pass the oldest
+supported stable source explicitly, for example
+`--version 1.1.0 --minimum-version 1.0.0`.
 
 ### 5.2 Write the release files
 
 ```sh
-pnpm release:migrations -- --version 0.4.0 --minimum-version 0.3.3 --write
+pnpm release:migrations -- --version 0.4.0 --write
 ```
 
-When needed, this command combines several SQL files for the same database kind and writes
-`migrations/releases/0.4.0.json`. It also records the original file names and contents.
+This publishes `migrations/releases/0.4.0.json` from the verified baseline. In the stable forward-only
+workflow, the same command also combines multiple unpublished deltas per stream when needed and
+records their source paths and checksums in `supersedes`.
 
 Do not remove source SQL files yourself. If the command is interrupted, run the same `--write` command
 again.
@@ -196,10 +218,13 @@ Confirm:
 - `migrations/releases/0.4.0.json` exists
 - It contains only the intended SQL
 - Combined SQL contains every intended source file
-- Previously published SQL did not change
+- For 1.0.0 and later, previously published SQL did not change
+- For a pre-1.0 release, `databaseCompatibility` is `fresh_install_only` and no
+  `minimumProductVersion` is present
 
-From this point, do not change the `0.4.0` SQL or `migrations/releases/0.4.0.json`. Put any further
-database correction in the next product version.
+For a published 0.x release, a later pre-1.0 semantic rewrite may deliberately replace this manifest
+and baseline, but no retained database may be upgraded across that rewrite. From 1.0.0 onward, do not
+change published SQL or manifests; put every correction in the next product version.
 
 ## 6. Check the test environment against the fixed SQL file list
 
@@ -383,7 +408,7 @@ Apply every external PostgreSQL SQL file shown by `--dry-run` to its target data
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/external/postgres/014_release_0_4_0_external_postgres_core.sql
+  -f migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql
 ```
 
 Use the actual file shown by `--dry-run`. If Core and PII use different databases, apply each SQL file

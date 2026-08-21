@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationPath = fileURLToPath(
-  new URL('../../../../migrations/admin/023_admin_invitations.sql', import.meta.url)
+  new URL('../../../../migrations/admin/001_pre_1_0_admin_baseline.sql', import.meta.url)
 );
 
 function findSqlite3(): string | null {
@@ -108,9 +108,13 @@ describe('Admin invitation D1 migration', () => {
           "SELECT COUNT(*) FROM pragma_table_info('admin_invitations') WHERE name = 'failed_attempts';"
         )
       ).toBe('0');
-      expect(readFileSync(migrationPath, 'utf8')).not.toMatch(
-        /CREATE(?: UNIQUE)? INDEX[\s\S]{0,120}?WHERE\b/u
-      );
+      expect(
+        query(
+          sqlite3,
+          database,
+          "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'admin_invitations' AND sql LIKE '% WHERE %';"
+        )
+      ).toBe('0');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

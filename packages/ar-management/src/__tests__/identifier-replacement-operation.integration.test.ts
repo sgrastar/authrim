@@ -104,13 +104,9 @@ describe('IdentifierReplacementOperationRepository', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    for (const migrationPath of [
-      'migrations/pii/001_pii_schema.sql',
-      'migrations/pii/004_identifier_replacement_authority.sql',
-      'migrations/pii/011_allow_external_subject_identifier_replacement.sql',
-    ]) {
-      database.exec(readFileSync(resolve(REPO_ROOT, migrationPath), 'utf8'));
-    }
+    database.exec(
+      readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_pre_1_0_pii_baseline.sql'), 'utf8')
+    );
     database
       .prepare(
         `INSERT INTO identity_identifier_replacement_challenges (

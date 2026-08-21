@@ -84,6 +84,7 @@ import {
 import {
   calculateReleaseManifestChecksum,
   assertDatabaseOnlyWorkerCompatibility,
+  assertReleaseDatabaseCompatibility,
   compareProductVersions,
   isProductVersion,
   loadTargetReleaseMigrationManifest,
@@ -956,6 +957,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     process.exit(1);
   }
   const manifestChecksum = calculateReleaseManifestChecksum(targetManifestResult.manifest);
+  try {
+    assertReleaseDatabaseCompatibility({
+      manifest: targetManifestResult.manifest,
+      manifestChecksum,
+      installedProductVersion: workingLock.productVersion,
+      installedSchemaManifestChecksums: Object.values(workingLock.schemaTargets ?? {}).map(
+        (state) => state.manifestChecksum
+      ),
+    });
+  } catch (error) {
+    spinner.fail('This pre-1.0 database baseline requires a fresh installation');
+    console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+    process.exit(1);
+  }
   const minimumProductVersion = targetManifestResult.manifest.minimumProductVersion;
   if (
     minimumProductVersion &&

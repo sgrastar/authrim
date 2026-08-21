@@ -344,7 +344,9 @@ export async function executeDurableInitialAccountDirectoryWrite(
     operation = await dependencies.operationRepository.transition(operation, 'writing', now);
   }
   if (operation.status === 'writing') {
-    log.info('Durable account authoritative write started', { stage: 'authoritative_write_started' });
+    log.info('Durable account authoritative write started', {
+      stage: 'authoritative_write_started',
+    });
     await dependencies.writeAuthoritative({
       publication,
       tenantCoreUsers,

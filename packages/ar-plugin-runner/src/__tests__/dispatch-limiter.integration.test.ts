@@ -69,10 +69,7 @@ describe('D1PluginDispatchLimiter', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    for (const migration of [
-      '001_plugin_runner.sql',
-      '002_registry_installations_and_config.sql',
-    ]) {
+    for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8')
       );

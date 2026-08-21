@@ -7,14 +7,14 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = fileURLToPath(new URL('../../../../../../', import.meta.url));
 
 function migration(path: string): string {
-  return readFileSync(resolve(REPO_ROOT, path), 'utf8');
+  return readFileSync(resolve(REPO_ROOT, path), 'utf8')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', '1')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '1000');
 }
 
 function controlDatabase(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(migration('migrations/control/001_control_plane.sql'));
-  db.exec(migration('migrations/control/014_automatic_provisioning_authority.sql'));
-  db.exec(migration('migrations/control/016_worker_loader_binding_kind.sql'));
+  db.exec(migration('migrations/control/001_pre_1_0_control_baseline.sql'));
   db.exec(
     `INSERT INTO control_environments (
        environment_id, environment_name, issuer, created_at, updated_at
@@ -38,9 +38,7 @@ function controlDatabase(): DatabaseSync {
   return db;
 }
 
-function applyLookupGeneratedBindingMigration(db: DatabaseSync): void {
-  db.exec(migration('migrations/control/022_lookup_generated_worker_bindings.sql'));
-}
+function applyLookupGeneratedBindingMigration(db: DatabaseSync): void {}
 
 describe('Control D1 schema', () => {
   it('exports additional physical Lookup shards to every Worker requiring the lookup role', () => {
@@ -159,8 +157,6 @@ describe('Control D1 schema', () => {
          'tenant_core/default', 'default', 1, 'provider-tenant', 1, 1
        );`
     );
-
-    db.exec(migration('migrations/control/020_lookup_worker_binding_reconciliations.sql'));
 
     expect(
       db
@@ -556,7 +552,6 @@ describe('Control D1 schema', () => {
 
   it('applies the resumable read-replication rollout schema and permits one active rollout', () => {
     const db = controlDatabase();
-    db.exec(migration('migrations/control/005_read_replication_rollout_targets.sql'));
     const lookupColumns = db
       .prepare('PRAGMA table_info(control_lookup_physical_shards)')
       .all() as Array<{ name: string }>;
@@ -667,7 +662,7 @@ describe('Control D1 schema', () => {
 describe('Lookup D1 schema', () => {
   it('enforces the three-state activation gate and tenant-scoped uniqueness authority', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_lookup_directory.sql'));
+    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
     const identifierSql = `INSERT INTO lookup_identifiers (
       virtual_bucket, index_kind, normalization_version, hmac_key_generation,
       identifier_blind_digest, tenant_id, account_id, route_schema_version,
@@ -698,7 +693,7 @@ describe('Lookup D1 schema', () => {
 
   it('allows only one live tenant alias owner per exact alias digest', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_lookup_directory.sql'));
+    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
     const insert = (tenantId: string, lifecycleState: 'pending' | 'active' | 'disabled') =>
       db
         .prepare(
@@ -721,8 +716,7 @@ describe('Lookup D1 schema', () => {
 
   it('stores discovery challenges without raw email or domain indexes', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_lookup_directory.sql'));
-    db.exec(migration('migrations/lookup/002_identifier_replacement_verification_gate.sql'));
+    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
     const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table'").all() as Array<{
       sql: string;
     }>;
@@ -745,8 +739,7 @@ describe('Lookup D1 schema', () => {
     const oldDigest = 'f'.repeat(64);
     const newDigest = '0'.repeat(64);
     const pii = new DatabaseSync(':memory:');
-    pii.exec(migration('migrations/pii/001_pii_schema.sql'));
-    pii.exec(migration('migrations/pii/004_identifier_replacement_authority.sql'));
+    pii.exec(migration('migrations/pii/001_pre_1_0_pii_baseline.sql'));
     const insertChallenge = (reauthenticatedAt: number) =>
       pii
         .prepare(
@@ -817,8 +810,7 @@ describe('Lookup D1 schema', () => {
     pii.close();
 
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_lookup_directory.sql'));
-    db.exec(migration('migrations/lookup/002_identifier_replacement_verification_gate.sql'));
+    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
     db.exec(
       `INSERT INTO lookup_identifier_replacements (
          replacement_id, tenant_id, account_id, index_kind, normalization_version,
@@ -930,15 +922,7 @@ describe('Lookup D1 schema', () => {
 describe('tenant and plugin outbox schemas', () => {
   it('keeps account routing and plugin delivery separate and fixes retention periods', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(
-      `PRAGMA foreign_keys = ON;
-       CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL
-       );`
-    );
-    db.exec(migration('migrations/032_tenant_directory_and_plugin_outboxes.sql'));
+    db.exec(migration('migrations/001_pre_1_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -973,25 +957,22 @@ describe('tenant and plugin outbox schemas', () => {
           WHERE outbox_id = 'outbox-2';`
       )
     ).toThrow();
-    expect(
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%outbox'")
-        .all()
-    ).toHaveLength(3);
+    const outboxes = new Set(
+      (
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%outbox'")
+          .all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+    );
+    expect(outboxes.has('account_routing_outbox')).toBe(true);
+    expect(outboxes.has('plugin_hook_outbox')).toBe(true);
+    expect(outboxes.has('identifier_change_notification_outbox')).toBe(true);
     db.close();
   });
 
   it('enforces plugin outbox claim fencing and state transitions', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(
-      `PRAGMA foreign_keys = ON;
-       CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL
-       );`
-    );
-    db.exec(migration('migrations/032_tenant_directory_and_plugin_outboxes.sql'));
+    db.exec(migration('migrations/001_pre_1_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -1059,7 +1040,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('rejects overly broad plugin egress suffix wildcards', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_plugin_runner.sql'));
+    db.exec(migration('migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'));
     expect(() =>
       db.exec(
         `INSERT INTO plugin_runner_egress_allowed_hosts (
@@ -1077,7 +1058,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('allows only one pending or running plugin sweep', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_plugin_runner.sql'));
+    db.exec(migration('migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_runner_full_sweep_state (
          sweep_id, state, active_sweep_key, created_at, updated_at
