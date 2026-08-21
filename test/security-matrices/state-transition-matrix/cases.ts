@@ -569,7 +569,7 @@ export const CIBA_STORE_SELECTED_TRIPLES: Array<[string, string, string]> = [
   // nonce × authenticated ACR × approval result
   ['nonce', 'acr', 'approvalResult'],
   ['state', 'operation', 'tenantBinding'],
-  ['state', 'reservationResult', 'expiry'],
+  ['state', 'reservationResult', 'tenantBinding'],
 ];
 
 // =============================================================================
