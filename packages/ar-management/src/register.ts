@@ -2070,7 +2070,11 @@ export async function registerHandler(c: Context<{ Bindings: Env }>): Promise<Re
     // Log client registration for debugging/auditing
     log.info('Client registered', { action: 'register', clientId });
 
-    if (isCertificationTest) {
+    const requiresInteractiveConformanceUser =
+      !request.grant_types?.length ||
+      request.grant_types.some((grant) => grant !== 'client_credentials');
+
+    if (isCertificationTest && requiresInteractiveConformanceUser) {
       log.info('OIDC Conformance Test detected, creating test user', { action: 'register' });
 
       const testUserId = buildConformanceTestUserId(

@@ -363,8 +363,7 @@ export interface Env {
   LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
 
   // R2 Buckets
-  AVATARS: R2Bucket;
-  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets such as logos, backgrounds, and favicons
+  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets and tenant-scoped user avatars
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
   AUDIT_ARCHIVE?: R2Bucket; // Canonical R2 archive for audit/admin audit/runtime log chunks and DLQ backup
   IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
@@ -442,6 +441,7 @@ export interface Env {
   NONCE_EXPIRY: string; // OIDC nonce lifetime in seconds (default: 300)
   REFRESH_TOKEN_EXPIRY: string; // Refresh token lifetime in seconds (default: 7776000 = 90 days)
   AUTH_CODE_CLEANUP_INTERVAL?: string; // Auth code cleanup interval in seconds (default: 30)
+  AUTHRIM_R2_MAINTENANCE_CRON_ENABLED?: string; // setup-owned proof that the 6-hour maintenance trigger is deployed
 
   // ============================================================
   // Feature Flags (ENABLE_* prefix)

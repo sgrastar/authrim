@@ -3,6 +3,7 @@ import {
 	apiProxy,
 	buildProxyHeaders,
 	clearBffAdminAccessTokenCacheForTests,
+	readBoundedProxyBody,
 	securityHeaders
 } from './hooks.server';
 
@@ -110,6 +111,62 @@ describe('securityHeaders', () => {
 });
 
 describe('apiProxy', () => {
+	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		const accepted = new Request('https://admin.example.com/api/admin/import', {
+			method: 'POST',
+			body: expected
+		});
+		const rejected = new Request('https://admin.example.com/api/admin/import', {
+			method: 'POST',
+			body: new Uint8Array([1, 2, 3, 4, 5])
+		});
+
+		const body = await readBoundedProxyBody(accepted, expected.byteLength);
+
+		expect(body).toBeInstanceOf(ArrayBuffer);
+		expect(new Uint8Array(body as ArrayBuffer)).toEqual(expected);
+		await expect(readBoundedProxyBody(rejected, 4)).resolves.toBe('__TOO_LARGE__');
+	});
+
+	it('forwards exact binary bytes through the configured upstream proxy path', async () => {
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		vi.stubGlobal('fetch', fetch);
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const url = new URL('http://localhost:5173/api/admin/import');
+		const event = {
+			url,
+			request: new Request(url, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/octet-stream',
+					origin: url.origin
+				},
+				body: expected
+			}),
+			platform: {
+				env: {
+					AUTHRIM_ALLOW_LOCAL_ADMIN_PROXY: 'true',
+					API_BACKEND_URL: 'http://127.0.0.1:8786'
+				}
+			},
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest).toBeDefined();
+		expect(new Uint8Array(await upstreamRequest!.arrayBuffer())).toEqual(expected);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('serves the explicit Admin UI dev mock only on loopback origins', async () => {
 		const resolve = vi.fn(async () => new Response('resolved'));
 		const event = {

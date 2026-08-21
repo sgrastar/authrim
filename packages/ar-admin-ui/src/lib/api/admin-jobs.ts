@@ -168,6 +168,40 @@ export interface JobTypesResponse {
 	job_types: JobTypeDefinition[];
 }
 
+export interface ScheduledMaintenanceTask {
+	id: string;
+	name: string;
+	enabled: boolean;
+	cron: string;
+	status: 'never_run' | 'running' | 'succeeded' | 'failed' | 'disabled';
+	last_started_at?: string;
+	last_completed_at?: string;
+	next_run_at?: string;
+	last_error_code?: string;
+	disabled_reason?: string;
+}
+
+export interface R2BucketOperationalMetric {
+	binding: string;
+	owner_worker?: 'ar-control' | 'ar-management' | 'ar-plugin-runner';
+	availability?: 'current' | 'stale' | 'pending';
+	unavailable_reason?: string;
+	reported_at?: string;
+	object_count: number;
+	total_bytes: number;
+	oldest_object_at?: string;
+	encryption_methods: Record<string, number>;
+	retention_overdue_objects: number | null;
+	retention_policy: string;
+	scan_complete: boolean;
+	measured_at: string;
+}
+
+export interface ScheduledMaintenanceResponse {
+	schedules: ScheduledMaintenanceTask[];
+	storage_metrics: R2BucketOperationalMetric[];
+}
+
 /**
  * Bulk update operation
  */
@@ -410,6 +444,75 @@ export interface ListResponse<T> {
  * Admin Jobs API
  */
 export const adminJobsAPI = {
+	async listSchedules(): Promise<ScheduledMaintenanceResponse> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/jobs/schedules`, {
+			method: 'GET',
+			credentials: 'include',
+			headers: { 'Content-Type': 'application/json' }
+		});
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to list scheduled maintenance');
+		}
+		const payload = (await response.json()) as {
+			schedules?: Array<Record<string, unknown>>;
+			storageMetrics?: Array<Record<string, unknown>>;
+		};
+		const toIso = (value: unknown): string | undefined =>
+			typeof value === 'number' && Number.isFinite(value)
+				? new Date(value).toISOString()
+				: undefined;
+		return {
+			schedules: (payload.schedules ?? []).map((raw) => ({
+				id: String(raw.id ?? ''),
+				name: String(raw.name ?? ''),
+				enabled: raw.enabled === true,
+				cron: String(raw.cron ?? ''),
+				status:
+					raw.status === 'running' ||
+					raw.status === 'succeeded' ||
+					raw.status === 'failed' ||
+					raw.status === 'disabled'
+						? raw.status
+						: 'never_run',
+				last_started_at: toIso(raw.lastStartedAt),
+				last_completed_at: toIso(raw.lastCompletedAt),
+				next_run_at: toIso(raw.nextRunAt),
+				last_error_code: typeof raw.lastErrorCode === 'string' ? raw.lastErrorCode : undefined,
+				disabled_reason: typeof raw.disabledReason === 'string' ? raw.disabledReason : undefined
+			})),
+			storage_metrics: (payload.storageMetrics ?? []).map((raw) => ({
+				binding: String(raw.binding ?? ''),
+				owner_worker:
+					raw.ownerWorker === 'ar-control' ||
+					raw.ownerWorker === 'ar-management' ||
+					raw.ownerWorker === 'ar-plugin-runner'
+						? raw.ownerWorker
+						: undefined,
+				availability:
+					raw.availability === 'current' ||
+					raw.availability === 'stale' ||
+					raw.availability === 'pending'
+						? raw.availability
+						: undefined,
+				unavailable_reason:
+					typeof raw.unavailableReason === 'string' ? raw.unavailableReason : undefined,
+				reported_at: toIso(raw.reportedAt),
+				object_count: Number(raw.objectCount ?? 0),
+				total_bytes: Number(raw.totalBytes ?? 0),
+				oldest_object_at: toIso(raw.oldestObjectAt),
+				encryption_methods:
+					raw.encryptionMethods && typeof raw.encryptionMethods === 'object'
+						? (raw.encryptionMethods as Record<string, number>)
+						: {},
+				retention_overdue_objects:
+					typeof raw.retentionOverdueObjects === 'number' ? raw.retentionOverdueObjects : null,
+				retention_policy: String(raw.retentionPolicy ?? ''),
+				scan_complete: raw.scanComplete === true,
+				measured_at: toIso(raw.measuredAt) ?? ''
+			}))
+		};
+	},
+
 	/**
 	 * List supported job types and result delivery modes
 	 */

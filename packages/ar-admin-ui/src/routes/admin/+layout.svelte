@@ -517,35 +517,6 @@
 		}
 	});
 
-	// Paths that belong to the PLATFORM section (tenant selector should be hidden)
-	const PLATFORM_PATHS = [
-		'/admin/tenants',
-		'/admin/tenant-vanity-domains',
-		'/admin/platform/tenant-domain-mappings',
-		'/admin/security',
-		'/admin/compliance',
-		'/admin/scale',
-		'/admin/storage-destinations',
-		'/admin/logging-policies',
-		'/admin/notifications',
-		'/admin/admin-logging',
-		'/admin/database-connections',
-		'/admin/dr-backup',
-		'/admin/jobs',
-		'/admin/approvals',
-		'/admin/admins',
-		'/admin/admin-access-control',
-		'/admin/admin-rbac',
-		'/admin/admin-abac',
-		'/admin/admin-rebac',
-		'/admin/admin-policies',
-		'/admin/machine-access',
-		'/admin/ip-allowlist',
-		'/admin/admin-audit',
-		'/admin/operational-logs'
-	];
-
-	const isPlatformPage = $derived(PLATFORM_PATHS.some((p) => $page.url.pathname.startsWith(p)));
 	const selectedTenantLabel = $derived(
 		tenantStore.activeTenants.find((tenant) => tenant.id === selectedTenantId)?.name ??
 			selectedTenantId ??
@@ -808,7 +779,6 @@
 				userEmail={adminAuth.user?.email}
 				userName={adminAuth.user?.name}
 				userId={adminAuth.user?.userId}
-				hideTenantSelector={isPlatformPage}
 			/>
 
 			<div class="page-content">

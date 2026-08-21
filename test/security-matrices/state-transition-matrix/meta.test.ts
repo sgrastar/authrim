@@ -687,7 +687,7 @@ const IND_CS_TRIPLES: Array<[string, string, string]> = [
   ['deliveryMode', 'state', 'operation'],
   ['nonce', 'acr', 'approvalResult'],
   ['state', 'operation', 'tenantBinding'],
-  ['state', 'reservationResult', 'expiry'],
+  ['state', 'reservationResult', 'tenantBinding'],
 ];
 
 const IND_CT_TRIPLES: Array<[string, string, string]> = [
@@ -861,6 +861,19 @@ function caseTableFor(name: string): StateCase[] {
 // =============================================================================
 
 describe('state-transition coverage (independent checker)', () => {
+  it('references only declared dimensions in every selected triple', () => {
+    expect.hasAssertions();
+    for (const spec of MATRIX_SPECS) {
+      const declared = new Set<string>(spec.order);
+      for (const triple of spec.triples) {
+        expect(
+          triple.every((dimension) => declared.has(dimension)),
+          `${spec.name} selected triple ${triple.join(' × ')}`
+        ).toBe(true);
+      }
+    }
+  });
+
   it('every matrix legal pair count matches its fixed independently declared literal', () => {
     expect.hasAssertions();
     for (const spec of MATRIX_SPECS) {

@@ -35,8 +35,6 @@
     { "name": "FLOW_STATE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DIRECTORY_CONNECTOR_RELAY", "kind": "durable_object_namespace", "required": true },
-    { "name": "PUBLIC_ASSETS", "kind": "r2_bucket", "required": false },
-    { "name": "AVATARS", "kind": "r2_bucket", "required": false },
     { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
     { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
     { "name": "AUDIT_QUEUE", "kind": "queue", "required": false },
@@ -65,6 +63,11 @@
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt",
+      "required": true
+    },
     { "name": "PRIVATE_KEY_PEM", "capability": "legacy_signing.private", "required": true },
     { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
     {

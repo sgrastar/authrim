@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
 
@@ -23,16 +24,12 @@ describe('screen locale tag normalization migrations', () => {
     const directory = mkdtempSync(join(tmpdir(), 'authrim-screen-locales-'));
     const database = join(directory, 'core.db');
     try {
-      const migration = readFileSync(
-        join(migrationsDir, '031_normalize_screen_locale_tags.sql'),
-        'utf8'
+      const migration = renderPortableMigrationSql(
+        readFileSync(join(migrationsDir, '001_pre_1_0_core_baseline.sql'), 'utf8'),
+        'sqlite'
       );
       execFileSync(sqlite3, [database], {
-        input: `
-          CREATE TABLE screens (localizations_json TEXT);
-          INSERT INTO screens VALUES ('{"en":{"label":"Sign in"},"zh_CN":{"label":"登录"},"zh_TW":{"label":"登入"}}');
-          ${migration}
-        `,
+        input: migration,
         encoding: 'utf8',
       });
 
@@ -40,16 +37,17 @@ describe('screen locale tag normalization migrations', () => {
         sqlite3,
         [
           database,
-          `SELECT json_extract(localizations_json, '$."zh-CN".label') || ':' ||
-                  json_extract(localizations_json, '$."zh-TW".label') || ':' ||
-                  COALESCE(json_type(localizations_json, '$.zh_CN'), 'missing') || ':' ||
-                  COALESCE(json_type(localizations_json, '$.zh_TW'), 'missing')
-             FROM screens;`,
+          `SELECT COUNT(*) || ':' ||
+                  SUM(json_type(localizations_json, '$."zh-CN"') IS NOT NULL) || ':' ||
+                  SUM(json_type(localizations_json, '$."zh-TW"') IS NOT NULL) || ':' ||
+                  SUM(json_type(localizations_json, '$.zh_CN') IS NOT NULL) || ':' ||
+                  SUM(json_type(localizations_json, '$.zh_TW') IS NOT NULL)
+             FROM screens WHERE localizations_json IS NOT NULL;`,
         ],
         { encoding: 'utf8' }
       ).trim();
 
-      expect(result).toBe('登录:登入:missing:missing');
+      expect(result).toBe('3:3:3:0:0');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -57,12 +55,12 @@ describe('screen locale tag normalization migrations', () => {
 
   it('uses matching BCP 47 keys in the PostgreSQL migration', () => {
     const migration = readFileSync(
-      join(migrationsDir, 'external/postgres/016_external_normalize_screen_locale_tags.sql'),
+      join(migrationsDir, 'external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'),
       'utf8'
     );
-    expect(migration).toContain("jsonb_build_object('zh-CN'");
-    expect(migration).toContain("jsonb_build_object('zh-TW'");
-    expect(migration).toContain("localizations_json - 'zh_CN'");
-    expect(migration).toContain("localizations_json - 'zh_TW'");
+    expect(migration).toContain('zh-CN');
+    expect(migration).toContain('zh-TW');
+    expect(migration).not.toContain('zh_CN');
+    expect(migration).not.toContain('zh_TW');
   });
 });

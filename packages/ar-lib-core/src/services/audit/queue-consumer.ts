@@ -47,6 +47,7 @@ import {
 import {
   buildLogChunkObjectKey,
   defaultLogStorageShard,
+  deriveLogChunkEncryptionKey,
   rewrapLogChunkObject,
   writeLogChunkToR2,
   type LogChunkEncryptionOptions,
@@ -118,16 +119,76 @@ const LOGGING_DELIVERY_PAYLOAD_MAX_BYTES = 5 * 1024 * 1024;
 
 async function readLoggingDeliveryPayloadObjectText(
   object: R2ObjectBody,
-  errorPrefix: string
+  errorPrefix: string,
+  options?: {
+    env: AuditQueueConsumerEnv;
+    objectKey: string;
+  }
 ): Promise<{ text: string; byteCount: number }> {
+  const metadata = (object as R2ObjectBody & { customMetadata?: Record<string, string> })
+    .customMetadata;
+  if (metadata?.encryption !== 'authrim-object-envelope-v1') {
+    throw new Error(`${errorPrefix}_unencrypted_payload`);
+  }
+  if (!options?.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error(`${errorPrefix}_encryption_key_unavailable`);
+  }
+  const tenantContext = metadata.encryptionTenantContext;
+  if (!tenantContext) {
+    throw new Error(`${errorPrefix}_encryption_context_missing`);
+  }
   let text: string;
   try {
     text = await readR2ObjectTextWithLimit(object, LOGGING_DELIVERY_PAYLOAD_MAX_BYTES);
   } catch {
     throw new Error(`${errorPrefix}_too_large`);
   }
+  text = await decryptObjectArtifact(JSON.parse(text), {
+    rootKeyHex: options.env.OBJECT_ENCRYPTION_ROOT_KEY,
+    context: {
+      tenantId: tenantContext,
+      objectKey: options.objectKey,
+      objectClass: 'operational_log_detail',
+    },
+  });
   const byteCount = new TextEncoder().encode(text).byteLength;
   return { text, byteCount };
+}
+
+async function putEncryptedAuditArchivePayload(input: {
+  env: AuditQueueConsumerEnv;
+  bucket: R2Bucket;
+  objectKey: string;
+  tenantContext: string;
+  payload: unknown;
+  customMetadata: Record<string, string>;
+}): Promise<void> {
+  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('audit_archive_payload_encryption_key_unavailable');
+  }
+  const parsedKeyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
+  const keyVersion =
+    Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
+  const envelope = await encryptObjectArtifact(JSON.stringify(input.payload), {
+    rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
+    plane: 'AUDIT_ARCHIVE',
+    keyVersion,
+    contentType: 'application/json',
+    context: {
+      tenantId: input.tenantContext,
+      objectKey: input.objectKey,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  await input.bucket.put(input.objectKey, JSON.stringify(envelope), {
+    httpMetadata: { contentType: 'application/vnd.authrim.object-envelope+json' },
+    customMetadata: {
+      ...input.customMetadata,
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: input.tenantContext,
+      keyVersion: String(keyVersion),
+    },
+  });
 }
 
 function getChunkWriteBucket(env: AuditQueueConsumerEnv, plane: LogPlane): R2Bucket | null {
@@ -889,8 +950,12 @@ async function enqueueHttpSinkBatchForDelivery(input: {
     `${cleanR2ObjectKeySegment(payloadId)}.json`,
   ].join('/');
   const canonicalBatch = JSON.stringify(buildCanonicalAuditBatch(input.target, input.body, 'http'));
-  await bucket.put(objectKey, canonicalBatch, {
-    httpMetadata: { contentType: 'application/json' },
+  await putEncryptedAuditArchivePayload({
+    env: input.env,
+    bucket,
+    objectKey,
+    tenantContext: input.tenantKey,
+    payload: JSON.parse(canonicalBatch),
     customMetadata: {
       tenantKey: input.tenantKey,
       logType: input.logType,
@@ -931,6 +996,9 @@ async function writeArchiveTarget(
 ): Promise<WriteLogChunkResult> {
   if (target.type !== 'r2') {
     throw new Error(`Unsupported archive target type: ${target.type}`);
+  }
+  if (target.bucketRef !== 'AUDIT_ARCHIVE') {
+    throw new Error(`Audit archive bucket binding must be AUDIT_ARCHIVE: ${target.bucketRef}`);
   }
 
   const bucket = getR2BucketBinding(env, target.bucketRef);
@@ -986,46 +1054,6 @@ async function writeArchiveTarget(
   });
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length !== 64 || !/^[0-9a-fA-F]+$/.test(hex)) {
-    throw new Error('object_encryption_root_key_invalid');
-  }
-  const bytes = new Uint8Array(32);
-  for (let index = 0; index < hex.length; index += 2) {
-    bytes[index / 2] = Number.parseInt(hex.slice(index, index + 2), 16);
-  }
-  return bytes;
-}
-
-async function deriveArchiveChunkEncryptionKey(input: {
-  rootKeyHex: string;
-  tenantKey: string;
-  logType: LogType;
-  plane: LogPlane;
-  keyVersion: number;
-}): Promise<Uint8Array> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    hexToBytes(input.rootKeyHex),
-    'HKDF',
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new TextEncoder().encode('authrim-log-chunk-archive-encryption'),
-      info: new TextEncoder().encode(
-        `${input.tenantKey}:${input.logType}:${input.plane}:v${input.keyVersion}`
-      ),
-    },
-    material,
-    256
-  );
-  return new Uint8Array(bits);
-}
-
 async function resolveArchiveChunkEncryption(input: {
   env: AuditQueueConsumerEnv;
   tenantKey: string;
@@ -1039,7 +1067,7 @@ async function resolveArchiveChunkEncryption(input: {
   const normalizedKeyVersion = Number.isFinite(keyVersion) && keyVersion > 0 ? keyVersion : 1;
   const encryptionScope = `tenant:${input.tenantKey}:${input.logType}:${input.plane}`;
   return {
-    keyBytes: await deriveArchiveChunkEncryptionKey({
+    keyBytes: await deriveLogChunkEncryptionKey({
       rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
       tenantKey: input.tenantKey,
       logType: input.logType,
@@ -1430,8 +1458,7 @@ async function processFanoutMessage(
   const body = message.body;
   const attemptCount = message.attempts;
   const fanout = body.fanout as AuditQueueFanoutPlan;
-  const archives =
-    fanout.archives.length > 0 ? fanout.archives : fanout.archive ? [fanout.archive] : [];
+  const archives = fanout.archives;
   const tenantKey = await resolveTenantKeyForAuditFanout(body.tenantId, env);
   const logType = logTypeForAuditMessage(body);
   const deliveryEventStore = createDeliveryEventStore(env);
@@ -1867,25 +1894,25 @@ export async function processDLQQueue(
       // Save to R2 for recovery
       const archiveBucket = env.AUDIT_ARCHIVE ?? null;
       if (archiveBucket) {
-        await archiveBucket.put(
-          payloadObjectRef,
-          JSON.stringify({
+        await putEncryptedAuditArchivePayload({
+          env,
+          bucket: archiveBucket,
+          objectKey: payloadObjectRef,
+          tenantContext: tenantKey,
+          payload: {
             messageId: message.id,
             receivedAt: timestamp,
             retryCount: message.attempts,
             body: message.body,
-          }),
-          {
-            httpMetadata: { contentType: 'application/json' },
-            customMetadata: {
-              tenantKey,
-              payloadType: 'audit_queue_message',
-              schemaVersion: '1',
-              dlqItemId,
-              logType,
-            },
-          }
-        );
+          },
+          customMetadata: {
+            tenantKey,
+            payloadType: 'audit_queue_message',
+            schemaVersion: '1',
+            dlqItemId,
+            logType,
+          },
+        });
 
         await dlqStore?.insertItem({
           id: dlqItemId,
@@ -1989,26 +2016,26 @@ async function writeUnsupportedLoggingDeliveryPayloadToDlq(input: {
     throw new Error('logging_delivery_unsupported_payload_dlq_bucket_unavailable');
   }
 
-  await archiveBucket.put(
-    payloadObjectRef,
-    JSON.stringify({
+  await putEncryptedAuditArchivePayload({
+    env,
+    bucket: archiveBucket,
+    objectKey: payloadObjectRef,
+    tenantContext: tenantKey,
+    payload: {
       messageId: message.id,
       receivedAt: new Date(now).toISOString(),
       retryCount: message.attempts,
       parseResult,
       body: message.body,
       bodyJson: serializeQueueBody(message.body),
-    }),
-    {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: {
-        tenantKey,
-        payloadType,
-        schemaVersion: String(schemaVersion),
-        dlqItemId,
-      },
-    }
-  );
+    },
+    customMetadata: {
+      tenantKey,
+      payloadType,
+      schemaVersion: String(schemaVersion),
+      dlqItemId,
+    },
+  });
 
   const dlqStore = createDlqItemStore(env);
   await dlqStore?.insertItem({
@@ -2096,7 +2123,8 @@ async function readHttpSinkBatchBody(
   }
   const bodyRead = await readLoggingDeliveryPayloadObjectText(
     object,
-    'logging_delivery_payload_object'
+    'logging_delivery_payload_object',
+    { env, objectKey }
   );
   const metadata = object as R2ObjectBody & {
     httpMetadata?: { contentType?: string };
@@ -2108,6 +2136,34 @@ async function readHttpSinkBatchBody(
     byteCount: bodyRead.byteCount,
     objectRef: payload.body_object_ref,
   };
+}
+
+async function deleteLoggingDeliveryPayloadObject(input: {
+  env: AuditQueueConsumerEnv;
+  objectRef: string | null;
+  logger: Logger;
+  event: string;
+}): Promise<void> {
+  if (!input.objectRef) {
+    return;
+  }
+  const bucket = getDefaultLoggingDeliveryPayloadBucket(input.env);
+  if (!bucket) {
+    input.logger.warn(`${input.event}_bucket_unavailable`, {
+      objectRef: input.objectRef,
+    });
+    return;
+  }
+  try {
+    await bucket.delete(normalizeR2ObjectRef(input.objectRef));
+  } catch (error) {
+    // Delivery has already reached a terminal state. Do not redeliver only because cleanup failed;
+    // the scheduled R2 maintenance scan remains the recovery path for the orphaned object.
+    input.logger.warn(`${input.event}_failed`, {
+      objectRef: input.objectRef,
+      error: sanitizeErrorMessage(String(error)),
+    });
+  }
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
@@ -2175,7 +2231,8 @@ async function loadChunkWriteRecords(
     }
     const objectRead = await readLoggingDeliveryPayloadObjectText(
       object,
-      'chunk_write_records_payload_object'
+      'chunk_write_records_payload_object',
+      { env, objectKey: normalizeR2ObjectRef(payload.records_object_ref) }
     );
     const parsed = JSON.parse(objectRead.text) as unknown;
     if (Array.isArray(parsed)) {
@@ -2814,6 +2871,14 @@ async function processHttpSinkBatchDeliveryPayload(input: {
         metadata,
       });
     }
+    if (status !== 'retrying') {
+      await deleteLoggingDeliveryPayloadObject({
+        env,
+        objectRef: body.objectRef,
+        logger,
+        event: 'logging_delivery_payload_cleanup',
+      });
+    }
     return status === 'retrying' ? 'retry' : 'ack';
   } catch (error) {
     const errorClass = deliveryErrorClass(error, 'http_sink_delivery_failed');
@@ -3231,7 +3296,7 @@ async function processRewrapChunkDeliveryPayload(input: {
       plane: object.plane,
       compression: object.compression,
       from: {
-        keyBytes: await deriveArchiveChunkEncryptionKey({
+        keyBytes: await deriveLogChunkEncryptionKey({
           rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
           tenantKey: object.tenant_key,
           logType: object.log_type,
@@ -3242,7 +3307,7 @@ async function processRewrapChunkDeliveryPayload(input: {
         keyVersion: job.from_version,
       },
       to: {
-        keyBytes: await deriveArchiveChunkEncryptionKey({
+        keyBytes: await deriveLogChunkEncryptionKey({
           rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
           tenantKey: object.tenant_key,
           logType: object.log_type,
@@ -3446,7 +3511,8 @@ async function processDlqReplayDeliveryPayload(input: {
     }
     const objectRead = await readLoggingDeliveryPayloadObjectText(
       object,
-      'logging_dlq_replay_payload_object'
+      'logging_dlq_replay_payload_object',
+      { env, objectKey: item.payload_object_ref }
     );
     const parsed = JSON.parse(objectRead.text) as { body?: unknown };
     if (!parsed || typeof parsed !== 'object' || !parsed.body) {
@@ -3480,6 +3546,12 @@ async function processDlqReplayDeliveryPayload(input: {
        WHERE id = ? AND status = 'open'`,
       [now, item.id]
     );
+    await deleteLoggingDeliveryPayloadObject({
+      env,
+      objectRef: item.payload_object_ref,
+      logger,
+      event: 'logging_dlq_replay_payload_cleanup',
+    });
     await recordDeliveryEvent(deliveryEventStore, logger, {
       tenantKey: item.tenant_key,
       destinationId: item.destination_id ?? 'queue:AUDIT_QUEUE',

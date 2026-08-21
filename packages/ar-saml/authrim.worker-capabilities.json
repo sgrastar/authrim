@@ -41,6 +41,11 @@
   ],
   "secrets": [
     {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt",
+      "required": true
+    },
+    {
       "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
       "capability": "runtime_registry.verify",
       "required": true

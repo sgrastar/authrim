@@ -119,27 +119,15 @@ describe('PluginAccountMetadataService', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
     tenantDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migrationName of [
-      '001_plugin_runner.sql',
-      '002_registry_installations_and_config.sql',
-    ]) {
+    for (const migrationName of ['001_pre_1_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migrationName), 'utf8')
       );
     }
     tenantDatabase.exec(
-      `CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         account_type TEXT NOT NULL,
-         lifecycle_state TEXT NOT NULL DEFAULT 'active',
-         metadata_json TEXT,
-         created_at INTEGER NOT NULL,
-         updated_at INTEGER NOT NULL
-       );`
-    );
-    tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/034_plugin_account_metadata.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     runnerDatabase.exec(
       `INSERT INTO plugin_runner_installations (

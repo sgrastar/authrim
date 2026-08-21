@@ -46,12 +46,19 @@ The default command starts the local Web UI, checks the current Wrangler session
 8. Worker deployment
 9. Completion and next steps
 
+R2 object storage is enabled by default. Setup provisions the complete standard bucket topology and
+deploys each binding only to the Workers that require it. Login UI assets and tenant-scoped avatars
+share `PUBLIC_ASSETS` under separate object-key prefixes; there is no dedicated avatar bucket. The
+pre-1.0 resource layout is intentionally not backward compatible: if an environment lock still
+contains the removed `AVATARS` bucket, recreate that environment instead of attempting an in-place
+R2 topology conversion.
+
 ## Requirements
 
 - Node.js `>=20.0.0`
 - `pnpm@9` for repository development
 - Wrangler CLI installed and authenticated with `wrangler login`
-- A Cloudflare account that can create Workers, D1 databases, KV namespaces, and optional R2 buckets
+- A Cloudflare account that can create Workers, D1 databases, KV namespaces, and R2 buckets
 
 For repository development, the root project currently expects Node `>=22`.
 
@@ -133,7 +140,9 @@ Every new D1 environment uses the unified Control Plane. The interactive CLI and
 `Automatic provisioning` as an execution-authority choice, not as a routing-mode choice:
 
 - **On:** setup opens a Cloudflare Dashboard link prefilled with only API-token creation permission.
-  Enter the resulting one-time bootstrap token once. Setup creates distinct account-scoped D1 and
+  The Control Worker needs this one-time bootstrap token to create its scoped execution credentials;
+  setup displays an explicit required-token message if it has not been entered. Enter the token once.
+  Setup creates distinct account-scoped D1 and
   Workers Scripts tokens and, when the enabled capability requires them, separate KV and R2 tokens.
   Before registering a child secret, setup verifies that the token can list only its own resource
   class and that Cloudflare rejects the other D1, Workers Scripts, KV, and R2 list endpoints with

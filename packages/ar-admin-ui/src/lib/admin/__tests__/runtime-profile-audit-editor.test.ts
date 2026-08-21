@@ -25,7 +25,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 		expect(parsed.error).toBeUndefined();
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		});
 		expect(parsed.profile?.sinks).toHaveLength(1);
@@ -55,7 +55,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		});
 	});

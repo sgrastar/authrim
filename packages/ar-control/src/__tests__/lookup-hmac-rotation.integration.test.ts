@@ -131,14 +131,8 @@ describe('Lookup HMAC rotation state machine', () => {
     now = 100;
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/004_lookup_hmac_key_state.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_lookup_hmac_candidate_verifications.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );

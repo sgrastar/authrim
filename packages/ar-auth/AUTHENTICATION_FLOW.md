@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2025-12-27
-description: "This document describes the authentication and consent flows in the Authrim OpenID Provider."
+description: 'This document describes the authentication and consent flows in the Authrim OpenID Provider.'
 type: document
 tags:
   - authrim
@@ -12,6 +12,7 @@ tags:
   - identity-platform
   - authentication-flow
 ---
+
 # Authentication Flow Documentation
 
 This document describes the authentication and consent flows in the Authrim OpenID Provider.
@@ -421,12 +422,13 @@ flowchart TD
 
 ---
 
-## Migration
+## Database setup
 
-To enable consent functionality, run the migration:
+Consent storage is included in the pre-1.0 Core baseline. Initialize a fresh environment through the
+setup tool so the complete baseline is applied:
 
 ```bash
-wrangler d1 execute authrim-prod --file=migrations/003_add_consent_table.sql
+pnpm run setup init --env prod
 ```
 
 This creates the `oauth_client_consents` table for storing user consent history.

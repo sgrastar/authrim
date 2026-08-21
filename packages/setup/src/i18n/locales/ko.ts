@@ -466,7 +466,7 @@ const ko: Translations = {
   // Feature flags
   'features.title': '기능 플래그',
   'features.queuePrompt': 'Cloudflare Queues를 활성화하시겠습니까? (감사 로그용)',
-  'features.r2Prompt': 'Cloudflare R2를 활성화하시겠습니까? (아바타용)',
+  'features.r2Prompt': 'Cloudflare R2 객체 스토리지를 활성화하시겠습니까?',
   'features.queue': '큐:',
   'features.r2': 'R2:',
 

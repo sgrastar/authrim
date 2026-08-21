@@ -57,6 +57,7 @@ interface ServiceBinding {
 
 type ServerFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+const MAX_PROXY_BODY_BYTES = 10 * 1024 * 1024;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH = 32;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH = 4096;
 // Keep this aligned with VALIDATION_LIMITS.CLIENT_ID_MAX_LENGTH in ar-lib-core.
@@ -902,6 +903,7 @@ export function buildProxyHeaders(
 		'accept-language',
 		'content-type',
 		'authorization',
+		'dpop',
 		'cookie',
 		'user-agent',
 		'x-request-id',
@@ -968,22 +970,52 @@ export function getForwardedHost(
 	return getConfiguredForwardedHost(platformEnv) ?? event.url.host;
 }
 
-async function readBody(event: RequestEvent): Promise<string | undefined> {
-	if (event.request.method === 'GET' || event.request.method === 'HEAD') {
+export async function readBoundedProxyBody(
+	request: Request,
+	maxBytes = MAX_PROXY_BODY_BYTES
+): Promise<ArrayBuffer | undefined | '__TOO_LARGE__'> {
+	if (request.method === 'GET' || request.method === 'HEAD') {
 		return undefined;
 	}
-
-	const maxBodySize = 10 * 1024 * 1024;
-	const contentLength = event.request.headers.get('content-length');
-	if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
-		return '__TOO_LARGE__';
+	if (maxBytes <= 0) {
+		throw new Error('Proxy body size limit must be greater than zero');
 	}
 
-	const body = await event.request.text();
-	if (body.length > maxBodySize) {
+	const contentLength = request.headers.get('content-length');
+	if (contentLength && parseInt(contentLength, 10) > maxBytes) {
 		return '__TOO_LARGE__';
 	}
-	return body;
+	if (!request.body) {
+		return new ArrayBuffer(0);
+	}
+
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let totalBytes = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+
+			totalBytes += value.byteLength;
+			if (totalBytes > maxBytes) {
+				void reader.cancel().catch(() => {});
+				return '__TOO_LARGE__';
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	const body = new Uint8Array(totalBytes);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return body.buffer;
 }
 
 export function buildProxyResponse(response: Response): Response {
@@ -1019,7 +1051,7 @@ export function buildProxyResponse(response: Response): Response {
 	});
 }
 
-const apiProxyHandle: Handle = async ({ event, resolve }) => {
+export const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const pathname = event.url.pathname;
 	if (!shouldProxyPath(pathname)) {
 		return resolve(event);
@@ -1029,7 +1061,7 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const apiBackendUrl = getApiBackendUrl(platformEnv);
 	const forwardedHost = getForwardedHost(event, platformEnv);
 
-	const body = await readBody(event);
+	const body = await readBoundedProxyBody(event.request);
 	if (body === '__TOO_LARGE__') {
 		return new Response('Request body too large', { status: 413 });
 	}
@@ -1047,7 +1079,8 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const requestInit: RequestInit = {
 		method: event.request.method,
 		headers: proxyHeaders,
-		redirect: 'manual'
+		redirect: 'manual',
+		signal: event.request.signal
 	};
 
 	if (body !== undefined) {

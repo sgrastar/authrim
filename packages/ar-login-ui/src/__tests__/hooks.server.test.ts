@@ -337,6 +337,121 @@ describe('Login UI proxy hooks', () => {
 		expect(headers.get('Cookie')).toContain('authrim_remembered_tenant');
 	});
 
+	it('forwards DPoP proofs without broadening the proxy header allowlist', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request('https://login.example.com/authorize', {
+			headers: {
+				DPoP: 'proof.jwt.value',
+				'X-Authrim-Internal-Secret': 'must-not-forward'
+			}
+		});
+		const event = {
+			request,
+			url: new URL(request.url),
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(event as never, undefined, 'first.test.authrim.com');
+
+		expect(headers.get('DPoP')).toBe('proof.jwt.value');
+		expect(headers.get('X-Authrim-Internal-Secret')).toBeNull();
+	});
+
+	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
+		const { readBoundedProxyBody } = await import('../hooks.server');
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		const accepted = new Request('https://login.example.com/api/upload', {
+			method: 'POST',
+			body: expected
+		});
+		const rejected = new Request('https://login.example.com/api/upload', {
+			method: 'POST',
+			body: new Uint8Array([1, 2, 3, 4, 5])
+		});
+
+		const body = await readBoundedProxyBody(accepted, expected.byteLength);
+
+		expect(body).toBeInstanceOf(ArrayBuffer);
+		expect(new Uint8Array(body as ArrayBuffer)).toEqual(expected);
+		await expect(readBoundedProxyBody(rejected, 4)).resolves.toBe('__TOO_LARGE__');
+	});
+
+	it('forwards exact binary bytes through the Service Binding proxy path', async () => {
+		const { apiProxyHandle } = await import('../hooks.server');
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		const url = new URL('https://login.example.com/api/upload');
+		const event = {
+			url,
+			request: new Request(url, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/octet-stream',
+					'x-authrim-original-host': 'first.test.authrim.com'
+				},
+				body: expected
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_API_BASE_URL: 'https://api.example.com'
+				}
+			},
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const resolve = vi.fn(async () => new Response('resolved'));
+
+		const response = await apiProxyHandle({ event: event as never, resolve });
+
+		expect(response.status).toBe(200);
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest).toBeDefined();
+		expect(new Uint8Array(await upstreamRequest!.arrayBuffer())).toEqual(expected);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('forwards DPoP through the complete authorization proxy path only', async () => {
+		const { apiProxyHandle } = await import('../hooks.server');
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		const url = new URL('https://login.example.com/authorize');
+		const event = {
+			url,
+			request: new Request(url, {
+				headers: {
+					DPoP: 'proof.jwt.value',
+					'X-Authrim-Internal-Secret': 'must-not-forward',
+					'x-authrim-original-host': 'first.test.authrim.com'
+				}
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_API_BASE_URL: 'https://api.example.com'
+				}
+			},
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		await apiProxyHandle({
+			event: event as never,
+			resolve: vi.fn(async () => new Response('resolved'))
+		});
+
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest?.headers.get('DPoP')).toBe('proof.jwt.value');
+		expect(upstreamRequest?.headers.get('X-Authrim-Internal-Secret')).toBeNull();
+	});
+
 	it('rewrites same-origin browser Origin and Referer to the forwarded tenant origin', async () => {
 		const { buildProxyHeaders } = await import('../hooks.server');
 		const request = new Request('https://login.example.com/api/v1/auth/direct/session', {

@@ -118,26 +118,19 @@ describe('AccountDirectoryRemovalCoordinator', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     lookupDatabase = new DatabaseSync(':memory:');
     tenantDatabase.exec(
-      `PRAGMA foreign_keys = ON;
-       CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         lifecycle_state TEXT NOT NULL DEFAULT 'active',
-         created_at INTEGER NOT NULL,
-         updated_at INTEGER NOT NULL,
-         deleted_at INTEGER
-       );
-       INSERT INTO identity_accounts (id, tenant_id, lifecycle_state, created_at, updated_at)
-       VALUES ('account-a', 'tenant-a', 'active', 1, 1);`
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     tenantDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-        'utf8'
-      )
+      `INSERT INTO identity_accounts (
+         id, tenant_id, account_type, lifecycle_state, created_at, updated_at
+       ) VALUES ('account-a', 'tenant-a', 'person', 'active', 1, 1);`
     );
     lookupDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     tenant = new SqliteD1(tenantDatabase);
     lookup = new SqliteD1(lookupDatabase);

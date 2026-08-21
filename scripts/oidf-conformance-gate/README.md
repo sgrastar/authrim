@@ -34,3 +34,9 @@ deployment-specific values should remain in CI environment variables rather than
 `pnpm conformance:test` covers the evidence parser and fail-closed cases. The root
 `pnpm typecheck` also runs `pnpm conformance:typecheck`; gate code must not rely only on Vitest's
 transpile step for type safety.
+
+`openid4vc-profiles.ts` pins the official Suite plan names and exact Final/HAIP variants used for
+OpenID4VCI 1.0 and OpenID4VP 1.0 gap analysis. Its tests deliberately fail if HAIP is weakened to a
+plain profile (for example, `direct_post.jwt` to `direct_post`, `x509_hash` to `redirect_uri`, or
+client attestation to `private_key_jwt`). Suite credentials, client private keys, tenant admin
+tokens, and generated evidence remain outside the repository.

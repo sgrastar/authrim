@@ -110,6 +110,11 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
     const lockedConfig = AuthrimConfigSchema.parse(
       JSON.parse(await readFile(envPaths.config, 'utf-8'))
     );
+    if (lockedEnvironment.lock?.r2?.AVATARS) {
+      throw new Error(
+        'legacy_avatar_bucket_is_not_supported; recreate this pre-1.0 environment with PUBLIC_ASSETS'
+      );
+    }
     if (
       !lockedEnvironment.lock ||
       JSON.stringify(lockedEnvironment.lock) !== JSON.stringify(lock) ||
@@ -121,11 +126,12 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
       existing: lock.r2,
       onProgress: (message) => console.log(chalk.gray(message)),
     });
-    const resourceLock = mergeLockFiles(lock, {
+    const resourceLock = {
+      ...mergeLockFiles(lock, {}),
       r2: Object.fromEntries(
         provisionedBuckets.map((bucket) => [bucket.binding, { name: bucket.name }])
       ),
-    });
+    };
 
     const updatedConfig: AuthrimConfig = resuming
       ? config

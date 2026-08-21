@@ -6,6 +6,7 @@ import {
   filterKnownD1NamesForEnvironment,
   filterKnownQueueNamesForEnvironment,
   getObjectCatalogR2BucketName,
+  getRequiredR2Buckets,
   getR2BucketName,
   isZoneReadPermissionError,
   parseObjectCatalogR2RowsFromWranglerJson,
@@ -13,12 +14,25 @@ import {
 } from '../core/cloudflare.js';
 
 describe('Cloudflare pure resource contracts', () => {
+  it('requires the complete eight-bucket R2 topology by default', () => {
+    expect(getRequiredR2Buckets('prod')).toEqual([
+      { binding: 'MIGRATION_RELEASES', name: 'prod-migration-releases' },
+      { binding: 'PLUGIN_BUNDLES', name: 'prod-plugin-bundles' },
+      { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
+      { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
+      { binding: 'IMPORT_ARTIFACTS', name: 'prod-import-artifacts' },
+      { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
+      { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
+    ]);
+  });
+
   it('distinguishes configured, stale, and unrecorded required R2 buckets', () => {
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
         PUBLIC_ASSETS: { name: 'prod-public-assets' },
-        AVATARS: { name: 'legacy-avatars' },
+        DIAGNOSTIC_LOGS: { name: 'legacy-diagnostic-logs' },
       },
       ['prod-public-assets']
     );
@@ -27,7 +41,7 @@ describe('Cloudflare pure resource contracts', () => {
     expect(status.buckets.find((bucket) => bucket.binding === 'PUBLIC_ASSETS')?.state).toBe(
       'configured'
     );
-    expect(status.buckets.find((bucket) => bucket.binding === 'AVATARS')?.state).toBe(
+    expect(status.buckets.find((bucket) => bucket.binding === 'DIAGNOSTIC_LOGS')?.state).toBe(
       'recorded_but_missing'
     );
     expect(status.buckets.find((bucket) => bucket.binding === 'AUDIT_ARCHIVE')?.state).toBe(

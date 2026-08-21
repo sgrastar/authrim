@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2025-12-27
-description: "The Trusted Client feature optimizes user experience for First-Party clients (clients owned and operated by the same organization). Clients registered as Trusted Clients can skip."
+description: 'The Trusted Client feature optimizes user experience for First-Party clients (clients owned and operated by the same organization). Clients registered as Trusted Clients can skip.'
 type: spec
 tags:
   - authrim
@@ -12,6 +12,7 @@ tags:
   - security
   - testing
 ---
+
 # Trusted Client Feature Specification
 
 ## Overview
@@ -419,17 +420,18 @@ export interface Env {
 
 ---
 
-## Migration Procedure
+## Deployment Procedure
 
 ```bash
-# 1. Run migration
-wrangler d1 execute authrim-prod --file=migrations/004_add_client_trust_settings.sql
-
-# 2. Set environment variables
+# 1. Set environment variables
 # Configure in wrangler.toml or Cloudflare Dashboard
 TRUSTED_DOMAINS=www.certification.openid.net
 
-# 3. Deploy
+# 2. For a fresh pre-1.0 installation, apply the generated setup plan.
+# Existing pre-1.0 databases are recreated rather than upgraded in place.
+pnpm run setup init --env prod
+
+# 3. Build and deploy
 pnpm run build
 pnpm run deploy
 ```

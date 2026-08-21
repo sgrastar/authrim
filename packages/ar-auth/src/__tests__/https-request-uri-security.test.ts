@@ -176,7 +176,7 @@ describe('HTTPS Request URI Security', () => {
     // Create mock environment
     mockEnv = {
       DB: createMockDB(),
-      AVATARS: {} as R2Bucket,
+      PUBLIC_ASSETS: {} as R2Bucket,
       STATE_STORE: new MockKVNamespace() as unknown as KVNamespace,
       NONCE_STORE: new MockKVNamespace() as unknown as KVNamespace,
       CLIENTS_CACHE: new MockKVNamespace() as unknown as KVNamespace,

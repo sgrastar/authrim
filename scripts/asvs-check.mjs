@@ -231,7 +231,10 @@ async function runIndependentCheck(repoRoot, id) {
 
   if (id === 'asvs.v6_4_1.admin_ui_setup_token_lifecycle') {
     const setup = await readText(repoRoot, 'packages/ar-auth/src/setup.ts');
-    const schema = await readText(repoRoot, 'migrations/admin/002_admin_policy_relationships.sql');
+    const schema = await readText(
+      repoRoot,
+      'migrations/admin/001_pre_1_0_admin_baseline.sql'
+    );
     const base = await readText(repoRoot, 'packages/ar-lib-core/src/repositories/base.ts');
     requirePattern(base, /crypto\.randomUUID\(\)/, 'Repository IDs must use crypto.randomUUID.');
     requirePattern(setup, /const setupTokenId = generateId\(\)/, 'Admin UI setup token ID must be generated.');
@@ -249,7 +252,7 @@ async function runIndependentCheck(repoRoot, id) {
       description:
         'Admin UI passkey setup tokens are random UUIDs, start pending, expire, and have status/usage tracking.',
       evidence:
-        'packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/002_admin_policy_relationships.sql',
+        'packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/001_pre_1_0_admin_baseline.sql',
     };
   }
 

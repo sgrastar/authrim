@@ -44,6 +44,7 @@ import {
   FAPI2_MESSAGE_SIGNING_ALGS,
   parseBasicAuth,
   validateRegisteredClientAuthenticationMethod,
+  validateCustomRedirectParams,
 } from '@authrim/ar-lib-core';
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
@@ -80,6 +81,8 @@ interface PARRequestParams {
   claims?: string | undefined;
   dpop_jkt?: string | undefined;
   authorization_details?: string | undefined; // RFC 9396: Rich Authorization Requests
+  error_uri?: string | undefined; // Authrim extension: validated again at /authorize
+  cancel_uri?: string | undefined; // Authrim extension: validated again at /authorize
 }
 
 interface CompletePARRequestParams extends PARRequestParams {
@@ -159,6 +162,8 @@ function validatePARParams(formData: Record<string, unknown>, clientId: string):
       typeof formData.authorization_details === 'string'
         ? formData.authorization_details
         : undefined,
+    error_uri: typeof formData.error_uri === 'string' ? formData.error_uri : undefined,
+    cancel_uri: typeof formData.cancel_uri === 'string' ? formData.cancel_uri : undefined,
   };
 }
 
@@ -826,6 +831,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               typeof requestObjectClaims.authorization_details === 'string'
                 ? requestObjectClaims.authorization_details
                 : JSON.stringify(requestObjectClaims.authorization_details);
+          if (typeof requestObjectClaims.error_uri === 'string')
+            params.error_uri = requestObjectClaims.error_uri;
+          if (typeof requestObjectClaims.cancel_uri === 'string')
+            params.cancel_uri = requestObjectClaims.cancel_uri;
 
           // client_id in request object must match client_id from request
           if (requestObjectClaims.client_id && requestObjectClaims.client_id !== params.client_id) {
@@ -879,6 +888,32 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // to prevent Open Redirect attacks via URL manipulation
     if (!isRedirectUriRegistered(params.redirect_uri, clientData.redirect_uris as string[])) {
       throw new RFCError('invalid_request', 400, 'redirect_uri not registered for this client');
+    }
+
+    // Authrim extension parameters are allowlisted explicitly and validated before storage.
+    // The authorization endpoint validates them again before using either redirect target.
+    if (params.error_uri || params.cancel_uri) {
+      const allowedRedirectOrigins = Array.isArray(clientMetadata.allowed_redirect_origins)
+        ? clientMetadata.allowed_redirect_origins.filter(
+            (origin): origin is string => typeof origin === 'string'
+          )
+        : [];
+      const customRedirectValidation = validateCustomRedirectParams(
+        { error_uri: params.error_uri, cancel_uri: params.cancel_uri },
+        params.redirect_uri,
+        allowedRedirectOrigins
+      );
+      if (!customRedirectValidation.valid) {
+        throw new RFCError(
+          'invalid_request',
+          400,
+          Object.entries(customRedirectValidation.errors)
+            .map(([parameter, message]) => `${parameter}: ${message}`)
+            .join(', ')
+        );
+      }
+      params.error_uri = customRedirectValidation.validatedUris?.error_uri;
+      params.cancel_uri = customRedirectValidation.validatedUris?.cancel_uri;
     }
 
     // Validate scope
@@ -1053,6 +1088,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       dpop_jkt: dpopJkt,
       // RFC 9396: Rich Authorization Requests
       authorization_details: params.authorization_details,
+      // Authrim extensions. The authorization endpoint applies the same registered-origin
+      // validation used for direct authorization requests before either URI can be used.
+      error_uri: params.error_uri,
+      cancel_uri: params.cancel_uri,
     };
 
     // Store in PARRequestStore DO with region-aware sharding (issue #11: single-use guarantee)

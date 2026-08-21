@@ -1,7 +1,7 @@
 const TENANT_INVENTORY_PATH =
   /^\/api\/admin\/tenants(?:\/([^/]+)(?:\/(info|runtime-profiles|set-default|clone|invitations(?:\/[^/]+)?|provisioning(?:\/(?:cleanup|retry))?))?)?\/?$/;
 const TENANT_SCOPED_PATH_TENANT_ID_PATTERNS = [
-  /^\/api\/admin\/tenants\/([^/]+)\/(settings|audit|email-settings|clients)(?:\/.*)?$/,
+  /^\/api\/admin\/tenants\/([^/]+)\/.*$/,
   /^\/api\/admin\/settings\/logging\/tenant\/([^/]+)(?:\/.*)?$/,
 ] as const;
 const SETTINGS_METADATA_PATH =

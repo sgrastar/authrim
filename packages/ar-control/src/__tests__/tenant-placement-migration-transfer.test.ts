@@ -102,7 +102,10 @@ describe('tenant placement migration outbox transfer', () => {
     target = new DatabaseSync(':memory:');
     source.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/040_tenant_placement_migration_outbox.sql'),
+        resolve(
+          REPO_ROOT,
+          'packages/ar-control/src/__tests__/fixtures/tenant-placement-migration-capture.sql'
+        ),
         'utf8'
       )
     );

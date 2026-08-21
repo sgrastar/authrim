@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { encryptObjectArtifact, type Env } from '@authrim/ar-lib-core';
 import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
 import { encodeLogRecordBlocks } from '@authrim/ar-lib-logging/chunks';
 
@@ -23,6 +23,42 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import { processLoggingStorageMaintenanceJobs } from '../logging-storage-maintenance-jobs';
+
+const OBJECT_ENCRYPTION_ROOT_KEY = '33'.repeat(32);
+
+async function encryptedMessagePayloadObject(
+  objectRef: string,
+  payload: Record<string, unknown>,
+  tenantContext: string
+): Promise<R2ObjectBody> {
+  const plaintext = JSON.stringify(payload);
+  const envelope = await encryptObjectArtifact(plaintext, {
+    rootKeyHex: OBJECT_ENCRYPTION_ROOT_KEY,
+    plane: 'AUDIT_ARCHIVE',
+    keyVersion: 1,
+    contentType: 'application/json',
+    context: {
+      tenantId: tenantContext,
+      objectKey: objectRef,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(plaintext));
+  const sha256 = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  const stored = JSON.stringify(envelope);
+  return {
+    size: new TextEncoder().encode(stored).byteLength,
+    customMetadata: {
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: tenantContext,
+      keyVersion: '1',
+      sha256,
+    },
+    text: async () => stored,
+  } as unknown as R2ObjectBody;
+}
 
 function messageJobRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -146,7 +182,7 @@ describe('logging/storage maintenance jobs', () => {
         return [{ id: 'lde_old_success' }, { id: 'lde_old_retry' }];
       }
       if (sql.includes('FROM logging_dlq_items')) {
-        return [{ id: 'dlq_closed' }];
+        return [{ id: 'dlq_closed', payload_object_ref: 'dlq/closed.json' }];
       }
       return [];
     });
@@ -164,7 +200,11 @@ describe('logging/storage maintenance jobs', () => {
     });
 
     try {
-      const result = await processLoggingStorageMaintenanceJobs({} as Env, log);
+      const deleteObject = vi.fn().mockResolvedValue(undefined);
+      const result = await processLoggingStorageMaintenanceJobs(
+        { AUDIT_ARCHIVE: { delete: deleteObject } as unknown as R2Bucket } as Env,
+        log
+      );
 
       expect(result.retention).toEqual({
         deliveryEventsDeleted: 2,
@@ -190,6 +230,7 @@ describe('logging/storage maintenance jobs', () => {
         expect.stringContaining('FROM logging_dlq_items'),
         [now - 180 * dayMs, now - 90 * dayMs, 500]
       );
+      expect(deleteObject).toHaveBeenCalledWith(['dlq/closed.json']);
     } finally {
       nowSpy.mockRestore();
     }
@@ -432,9 +473,10 @@ describe('logging/storage maintenance jobs', () => {
       return null;
     });
     const deliverySend = vi.fn().mockResolvedValue(undefined);
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/retry_delivery/job.json',
+        {
           payload_type: 'retry_delivery',
           schema_version: 1,
           payload_id: 'qpl_retry',
@@ -462,13 +504,15 @@ describe('logging/storage maintenance jobs', () => {
             plane: 'archive',
             record_count: 1,
           },
-        })
-      ),
-    });
+        },
+        't_retry'
+      )
+    );
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         LOGGING_DELIVERY_QUEUE: { send: deliverySend },
       } as unknown as Env,
       log
@@ -638,9 +682,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/job.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export',
@@ -663,14 +708,16 @@ describe('logging/storage maintenance jobs', () => {
             limit: 100,
             include_payload: false,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const artifactPut = vi.fn().mockResolvedValue(undefined);
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -779,9 +826,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/zip-job.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export_zip',
@@ -804,14 +852,16 @@ describe('logging/storage maintenance jobs', () => {
             limit: 100,
             include_payload: false,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const artifactPut = vi.fn().mockResolvedValue(undefined);
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -896,9 +946,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/large-plan.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export_large',
@@ -921,15 +972,17 @@ describe('logging/storage maintenance jobs', () => {
             limit: 2500,
             include_payload: false,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const payloadPut = vi.fn().mockResolvedValue(undefined);
     const send = vi.fn().mockResolvedValue(undefined);
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet, put: payloadPut },
+        AUDIT_ARCHIVE: { get: payloadGet, put: payloadPut, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: vi.fn() },
         LOGGING_MESSAGE_BULK_QUEUE: { send },
       } as unknown as Env,
@@ -1053,9 +1106,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/record.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export_record',
@@ -1078,9 +1132,10 @@ describe('logging/storage maintenance jobs', () => {
             limit: 100,
             include_payload: true,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const artifactPut = vi.fn().mockResolvedValue(undefined);
     const chunkGet = vi.fn().mockResolvedValue(null);
 
@@ -1088,7 +1143,9 @@ describe('logging/storage maintenance jobs', () => {
       {
         AUDIT_ARCHIVE: {
           get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+          delete: vi.fn(),
         },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -1212,9 +1269,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/projection.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export_projection',
@@ -1237,9 +1295,10 @@ describe('logging/storage maintenance jobs', () => {
             limit: 100,
             include_payload: true,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const artifactPut = vi.fn().mockResolvedValue(undefined);
     const chunkGet = vi.fn().mockResolvedValue({
       arrayBuffer: vi.fn().mockResolvedValue(encoded.body.buffer),
@@ -1249,7 +1308,9 @@ describe('logging/storage maintenance jobs', () => {
       {
         AUDIT_ARCHIVE: {
           get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+          delete: vi.fn(),
         },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -1361,9 +1422,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/oversized-chunk.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_export_oversized_chunk',
@@ -1386,9 +1448,10 @@ describe('logging/storage maintenance jobs', () => {
             limit: 100,
             include_payload: true,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
     const chunkGet = vi.fn().mockResolvedValue({
       size: 65 * 1024 * 1024,
@@ -1406,7 +1469,9 @@ describe('logging/storage maintenance jobs', () => {
       {
         AUDIT_ARCHIVE: {
           get: (key: string) => (key.startsWith('message-jobs/') ? payloadGet(key) : chunkGet(key)),
+          delete: vi.fn(),
         },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { put: artifactPut },
       } as unknown as Env,
       log
@@ -1636,9 +1701,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/cleanup.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_cleanup',
@@ -1651,14 +1717,16 @@ describe('logging/storage maintenance jobs', () => {
           cleanup_reason: 'cancelled',
           snapshot_cutoff_at: now,
           requested_by: 'admin-1',
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const deleteObject = vi.fn().mockResolvedValue(undefined);
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { delete: deleteObject },
       } as unknown as Env,
       log
@@ -1761,9 +1829,10 @@ describe('logging/storage maintenance jobs', () => {
       }
       return { rowsAffected: 1 };
     });
-    const payloadGet = vi.fn().mockResolvedValue({
-      text: vi.fn().mockResolvedValue(
-        JSON.stringify({
+    const payloadGet = vi.fn().mockResolvedValue(
+      await encryptedMessagePayloadObject(
+        'message-jobs/export_build/verify.json',
+        {
           payload_type: 'export_build',
           schema_version: 1,
           payload_id: 'qpl_verify',
@@ -1786,9 +1855,10 @@ describe('logging/storage maintenance jobs', () => {
             limit: 2000,
             include_payload: false,
           },
-        })
-      ),
-    });
+        },
+        't_message'
+      )
+    );
     const exportGet = vi.fn().mockResolvedValue({
       text: vi.fn().mockResolvedValue(
         JSON.stringify({
@@ -1814,7 +1884,8 @@ describe('logging/storage maintenance jobs', () => {
 
     const result = await processLoggingStorageMaintenanceJobs(
       {
-        AUDIT_ARCHIVE: { get: payloadGet },
+        AUDIT_ARCHIVE: { get: payloadGet, delete: vi.fn() },
+        OBJECT_ENCRYPTION_ROOT_KEY,
         EXPORT_ARTIFACTS: { get: exportGet, head },
       } as unknown as Env,
       log

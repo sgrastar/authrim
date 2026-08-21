@@ -691,6 +691,7 @@ export function generateWranglerConfig(
     wranglerConfig.triggers = {
       crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
     };
+    wranglerConfig.vars['AUTHRIM_R2_MAINTENANCE_CRON_ENABLED'] = 'true';
   }
 
   if (component === 'ar-agent-access') {
@@ -817,25 +818,27 @@ export function generateWranglerConfig(
     }
   }
 
-  // R2 Buckets — add bindings whenever provisioned resources are available
+  // R2 Buckets — bind only resources recorded in the environment lock.
+  //
+  // Do not synthesize bucket names here. Wrangler treats a binding to a missing
+  // bucket as an instruction to provision it during deploy. Multiple Workers
+  // share these buckets, so concurrent first deploys can race and one fails with
+  // Cloudflare error 10004 after another Worker creates the same bucket.
   if (resourceIds.r2 && Object.keys(resourceIds.r2).length > 0) {
     const r2Buckets: Array<{ binding: string; bucket_name: string }> = [];
+    const addProvisionedR2Binding = (binding: string): void => {
+      const bucket = resourceIds.r2?.[binding];
+      if (bucket) {
+        r2Buckets.push({ binding, bucket_name: bucket.name });
+      }
+    };
 
     if (component === 'ar-control') {
-      r2Buckets.push({
-        binding: 'MIGRATION_RELEASES',
-        bucket_name: resourceIds.r2['MIGRATION_RELEASES']?.name || `${env}-migration-releases`,
-      });
+      addProvisionedR2Binding('MIGRATION_RELEASES');
     }
 
-    if (
-      component === 'ar-plugin-runner' &&
-      config.features.pluginDynamicWorkers?.enabled === true
-    ) {
-      r2Buckets.push({
-        binding: 'PLUGIN_BUNDLES',
-        bucket_name: resourceIds.r2['PLUGIN_BUNDLES'].name,
-      });
+    if (component === 'ar-plugin-runner') {
+      addProvisionedR2Binding('PLUGIN_BUNDLES');
     }
 
     if (component === 'ar-plugin-runner') {
@@ -849,15 +852,8 @@ export function generateWranglerConfig(
       );
     }
 
-    if (component === 'ar-auth' || component === 'ar-management') {
-      r2Buckets.push({
-        binding: 'PUBLIC_ASSETS',
-        bucket_name: resourceIds.r2['PUBLIC_ASSETS']?.name || `${env}-public-assets`,
-      });
-      r2Buckets.push({
-        binding: 'AVATARS',
-        bucket_name: resourceIds.r2['AVATARS']?.name || `${env}-authrim-avatars`,
-      });
+    if (component === 'ar-management') {
+      addProvisionedR2Binding('PUBLIC_ASSETS');
     }
 
     if (
@@ -869,29 +865,18 @@ export function generateWranglerConfig(
       component === 'ar-vc' ||
       component === 'ar-management'
     ) {
-      r2Buckets.push({
-        binding: 'DIAGNOSTIC_LOGS',
-        bucket_name: resourceIds.r2['DIAGNOSTIC_LOGS']?.name || `${env}-diagnostic-logs`,
-      });
-      r2Buckets.push({
-        binding: 'AUDIT_ARCHIVE',
-        bucket_name: resourceIds.r2['AUDIT_ARCHIVE']?.name || `${env}-audit-archive`,
-      });
+      addProvisionedR2Binding('DIAGNOSTIC_LOGS');
+      addProvisionedR2Binding('AUDIT_ARCHIVE');
+    }
+
+    if (component === 'ar-bridge') {
+      addProvisionedR2Binding('SENSITIVE_DETAILS');
     }
 
     if (component === 'ar-management') {
-      r2Buckets.push({
-        binding: 'IMPORT_ARTIFACTS',
-        bucket_name: resourceIds.r2['IMPORT_ARTIFACTS']?.name || `${env}-import-artifacts`,
-      });
-      r2Buckets.push({
-        binding: 'EXPORT_ARTIFACTS',
-        bucket_name: resourceIds.r2['EXPORT_ARTIFACTS']?.name || `${env}-export-artifacts`,
-      });
-      r2Buckets.push({
-        binding: 'SENSITIVE_DETAILS',
-        bucket_name: resourceIds.r2['SENSITIVE_DETAILS']?.name || `${env}-sensitive-details`,
-      });
+      addProvisionedR2Binding('IMPORT_ARTIFACTS');
+      addProvisionedR2Binding('EXPORT_ARTIFACTS');
+      addProvisionedR2Binding('SENSITIVE_DETAILS');
     }
 
     if (r2Buckets.length > 0) {
@@ -1010,6 +995,19 @@ export function generateWranglerConfig(
         entrypoint: 'VCIssuerEntrypoint',
       });
     }
+  }
+
+  if (component === 'ar-plugin-runner') {
+    wranglerConfig.services ??= [];
+    wranglerConfig.services.push({
+      binding: 'CONTROL',
+      service: `${env}-ar-control`,
+      props: {
+        caller: 'ar-plugin-runner',
+        environmentId: env,
+        audience: 'authrim-control-v1',
+      },
+    });
   }
 
   if (component === 'ar-bridge' && options.includeExternalIdpAccountProvisioner !== false) {

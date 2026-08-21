@@ -1485,7 +1485,9 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
     const payloadBytes = new Uint8Array(payload);
     const checksumSha256 = await sha256HexFromBytes(payloadBytes);
     const key = buildUserImportUploadKey(tenantId, uploadId, filename);
-    await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+    const uploadedAt = Date.now();
+    const storedObject = await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+      onlyIf: { etagDoesNotMatch: '*' },
       httpMetadata: {
         contentType: 'text/csv',
       },
@@ -1493,8 +1495,21 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
         checksum_sha256: checksumSha256,
         uploaded_bytes: String(payload.byteLength),
         content_type: 'text/csv',
+        uploaded_at: String(uploadedAt),
+        expires_at: String(uploadedAt + 24 * 60 * 60 * 1000),
       },
     });
+    if (!storedObject) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+        variables: {
+          field: 'upload_id',
+          reason: 'Import upload IDs are immutable and can only be used once',
+        },
+      });
+    }
+    if (!storedObject?.etag) {
+      throw new Error('import_artifact_upload_receipt_missing');
+    }
 
     return c.json(
       {
@@ -1503,6 +1518,7 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
         r2_key: key,
         uploaded_bytes: payload.byteLength,
         checksum_sha256: checksumSha256,
+        etag: storedObject.etag,
         content_type: 'text/csv',
       },
       201
@@ -1663,7 +1679,15 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
           percentage: 0,
           stage: options.validate_only ? 'validation' : 'queued',
         }),
-        JSON.stringify(options),
+        JSON.stringify({
+          ...options,
+          artifact: {
+            checksum_sha256: actualChecksumSha256,
+            etag: inputObject.etag,
+            size_bytes: inputBytes.byteLength,
+            content_type: storedContentType,
+          },
+        }),
         inputKey,
         buildUserImportResultKey(tenantId, jobId),
         createdBy,

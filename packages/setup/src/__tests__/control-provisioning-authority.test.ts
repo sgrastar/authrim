@@ -169,11 +169,8 @@ describe('Control provisioning authority setup projection', () => {
     const database = new DatabaseSync(':memory:');
     try {
       database.exec(
-        readFileSync(resolve(ROOT_DIR, 'migrations/control/001_control_plane.sql'), 'utf8')
-      );
-      database.exec(
         readFileSync(
-          resolve(ROOT_DIR, 'migrations/control/014_automatic_provisioning_authority.sql'),
+          resolve(ROOT_DIR, 'migrations/control/001_pre_1_0_control_baseline.sql'),
           'utf8'
         )
       );

@@ -470,7 +470,7 @@ const id: Translations = {
   // Feature flags
   'features.title': 'Feature Flags',
   'features.queuePrompt': 'Aktifkan Cloudflare Queues? (untuk log audit)',
-  'features.r2Prompt': 'Aktifkan Cloudflare R2? (untuk avatar)',
+  'features.r2Prompt': 'Aktifkan penyimpanan objek Cloudflare R2?',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',
 

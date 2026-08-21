@@ -104,17 +104,8 @@ describe('account route allocation', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/006_tenant_default_allocations.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/011_tenant_physical_isolation.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );

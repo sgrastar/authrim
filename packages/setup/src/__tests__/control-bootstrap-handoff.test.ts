@@ -77,24 +77,8 @@ function lock(): AuthrimLock {
 
 function database(manifestDigest: string): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(resolve(ROOT, 'migrations/control/001_control_plane.sql'), 'utf8'));
   db.exec(
-    readFileSync(
-      resolve(ROOT, 'migrations/control/010_bootstrap_handoff_worker_evidence.sql'),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(
-      resolve(ROOT, 'migrations/control/015_bootstrap_worker_evidence_refresh.sql'),
-      'utf8'
-    )
-  );
-  db.exec(
-    readFileSync(resolve(ROOT, 'migrations/control/006_tenant_default_allocations.sql'), 'utf8')
-  );
-  db.exec(
-    readFileSync(resolve(ROOT, 'migrations/control/011_tenant_physical_isolation.sql'), 'utf8')
+    readFileSync(resolve(ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'), 'utf8')
   );
   db.exec(
     `INSERT INTO control_environments (

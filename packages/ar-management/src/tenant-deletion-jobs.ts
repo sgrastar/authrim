@@ -3,6 +3,7 @@ import { ensureDatabaseAdapter, listEnvironmentTenantDefaultStores } from '@auth
 import { purgeTenantAuthoritativeShards } from './tenant-deletion-authoritative-purge';
 import { disableTenantLookupDirectory } from './tenant-deletion-lookup-cleanup';
 import { publishTenantRuntimeRegistryRouteState } from './tenant-runtime-registry-route-state';
+import { deleteTenantPublicAssets } from './r2-storage-maintenance';
 
 interface TenantDeletionJobLogger {
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -540,6 +541,7 @@ async function processPendingTenantDeletionJobsInStore(
         );
       }
 
+      const deletedPublicAssets = await deleteTenantPublicAssets(env, deletionTargetTenantId);
       const completedTs = Math.floor(Date.now() / 1000);
       await coreAdapter.execute(
         "UPDATE admin_jobs SET status = 'completed', completed_at = ?, updated_at = ?, progress = ? WHERE id = ? AND tenant_id = ?",
@@ -549,6 +551,7 @@ async function processPendingTenantDeletionJobsInStore(
       log.info('Tenant deletion job completed', {
         job_id: job.id,
         tenant_id: deletionTargetTenantId,
+        deleted_public_assets: deletedPublicAssets,
       });
     } catch (jobError) {
       const failedTs = Math.floor(Date.now() / 1000);

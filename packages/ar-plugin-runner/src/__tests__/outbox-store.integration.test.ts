@@ -71,23 +71,9 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function pluginOutboxSchema(): string {
-  const migration = readFileSync(
-    resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-    'utf8'
-  );
-  const start = migration.indexOf('CREATE TABLE IF NOT EXISTS plugin_hook_outbox');
-  const end = migration.indexOf('CREATE TABLE IF NOT EXISTS identifier_change_notification_outbox');
-  if (start < 0 || end <= start) throw new Error('plugin_outbox_test_schema_missing');
-  return migration.slice(start, end);
-}
-
-function notificationIntentSchema(): string {
-  return [
-    'migrations/035_notification_delivery_intents.sql',
-    'migrations/050_email_delivery_history.sql',
-  ]
-    .map((path) => readFileSync(resolve(REPO_ROOT, path), 'utf8'))
-    .join('\n');
+  return readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+    .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }
 
 function insertNotification(database: DatabaseSync, providerInstallationIds = ['installation-a']) {
@@ -158,7 +144,6 @@ describe('D1PluginHookOutboxStore', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(pluginOutboxSchema());
-    database.exec(notificationIntentSchema());
     store = new D1PluginHookOutboxStore(d1(database));
   });
 

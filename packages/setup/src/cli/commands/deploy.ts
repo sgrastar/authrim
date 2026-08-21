@@ -845,7 +845,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       if (!process.stdin.isTTY || !process.stdout.isTTY) {
         console.error(
           chalk.red(
-            'Automatic provisioning in non-interactive mode requires distinct CLOUDFLARE_D1_API_TOKEN and CLOUDFLARE_WORKERS_API_TOKEN values.'
+            'The Control Worker needs Cloudflare API credentials for automatic provisioning. Non-interactive setup cannot prompt for a one-time bootstrap token, so provide distinct CLOUDFLARE_D1_API_TOKEN and CLOUDFLARE_WORKERS_API_TOKEN values.'
           )
         );
         process.exit(1);
@@ -857,7 +857,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             value: 'bootstrap',
             name: 'Automatic provisioning (one-time bootstrap token)',
             description:
-              'Open a permission-prefilled Dashboard link and enter one temporary token.',
+              'The Control Worker needs this temporary token to create scoped D1, Workers, KV, and R2 credentials.',
           },
           {
             value: 'skip',
@@ -1213,6 +1213,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             : resolveAdminUiEntryUrl(config, { env, workersSubdomain });
         const httpReadiness = await waitForWorkerHttpReady({
           targets: [{ workerName: result.projectName, url: entryUrl }],
+          allowPublicDnsFallback: Boolean(
+            uiComponent === 'ar-login-ui'
+              ? config.urls?.loginUi?.custom
+              : config.urls?.adminUi?.custom
+          ),
         });
         if (!httpReadiness.ready) {
           throw new Error(
@@ -2293,6 +2298,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         let bootstrapToken = '';
         try {
           tokenSpinner.stop();
+          console.log(
+            chalk.yellow(
+              'The Control Worker needs a one-time Cloudflare API token to create its scoped D1, Workers, KV, and R2 credentials.'
+            )
+          );
           bootstrapToken = await promptForControlTokenBootstrap({
             accountId,
             environment: env,
@@ -2362,7 +2372,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         const workerHttpSpinner = ora('Verifying Worker HTTP health...').start();
         const workerHttpResult = await waitForWorkerHttpReady({
           targets: workerHttpTargets,
-          allowMissingTenantSnapshot: isInitialDeployment,
+          allowTenantRegistryBootstrapGap: isInitialDeployment,
           onProgress: (msg) => {
             workerHttpSpinner.text = msg;
           },
@@ -3001,6 +3011,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   ? resolveLoginUiEntryUrl(config, { env, workersSubdomain })
                   : resolveAdminUiEntryUrl(config, { env, workersSubdomain }),
             })),
+            allowPublicDnsFallback: Boolean(
+              config.urls?.loginUi?.custom || config.urls?.adminUi?.custom
+            ),
           });
           if (!httpReadiness.ready) {
             uiWorkersSuccess = false;

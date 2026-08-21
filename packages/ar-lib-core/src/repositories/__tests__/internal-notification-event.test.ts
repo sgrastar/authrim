@@ -105,6 +105,71 @@ describe('InternalNotificationEventRepository', () => {
     ]);
   });
 
+  it('suppresses only open condition notifications by deduplication key', async () => {
+    const adapter = createAdapter({
+      execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 2 }),
+    });
+    const repository = new InternalNotificationEventRepository(adapter);
+
+    await expect(
+      repository.suppressResolvedByDeduplicationKeys(
+        ['condition-a', 'condition-a', 'condition-b'],
+        new Date('2026-05-16T01:00:00.000Z')
+      )
+    ).resolves.toBe(2);
+
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("status IN ('pending', 'failed', 'dead_letter')"),
+      ['2026-05-16T01:00:00.000Z', 'condition-a', 'condition-b']
+    );
+  });
+
+  it('reopens a suppressed condition when the same condition recurs', async () => {
+    const suppressedRow = {
+      id: 'event-1',
+      tenant_id: 'tenant-a',
+      category: 'storage_registry_health',
+      event_type: 'tenant_database.reconciliation.missing_binding',
+      severity: 'critical',
+      status: 'suppressed',
+      deduplication_key: 'condition-a',
+      payload_json: '{}',
+      attempts: 1,
+      last_error: null,
+      next_attempt_at: null,
+      created_at: '2026-05-16T00:00:00.000Z',
+      updated_at: '2026-05-16T00:00:00.000Z',
+      delivered_at: null,
+    } as const;
+    const reopenedRow = { ...suppressedRow, status: 'pending' as const, attempts: 0 };
+    const adapter = createAdapter({
+      queryOne: vi.fn().mockResolvedValueOnce(suppressedRow).mockResolvedValueOnce(reopenedRow),
+    });
+    const repository = new InternalNotificationEventRepository(adapter);
+
+    const event = await repository.enqueue({
+      tenantId: 'tenant-a',
+      category: 'storage_registry_health',
+      eventType: 'tenant_database.reconciliation.missing_binding',
+      severity: 'critical',
+      deduplicationKey: 'condition-a',
+      payload: { tenant_id: 'tenant-a', checked_at: '2026-05-16T02:00:00.000Z' },
+      reopenSuppressed: true,
+      now: new Date('2026-05-16T02:00:00.000Z'),
+    });
+
+    expect(event.status).toBe('pending');
+    expect(adapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending'"),
+      [
+        'critical',
+        '{"tenant_id":"tenant-a","checked_at":"2026-05-16T02:00:00.000Z"}',
+        '2026-05-16T02:00:00.000Z',
+        'event-1',
+      ]
+    );
+  });
+
   it('stores future notification routing policy metadata in the event payload', async () => {
     const adapter = createAdapter();
     const repository = new InternalNotificationEventRepository(adapter);

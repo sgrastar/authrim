@@ -140,7 +140,7 @@ Generated at: 2026-06-16T15:04:33.394Z
 | V6.3.2-3 | V6.3.2 | Reference | First administrator is created during deployment setup with passkey registration. | docs/getting-started/deployment.md:403 |
 | V6.3.2-4 | V6.3.2 | Reference | Setup API is permanently disabled after the first admin account is created. | packages/ar-auth/src/index.ts:548 |
 | V6.4.1-1 | V6.4.1 | Evidence check passed | Setup token generation uses 32 random bytes and all storage paths enforce expiring setup tokens. | packages/ar-lib-core/src/utils/setup-token.ts; scripts/setup-keys.sh; packages/setup/src/core/admin.ts |
-| V6.4.1-2 | V6.4.1 | Evidence check passed | Admin UI passkey setup tokens are random UUIDs, start pending, expire, and have status/usage tracking. | packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/002_admin_policy_relationships.sql |
+| V6.4.1-2 | V6.4.1 | Evidence check passed | Admin UI passkey setup tokens are random UUIDs, start pending, expire, and have status/usage tracking. | packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/001_pre_1_0_admin_baseline.sql |
 | V6.4.1-3 | V6.4.1 | Reference | Initial administrator setup uses passkey/WebAuthn rather than a long-term initial password. | docs/getting-started/deployment.md:403 |
 | V6.4.2-1 | V6.4.2 | Evidence check passed | Auth runtime, management API, login UI, and migrations expose no password-hint or knowledge-based authentication surfaces. | 308 runtime/schema files scanned |
 | V6.4.2-2 | V6.4.2 | Reference | Initial admin setup is passwordless and does not describe password hints or knowledge-based authentication. | docs/getting-started/deployment.md:403 |

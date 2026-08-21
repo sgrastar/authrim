@@ -17,6 +17,7 @@ const {
   };
   const notificationRepository = {
     enqueue: vi.fn(),
+    suppressResolvedByDeduplicationKeys: vi.fn(),
   };
   function MockRepositoryConstructor() {
     return repository;
@@ -70,6 +71,7 @@ describe('tenant database stats jobs', () => {
     mockRepository.getStats.mockResolvedValue(null);
     mockRepository.upsertStats.mockResolvedValue({});
     mockNotificationRepository.enqueue.mockResolvedValue({});
+    mockNotificationRepository.suppressResolvedByDeduplicationKeys.mockResolvedValue(0);
     mockResolveTenantDatabaseSourceFromControlRegistry.mockResolvedValue({
       source: 'tenant-source',
     });
@@ -134,7 +136,7 @@ describe('tenant database stats jobs', () => {
       }
     );
 
-    expect(summary).toEqual({ scanned: 1, refreshed: 1, skipped: 0, failed: 0 });
+    expect(summary).toEqual({ scanned: 1, refreshed: 1, skipped: 0, failed: 0, resolved: 0 });
     expect(mockRepository.listActiveRegistryRowsForRole).toHaveBeenCalledWith('tenant_core', 25, 0);
     expect(mockCollectTenantCoreDatabaseStats).toHaveBeenCalledWith('tenant-source', 'tenant-a', {
       checkedAt: '2026-05-16T00:00:00.000Z',
@@ -194,6 +196,13 @@ describe('tenant database stats jobs', () => {
           stats_checked_at: '2026-05-16T00:00:00.000Z',
         }),
       })
+    );
+    expect(mockNotificationRepository.suppressResolvedByDeduplicationKeys).toHaveBeenCalledWith(
+      [
+        'tenant_database_stats_refresh_failed:tenant-a:tenant_core:2:default:0',
+        'tenant_database_stats_warning:tenant-a:tenant_core:2:default:0:strong_warning',
+      ],
+      new Date('2026-05-16T00:00:00.000Z')
     );
   });
 
@@ -265,7 +274,7 @@ describe('tenant database stats jobs', () => {
       { now: new Date('2026-05-16T00:00:00.000Z') }
     );
 
-    expect(summary).toEqual({ scanned: 1, refreshed: 0, skipped: 0, failed: 1 });
+    expect(summary).toEqual({ scanned: 1, refreshed: 0, skipped: 0, failed: 1, resolved: 0 });
     expect(mockNotificationRepository.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         tenantId: 'tenant-a',
@@ -279,6 +288,40 @@ describe('tenant database stats jobs', () => {
         }),
       })
     );
+  });
+
+  it('resolves stale failure and warning notifications after a healthy refresh', async () => {
+    mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([
+      {
+        tenant_id: 'tenant-a',
+        role: 'tenant_core',
+        generation: 2,
+        shard_group: 'default',
+        shard_index: 0,
+        database_id: 'd1-db-id',
+      },
+    ]);
+    mockEvaluateTenantDatabaseStatsWarning.mockReturnValue({
+      state: 'ok',
+      reasons: [],
+      storageRatio: null,
+    });
+    mockNotificationRepository.suppressResolvedByDeduplicationKeys.mockResolvedValue(3);
+
+    const summary = await refreshTenantDatabaseStats({ DB_ADMIN: 'control-db' } as never, logger, {
+      now: new Date('2026-05-16T00:00:00.000Z'),
+    });
+
+    expect(summary).toEqual({ scanned: 1, refreshed: 1, skipped: 0, failed: 0, resolved: 3 });
+    expect(mockNotificationRepository.suppressResolvedByDeduplicationKeys).toHaveBeenCalledWith(
+      [
+        'tenant_database_stats_refresh_failed:tenant-a:tenant_core:2:default:0',
+        'tenant_database_stats_warning:tenant-a:tenant_core:2:default:0:warning',
+        'tenant_database_stats_warning:tenant-a:tenant_core:2:default:0:strong_warning',
+      ],
+      new Date('2026-05-16T00:00:00.000Z')
+    );
+    expect(mockNotificationRepository.enqueue).not.toHaveBeenCalled();
   });
 
   it('fetches D1 file size from the Cloudflare account D1 API', async () => {

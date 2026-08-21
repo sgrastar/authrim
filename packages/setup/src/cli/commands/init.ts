@@ -1972,7 +1972,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   const enableR2 = await confirm({
     message: t('features.r2Prompt'),
-    default: false,
+    default: true,
   });
 
   const emailProviderChoice = await select({
@@ -3349,8 +3349,8 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   });
 
   const r2Enabled = await confirm({
-    message: 'Enable Cloudflare R2? (for avatars and logging artifacts)',
-    default: config.features.r2?.enabled || false,
+    message: 'Enable Cloudflare R2 object storage?',
+    default: config.features.r2?.enabled ?? true,
   });
 
   const emailProvider = await select({
@@ -3665,8 +3665,8 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
           },
     archive: {
       type: 'r2' as const,
-      bucketRef: 'DIAGNOSTIC_LOGS',
-      prefix: 'audit/',
+      bucketRef: 'AUDIT_ARCHIVE',
+      prefix: 'logs/v1',
     },
     sinks: [
       {

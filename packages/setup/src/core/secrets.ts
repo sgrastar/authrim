@@ -114,6 +114,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
   'ar-auth': [
     'PRIVATE_KEY_PEM',
     'PUBLIC_JWK_JSON',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'RP_TOKEN_ENCRYPTION_KEY',
     'PII_ENCRYPTION_KEY',
     'OTP_HMAC_SECRET',
@@ -127,6 +128,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
   ],
   'ar-token': [
     'PUBLIC_JWK_JSON',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
@@ -174,11 +176,13 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-saml': [
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-bridge': [
     'RP_TOKEN_ENCRYPTION_KEY',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
     'LOOKUP_HMAC_KEY_SLOT_A',
     'LOOKUP_HMAC_KEY_SLOT_B',
@@ -186,6 +190,7 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
   ],
   'ar-vc': [
     'PUBLIC_JWK_JSON',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'VC_TRANSACTION_CODE_HMAC_SECRET',
     'VC_EVIDENCE_HMAC_SECRET',
     'VC_PROFILE_CONTRACT_HMAC_SECRET',

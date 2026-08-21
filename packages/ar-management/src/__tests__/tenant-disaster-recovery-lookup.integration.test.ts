@@ -293,7 +293,9 @@ describe('tenant disaster recovery Lookup reprojection', () => {
     users = new DatabaseSync(':memory:');
     pii = new DatabaseSync(':memory:');
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_lookup_directory.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     await seedSources(users, pii);
     mocks.lookup = d1(lookup);

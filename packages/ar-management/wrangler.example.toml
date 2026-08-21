@@ -2,6 +2,12 @@ name = "ar-management"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
+[vars]
+AUTHRIM_R2_MAINTENANCE_CRON_ENABLED = "true"
+
+[triggers]
+crons = ["0 */6 * * *"]
+
 # Smart Placement - automatically run Worker close to backend (D1/DO)
 [placement]
 mode = "smart"
@@ -9,6 +15,31 @@ mode = "smart"
 # R2 Buckets
 # Create buckets with: wrangler r2 bucket create <bucket_name>
 [[r2_buckets]]
-binding = "AVATARS"
-bucket_name = "authrim-avatars"
-preview_bucket_name = "authrim-avatars-preview"
+binding = "PUBLIC_ASSETS"
+bucket_name = "authrim-public-assets"
+preview_bucket_name = "authrim-public-assets-preview"
+
+[[r2_buckets]]
+binding = "DIAGNOSTIC_LOGS"
+bucket_name = "authrim-diagnostic-logs"
+preview_bucket_name = "authrim-diagnostic-logs-preview"
+
+[[r2_buckets]]
+binding = "AUDIT_ARCHIVE"
+bucket_name = "authrim-audit-archive"
+preview_bucket_name = "authrim-audit-archive-preview"
+
+[[r2_buckets]]
+binding = "IMPORT_ARTIFACTS"
+bucket_name = "authrim-import-artifacts"
+preview_bucket_name = "authrim-import-artifacts-preview"
+
+[[r2_buckets]]
+binding = "EXPORT_ARTIFACTS"
+bucket_name = "authrim-export-artifacts"
+preview_bucket_name = "authrim-export-artifacts-preview"
+
+[[r2_buckets]]
+binding = "SENSITIVE_DETAILS"
+bucket_name = "authrim-sensitive-details"
+preview_bucket_name = "authrim-sensitive-details-preview"

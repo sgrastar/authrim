@@ -525,9 +525,6 @@ export interface AuditQueueFanoutPlan {
   /** Archive targets */
   archives: AuditTarget[];
 
-  /** Transitional legacy single-archive alias */
-  archive?: AuditTarget | null;
-
   /** Forwarding sinks */
   sinks: AuditTarget[];
 

@@ -10,6 +10,26 @@ refresh/introspection/revocation, OIDC session-management, security-header, SAML
 provisioning contracts. These tests exercise current exported handlers or production boundary
 functions and assert negative cases and observable side effects where applicable.
 
+## Maintained matrix inventory
+
+The suite contains the following checked-in tenant-system matrices. `Fixture rows` counts data rows,
+not the additional contract, lifecycle, and matrix-integrity tests in the canonical suite. The
+308-row settings fixture is a constrained 3-wise array; the smaller tables are explicit boundary and
+negative-case inventories.
+
+| Matrix fixture                                     | Fixture rows | Dimensions                                                                                                                                              | Representative conditions                                                                     | Checked outcome                                                  |
+| -------------------------------------------------- | -----------: | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `tenant-system-3wise-constrained-valid-matrix.csv` |          308 | topology, entry mode, email resolution, selection policy, discovery methods, manual selection, remembered tenant, common-login redirects and skip rules | single/multi-tenant topology and valid combinations of tenant-discovery settings              | normalized profile expectation for every legal 3-wise row        |
+| `tenant-system-entry-route-matrix.csv`             |           14 | route family, host topology, required profiles                                                                                                          | common, tenant, naked, vanity, and invalid entry hosts                                        | selected entry route or fail-closed result                       |
+| `tenant-system-discovery-input-data-matrix.csv`    |           18 | discovery mode, input/data condition, available profiles                                                                                                | generic/specific lookup, missing or ambiguous data, profile availability                      | resolved tenant/profile or non-disclosing failure                |
+| `tenant-system-oidc-tenant-matrix.csv`             |           14 | entry source, host/client binding, session condition                                                                                                    | canonical and naked issuers, cross-tenant clients and challenges, missing or foreign sessions | issuer, challenge, redirect, or rejection contract               |
+| `tenant-system-cookie-session-matrix.csv`          |           15 | cookie/session item, condition, test type                                                                                                               | valid, expired, tampered, unsafe-return and cross-tenant grant/session shapes                 | cookie handling, grant verification, URL stripping, or rejection |
+| `tenant-system-negative-matrix.csv`                |           20 | category, invalid or hostile condition                                                                                                                  | malformed hosts, unsafe redirects, invalid identifiers and cross-tenant inputs                | stable fail-closed response with no unsafe routing               |
+
+The matrix fixture integrity test pins the filenames, unique case IDs, allowed value domains, and the
+308-row planned size. The consuming tests then exercise production handlers and assert observable
+responses and side effects; passing the CSV shape check alone is not release evidence.
+
 ## Protocol coverage
 
 - SAML is covered by `saml-federation-contract.test.ts` and

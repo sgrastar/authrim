@@ -267,7 +267,7 @@ export async function createSecurityMatrixEnv(ledger: CallLedger): Promise<Secur
     TOKEN_REVOCATION_STORE: createNamespaceFromStub(revocationStub, ledger),
     DPOP_JTI_STORE: createNamespaceFromStub(dpopJtiStub, ledger),
     SESSION_CLIENT_STORE: createNamespaceFromStub(sessionRevocationStub, ledger),
-    AVATARS: new MemoryR2Bucket(ledger, 'avatars'),
+    PUBLIC_ASSETS: new MemoryR2Bucket(ledger, 'public_assets'),
     AUDIT_ARCHIVE: new MemoryR2Bucket(ledger, 'audit_archive'),
     DIAGNOSTIC_LOGS: new MemoryR2Bucket(ledger, 'diagnostic_logs'),
     AUDIT_QUEUE: new MemoryQueue(ledger, 'audit_queue'),

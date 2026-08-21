@@ -89,7 +89,7 @@ export class TotpCredentialRepository {
     await this.adapter.execute(
       `INSERT INTO totp_credentials (
         id, tenant_id, user_id, secret_encrypted, secret_key_version, label,
-        algorithm, digits, period, window, status, last_used_time_step,
+        algorithm, digits, period, "window", status, last_used_time_step,
         created_at, activated_at, last_used_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)`,
       [

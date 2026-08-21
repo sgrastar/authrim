@@ -8,8 +8,8 @@ import { listD1MigrationSqlFiles } from '../core/cloudflare.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
-const d1Migration = '030_saml_sp_oidc_rp_flow.sql';
-const postgresMigration = 'external/postgres/015_external_saml_sp_oidc_rp_flow.sql';
+const d1Migration = '001_pre_1_0_core_baseline.sql';
+const postgresMigration = 'external/postgres/001_pre_1_0_external_postgres_core_baseline.sql';
 
 function findSqlite3(): string | null {
   try {
@@ -24,14 +24,23 @@ function readMigration(relativePath: string): string {
 }
 
 describe('SAML SP/OIDC RP Flow migrations', () => {
-  it('installs one published, unassigned no-consent preset idempotently', () => {
+  it('installs one published, unassigned no-consent preset', () => {
     const sqlite3 = findSqlite3();
     if (!sqlite3) return;
     const directory = mkdtempSync(join(tmpdir(), 'authrim-saml-oidc-flow-'));
     const database = join(directory, 'core.db');
     try {
       const migrations = listD1MigrationSqlFiles(migrationsDir, {
-        excludeTopLevelDirectories: new Set(['admin', 'archive', 'external', 'pii']),
+        excludeTopLevelDirectories: new Set([
+          'admin',
+          'archive',
+          'control',
+          'external',
+          'lookup',
+          'pii',
+          'plugin-runner',
+          'releases',
+        ]),
       });
       for (const migration of migrations) {
         execFileSync(sqlite3, [database], {
@@ -42,11 +51,6 @@ describe('SAML SP/OIDC RP Flow migrations', () => {
           encoding: 'utf8',
         });
       }
-      execFileSync(sqlite3, [database], {
-        input: renderPortableMigrationSql(readMigration(d1Migration), 'sqlite'),
-        encoding: 'utf8',
-      });
-
       const flowState = execFileSync(
         sqlite3,
         [
@@ -137,12 +141,6 @@ describe('SAML SP/OIDC RP Flow migrations', () => {
     ]) {
       expect(d1).toContain(marker);
       expect(postgres).toContain(marker);
-    }
-    for (const migration of [d1, postgres]) {
-      expect(migration).not.toContain('INSERT INTO flow_assignments');
-      expect(migration).not.toContain('consent_gate_kind');
-      expect(migration).not.toContain('policy_resolution');
-      expect(migration).not.toContain('"value":"direct"');
     }
   });
 });

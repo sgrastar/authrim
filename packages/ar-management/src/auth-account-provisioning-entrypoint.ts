@@ -88,7 +88,7 @@ const REQUIRED_INPUT_KEYS = [
 ] as const;
 
 const SAFE_PROVISIONING_DIAGNOSTIC =
-  /^(account_[a-z0-9_]+|directory_[a-z0-9_]+|lookup_[a-z0-9_]+|tenant_[a-z0-9_]+)$/u;
+  /^(account_[a-z0-9_]+|account_creation_[a-z0-9_]+|auth_[a-z0-9_]+|canonical_[a-z0-9_]+|d1_[a-z0-9_]+|directory_[a-z0-9_]+|external_[a-z0-9_]+|lookup_[a-z0-9_]+|tenant_[a-z0-9_]+)$/u;
 
 function logProvisioningFailure(error: unknown): void {
   const errorCode =
@@ -1578,6 +1578,9 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         validated
       );
     } catch (error) {
+      // Keep external-IdP JIT failures diagnosable without exposing request payloads or secrets.
+      // The public RPC error remains intentionally generic below.
+      logProvisioningFailure(error);
       if (
         error instanceof Error &&
         /^(external_idp_account_provisioning_(rpc_caller_unauthorized|input_invalid)|auth_account_provisioning_(input_invalid|input_too_large|runtime_user_invalid|directory_unavailable)|account_creation_operation_(blocked|canceled)|external_idp_identity_authority_conflict)$/u.test(

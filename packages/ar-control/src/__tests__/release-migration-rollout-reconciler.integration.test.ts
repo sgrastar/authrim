@@ -251,11 +251,8 @@ describe('ReleaseMigrationRolloutReconciler', () => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/024_release_migration_rollout.sql'),
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
         'utf8'
       )
     );

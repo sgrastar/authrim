@@ -2602,7 +2602,7 @@ export function createApiRoutes(): Hono {
           createD1: true,
           createKV: true,
           createQueues: createQueues || false,
-          createR2: createR2 || false,
+          createR2: createR2 !== false,
           onProgress: addProgress,
           databaseConfig,
         });

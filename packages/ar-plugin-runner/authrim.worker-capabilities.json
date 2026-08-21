@@ -36,6 +36,12 @@
       "capability": "plugin_dynamic_worker.code.read"
     },
     {
+      "name": "CONTROL",
+      "kind": "service",
+      "required": true,
+      "capability": "r2_metrics.report"
+    },
+    {
       "name": "EMAIL",
       "kind": "send_email",
       "required": false,

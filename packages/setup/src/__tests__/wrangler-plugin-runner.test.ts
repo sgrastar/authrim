@@ -65,9 +65,19 @@ describe('Plugin Runner wrangler topology', () => {
       ],
       kv_namespaces: [{ binding: 'TENANT_RUNTIME_REGISTRY', id: 'runtime-registry-id' }],
       r2_buckets: [{ binding: 'PLUGIN_BUNDLES', bucket_name: 'plugin-test-plugin-bundles' }],
+      services: [
+        {
+          binding: 'CONTROL',
+          service: 'plugin-test-ar-control',
+          props: {
+            caller: 'ar-plugin-runner',
+            environmentId: 'plugin-test',
+            audience: 'authrim-control-v1',
+          },
+        },
+      ],
     });
     expect(generated.routes).toBeUndefined();
-    expect(generated.services).toBeUndefined();
   });
 
   it('serializes Worker Loader bindings in environment and flat Wrangler formats', () => {

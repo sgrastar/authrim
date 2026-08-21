@@ -285,14 +285,7 @@ describe('SyncHookService circuit breaker', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    for (const migration of [
-      '001_plugin_runner.sql',
-      '002_registry_installations_and_config.sql',
-      '003_sync_circuit_breaker_probe.sql',
-      '006_dynamic_worker_loader_artifacts.sql',
-      '007_replace_dynamic_rollout_partial_index.sql',
-      '008_dynamic_worker_resource_bindings.sql',
-    ]) {
+    for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
       database.exec(
         readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8')
       );

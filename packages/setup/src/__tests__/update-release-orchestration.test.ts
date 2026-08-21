@@ -10,6 +10,8 @@ import {
   splitReleaseSchemaTargetsForControlHandoff,
   getUiComponentsToUpdate,
   isUpdateSourceLockUnchanged,
+  recoverActiveControlReleaseRollout,
+  withRecoveredReleaseUpdateState,
   withReleaseUpdateState,
   withSchemaTargetStates,
 } from '../cli/commands/update.js';
@@ -280,6 +282,121 @@ describe('release update orchestration', () => {
     expect(state.remainingBlockedTargets.map((item) => item.target.id)).toEqual([
       'external:mysql:core-primary',
     ]);
+  });
+
+  it('recovers a matching durable awaiting_setup rollout when the local lock is stale', () => {
+    const staleLock = AuthrimLockSchema.parse({
+      ...lock(),
+      releaseUpdate: {
+        targetVersion: '1.0.0',
+        previousProductVersion: '1.0.0',
+        phase: 'verified',
+        manifestChecksum: 'a'.repeat(64),
+        startedAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:01:00.000Z',
+        appliedTargets: ['old-target'],
+        manualTargets: ['old-manual-target'],
+        controlOperationId: `op_release_rollout_${'1'.repeat(32)}`,
+      },
+    });
+    const recovered = withRecoveredReleaseUpdateState(staleLock, {
+      targetVersion: '1.1.0',
+      manifestChecksum: 'b'.repeat(64),
+      activeRollout: {
+        operationId: `op_release_rollout_${'2'.repeat(32)}`,
+        sourceVersion: '1.0.0',
+        targetVersion: '1.1.0',
+        releaseId: '1.1.0',
+        manifestDigest: 'b'.repeat(64),
+        phase: 'awaiting_setup',
+        completedTargets: 10,
+        totalTargets: 10,
+        lastErrorCode: null,
+        updatedAt: 100,
+      },
+    });
+
+    expect(recovered.releaseUpdate).toMatchObject({
+      targetVersion: '1.1.0',
+      previousProductVersion: '1.0.0',
+      phase: 'awaiting_setup',
+      manifestChecksum: 'b'.repeat(64),
+      appliedTargets: [],
+      manualTargets: [],
+      controlOperationId: `op_release_rollout_${'2'.repeat(32)}`,
+      controlCompletedTargets: 10,
+      controlTotalTargets: 10,
+    });
+  });
+
+  it('loads the active Control rollout and wires the recovered state into update orchestration', async () => {
+    const sourceLock = AuthrimLockSchema.parse({
+      ...lock(),
+      d1: {
+        CONTROL_DB: { id: 'control-database-id', name: 'prod-authrim-control-db' },
+      },
+    });
+    const activeRollout = {
+      operationId: `op_release_rollout_${'4'.repeat(32)}`,
+      sourceVersion: '1.0.0',
+      targetVersion: '1.1.0',
+      releaseId: '1.1.0',
+      manifestDigest: 'd'.repeat(64),
+      phase: 'awaiting_setup' as const,
+      completedTargets: 3,
+      totalTargets: 3,
+      lastErrorCode: null,
+      updatedAt: 100,
+    };
+    const calls: Array<{ controlDatabaseId: string; environmentId: string }> = [];
+    const recovered = await recoverActiveControlReleaseRollout({
+      lock: sourceLock,
+      environmentId: 'prod',
+      targetVersion: '1.1.0',
+      manifestChecksum: 'd'.repeat(64),
+      loadActiveRollout: async (input) => {
+        calls.push(input);
+        return activeRollout;
+      },
+    });
+
+    expect(calls).toEqual([{ controlDatabaseId: 'control-database-id', environmentId: 'prod' }]);
+    expect(recovered.activeRollout).toEqual(activeRollout);
+    expect(recovered.lock.releaseUpdate).toMatchObject({
+      phase: 'awaiting_setup',
+      controlOperationId: activeRollout.operationId,
+      controlCompletedTargets: 3,
+      controlTotalTargets: 3,
+    });
+  });
+
+  it('fails closed instead of adopting an unrelated active rollout', () => {
+    const activeRollout = {
+      operationId: `op_release_rollout_${'3'.repeat(32)}`,
+      sourceVersion: '1.0.0',
+      targetVersion: '1.1.0',
+      releaseId: '1.1.0',
+      manifestDigest: 'c'.repeat(64),
+      phase: 'awaiting_setup' as const,
+      completedTargets: 10,
+      totalTargets: 10,
+      lastErrorCode: null,
+      updatedAt: 100,
+    };
+    expect(() =>
+      withRecoveredReleaseUpdateState(lock(), {
+        targetVersion: '1.1.0',
+        manifestChecksum: 'b'.repeat(64),
+        activeRollout,
+      })
+    ).toThrow('release_rollout_active_manifest_mismatch');
+    expect(() =>
+      withRecoveredReleaseUpdateState(lock(), {
+        targetVersion: '1.2.0',
+        manifestChecksum: 'c'.repeat(64),
+        activeRollout,
+      })
+    ).toThrow('release_rollout_active_target_mismatch');
   });
 
   it('never lets the external-ready acknowledgement bypass a missing migration stream', () => {

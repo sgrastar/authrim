@@ -14,6 +14,7 @@ import { execa } from 'execa';
 import {
   buildApiPackages,
   buildUiWorkerBuildEnv,
+  assertLoginUiBuildClientId,
   cleanupLegacyStaticSecrets,
   deployAll,
   deployUiWorkerComponent,
@@ -965,6 +966,39 @@ describe('deployWorkerGradually', () => {
 });
 
 describe('deployUiWorkerComponent', () => {
+  it('fails closed when reused Login UI output was built for another OAuth client', () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const outputDirectory = join(
+      rootDir,
+      'packages',
+      'ar-login-ui',
+      '.svelte-kit',
+      'cloudflare',
+      '_app',
+      'immutable',
+      'chunks'
+    );
+    mkdirSync(outputDirectory, { recursive: true });
+    writeFileSync(join(outputDirectory, 'client.js'), 'const clientId="login-ui";');
+
+    expect(() =>
+      assertLoginUiBuildClientId(join(rootDir, 'packages', 'ar-login-ui'), 'client-123')
+    ).toThrow('login_ui_build_client_id_mismatch');
+  });
+
+  it('accepts Login UI output containing the configured OAuth client', () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const outputDirectory = join(rootDir, 'packages', 'ar-login-ui', '.svelte-kit', 'cloudflare');
+    mkdirSync(outputDirectory, { recursive: true });
+    writeFileSync(join(outputDirectory, '_worker.js'), 'const clientId="client-123";');
+
+    expect(() =>
+      assertLoginUiBuildClientId(join(rootDir, 'packages', 'ar-login-ui'), 'client-123')
+    ).not.toThrow();
+  });
+
   it('fails closed before upload when UI Static Assets contain a source map', async () => {
     const rootDir = createTempRoot();
     createUiPackage(rootDir, 'ar-login-ui');

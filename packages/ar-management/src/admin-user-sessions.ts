@@ -33,6 +33,25 @@ function resolveAvatarContentType(filename: string): string | null {
   return extension ? (AVATAR_CONTENT_TYPES[extension] ?? null) : null;
 }
 
+function buildAvatarObjectKey(tenantId: string, filename: string): string {
+  return `avatars/${tenantId}/users/${filename}`;
+}
+
+function resolveOwnedAvatarFilename(pictureUrl: string, canonicalBaseUrl: string): string | null {
+  try {
+    const picture = new URL(pictureUrl);
+    const canonical = new URL(canonicalBaseUrl);
+    if (picture.origin !== canonical.origin || picture.search || picture.hash) {
+      return null;
+    }
+    const match = /^\/api\/avatars\/([^/]+)$/u.exec(picture.pathname);
+    const filename = match?.[1] ? decodeURIComponent(match[1]) : '';
+    return filename && resolveAvatarContentType(filename) ? filename : null;
+  } catch {
+    return null;
+  }
+}
+
 function createRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
   tenantId: string
@@ -48,19 +67,18 @@ function createRuntimeUserStore(
 
 /**
  * Serve avatar image from R2
- * GET /avatars/:filename
+ * GET /api/avatars/:filename
  */
 export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
   try {
     const filename = c.req.param('filename')!;
+    const tenantId = getTenantIdFromContext(c);
     const contentType = resolveAvatarContentType(filename);
     if (!contentType) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const filePath = `avatars/${filename}`;
-
-    const object = await c.env.AVATARS.get(filePath);
+    const object = await c.env.PUBLIC_ASSETS?.get(buildAvatarObjectKey(tenantId, filename));
 
     if (!object) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -70,7 +88,7 @@ export async function serveAvatarHandler(c: Context<{ Bindings: Env }>) {
     object.writeHttpMetadata(headers);
     headers.set('content-type', contentType);
     headers.set('etag', object.httpEtag);
-    headers.set('cache-control', 'public, max-age=31536000, immutable');
+    headers.set('cache-control', 'private, no-store');
     headers.set('x-content-type-options', 'nosniff');
 
     return new Response(object.body, {
@@ -169,25 +187,54 @@ export async function adminUserAvatarUploadHandler(c: Context<{ Bindings: Env }>
     }
 
     const fileExtension = detectedType.extension;
-    const fileName = `${userId}.${fileExtension}`;
-    const filePath = `avatars/${fileName}`;
+    const fileName = `${crypto.randomUUID()}.${fileExtension}`;
+    const filePath = buildAvatarObjectKey(tenantId, fileName);
 
-    await c.env.AVATARS.put(filePath, arrayBuffer, {
+    if (!c.env.PUBLIC_ASSETS) {
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Public assets bucket is not configured',
+        },
+        503
+      );
+    }
+
+    await c.env.PUBLIC_ASSETS.put(filePath, arrayBuffer, {
       httpMetadata: {
         contentType: detectedType.mimeType,
       },
     });
 
-    const avatarUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/${filePath}`;
+    const canonicalBaseUrl = getCanonicalTenantBaseUrl(c.env, tenantId);
+    const avatarUrl = `${canonicalBaseUrl}/api/avatars/${fileName}`;
 
-    await runtimeUsers.syncUser({
-      userId,
-      active: runtimeUser.active === 1,
-      emailVerified: runtimeUser.email_verified === 1,
-      phoneNumberVerified: runtimeUser.phone_number_verified === 1,
-      piiFields: { picture: true },
-      sensitiveValues: { picture: avatarUrl },
-    });
+    try {
+      await runtimeUsers.syncUser({
+        userId,
+        active: runtimeUser.active === 1,
+        emailVerified: runtimeUser.email_verified === 1,
+        phoneNumberVerified: runtimeUser.phone_number_verified === 1,
+        piiFields: { picture: true },
+        sensitiveValues: { picture: avatarUrl },
+      });
+    } catch (error) {
+      await c.env.PUBLIC_ASSETS.delete(filePath).catch((cleanupError) => {
+        logSanitizedError('Avatar upload rollback delete error', cleanupError);
+      });
+      throw error;
+    }
+
+    if (runtimeUser.picture) {
+      const previousFilename = resolveOwnedAvatarFilename(runtimeUser.picture, canonicalBaseUrl);
+      if (previousFilename && previousFilename !== fileName) {
+        await c.env.PUBLIC_ASSETS.delete(buildAvatarObjectKey(tenantId, previousFilename)).catch(
+          (error) => {
+            logSanitizedError('Previous avatar delete error', error);
+          }
+        );
+      }
+    }
 
     await invalidateUserCache(c.env, tenantId, userId);
 
@@ -244,14 +291,8 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
       );
     }
 
-    const urlParts = pictureUrl.split('/');
-    const filePath = urlParts.slice(-2).join('/');
-
-    try {
-      await c.env.AVATARS.delete(filePath);
-    } catch (error) {
-      logSanitizedError('R2 delete error', error);
-    }
+    const canonicalBaseUrl = getCanonicalTenantBaseUrl(c.env, tenantId);
+    const filename = resolveOwnedAvatarFilename(pictureUrl, canonicalBaseUrl);
 
     await runtimeUsers.syncUser({
       userId,
@@ -263,6 +304,14 @@ export async function adminUserAvatarDeleteHandler(c: Context<{ Bindings: Env }>
     });
 
     await invalidateUserCache(c.env, tenantId, userId);
+
+    if (filename) {
+      try {
+        await c.env.PUBLIC_ASSETS?.delete(buildAvatarObjectKey(tenantId, filename));
+      } catch (error) {
+        logSanitizedError('R2 delete error', error);
+      }
+    }
 
     return c.json({
       success: true,

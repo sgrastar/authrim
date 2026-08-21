@@ -397,7 +397,7 @@ add_kv_to_lock() {
 }
 
 # Add R2 bucket to lock.json
-# Usage: add_r2_to_lock "conformance" "AVATARS" "conformance-authrim-avatars"
+# Usage: add_r2_to_lock "conformance" "PUBLIC_ASSETS" "conformance-public-assets"
 add_r2_to_lock() {
   local env="$1"
   local binding="$2"

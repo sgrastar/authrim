@@ -49,6 +49,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
+import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import {
   isInteractiveAdminJobCron,
   processInteractiveAdminJobQueues,
@@ -70,6 +71,13 @@ import { processControlPlaneDriftNotifications } from './control-plane-drift-not
 import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
 import { processNextLookupBucketMigration } from './lookup-bucket-migration-scheduled';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
+import {
+  getR2MaintenanceDashboard,
+  processR2StorageMaintenance,
+  R2_STORAGE_MAINTENANCE_CRON,
+  runTrackedLoggingStorageMaintenance,
+  runTrackedObjectArtifactCleanup,
+} from './r2-storage-maintenance';
 import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import { MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
@@ -1397,6 +1405,7 @@ app.use('/api/auth/authentication-methods', async (c, next) => {
 app.use('/api/auth/authentication-methods', managementRequestDiagnosticCheckpoint('mg_rate_limit'));
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
+app.get('/api/avatars/:filename', serveAvatarHandler);
 app.use('/api/auth/discovery', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx);
   return rateLimitMiddleware({
@@ -1592,7 +1601,6 @@ app.delete('/api/admin/users/:id', adminUserDeleteHandler);
 app.post('/api/admin/users/:id/totp/reset', adminUserTotpResetHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
-app.get('/api/admin/avatars/:filename', serveAvatarHandler); // Avatar serving (protected by adminAuthMiddleware)
 app.post('/api/admin/users/:id/retry-pii', adminUserRetryPiiHandler);
 app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
 app.use('/api/admin/clients', requireClientManagementPermission());
@@ -3518,6 +3526,7 @@ app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
 app.get('/api/admin/jobs/types', adminJobTypesHandler);
+app.get('/api/admin/jobs/schedules', async (c) => c.json(await getR2MaintenanceDashboard(c.env)));
 app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/download', adminJobResultArtifactDownloadHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/chunks/:index', adminJobResultArtifactChunkHandler);
@@ -4151,6 +4160,9 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     await processInteractiveAdminJobQueues(env, log);
     return;
   }
+  if (event.cron !== R2_STORAGE_MAINTENANCE_CRON) {
+    return;
+  }
 
   const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   log.info('Scheduled maintenance job started', { timestamp: new Date().toISOString() });
@@ -4333,7 +4345,15 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     // Errors are logged for monitoring
   }
 
-  await processScheduledAdminJobQueues(env, log);
+  await processScheduledAdminJobQueues(env, log, { skipLoggingStorageMaintenance: true });
+
+  await runTrackedLoggingStorageMaintenance(
+    env,
+    async () => ({ ...(await processLoggingStorageMaintenanceJobs(env, log)) }),
+    log.module('LOGGING-STORAGE-MAINTENANCE')
+  );
+
+  await processR2StorageMaintenance(env, log.module('R2-STORAGE-MAINTENANCE'));
 
   try {
     await processControlPlaneDriftNotifications(env, log.module('CONTROL-DRIFT-NOTIFICATIONS'));
@@ -4341,11 +4361,14 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     log.error('Control drift notification sync failed', {}, notificationError as Error);
   }
 
-  try {
-    await runObjectArtifactCleanup(env, log);
-  } catch (cleanupError) {
-    log.error('Object artifact cleanup failed', {}, cleanupError as Error);
-  }
+  await runTrackedObjectArtifactCleanup(
+    env,
+    async () => {
+      await runObjectArtifactCleanup(env, log);
+      return { completed: true };
+    },
+    log.module('OBJECT-ARTIFACT-CLEANUP')
+  );
 }
 
 const LOGGING_DELIVERY_QUEUE_NAMES = new Set([

@@ -193,7 +193,8 @@ export class OIDCRPClient {
     }
 
     const discoveryUrl =
-      this.config.discoveryUrl ?? `${this.config.issuer}/.well-known/openid-configuration`;
+      this.config.discoveryUrl ??
+      `${this.config.issuer.replace(/\/$/u, '')}/.well-known/openid-configuration`;
     assertSafeProviderFetchUrl(discoveryUrl, 'issuer');
     const response = await safeFetch(discoveryUrl, {
       timeoutMs: 10000,

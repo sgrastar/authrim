@@ -25,22 +25,25 @@ function readMigration(relativePath: string): string {
 }
 
 describe('passkeys canonical runtime user binding migrations', () => {
-  it('creates new core passkeys without a users_core foreign key', () => {
-    const sql = readMigration('migrations/003_core_policy_identity_tables.sql');
-    const passkeysBlock = sql.match(/CREATE TABLE "passkeys" \([\s\S]*?\n\);/u)?.[0] ?? '';
+  it('defines final core passkeys without a users_core foreign key', () => {
+    const sql = readMigration('migrations/001_pre_1_0_core_baseline.sql');
+    const passkeysBlock =
+      sql.match(/CREATE TABLE IF NOT EXISTS "passkeys" \([\s\S]*?\n\);/u)?.[0] ?? '';
 
+    expect(passkeysBlock).not.toBe('');
     expect(passkeysBlock).toContain('user_id TEXT NOT NULL');
     expect(passkeysBlock).toContain('UNIQUE(tenant_id, credential_id)');
     expect(passkeysBlock).not.toMatch(/\bREFERENCES\s+users_core\b/iu);
   });
 
-  it('rebuilds existing passkeys without preserving the users_core foreign key', () => {
-    const sql = readMigration('migrations/013_passkeys_canonical_user_binding.sql');
+  it('defines final PostgreSQL passkeys without a users_core foreign key', () => {
+    const sql = readMigration(
+      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+    );
+    const passkeysBlock = sql.match(/CREATE TABLE public\.passkeys \([\s\S]*?\n\);/u)?.[0] ?? '';
 
-    expect(sql).toContain('CREATE TABLE IF NOT EXISTS passkeys_canonical');
-    expect(sql).toContain('UNIQUE(tenant_id, credential_id)');
-    expect(sql).toContain('DROP TABLE passkeys');
-    expect(sql).toContain('ALTER TABLE passkeys_canonical RENAME TO passkeys');
-    expect(sql).not.toMatch(/\bREFERENCES\s+users_core\b/iu);
+    expect(passkeysBlock).not.toBe('');
+    expect(passkeysBlock).toContain('user_id text NOT NULL');
+    expect(passkeysBlock).not.toMatch(/\bREFERENCES\s+public\.users_core\b/iu);
   });
 });

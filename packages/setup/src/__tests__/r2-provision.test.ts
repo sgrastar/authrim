@@ -80,8 +80,8 @@ describe('r2-provision command', () => {
     provisionR2BucketsMock.mockReset();
     provisionR2BucketsMock.mockResolvedValue([
       { binding: 'MIGRATION_RELEASES', name: 'prod-migration-releases' },
+      { binding: 'PLUGIN_BUNDLES', name: 'prod-plugin-bundles' },
       { binding: 'PUBLIC_ASSETS', name: 'prod-public-assets' },
-      { binding: 'AVATARS', name: 'prod-authrim-avatars' },
       { binding: 'DIAGNOSTIC_LOGS', name: 'prod-diagnostic-logs' },
       { binding: 'AUDIT_ARCHIVE', name: 'prod-audit-archive' },
       { binding: 'IMPORT_ARTIFACTS', name: 'prod-import-artifacts' },
@@ -122,8 +122,8 @@ describe('r2-provision command', () => {
     expect(config.features.r2.enabled).toBe(true);
     expect(lock.r2).toEqual({
       MIGRATION_RELEASES: { name: 'prod-migration-releases' },
+      PLUGIN_BUNDLES: { name: 'prod-plugin-bundles' },
       PUBLIC_ASSETS: { name: 'prod-public-assets' },
-      AVATARS: { name: 'prod-authrim-avatars' },
       DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
       AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
       IMPORT_ARTIFACTS: { name: 'prod-import-artifacts' },
@@ -164,6 +164,22 @@ describe('r2-provision command', () => {
     expect(saveMasterWranglerConfigsMock).toHaveBeenCalledOnce();
     const lock = JSON.parse(await readFile(join(tempDir!, '.authrim/prod/lock.json'), 'utf-8'));
     expect(Object.keys(lock.r2)).toHaveLength(8);
+  });
+
+  it('fails closed for a retired avatar binding instead of silently stranding its objects', async () => {
+    await writeEnvironment('prod');
+    const lockPath = join(tempDir!, '.authrim/prod/lock.json');
+    const legacyLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    legacyLock.r2 = { AVATARS: { name: 'prod-authrim-avatars' } };
+    await writeFile(lockPath, `${JSON.stringify(legacyLock, null, 2)}\n`, 'utf-8');
+
+    await expect(r2ProvisionCommand({ env: 'prod', yes: true })).rejects.toThrow(
+      /legacy_avatar_bucket_is_not_supported/
+    );
+
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(lock.r2).toEqual({ AVATARS: { name: 'prod-authrim-avatars' } });
+    expect(deployCommandMock).not.toHaveBeenCalled();
   });
 
   it('does not update local state or deploy when bucket provisioning fails', async () => {

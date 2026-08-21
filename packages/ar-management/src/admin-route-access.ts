@@ -390,7 +390,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.USERS_DELETE,
     'end users'
   ),
-  readOnly('/api/admin/avatars/*', ADMIN_PERMISSIONS.USERS_READ, 'user avatars'),
   ...byMethod(
     '/api/admin/assets/login-ui',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -1360,6 +1359,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'admin jobs',
     TENANT_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/jobs/schedules',
+    methods: READ_METHODS,
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform R2 maintenance schedules and storage metrics',
+  }),
   ...byMethod(
     '/api/admin/jobs/*',
     ADMIN_PERMISSIONS.JOBS_READ,

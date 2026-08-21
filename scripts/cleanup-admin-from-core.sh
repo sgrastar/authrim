@@ -276,10 +276,13 @@ fi
 if [ "$PII_ONLY" = "false" ]; then
     echo -e "${BLUE}Step 2: Cleaning up D1_CORE...${NC}"
 
-    # Apply migration
-    echo -e "  Applying migration 046_cleanup_admin_from_core.sql..."
+    # This maintenance operation predates the pre-1.0 semantic baseline. Keep the
+    # destructive SQL local to this explicitly confirmed operator script instead
+    # of depending on a historical migration file.
+    echo -e "  Removing legacy Admin records from D1_CORE..."
 
-    wrangler d1 execute "$DB_CORE_NAME" --remote --file="migrations/046_cleanup_admin_from_core.sql"
+    wrangler d1 execute "$DB_CORE_NAME" --remote \
+        --command="DELETE FROM users_core WHERE user_type = 'admin'; DELETE FROM role_assignments WHERE subject_id NOT IN (SELECT id FROM users_core);"
 
     # Verify cleanup
     REMAINING=$(count_admin_users)

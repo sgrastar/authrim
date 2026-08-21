@@ -150,26 +150,9 @@ describe('account creation operation repository', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      `CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL
-       );`
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/036_account_lifecycle_event_outbox.sql'), 'utf8')
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/041_account_lifecycle_outbox_split_shard.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     adapter = new SqliteAdapter(database);
     repository = new AccountCreationOperationRepository(adapter);
@@ -322,8 +305,11 @@ describe('account creation operation repository', () => {
     const reserved = await repository.transition(recorded, 'reserved', 102);
     await repository.transition(reserved, 'writing', 103);
     database
-      .prepare(`INSERT INTO identity_accounts (id, tenant_id, created_at) VALUES (?, ?, ?)`)
-      .run(preparing.accountId, preparing.tenantId, 103);
+      .prepare(
+        `INSERT INTO identity_accounts (id, tenant_id, account_type, created_at, updated_at)
+         VALUES (?, ?, 'person', ?, ?)`
+      )
+      .run(preparing.accountId, preparing.tenantId, 103, 103);
 
     const succeeded = await repository.recordDirectoryOutcome({
       publication: value,
@@ -358,26 +344,9 @@ describe('account creation operation repository', () => {
   it('completes the operation and emits the lifecycle event across split core shards', async () => {
     const usersDatabase = new DatabaseSync(':memory:');
     usersDatabase.exec(
-      `CREATE TABLE identity_accounts (
-         id TEXT PRIMARY KEY,
-         tenant_id TEXT NOT NULL,
-         created_at INTEGER NOT NULL
-       );`
-    );
-    usersDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/032_tenant_directory_and_plugin_outboxes.sql'),
-        'utf8'
-      )
-    );
-    usersDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/036_account_lifecycle_event_outbox.sql'), 'utf8')
-    );
-    usersDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/041_account_lifecycle_outbox_split_shard.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     try {
       const preparing = await acquire({
@@ -395,8 +364,11 @@ describe('account creation operation repository', () => {
       const writing = await repository.transition(reserved, 'writing', 103);
       await repository.transition(writing, 'directory_pending', 104);
       usersDatabase
-        .prepare(`INSERT INTO identity_accounts (id, tenant_id, created_at) VALUES (?, ?, ?)`)
-        .run(preparing.accountId, preparing.tenantId, 103);
+        .prepare(
+          `INSERT INTO identity_accounts (id, tenant_id, account_type, created_at, updated_at)
+           VALUES (?, ?, 'person', ?, ?)`
+        )
+        .run(preparing.accountId, preparing.tenantId, 103, 103);
       const lifecycleEventAdapter = new SqliteAdapter(usersDatabase);
 
       const succeeded = await repository.recordDirectoryOutcome({
@@ -457,8 +429,11 @@ describe('account creation operation repository', () => {
     const writing = await repository.transition(reserved, 'writing', 103);
     await repository.transition(writing, 'directory_pending', 104);
     database
-      .prepare(`INSERT INTO identity_accounts (id, tenant_id, created_at) VALUES (?, ?, ?)`)
-      .run(preparing.accountId, preparing.tenantId, 103);
+      .prepare(
+        `INSERT INTO identity_accounts (id, tenant_id, account_type, created_at, updated_at)
+         VALUES (?, ?, 'person', ?, ?)`
+      )
+      .run(preparing.accountId, preparing.tenantId, 103, 103);
 
     const racingRepository = new AccountCreationOperationRepository(
       new OutcomeRaceAdapter(database, () => {

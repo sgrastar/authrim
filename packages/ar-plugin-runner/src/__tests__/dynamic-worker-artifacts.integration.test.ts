@@ -9,13 +9,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 function database(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
-  for (const migration of [
-    '001_plugin_runner.sql',
-    '002_registry_installations_and_config.sql',
-    '006_dynamic_worker_loader_artifacts.sql',
-    '007_replace_dynamic_rollout_partial_index.sql',
-    '008_dynamic_worker_resource_bindings.sql',
-  ]) {
+  for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
     db.exec(readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8'));
   }
   db.exec(

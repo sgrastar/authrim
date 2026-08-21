@@ -190,14 +190,12 @@ describe('tenant placement migration verification and write fence', () => {
 
   beforeEach(async () => {
     control = new DatabaseSync(':memory:');
-    for (const file of [
-      '001_control_plane.sql',
-      '006_tenant_default_allocations.sql',
-      '011_tenant_physical_isolation.sql',
-      '012_tenant_placement_migrations.sql',
-    ]) {
-      control.exec(readFileSync(resolve(REPO_ROOT, 'migrations/control', file), 'utf8'));
-    }
+    control.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        'utf8'
+      )
+    );
     control.exec(`
       INSERT INTO control_environments (
         environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
@@ -230,7 +228,10 @@ describe('tenant placement migration verification and write fence', () => {
 
     physical = new Map();
     const captureSql = readFileSync(
-      resolve(REPO_ROOT, 'migrations/040_tenant_placement_migration_outbox.sql'),
+      resolve(
+        REPO_ROOT,
+        'packages/ar-control/src/__tests__/fixtures/tenant-placement-migration-capture.sql'
+      ),
       'utf8'
     );
     for (const [index, fixture] of inventories.entries()) {

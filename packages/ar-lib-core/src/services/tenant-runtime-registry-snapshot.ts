@@ -994,29 +994,42 @@ async function markSnapshotPublishFailure(
   const markedPointers = new Set<string>();
 
   for (const { pointer, row } of pairs) {
-    const metadata = JSON.stringify({
+    const rowMetadata = JSON.stringify({
+      ...parseMetadataObject(row.metadata_json),
       snapshot_publish_error: errorMessage,
       snapshot_publish_failed_at: new Date().toISOString(),
     });
     const pointerKey = `${pointer.tenant_id}:${pointer.role}:${pointer.shard_group}`;
     if (!markedPointers.has(pointerKey)) {
       markedPointers.add(pointerKey);
+      const pointerMetadata = JSON.stringify({
+        ...parseMetadataObject(pointer.metadata_json),
+        snapshot_publish_error: errorMessage,
+        snapshot_publish_failed_at: new Date().toISOString(),
+      });
       await repository.updateActivePointerStatus(
         pointer.tenant_id,
         pointer.role,
         pointer.shard_group,
         'degraded_pending_snapshot',
         actorId,
-        metadata
+        pointerMetadata
       );
     }
     await repository.updateRegistryStatusAndMetadata(
       rowKey(row),
       'degraded_pending_snapshot',
-      metadata,
+      rowMetadata,
       actorId
     );
   }
+}
+
+function clearSnapshotPublishFailureMetadata(metadataJson: string | null): string | null {
+  const metadata = parseMetadataObject(metadataJson);
+  delete metadata.snapshot_publish_error;
+  delete metadata.snapshot_publish_failed_at;
+  return Object.keys(metadata).length > 0 ? JSON.stringify(metadata) : null;
 }
 
 async function markSnapshotPublishSuccess(
@@ -1036,11 +1049,16 @@ async function markSnapshotPublishSuccess(
         pointer.shard_group,
         'active',
         actorId,
-        null
+        clearSnapshotPublishFailureMetadata(pointer.metadata_json)
       );
     }
     if (row.status === 'degraded_pending_snapshot') {
-      await repository.updateRegistryStatusAndMetadata(rowKey(row), 'active', null, actorId);
+      await repository.updateRegistryStatusAndMetadata(
+        rowKey(row),
+        'active',
+        clearSnapshotPublishFailureMetadata(row.metadata_json),
+        actorId
+      );
     }
   }
 }

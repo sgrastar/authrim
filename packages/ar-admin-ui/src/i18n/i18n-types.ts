@@ -22115,6 +22115,102 @@ type RootTranslation = {
 	 */
 	admin_jobs_needs_attention: string
 	/**
+	 * S​c​h​e​d​u​l​e​d​ ​M​a​i​n​t​e​n​a​n​c​e
+	 */
+	admin_jobs_scheduled_maintenance_title: string
+	/**
+	 * R​e​c​u​r​r​i​n​g​ ​R​2​ ​m​a​i​n​t​e​n​a​n​c​e​ ​s​t​a​t​u​s​,​ ​i​n​c​l​u​d​i​n​g​ ​w​h​e​t​h​e​r​ ​e​a​c​h​ ​t​a​s​k​ ​i​s​ ​e​n​a​b​l​e​d​ ​a​n​d​ ​i​t​s​ ​p​r​e​v​i​o​u​s​ ​a​n​d​ ​n​e​x​t​ ​e​x​e​c​u​t​i​o​n​ ​t​i​m​e​s​.
+	 */
+	admin_jobs_scheduled_maintenance_description: string
+	/**
+	 * N​o​ ​s​c​h​e​d​u​l​e​d​ ​m​a​i​n​t​e​n​a​n​c​e​ ​t​a​s​k​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_jobs_no_scheduled_maintenance: string
+	/**
+	 * T​a​s​k
+	 */
+	admin_jobs_task: string
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_jobs_enabled: string
+	/**
+	 * E​n​a​b​l​e​d
+	 */
+	admin_jobs_enabled_yes: string
+	/**
+	 * D​i​s​a​b​l​e​d
+	 */
+	admin_jobs_enabled_no: string
+	/**
+	 * L​a​s​t​ ​R​u​n
+	 */
+	admin_jobs_last_run: string
+	/**
+	 * S​c​h​e​d​u​l​e
+	 */
+	admin_jobs_schedule: string
+	/**
+	 * N​e​v​e​r
+	 */
+	admin_jobs_never: string
+	/**
+	 * N​o​t​ ​s​c​h​e​d​u​l​e​d
+	 */
+	admin_jobs_not_scheduled: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​c​h​e​d​u​l​e​d​ ​m​a​i​n​t​e​n​a​n​c​e​ ​s​t​a​t​u​s
+	 */
+	admin_jobs_schedules_load_failed: string
+	/**
+	 * R​2​ ​S​t​o​r​a​g​e​ ​M​e​t​r​i​c​s
+	 */
+	admin_jobs_r2_metrics_title: string
+	/**
+	 * O​b​j​e​c​t​ ​c​o​u​n​t​,​ ​s​t​o​r​a​g​e​ ​u​s​e​,​ ​o​l​d​e​s​t​ ​o​b​j​e​c​t​,​ ​e​n​c​r​y​p​t​i​o​n​ ​c​l​a​s​s​i​f​i​c​a​t​i​o​n​,​ ​a​n​d​ ​r​e​t​e​n​t​i​o​n​ ​e​v​i​d​e​n​c​e​ ​f​r​o​m​ ​t​h​e​ ​l​a​t​e​s​t​ ​b​o​u​n​d​e​d​ ​s​c​a​n​.
+	 */
+	admin_jobs_r2_metrics_description: string
+	/**
+	 * M​e​t​r​i​c​s​ ​w​i​l​l​ ​a​p​p​e​a​r​ ​a​f​t​e​r​ ​t​h​e​ ​f​i​r​s​t​ ​s​c​h​e​d​u​l​e​d​ ​s​c​a​n​.
+	 */
+	admin_jobs_r2_metrics_pending: string
+	/**
+	 * B​u​c​k​e​t
+	 */
+	admin_jobs_bucket: string
+	/**
+	 * O​b​j​e​c​t​s
+	 */
+	admin_jobs_objects: string
+	/**
+	 * S​t​o​r​a​g​e
+	 */
+	admin_jobs_storage: string
+	/**
+	 * O​l​d​e​s​t​ ​O​b​j​e​c​t
+	 */
+	admin_jobs_oldest_object: string
+	/**
+	 * E​n​c​r​y​p​t​i​o​n
+	 */
+	admin_jobs_encryption: string
+	/**
+	 * R​e​t​e​n​t​i​o​n​ ​O​v​e​r​d​u​e
+	 */
+	admin_jobs_retention_overdue: string
+	/**
+	 * S​c​a​n​ ​i​n​ ​p​r​o​g​r​e​s​s
+	 */
+	admin_jobs_scan_in_progress: string
+	/**
+	 * U​n​k​n​o​w​n
+	 */
+	admin_jobs_unknown: string
+	/**
+	 * P​o​l​i​c​y​ ​m​a​n​a​g​e​d
+	 */
+	admin_jobs_policy_managed: string
+	/**
 	 * C​r​e​a​t​a​b​l​e​ ​J​o​b​ ​T​y​p​e​s
 	 */
 	admin_jobs_creatable_types_title: string
@@ -54940,6 +55036,102 @@ Remove this role from {email}?
 	 * Needs attention
 	 */
 	admin_jobs_needs_attention: () => LocalizedString
+	/**
+	 * Scheduled Maintenance
+	 */
+	admin_jobs_scheduled_maintenance_title: () => LocalizedString
+	/**
+	 * Recurring R2 maintenance status, including whether each task is enabled and its previous and next execution times.
+	 */
+	admin_jobs_scheduled_maintenance_description: () => LocalizedString
+	/**
+	 * No scheduled maintenance tasks are available.
+	 */
+	admin_jobs_no_scheduled_maintenance: () => LocalizedString
+	/**
+	 * Task
+	 */
+	admin_jobs_task: () => LocalizedString
+	/**
+	 * Enabled
+	 */
+	admin_jobs_enabled: () => LocalizedString
+	/**
+	 * Enabled
+	 */
+	admin_jobs_enabled_yes: () => LocalizedString
+	/**
+	 * Disabled
+	 */
+	admin_jobs_enabled_no: () => LocalizedString
+	/**
+	 * Last Run
+	 */
+	admin_jobs_last_run: () => LocalizedString
+	/**
+	 * Schedule
+	 */
+	admin_jobs_schedule: () => LocalizedString
+	/**
+	 * Never
+	 */
+	admin_jobs_never: () => LocalizedString
+	/**
+	 * Not scheduled
+	 */
+	admin_jobs_not_scheduled: () => LocalizedString
+	/**
+	 * Failed to load scheduled maintenance status
+	 */
+	admin_jobs_schedules_load_failed: () => LocalizedString
+	/**
+	 * R2 Storage Metrics
+	 */
+	admin_jobs_r2_metrics_title: () => LocalizedString
+	/**
+	 * Object count, storage use, oldest object, encryption classification, and retention evidence from the latest bounded scan.
+	 */
+	admin_jobs_r2_metrics_description: () => LocalizedString
+	/**
+	 * Metrics will appear after the first scheduled scan.
+	 */
+	admin_jobs_r2_metrics_pending: () => LocalizedString
+	/**
+	 * Bucket
+	 */
+	admin_jobs_bucket: () => LocalizedString
+	/**
+	 * Objects
+	 */
+	admin_jobs_objects: () => LocalizedString
+	/**
+	 * Storage
+	 */
+	admin_jobs_storage: () => LocalizedString
+	/**
+	 * Oldest Object
+	 */
+	admin_jobs_oldest_object: () => LocalizedString
+	/**
+	 * Encryption
+	 */
+	admin_jobs_encryption: () => LocalizedString
+	/**
+	 * Retention Overdue
+	 */
+	admin_jobs_retention_overdue: () => LocalizedString
+	/**
+	 * Scan in progress
+	 */
+	admin_jobs_scan_in_progress: () => LocalizedString
+	/**
+	 * Unknown
+	 */
+	admin_jobs_unknown: () => LocalizedString
+	/**
+	 * Policy managed
+	 */
+	admin_jobs_policy_managed: () => LocalizedString
 	/**
 	 * Creatable Job Types
 	 */

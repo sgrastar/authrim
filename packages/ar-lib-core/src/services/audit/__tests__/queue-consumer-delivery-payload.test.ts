@@ -1,9 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { processLoggingDeliveryQueue } from '../queue-consumer';
 import { decodeStoredLogChunkRecord, writeLogChunkToR2 } from '@authrim/ar-lib-logging/chunks';
-import { encryptObjectArtifact } from '../../object-artifact-crypto';
+import { decryptObjectArtifact, encryptObjectArtifact } from '../../object-artifact-crypto';
 
 const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+async function createEncryptedArchivePayloadObject(
+  objectKey: string,
+  tenantContext: string,
+  payload: unknown
+): Promise<R2ObjectBody> {
+  const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
+    rootKeyHex: ROOT_KEY,
+    plane: 'AUDIT_ARCHIVE',
+    keyVersion: 1,
+    contentType: 'application/json',
+    context: {
+      tenantId: tenantContext,
+      objectKey,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  const stored = JSON.stringify(envelope);
+  return {
+    size: new TextEncoder().encode(stored).byteLength,
+    customMetadata: {
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: tenantContext,
+      keyVersion: '1',
+    },
+    text: vi.fn().mockResolvedValue(stored),
+  } as unknown as R2ObjectBody;
+}
 
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(32);
@@ -233,21 +261,20 @@ describe('logging delivery queue consumer', () => {
   });
 
   it('loads chunk_write records from an R2 object reference before writing chunks', async () => {
+    const objectKey = 'payloads/chunk-records.json';
     const bucket = {
-      get: vi.fn().mockResolvedValue({
-        text: vi.fn().mockResolvedValue(
-          JSON.stringify({
-            records: [
-              {
-                id: 'evt_chunk_ref_1',
-                eventAt: 1779148800000,
-                payload: { operation: 'bulk.flush', status: 'ok' },
-                indexedFields: { operation: 'bulk.flush' },
-              },
-            ],
-          })
-        ),
-      }),
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject(objectKey, 'tk_chunk_ref', {
+          records: [
+            {
+              id: 'evt_chunk_ref_1',
+              eventAt: 1779148800000,
+              payload: { operation: 'bulk.flush', status: 'ok' },
+              indexedFields: { operation: 'bulk.flush' },
+            },
+          ],
+        })
+      ),
       put: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
@@ -261,7 +288,7 @@ describe('logging delivery queue consumer', () => {
       log_type: 'operational',
       plane: 'archive',
       records: [],
-      records_object_ref: 'r2://payloads/chunk-records.json',
+      records_object_ref: `r2://${objectKey}`,
     });
 
     await processLoggingDeliveryQueue(
@@ -289,6 +316,43 @@ describe('logging delivery queue consumer', () => {
     ]);
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('rejects plaintext R2 payload references instead of using the removed legacy format', async () => {
+    const bucket = {
+      get: vi.fn().mockResolvedValue({
+        size: 14,
+        text: vi.fn().mockResolvedValue('{"records":[]}'),
+      }),
+      put: vi.fn(),
+    } as unknown as R2Bucket;
+    const message = createMessage({
+      payload_type: 'chunk_write',
+      schema_version: 1,
+      payload_id: 'qpl_plaintext_ref',
+      tenant_key: 'tk_plaintext_ref',
+      lane: 'bulk',
+      created_at: 1779148800000,
+      log_type: 'operational',
+      plane: 'archive',
+      records: [],
+      records_object_ref: 'r2://payloads/plaintext.json',
+    });
+
+    await processLoggingDeliveryQueue(
+      { messages: [message], queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<unknown>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: createAdminDbAdapter(),
+        AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      }
+    );
+
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(message.ack).not.toHaveBeenCalled();
   });
 
   it('rejects oversized chunk_write record objects before reading R2 text', async () => {
@@ -321,6 +385,7 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
@@ -610,11 +675,12 @@ describe('logging delivery queue consumer', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const bucket = {
-      get: vi.fn().mockResolvedValue({
-        size: 38,
-        httpMetadata: { contentType: 'application/json' },
-        text: vi.fn().mockResolvedValue('{"records":[{"id":"evt_1"}]}'),
-      }),
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject('payloads/batch_1.json', 'tk_123', {
+          records: [{ id: 'evt_1' }],
+        })
+      ),
+      delete: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
     const message = createMessage({
@@ -640,10 +706,12 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
     expect(bucket.get).toHaveBeenCalledWith('payloads/batch_1.json');
+    expect(bucket.delete).toHaveBeenCalledWith('payloads/batch_1.json');
     expect(fetchMock).toHaveBeenCalledWith(
       'https://collector.example/logs',
       expect.objectContaining({
@@ -1119,18 +1187,17 @@ describe('logging delivery queue consumer', () => {
   it('replays supported DLQ replay payloads to the audit queue', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
     const bucket = {
-      get: vi.fn().mockResolvedValue({
-        text: vi.fn().mockResolvedValue(
-          JSON.stringify({
-            body: {
-              type: 'event_log',
-              tenantId: 'tenant-a',
-              timestamp: 1779148800000,
-              entries: [],
-            },
-          })
-        ),
-      }),
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject('dlq/tenant_key=tk_123/item.json', 'tk_123', {
+          body: {
+            type: 'event_log',
+            tenantId: 'tenant-a',
+            timestamp: 1779148800000,
+            entries: [],
+          },
+        })
+      ),
+      delete: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter();
     const message = createMessage({
@@ -1152,10 +1219,12 @@ describe('logging delivery queue consumer', () => {
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         AUDIT_QUEUE: { send } as never,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
     expect(bucket.get).toHaveBeenCalledWith('dlq/tenant_key=tk_123/item.json');
+    expect(bucket.delete).toHaveBeenCalledWith('dlq/tenant_key=tk_123/item.json');
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'event_log',
@@ -1219,9 +1288,12 @@ describe('logging delivery queue consumer', () => {
       destination_id: 'dest_1',
     };
     const bucket = {
-      get: vi.fn().mockResolvedValue({
-        text: vi.fn().mockResolvedValue(JSON.stringify({ body: replayBody })),
-      }),
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject('dlq/tenant_key=tk_123/item.json', 'tk_123', {
+          body: replayBody,
+        })
+      ),
+      delete: vi.fn().mockResolvedValue(undefined),
     } as unknown as R2Bucket;
     const adminDb = createAdminDbAdapter({
       dlqItem: {
@@ -1251,10 +1323,12 @@ describe('logging delivery queue consumer', () => {
         AUDIT_ARCHIVE: bucket,
         AUDIT_QUEUE: { send: vi.fn() } as never,
         LOGGING_DELIVERY_QUEUE: { send: deliverySend } as never,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
     expect(deliverySend).toHaveBeenCalledWith(replayBody);
+    expect(bucket.delete).toHaveBeenCalledWith('dlq/tenant_key=tk_123/item.json');
     expect(adminDb.execute).toHaveBeenCalledWith(
       expect.stringContaining("SET status = 'replayed'"),
       expect.arrayContaining(['dlq_1'])
@@ -1484,12 +1558,26 @@ describe('logging delivery queue consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       }
     );
 
     const objectKey = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    const putOptions = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as {
+      customMetadata?: Record<string, string>;
+    };
     const objectBody = JSON.parse(
-      String((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1])
+      await decryptObjectArtifact(
+        JSON.parse(String((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1])),
+        {
+          rootKeyHex: ROOT_KEY,
+          context: {
+            tenantId: putOptions.customMetadata?.encryptionTenantContext ?? '',
+            objectKey: String(objectKey),
+            objectClass: 'operational_log_detail',
+          },
+        }
+      )
     ) as { body?: unknown; bodyJson?: string };
     expect(objectKey).toContain('dlq/tenant_key=tk_123/');
     expect(objectKey).toContain('/unsupported/');
@@ -1500,6 +1588,9 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(objectBody.bodyJson).toContain('"payload_type":"http_sink_batch"');
+    expect(putOptions.customMetadata).toEqual(
+      expect.objectContaining({ encryption: 'authrim-object-envelope-v1' })
+    );
     expect(adminDb.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_dlq_items'),
       expect.arrayContaining(['tk_123', 'http_sink_batch', 99, 'default', 'queue:LOGGING_DELIVERY'])

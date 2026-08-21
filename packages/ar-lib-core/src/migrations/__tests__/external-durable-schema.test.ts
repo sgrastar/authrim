@@ -26,7 +26,10 @@ function readMigration(relativePath: string): string {
 
 function extractCreateTableBlock(sql: string, tableName: string): string {
   const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`CREATE TABLE IF NOT EXISTS ${escaped} \\([\\s\\S]*?\\n\\);`, 'i');
+  const pattern = new RegExp(
+    `CREATE TABLE (?:IF NOT EXISTS )?(?:public\\.)?"?${escaped}"? \\([\\s\\S]*?\\n\\);`,
+    'i'
+  );
   const match = sql.match(pattern);
 
   if (!match) {
@@ -72,27 +75,31 @@ const piiTables = [
 
 describe('external durable postgres schema', () => {
   it('keeps every shared durable core table explicitly tenant-scoped', () => {
-    const coreSql = readMigration('migrations/external/postgres/001_external_durable_core.sql');
+    const coreSql = readMigration(
+      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+    );
 
     for (const tableName of coreTables) {
       const tableBlock = extractCreateTableBlock(coreSql, tableName);
-      expect(tableBlock).toMatch(/\btenant_id TEXT NOT NULL\b/i);
+      expect(tableBlock).toMatch(/\btenant_id text\b[^\n]*\bNOT NULL\b/i);
     }
   });
 
   it('keeps every shared durable PII table explicitly tenant-scoped', () => {
-    const piiSql = readMigration('migrations/external/postgres/002_external_durable_pii.sql');
+    const piiSql = readMigration(
+      'migrations/external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql'
+    );
 
     for (const tableName of piiTables) {
       const tableBlock = extractCreateTableBlock(piiSql, tableName);
-      expect(tableBlock).toMatch(/\btenant_id TEXT NOT NULL\b/i);
+      expect(tableBlock).toMatch(/\btenant_id text\b[^\n]*\bNOT NULL\b/i);
     }
   });
 
   it('does not use D1-only SQLite syntax in postgres migrations', () => {
     const combinedSql = [
-      readMigration('migrations/external/postgres/001_external_durable_core.sql'),
-      readMigration('migrations/external/postgres/002_external_durable_pii.sql'),
+      readMigration('migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'),
+      readMigration('migrations/external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql'),
     ].join('\n');
 
     expect(combinedSql).not.toMatch(/\bAUTOINCREMENT\b/i);
@@ -102,12 +109,14 @@ describe('external durable postgres schema', () => {
   });
 
   it('keeps passkeys bound to canonical runtime user ids instead of users_core rows', () => {
-    const coreSql = readMigration('migrations/external/postgres/001_external_durable_core.sql');
+    const coreSql = readMigration(
+      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+    );
     const passkeysBlock = extractCreateTableBlock(coreSql, 'passkeys');
 
-    expect(passkeysBlock).toContain('user_id TEXT NOT NULL');
-    expect(passkeysBlock).toContain(
-      'CONSTRAINT passkeys_unique_credential UNIQUE(tenant_id, credential_id)'
+    expect(passkeysBlock).toMatch(/\buser_id text NOT NULL\b/i);
+    expect(coreSql).toMatch(
+      /ADD CONSTRAINT passkeys_unique_credential UNIQUE \(tenant_id, credential_id\)/i
     );
     expect(passkeysBlock).not.toMatch(/\bREFERENCES\s+users_core\b/i);
   });

@@ -153,7 +153,7 @@ function createMockEnv(): Env {
     } as unknown as DurableObjectNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
-    AVATARS: {
+    PUBLIC_ASSETS: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),

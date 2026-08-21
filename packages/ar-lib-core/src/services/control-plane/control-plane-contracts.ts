@@ -44,6 +44,48 @@ export interface ControlReleaseRolloutRetryTargetRequest {
   idempotencyKey: string;
 }
 
+export const CONTROL_R2_BUCKET_BINDINGS = [
+  'MIGRATION_RELEASES',
+  'PLUGIN_BUNDLES',
+  'PUBLIC_ASSETS',
+  'DIAGNOSTIC_LOGS',
+  'AUDIT_ARCHIVE',
+  'IMPORT_ARTIFACTS',
+  'EXPORT_ARTIFACTS',
+  'SENSITIVE_DETAILS',
+] as const;
+
+export type ControlR2BucketBinding = (typeof CONTROL_R2_BUCKET_BINDINGS)[number];
+export type ControlR2MetricOwner = 'ar-control' | 'ar-management' | 'ar-plugin-runner';
+
+export interface ControlR2BucketMetric {
+  binding: ControlR2BucketBinding;
+  objectCount: number;
+  totalBytes: number;
+  oldestObjectAt: number | null;
+  encryptionMethods: Record<string, number>;
+  retentionOverdueObjects: number | null;
+  retentionPolicy: string;
+  scanComplete: boolean;
+  measuredAt: number;
+}
+
+export interface ControlR2BucketMetricReportRequest {
+  metrics: ControlR2BucketMetric[];
+}
+
+export interface ControlR2BucketMetricView extends ControlR2BucketMetric {
+  ownerWorker: ControlR2MetricOwner;
+  availability: 'current' | 'stale' | 'pending';
+  unavailableReason: string | null;
+  reportedAt: number | null;
+}
+
+export interface ControlR2BucketMetricInventory {
+  metrics: ControlR2BucketMetricView[];
+  generatedAt: number;
+}
+
 export type LookupLifecycleState = 'pending' | 'active' | 'disabled';
 export type AccountDirectoryPublicationState =
   | 'pending'
@@ -1219,6 +1261,10 @@ export interface ControlPluginResourceCleanupView {
 }
 
 export interface ControlServiceBinding {
+  reportR2BucketMetrics?(
+    request: ControlR2BucketMetricReportRequest
+  ): Promise<ControlR2BucketMetricInventory>;
+  getR2BucketMetrics?(): Promise<ControlR2BucketMetricInventory>;
   getReleaseMigrationRolloutStatus?(): Promise<ControlReleaseRolloutStatus>;
   retryReleaseMigrationRolloutTarget?(
     request: ControlReleaseRolloutRetryTargetRequest

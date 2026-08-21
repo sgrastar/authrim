@@ -28,6 +28,7 @@ import { D1DynamicPluginInstallationStore } from './dynamic-worker-installations
 import { resolvePluginHostInterfaceEnv } from './host-interfaces';
 import type { PluginHostInterfaceEnvFactory } from './dynamic-worker-backend';
 import type { PluginHostInterfaceBindingContract } from '@authrim/ar-lib-core/services/plugin-host-interface-contract';
+import { scanAndReportPluginBundleMetrics } from './r2-bucket-metrics';
 import {
   PluginD1ResourceAccess,
   PluginKvResourceAccess,
@@ -478,14 +479,17 @@ export default class PluginRunnerWorker extends WorkerEntrypoint<
     });
   }
 
-  scheduled(): Promise<void> {
-    return new PluginRunnerScheduler(
-      this.env,
-      () => Math.floor(Date.now() / 1000),
-      (context) => this.dynamicOutbound(context),
-      (context, bindings, resources, pluginId) =>
-        this.dynamicHostInterfaces(context, bindings, resources, pluginId)
-    ).run();
+  async scheduled(): Promise<void> {
+    await Promise.all([
+      new PluginRunnerScheduler(
+        this.env,
+        () => Math.floor(Date.now() / 1000),
+        (context) => this.dynamicOutbound(context),
+        (context, bindings, resources, pluginId) =>
+          this.dynamicHostInterfaces(context, bindings, resources, pluginId)
+      ).run(),
+      scanAndReportPluginBundleMetrics(this.env),
+    ]);
   }
 
   runHumanVerification(input: unknown) {

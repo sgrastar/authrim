@@ -9,6 +9,7 @@
     "./create-migration.ts",
     "./release-migrations.ts",
     "./release-migrations-cli.ts",
+    "./semantic-baseline-migrations.ts",
     "./run-d1-migrations.ts"
   ]
 }

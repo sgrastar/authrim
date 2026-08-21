@@ -274,7 +274,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     sessionIds = parseCsvFilter(query.sessionIds, 'sessionIds');
     flowIds = parseCsvFilter(query.flowIds, 'flowIds', { maxItemLength: 128 });
     categories = parseCsvFilter(query.categories, 'categories', {
-      maxItems: 4,
+      maxItems: 8,
       maxItemLength: 32,
     });
   } catch (error) {
@@ -292,6 +292,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     'http-response',
     'token-validation',
     'auth-decision',
+    'client-operation',
   ]);
   if (categories?.some((category) => !allowedCategories.has(category))) {
     return c.json({ error: 'invalid_categories', message: 'Unknown log category' }, 400);

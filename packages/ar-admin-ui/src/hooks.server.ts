@@ -640,21 +640,52 @@ export function buildProxyHeaders(
 	return headers;
 }
 
-async function readBody(event: RequestEvent): Promise<ProxyBody | '__TOO_LARGE__'> {
-	if (event.request.method === 'GET' || event.request.method === 'HEAD') {
+export async function readBoundedProxyBody(
+	request: Request,
+	maxBytes = MAX_PROXY_BODY_BYTES
+): Promise<ProxyBody | '__TOO_LARGE__'> {
+	if (request.method === 'GET' || request.method === 'HEAD') {
 		return undefined;
 	}
-
-	const contentLength = event.request.headers.get('content-length');
-	if (contentLength && parseInt(contentLength, 10) > MAX_PROXY_BODY_BYTES) {
-		return '__TOO_LARGE__';
+	if (maxBytes <= 0) {
+		throw new Error('Proxy body size limit must be greater than zero');
 	}
 
-	const body = await event.request.arrayBuffer();
-	if (body.byteLength > MAX_PROXY_BODY_BYTES) {
+	const contentLength = request.headers.get('content-length');
+	if (contentLength && parseInt(contentLength, 10) > maxBytes) {
 		return '__TOO_LARGE__';
 	}
-	return body;
+	if (!request.body) {
+		return new ArrayBuffer(0);
+	}
+
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let totalBytes = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+
+			totalBytes += value.byteLength;
+			if (totalBytes > maxBytes) {
+				void reader.cancel().catch(() => {});
+				return '__TOO_LARGE__';
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	const body = new Uint8Array(totalBytes);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return body.buffer;
 }
 
 function getSetCookieHeaders(headers: Headers): string[] {
@@ -818,7 +849,7 @@ export const apiProxy: Handle = async ({ event, resolve }) => {
 	}
 
 	// Security: Limit request body size (10MB max)
-	const body = await readBody(event);
+	const body = await readBoundedProxyBody(event.request);
 	if (body === '__TOO_LARGE__') {
 		logProxySecurityEvent(event, proxyRequestId, 'payload_too_large', 'rejected', {
 			status: 413,

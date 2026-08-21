@@ -21,6 +21,7 @@ import { laneForLogPolicy } from '@authrim/ar-lib-logging/policies';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { SqlLogChunkCatalogStore } from './audit/logging-catalog-store';
 import { resolveAuditTenantKey, type TenantKeyResolver } from './audit/tenant-key';
+import { encryptObjectArtifact } from './object-artifact-crypto';
 import {
   resolveRuntimeLoggingPolicyTargetFromEnv,
   type RuntimeLoggingDestinationTarget,
@@ -612,19 +613,34 @@ async function emitHttpBatch(input: {
     partition.hour,
     `${cleanR2ObjectKeySegment(payloadId)}.json`,
   ].join('/');
-  const body = JSON.stringify(
-    canonicalBatch({
-      tenantId: input.tenantId,
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      surface: input.surface,
-      records: input.records,
-      target: input.target,
-    })
-  );
-  await bucket.put(objectKey, body, {
-    httpMetadata: { contentType: 'application/json' },
+  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('runtime_log_delivery_payload_encryption_key_unavailable');
+  }
+  const payload = canonicalBatch({
+    tenantId: input.tenantId,
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane,
+    surface: input.surface,
+    records: input.records,
+    target: input.target,
+  });
+  const parsedKeyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
+  const keyVersion =
+    Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
+  const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
+    rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
+    plane: 'AUDIT_ARCHIVE',
+    keyVersion,
+    contentType: 'application/json',
+    context: {
+      tenantId: input.tenantKey,
+      objectKey,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  await bucket.put(objectKey, JSON.stringify(envelope), {
+    httpMetadata: { contentType: 'application/vnd.authrim.object-envelope+json' },
     customMetadata: {
       tenantKey: input.tenantKey,
       logType: input.logType,
@@ -633,6 +649,9 @@ async function emitHttpBatch(input: {
       payloadId,
       batchId,
       createdAt: String(now),
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: input.tenantKey,
+      keyVersion: String(keyVersion),
     },
   });
   const enqueueResult = await enqueueDeliveryPayload(input.env, {

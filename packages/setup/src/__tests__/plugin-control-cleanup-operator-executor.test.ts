@@ -36,10 +36,10 @@ describe('setup plugin cleanup operator executor', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_control_plane.sql'), 'utf8')
-    );
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/018_plugin_resource_cleanup.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     managedD1 = { uuid: 'managed-d1-id', name: 'managed-d1-name' };
     deleteD1.mockReset().mockImplementation(async () => {

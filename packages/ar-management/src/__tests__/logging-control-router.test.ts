@@ -44,7 +44,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-import { ADMIN_PERMISSIONS, AR_ERROR_CODES, encryptObjectArtifact } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  AR_ERROR_CODES,
+  decryptObjectArtifact,
+  encryptObjectArtifact,
+} from '@authrim/ar-lib-core';
 import {
   adminLoggingRouter,
   destinationsRouter,
@@ -57,6 +62,41 @@ import { decodeLoggingCursor } from '@authrim/ar-lib-logging/delivery';
 
 const LOGGING_EXPORT_CREATE_PERMISSION = 'admin:logging:exports:create';
 const LOGGING_SENSITIVE_DETAIL_EXPORT_PERMISSION = 'admin:logging:sensitive_detail:export';
+const OBJECT_ENCRYPTION_ROOT_KEY =
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+async function readEncryptedMessagePayloadPut(
+  put: unknown,
+  keyFragment: string
+): Promise<Record<string, unknown>> {
+  const call = (put as { mock: { calls: unknown[][] } }).mock.calls.find(([key]) =>
+    String(key).includes(keyFragment)
+  );
+  expect(call).toBeTruthy();
+  const [key, body, options] = call! as [
+    string,
+    string,
+    {
+      httpMetadata?: { contentType?: string };
+      customMetadata?: Record<string, string>;
+    },
+  ];
+  expect(options.httpMetadata?.contentType).toBe('application/vnd.authrim.object-envelope+json');
+  expect(options.customMetadata).toMatchObject({
+    encryption: 'authrim-object-envelope-v1',
+    encryptionTenantContext: expect.any(String),
+    sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+  const plaintext = await decryptObjectArtifact(JSON.parse(body), {
+    rootKeyHex: OBJECT_ENCRYPTION_ROOT_KEY,
+    context: {
+      tenantId: options.customMetadata!.encryptionTenantContext,
+      objectKey: key,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  return JSON.parse(plaintext) as Record<string, unknown>;
+}
 
 function createTextR2Object(text: string): R2ObjectBody {
   const body = new TextEncoder().encode(text);
@@ -110,7 +150,7 @@ async function deriveTestArchiveChunkEncryptionKey(input: {
 
 const env = {
   DB_ADMIN: {},
-  OBJECT_ENCRYPTION_ROOT_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  OBJECT_ENCRYPTION_ROOT_KEY,
   LOGGING_CURSOR_HMAC_SECRET: 'test-logging-cursor-secret',
   AUDIT_QUEUE: {
     send: vi.fn().mockResolvedValue(undefined),
@@ -2588,13 +2628,9 @@ describe('logging control routers', () => {
       status: 'queued',
       message_job_id: expect.stringMatching(/^lmj_/),
     });
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/'),
-      expect.stringContaining('"payload_type":"export_build"'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+    ).resolves.toMatchObject({ payload_type: 'export_build' });
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO admin_audit_log'),
       expect.arrayContaining(['logging_export.create'])
@@ -2655,13 +2691,9 @@ describe('logging control routers', () => {
     expect(result.id).toMatch(/^lexp_/);
     expect(result.status).toBe('queued');
     expect(result.message_job_id).toMatch(/^lmj_/);
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/'),
-      expect.stringContaining('"payload_type":"export_build"'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+    ).resolves.toMatchObject({ payload_type: 'export_build' });
     expect(mockAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_export_jobs'),
       expect.arrayContaining([result.id, tenantKey, 'audit', 'archive', 'jsonl', 'queued'])
@@ -2770,13 +2802,9 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/'),
-      expect.stringContaining('"source":"record_index"'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+    ).resolves.toMatchObject({ filters: expect.objectContaining({ source: 'record_index' }) });
   });
 
   it('expands record index export artifacts with chunk payloads when requested', async () => {
@@ -2854,13 +2882,9 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/'),
-      expect.stringContaining('"include_payload":true'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+    ).resolves.toMatchObject({ filters: expect.objectContaining({ include_payload: true }) });
   });
 
   it('decrypts encrypted archive chunks for record index payload exports', async () => {
@@ -2967,13 +2991,9 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/'),
-      expect.stringContaining('"include_payload":true'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(env.AUDIT_ARCHIVE!.put, 'message-jobs/export_build/')
+    ).resolves.toMatchObject({ filters: expect.objectContaining({ include_payload: true }) });
   });
 
   it('exports decrypted sensitive detail chunk payloads with explicit permission', async () => {
@@ -3056,13 +3076,12 @@ describe('logging control routers', () => {
     expect(response.status).toBe(202);
     expect(body.result.status).toBe('queued');
     expect(body.result.message_job_id).toMatch(/^lmj_/);
-    expect(env.AUDIT_ARCHIVE?.put).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/criticality=critical/'),
-      expect.stringContaining('"plane":"sensitive_detail"'),
-      expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(
+        env.AUDIT_ARCHIVE!.put,
+        'message-jobs/export_build/criticality=critical/'
+      )
+    ).resolves.toMatchObject({ filters: expect.objectContaining({ plane: 'sensitive_detail' }) });
   });
 
   it('reads logging export status and artifact payloads', async () => {
@@ -4481,16 +4500,12 @@ describe('logging control routers', () => {
       kind: 'retry_delivery',
       queued: true,
     });
-    expect(messagePut).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/retry_delivery/criticality=standard/lane=default'),
-      expect.stringContaining('"payload_type":"retry_delivery"'),
-      expect.objectContaining({
-        customMetadata: expect.objectContaining({
-          payload_type: 'retry_delivery',
-          schema_version: '1',
-        }),
-      })
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(
+        messagePut,
+        'message-jobs/retry_delivery/criticality=standard/lane=default'
+      )
+    ).resolves.toMatchObject({ payload_type: 'retry_delivery', schema_version: 1 });
     expect(queueSend).toHaveBeenCalledWith(
       expect.objectContaining({
         payload_type: 'retry_delivery',
@@ -4788,11 +4803,12 @@ describe('logging control routers', () => {
     expect(body.audit_id).toEqual(expect.any(String));
     expect(body.result.applied_count).toBe(1);
     expect(body.result.applied[0].message_job_id).toMatch(/^lmj_/);
-    expect(messagePut).toHaveBeenCalledWith(
-      expect.stringContaining('message-jobs/export_build/criticality=standard/lane=default'),
-      expect.stringContaining('"export_job_id":"lexp_repair"'),
-      expect.any(Object)
-    );
+    await expect(
+      readEncryptedMessagePayloadPut(
+        messagePut,
+        'message-jobs/export_build/criticality=standard/lane=default'
+      )
+    ).resolves.toMatchObject({ export_job_id: 'lexp_repair' });
     expect(queueSend).toHaveBeenCalledWith(
       expect.objectContaining({
         payload_type: 'export_build',

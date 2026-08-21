@@ -28,6 +28,13 @@ async function hashBody(body: string): Promise<string> {
     .join('');
 }
 
+async function hashBytes(body: Uint8Array): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', body);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function createApp(middleware = idempotencyMiddleware(), tenantId: string | null = 'tenant-a') {
   const app = new Hono();
   if (tenantId) {
@@ -188,6 +195,41 @@ describe('idempotency middleware', () => {
     expect(payload.error_description).toContain('size limit');
     expect(mockAdapter.queryOne).not.toHaveBeenCalled();
     expect(mockAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('hashes and restores the exact request bytes for the handler', async () => {
+    const requestBody = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+    let handlerBody: Uint8Array | undefined;
+    const app = new Hono();
+    app.use('*', async (c, next) => {
+      c.set('tenantId', 'tenant-a');
+      await next();
+    });
+    app.use(
+      '/protected',
+      requiredIdempotencyMiddleware({ reserveBeforeExecution: true, redactFields: [] })
+    );
+    app.post('/protected', async (c) => {
+      handlerBody = new Uint8Array(await c.req.arrayBuffer());
+      return c.json({ ok: true }, 201);
+    });
+
+    const res = await app.request(
+      '/protected',
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': 'idem-key-001',
+          'Content-Type': 'application/octet-stream',
+        },
+        body: requestBody,
+      },
+      mockEnv
+    );
+
+    expect(res.status).toBe(201);
+    expect(handlerBody).toEqual(requestBody);
+    expect(mockAdapter.execute.mock.calls[0]?.[1]?.[7]).toBe(await hashBytes(requestBody));
   });
 
   it('keeps identical keys on different UUID resource paths isolated', async () => {

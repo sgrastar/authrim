@@ -130,11 +130,7 @@ describe('initial notification provider bootstrap', () => {
       writeFile(join(keysDir, 'plugin_mutation_hmac_key.txt'), 'm'.repeat(64)),
     ]);
     const database = new DatabaseSync(':memory:');
-    for (const migration of [
-      'migrations/plugin-runner/001_plugin_runner.sql',
-      'migrations/plugin-runner/002_registry_installations_and_config.sql',
-      'migrations/plugin-runner/004_notification_provider_order.sql',
-    ]) {
+    for (const migration of ['migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql']) {
       database.exec(await readFile(resolve(process.cwd(), '../..', migration), 'utf8'));
     }
     const executedSql: string[] = [];

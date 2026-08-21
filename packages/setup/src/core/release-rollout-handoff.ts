@@ -411,6 +411,54 @@ export async function getReleaseRolloutHandoffStatus(input: {
   return parseStatus(resultRows(results[0])[0]);
 }
 
+export async function getActiveReleaseRolloutHandoffStatus(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  executeBatch?: D1BatchExecutor;
+}): Promise<ReleaseRolloutHandoffStatus | null> {
+  if (!SAFE_ENVIRONMENT_ID.test(input.environmentId)) {
+    throw new Error('release_rollout_environment_invalid');
+  }
+  const executeBatch = input.executeBatch ?? executeD1Batch;
+  const tableCheck = await executeBatch(input.controlDatabaseId, [
+    {
+      sql: `SELECT name FROM sqlite_master
+             WHERE type = 'table' AND name = 'control_release_migration_rollouts'`,
+    },
+  ]);
+  if (resultRows(tableCheck[0]).length === 0) return null;
+
+  const results = await executeBatch(input.controlDatabaseId, [
+    {
+      sql: `SELECT rollout.operation_id, rollout.source_version, rollout.target_version,
+                   rollout.release_id, rollout.manifest_digest, rollout.handoff_state,
+                   COALESCE(SUM(CASE WHEN target.state = 'succeeded' THEN 1 ELSE 0 END), 0)
+                     AS completed_targets,
+                   COUNT(target.target_id) AS total_targets,
+                   operation.last_error_code, rollout.updated_at
+              FROM control_release_migration_rollouts rollout
+              JOIN control_operations operation
+                ON operation.operation_id = rollout.operation_id
+               AND operation.environment_id = rollout.environment_id
+         LEFT JOIN control_release_migration_targets target
+                ON target.operation_id = rollout.operation_id
+             WHERE rollout.environment_id = ?
+               AND rollout.active_environment_key = ?
+               AND rollout.handoff_state <> 'completed'
+          GROUP BY rollout.operation_id, rollout.source_version, rollout.target_version,
+                   rollout.release_id, rollout.manifest_digest, rollout.handoff_state,
+                   operation.last_error_code, rollout.updated_at
+          ORDER BY rollout.updated_at DESC, rollout.operation_id DESC
+             LIMIT 2`,
+      params: [input.environmentId, input.environmentId],
+    },
+  ]);
+  const rows = resultRows(results[0]);
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) throw new Error('release_rollout_active_state_ambiguous');
+  return parseStatus(rows[0]);
+}
+
 export async function waitForReleaseRolloutAwaitingSetup(input: {
   controlDatabaseId: string;
   environmentId: string;

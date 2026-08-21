@@ -323,8 +323,8 @@ database_id = "placeholder"
 
 # R2 Bucket
 [[r2_buckets]]
-binding = "AVATARS"
-bucket_name = "authrim-avatars"' '[[durable_objects.bindings]]
+binding = "PUBLIC_ASSETS"
+bucket_name = "authrim-public-assets"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"

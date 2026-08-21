@@ -369,7 +369,7 @@ export const adminTenantsAPI = {
 	async latestPlacementMigration(id: string): Promise<TenantPlacementMigrationOperation | null> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/latest`,
-			{ skipTenantHeader: true }
+			{ tenantId: id }
 		);
 		if (response.status === 404) return null;
 		if (!response.ok) {
@@ -389,7 +389,7 @@ export const adminTenantsAPI = {
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations`,
 			{
 				method: 'POST',
-				skipTenantHeader: true,
+				tenantId: id,
 				headers: { 'Idempotency-Key': idempotencyKey }
 			}
 		);
@@ -411,7 +411,7 @@ export const adminTenantsAPI = {
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/${encodeURIComponent(operationId)}/cancel`,
 			{
 				method: 'POST',
-				skipTenantHeader: true,
+				tenantId: id,
 				headers: { 'Idempotency-Key': idempotencyKey }
 			}
 		);
@@ -433,7 +433,7 @@ export const adminTenantsAPI = {
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/placement-migrations/${encodeURIComponent(operationId)}/approve-purge`,
 			{
 				method: 'POST',
-				skipTenantHeader: true,
+				tenantId: id,
 				headers: { 'Idempotency-Key': idempotencyKey }
 			}
 		);
@@ -501,7 +501,7 @@ export const adminTenantsAPI = {
 			{
 				method: 'POST',
 				includeJsonContentType: true,
-				skipTenantHeader: true,
+				tenantId: id,
 				headers: { 'Idempotency-Key': idempotencyKey },
 				body: JSON.stringify(data)
 			}
@@ -519,7 +519,7 @@ export const adminTenantsAPI = {
 	async lifecycleJobs(id: string): Promise<TenantLifecycleJob[]> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs`,
-			{ skipTenantHeader: true }
+			{ tenantId: id }
 		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -532,7 +532,7 @@ export const adminTenantsAPI = {
 	async retryLifecycleJob(id: string, jobId: string): Promise<void> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs/${encodeURIComponent(jobId)}/retry`,
-			{ method: 'POST', skipTenantHeader: true }
+			{ method: 'POST', tenantId: id }
 		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

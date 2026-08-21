@@ -80,7 +80,7 @@ describe('Cloudflare R2 helpers', () => {
       stderr: 'Authentication error: missing permission',
     });
 
-    await expect(createR2Bucket('prod-authrim-avatars')).rejects.toThrow(/missing permission/);
+    await expect(createR2Bucket('prod-public-assets')).rejects.toThrow(/missing permission/);
   });
 
   it('lists R2 objects through the REST API with prefix and cursor pagination', async () => {
@@ -142,8 +142,8 @@ describe('Cloudflare R2 helpers', () => {
       stderr: 'A bucket with this name already exists',
     });
 
-    await expect(createR2Bucket('prod-authrim-avatars')).resolves.toEqual({
-      name: 'prod-authrim-avatars',
+    await expect(createR2Bucket('prod-public-assets')).resolves.toEqual({
+      name: 'prod-public-assets',
     });
   });
 
@@ -228,13 +228,13 @@ describe('Cloudflare R2 helpers', () => {
       json: async () => ({
         success: true,
         result: {
-          buckets: [{ name: 'test-authrim-avatars' }, { name: 'test-sensitive-details' }],
+          buckets: [{ name: 'test-public-assets' }, { name: 'test-sensitive-details' }],
         },
       }),
     });
 
     await expect(listR2Buckets({ throwOnError: true })).resolves.toEqual([
-      { name: 'test-authrim-avatars' },
+      { name: 'test-public-assets' },
       { name: 'test-sensitive-details' },
     ]);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -278,7 +278,7 @@ describe('Cloudflare R2 helpers', () => {
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
-        AVATARS: { name: 'prod-authrim-avatars' },
+        DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
       },
       []
     );
@@ -288,8 +288,8 @@ describe('Cloudflare R2 helpers', () => {
     expect(status.missing).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          binding: 'AVATARS',
-          name: 'prod-authrim-avatars',
+          binding: 'DIAGNOSTIC_LOGS',
+          name: 'prod-diagnostic-logs',
           recorded: true,
           exists: false,
           configured: false,
@@ -306,7 +306,6 @@ describe('Cloudflare R2 helpers', () => {
         MIGRATION_RELEASES: { name: 'prod-migration-releases' },
         PLUGIN_BUNDLES: { name: 'prod-plugin-bundles' },
         PUBLIC_ASSETS: { name: 'prod-public-assets' },
-        AVATARS: { name: 'prod-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
         AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
         IMPORT_ARTIFACTS: { name: 'prod-import-artifacts' },
@@ -317,7 +316,6 @@ describe('Cloudflare R2 helpers', () => {
         'prod-migration-releases',
         'prod-plugin-bundles',
         'prod-public-assets',
-        'prod-authrim-avatars',
         'prod-diagnostic-logs',
         'prod-audit-archive',
         'prod-import-artifacts',
@@ -327,8 +325,8 @@ describe('Cloudflare R2 helpers', () => {
     );
 
     expect(status.enabled).toBe(true);
-    expect(status.required).toBe(9);
-    expect(status.configured).toBe(9);
+    expect(status.required).toBe(8);
+    expect(status.configured).toBe(8);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
   });

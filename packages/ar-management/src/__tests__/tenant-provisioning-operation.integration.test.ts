@@ -86,13 +86,9 @@ describe('tenant provisioning operation repository', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/admin/033_tenant_provisioning_operations.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/admin/034_tenant_placement_policy.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/admin/001_pre_1_0_admin_baseline.sql'), 'utf8')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
+        .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
     repository = new TenantProvisioningOperationRepository(new SqliteAdapter(database));
   });

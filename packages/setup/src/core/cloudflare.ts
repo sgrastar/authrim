@@ -179,7 +179,6 @@ export const R2_BUCKETS = [
   { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
   { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
   { binding: 'PUBLIC_ASSETS', suffix: 'public-assets', baseline: false },
-  { binding: 'AVATARS', suffix: 'authrim-avatars', baseline: false },
   { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs', baseline: false },
   { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive', baseline: false },
   { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts', baseline: false },
@@ -5470,13 +5469,14 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     onProgress('');
   }
 
-  // The migration release bucket is baseline infrastructure. Product R2 buckets remain optional.
+  // The migration release bucket is baseline infrastructure. A normal setup provisions every
+  // product bucket; only an explicit R2 opt-out limits provisioning to the baseline bucket.
   onProgress('📁 R2 Buckets');
   try {
     resources.r2.push(
       ...(await provisionR2Buckets(env, {
         onProgress,
-        includeFeatureBuckets: options.createR2 === true,
+        includeFeatureBuckets: options.createR2 !== false,
       }))
     );
   } catch (error) {
@@ -5549,6 +5549,8 @@ const AUTHRIM_PATTERNS = {
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
+  // Keep the retired authrim-avatars suffix discoverable so environment deletion can clean up
+  // buckets created by pre-consolidation installations.
   r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,

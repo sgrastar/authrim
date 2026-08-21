@@ -85,7 +85,8 @@ export async function processInteractiveAdminJobQueues(
 
 export async function processScheduledAdminJobQueues(
   env: Env,
-  log: ScheduledJobLogger
+  log: ScheduledJobLogger,
+  options: { skipLoggingStorageMaintenance?: boolean } = {}
 ): Promise<void> {
   try {
     await processPendingTenantDeletionJobs(env, log);
@@ -143,10 +144,12 @@ export async function processScheduledAdminJobQueues(
     log.error('Tenant discovery reindex job processing failed', {}, jobsError as Error);
   }
 
-  try {
-    await processLoggingStorageMaintenanceJobs(env, log);
-  } catch (jobsError) {
-    log.error('Logging/storage maintenance job processing failed', {}, jobsError as Error);
+  if (!options.skipLoggingStorageMaintenance) {
+    try {
+      await processLoggingStorageMaintenanceJobs(env, log);
+    } catch (jobsError) {
+      log.error('Logging/storage maintenance job processing failed', {}, jobsError as Error);
+    }
   }
 
   try {

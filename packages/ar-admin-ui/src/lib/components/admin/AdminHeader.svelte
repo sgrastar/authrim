@@ -24,7 +24,6 @@
 		userName?: string;
 		userPicture?: string | null;
 		userId?: string;
-		hideTenantSelector?: boolean;
 	}
 
 	let {
@@ -35,8 +34,7 @@
 		onMobileMenuClick,
 		userEmail,
 		userName,
-		userPicture,
-		hideTenantSelector = false
+		userPicture
 	}: Props = $props();
 
 	// User dropdown state
@@ -127,7 +125,7 @@
 	</div>
 
 	<div class="header-right">
-		{#if tenants.length > 1 && !hideTenantSelector}
+		{#if tenants.length > 1}
 			<div class="header-tenant-selector">
 				<span class="tenant-selector-label">{$LL.admin_header_tenant()}</span>
 				<select

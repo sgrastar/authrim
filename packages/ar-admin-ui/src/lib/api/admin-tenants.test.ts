@@ -209,6 +209,52 @@ describe('adminTenantsAPI', () => {
 		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('Idempotency-Key')).toBe(
 			idempotencyKey
 		);
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('tenant a');
+	});
+
+	it('sends the tenant detail route ID when loading lifecycle jobs', async () => {
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ jobs: [] }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		await expect(adminTenantsAPI.lifecycleJobs('fapi2')).resolves.toEqual([]);
+
+		expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/admin/tenants/fapi2/lifecycle/jobs');
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('fapi2');
+	});
+
+	it('sends the target tenant for lifecycle mutations instead of the selected tenant fallback', async () => {
+		const response = {
+			job_id: 'job-1',
+			status: 'pending',
+			tenant_id: 'fapi2',
+			lifecycle_state: 'active',
+			validation_required: false
+		};
+		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify(response), {
+				status: 202,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		await expect(
+			adminTenantsAPI.lifecycleCommand(
+				'fapi2',
+				'suspend',
+				{
+					expected_state: 'active',
+					expected_updated_at: 1,
+					reason: 'maintenance'
+				},
+				'00000000-0000-4000-8000-000000000002'
+			)
+		).resolves.toEqual(response);
+
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('fapi2');
 	});
 
 	it('treats a missing latest placement migration as an empty state', async () => {
