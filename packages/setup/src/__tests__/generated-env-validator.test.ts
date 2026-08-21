@@ -267,8 +267,8 @@ async function writeGeneratedEnvironment(
     queues,
     r2: [
       { binding: 'MIGRATION_RELEASES', name: `${env}-migration-releases` },
+      { binding: 'PLUGIN_BUNDLES', name: `${env}-plugin-bundles` },
       { binding: 'PUBLIC_ASSETS', name: `${env}-public-assets` },
-      { binding: 'AVATARS', name: `${env}-authrim-avatars` },
       { binding: 'DIAGNOSTIC_LOGS', name: `${env}-diagnostic-logs` },
       { binding: 'AUDIT_ARCHIVE', name: `${env}-audit-archive` },
       { binding: 'IMPORT_ARTIFACTS', name: `${env}-import-artifacts` },
@@ -906,7 +906,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
-      { name: `${env}-authrim-avatars` },
+      { name: `${env}-plugin-bundles` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
@@ -963,7 +963,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
-      { name: `${env}-authrim-avatars` },
+      { name: `${env}-plugin-bundles` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
@@ -1001,7 +1001,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
-      { name: `${env}-authrim-avatars` },
+      { name: `${env}-plugin-bundles` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
@@ -1036,7 +1036,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
-      { name: `${env}-authrim-avatars` },
+      { name: `${env}-plugin-bundles` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },
@@ -1071,7 +1071,7 @@ describe('validateGeneratedEnvironment', () => {
     listR2BucketsMock.mockResolvedValueOnce([
       { name: `${env}-migration-releases` },
       { name: `${env}-public-assets` },
-      { name: `${env}-authrim-avatars` },
+      { name: `${env}-plugin-bundles` },
       { name: `${env}-diagnostic-logs` },
       { name: `${env}-audit-archive` },
       { name: `${env}-import-artifacts` },

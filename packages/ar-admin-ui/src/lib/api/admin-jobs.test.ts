@@ -146,6 +146,61 @@ describe('adminJobsAPI partial failure handling', () => {
 		expect(response.job_types[4]).toMatchObject({ type: 'tenant_delete' });
 	});
 
+	it('normalizes recurring maintenance state and R2 metrics for the Jobs screen', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					schedules: [
+						{
+							id: 'r2_diagnostic_log_retention',
+							name: 'Diagnostic log retention',
+							enabled: true,
+							cron: '0 */6 * * *',
+							status: 'succeeded',
+							lastCompletedAt: 1_800_000_000_000,
+							nextRunAt: 1_800_021_600_000
+						}
+					],
+					storageMetrics: [
+						{
+							binding: 'DIAGNOSTIC_LOGS',
+							objectCount: 10,
+							totalBytes: 1024,
+							oldestObjectAt: 1_799_000_000_000,
+							encryptionMethods: { 'privacy-sanitized-plaintext': 10 },
+							retentionOverdueObjects: 2,
+							retentionPolicy: '30 days',
+							scanComplete: true,
+							measuredAt: 1_800_000_000_000
+						}
+					]
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await adminJobsAPI.listSchedules();
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			expect.stringContaining('/api/admin/jobs/schedules'),
+			expect.objectContaining({ method: 'GET' })
+		);
+		expect(response.schedules[0]).toMatchObject({
+			enabled: true,
+			status: 'succeeded',
+			last_completed_at: new Date(1_800_000_000_000).toISOString(),
+			next_run_at: new Date(1_800_021_600_000).toISOString()
+		});
+		expect(response.storage_metrics[0]).toMatchObject({
+			binding: 'DIAGNOSTIC_LOGS',
+			object_count: 10,
+			total_bytes: 1024,
+			retention_overdue_objects: 2,
+			scan_complete: true
+		});
+	});
+
 	it('creates report jobs with top-level date range and result delivery', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(

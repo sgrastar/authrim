@@ -39,6 +39,7 @@
     { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
     { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
+    { "name": "SENSITIVE_DETAILS", "kind": "r2_bucket", "required": false },
     { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
     { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
     { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
@@ -49,6 +50,11 @@
     {
       "name": "RP_TOKEN_ENCRYPTION_KEY",
       "capability": "external_idp_tokens.encrypt_decrypt",
+      "required": true
+    },
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt",
       "required": true
     },
     {

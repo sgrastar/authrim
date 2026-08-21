@@ -118,7 +118,7 @@ function createContext(
       query: vi.fn((name: string) => query[name]),
       parseBody: vi.fn().mockResolvedValue(options.parsedBody ?? {}),
     },
-    env: { AVATARS: avatars },
+    env: { PUBLIC_ASSETS: avatars },
     json: vi.fn(
       (body, status = 200) =>
         new Response(JSON.stringify(body), {
@@ -192,18 +192,26 @@ describe('admin user session revocation', () => {
       ['unsupported extension', 'avatar.svg'],
       ['missing extension', 'avatar'],
     ])('rejects %s filenames before reading R2', async (_name, filename) => {
-      const avatars = { get: vi.fn(), put: vi.fn(), delete: vi.fn() };
+      const avatars = {
+        get: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
       const response = await serveAvatarHandler(createContext({ filename, avatars }));
       expect(response.status).toBe(404);
       expect(avatars.get).not.toHaveBeenCalled();
     });
 
     it('returns not_found for a missing avatar object', async () => {
-      const avatars = { get: vi.fn(), put: vi.fn(), delete: vi.fn() };
+      const avatars = {
+        get: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
       expect(
         (await serveAvatarHandler(createContext({ filename: 'user-1.jpeg', avatars }))).status
       ).toBe(404);
-      expect(avatars.get).toHaveBeenCalledWith('avatars/user-1.jpeg');
+      expect(avatars.get).toHaveBeenCalledWith('avatars/tenant-1/users/user-1.jpeg');
     });
 
     it.each([
@@ -212,7 +220,7 @@ describe('admin user session revocation', () => {
       ['jpeg', 'image/jpeg'],
       ['png', 'image/png'],
       ['webp', 'image/webp'],
-    ])('serves .%s with nosniff and immutable metadata', async (extension, contentType) => {
+    ])('serves .%s with nosniff and no-store metadata', async (extension, contentType) => {
       const object = {
         body: new Blob(['image']),
         httpEtag: 'etag-1',
@@ -225,7 +233,7 @@ describe('admin user session revocation', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toBe(contentType);
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(response.headers.get('cache-control')).toContain('immutable');
+      expect(response.headers.get('cache-control')).toBe('private, no-store');
     });
 
     it('normalizes R2 failures to internal_error', async () => {
@@ -282,21 +290,86 @@ describe('admin user session revocation', () => {
       const response = await adminUserAvatarUploadHandler(
         createContext({ parsedBody: { avatar: file }, avatars })
       );
-      await expect(response.json()).resolves.toMatchObject({
+      const body = (await response.json()) as { success: boolean; avatarUrl: string };
+      expect(body).toMatchObject({
         success: true,
-        avatarUrl: 'https://tenant.example.com/avatars/user-1.png',
       });
-      expect(avatars.put).toHaveBeenCalledWith('avatars/user-1.png', expect.any(ArrayBuffer), {
-        httpMetadata: { contentType: 'image/png' },
-      });
+      expect(body.avatarUrl).toMatch(
+        /^https:\/\/tenant\.example\.com\/api\/avatars\/[0-9a-f-]{36}\.png$/u
+      );
+      const filename = body.avatarUrl.split('/').pop();
+      expect(avatars.put).toHaveBeenCalledWith(
+        `avatars/tenant-1/users/${filename}`,
+        expect.any(ArrayBuffer),
+        {
+          httpMetadata: { contentType: 'image/png' },
+        }
+      );
       expect(mockRuntimeUsers.syncUser).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: 'user-1',
           piiFields: { picture: true },
-          sensitiveValues: { picture: 'https://tenant.example.com/avatars/user-1.png' },
+          sensitiveValues: { picture: body.avatarUrl },
         })
       );
       expect(mockInvalidateUserCache).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'user-1');
+    });
+
+    it('replaces only a tenant-owned previous avatar after canonical PII is updated', async () => {
+      mockRuntimeUsers.findById.mockResolvedValueOnce({
+        id: 'user-1',
+        active: 1,
+        email_verified: 1,
+        phone_number_verified: 0,
+        picture: 'https://tenant.example.com/api/avatars/previous.png',
+      });
+      const avatars = {
+        get: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
+      const file = new File(['png'], 'avatar.png', { type: 'image/png' });
+
+      expect(
+        (
+          await adminUserAvatarUploadHandler(
+            createContext({ parsedBody: { avatar: file }, avatars })
+          )
+        ).status
+      ).toBe(200);
+      expect(mockRuntimeUsers.syncUser).toHaveBeenCalledBefore(avatars.delete);
+      expect(avatars.delete).toHaveBeenCalledWith('avatars/tenant-1/users/previous.png');
+
+      mockRuntimeUsers.findById.mockResolvedValueOnce({
+        id: 'user-1',
+        active: 1,
+        email_verified: 1,
+        phone_number_verified: 0,
+        picture: 'https://external.example/avatar/other-user.png',
+      });
+      await adminUserAvatarUploadHandler(createContext({ parsedBody: { avatar: file }, avatars }));
+      expect(avatars.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it('removes a newly uploaded object when canonical PII update fails', async () => {
+      mockRuntimeUsers.syncUser.mockRejectedValueOnce(new Error('PII store unavailable'));
+      const avatars = {
+        get: vi.fn(),
+        put: vi.fn(),
+        delete: vi.fn().mockResolvedValue(undefined),
+      };
+      const file = new File(['png'], 'avatar.png', { type: 'image/png' });
+
+      expect(
+        (
+          await adminUserAvatarUploadHandler(
+            createContext({ parsedBody: { avatar: file }, avatars })
+          )
+        ).status
+      ).toBe(500);
+      expect(avatars.delete).toHaveBeenCalledWith(
+        expect.stringMatching(/^avatars\/tenant-1\/users\/[0-9a-f-]{36}\.png$/u)
+      );
     });
 
     it('does not reactivate an inactive user when updating an avatar', async () => {
@@ -343,7 +416,7 @@ describe('admin user session revocation', () => {
     it('clears canonical picture even when best-effort R2 deletion fails', async () => {
       mockRuntimeUsers.findById.mockResolvedValueOnce({
         id: 'user-1',
-        picture: 'https://tenant.example.com/avatars/user-1.png',
+        picture: 'https://tenant.example.com/api/avatars/user-1.png',
         email_verified: 0,
         phone_number_verified: 1,
       });
@@ -354,7 +427,7 @@ describe('admin user session revocation', () => {
       };
       const response = await adminUserAvatarDeleteHandler(createContext({ avatars }));
       expect(response.status).toBe(200);
-      expect(avatars.delete).toHaveBeenCalledWith('avatars/user-1.png');
+      expect(avatars.delete).toHaveBeenCalledWith('avatars/tenant-1/users/user-1.png');
       expect(mockRuntimeUsers.syncUser).toHaveBeenCalledWith(
         expect.objectContaining({ sensitiveValues: { picture: null } })
       );
@@ -364,7 +437,7 @@ describe('admin user session revocation', () => {
       mockRuntimeUsers.findById.mockResolvedValueOnce({
         id: 'user-1',
         active: 0,
-        picture: 'https://tenant.example.com/avatars/user-1.png',
+        picture: 'https://tenant.example.com/api/avatars/user-1.png',
         email_verified: 0,
         phone_number_verified: 1,
       });

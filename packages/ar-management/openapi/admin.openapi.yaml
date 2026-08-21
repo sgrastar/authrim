@@ -6157,24 +6157,22 @@ paths:
               - verified
               - failed
               - expired
-  '/api/admin/avatars/{filename}':
+  '/api/avatars/{filename}':
     get:
       tags:
         - Admin Miscellaneous
-      operationId: getApiAdminAvatarsByFilename
-      summary: Download an admin avatar image.
+      operationId: getApiAvatarsByFilename
+      summary: Download a public user avatar image.
       description: >-
-        Streams an uploaded admin avatar object from the AVATARS bucket. The response body is image
-        bytes and is cached immutably when the object exists. Unsupported filenames or missing
-        objects return a not-found error.
+        Streams a tenant-owned user avatar from the private PUBLIC_ASSETS bucket through the public
+        tenant API origin. Object keys are resolved from the request tenant and cannot be selected by
+        the caller. Avatar filenames are content-versioned and successful responses use no-store cache
+        controls so that replacement and deletion take effect without retaining personal images in a
+        shared cache. Unsupported filenames and missing or deleted objects return a not-found error.
       responses:
         '200':
           $ref: '#/components/responses/AvatarImage'
         '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
@@ -6187,9 +6185,7 @@ paths:
           schema:
             type: string
           description: 'Stored avatar object filename, including the image extension.'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
+      security: []
   /api/admin/check-api-keys:
     get:
       tags:
@@ -12959,6 +12955,149 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/jobs/schedules:
+    get:
+      tags:
+        - Jobs
+      operationId: getApiAdminJobsSchedules
+      summary: Get recurring R2 maintenance status and storage metrics.
+      description: >-
+        Platform administrator only. Returns whether each R2 maintenance task is enabled, its cron
+        expression, durable previous execution evidence, computed next execution time, and the
+        latest bounded fleet-wide per-bucket storage metric scan aggregated by Control. Each owning
+        Worker reports only a secret-free summary; pending and stale reports are explicit. Error
+        codes and object metadata are redacted from sensitive payload content.
+      responses:
+        '200':
+          description: Scheduled maintenance status and latest R2 metrics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - schedules
+                  - storageMetrics
+                properties:
+                  schedules:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - id
+                        - name
+                        - enabled
+                        - cron
+                        - status
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        enabled:
+                          type: boolean
+                        cron:
+                          type: string
+                        status:
+                          type: string
+                          enum:
+                            - never_run
+                            - running
+                            - succeeded
+                            - failed
+                            - disabled
+                        lastStartedAt:
+                          type:
+                            - integer
+                            - 'null'
+                        lastCompletedAt:
+                          type:
+                            - integer
+                            - 'null'
+                        nextRunAt:
+                          type:
+                            - integer
+                            - 'null'
+                        lastErrorCode:
+                          type:
+                            - string
+                            - 'null'
+                  storageMetrics:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - binding
+                        - ownerWorker
+                        - availability
+                        - unavailableReason
+                        - reportedAt
+                        - objectCount
+                        - totalBytes
+                        - encryptionMethods
+                        - retentionPolicy
+                        - scanComplete
+                        - measuredAt
+                      properties:
+                        binding:
+                          type: string
+                          enum:
+                            - MIGRATION_RELEASES
+                            - PLUGIN_BUNDLES
+                            - PUBLIC_ASSETS
+                            - DIAGNOSTIC_LOGS
+                            - AUDIT_ARCHIVE
+                            - IMPORT_ARTIFACTS
+                            - EXPORT_ARTIFACTS
+                            - SENSITIVE_DETAILS
+                        ownerWorker:
+                          type: string
+                          enum:
+                            - ar-control
+                            - ar-management
+                            - ar-plugin-runner
+                        availability:
+                          type: string
+                          enum:
+                            - current
+                            - stale
+                            - pending
+                        unavailableReason:
+                          type:
+                            - string
+                            - 'null'
+                        reportedAt:
+                          type:
+                            - integer
+                            - 'null'
+                        objectCount:
+                          type: integer
+                        totalBytes:
+                          type: integer
+                        oldestObjectAt:
+                          type:
+                            - integer
+                            - 'null'
+                        encryptionMethods:
+                          type: object
+                          additionalProperties:
+                            type: integer
+                        retentionOverdueObjects:
+                          type:
+                            - integer
+                            - 'null'
+                        retentionPolicy:
+                          type: string
+                        scanComplete:
+                          type: boolean
+                        measuredAt:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/jobs/users/bulk-update:
     post:
       tags:
@@ -13037,8 +13176,6 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminJobUserImportUploadUrl'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -13050,7 +13187,8 @@ paths:
       summary: Upload a user import artifact.
       description: >-
         Stores a CSV import payload in IMPORT_ARTIFACTS under the tenant-scoped upload key,
-        validates content type and size, and returns checksum and upload receipt metadata.
+        validates content type and size, and returns checksum, ETag, and upload receipt metadata.
+        Upload IDs are immutable and can be used only once; an existing object is never overwritten.
       responses:
         '201':
           $ref: '#/components/responses/AdminJobUserImportUpload'
@@ -13059,6 +13197,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -45659,7 +45799,7 @@ components:
         family_name: User
         nickname: null
         preferred_username: example
-        picture: 'https://auth.example.com/avatars/user_123.png'
+        picture: 'https://auth.example.com/api/avatars/user_123.png'
         phone_number: null
         website: null
         gender: null
@@ -45933,7 +46073,7 @@ components:
           type: string
       example:
         success: true
-        avatarUrl: 'https://auth.example.com/avatars/user_123.png'
+        avatarUrl: 'https://auth.example.com/api/avatars/user_123.png'
         message: Avatar uploaded successfully
     AdminUserSessionsRevokedResponse:
       type: object
@@ -47812,6 +47952,7 @@ components:
         - r2_key
         - uploaded_bytes
         - checksum_sha256
+        - etag
         - content_type
       properties:
         upload_id:
@@ -47824,6 +47965,8 @@ components:
           type: integer
           minimum: 1
         checksum_sha256:
+          type: string
+        etag:
           type: string
         content_type:
           type: string

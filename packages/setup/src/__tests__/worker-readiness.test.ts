@@ -2,10 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getWorkerDeployments: vi.fn(),
+  fetchWithPublicDns: vi.fn(),
 }));
 
 vi.mock('../core/cloudflare.js', () => ({
   getWorkerDeployments: mocks.getWorkerDeployments,
+}));
+
+vi.mock('../core/public-dns-fetch.js', () => ({
+  fetchWithPublicDns: mocks.fetchWithPublicDns,
+  isDnsResolutionError: (error: unknown) =>
+    (error as { cause?: { code?: string } })?.cause?.code === 'ENOTFOUND',
 }));
 
 import {
@@ -29,6 +36,7 @@ describe('waitForRouterWorkerReady', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
     mocks.getWorkerDeployments.mockReset();
+    mocks.fetchWithPublicDns.mockReset();
   });
 
   afterEach(() => {
@@ -281,10 +289,17 @@ describe('Worker HTTP readiness helpers', () => {
     expect(result.error).toContain('dev-ar-auth');
   });
 
-  it('allows the initial tenant snapshot gap only for auth and SAML health checks', async () => {
-    fetchMock.mockResolvedValue(
-      textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
-    );
+  it('allows the initial tenant registry bootstrap gap only for dependent health checks', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+      );
 
     const result = await waitForWorkerHttpReady({
       targets: [
@@ -293,15 +308,64 @@ describe('Worker HTTP readiness helpers', () => {
           url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
         },
         {
+          workerName: 'dev-ar-policy',
+          url: 'https://dev-ar-policy.example.workers.dev/api/check/health',
+        },
+        {
           workerName: 'dev-ar-saml',
           url: 'https://dev-ar-saml.example.workers.dev/saml/health',
         },
       ],
-      allowMissingTenantSnapshot: true,
+      allowTenantRegistryBootstrapGap: true,
       maxWaitMs: 0,
     });
 
     expect(result.ready).toBe(true);
+  });
+
+  it('does not hide a tenant registry bootstrap gap for an unrelated worker', async () => {
+    fetchMock.mockResolvedValue(
+      textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-token',
+          url: 'https://dev-ar-token.example.workers.dev/api/health',
+        },
+      ],
+      allowTenantRegistryBootstrapGap: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.error).toContain('missing_generation');
+  });
+
+  it('verifies a new custom domain through public DNS after a system DNS miss', async () => {
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-admin-ui',
+          url: 'https://admin.dev.example.com',
+        },
+      ],
+      allowPublicDnsFallback: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://admin.dev.example.com',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
   });
 
   it('does not hide a missing tenant snapshot outside the initial deploy gate', async () => {

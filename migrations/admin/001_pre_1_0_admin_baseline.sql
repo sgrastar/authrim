@@ -4208,4 +4208,11 @@ CREATE UNIQUE INDEX ux_destination_profiles_active_resource_server_client
     END
   );
 
+CREATE TABLE scheduled_task_leases (
+  task_id TEXT PRIMARY KEY,
+  lease_token TEXT NOT NULL,
+  lease_until INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 PRAGMA foreign_keys = ON;

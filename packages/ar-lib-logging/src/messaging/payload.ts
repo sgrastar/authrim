@@ -20,6 +20,15 @@ export interface LoggingMessagePayloadWriteInput {
   tenantKey?: string | null;
   payload: unknown;
   now?: number;
+  storedPayloadEncoder?: (input: {
+    plaintext: string;
+    objectRef: string;
+    sha256: string;
+  }) => Promise<{
+    body: string;
+    contentType: string;
+    customMetadata?: Record<string, string>;
+  }>;
 }
 
 export interface LoggingMessagePayloadWriteResult {
@@ -141,13 +150,17 @@ export async function writeLoggingMessagePayloadToR2(
     tenantKey: input.tenantKey,
     now,
   });
-  await input.bucket.put(objectRef, payloadJson, {
-    httpMetadata: { contentType: 'application/json' },
+  const storedPayload = input.storedPayloadEncoder
+    ? await input.storedPayloadEncoder({ plaintext: payloadJson, objectRef, sha256 })
+    : { body: payloadJson, contentType: 'application/json' };
+  await input.bucket.put(objectRef, storedPayload.body, {
+    httpMetadata: { contentType: storedPayload.contentType },
     customMetadata: {
       payload_type: input.payloadType,
       schema_version: String(input.schemaVersion),
       sha256,
       message_job_id: input.jobId,
+      ...storedPayload.customMetadata,
     },
   });
 

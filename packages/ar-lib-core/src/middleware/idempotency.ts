@@ -28,7 +28,7 @@ import type { Env } from '../types/env';
 import type { DatabaseAdapter } from '../db/adapter';
 import { createLogger } from '../utils/logger';
 import { createPhase1ErrorDetails } from '../errors/details';
-import { readRequestTextWithLimit } from '../utils/body-limits';
+import { readRequestBytesWithLimit } from '../utils/body-limits';
 import { readResponseTextWithLimit } from '../utils/url-security';
 
 const log = createLogger().module('IDEMPOTENCY');
@@ -106,10 +106,8 @@ function returnStoredResponse(
 /**
  * Generate SHA-256 hash of request body
  */
-async function hashBody(body: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(body);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+async function hashBody(body: ArrayBuffer): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', body);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -253,9 +251,9 @@ export function idempotencyMiddleware(
     // actions and credential offers), allowing one resource's response to replay for another.
     const normalizedPath = path;
 
-    let bodyText: string;
+    let bodyBytes: ArrayBuffer;
     try {
-      bodyText = await readRequestTextWithLimit(c.req.raw, IDEMPOTENCY_REQUEST_BODY_MAX_BYTES);
+      bodyBytes = await readRequestBytesWithLimit(c.req.raw, IDEMPOTENCY_REQUEST_BODY_MAX_BYTES);
     } catch {
       return c.json(
         {
@@ -265,7 +263,7 @@ export function idempotencyMiddleware(
         413
       );
     }
-    const bodyHash = await hashBody(bodyText);
+    const bodyHash = await hashBody(bodyBytes);
 
     // Generate composite key ID
     const keyId = generateKeyId(
@@ -368,11 +366,10 @@ export function idempotencyMiddleware(
       // Restore the body for the handler (since we already read it)
       // Create a new request with the body
       const originalRequest = c.req.raw;
-      const newRequest = new Request(originalRequest.url, {
-        method: originalRequest.method,
-        headers: originalRequest.headers,
-        body: bodyText,
-      });
+      const newRequest =
+        originalRequest.method === 'GET' || originalRequest.method === 'HEAD'
+          ? new Request(originalRequest)
+          : new Request(originalRequest, { body: bodyBytes });
       // Replace the request in context
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (c.req as any).raw = newRequest;

@@ -41,8 +41,8 @@ describe('Cloudflare environment deletion helpers', () => {
   });
 
   it('parses R2 bucket rows from JSON and legacy wrangler output', () => {
-    expect(parseR2BucketRows(JSON.stringify([{ name: 'prod-authrim-avatars' }]))).toEqual([
-      { name: 'prod-authrim-avatars' },
+    expect(parseR2BucketRows(JSON.stringify([{ name: 'prod-public-assets' }]))).toEqual([
+      { name: 'prod-public-assets' },
     ]);
     expect(parseR2BucketRows('name: prod-diagnostic-logs\nprod-import-artifacts\n')).toEqual([
       { name: 'prod-diagnostic-logs' },

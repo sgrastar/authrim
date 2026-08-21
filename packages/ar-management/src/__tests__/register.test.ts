@@ -98,7 +98,7 @@ function createMockEnv(options?: { db?: D1Database }): Env {
     NONCE_STORE: {} as KVNamespace,
     CLIENTS_CACHE: {} as KVNamespace,
     DB: options?.db ?? createMockDB(),
-    AVATARS: {} as R2Bucket,
+    PUBLIC_ASSETS: {} as R2Bucket,
     KEY_MANAGER: {} as unknown as Env['KEY_MANAGER'],
     SESSION_STORE: {} as unknown as Env['SESSION_STORE'],
     AUTH_CODE_STORE: {} as unknown as Env['AUTH_CODE_STORE'],

@@ -25,6 +25,9 @@ import { materializeEncryptedObjectArtifact } from './object-artifact-materializ
 
 export const USER_IMPORT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const USER_IMPORT_BATCH_SIZE = 100;
+export const USER_IMPORT_ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1000;
+const USER_IMPORT_CLEANUP_CURSOR_KEY = 'jobs:r2-maintenance:import-artifacts-cursor';
+const USER_IMPORT_CLEANUP_BATCH_SIZE = 200;
 
 const USER_IMPORT_MAX_RESULT_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const USER_IMPORT_MAX_FAILURE_DETAILS = 1000;
@@ -161,6 +164,17 @@ interface UserImportJobOptions {
   validate_only: boolean;
 }
 
+interface UserImportArtifactPin {
+  checksum_sha256: string;
+  etag: string;
+  size_bytes: number;
+  content_type: string;
+}
+
+interface UserImportJobConfig extends UserImportJobOptions {
+  artifact: UserImportArtifactPin;
+}
+
 interface UserImportJobRow {
   id: string;
   tenant_id: string;
@@ -171,6 +185,15 @@ interface UserImportJobRow {
   result_r2_key: string | null;
   object_catalog_id: string | null;
   created_at: number;
+}
+
+export interface UserImportArtifactCleanupSummary {
+  scanned: number;
+  deleted: number;
+  retainedActive: number;
+  retainedYoung: number;
+  failures: number;
+  cursor: string | null;
 }
 
 interface ImportedUserRowInput {
@@ -270,6 +293,121 @@ export function buildUserImportUploadKey(
 
 export function buildUserImportResultKey(tenantId: string, jobId: string): string {
   return `exports/${tenantId}/users-import/${jobId}/result.json`;
+}
+
+export async function deleteTerminalUserImportInput(
+  bucket: R2Bucket,
+  job: Pick<UserImportJobRow, 'id' | 'tenant_id' | 'input_r2_key'>,
+  logger: { error: (message: string, meta?: Record<string, unknown>, err?: Error) => void }
+): Promise<void> {
+  if (!job.input_r2_key || !job.input_r2_key.startsWith(`imports/${job.tenant_id}/`)) {
+    return;
+  }
+  try {
+    await bucket.delete(job.input_r2_key);
+  } catch (error) {
+    logger.error(
+      'Terminal user import input cleanup failed',
+      { job_id: job.id, tenant_id: job.tenant_id },
+      error as Error
+    );
+  }
+}
+
+export async function cleanupOrphanedUserImportUploads(
+  env: Env,
+  logger: {
+    info: (message: string, meta?: Record<string, unknown>) => void;
+    error: (message: string, meta?: Record<string, unknown>, err?: Error) => void;
+  },
+  nowMs = Date.now()
+): Promise<UserImportArtifactCleanupSummary> {
+  const bucket = env.IMPORT_ARTIFACTS;
+  if (!bucket) {
+    return {
+      scanned: 0,
+      deleted: 0,
+      retainedActive: 0,
+      retainedYoung: 0,
+      failures: 0,
+      cursor: null,
+    };
+  }
+
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'management-user-import-artifact-cleanup'
+  );
+  const storedCursor = env.AUTHRIM_CONFIG
+    ? (await env.AUTHRIM_CONFIG.get(USER_IMPORT_CLEANUP_CURSOR_KEY))?.trim() || undefined
+    : undefined;
+  const listOptions = {
+    prefix: 'imports/',
+    limit: USER_IMPORT_CLEANUP_BATCH_SIZE,
+    cursor: storedCursor,
+    include: ['customMetadata'] as const,
+  };
+  const listed = await bucket.list(listOptions);
+  const summary: UserImportArtifactCleanupSummary = {
+    scanned: listed.objects.length,
+    deleted: 0,
+    retainedActive: 0,
+    retainedYoung: 0,
+    failures: 0,
+    cursor: listed.truncated ? (listed.cursor ?? null) : null,
+  };
+
+  for (const object of listed.objects) {
+    const metadata = (object as R2Object & { customMetadata?: Record<string, string> })
+      .customMetadata;
+    const expiresAt = Number.parseInt(metadata?.expires_at ?? '', 10);
+    const uploadedAt = object.uploaded instanceof Date ? object.uploaded.getTime() : nowMs;
+    const eligibleAt = Number.isFinite(expiresAt)
+      ? expiresAt
+      : uploadedAt + USER_IMPORT_ORPHAN_RETENTION_MS;
+    if (eligibleAt > nowMs) {
+      summary.retainedYoung += 1;
+      continue;
+    }
+
+    const activeJob = await adapter.queryOne<{ id: string }>(
+      `SELECT id
+       FROM admin_jobs
+       WHERE input_r2_key = ?
+         AND status IN ('pending', 'processing')
+       LIMIT 1`,
+      [object.key]
+    );
+    if (activeJob) {
+      summary.retainedActive += 1;
+      continue;
+    }
+
+    try {
+      await bucket.delete(object.key);
+      summary.deleted += 1;
+    } catch (error) {
+      summary.failures += 1;
+      logger.error(
+        'Orphaned user import upload cleanup failed',
+        { object_key: object.key },
+        error as Error
+      );
+    }
+  }
+
+  if (env.AUTHRIM_CONFIG) {
+    if (summary.cursor) {
+      await env.AUTHRIM_CONFIG.put(USER_IMPORT_CLEANUP_CURSOR_KEY, summary.cursor);
+    } else {
+      await env.AUTHRIM_CONFIG.delete(USER_IMPORT_CLEANUP_CURSOR_KEY);
+    }
+  }
+  logger.info('User import artifact cleanup completed', { ...summary });
+  if (summary.failures > 0) {
+    throw new Error('user_import_artifact_cleanup_partial_failure');
+  }
+  return summary;
 }
 
 export function assertUserImportJobStorageKeys(job: {
@@ -892,6 +1030,34 @@ function parseJobOptions(config: string | null): UserImportJobOptions {
   };
 }
 
+function parseArtifactPin(config: string | null): UserImportArtifactPin {
+  if (!config) {
+    throw new Error('user_import_artifact_pin_missing');
+  }
+  const parsed = JSON.parse(config) as Partial<UserImportJobConfig>;
+  const artifact = parsed.artifact;
+  if (
+    !artifact ||
+    !/^[0-9a-f]{64}$/u.test(artifact.checksum_sha256) ||
+    typeof artifact.etag !== 'string' ||
+    artifact.etag.length === 0 ||
+    !Number.isSafeInteger(artifact.size_bytes) ||
+    artifact.size_bytes <= 0 ||
+    artifact.size_bytes > USER_IMPORT_MAX_UPLOAD_BYTES ||
+    artifact.content_type !== 'text/csv'
+  ) {
+    throw new Error('user_import_artifact_pin_invalid');
+  }
+  return artifact;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function parseProgress(progress: string | null): JobProgressState {
   if (!progress) {
     return computeProgress({
@@ -1118,7 +1284,18 @@ async function processUserImportJob(
     throw new Error(`Import source not found: ${job.input_r2_key}`);
   }
 
+  const artifactPin = parseArtifactPin(job.config);
+  if (inputObject.etag !== artifactPin.etag) {
+    throw new Error('user_import_artifact_etag_mismatch');
+  }
   const csvText = await readR2ObjectTextWithLimit(inputObject, USER_IMPORT_MAX_UPLOAD_BYTES);
+  const inputBytes = new TextEncoder().encode(csvText).byteLength;
+  if (inputBytes !== artifactPin.size_bytes) {
+    throw new Error('user_import_artifact_size_mismatch');
+  }
+  if ((await sha256Hex(csvText)) !== artifactPin.checksum_sha256) {
+    throw new Error('user_import_artifact_checksum_mismatch');
+  }
   const options = parseJobOptions(job.config);
   const resultKey = job.result_r2_key ?? buildUserImportResultKey(job.tenant_id, job.id);
   const parsed = parseUserImportCsv(csvText, { skip_header: options.skip_header });
@@ -1302,6 +1479,8 @@ async function processUserImportJob(
     ]
   );
 
+  await deleteTerminalUserImportInput(inputBucket, job, logger);
+
   logger.info('User import job completed', {
     job_id: job.id,
     tenant_id: job.tenant_id,
@@ -1361,6 +1540,7 @@ export async function processPendingUserImportJobs(
         "UPDATE admin_jobs SET status = 'failed', error_message = ?, completed_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         [String(error), failedTs, failedTs, job.id, job.tenant_id]
       );
+      await deleteTerminalUserImportInput(inputBucket, job, logger);
       logger.error(
         'User import job failed',
         { job_id: job.id, tenant_id: job.tenant_id },

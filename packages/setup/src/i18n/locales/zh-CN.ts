@@ -459,7 +459,7 @@ const zhCN: Translations = {
   // Feature flags
   'features.title': '功能标志',
   'features.queuePrompt': '启用 Cloudflare Queues？（用于审计日志）',
-  'features.r2Prompt': '启用 Cloudflare R2？（用于头像）',
+  'features.r2Prompt': '启用 Cloudflare R2 对象存储？',
   'features.queue': '队列：',
   'features.r2': 'R2：',
 

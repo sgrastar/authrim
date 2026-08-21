@@ -5,13 +5,18 @@ import type {
   WorkerLoader,
   WorkerVersionMetadata,
 } from '@cloudflare/workers-types';
-import type { EmailServiceBinding, NotificationDeliveryPayload } from '@authrim/ar-lib-core';
+import type {
+  ControlServiceBinding,
+  EmailServiceBinding,
+  NotificationDeliveryPayload,
+} from '@authrim/ar-lib-core';
 
 export interface PluginRunnerEnv {
   PLUGIN_RUNNER_DB: D1Database;
   TENANT_RUNTIME_REGISTRY: KVNamespace;
   PLUGIN_LOADER?: WorkerLoader;
   PLUGIN_BUNDLES?: R2Bucket;
+  CONTROL?: Pick<ControlServiceBinding, 'reportR2BucketMetrics'>;
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: string;
   PLUGIN_ENCRYPTION_KEY: string;
   PLUGIN_MUTATION_HMAC_KEY: string;

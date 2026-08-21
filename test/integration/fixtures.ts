@@ -1317,7 +1317,7 @@ export async function createMockEnv(): Promise<Env> {
     PRIVATE_KEY_PEM: keySet.privatePEM,
     PUBLIC_JWK_JSON: JSON.stringify(keySet.publicJWK),
     KEY_MANAGER_SECRET: 'test-key-manager-secret',
-    AVATARS: new MockR2Bucket() as unknown as R2Bucket,
+    PUBLIC_ASSETS: new MockR2Bucket() as unknown as R2Bucket,
     KEY_MANAGER: createDurableObjectNamespace(
       () =>
         new MockKeyManager(

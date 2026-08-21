@@ -4302,7 +4302,7 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 			builtin: true,
 			version: 1,
 			primary: { type: 'd1', bindingRef: 'DB' },
-			archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+			archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/' },
 			sinks: [
 				{
 					type: 'http',
@@ -4330,7 +4330,7 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 			description: 'Dev mock custom audit profile with an HTTP sink reference.',
 			version: 2,
 			primary: null,
-			archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/custom/' },
+			archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/custom/' },
 			sinks: [{ type: 'http', url: 'https://example.com/audit', method: 'POST', format: 'json' }],
 			retention: {
 				eventLogRetentionDays: 90,

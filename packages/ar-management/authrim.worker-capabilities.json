@@ -36,7 +36,6 @@
     { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
     { "name": "DIRECTORY_CONNECTOR_RELAY", "kind": "durable_object_namespace", "required": true },
     { "name": "PUBLIC_ASSETS", "kind": "r2_bucket", "required": false },
-    { "name": "AVATARS", "kind": "r2_bucket", "required": false },
     { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
     { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
     { "name": "IMPORT_ARTIFACTS", "kind": "r2_bucket", "required": false },

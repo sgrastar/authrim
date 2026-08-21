@@ -805,8 +805,8 @@ database_name = \"${DEPLOY_ENV}-authrim-admin-db\"
 database_id = \"placeholder\"
 
 " "[[r2_buckets]]
-binding = \"AVATARS\"
-bucket_name = \"${DEPLOY_ENV}-authrim-avatars\"
+binding = \"PUBLIC_ASSETS\"
+bucket_name = \"${DEPLOY_ENV}-public-assets\"
 
 " "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"

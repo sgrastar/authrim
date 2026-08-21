@@ -123,9 +123,6 @@ export {
   D1AuditAdapter,
   createD1EventLogAdapter,
   createD1PIILogAdapter,
-  // R2 Adapter
-  R2AuditAdapter,
-  createR2AuditAdapter,
   // Hyperdrive Adapter
   HyperdriveAuditAdapter,
   createHyperdriveAuditAdapter,
@@ -140,6 +137,7 @@ export {
   buildCanonicalAuditRecord,
   extractAuditEntryFromCanonicalPayload,
 } from './canonical-format';
+export { SqlLogChunkCatalogStore } from './logging-catalog-store';
 export {
   auditTargetFromBackendConfig,
   buildAuditStorageBackendsFromProfile,
@@ -164,7 +162,6 @@ export type {
   AuditStorageRoutingRule,
   AuditStorageConfig,
   D1AuditAdapterConfig,
-  R2AuditAdapterConfig,
   HyperdriveAuditAdapterConfig,
   MysqlAuditAdapterConfig,
 } from './storage';

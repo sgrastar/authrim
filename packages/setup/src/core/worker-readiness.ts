@@ -1,5 +1,6 @@
 import { fetchWithTimeout, readResponseTextWithLimit } from './http-limits.js';
 import { getWorkerDeployments } from './cloudflare.js';
+import { fetchWithPublicDns, isDnsResolutionError } from './public-dns-fetch.js';
 
 export const DEFAULT_ROUTER_READINESS_MAX_WAIT_MS = 180_000;
 export const DEFAULT_ROUTER_READINESS_INITIAL_DELAY_MS = 2_000;
@@ -140,15 +141,17 @@ async function describeReadinessFailure(response: Response): Promise<string> {
   return compactBody ? `HTTP ${response.status}: ${compactBody}` : `HTTP ${response.status}`;
 }
 
-async function hasExpectedMissingTenantSnapshot(
+async function hasExpectedTenantRegistryBootstrapGap(
   response: Response,
   workerName: string,
-  allowMissingTenantSnapshot: boolean
+  allowTenantRegistryBootstrapGap: boolean
 ): Promise<boolean> {
   if (
-    !allowMissingTenantSnapshot ||
+    !allowTenantRegistryBootstrapGap ||
     response.status !== 409 ||
-    (!workerName.endsWith('-ar-auth') && !workerName.endsWith('-ar-saml'))
+    (!workerName.endsWith('-ar-auth') &&
+      !workerName.endsWith('-ar-policy') &&
+      !workerName.endsWith('-ar-saml'))
   ) {
     return false;
   }
@@ -156,7 +159,7 @@ async function hasExpectedMissingTenantSnapshot(
   const body = await readResponseTextWithLimit(response, 2048).catch(() => '');
   try {
     const payload = JSON.parse(body) as { error?: unknown };
-    return payload.error === 'missing_snapshot';
+    return payload.error === 'missing_snapshot' || payload.error === 'missing_generation';
   } catch {
     return false;
   }
@@ -387,8 +390,10 @@ export async function waitForWorkerHttpReady(options: {
   initialDelayMs?: number;
   maxDelayMs?: number;
   requestTimeoutMs?: number;
-  /** Initial tenant-D1 deploys may not have a Runtime Registry snapshot yet. */
-  allowMissingTenantSnapshot?: boolean;
+  /** Initial tenant-D1 deploys may not have a Runtime Registry snapshot or generation yet. */
+  allowTenantRegistryBootstrapGap?: boolean;
+  /** Retry a newly created HTTPS custom domain through public DNS after a system DNS miss. */
+  allowPublicDnsFallback?: boolean;
   onProgress?: (message: string) => void;
 }): Promise<WorkerHttpReadinessResult> {
   const targets = options.targets.filter((target) => target.workerName && target.url);
@@ -421,25 +426,28 @@ export async function waitForWorkerHttpReady(options: {
     const results = await Promise.all(
       targets.map(async (target) => {
         try {
-          const response = await fetchWithTimeout(
-            target.url,
-            {
-              method: 'GET',
-              headers: {
-                Accept: 'application/json',
-                'Cache-Control': 'no-cache',
-              },
+          const requestInit = {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+              'Cache-Control': 'no-cache',
             },
-            requestTimeoutMs
-          );
+          } satisfies globalThis.RequestInit;
+          let response: Response;
+          try {
+            response = await fetchWithTimeout(target.url, requestInit, requestTimeoutMs);
+          } catch (error) {
+            if (!options.allowPublicDnsFallback || !isDnsResolutionError(error)) throw error;
+            response = await fetchWithPublicDns(target.url, requestInit, requestTimeoutMs);
+          }
           if (response.ok) {
             return null;
           }
           if (
-            await hasExpectedMissingTenantSnapshot(
+            await hasExpectedTenantRegistryBootstrapGap(
               response.clone(),
               target.workerName,
-              options.allowMissingTenantSnapshot === true
+              options.allowTenantRegistryBootstrapGap === true
             )
           ) {
             return null;

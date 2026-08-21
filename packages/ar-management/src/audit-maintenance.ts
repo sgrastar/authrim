@@ -10,11 +10,17 @@ import type {
 import {
   buildCanonicalAuditArchiveRecordFromEntry,
   createAuditPrimaryStorageAdapter,
-  createR2AuditAdapter,
   createLogger,
   ensureDatabaseAdapter,
   resolveTenantRuntimeProfilesFromEnv,
+  SqlLogChunkCatalogStore,
 } from '@authrim/ar-lib-core';
+import {
+  deriveLogChunkEncryptionKey,
+  writeLogChunkToR2,
+  type LogChunkRecord,
+} from '@authrim/ar-lib-logging/chunks';
+import { deriveTenantKeyFromTenantId, type LogType } from '@authrim/ar-lib-logging/contract';
 import { createLoggingTenantKeyResolverFromSource } from './logging-tenant-key';
 
 export interface AuditPrimaryCleanupSummary {
@@ -56,6 +62,115 @@ async function listTenantIds(env: Env): Promise<string[]> {
 function getR2BucketBinding(env: Env, bucketRef: string): R2Bucket | null {
   const binding = (env as unknown as Record<string, unknown>)[bucketRef];
   return binding && typeof binding === 'object' ? (binding as R2Bucket) : null;
+}
+
+async function stableArchiveChunkId(entries: Array<EventLogEntry | PIILogEntry>): Promise<string> {
+  const value = entries
+    .map((entry) => entry.id)
+    .sort()
+    .join('\n');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  const hex = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  return `ret_${hex.slice(0, 40)}`;
+}
+
+function createEncryptedArchiveAdapter(input: {
+  env: Env;
+  bucket: R2Bucket;
+  target: Extract<AuditTarget, { type: 'r2' }>;
+  logType: 'event' | 'pii';
+  profile: AuditProfile;
+  tenantKeyResolver?: (
+    tenantId: string
+  ) => string | null | undefined | Promise<string | null | undefined>;
+}): IAuditStorageAdapter {
+  const writeBatch = async (entries: Array<EventLogEntry | PIILogEntry>) => {
+    const startedAt = Date.now();
+    if (entries.length === 0) {
+      return { success: true, entriesWritten: 0, backend: 'r2-encrypted-chunk', durationMs: 0 };
+    }
+    if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+      throw new Error('audit_archive_encryption_key_unavailable');
+    }
+    const tenantId = entries[0].tenantId;
+    if (entries.some((entry) => entry.tenantId !== tenantId)) {
+      throw new Error('audit_archive_mixed_tenant_batch');
+    }
+    const tenantKey =
+      (await input.tenantKeyResolver?.(tenantId)) ??
+      (await deriveTenantKeyFromTenantId(tenantId, input.env.LOGGING_TENANT_KEY_SALT));
+    const logType: LogType = input.logType === 'event' ? 'audit' : 'pii';
+    const keyVersionText = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
+    const keyVersion =
+      Number.isSafeInteger(keyVersionText) && keyVersionText > 0 ? keyVersionText : 1;
+    const chunkId = await stableArchiveChunkId(entries);
+    const records: LogChunkRecord[] = entries.map((entry) => ({
+      id: entry.id,
+      eventAt: entry.createdAt,
+      payload: buildCanonicalAuditArchiveRecordFromEntry(
+        input.target,
+        input.logType === 'event' ? 'event_log' : 'pii_log',
+        entry,
+        tenantKey,
+        { emittedAt: Date.now(), auditProfileId: input.profile.id }
+      ),
+      indexedFields:
+        input.logType === 'event'
+          ? {
+              eventType: (entry as EventLogEntry).eventType,
+              eventCategory: (entry as EventLogEntry).eventCategory,
+              result: (entry as EventLogEntry).result,
+              severity: (entry as EventLogEntry).severity,
+            }
+          : {
+              changeType: (entry as PIILogEntry).changeType,
+              actorType: (entry as PIILogEntry).actorType,
+            },
+    }));
+    await writeLogChunkToR2({
+      bucket: input.bucket,
+      tenantKey,
+      logType,
+      plane: 'archive',
+      prefix: input.target.prefix ?? 'audit',
+      indexProfile: logType,
+      catalogStore: input.env.DB_ADMIN
+        ? new SqlLogChunkCatalogStore(input.env.DB_ADMIN)
+        : undefined,
+      compression: 'gzip_block',
+      chunkId,
+      objectCatalogId: `obj_${chunkId}`,
+      now: Math.min(...entries.map((entry) => entry.createdAt)),
+      encryption: {
+        keyBytes: await deriveLogChunkEncryptionKey({
+          rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
+          tenantKey,
+          logType,
+          plane: 'archive',
+          keyVersion,
+        }),
+        encryptionScope: `tenant:${tenantKey}:${logType}:archive`,
+        keyVersion,
+      },
+      records,
+    });
+    return {
+      success: true,
+      entriesWritten: entries.length,
+      backend: 'r2-encrypted-chunk',
+      durationMs: Date.now() - startedAt,
+    };
+  };
+
+  return {
+    writeEventLog: (entry: EventLogEntry) => writeBatch([entry]),
+    writeEventLogBatch: (entries: EventLogEntry[]) => writeBatch(entries),
+    writePIILog: (entry: PIILogEntry) => writeBatch([entry]),
+    writePIILogBatch: (entries: PIILogEntry[]) => writeBatch(entries),
+    close: async () => {},
+  } as unknown as IAuditStorageAdapter;
 }
 
 async function copyRetentionCandidatesToArchive(input: {
@@ -185,7 +300,7 @@ export async function cleanupResolvedAuditPrimaries(
         return archiveAdapterCache.get(cacheKey) ?? null;
       }
 
-      if (target.type !== 'r2') {
+      if (target.type !== 'r2' || target.bucketRef !== 'AUDIT_ARCHIVE') {
         archiveAdapterCache.set(cacheKey, null);
         return null;
       }
@@ -196,26 +311,17 @@ export async function cleanupResolvedAuditPrimaries(
         return null;
       }
 
-      const emittedAt = Date.now();
       const tenantKeyResolver = createLoggingTenantKeyResolverFromSource(
         env.DB,
         'audit-maintenance-tenant-key'
       );
-      const adapter = createR2AuditAdapter(bucket, {
-        id: `retention-archive:${target.bucketRef}:${logType}`,
-        pathPrefix: target.prefix ?? 'audit',
-        format: 'json',
-        ...({ tenantKeyResolver } as Record<string, unknown>),
-        eventSerializer: (entry, context) =>
-          buildCanonicalAuditArchiveRecordFromEntry(target, 'event_log', entry, context.tenantKey, {
-            emittedAt,
-            auditProfileId: profile.id,
-          }),
-        piiSerializer: (entry, context) =>
-          buildCanonicalAuditArchiveRecordFromEntry(target, 'pii_log', entry, context.tenantKey, {
-            emittedAt,
-            auditProfileId: profile.id,
-          }),
+      const adapter = createEncryptedArchiveAdapter({
+        env,
+        bucket,
+        target,
+        logType,
+        profile,
+        tenantKeyResolver,
       });
       archiveAdapterCache.set(cacheKey, adapter);
       return adapter;

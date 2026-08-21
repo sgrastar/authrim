@@ -25,26 +25,28 @@ function createFailingBucket() {
 }
 
 function createMemoryBucket() {
-  const objects = new Map<string, string>();
+  const objects = new Map<string, { value: string; customMetadata?: Record<string, string> }>();
   const bucket = {
-    put: vi.fn().mockImplementation(async (key: string, value: unknown) => {
+    put: vi.fn().mockImplementation(async (key: string, value: unknown, options?: R2PutOptions) => {
+      let stored: string;
       if (typeof value === 'string') {
-        objects.set(key, value);
-        return;
+        stored = value;
+      } else if (value instanceof Uint8Array) {
+        stored = new TextDecoder().decode(value);
+      } else {
+        stored = String(value);
       }
-      if (value instanceof Uint8Array) {
-        objects.set(key, new TextDecoder().decode(value));
-        return;
-      }
-      objects.set(key, String(value));
+      objects.set(key, { value: stored, customMetadata: options?.customMetadata });
     }),
     get: vi.fn().mockImplementation(async (key: string) => {
-      const value = objects.get(key);
-      if (value == null) {
+      const object = objects.get(key);
+      if (object == null) {
         return null;
       }
       return {
-        text: vi.fn().mockResolvedValue(value),
+        size: new TextEncoder().encode(object.value).byteLength,
+        customMetadata: object.customMetadata,
+        text: vi.fn().mockResolvedValue(object.value),
       };
     }),
     delete: vi.fn(),
@@ -54,8 +56,12 @@ function createMemoryBucket() {
     resumeMultipartUpload: vi.fn(),
     objects,
   };
-  return bucket as unknown as R2Bucket & { objects: Map<string, string> };
+  return bucket as unknown as R2Bucket & {
+    objects: Map<string, { value: string; customMetadata?: Record<string, string> }>;
+  };
 }
+
+const OBJECT_ENCRYPTION_ROOT_KEY = '44'.repeat(32);
 
 function createAdminDbAdapter(
   options: { dlqItemId?: string; tenantKey?: string; objectRef?: string } = {}
@@ -155,6 +161,7 @@ describe('logging failure smoke', () => {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
         DIAGNOSTIC_LOGS: createFailingBucket(),
+        OBJECT_ENCRYPTION_ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 
@@ -172,6 +179,7 @@ describe('logging failure smoke', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: dlqAdminDb,
         AUDIT_ARCHIVE: replayBucket,
+        OBJECT_ENCRYPTION_ROOT_KEY,
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 
@@ -220,6 +228,7 @@ describe('logging failure smoke', () => {
         DB_ADMIN: replayAdminDb,
         AUDIT_ARCHIVE: replayBucket,
         AUDIT_QUEUE: { send } as never,
+        OBJECT_ENCRYPTION_ROOT_KEY,
       } as unknown as Parameters<typeof processLoggingDeliveryQueue>[1]
     );
 

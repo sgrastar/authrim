@@ -893,6 +893,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('name="automatic-provisioning" value="off"');
     expect(html).toContain('id="btn-create-control-bootstrap-token"');
     expect(html).toContain('data-i18n="web.deploy.bootstrapTokenDescription"');
+    expect(en['web.deploy.bootstrapTokenRequired']).toContain('Control Worker needs');
+    expect(en['web.deploy.bootstrapTokenRequired']).toContain('D1, Workers, KV, and R2');
     expect(html).toMatch(/type="password"\s+id="control-bootstrap-token"\s+autocomplete="off"/u);
     expect(html).toContain("api('/cloudflare/control-token-template'");
     expect(html).toContain("bootstrapTokenInput.value = '';");

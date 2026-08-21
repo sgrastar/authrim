@@ -17,7 +17,7 @@ describe('audit runtime target resolution', () => {
     [{ type: 'postgres', connectionRef: 'PG' }, 'PG'],
     [{ type: 'postgres' }, 'postgres-primary'],
     [{ type: 'mysql' }, 'mysql-primary'],
-    [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS' }, 'r2-archive'],
+    [{ type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS' }, 'r2:DIAGNOSTIC_LOGS'],
     [{ type: 'r2', bucketRef: 'AUDIT' }, 'r2:AUDIT'],
     [{ type: 'logpush', destinationRef: 'logs' }, 'logpush:logs'],
     [{ type: 'firehose', streamRef: 'stream' }, 'firehose:stream'],

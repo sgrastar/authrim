@@ -3,7 +3,6 @@
  *
  * Provides unified storage interface for audit logs with multiple backend support:
  * - D1: Hot data storage for recent logs (fast queries)
- * - R2: Archive storage for long-term retention (cost-efficient)
  * - Hyperdrive: External PostgreSQL/MySQL for enterprise deployments
  */
 
@@ -35,11 +34,6 @@ export type { AuditRoutingContext, ResolvedAuditRoutingTargets } from './routing
 export { D1AuditAdapter, createD1EventLogAdapter, createD1PIILogAdapter } from './d1-adapter';
 
 export type { D1AuditAdapterConfig } from './d1-adapter';
-
-// R2 Adapter
-export { R2AuditAdapter, createR2AuditAdapter } from './r2-adapter';
-
-export type { R2AuditAdapterConfig } from './r2-adapter';
 
 // Hyperdrive Adapter
 export { HyperdriveAuditAdapter, createHyperdriveAuditAdapter } from './hyperdrive-adapter';

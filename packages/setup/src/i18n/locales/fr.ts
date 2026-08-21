@@ -480,7 +480,7 @@ const fr: Translations = {
   // Feature flags
   'features.title': 'Flags de Fonctionnalités',
   'features.queuePrompt': "Activer Cloudflare Queues ? (pour les logs d'audit)",
-  'features.r2Prompt': 'Activer Cloudflare R2 ? (pour les avatars)',
+  'features.r2Prompt': 'Activer le stockage d’objets Cloudflare R2 ?',
   'features.queue': 'File :',
   'features.r2': 'R2 :',
 

@@ -127,7 +127,7 @@ export function createEmptyAuditProfileDraftJson(): string {
 		primary: null,
 		archive: {
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		},
 		sinks: [
@@ -183,7 +183,7 @@ export function ensureAuditArchiveTemplate(json: string): string {
 	return updateAuditProfileJson(json, (raw) => {
 		raw.archive = {
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		};
 	});
@@ -240,7 +240,7 @@ export function updateAuditArchiveField(
 function createR2ArchiveTemplate(): Record<string, unknown> {
 	return {
 		type: 'r2',
-		bucketRef: 'DIAGNOSTIC_LOGS',
+		bucketRef: 'AUDIT_ARCHIVE',
 		prefix: 'audit/'
 	};
 }

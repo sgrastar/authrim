@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { processDLQQueue } from '../queue-consumer';
 import type { AuditQueueMessage } from '../types';
 
+const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
 function createMessage(body: AuditQueueMessage) {
   return {
     id: crypto.randomUUID(),
@@ -92,12 +94,23 @@ describe('audit DLQ consumer', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processDLQQueue>[1]
     );
 
     const objectKey = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(objectKey).toContain('dlq/tenant_key=');
     expect(objectKey).not.toContain('tenant-a');
+    const objectBody = String(
+      (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]
+    );
+    expect(objectBody).not.toContain('auth.login');
+    expect((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        httpMetadata: { contentType: 'application/vnd.authrim.object-envelope+json' },
+        customMetadata: expect.objectContaining({ encryption: 'authrim-object-envelope-v1' }),
+      })
+    );
     expect(adminDb.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO logging_dlq_items'),
       expect.arrayContaining(['audit_queue_message', 1, 'critical'])
@@ -122,5 +135,39 @@ describe('audit DLQ consumer', () => {
     });
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('fails closed instead of writing a plaintext DLQ payload without an encryption key', async () => {
+    const bucket = { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket;
+    const message = createMessage({
+      type: 'event_log',
+      tenantId: 'tenant-a',
+      timestamp: Date.now(),
+      entries: [
+        {
+          id: 'evt-1',
+          tenantId: 'tenant-a',
+          eventType: 'auth.login',
+          eventCategory: 'auth',
+          result: 'failure',
+          severity: 'critical',
+          createdAt: Date.now(),
+        },
+      ],
+    });
+
+    await processDLQQueue(
+      { messages: [message], queue: 'AUDIT_DLQ' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: createAdminDbAdapter(),
+        AUDIT_ARCHIVE: bucket,
+      } as unknown as Parameters<typeof processDLQQueue>[1]
+    );
+
+    expect(bucket.put).not.toHaveBeenCalled();
+    expect(message.ack).not.toHaveBeenCalled();
+    expect(message.retry).toHaveBeenCalledOnce();
   });
 });

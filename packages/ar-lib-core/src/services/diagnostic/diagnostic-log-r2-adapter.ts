@@ -316,6 +316,27 @@ export class DiagnosticLogR2Adapter {
    * Delete logs older than retention period
    */
   async deleteByRetention(beforeTime: number, batchSize: number = 100): Promise<number> {
+    let deleted = 0;
+    let cursor: string | undefined;
+
+    do {
+      const result = await this.deleteByRetentionPage(beforeTime, batchSize, cursor);
+      deleted += result.deleted;
+      cursor = result.cursor;
+    } while (cursor);
+
+    return deleted;
+  }
+
+  /**
+   * Delete at most one R2 list page of expired logs. Scheduled maintenance uses
+   * this bounded form and persists the returned cursor between invocations.
+   */
+  async deleteByRetentionPage(
+    beforeTime: number,
+    batchSize: number = 100,
+    cursor?: string
+  ): Promise<{ deleted: number; scanned: number; cursor?: string }> {
     const prefix = await buildDiagnosticLogPrefix({
       pathPrefix: this.pathPrefix,
       tenantId: this.tenantId,
@@ -323,28 +344,18 @@ export class DiagnosticLogR2Adapter {
       tenantKeySalt: this.tenantKeySalt,
     });
 
-    try {
-      let deleted = 0;
-      let cursor: string | undefined;
-
-      do {
-        const listed = await this.bucket.list({ prefix, limit: batchSize, cursor });
-
-        for (const obj of listed.objects) {
-          const objDate = this.getObjectDayTimestamp(obj.key);
-          if (objDate < beforeTime) {
-            await this.bucket.delete(obj.key);
-            deleted++;
-          }
-        }
-
-        cursor = listed.truncated ? listed.cursor : undefined;
-      } while (cursor);
-
-      return deleted;
-    } catch {
-      return 0;
+    const listed = await this.bucket.list({ prefix, limit: batchSize, cursor });
+    const expiredKeys = listed.objects
+      .filter((object) => this.getObjectDayTimestamp(object.key) < beforeTime)
+      .map((object) => object.key);
+    if (expiredKeys.length > 0) {
+      await this.bucket.delete(expiredKeys);
     }
+    return {
+      deleted: expiredKeys.length,
+      scanned: listed.objects.length,
+      cursor: listed.truncated ? listed.cursor : undefined,
+    };
   }
 
   /**
@@ -417,18 +428,13 @@ export class DiagnosticLogR2Adapter {
   }
 
   private getObjectDayTimestamp(key: string): number {
-    const partitionMatch = key.match(/\/yyyy=(\d{4})\/mm=(\d{2})\/dd=(\d{2})\//);
+    const partitionMatch = key.match(/\/(\d{4})\/(\d{2})\/(\d{2})\/\d{2}\//);
     if (partitionMatch) {
       return Date.UTC(
         Number.parseInt(partitionMatch[1], 10),
         Number.parseInt(partitionMatch[2], 10) - 1,
         Number.parseInt(partitionMatch[3], 10)
       );
-    }
-
-    const legacyMatch = key.match(/\/(\d{4}-\d{2}-\d{2})\//);
-    if (legacyMatch) {
-      return new Date(`${legacyMatch[1]}T00:00:00.000Z`).getTime();
     }
 
     return Number.POSITIVE_INFINITY;

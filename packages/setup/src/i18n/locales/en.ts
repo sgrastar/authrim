@@ -470,7 +470,7 @@ const en: Translations = {
   'features.title': 'Feature Flags',
   'features.queuePrompt':
     'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
-  'features.r2Prompt': 'Enable Cloudflare R2? (for avatars)',
+  'features.r2Prompt': 'Enable Cloudflare R2 object storage?',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',
 
@@ -816,7 +816,7 @@ const en: Translations = {
   'web.deploy.bootstrapPopupBlocked':
     'The browser blocked the new tab. Allow popups and select this button again.',
   'web.deploy.bootstrapTokenRequired':
-    'Create and enter the temporary Cloudflare token before deployment.',
+    'The Control Worker needs a one-time Cloudflare API token to create its scoped D1, Workers, KV, and R2 credentials. Create and enter it before deployment.',
   'web.envDetail.automaticProvisioningTitle': 'Automatic provisioning',
   'web.envDetail.automaticProvisioningChecking': 'Checking...',
   'web.envDetail.automaticProvisioningUnavailable': 'Unavailable',

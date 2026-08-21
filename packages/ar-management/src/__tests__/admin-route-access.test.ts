@@ -108,6 +108,14 @@ function createHarness(permissions: string[], roles: string[] = []) {
 }
 
 describe('declared admin route access', () => {
+  it('restricts global R2 schedules and metrics to platform admin roles', () => {
+    expect(findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')).toMatchObject({
+      roles: ['super_admin', 'system_admin'],
+    });
+    expect(
+      findAdminRouteAccessRule('GET', '/api/admin/jobs/schedules')?.permissions
+    ).toBeUndefined();
+  });
   it('fails closed when an admin route has no declaration', async () => {
     const app = createHarness([ADMIN_PERMISSIONS.ALL]);
     const response = await app.request('/api/admin/undocumented', { method: 'POST' });

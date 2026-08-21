@@ -360,7 +360,7 @@ function createMockEnv(): Env {
       'region_shard_config:default': JSON.stringify(TEST_REGION_CONFIG),
     }) as unknown as KVNamespace,
     DB: createMockDB(),
-    AVATARS: {} as R2Bucket,
+    PUBLIC_ASSETS: {} as R2Bucket,
     KEY_MANAGER: createMockDO() as unknown as Env['KEY_MANAGER'],
     SESSION_STORE: createMockSessionStore() as unknown as Env['SESSION_STORE'],
     AUTH_CODE_STORE: createMockAuthCodeStore() as unknown as Env['AUTH_CODE_STORE'],
@@ -3322,6 +3322,71 @@ describe('Authorization Handler', () => {
       const html = await response.text();
       expect(html).toContain('name="code"');
       expect(html).toContain('name="state" value="par-form-post"');
+    });
+
+    it('preserves validated PAR redirect extensions into the consent challenge', async () => {
+      await configureClientSettings(env, {
+        'client.sso_enabled': true,
+      });
+      seedSession(env);
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_redirect_extensions';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid email',
+        state: 'par-redirect-extension-state',
+        error_uri: 'https://example.com/error',
+        cancel_uri: 'https://example.com/cancel',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+        {
+          method: 'GET',
+          headers: { Cookie: `authrim_session=${encodeURIComponent(TEST_SESSION_ID)}` },
+        },
+        env
+      );
+
+      expect(response.status).toBe(302);
+      const location = response.headers.get('Location');
+      expect(location).toContain('/auth/consent');
+      const challengeId = new URL(location!, 'https://test.example.com').searchParams.get(
+        'challenge_id'
+      );
+      expect(challengeId).toBeTruthy();
+      expect(getChallengeMap(env).get(challengeId!)).toMatchObject({
+        type: 'consent',
+        metadata: expect.objectContaining({
+          state: 'par-redirect-extension-state',
+          error_uri: 'https://example.com/error',
+          cancel_uri: 'https://example.com/cancel',
+        }),
+      });
+    });
+
+    it('revalidates stored PAR redirect extensions before using them', async () => {
+      const requestUri = 'urn:ietf:params:oauth:request_uri:par_unsafe_redirect_extension';
+      env.PAR_REQUEST_STORE = createMockPARRequestStore({
+        client_id: 'test-client',
+        response_type: 'code',
+        redirect_uri: 'https://example.com/callback',
+        scope: 'openid',
+        error_uri: 'https://attacker.example/error',
+      }) as unknown as Env['PAR_REQUEST_STORE'];
+
+      const response = await app.request(
+        `/authorize?client_id=test-client&request_uri=${encodeURIComponent(requestUri)}`,
+        { method: 'GET' },
+        env
+      );
+
+      expect(response.status).toBe(400);
+      const html = await response.text();
+      expect(html).toContain('Invalid Custom Redirect URI');
+      expect(html).toContain('error_uri');
+      expect(getChallengeMap(env).size).toBe(0);
     });
 
     it('redirects an unauthorized response_type error after validating redirect_uri', async () => {

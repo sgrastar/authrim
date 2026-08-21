@@ -41,8 +41,8 @@ function minimalManifest(overrides: Record<string, unknown> = {}) {
 function maximalResourceIds() {
   const r2Names = [
     'MIGRATION_RELEASES',
+    'PLUGIN_BUNDLES',
     'PUBLIC_ASSETS',
-    'AVATARS',
     'DIAGNOSTIC_LOGS',
     'AUDIT_ARCHIVE',
     'IMPORT_ARTIFACTS',
@@ -247,6 +247,51 @@ describe('worker capability manifests', () => {
         required: true,
       })
     );
+  });
+
+  it('declares encrypted sensitive-detail storage for Bridge token refresh evidence', async () => {
+    const [bridge] = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: ['ar-bridge'],
+    });
+
+    expect(bridge?.manifest.bindings).toContainEqual(
+      expect.objectContaining({
+        name: 'SENSITIVE_DETAILS',
+        kind: 'r2_bucket',
+      })
+    );
+    expect(bridge?.manifest.secrets).toContainEqual(
+      expect.objectContaining({
+        name: 'OBJECT_ENCRYPTION_ROOT_KEY',
+        required: true,
+      })
+    );
+  });
+
+  it('requires object encryption keys for every Worker that writes audit archive payloads', async () => {
+    const components = [
+      'ar-auth',
+      'ar-token',
+      'ar-async',
+      'ar-saml',
+      'ar-bridge',
+      'ar-vc',
+      'ar-management',
+    ] as const;
+    const manifests = await loadWorkerCapabilityManifests({
+      baseDir: ROOT_DIR,
+      components: [...components],
+    });
+
+    for (const compiled of manifests) {
+      expect(compiled.manifest.bindings, compiled.component).toContainEqual(
+        expect.objectContaining({ name: 'AUDIT_ARCHIVE', kind: 'r2_bucket' })
+      );
+      expect(compiled.manifest.secrets, compiled.component).toContainEqual(
+        expect.objectContaining({ name: 'OBJECT_ENCRYPTION_ROOT_KEY', required: true })
+      );
+    }
   });
 
   it('declares the signed Runtime Registry contract for every tenant-routed Worker', async () => {

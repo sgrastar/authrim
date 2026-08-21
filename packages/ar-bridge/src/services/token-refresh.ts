@@ -11,12 +11,12 @@ import {
   type DatabaseAdapter,
   type DatabaseSource,
   type AdminAuthContext,
-  createObjectCatalogEntry,
   createLogger,
   ensureAdminDatabaseAdapter,
   ensureDatabaseAdapter,
   getDefaultTenantId,
   listEnvironmentTenantDefaultStores,
+  storeImmediateChunkedSensitiveDetailJson,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity } from '../types';
 import { getProvider } from './provider-store';
@@ -776,7 +776,10 @@ async function writeTokenRefreshDetailArtifact(
   adapter: DatabaseAdapter,
   input: TokenRefreshRunFinishInput
 ): Promise<string | null> {
-  if (!env.SENSITIVE_DETAILS) {
+  if (!env.SENSITIVE_DETAILS || !env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    log.warn(
+      'Token refresh detail artifact unavailable: encrypted object storage is not configured'
+    );
     return null;
   }
 
@@ -793,34 +796,18 @@ async function writeTokenRefreshDetailArtifact(
       errorMessage: input.errorMessage ?? null,
       generatedAt: Date.now(),
     };
-    const json = JSON.stringify(payload);
-    const objectKey = `external-token-refresh/${input.runId}.json`;
-    const bytes = new TextEncoder().encode(json);
-    const hash = await crypto.subtle.digest('SHA-256', bytes);
-    const checksumSha256 = Array.from(new Uint8Array(hash))
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-
-    await env.SENSITIVE_DETAILS.put(objectKey, json, {
-      httpMetadata: { contentType: 'application/json' },
-    });
-
-    const catalog = await createObjectCatalogEntry(adapter, {
+    const stored = await storeImmediateChunkedSensitiveDetailJson({
+      adapter,
+      bucket: env.SENSITIVE_DETAILS,
+      rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
       tenantId: input.requestedTenantId ?? getDefaultTenantId(env),
       objectClass: 'operational_log_detail',
-      objects: [
-        {
-          representation: 'canonical_json',
-          objectKind: 'single',
-          bucketBinding: 'SENSITIVE_DETAILS',
-          objectKey,
-          keyVersion: 1,
-          checksumSha256,
-          totalBytes: bytes.byteLength,
-        },
-      ],
+      payload,
+      contentType: 'application/json',
+      surface: 'external_token_refresh',
+      logType: 'operational',
     });
-    return catalog.catalogId;
+    return stored.catalogId;
   } catch (error) {
     log.warn('Token refresh detail artifact unavailable', {
       errorName: error instanceof Error ? error.name : 'UnknownError',

@@ -321,6 +321,7 @@ describe('SECRET_UPLOAD_PLAN', () => {
     expect(getSecretNamesForWorker('ar-saml')).not.toContain('ADMIN_API_SECRET');
     expect(getSecretNamesForWorker('ar-bridge')).toEqual([
       'RP_TOKEN_ENCRYPTION_KEY',
+      'OBJECT_ENCRYPTION_ROOT_KEY',
       'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
       'LOOKUP_HMAC_KEY_SLOT_A',
       'LOOKUP_HMAC_KEY_SLOT_B',

@@ -34,6 +34,7 @@ import {
   type ControlWorkerInventoryDriftFinding,
   type ControlWorkerInventoryDriftNotification,
   type ControlWorkerInventoryDriftReviewRequest,
+  type ControlR2MetricOwner,
 } from '@authrim/ar-lib-core/control-plane';
 import { D1ControlRepository } from './repository';
 import { ControlService } from './service';
@@ -84,6 +85,11 @@ import {
   releaseInitialBootstrapAcceleration,
 } from './bootstrap-accelerator';
 import { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
+import {
+  getR2BucketMetricInventory,
+  reportR2BucketMetrics,
+  scanControlR2BucketMetrics,
+} from './r2-bucket-metrics';
 
 function service(env: ControlEnv): ControlService {
   return new ControlService({
@@ -107,16 +113,33 @@ async function rpcResult<T>(operation: () => Promise<T>): Promise<T> {
   }
 }
 
-function authorizedCaller(props: ControlRpcProps): ControlRpcProps {
+function validRpcProps(props: ControlRpcProps): boolean {
+  return (
+    props?.audience === 'authrim-control-v1' &&
+    typeof props.environmentId === 'string' &&
+    /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(props.environmentId)
+  );
+}
+
+function authorizedCaller(props: ControlRpcProps): ControlRpcProps & { caller: 'ar-management' } {
+  if (props?.caller !== 'ar-management' || !validRpcProps(props)) {
+    throw new Error('control_rpc_caller_unauthorized');
+  }
+  return props as ControlRpcProps & { caller: 'ar-management' };
+}
+
+function authorizedMetricReporter(
+  props: ControlRpcProps
+): ControlRpcProps & { caller: Exclude<ControlR2MetricOwner, 'ar-control'> } {
   if (
-    props?.caller !== 'ar-management' ||
-    props.audience !== 'authrim-control-v1' ||
-    typeof props.environmentId !== 'string' ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(props.environmentId)
+    (props?.caller !== 'ar-management' && props?.caller !== 'ar-plugin-runner') ||
+    !validRpcProps(props)
   ) {
     throw new Error('control_rpc_caller_unauthorized');
   }
-  return props;
+  return props as ControlRpcProps & {
+    caller: Exclude<ControlR2MetricOwner, 'ar-control'>;
+  };
 }
 
 function findingIds(input: unknown): string[] {
@@ -1063,6 +1086,29 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       );
       assertControlPlaneRecordIsSecretFree(preview);
       return preview;
+    });
+  }
+
+  reportR2BucketMetrics(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedMetricReporter(this.ctx.props);
+      const result = await reportR2BucketMetrics(
+        this.env.CONTROL_DB,
+        caller.environmentId,
+        caller.caller,
+        input
+      );
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
+  getR2BucketMetrics() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await getR2BucketMetricInventory(this.env.CONTROL_DB, caller.environmentId);
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
     });
   }
 
@@ -2317,6 +2363,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       now: () => Math.floor(Date.now() / 1000),
     });
     const tasks: Promise<unknown>[] = [
+      scheduledTask('r2_bucket_metrics_scan', scanControlR2BucketMetrics(this.env)),
       scheduledTask(
         'signing_key_candidate_verification',
         new SigningKeyCandidateVerifier(

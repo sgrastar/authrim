@@ -83,6 +83,7 @@ interface StoredR2Object {
   body: Uint8Array;
   contentType?: string;
   customMetadata?: Record<string, string>;
+  etag?: string;
 }
 
 function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
@@ -96,10 +97,14 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
           key: string,
           value: ArrayBuffer | ArrayBufferView | string,
           options?: {
+            onlyIf?: { etagDoesNotMatch?: string };
             httpMetadata?: { contentType?: string };
             customMetadata?: Record<string, string>;
           }
         ) => {
+          if (options?.onlyIf?.etagDoesNotMatch === '*' && store.has(key)) {
+            return null;
+          }
           const body =
             typeof value === 'string'
               ? new TextEncoder().encode(value)
@@ -110,11 +115,14 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
                   : new Uint8Array(
                       value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
                     );
+          const etag = `etag-${body.byteLength}`;
           store.set(key, {
             body,
             contentType: options?.httpMetadata?.contentType,
             customMetadata: options?.customMetadata,
+            etag,
           });
+          return { etag };
         }
       ),
       get: vi.fn(async (key: string) => {
@@ -123,6 +131,7 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
           return null;
         }
         return {
+          etag: object.etag ?? `etag-${object.body.byteLength}`,
           body: new Blob([object.body]).stream(),
           arrayBuffer: async () =>
             object.body.buffer.slice(
@@ -508,6 +517,36 @@ describe('admin-jobs handlers', () => {
         content_type: 'text/csv',
       })
     );
+    expect(bucket.put).toHaveBeenCalledWith(
+      buildUserImportUploadKey('tenant-a', 'upload-123', 'users.csv'),
+      expect.any(ArrayBuffer),
+      expect.objectContaining({ onlyIf: { etagDoesNotMatch: '*' } })
+    );
+  });
+
+  it('rejects replacing an immutable import artifact upload', async () => {
+    const key = buildUserImportUploadKey('tenant-a', 'upload-123', 'users.csv');
+    const { bucket, store } = createMockR2Bucket({
+      [key]: { body: new TextEncoder().encode('email\noriginal@example.com\n') },
+    });
+    const { app, env } = createTestApp({ IMPORT_ARTIFACTS: bucket });
+
+    const res = await app.request(
+      '/api/admin/jobs/users/import/upload/upload-123?filename=users.csv',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/csv',
+          'X-Tenant-Id': 'tenant-a',
+        },
+        body: 'email\nalice@example.com\n',
+      },
+      env
+    );
+
+    expect(res.status).toBe(409);
+    expect(bucket.put).toHaveBeenCalledOnce();
+    expect(new TextDecoder().decode(store.get(key)?.body)).toBe('email\noriginal@example.com\n');
   });
 
   it('creates a user import job only when the artifact belongs to the tenant', async () => {

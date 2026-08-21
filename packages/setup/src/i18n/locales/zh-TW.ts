@@ -458,7 +458,7 @@ const zhTW: Translations = {
   // Feature flags
   'features.title': '功能旗標',
   'features.queuePrompt': '啟用 Cloudflare Queues？（用於稽核日誌）',
-  'features.r2Prompt': '啟用 Cloudflare R2？（用於頭像）',
+  'features.r2Prompt': '啟用 Cloudflare R2 物件儲存空間？',
   'features.queue': '佇列：',
   'features.r2': 'R2：',
 

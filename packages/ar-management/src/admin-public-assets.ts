@@ -21,7 +21,7 @@ const PUBLIC_ASSET_CONTENT_TYPES: Record<string, string> = {
 };
 
 function getPublicAssetsBucket(env: Env): R2Bucket | null {
-  return env.PUBLIC_ASSETS ?? env.AVATARS ?? null;
+  return env.PUBLIC_ASSETS ?? null;
 }
 
 function sanitizeAssetKind(value: string | undefined): string | null {

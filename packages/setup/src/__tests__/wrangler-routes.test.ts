@@ -64,6 +64,93 @@ describe('Worker placement generation', () => {
   });
 });
 
+describe('R2 binding generation', () => {
+  it('connects every provisioned standard bucket to its least-privilege Worker consumers', () => {
+    const config = createDefaultConfig('full-r2');
+    config.urls = {
+      api: { custom: null, auto: 'https://full-r2-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://full-r2-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://full-r2-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const resources = {
+      d1: {},
+      kv: {},
+      r2: {
+        MIGRATION_RELEASES: { name: 'full-r2-migration-releases' },
+        PLUGIN_BUNDLES: { name: 'full-r2-plugin-bundles' },
+        PUBLIC_ASSETS: { name: 'full-r2-public-assets' },
+        DIAGNOSTIC_LOGS: { name: 'full-r2-diagnostic-logs' },
+        AUDIT_ARCHIVE: { name: 'full-r2-audit-archive' },
+        IMPORT_ARTIFACTS: { name: 'full-r2-import-artifacts' },
+        EXPORT_ARTIFACTS: { name: 'full-r2-export-artifacts' },
+        SENSITIVE_DETAILS: { name: 'full-r2-sensitive-details' },
+      },
+    };
+
+    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+      { binding: 'MIGRATION_RELEASES', bucket_name: 'full-r2-migration-releases' },
+    ]);
+    expect(generateWranglerConfig('ar-plugin-runner', config, resources).r2_buckets).toEqual([
+      { binding: 'PLUGIN_BUNDLES', bucket_name: 'full-r2-plugin-bundles' },
+    ]);
+    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toEqual([
+      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
+    ]);
+    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toEqual([
+      { binding: 'PUBLIC_ASSETS', bucket_name: 'full-r2-public-assets' },
+      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
+      { binding: 'IMPORT_ARTIFACTS', bucket_name: 'full-r2-import-artifacts' },
+      { binding: 'EXPORT_ARTIFACTS', bucket_name: 'full-r2-export-artifacts' },
+      { binding: 'SENSITIVE_DETAILS', bucket_name: 'full-r2-sensitive-details' },
+    ]);
+  });
+
+  it('does not ask Wrangler to provision unrecorded optional buckets during deploy', () => {
+    const config = createDefaultConfig('baseline-r2');
+    config.features.r2 = { enabled: false };
+    config.urls = {
+      api: { custom: null, auto: 'https://baseline-r2-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://baseline-r2-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://baseline-r2-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const resources = {
+      d1: {},
+      kv: {},
+      r2: {
+        MIGRATION_RELEASES: { name: 'baseline-r2-migration-releases' },
+      },
+    };
+
+    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+      {
+        binding: 'MIGRATION_RELEASES',
+        bucket_name: 'baseline-r2-migration-releases',
+      },
+    ]);
+    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toBeUndefined();
+    expect(generateWranglerConfig('ar-bridge', config, resources).r2_buckets).toBeUndefined();
+    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toBeUndefined();
+  });
+});
+
 describe('generateRoutes', () => {
   it('exposes protected customer profile routes on ar-userinfo', () => {
     const routes = generateRoutes('ar-userinfo', 'auth.example.com', 'example.com');
@@ -1996,7 +2083,6 @@ id = "kv-id"
       kv: {},
       r2: {
         PUBLIC_ASSETS: { name: 'imports-public-assets' },
-        AVATARS: { name: 'imports-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
         IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },
         EXPORT_ARTIFACTS: { name: 'imports-export-artifacts' },
@@ -2046,13 +2132,16 @@ id = "kv-id"
           binding: 'DIAGNOSTIC_LOGS',
           bucket_name: 'imports-diagnostic-logs',
         },
+        {
+          binding: 'SENSITIVE_DETAILS',
+          bucket_name: 'imports-sensitive-details',
+        },
       ])
     );
     expect(bridgeConfig.r2_buckets).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ binding: 'IMPORT_ARTIFACTS' }),
         expect.objectContaining({ binding: 'EXPORT_ARTIFACTS' }),
-        expect.objectContaining({ binding: 'SENSITIVE_DETAILS' }),
       ])
     );
   });

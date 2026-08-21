@@ -8,7 +8,9 @@
 		type JobStatus,
 		type JobType,
 		type JobTypeDefinition,
-		type ReportType
+		type ReportType,
+		type ScheduledMaintenanceTask,
+		type R2BucketOperationalMetric
 	} from '$lib/api/admin-jobs';
 	import {
 		adminStorageDestinationsAPI,
@@ -37,6 +39,9 @@
 	let jobs = $state<Job[]>([]);
 	let jobTypes = $state<JobTypeDefinition[]>([]);
 	let jobTypeError = $state('');
+	let scheduleError = $state('');
+	let schedules = $state<ScheduledMaintenanceTask[]>([]);
+	let storageMetrics = $state<R2BucketOperationalMetric[]>([]);
 	let selectedJobType = $state<JobTypeDefinition | null>(null);
 
 	// Filters
@@ -137,10 +142,23 @@
 		}
 	}
 
+	async function loadSchedules() {
+		try {
+			const response = await adminJobsAPI.listSchedules();
+			schedules = response.schedules;
+			storageMetrics = response.storage_metrics;
+			scheduleError = '';
+		} catch (e) {
+			scheduleError = e instanceof Error ? e.message : $LL.admin_jobs_schedules_load_failed();
+			schedules = [];
+			storageMetrics = [];
+		}
+	}
+
 	async function loadData() {
 		loading = true;
 		error = '';
-		await Promise.all([loadJobs(), loadJobTypes(), loadStorageDestinations()]);
+		await Promise.all([loadJobs(), loadJobTypes(), loadSchedules(), loadStorageDestinations()]);
 		loading = false;
 	}
 
@@ -416,6 +434,27 @@
 		}
 	}
 
+	function getScheduleStatusBadgeClass(status: ScheduledMaintenanceTask['status']): string {
+		if (status === 'succeeded') return 'badge badge-success';
+		if (status === 'running') return 'badge badge-info';
+		if (status === 'failed') return 'badge badge-danger';
+		if (status === 'never_run') return 'badge badge-warning';
+		return 'badge badge-neutral';
+	}
+
+	function formatBytes(bytes: number): string {
+		if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+		const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+		const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+		return `${(bytes / 1024 ** unit).toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+	}
+
+	function encryptionSummary(metric: R2BucketOperationalMetric): string {
+		return Object.entries(metric.encryption_methods)
+			.map(([method, count]) => `${method}: ${count}`)
+			.join(', ');
+	}
+
 	function getDeliveryLabel(value: 'auto' | 'inline' | 'artifact'): string {
 		const labels = {
 			auto: $LL.admin_jobs_delivery_auto(),
@@ -573,6 +612,9 @@
 	{#if jobTypeError}
 		<div class="alert alert-warning">{jobTypeError}</div>
 	{/if}
+	{#if scheduleError}
+		<div class="alert alert-warning">{scheduleError}</div>
+	{/if}
 
 	<div class="job-summary-grid">
 		<div class="summary-card">
@@ -592,6 +634,127 @@
 			<strong>{jobSummary.failed}</strong>
 		</div>
 	</div>
+
+	<AdminSection
+		title={$LL.admin_jobs_scheduled_maintenance_title()}
+		description={$LL.admin_jobs_scheduled_maintenance_description()}
+	>
+		{#if schedules.length === 0}
+			<p class="empty-state-description">{$LL.admin_jobs_no_scheduled_maintenance()}</p>
+		{:else}
+			<AdminDataTable width="xwide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_jobs_task()}</th>
+						<th>{$LL.admin_jobs_enabled()}</th>
+						<th>{$LL.admin_jobs_status()}</th>
+						<th>{$LL.admin_jobs_last_run()}</th>
+						<th>{$LL.admin_jobs_next_run()}</th>
+						<th>{$LL.admin_jobs_schedule()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each schedules as schedule (schedule.id)}
+						<tr>
+							<td>
+								<div class="cell-primary">{schedule.name}</div>
+								<div class="cell-secondary mono">{schedule.id}</div>
+								{#if schedule.last_error_code}
+									<div class="cell-secondary text-danger mono">{schedule.last_error_code}</div>
+								{:else if schedule.disabled_reason}
+									<div class="cell-secondary">{schedule.disabled_reason}</div>
+								{/if}
+							</td>
+							<td>
+								<span class={schedule.enabled ? 'badge badge-success' : 'badge badge-neutral'}>
+									{schedule.enabled ? $LL.admin_jobs_enabled_yes() : $LL.admin_jobs_enabled_no()}
+								</span>
+							</td>
+							<td
+								><span class={getScheduleStatusBadgeClass(schedule.status)}>{schedule.status}</span
+								></td
+							>
+							<td class="muted nowrap">
+								{schedule.last_completed_at
+									? formatDate(schedule.last_completed_at)
+									: $LL.admin_jobs_never()}
+							</td>
+							<td class="muted nowrap">
+								{schedule.next_run_at
+									? formatDate(schedule.next_run_at)
+									: $LL.admin_jobs_not_scheduled()}
+							</td>
+							<td class="mono">{schedule.cron}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
+		{/if}
+	</AdminSection>
+
+	<AdminSection
+		title={$LL.admin_jobs_r2_metrics_title()}
+		description={$LL.admin_jobs_r2_metrics_description()}
+	>
+		{#if storageMetrics.length === 0}
+			<p class="empty-state-description">{$LL.admin_jobs_r2_metrics_pending()}</p>
+		{:else}
+			<AdminDataTable width="xwide">
+				<thead>
+					<tr>
+						<th>{$LL.admin_jobs_bucket()}</th>
+						<th>{$LL.admin_jobs_objects()}</th>
+						<th>{$LL.admin_jobs_storage()}</th>
+						<th>{$LL.admin_jobs_oldest_object()}</th>
+						<th>{$LL.admin_jobs_encryption()}</th>
+						<th>{$LL.admin_jobs_retention_overdue()}</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each storageMetrics as metric (metric.binding)}
+						<tr>
+							<td>
+								<div class="cell-primary mono">{metric.binding}</div>
+								<div class="cell-secondary">
+									{metric.owner_worker ? `${metric.owner_worker} · ` : ''}{metric.retention_policy}
+								</div>
+								{#if metric.availability === 'pending'}
+									<span class="badge badge-warning" title={metric.unavailable_reason ?? ''}
+										>{$LL.admin_jobs_status_pending()}</span
+									>
+								{:else if metric.availability === 'stale'}
+									<span class="badge badge-warning" title={metric.unavailable_reason ?? ''}
+										>{$LL.admin_admin_logging_stale()}</span
+									>
+								{:else if !metric.scan_complete}
+									<span class="badge badge-warning">{$LL.admin_jobs_scan_in_progress()}</span>
+								{/if}
+							</td>
+							<td>{metric.availability === 'pending' ? '—' : metric.object_count}</td>
+							<td>{metric.availability === 'pending' ? '—' : formatBytes(metric.total_bytes)}</td>
+							<td class="muted nowrap">
+								{metric.oldest_object_at
+									? formatDate(metric.oldest_object_at)
+									: $LL.admin_jobs_none()}
+							</td>
+							<td class="metric-detail">
+								{metric.availability === 'pending'
+									? '—'
+									: encryptionSummary(metric) || $LL.admin_jobs_unknown()}
+							</td>
+							<td>
+								{metric.availability === 'pending'
+									? '—'
+									: metric.retention_overdue_objects === null
+										? $LL.admin_jobs_policy_managed()
+										: metric.retention_overdue_objects}
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</AdminDataTable>
+		{/if}
+	</AdminSection>
 
 	{#if jobTypes.length > 0}
 		<AdminSection

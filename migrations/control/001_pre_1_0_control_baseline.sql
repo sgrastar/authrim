@@ -3347,6 +3347,37 @@ CREATE UNIQUE INDEX idx_control_lookup_bucket_migration_active
   ON control_lookup_bucket_migrations(environment_id, virtual_bucket, active_operation_key);
 CREATE INDEX idx_control_lookup_bucket_migration_runnable
   ON control_lookup_bucket_migrations(state, updated_at, environment_id, virtual_bucket);
+CREATE TABLE control_r2_bucket_metric_reports (
+  environment_id TEXT NOT NULL,
+  binding TEXT NOT NULL CHECK (binding IN (
+    'MIGRATION_RELEASES', 'PLUGIN_BUNDLES', 'PUBLIC_ASSETS', 'DIAGNOSTIC_LOGS',
+    'AUDIT_ARCHIVE', 'IMPORT_ARTIFACTS', 'EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'
+  )),
+  owner_worker TEXT NOT NULL CHECK (owner_worker IN (
+    'ar-control', 'ar-management', 'ar-plugin-runner'
+  )),
+  object_count INTEGER NOT NULL CHECK (object_count >= 0),
+  total_bytes INTEGER NOT NULL CHECK (total_bytes >= 0),
+  oldest_object_at INTEGER,
+  encryption_methods_json TEXT NOT NULL,
+  retention_overdue_objects INTEGER,
+  retention_policy TEXT NOT NULL,
+  scan_complete INTEGER NOT NULL CHECK (scan_complete IN (0, 1)),
+  measured_at INTEGER NOT NULL,
+  reported_at INTEGER NOT NULL,
+  PRIMARY KEY (environment_id, binding),
+  FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE
+);
+
+CREATE TABLE control_r2_metric_scan_state (
+  environment_id TEXT NOT NULL,
+  binding TEXT NOT NULL CHECK (binding = 'MIGRATION_RELEASES'),
+  accumulator_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (environment_id, binding),
+  FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE
+);
+
 CREATE INDEX idx_control_lookup_hmac_key_state_publication_due
   ON control_lookup_hmac_key_state_publications(status, expires_at, updated_at);
 CREATE INDEX idx_control_lookup_hmac_rotation_source_due

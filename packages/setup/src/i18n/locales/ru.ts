@@ -470,7 +470,7 @@ const ru: Translations = {
   // Feature flags
   'features.title': 'Флаги функций',
   'features.queuePrompt': 'Включить Cloudflare Queues? (для журналов аудита)',
-  'features.r2Prompt': 'Включить Cloudflare R2? (для аватаров)',
+  'features.r2Prompt': 'Включить объектное хранилище Cloudflare R2?',
   'features.queue': 'Очередь:',
   'features.r2': 'R2:',
 

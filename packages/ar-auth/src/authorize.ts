@@ -1514,6 +1514,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         login_hint?: string;
         acr_values?: string;
         authorization_details?: string;
+        error_uri?: string;
+        cancel_uri?: string;
       } | null = null;
 
       if (!c.env.PAR_REQUEST_STORE) {
@@ -1586,6 +1588,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           id_token_hint: stored.id_token_hint,
           login_hint: stored.login_hint,
           acr_values: stored.acr_values,
+          error_uri: stored.error_uri,
+          cancel_uri: stored.cancel_uri,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1658,6 +1662,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         login_hint?: string;
         acr_values?: string;
         authorization_details?: string; // RFC 9396: Rich Authorization Requests
+        error_uri?: string;
+        cancel_uri?: string;
       } = parsedData;
 
       try {
@@ -1693,6 +1699,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         id_token_hint = parData.id_token_hint;
         login_hint = parData.login_hint;
         acr_values = parData.acr_values;
+        error_uri = parData.error_uri;
+        cancel_uri = parData.cancel_uri;
         authorizationRequestSource = 'par';
         par_request_uri = request_uri;
       } catch {

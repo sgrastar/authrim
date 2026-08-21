@@ -53,6 +53,10 @@ export interface PARRequestData {
   dpop_jkt?: string;
   // RFC 9396: Rich Authorization Requests
   authorization_details?: string;
+  // Authrim extension redirect targets. These are revalidated by the authorization endpoint
+  // against the registered redirect URI and allowed redirect origins before use.
+  error_uri?: string;
+  cancel_uri?: string;
   /** RFC 8707 target resource, when the journey requires an exact resource binding. */
   resource?: string;
   createdAt?: number;

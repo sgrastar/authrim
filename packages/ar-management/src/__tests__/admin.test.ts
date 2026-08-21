@@ -1437,7 +1437,7 @@ describe('Admin API Handlers', () => {
       });
     });
 
-    it('returns archive-backed audit log entries when archive-only profile is active', async () => {
+    it('rejects the legacy DIAGNOSTIC_LOGS archive list configuration', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -1466,24 +1466,10 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        entries: Array<Record<string, unknown>>;
-        pagination: { total: number };
-      };
-      expect(body.pagination.total).toBe(1);
-      expect(body.entries).toEqual([
-        expect.objectContaining({
-          id: 'evt-1',
-          action: 'user.login',
-          resourceType: 'user',
-          resourceId: 'user-1',
-          ipAddress: '127.0.0.1',
-        }),
-      ]);
+      expect(response.status).toBe(501);
     });
 
-    it('returns archive-backed audit log details when archive-only profile is active', async () => {
+    it('rejects the legacy DIAGNOSTIC_LOGS archive detail configuration', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -1513,18 +1499,7 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogGetHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as Record<string, unknown>;
-      expect(body).toEqual(
-        expect.objectContaining({
-          id: 'evt-1',
-          action: 'user.login',
-          resourceType: 'user',
-          resourceId: 'user-1',
-          requestId: 'req-1',
-          userAgent: 'Vitest',
-        })
-      );
+      expect(response.status).toBe(501);
     });
 
     it('returns an empty audit log list when the hot audit table is not initialized', async () => {

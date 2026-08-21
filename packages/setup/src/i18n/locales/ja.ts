@@ -468,7 +468,7 @@ const ja: Translations = {
   'features.title': '機能フラグ',
   'features.queuePrompt':
     'Cloudflare Queuesを有効にしますか？デフォルトは無効です。Freeプランの目安は約3,000配信メッセージ/日です。Authrimでは非同期audit fan-out、logging delivery retry、export build job、key rewrap retry jobなどで1 queued messageを使います。',
-  'features.r2Prompt': 'Cloudflare R2を有効にしますか？（アバター用）',
+  'features.r2Prompt': 'Cloudflare R2オブジェクトストレージを有効にしますか？',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',
 
@@ -811,7 +811,7 @@ const ja: Translations = {
   'web.deploy.bootstrapPopupBlocked':
     '新しいタブがブラウザにブロックされました。ポップアップを許可して、もう一度このボタンを選択してください。',
   'web.deploy.bootstrapTokenRequired':
-    'デプロイ前に一時Cloudflare tokenを作成して入力してください。',
+    'Control Workerを動かすための権限限定D1・Workers・KV・R2認証情報を作成する、一回限りのCloudflare API tokenが必要です。デプロイ前に作成して入力してください。',
   'web.envDetail.automaticProvisioningTitle': '自動プロビジョニング',
   'web.envDetail.automaticProvisioningChecking': '確認中…',
   'web.envDetail.automaticProvisioningUnavailable': '利用できません',

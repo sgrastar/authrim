@@ -122,7 +122,7 @@ export interface ControlEnv {
 }
 
 export interface ControlRpcProps {
-  caller: 'ar-management';
+  caller: 'ar-management' | 'ar-plugin-runner';
   environmentId: string;
   audience: 'authrim-control-v1';
 }

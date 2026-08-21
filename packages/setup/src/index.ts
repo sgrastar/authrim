@@ -37,6 +37,7 @@ import {
   resolveLoginUiExecutionOrigin,
 } from './core/url-config.js';
 import { formatFatalError } from './core/fatal-error.js';
+import { detectSystemLocale, initI18n } from './i18n/index.js';
 
 // Read version from package.json
 const require = createRequire(import.meta.url);
@@ -861,4 +862,9 @@ function normalizePnpmScriptArgv(argv: string[]): string[] {
   return [...argv.slice(0, 3), ...argv.slice(4)];
 }
 
+// Every subcommand may render translated prompts. Init performs its own
+// interactive locale selection, but deploy/update/status are commonly invoked
+// in a fresh process and previously reached `t()` before any translations were
+// loaded, causing raw keys such as `deploy.confirmStart` to be displayed.
+await initI18n(process.env.AUTHRIM_LANG ?? detectSystemLocale());
 program.parse(normalizePnpmScriptArgv(process.argv));

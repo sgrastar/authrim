@@ -21,6 +21,11 @@
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt",
+      "required": true
+    },
     { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
     {
       "name": "VC_TRANSACTION_CODE_HMAC_SECRET",

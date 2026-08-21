@@ -1098,6 +1098,69 @@ describe('PAR Handler', () => {
     });
   });
 
+  it('stores validated Authrim redirect extensions without retaining unknown parameters', async () => {
+    mockGetClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      client_secret_hash: 'hash_secret',
+      redirect_uris: ['https://client.example.com/callback'],
+      token_endpoint_auth_method: 'client_secret_post',
+    });
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        client_secret: 'client-secret-must-not-be-stored',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        error_uri: 'https://client.example.com/error',
+        cancel_uri: 'https://client.example.com/cancel',
+        org_id: 'unapproved-org-extension',
+        acting_as: 'unapproved-acting-as-extension',
+        custom_extension: 'must-not-be-stored',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(201);
+    const storedData = mockStoreRequestRpc.mock.calls[0]?.[0]?.data;
+    expect(storedData).toMatchObject({
+      error_uri: 'https://client.example.com/error',
+      cancel_uri: 'https://client.example.com/cancel',
+    });
+    expect(storedData).not.toHaveProperty('org_id');
+    expect(storedData).not.toHaveProperty('acting_as');
+    expect(storedData).not.toHaveProperty('custom_extension');
+    expect(storedData).not.toHaveProperty('client_secret');
+  });
+
+  it('rejects an unsafe PAR redirect extension before storage', async () => {
+    const c = createMockContext({
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: {
+        client_id: 'client-123',
+        response_type: 'code',
+        redirect_uri: 'https://client.example.com/callback',
+        scope: 'openid profile',
+        error_uri: 'https://attacker.example/error',
+      },
+    });
+
+    const response = await parHandler(c);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_request',
+      error_description: expect.stringContaining('error_uri'),
+    });
+    expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
   it('rejects unregistered redirect_uri before PAR storage', async () => {
     mockIsRedirectUriRegistered.mockReturnValue(false);
     const c = createMockContext({
@@ -1721,6 +1784,9 @@ describe('PAR Handler', () => {
       login_hint: 'person@example.com',
       acr_values: 'urn:authrim:aal:2',
       claims: { id_token: { email: null } },
+      error_uri: 'https://client.example.com/error',
+      cancel_uri: 'https://client.example.com/cancel',
+      custom_extension: 'must-not-be-stored',
     });
     const c = createMockContext({
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -1763,8 +1829,12 @@ describe('PAR Handler', () => {
         login_hint: 'person@example.com',
         acr_values: 'urn:authrim:aal:2',
         claims: JSON.stringify({ id_token: { email: null } }),
+        error_uri: 'https://client.example.com/error',
+        cancel_uri: 'https://client.example.com/cancel',
       }),
     });
+    const storedData = mockStoreRequestRpc.mock.calls[0]?.[0]?.data;
+    expect(storedData).not.toHaveProperty('custom_extension');
   });
 
   it.each([

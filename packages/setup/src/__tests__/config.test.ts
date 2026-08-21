@@ -6,6 +6,10 @@ import { describe, it, expect } from 'vitest';
 import { AuthrimConfigSchema, createDefaultConfig, parseConfig } from '../core/config.js';
 
 describe('AuthrimConfigSchema', () => {
+  it('enables the complete standard R2 topology by default', () => {
+    expect(createDefaultConfig('test').features.r2).toEqual({ enabled: true });
+  });
+
   it('keeps paid Dynamic Worker plugin execution disabled by default', () => {
     expect(createDefaultConfig('test').features.pluginDynamicWorkers).toEqual({ enabled: false });
   });

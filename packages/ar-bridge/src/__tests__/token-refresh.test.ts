@@ -5,7 +5,7 @@ const {
   mockAdminAdapter,
   mockEnsureDatabaseAdapter,
   mockEnsureAdminDatabaseAdapter,
-  mockCreateObjectCatalogEntry,
+  mockStoreImmediateChunkedSensitiveDetailJson,
   mockListEnvironmentTenantDefaultStores,
   mockListExternalIdpPiiSourceShards,
   mockGetDefaultTenantId,
@@ -27,7 +27,7 @@ const {
     },
     mockEnsureDatabaseAdapter: vi.fn(),
     mockEnsureAdminDatabaseAdapter: vi.fn(),
-    mockCreateObjectCatalogEntry: vi.fn(),
+    mockStoreImmediateChunkedSensitiveDetailJson: vi.fn(),
     mockListEnvironmentTenantDefaultStores: vi.fn(),
     mockListExternalIdpPiiSourceShards: vi.fn(),
     mockGetDefaultTenantId: vi.fn(),
@@ -37,7 +37,6 @@ const {
 });
 
 vi.mock('@authrim/ar-lib-core', () => ({
-  createObjectCatalogEntry: mockCreateObjectCatalogEntry,
   createLogger: () => ({
     module: () => mockLogger,
   }),
@@ -47,6 +46,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
   isMultiTenantEnabled: mockIsMultiTenantEnabled,
   isValidTenantIdentifier: (value: string) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value),
   listEnvironmentTenantDefaultStores: mockListEnvironmentTenantDefaultStores,
+  storeImmediateChunkedSensitiveDetailJson: mockStoreImmediateChunkedSensitiveDetailJson,
 }));
 
 import {
@@ -60,6 +60,8 @@ const TOKEN_REFRESH_CONFIG_KEY = 'external_idp_token_refresh';
 const TOKEN_REFRESH_TENANT_CURSOR_KEY = 'external_idp_token_refresh:tenant_cursor';
 const TOKEN_REFRESH_PII_SHARD_CURSOR_KEY = 'external_idp_token_refresh:pii_shard_cursor:tenant-a';
 const VALID_ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const VALID_OBJECT_ENCRYPTION_KEY =
+  'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
 
 function createSettingsKv(values: Record<string, string | null> = {}) {
   return {
@@ -89,9 +91,14 @@ describe('scheduled bridge token refresh', () => {
     mockAdminAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockEnsureDatabaseAdapter.mockReset().mockReturnValue(mockIdentityAdapter);
     mockEnsureAdminDatabaseAdapter.mockReset().mockReturnValue(mockAdminAdapter);
-    mockCreateObjectCatalogEntry.mockReset().mockResolvedValue({
+    mockStoreImmediateChunkedSensitiveDetailJson.mockReset().mockResolvedValue({
       catalogId: 'catalog-1',
       publicArtifactId: 'oa_test',
+      objectKey: 'sensitive-details/v1/test.ndjson',
+      lineNumber: 0,
+      checksumSha256: 'a'.repeat(64),
+      totalBytes: 1,
+      queued: false,
     });
     mockListEnvironmentTenantDefaultStores.mockReset().mockResolvedValue([]);
     mockListExternalIdpPiiSourceShards.mockReset().mockResolvedValue([
@@ -233,6 +240,58 @@ describe('scheduled bridge token refresh', () => {
     expect(result.runId).toBeNull();
     expect(result.selectedTenants).toEqual(['tenant-a']);
     expect(mockListExternalIdpPiiSourceShards).toHaveBeenCalledOnce();
+  });
+
+  it('stores scheduled run details through the encrypted sensitive-detail catalog path', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
+    const sensitiveDetails = { put: vi.fn() };
+    const env = {
+      ...(createEnv(settings) as unknown as Record<string, unknown>),
+      DB_ADMIN: {},
+      SENSITIVE_DETAILS: sensitiveDetails,
+      OBJECT_ENCRYPTION_ROOT_KEY: VALID_OBJECT_ENCRYPTION_KEY,
+    } as never;
+
+    await refreshExpiringTokensForScheduledTenants(env);
+
+    expect(mockStoreImmediateChunkedSensitiveDetailJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: mockAdminAdapter,
+        bucket: sensitiveDetails,
+        rootKeyHex: VALID_OBJECT_ENCRYPTION_KEY,
+        tenantId: 'default',
+        objectClass: 'operational_log_detail',
+        contentType: 'application/json',
+        surface: 'external_token_refresh',
+      })
+    );
+    expect(mockAdminAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('detail_object_catalog_id = ?'),
+      expect.arrayContaining(['catalog-1'])
+    );
+  });
+
+  it('never writes token refresh details when the object encryption key is missing', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
+    const sensitiveDetails = { put: vi.fn() };
+
+    await refreshExpiringTokensForScheduledTenants({
+      ...(createEnv(settings) as unknown as Record<string, unknown>),
+      DB_ADMIN: {},
+      SENSITIVE_DETAILS: sensitiveDetails,
+    } as never);
+
+    expect(sensitiveDetails.put).not.toHaveBeenCalled();
+    expect(mockStoreImmediateChunkedSensitiveDetailJson).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Token refresh detail artifact unavailable: encrypted object storage is not configured'
+    );
   });
 
   it('caps configured tenant and token refresh batch sizes', async () => {

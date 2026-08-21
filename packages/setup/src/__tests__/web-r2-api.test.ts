@@ -57,7 +57,7 @@ describe('setup web R2 API', () => {
 
   it('reports recorded R2 buckets as missing when Cloudflare does not list them', async () => {
     await writeLock('prod', {
-      AVATARS: { name: 'prod-authrim-avatars' },
+      PUBLIC_ASSETS: { name: 'prod-public-assets' },
     });
     listR2BucketsMock.mockResolvedValueOnce([]);
 
@@ -80,7 +80,7 @@ describe('setup web R2 API', () => {
     expect(body.missing).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          binding: 'AVATARS',
+          binding: 'PUBLIC_ASSETS',
           state: 'recorded_but_missing',
           recorded: true,
           exists: false,
