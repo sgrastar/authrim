@@ -216,6 +216,7 @@ function createAggregateStoreNamespace(input: {
 
 function createContext(input: {
   body?: unknown;
+  rawRequest?: Request;
   params?: Record<string, string>;
   query?: Record<string, string | undefined>;
   tenantId?: string;
@@ -224,6 +225,7 @@ function createContext(input: {
 }) {
   return {
     req: {
+      raw: input.rawRequest,
       json: async () => input.body,
       header: () => undefined,
       query: (name: string) => input.query?.[name],
@@ -294,6 +296,40 @@ describe('SAML aggregate provider API', () => {
       'https://metadata.example.test/aggregate.xml',
       expect.objectContaining({ maxResponseSize: 10 * 1024 * 1024 })
     );
+  });
+
+  it('rejects an oversized aggregate preview request before buffering its JSON body', async () => {
+    const response = await handlePreviewMetadata(
+      createContext({
+        rawRequest: new Request('https://authrim.example.test/api/admin/saml-metadata/preview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(12 * 1024 * 1024 + 1),
+          },
+          body: '{}',
+        }),
+      })
+    );
+    const body = (await response.json()) as { error_description: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error_description).toContain('request body exceeds size limit');
+    expect(mocks.safeFetchText).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized single-entity XML received through the aggregate preview endpoint', async () => {
+    const oversizedSingleMetadata = singleSPMetadata.replace(
+      '</md:EntityDescriptor>',
+      `<md:Extensions>${'x'.repeat(1024 * 1024)}</md:Extensions></md:EntityDescriptor>`
+    );
+    const response = await handlePreviewMetadata(
+      createContext({ body: { metadataXml: oversizedSingleMetadata } }) as never
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error_description?: string };
+    expect(body.error_description).toContain('Single-entity SAML metadata exceeds size limit');
   });
 
   it('loads normalized SAML federation trust sources during aggregate preview', async () => {

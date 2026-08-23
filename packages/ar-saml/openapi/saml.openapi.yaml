@@ -246,7 +246,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/SAMLMetadataInput"
+        $ref: "#/components/requestBodies/SAMLAggregateMetadataInput"
       responses:
         "200":
           $ref: "#/components/responses/SAMLMetadataPreview"
@@ -657,6 +657,15 @@ components:
             $ref: "#/components/schemas/SAMLMetadataInput"
           example:
             metadataUrl: https://idp.example.com/metadata.xml
+    SAMLAggregateMetadataInput:
+      required: true
+      description: The JSON request body is limited to 12 MiB; inline aggregate XML is limited to 10 MiB.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SAMLAggregateMetadataInput"
+          example:
+            metadataUrl: https://federation.example.com/aggregate-metadata.xml
     SAMLTrustCertificatePreview:
       required: true
       content:
@@ -1088,6 +1097,7 @@ components:
           format: uri
         metadataXml:
           type: string
+          maxLength: 1048576
         nameIdFormat:
           type: string
         metadataNameIdFormats:
@@ -1151,6 +1161,7 @@ components:
           format: uri
         metadataXml:
           type: string
+          maxLength: 1048576
         samlProfile:
           type: string
         attributePresetId:
@@ -1259,6 +1270,20 @@ components:
       properties:
         metadataXml:
           type: string
+          maxLength: 1048576
+        metadataUrl:
+          type: string
+          format: uri
+        samlProfile:
+          type: string
+        attributePresetId:
+          type: string
+    SAMLAggregateMetadataInput:
+      type: object
+      properties:
+        metadataXml:
+          type: string
+          maxLength: 10485760
         metadataUrl:
           type: string
           format: uri

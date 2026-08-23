@@ -63,6 +63,9 @@ vi.mock('../../admin/providers', () => ({
 
 vi.mock('../../common/signature', () => ({
   verifyXmlSignature: vi.fn().mockReturnValue(true),
+  verifyXmlSignatureAndGetReferences: vi.fn((xml: string) => [
+    { uri: `#${/\bID="([^"]+)"/.exec(xml)?.[1]}`, xml },
+  ]),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
 }));
 

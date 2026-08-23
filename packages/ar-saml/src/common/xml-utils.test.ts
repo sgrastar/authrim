@@ -4,6 +4,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseXml,
+  parseSAMLXml,
+  SAML_XML_LIMITS,
   serializeXml,
   createDocument,
   createElement,
@@ -36,6 +38,48 @@ describe('XML Utilities', () => {
     it('should throw on invalid XML', () => {
       const xml = '<root><unclosed>';
       expect(() => parseXml(xml)).toThrow();
+    });
+  });
+
+  describe('parseSAMLXml security limits', () => {
+    it('allows an XML declaration but rejects processing instructions in the message', () => {
+      expect(() => parseSAMLXml('<?xml version="1.0"?><root/>')).not.toThrow();
+      expect(() => parseSAMLXml('<root><?hidden admin?></root>')).toThrow(
+        'SAML XML processing instructions are not allowed'
+      );
+    });
+
+    it('rejects oversized protocol XML before DOM parsing', () => {
+      const xml = `<root>${'a'.repeat(SAML_XML_LIMITS.maxChars)}</root>`;
+      expect(() => parseSAMLXml(xml)).toThrow('SAML XML exceeds maximum size');
+    });
+
+    it('rejects deeply nested protocol XML', () => {
+      const depth = SAML_XML_LIMITS.maxDepth + 1;
+      const xml = `${'<n>'.repeat(depth)}${'</n>'.repeat(depth)}`;
+      expect(() => parseSAMLXml(xml)).toThrow('SAML XML exceeds maximum depth');
+    });
+
+    it('rejects excessive markup before DOM parsing', () => {
+      const xml = `<root>${'<n/>'.repeat(SAML_XML_LIMITS.maxMarkupTokens)}</root>`;
+      expect(() => parseSAMLXml(xml)).toThrow('SAML XML exceeds maximum markup complexity');
+    });
+
+    it('rejects an excessive number of attributes', () => {
+      const attributes = Array.from(
+        { length: SAML_XML_LIMITS.maxAttributes + 1 },
+        (_, index) => ` a${index}="x"`
+      ).join('');
+      expect(() => parseSAMLXml(`<root${attributes}/>`)).toThrow(
+        'SAML XML exceeds maximum attribute count'
+      );
+    });
+
+    it('rejects an excessive number of DOM nodes', () => {
+      const fragments = 'x<![CDATA[x]]>'.repeat(Math.ceil(SAML_XML_LIMITS.maxNodes / 2));
+      expect(() => parseSAMLXml(`<root>${fragments}</root>`)).toThrow(
+        'SAML XML exceeds maximum node count'
+      );
     });
   });
 

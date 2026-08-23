@@ -8,6 +8,14 @@
 import { DOMParser, XMLSerializer, DOMImplementation } from '@xmldom/xmldom';
 import { SAML_NAMESPACES } from './constants';
 
+export const SAML_XML_LIMITS = {
+  maxChars: 256 * 1024,
+  maxMarkupTokens: 8192,
+  maxNodes: 8192,
+  maxDepth: 64,
+  maxAttributes: 8192,
+} as const;
+
 // Re-export types from xmldom for use in other modules
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type XMLDocument = ReturnType<DOMParser['parseFromString']>;
@@ -101,6 +109,79 @@ export function parseXml(xmlString: string): XMLDocument {
   }
 
   return doc;
+}
+
+/**
+ * Parse an untrusted SAML protocol message with resource and syntax limits.
+ *
+ * Processing instructions are forbidden after the optional XML declaration.
+ * xml-crypto canonicalization and DOM text extraction do not preserve the same
+ * processing-instruction semantics, so accepting them could make the verified
+ * bytes differ from the values consumed by protocol code.
+ */
+export function parseSAMLXml(xmlString: string): XMLDocument {
+  if (xmlString.length > SAML_XML_LIMITS.maxChars) {
+    throw new Error('SAML XML exceeds maximum size');
+  }
+
+  const markupTokens = countOccurrences(xmlString, '<');
+  if (markupTokens > SAML_XML_LIMITS.maxMarkupTokens) {
+    throw new Error('SAML XML exceeds maximum markup complexity');
+  }
+
+  const withoutDeclaration = xmlString.replace(/^\uFEFF?\s*<\?xml(?:\s[^?]*?)?\?>/i, '');
+  if (withoutDeclaration.includes('<?')) {
+    throw new Error('SAML XML processing instructions are not allowed');
+  }
+
+  const doc = parseXml(xmlString);
+  validateSAMLDocumentBudget(doc);
+  return doc;
+}
+
+function countOccurrences(value: string, character: string): number {
+  let count = 0;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === character) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function validateSAMLDocumentBudget(doc: XMLDocument): void {
+  const stack: Array<{ node: Node; depth: number }> = [{ node: doc, depth: 0 }];
+  let nodeCount = 0;
+  let attributeCount = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+
+    nodeCount++;
+    if (nodeCount > SAML_XML_LIMITS.maxNodes) {
+      throw new Error('SAML XML exceeds maximum node count');
+    }
+    if (current.depth > SAML_XML_LIMITS.maxDepth) {
+      throw new Error('SAML XML exceeds maximum depth');
+    }
+
+    if (current.node.nodeType === 1) {
+      attributeCount += (current.node as Element).attributes?.length ?? 0;
+      if (attributeCount > SAML_XML_LIMITS.maxAttributes) {
+        throw new Error('SAML XML exceeds maximum attribute count');
+      }
+    }
+
+    const children = current.node.childNodes;
+    if (!children) continue;
+    for (let index = children.length - 1; index >= 0; index--) {
+      const child = children[index];
+      if (child) {
+        stack.push({ node: child, depth: current.depth + 1 });
+      }
+    }
+  }
 }
 
 /**

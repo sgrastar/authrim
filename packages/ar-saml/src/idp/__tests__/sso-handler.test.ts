@@ -315,6 +315,7 @@ describe('IdP SSO handler policy boundaries', () => {
   });
 
   it.each([
+    ['not-a-date', undefined],
     [new Date(Date.now() + 10 * 60_000).toISOString(), undefined],
     [new Date(Date.now() - 30 * 60_000).toISOString(), undefined],
     [new Date().toISOString(), 'https://attacker.example/sso'],

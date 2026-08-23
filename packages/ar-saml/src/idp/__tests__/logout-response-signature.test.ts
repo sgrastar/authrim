@@ -87,6 +87,26 @@ describe('validateSAMLLogoutResponseSignature', () => {
     );
   });
 
+  it('returns authenticated references for signed POST LogoutResponse processing', async () => {
+    const references = [
+      { uri: '#_logout_response123', xml: '<LogoutResponse ID="_logout_response123" />' },
+    ];
+    await expect(
+      validateSAMLLogoutResponseSignature(
+        {
+          logoutResponse,
+          spConfig: { ...baseSpConfig, logoutResponseSignaturePolicy: 'required' },
+          binding: 'post',
+          xml: '<LogoutResponse><Signature /></LogoutResponse>',
+        },
+        {
+          hasSignature: () => true,
+          verifyXmlSignatureAndGetReferences: vi.fn(() => references),
+        }
+      )
+    ).resolves.toEqual(references);
+  });
+
   it('verifies signed Redirect LogoutResponse over raw query parameter values', async () => {
     const verifyRedirectBindingSignature = vi.fn(async () => true);
 

@@ -99,6 +99,9 @@ vi.mock('../admin/providers', () => ({
 
 vi.mock('../common/signature', () => ({
   verifyXmlSignature: vi.fn(),
+  verifyXmlSignatureAndGetReferences: vi.fn((xml: string) => [
+    { uri: /\bReference URI="([^"]+)"/.exec(xml)?.[1] ?? '', xml },
+  ]),
   verifyRedirectBindingSignature: vi.fn().mockResolvedValue(true),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
   signXml: vi.fn((xml: string) => xml), // Pass through
@@ -501,22 +504,32 @@ function createMockLogoutResponse(
     issuer?: string;
     statusCode?: string;
     inResponseTo?: string;
+    includeSignature?: boolean;
   } = {}
 ): string {
   const {
     issuer = 'https://idp.example.com',
     statusCode = 'urn:oasis:names:tc:SAML:2.0:status:Success',
     inResponseTo = '_request_123',
+    includeSignature = true,
   } = options;
+  const responseId = `_response_${Date.now()}`;
+  const signature = includeSignature
+    ? `<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo><ds:Reference URI="#${responseId}"/></ds:SignedInfo>
+    <ds:SignatureValue>test-signature</ds:SignatureValue>
+  </ds:Signature>`
+    : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:LogoutResponse xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-  ID="_response_${Date.now()}"
+  ID="${responseId}"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   InResponseTo="${inResponseTo}">
   <saml:Issuer>${issuer}</saml:Issuer>
+  ${signature}
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>

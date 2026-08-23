@@ -72,6 +72,10 @@ vi.mock('../../common/signature', async (importOriginal) => {
     ...actual,
     hasSignature: vi.fn((xml: string) => xml.includes('<Signature')),
     verifyXmlSignature: mocks.verify,
+    verifyXmlSignatureAndGetReferences: vi.fn((xml: string, options: unknown) => {
+      mocks.verify(xml, options);
+      return [{ uri: `#${/\bID="([^"]+)"/.exec(xml)?.[1]}`, xml }];
+    }),
     signXml: vi.fn((xml: string) => xml),
   };
 });
@@ -136,12 +140,14 @@ function environment(withState = true) {
 function requestXml(
   options: {
     issueInstant?: string;
+    notOnOrAfter?: string;
     destination?: string;
     sessionIndex?: string;
   } = {}
 ) {
   return `<samlp:LogoutRequest xmlns:samlp="${SAML_NAMESPACES.SAML2P}" xmlns:saml="${SAML_NAMESPACES.SAML2}"
     ID="_logout" IssueInstant="${options.issueInstant ?? new Date().toISOString()}"
+    ${options.notOnOrAfter ? `NotOnOrAfter="${options.notOnOrAfter}"` : ''}
     ${options.destination ? `Destination="${options.destination}"` : ''}>
     <saml:Issuer>https://idp.example.test/entity</saml:Issuer>
     <saml:NameID>user@example.test</saml:NameID>
@@ -152,10 +158,11 @@ function requestXml(
 function responseXml(
   options: { statusCode?: string; inResponseTo?: string; signature?: boolean } = {}
 ) {
+  const signature = options.signature ?? true;
   return `<samlp:LogoutResponse xmlns:samlp="${SAML_NAMESPACES.SAML2P}" xmlns:saml="${SAML_NAMESPACES.SAML2}"
     ID="_response" IssueInstant="${new Date().toISOString()}" InResponseTo="${options.inResponseTo ?? '_outbound'}">
     <saml:Issuer>https://idp.example.test/entity</saml:Issuer>
-    ${options.signature ? '<Signature />' : ''}
+    ${signature ? '<Signature />' : ''}
     <samlp:Status><samlp:StatusCode Value="${options.statusCode ?? STATUS_CODES.SUCCESS}"/></samlp:Status>
   </samlp:LogoutResponse>`;
 }
@@ -218,10 +225,23 @@ describe('SP SLO handler policy boundaries', () => {
   it.each([
     [new Date(Date.now() + 10 * 60_000).toISOString(), undefined],
     [new Date(Date.now() - 30 * 60_000).toISOString(), undefined],
+    ['not-a-date', undefined],
     [new Date().toISOString(), 'https://attacker.example.test/slo'],
   ])('rejects invalid request timing or destination', async (issueInstant, destination) => {
     await expectValidationError(
       await post('SAMLRequest', requestXml({ issueInstant, destination }))
+    );
+  });
+
+  it('rejects an invalid or expired LogoutRequest NotOnOrAfter', async () => {
+    await expectValidationError(
+      await post('SAMLRequest', requestXml({ notOnOrAfter: 'not-a-date' }))
+    );
+    await expectValidationError(
+      await post(
+        'SAMLRequest',
+        requestXml({ notOnOrAfter: new Date(Date.now() - 10 * 60_000).toISOString() })
+      )
     );
   });
 
@@ -291,6 +311,12 @@ describe('SP SLO handler policy boundaries', () => {
     const response = await post('SAMLResponse', responseXml({ signature: true }));
     await expectValidationError(response);
     expect(mocks.verify).toHaveBeenCalled();
+    expect(mocks.consumeOutbound).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsigned POST LogoutResponse before consuming correlation state', async () => {
+    const response = await post('SAMLResponse', responseXml({ signature: false }));
+    await expectValidationError(response);
     expect(mocks.consumeOutbound).not.toHaveBeenCalled();
   });
 

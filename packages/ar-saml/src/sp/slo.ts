@@ -30,8 +30,7 @@ import {
   recordHybridUserSessionRevocationEpoch,
 } from '@authrim/ar-lib-core';
 import {
-  parseLogoutResponsePost,
-  parseLogoutResponseRedirect,
+  parseLogoutResponseXml,
   parseLogoutRequestXml,
   buildLogoutResponse,
   buildLogoutRequest,
@@ -44,9 +43,20 @@ import {
   inflateRedirectBindingMessage,
   parsePostBindingFormDataWithLimit,
 } from '../common/message-limits';
-import { base64Decode, generateSAMLId, nowAsDateTime } from '../common/xml-utils';
-import { STATUS_CODES, DEFAULTS } from '../common/constants';
-import { signXml, verifyXmlSignature, hasSignature } from '../common/signature';
+import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
+import {
+  DIGEST_ALGORITHMS,
+  SIGNATURE_ALGORITHMS,
+  STATUS_CODES,
+  DEFAULTS,
+} from '../common/constants';
+import {
+  signXml,
+  verifyRedirectBindingSignature,
+  verifyXmlSignatureAndGetReferences,
+  hasSignature,
+  parseRedirectBindingSignatureInput,
+} from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { findActiveSamlUserByEmail, getSamlUserNameIdById } from '../common/user-store';
@@ -122,8 +132,16 @@ async function handlePostBinding(
       xml,
     });
   } else if (samlResponse) {
-    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponsePost(samlResponse));
-    return processLogoutResponse(c, env, logoutResponse, relayState, samlResponse);
+    const xml = parseSAMLLogoutMessage(() =>
+      decodePostBindingMessage(samlResponse, 'SAML LogoutResponse')
+    );
+    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponseXml(xml));
+    return processLogoutResponse(c, env, {
+      logoutResponse,
+      relayState,
+      binding: 'post',
+      xml,
+    });
   } else {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'SAMLRequest or SAMLResponse' },
@@ -146,6 +164,7 @@ async function handleRedirectBinding(
   assertSAMLRelayStateSize(relayState);
 
   if (samlRequest) {
+    const redirectSignature = parseRedirectBindingSignatureInput(url.search, 'SAMLRequest');
     const xml = parseSAMLLogoutMessage(() =>
       inflateRedirectBindingMessage(samlRequest, 'SAML LogoutRequest')
     );
@@ -155,16 +174,21 @@ async function handleRedirectBinding(
       relayState,
       binding: 'redirect',
       xml,
-      redirectSignature: {
-        samlMessage: getRawQueryParam(url.search, 'SAMLRequest') ?? encodeURIComponent(samlRequest),
-        relayState: getRawQueryParam(url.search, 'RelayState'),
-        signature: url.searchParams.get('Signature') || undefined,
-        sigAlg: url.searchParams.get('SigAlg') || undefined,
-      },
+      redirectSignature,
     });
   } else if (samlResponse) {
-    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponseRedirect(samlResponse));
-    return processLogoutResponse(c, env, logoutResponse, relayState);
+    const redirectSignature = parseRedirectBindingSignatureInput(url.search, 'SAMLResponse');
+    const xml = parseSAMLLogoutMessage(() =>
+      inflateRedirectBindingMessage(samlResponse, 'SAML LogoutResponse')
+    );
+    const logoutResponse = parseSAMLLogoutMessage(() => parseLogoutResponseXml(xml));
+    return processLogoutResponse(c, env, {
+      logoutResponse,
+      relayState,
+      binding: 'redirect',
+      xml,
+      redirectSignature,
+    });
   } else {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'SAMLRequest or SAMLResponse' },
@@ -190,7 +214,8 @@ async function processLogoutRequest(
   input: ParsedIdPLogoutRequestInput
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
-  const { logoutRequest, relayState, binding } = input;
+  let { logoutRequest } = input;
+  const { relayState, binding } = input;
 
   // Get IdP configuration
   const idpConfig = await getIdPConfigByEntityId(
@@ -205,13 +230,35 @@ async function processLogoutRequest(
   }
 
   try {
-    await validateSAMLIdPLogoutRequestSignature({
+    const verifiedReferences = await validateSAMLIdPLogoutRequestSignature({
       logoutRequest,
       idpConfig,
       binding,
       xml: input.xml,
       redirectSignature: input.redirectSignature,
     });
+    if (binding === 'post' && verifiedReferences) {
+      const signedRequest = verifiedReferences.find(
+        (reference) => reference.uri === `#${logoutRequest.id}`
+      );
+      if (!signedRequest) {
+        throw new SAMLIdPLogoutRequestSignatureValidationError(
+          'idp_logout_request_invalid_signature',
+          'Signed LogoutRequest reference is missing'
+        );
+      }
+      const authenticatedRequest = parseLogoutRequestXml(signedRequest.xml);
+      if (
+        authenticatedRequest.id !== logoutRequest.id ||
+        authenticatedRequest.issuer !== logoutRequest.issuer
+      ) {
+        throw new SAMLIdPLogoutRequestSignatureValidationError(
+          'idp_logout_request_invalid_signature',
+          'Signed LogoutRequest does not match the routed request'
+        );
+      }
+      logoutRequest = authenticatedRequest;
+    }
   } catch (error) {
     if (error instanceof SAMLIdPLogoutRequestSignatureValidationError) {
       log.warn('IdP LogoutRequest signature policy failed', {
@@ -250,24 +297,23 @@ async function processLogoutRequest(
   );
 }
 
-function getRawQueryParam(search: string, name: string): string | undefined {
-  const prefix = `${name}=`;
-  const query = search.startsWith('?') ? search.slice(1) : search;
-  const match = query.split('&').find((part) => part.startsWith(prefix));
-  return match ? match.slice(prefix.length) : undefined;
-}
-
 /**
  * Process LogoutResponse from IdP (for SP-initiated logout)
  */
 async function processLogoutResponse(
   c: Context<{ Bindings: Env }>,
   env: Env,
-  logoutResponse: ParsedLogoutResponse,
-  relayState: string | null,
-  samlBase64?: string
+  input: {
+    logoutResponse: ParsedLogoutResponse;
+    relayState: string | null;
+    binding: 'post' | 'redirect';
+    xml: string;
+    redirectSignature?: SAMLRedirectSignatureInput;
+  }
 ): Promise<Response> {
   const log = getLogger(c).module('SAML-SP');
+  let { logoutResponse } = input;
+  let { relayState } = input;
 
   const tenantId = resolveSAMLTenantIdFromContext(c);
 
@@ -278,22 +324,97 @@ async function processLogoutResponse(
     return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
   }
 
-  // Verify signature if present
-  if (samlBase64) {
-    const decodedXml = base64Decode(samlBase64);
-    if (hasSignature(decodedXml)) {
-      try {
-        // Use expectedId and strictXswProtection to prevent XSW attacks
-        verifyXmlSignature(decodedXml, {
-          certificateOrKey: idpConfig.certificate,
-          expectedId: logoutResponse.id,
-          strictXswProtection: true,
-        });
-      } catch (error) {
-        log.error('LogoutResponse signature verification failed', {}, error as Error);
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+  try {
+    const certificates = Array.from(
+      new Set([idpConfig.certificate, ...(idpConfig.certificates ?? [])].filter(Boolean))
+    );
+    if (input.binding === 'post') {
+      if (!hasSignature(input.xml)) {
+        throw new Error('Signed HTTP-POST LogoutResponse is required');
+      }
+      let lastError: unknown;
+      let authenticatedResponse: ParsedLogoutResponse | undefined;
+      for (const certificate of certificates) {
+        try {
+          const references = verifyXmlSignatureAndGetReferences(input.xml, {
+            certificateOrKey: certificate,
+            expectedId: logoutResponse.id,
+            strictXswProtection: true,
+            ...(idpConfig.logoutRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
+            idpConfig.acceptedLogoutRequestSignatureAlgorithms?.includes(
+              SIGNATURE_ALGORITHMS.RSA_SHA1
+            )
+              ? { allowSha1SignatureAlgorithm: true }
+              : {}),
+            ...(idpConfig.logoutRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
+            idpConfig.acceptedLogoutRequestDigestAlgorithms?.includes(DIGEST_ALGORITHMS.SHA1)
+              ? { allowSha1DigestAlgorithm: true }
+              : {}),
+          });
+          const signedResponse = references.find(
+            (reference) => reference.uri === `#${logoutResponse.id}`
+          );
+          if (!signedResponse) {
+            throw new Error('Signed LogoutResponse reference is missing');
+          }
+          authenticatedResponse = parseLogoutResponseXml(signedResponse.xml);
+          break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (
+        !authenticatedResponse ||
+        authenticatedResponse.id !== logoutResponse.id ||
+        authenticatedResponse.issuer !== logoutResponse.issuer
+      ) {
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('Signed LogoutResponse does not match the routed response');
+      }
+      logoutResponse = authenticatedResponse;
+    } else if (input.binding === 'redirect') {
+      const redirectSignature = input.redirectSignature;
+      if (
+        !redirectSignature?.samlMessage ||
+        !redirectSignature.signature ||
+        !redirectSignature.sigAlg
+      ) {
+        throw new Error('Signed HTTP-Redirect LogoutResponse is required');
+      }
+      const acceptedSignatureAlgorithms =
+        idpConfig.logoutRequestLegacyAlgorithmPolicy === 'explicit_opt_in'
+          ? (idpConfig.acceptedLogoutRequestSignatureAlgorithms ?? [
+              SIGNATURE_ALGORITHMS.RSA_SHA256,
+            ])
+          : [SIGNATURE_ALGORITHMS.RSA_SHA256];
+      let verified = false;
+      let lastError: unknown;
+      for (const certificate of certificates) {
+        try {
+          verified = await verifyRedirectBindingSignature(
+            'SAMLResponse',
+            redirectSignature.samlMessage,
+            redirectSignature.relayState,
+            redirectSignature.signature,
+            redirectSignature.sigAlg,
+            certificate,
+            { acceptedSignatureAlgorithms }
+          );
+          if (verified) break;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      if (!verified) {
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('Invalid HTTP-Redirect LogoutResponse signature');
       }
     }
+  } catch (error) {
+    log.error('LogoutResponse signature verification failed', {}, error as Error);
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
   try {
@@ -365,17 +486,27 @@ async function processLogoutResponse(
  */
 function validateLogoutRequest(logoutRequest: ParsedLogoutRequest, issuerUrl: string): void {
   // Check request is not expired
-  const issueInstant = new Date(logoutRequest.issueInstant);
-  const now = new Date();
+  const issueInstantMs = Date.parse(logoutRequest.issueInstant);
+  if (!Number.isFinite(issueInstantMs)) {
+    throw new SAMLLogoutMessageValidationError();
+  }
+  const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
   const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
 
-  if (issueInstant.getTime() > now.getTime() + skewMs) {
+  if (issueInstantMs > nowMs + skewMs) {
     throw new SAMLLogoutMessageValidationError();
   }
 
-  if (now.getTime() - issueInstant.getTime() > maxAge + skewMs) {
+  if (nowMs - issueInstantMs > maxAge + skewMs) {
     throw new SAMLLogoutMessageValidationError();
+  }
+
+  if (logoutRequest.notOnOrAfter) {
+    const notOnOrAfterMs = Date.parse(logoutRequest.notOnOrAfter);
+    if (!Number.isFinite(notOnOrAfterMs) || nowMs >= notOnOrAfterMs + skewMs) {
+      throw new SAMLLogoutMessageValidationError();
+    }
   }
 
   // Validate Destination if present

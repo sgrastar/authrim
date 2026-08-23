@@ -37,7 +37,7 @@ import {
   filterSamlAttributesByDestinationConsentWithStatus,
 } from '@authrim/ar-lib-core';
 import {
-  parseXml,
+  parseSAMLXml,
   findDirectChildElement,
   getAttribute,
   getTextContent,
@@ -111,6 +111,7 @@ import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
 import { isAllowedIdPSSODestination } from './shibboleth-compat';
+import { parseRedirectBindingSignatureInput } from '../common/signature';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -151,7 +152,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       parsedInput = await parsePostBinding(c);
     }
 
-    const { authnRequest, relayState } = parsedInput;
+    let { authnRequest } = parsedInput;
+    const { relayState } = parsedInput;
 
     // Validate AuthnRequest
     await validateAuthnRequest(authnRequest, issuerUrl);
@@ -164,13 +166,36 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
     try {
       if (!parsedInput.storedRequestValidated) {
-        await validateSAMLAuthnRequestSignature({
+        const verifiedReferences = await validateSAMLAuthnRequestSignature({
           authnRequest,
           spConfig,
           binding: parsedInput.binding,
           xml: parsedInput.xml,
           redirectSignature: parsedInput.redirectSignature,
         });
+        if (parsedInput.binding === 'post' && verifiedReferences) {
+          const signedRequest = verifiedReferences.find(
+            (reference) => reference.uri === `#${authnRequest.id}`
+          );
+          if (!signedRequest) {
+            throw new SAMLAuthnRequestSignatureValidationError(
+              'authn_request_invalid_signature',
+              'Signed AuthnRequest reference is missing'
+            );
+          }
+          const authenticatedRequest = parseAuthnRequestXml(signedRequest.xml);
+          if (
+            authenticatedRequest.id !== authnRequest.id ||
+            authenticatedRequest.issuer !== authnRequest.issuer
+          ) {
+            throw new SAMLAuthnRequestSignatureValidationError(
+              'authn_request_invalid_signature',
+              'Signed AuthnRequest does not match the routed request'
+            );
+          }
+          authnRequest = authenticatedRequest;
+          await validateAuthnRequest(authnRequest, issuerUrl);
+        }
       }
       validateSAMLResponseProtocolBinding(authnRequest);
       resolveSAMLResponseDestination(authnRequest, spConfig);
@@ -951,18 +976,14 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
 
   // Decode: URL decode -> Base64 decode -> Inflate (deflate decompress)
   const inflated = inflateRedirectBindingMessage(samlRequest, 'SAML AuthnRequest');
+  const redirectSignature = parseRedirectBindingSignatureInput(url.search, 'SAMLRequest');
 
   return {
     authnRequest: parseAuthnRequestXml(inflated),
     relayState,
     binding: 'redirect',
     xml: inflated,
-    redirectSignature: {
-      samlMessage: getRawQueryParam(url.search, 'SAMLRequest') ?? encodeURIComponent(samlRequest),
-      relayState: getRawQueryParam(url.search, 'RelayState'),
-      signature: url.searchParams.get('Signature') || undefined,
-      sigAlg: url.searchParams.get('SigAlg') || undefined,
-    },
+    redirectSignature,
   };
 }
 
@@ -1053,18 +1074,11 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   };
 }
 
-function getRawQueryParam(search: string, name: string): string | undefined {
-  const prefix = `${name}=`;
-  const query = search.startsWith('?') ? search.slice(1) : search;
-  const match = query.split('&').find((part) => part.startsWith(prefix));
-  return match ? match.slice(prefix.length) : undefined;
-}
-
 /**
  * Parse AuthnRequest XML into structured data
  */
 export function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
   const authnRequestElement = doc.documentElement;
 
   if (
@@ -1145,16 +1159,19 @@ async function validateAuthnRequest(
   issuerUrl: string
 ): Promise<void> {
   // Check request is not expired (allow clock skew)
-  const issueInstant = new Date(authnRequest.issueInstant);
-  const now = new Date();
+  const issueInstantMs = Date.parse(authnRequest.issueInstant);
+  if (!Number.isFinite(issueInstantMs)) {
+    throw new Error('AuthnRequest IssueInstant is invalid');
+  }
+  const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
   const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
 
-  if (issueInstant.getTime() > now.getTime() + skewMs) {
+  if (issueInstantMs > nowMs + skewMs) {
     throw new Error('AuthnRequest IssueInstant is in the future');
   }
 
-  if (now.getTime() - issueInstant.getTime() > maxAge + skewMs) {
+  if (nowMs - issueInstantMs > maxAge + skewMs) {
     throw new Error('AuthnRequest has expired');
   }
 
