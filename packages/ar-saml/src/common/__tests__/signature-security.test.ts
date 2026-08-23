@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   signXml,
   verifyXmlSignature,
+  verifyXmlSignatureAndGetReferences,
   hasSignature,
   extractCertificateFromSignature,
 } from '../signature';
@@ -769,6 +770,128 @@ describe('XSW Attack Protection - Enhanced', () => {
           certificateOrKey: testCertificate,
         })
       ).toThrow('XSW Protection: Reference URI must be a fragment identifier or empty');
+    });
+  });
+
+  describe('authenticated reference consumption', () => {
+    it('returns the canonicalized XML that was actually digest-verified', () => {
+      const xml = createTestSAMLResponse('_verified_reference');
+      const signedXml = signXml(xml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_verified_reference',
+      });
+
+      const references = verifyXmlSignatureAndGetReferences(signedXml, {
+        certificateOrKey: testCertificate,
+        expectedId: '_verified_reference',
+        strictXswProtection: true,
+      });
+
+      expect(references).toHaveLength(1);
+      expect(references[0]?.uri).toBe('#_verified_reference');
+      expect(references[0]?.xml).toContain('<samlp:Response');
+      expect(references[0]?.xml).toContain('<saml:NameID>user@example.com</saml:NameID>');
+    });
+
+    it('rejects the processing-instruction canonicalization authentication bypass', () => {
+      const xml = createTestSAMLResponse('_pi_bypass').replace(
+        'user@example.com',
+        'not-an-admin@example.com'
+      );
+      const signedXml = signXml(xml, {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_pi_bypass',
+      });
+      const bypassXml = signedXml.replace(
+        '<saml:NameID>not-an-admin@example.com</saml:NameID>',
+        '<saml:NameID><?p not-an-?>admin@example.com</saml:NameID>'
+      );
+
+      expect(() =>
+        verifyXmlSignatureAndGetReferences(bypassXml, {
+          certificateOrKey: testCertificate,
+          expectedId: '_pi_bypass',
+          strictXswProtection: true,
+        })
+      ).toThrow('SAML XML processing instructions are not allowed');
+    });
+
+    it.each([
+      [
+        (xml: string) =>
+          xml.replace(
+            'Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"',
+            'Algorithm="http://www.w3.org/TR/1999/REC-xpath-19991116"'
+          ),
+        'Unsupported XML signature transform',
+      ],
+      [
+        (xml: string) =>
+          xml.replace(
+            '</Transforms>',
+            '<Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/></Transforms>'
+          ),
+        'XML signature Reference uses too many transforms',
+      ],
+      [
+        (xml: string) =>
+          xml.replace(
+            '<DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>',
+            '<DigestMethod/>'
+          ),
+        'DigestMethod Algorithm is required',
+      ],
+      [
+        (xml: string) =>
+          xml.replace(
+            'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+            'urn:unsupported:signature'
+          ),
+        'Unsupported signature algorithm',
+      ],
+      [
+        (xml: string) =>
+          xml.replace(
+            '<CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>',
+            '<CanonicalizationMethod Algorithm="urn:unsupported:c14n"/>'
+          ),
+        'Unsupported canonicalization algorithm',
+      ],
+    ])('rejects unsupported XML signature structure %#', (manipulate, expectedError) => {
+      const signedXml = signXml(createTestSAMLResponse('_structure'), {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_structure',
+      });
+      expect(() =>
+        verifyXmlSignatureAndGetReferences(manipulate(signedXml), {
+          certificateOrKey: testCertificate,
+          expectedId: '_structure',
+          strictXswProtection: true,
+        })
+      ).toThrow(expectedError);
+    });
+
+    it('rejects namespace-decoy DigestMethod elements before cryptographic verification', () => {
+      const signedXml = signXml(createTestSAMLResponse('_namespace_decoy'), {
+        privateKey: testPrivateKey,
+        certificate: testCertificate,
+        referenceUri: '#_namespace_decoy',
+      });
+      const decoyXml = signedXml.replace(
+        '<DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>',
+        '<DigestMethod xmlns="" Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/></DigestMethod>'
+      );
+
+      expect(() =>
+        verifyXmlSignatureAndGetReferences(decoyXml, {
+          certificateOrKey: testCertificate,
+          expectedId: '_namespace_decoy',
+          strictXswProtection: true,
+        })
+      ).toThrow('DigestMethod must use the XMLDSig namespace');
     });
   });
 });

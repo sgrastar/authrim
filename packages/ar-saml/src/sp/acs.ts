@@ -42,7 +42,7 @@ import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
-  parseXml,
+  parseSAMLXml,
   getAttribute,
   getTextContent,
   findDirectChildElement,
@@ -53,7 +53,11 @@ import {
   parsePostBindingFormDataWithLimit,
 } from '../common/message-limits';
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
-import { verifyXmlSignature, hasSignature } from '../common/signature';
+import {
+  verifyXmlSignatureAndGetReferences,
+  hasSignature,
+  type VerifiedXmlReference,
+} from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
@@ -101,25 +105,38 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
-    const { responseId, issuer, assertion, inResponseTo } = parseAndValidateResponse(
-      responseXml,
-      issuerUrl,
-      spEntityId
-    );
-    auditProviderId = issuer;
+    const preliminaryResponse = parseAndValidateResponse(responseXml, issuerUrl, spEntityId);
+    auditProviderId = preliminaryResponse.issuer;
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
+    const idpConfig = await getIdPConfigByEntityId(env, tenantId, preliminaryResponse.issuer);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
 
+    let verifiedResponse: ParsedResponse;
     try {
-      validateSAMLResponseSignature(responseXml, idpConfig, responseId, assertion.id);
+      const verifiedReferences = validateSAMLResponseSignature(
+        responseXml,
+        idpConfig,
+        preliminaryResponse.responseId,
+        preliminaryResponse.assertion.id
+      );
+      verifiedResponse = parseVerifiedSAMLResponse(
+        preliminaryResponse,
+        verifiedReferences,
+        issuerUrl,
+        spEntityId
+      );
+      if (verifiedResponse.issuer !== preliminaryResponse.issuer) {
+        throw new Error('Verified SAML Response Issuer does not match the routed IdP');
+      }
     } catch (error) {
       log.error('Signature verification failed', {}, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+
+    const { issuer, assertion, inResponseTo } = verifiedResponse;
 
     // Validate InResponseTo (if we sent an AuthnRequest)
     let validatedRequest: SAMLRequestData | null = null;
@@ -517,6 +534,7 @@ interface ParsedResponse {
 interface ParsedSAMLAssertion extends SAMLAssertion {
   subjectConfirmationData: {
     notOnOrAfter: string;
+    inResponseTo?: string;
   };
 }
 
@@ -528,7 +546,7 @@ function parseAndValidateResponse(
   issuerUrl: string,
   spEntityId: string
 ): ParsedResponse {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
 
   const responseElement = doc.documentElement;
   if (
@@ -700,14 +718,20 @@ function parseAssertion(
       SAML_NAMESPACES.SAML2,
       'AudienceRestriction'
     );
-    const audienceElements = audienceRestrictionElements.flatMap((audienceRestriction) =>
+    const audienceGroups = audienceRestrictionElements.map((audienceRestriction) =>
       findDirectChildElements(audienceRestriction, SAML_NAMESPACES.SAML2, 'Audience')
+        .map((audience) => getTextContent(audience) || '')
+        .filter(Boolean)
     );
-    const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
+    const audiences = audienceGroups.flat();
 
-    // Validate audience
+    // Audience values within one restriction are alternatives (OR), while separate
+    // AudienceRestriction elements are cumulative (AND).
     const expectedAudience = spEntityId;
-    if (audiences.length === 0 || !audiences.includes(expectedAudience)) {
+    if (
+      audienceGroups.length === 0 ||
+      audienceGroups.some((group) => !group.includes(expectedAudience))
+    ) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Audience in SAML Assertion');
     }
@@ -945,7 +969,10 @@ function validateSubjectConfirmation(
     }
   }
 
-  return { notOnOrAfter };
+  return {
+    notOnOrAfter,
+    inResponseTo: subjectConfirmationInResponseTo || undefined,
+  };
 }
 
 /**
@@ -1050,8 +1077,11 @@ function validateSAMLResponseSignature(
   idpConfig: SAMLIdPConfig,
   responseId: string,
   assertionId: string
-): void {
-  if (!idpConfig.certificate) {
+): VerifiedXmlReference[] {
+  const certificates = Array.from(
+    new Set([idpConfig.certificate, ...(idpConfig.certificates ?? [])].filter(Boolean))
+  );
+  if (certificates.length === 0) {
     throw new Error('IdP certificate is required to verify SAML Response signatures');
   }
 
@@ -1059,31 +1089,80 @@ function validateSAMLResponseSignature(
     throw new Error('Signed SAML Response or Assertion is required for configured IdP');
   }
 
-  verifyXmlSignature(xml, {
-    certificateOrKey: idpConfig.certificate,
-    strictXswProtection: true,
-  });
-
-  const signedReferences = getSignatureReferenceUris(xml);
-  if (!signedReferences.has(`#${responseId}`) && !signedReferences.has(`#${assertionId}`)) {
-    throw new Error('SAML signature does not cover the processed Response or Assertion');
-  }
-}
-
-function getSignatureReferenceUris(xml: string): Set<string> {
-  const doc = parseXml(xml);
-  const signatures = doc.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Signature');
-  const uris = new Set<string>();
-  for (let i = 0; i < signatures.length; i++) {
-    const references = signatures[i].getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Reference');
-    for (let j = 0; j < references.length; j++) {
-      const uri = getAttribute(references[j], 'URI');
-      if (uri) {
-        uris.add(uri);
-      }
+  let verifiedReferences: VerifiedXmlReference[] | undefined;
+  let lastError: unknown;
+  for (const certificate of certificates) {
+    try {
+      verifiedReferences = verifyXmlSignatureAndGetReferences(xml, {
+        certificateOrKey: certificate,
+        strictXswProtection: true,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
     }
   }
-  return uris;
+  if (!verifiedReferences) {
+    throw lastError instanceof Error ? lastError : new Error('SAML signature verification failed');
+  }
+
+  if (
+    !verifiedReferences.some(
+      (reference) => reference.uri === `#${responseId}` || reference.uri === `#${assertionId}`
+    )
+  ) {
+    throw new Error('SAML signature does not cover the processed Response or Assertion');
+  }
+
+  return verifiedReferences;
+}
+
+function parseVerifiedSAMLResponse(
+  preliminary: ParsedResponse,
+  verifiedReferences: VerifiedXmlReference[],
+  issuerUrl: string,
+  spEntityId: string
+): ParsedResponse {
+  const signedResponse = verifiedReferences.find(
+    (reference) => reference.uri === `#${preliminary.responseId}`
+  );
+  if (signedResponse) {
+    return parseAndValidateResponse(signedResponse.xml, issuerUrl, spEntityId);
+  }
+
+  const signedAssertion = verifiedReferences.find(
+    (reference) => reference.uri === `#${preliminary.assertion.id}`
+  );
+  if (!signedAssertion) {
+    throw new Error('SAML signature does not contain the processed Assertion');
+  }
+
+  const doc = parseSAMLXml(signedAssertion.xml);
+  const assertionElement = doc.documentElement;
+  if (
+    !assertionElement ||
+    assertionElement.namespaceURI !== SAML_NAMESPACES.SAML2 ||
+    assertionElement.localName !== 'Assertion'
+  ) {
+    throw new Error('Signed SAML reference is not an Assertion');
+  }
+
+  const assertion = parseAssertion(
+    assertionElement,
+    issuerUrl,
+    spEntityId,
+    preliminary.inResponseTo
+  );
+  if (assertion.id !== preliminary.assertion.id || assertion.issuer !== preliminary.issuer) {
+    throw new Error('Signed Assertion does not match the routed SAML Response');
+  }
+
+  return {
+    responseId: preliminary.responseId,
+    issuer: assertion.issuer,
+    inResponseTo: assertion.subjectConfirmationData.inResponseTo,
+    assertion,
+  };
 }
 
 function parseSAMLDateTimeMs(value: string, label: string): number {

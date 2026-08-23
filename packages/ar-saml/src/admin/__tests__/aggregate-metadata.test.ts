@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
   extractEntityDescriptorXml,
+  extractEntityDescriptorXmls,
   fingerprintCertificateSha256,
   isAggregateMetadata,
   parseAggregateMetadata,
+  verifyAggregateMetadata,
   verifyAggregateMetadataSignature,
 } from '../aggregate-metadata';
 import { signXml } from '../../common/signature';
@@ -158,8 +161,93 @@ describe('SAML aggregate metadata', () => {
     expect(xml).not.toContain('https://idp.example.test/idp');
   });
 
-  it('permits unsigned aggregate metadata in warn mode but records the trust profile decision', () => {
-    const summary = verifyAggregateMetadataSignature(
+  it('extracts multiple selected entities in one streaming pass', () => {
+    const entities = extractEntityDescriptorXmls(aggregateXml, [
+      'https://idp.example.test/idp',
+      'https://sp.example.test/sp',
+    ]);
+
+    expect(entities).toHaveLength(2);
+    expect(entities.get('https://idp.example.test/idp')).toContain('Example IdP');
+    expect(entities.get('https://sp.example.test/sp')).toContain('AssertionConsumerService');
+  });
+
+  it('rejects expired and malformed aggregate root validUntil values', () => {
+    expect(() =>
+      parseAggregateMetadata(aggregateXml.replace('2030-01-01T00:00:00Z', '2000-01-01T00:00:00Z'))
+    ).toThrow('Invalid aggregate metadata: expired validUntil');
+    expect(() =>
+      parseAggregateMetadata(aggregateXml.replace('2030-01-01T00:00:00Z', 'not-a-date'))
+    ).toThrow('Invalid aggregate metadata: invalid validUntil');
+
+    expect(() =>
+      parseAggregateMetadata(
+        aggregateXml.replace(
+          '<md:EntitiesDescriptor Name="nested">',
+          '<md:EntitiesDescriptor Name="nested" validUntil="2000-01-01T00:00:00Z">'
+        )
+      )
+    ).toThrow('Invalid aggregate metadata: expired validUntil');
+  });
+
+  it('rejects aggregate processing instructions and excessive nesting before DOM parsing', () => {
+    expect(() =>
+      parseAggregateMetadata(
+        aggregateXml.replace('<md:EntityDescriptor', '<?unsafe x?>\n<md:EntityDescriptor')
+      )
+    ).toThrow('SAML metadata processing instructions are not allowed');
+
+    const deeplyNested = `<md:EntitiesDescriptor xmlns:md="${'urn:oasis:names:tc:SAML:2.0:metadata'}" ID="_deep">${'<md:EntitiesDescriptor>'.repeat(64)}<md:EntityDescriptor entityID="https://sp.example.test/sp"/>${'</md:EntitiesDescriptor>'.repeat(64)}</md:EntitiesDescriptor>`;
+    expect(() => parseAggregateMetadata(deeplyNested)).toThrow(
+      'Aggregate metadata exceeds maximum depth'
+    );
+  });
+
+  it('rejects aggregate XML above the configured byte limit', () => {
+    const oversized = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ID="_large"><md:EntityDescriptor entityID="https://sp.example.test/sp"><!--${'x'.repeat(
+      AGGREGATE_METADATA_FETCH_LIMIT_BYTES
+    )}--></md:EntityDescriptor></md:EntitiesDescriptor>`;
+    expect(() => parseAggregateMetadata(oversized)).toThrow(
+      'Aggregate metadata exceeds maximum size'
+    );
+  });
+
+  it('rejects an oversized root Signature before DOM signature parsing', async () => {
+    const oversizedSignature = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" ID="_signature_limit"><ds:Signature><ds:Object>${'x'.repeat(
+      128 * 1024
+    )}</ds:Object></ds:Signature><md:EntityDescriptor entityID="https://sp.example.test/sp"/></md:EntitiesDescriptor>`;
+
+    await expect(
+      verifyAggregateMetadataSignature(
+        oversizedSignature,
+        'https://metadata.example.test/aggregate.xml',
+        [],
+        'strict'
+      )
+    ).rejects.toThrow('Aggregate signature exceeds maximum size');
+  });
+
+  it('accepts federation-sized XML without creating a DOM for the aggregate document', () => {
+    const entities = Array.from(
+      { length: 500 },
+      (_, index) =>
+        `<md:EntityDescriptor entityID="https://sp${index}.example.test/sp"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:Extensions><label>${'x'.repeat(
+          700
+        )}</label></md:Extensions><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp${index}.example.test/acs" index="0"/></md:SPSSODescriptor></md:EntityDescriptor>`
+    ).join('');
+    const largeAggregate = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ID="_large_federation">${entities}</md:EntitiesDescriptor>`;
+
+    const parsed = parseAggregateMetadata(largeAggregate);
+    expect(new TextEncoder().encode(largeAggregate).byteLength).toBeGreaterThan(256 * 1024);
+    expect(parsed.entities).toHaveLength(500);
+    expect(parsed.entities[499]).toMatchObject({
+      entityId: 'https://sp499.example.test/sp',
+      acsUrl: 'https://sp499.example.test/acs',
+    });
+  });
+
+  it('permits unsigned aggregate metadata in warn mode but records the trust profile decision', async () => {
+    const summary = await verifyAggregateMetadataSignature(
       aggregateXml,
       'https://metadata.example.test/aggregate.xml',
       [
@@ -182,8 +270,8 @@ describe('SAML aggregate metadata', () => {
     expect(summary.error).toBe('Aggregate metadata root is not signed');
   });
 
-  it('rejects unsigned aggregate metadata in strict mode', () => {
-    expect(() =>
+  it('rejects unsigned aggregate metadata in strict mode', async () => {
+    await expect(
       verifyAggregateMetadataSignature(
         aggregateXml,
         'https://metadata.example.test/aggregate.xml',
@@ -201,24 +289,24 @@ describe('SAML aggregate metadata', () => {
         ],
         'strict'
       )
-    ).toThrow('Aggregate metadata root is not signed');
+    ).rejects.toThrow('Aggregate metadata root is not signed');
   });
 
-  it('records disabled aggregate metadata signature verification explicitly', () => {
-    expect(
+  it('records disabled aggregate metadata signature verification explicitly', async () => {
+    await expect(
       verifyAggregateMetadataSignature(
         aggregateXml,
         'https://metadata.example.test/aggregate.xml',
         [],
         'disabled'
       )
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       status: 'skipped',
       policy: 'disabled',
     });
   });
 
-  it('verifies signed aggregate metadata with a matching trust profile', () => {
+  it('verifies signed aggregate metadata with a matching trust profile', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -226,7 +314,7 @@ describe('SAML aggregate metadata', () => {
       signatureLocation: 'prepend',
     });
 
-    const summary = verifyAggregateMetadataSignature(
+    const summary = await verifyAggregateMetadataSignature(
       signedXml,
       'https://metadata.example.test/aggregate.xml',
       [
@@ -259,7 +347,7 @@ describe('SAML aggregate metadata', () => {
     });
   });
 
-  it('does not match uploaded aggregate metadata to URL-bound trust profiles without a URL', () => {
+  it('returns only the validated signed reference for downstream aggregate processing', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -267,7 +355,88 @@ describe('SAML aggregate metadata', () => {
       signatureLocation: 'prepend',
     });
 
-    expect(() =>
+    const result = await verifyAggregateMetadata(
+      signedXml,
+      'https://metadata.example.test/aggregate.xml',
+      [
+        {
+          id: 'profile-1',
+          tenantId: 'default',
+          name: 'Example federation',
+          metadataUrlPatterns: ['https://metadata.example.test/*'],
+          certificates: [
+            {
+              id: 'cert-1',
+              certificate: testCertificate,
+              fingerprintSha256: 'test-fingerprint',
+              createdAt: 1,
+            },
+          ],
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      'strict'
+    );
+
+    expect(result.verification.status).toBe('verified');
+    expect(result.aggregate.metadataXml).not.toContain('<Signature');
+    expect(result.aggregate.metadataXml).not.toContain('<ds:Signature');
+    expect(result.aggregate.entities).toHaveLength(1);
+  });
+
+  it('verifies federation-style default namespaces with inherited extension prefixes', async () => {
+    const federationXml = `<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:mdui="urn:oasis:names:tc:SAML:metadata:ui" ID="_default_ns"><EntityDescriptor entityID="https://idp.example.test/idp"><IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><Extensions><mdui:UIInfo><mdui:DisplayName xml:lang="en">Default Namespace IdP</mdui:DisplayName></mdui:UIInfo></Extensions><SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.test/sso"/></IDPSSODescriptor></EntityDescriptor></EntitiesDescriptor>`;
+    const signedXml = signXml(federationXml, {
+      privateKey: testPrivateKey,
+      certificate: testCertificate,
+      referenceUri: '#_default_ns',
+      signatureLocation: 'prepend',
+    });
+
+    const result = await verifyAggregateMetadata(
+      signedXml,
+      undefined,
+      [
+        {
+          id: 'profile-1',
+          tenantId: 'default',
+          name: 'Offline federation',
+          metadataUrlPatterns: ['*'],
+          certificates: [
+            {
+              id: 'cert-1',
+              certificate: testCertificate,
+              fingerprintSha256: 'test-fingerprint',
+              createdAt: 1,
+            },
+          ],
+          enabled: true,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      'strict'
+    );
+
+    expect(result.verification.status).toBe('verified');
+    expect(result.aggregate.entities[0]).toMatchObject({
+      entityId: 'https://idp.example.test/idp',
+      displayName: 'Default Namespace IdP',
+      ssoUrl: 'https://idp.example.test/sso',
+    });
+  });
+
+  it('does not match uploaded aggregate metadata to URL-bound trust profiles without a URL', async () => {
+    const signedXml = signXml(signableAggregateXml, {
+      privateKey: testPrivateKey,
+      certificate: testCertificate,
+      referenceUri: '#_signed_aggregate',
+      signatureLocation: 'prepend',
+    });
+
+    await expect(
       verifyAggregateMetadataSignature(
         signedXml,
         undefined,
@@ -292,10 +461,10 @@ describe('SAML aggregate metadata', () => {
         ],
         'strict'
       )
-    ).toThrow('No matching federation trust profile');
+    ).rejects.toThrow('No matching federation trust profile');
   });
 
-  it('allows uploaded aggregate metadata only when the trust profile explicitly uses *', () => {
+  it('allows uploaded aggregate metadata only when the trust profile explicitly uses *', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -303,7 +472,7 @@ describe('SAML aggregate metadata', () => {
       signatureLocation: 'prepend',
     });
 
-    const summary = verifyAggregateMetadataSignature(
+    const summary = await verifyAggregateMetadataSignature(
       signedXml,
       undefined,
       [
@@ -331,7 +500,7 @@ describe('SAML aggregate metadata', () => {
     expect(summary.status).toBe('verified');
   });
 
-  it('rejects aggregate signatures with more than one Reference', () => {
+  it('rejects aggregate signatures with more than one Reference', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -342,7 +511,7 @@ describe('SAML aggregate metadata', () => {
       '<Reference xmlns="http://www.w3.org/2000/09/xmldsig#" URI="#unexpected"><DigestValue>ignored</DigestValue></Reference>$&'
     );
 
-    expect(() =>
+    await expect(
       verifyAggregateMetadataSignature(
         signedXml,
         'https://metadata.example.test/aggregate.xml',
@@ -367,12 +536,48 @@ describe('SAML aggregate metadata', () => {
         ],
         'strict'
       )
-    ).toThrow(
+    ).rejects.toThrow(
       'Aggregate signature reference does not exclusively cover the root EntitiesDescriptor'
     );
   });
 
-  it('rejects tampered signed aggregate metadata in strict mode', () => {
+  it('rejects a Reference moved outside the signed SignedInfo element', async () => {
+    const signedXml = signXml(signableAggregateXml, {
+      privateKey: testPrivateKey,
+      certificate: testCertificate,
+      referenceUri: '#_signed_aggregate',
+      signatureLocation: 'prepend',
+    });
+    const reference = signedXml.match(/<Reference\b[\s\S]*?<\/Reference>/)?.[0];
+    expect(reference).toBeDefined();
+    const decoyXml = signedXml
+      .replace(reference!, '')
+      .replace('</Signature>', `<Object>${reference}</Object></Signature>`);
+
+    await expect(
+      verifyAggregateMetadataSignature(
+        decoyXml,
+        'https://metadata.example.test/aggregate.xml',
+        [
+          {
+            id: 'profile-1',
+            tenantId: 'default',
+            name: 'Example federation',
+            metadataUrlPatterns: ['https://metadata.example.test/*'],
+            certificates: [],
+            enabled: true,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        'strict'
+      )
+    ).rejects.toThrow(
+      'Aggregate signature reference does not exclusively cover the root EntitiesDescriptor'
+    );
+  });
+
+  it('rejects tampered signed aggregate metadata in strict mode', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -380,7 +585,7 @@ describe('SAML aggregate metadata', () => {
       signatureLocation: 'prepend',
     }).replace('https://sp.example.test/acs', 'https://sp.example.test/tampered');
 
-    expect(() =>
+    await expect(
       verifyAggregateMetadataSignature(
         signedXml,
         'https://metadata.example.test/aggregate.xml',
@@ -405,10 +610,10 @@ describe('SAML aggregate metadata', () => {
         ],
         'strict'
       )
-    ).toThrow('Aggregate metadata signature could not be verified');
+    ).rejects.toThrow('Aggregate metadata signature could not be verified');
   });
 
-  it('rejects aggregate metadata signed by an unknown certificate in strict mode', () => {
+  it('rejects aggregate metadata signed by an unknown certificate in strict mode', async () => {
     const signedXml = signXml(signableAggregateXml, {
       privateKey: testPrivateKey,
       certificate: testCertificate,
@@ -416,7 +621,7 @@ describe('SAML aggregate metadata', () => {
       signatureLocation: 'prepend',
     });
 
-    expect(() =>
+    await expect(
       verifyAggregateMetadataSignature(
         signedXml,
         'https://metadata.example.test/aggregate.xml',
@@ -441,7 +646,7 @@ describe('SAML aggregate metadata', () => {
         ],
         'strict'
       )
-    ).toThrow('Aggregate metadata signature could not be verified');
+    ).rejects.toThrow('Aggregate metadata signature could not be verified');
   });
 
   it('rejects invalid trust certificate PEM before fingerprinting', async () => {

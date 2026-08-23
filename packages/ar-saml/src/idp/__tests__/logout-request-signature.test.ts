@@ -86,6 +86,24 @@ describe('validateSAMLLogoutRequestSignature', () => {
     );
   });
 
+  it('returns authenticated references for signed POST LogoutRequest processing', async () => {
+    const references = [{ uri: '#_logout123', xml: '<LogoutRequest ID="_logout123" />' }];
+    await expect(
+      validateSAMLLogoutRequestSignature(
+        {
+          logoutRequest,
+          spConfig: { ...baseSpConfig, logoutRequestSignaturePolicy: 'required' },
+          binding: 'post',
+          xml: '<LogoutRequest><Signature /></LogoutRequest>',
+        },
+        {
+          hasSignature: () => true,
+          verifyXmlSignatureAndGetReferences: vi.fn(() => references),
+        }
+      )
+    ).resolves.toEqual(references);
+  });
+
   it('tries rollover certificates when verifying signed POST LogoutRequest', async () => {
     const verifyXmlSignature = vi.fn((_xml, options) => options.certificateOrKey === 'sp-next');
 

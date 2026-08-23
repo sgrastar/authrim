@@ -85,6 +85,24 @@ describe('validateSAMLIdPLogoutRequestSignature', () => {
     );
   });
 
+  it('returns authenticated references for signed IdP POST LogoutRequest processing', async () => {
+    const references = [{ uri: '#_logout123', xml: '<LogoutRequest ID="_logout123" />' }];
+    await expect(
+      validateSAMLIdPLogoutRequestSignature(
+        {
+          logoutRequest,
+          idpConfig: baseIdPConfig,
+          binding: 'post',
+          xml: '<LogoutRequest><Signature /></LogoutRequest>',
+        },
+        {
+          hasSignature: () => true,
+          verifyXmlSignatureAndGetReferences: vi.fn(() => references),
+        }
+      )
+    ).resolves.toEqual(references);
+  });
+
   it('verifies signed Redirect LogoutRequest over raw query parameter values', async () => {
     const verifyRedirectBindingSignature = vi.fn(async () => true);
 

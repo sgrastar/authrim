@@ -23,7 +23,11 @@ import {
   type LogoutResponseOptions,
 } from '../slo-messages';
 import { SAML_MESSAGE_LIMITS } from '../message-limits';
-import { signRedirectBinding, verifyRedirectBindingSignature } from '../signature';
+import {
+  parseRedirectBindingSignatureInput,
+  signRedirectBinding,
+  verifyRedirectBindingSignature,
+} from '../signature';
 
 // Test private key (same as signature-security.test.ts)
 const testPrivateKey = `-----BEGIN PRIVATE KEY-----
@@ -407,6 +411,68 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
   });
 
   describe('Invalid Input Handling', () => {
+    it('rejects duplicate signed query parameters', () => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          '?SAMLRequest=first&SAMLRequest=second&SigAlg=algorithm&Signature=value',
+          'SAMLRequest'
+        )
+      ).toThrow('Duplicate HTTP-Redirect parameter: SAMLRequest');
+    });
+
+    it('rejects a query containing both request and response messages', () => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          '?SAMLRequest=request&SAMLResponse=response&SigAlg=algorithm&Signature=value',
+          'SAMLRequest'
+        )
+      ).toThrow('HTTP-Redirect message cannot contain both SAMLRequest and SAMLResponse');
+    });
+
+    it('preserves signed encodings and decodes only signature metadata', () => {
+      expect(
+        parseRedirectBindingSignatureInput(
+          'SAMLRequest=a%2Bb&RelayState=&SigAlg=urn%3Atest&Signature=c%2Bd',
+          'SAMLRequest'
+        )
+      ).toEqual({
+        samlMessage: 'a%2Bb',
+        relayState: '',
+        sigAlg: 'urn:test',
+        signature: 'c+d',
+      });
+    });
+
+    it('allows an unsigned message without optional Redirect parameters', () => {
+      expect(parseRedirectBindingSignatureInput('?SAMLRequest=value&&', 'SAMLRequest')).toEqual({
+        samlMessage: 'value',
+      });
+    });
+
+    it.each(['RelayState', 'SigAlg', 'Signature'])('rejects duplicate %s parameters', (name) => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          `?SAMLRequest=value&${name}=first&${name}=second`,
+          'SAMLRequest'
+        )
+      ).toThrow(`Duplicate HTTP-Redirect parameter: ${name}`);
+    });
+
+    it('rejects a missing message parameter', () => {
+      expect(() => parseRedirectBindingSignatureInput('?RelayState=value', 'SAMLResponse')).toThrow(
+        'Missing SAMLResponse parameter'
+      );
+    });
+
+    it('rejects malformed percent encoding in names and values', () => {
+      expect(() => parseRedirectBindingSignatureInput('?%ZZ=value', 'SAMLRequest')).toThrow(
+        'Malformed HTTP-Redirect query encoding'
+      );
+      expect(() =>
+        parseRedirectBindingSignatureInput('?SAMLRequest=value&SigAlg=%ZZ', 'SAMLRequest')
+      ).toThrow('Malformed HTTP-Redirect query encoding');
+    });
+
     it('should reject invalid base64 encoding', () => {
       expect(() => parseLogoutRequestRedirect('not-valid-base64!!!')).toThrow();
     });

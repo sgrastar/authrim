@@ -62,6 +62,9 @@ vi.mock('../../admin/providers', () => ({
 
 vi.mock('../../common/signature', () => ({
   verifyXmlSignature: vi.fn().mockReturnValue(true),
+  verifyXmlSignatureAndGetReferences: vi.fn((xml: string) => [
+    { uri: `#${/\bID="([^"]+)"/.exec(xml)?.[1]}`, xml },
+  ]),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
 }));
 
@@ -184,6 +187,7 @@ function createSAMLResponseWithConditions(options: {
   notBefore?: string | null;
   notOnOrAfter?: string | null;
   audiences?: string[];
+  audienceRestrictions?: string[][];
   includeConditions?: boolean;
   includeOneTimeUse?: boolean;
   includeProxyRestriction?: boolean;
@@ -198,18 +202,21 @@ function createSAMLResponseWithConditions(options: {
     notBefore = new Date(Date.now() - 60000).toISOString(),
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
     audiences = ['https://auth.example.com/saml/sp/metadata'],
+    audienceRestrictions = [audiences],
     includeConditions = true,
     includeOneTimeUse = false,
     includeProxyRestriction = false,
     proxyCount = 0,
   } = options;
 
-  const audienceRestriction =
-    audiences.length > 0
-      ? `<saml:AudienceRestriction>
-        ${audiences.map((a) => `<saml:Audience>${a}</saml:Audience>`).join('\n        ')}
+  const audienceRestriction = audienceRestrictions
+    .filter((restriction) => restriction.length > 0)
+    .map(
+      (restriction) => `<saml:AudienceRestriction>
+        ${restriction.map((audience) => `<saml:Audience>${audience}</saml:Audience>`).join('\n        ')}
       </saml:AudienceRestriction>`
-      : '';
+    )
+    .join('\n');
 
   const oneTimeUse = includeOneTimeUse ? '<saml:OneTimeUse/>' : '';
   const proxyRestriction = includeProxyRestriction
@@ -511,6 +518,19 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       const res = await callACS(samlResponse);
 
       expect(res.status).toBe(302);
+    });
+
+    it('should require every AudienceRestriction to allow our SP', async () => {
+      const samlResponse = createSAMLResponseWithConditions({
+        audienceRestrictions: [
+          ['https://auth.example.com/saml/sp/metadata'],
+          ['https://other-sp.example.com/sp'],
+        ],
+      });
+
+      const res = await callACS(samlResponse);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
     });
 
     it('should reject assertion with empty AudienceRestriction', async () => {

@@ -11,10 +11,15 @@
  */
 
 import { SignedXml } from 'xml-crypto';
-import { SIGNATURE_ALGORITHMS, DIGEST_ALGORITHMS, CANONICALIZATION_ALGORITHMS } from './constants';
-import { parseXml, serializeXml } from './xml-utils';
+import {
+  SIGNATURE_ALGORITHMS,
+  DIGEST_ALGORITHMS,
+  CANONICALIZATION_ALGORITHMS,
+  SAML_NAMESPACES,
+} from './constants';
+import { parseSAMLXml, parseXml } from './xml-utils';
 import type { XMLNode, XMLElement, SignedXmlWithErrors } from './types';
-import { NodeType, isElementNode } from './types';
+import { isElementNode } from './types';
 import { assertCertificateCurrentlyValid, extractSubjectPublicKeyInfo } from './x509';
 
 // =============================================================================
@@ -94,6 +99,20 @@ export interface VerifyOptions {
   allowSha1SignatureAlgorithm?: boolean;
   /** Allow deprecated SHA-1 DigestMethod. Only use for explicit legacy SP opt-in. */
   allowSha1DigestAlgorithm?: boolean;
+}
+
+export interface VerifiedXmlReference {
+  /** Fragment URI from ds:Reference, for example #_assertion_id. */
+  uri: string;
+  /** Canonicalized bytes whose digest was verified by xml-crypto. */
+  xml: string;
+}
+
+export interface RedirectBindingSignatureInput {
+  samlMessage: string;
+  relayState?: string;
+  signature?: string;
+  sigAlg?: string;
 }
 
 /**
@@ -199,6 +218,18 @@ function resolveSignatureReferenceXPath(referenceUri: string): string {
  * @see https://www.usenix.org/conference/usenixsecurity12/technical-sessions/presentation/somorovsky
  */
 export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean {
+  verifyXmlSignatureAndGetReferences(xml, options);
+  return true;
+}
+
+/**
+ * Verify XML signatures and return only the authenticated reference bytes.
+ * Callers must parse these values instead of continuing to consume the original DOM.
+ */
+export function verifyXmlSignatureAndGetReferences(
+  xml: string,
+  options: VerifyOptions
+): VerifiedXmlReference[] {
   const {
     certificateOrKey,
     expectedId,
@@ -209,7 +240,7 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
 
   assertCertificateCurrentlyValid(certificateOrKey);
 
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
 
   // Find Signature element
   const signatures = doc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature');
@@ -217,9 +248,13 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     throw new Error('No signature found in XML');
   }
 
+  const verifiedReferences: VerifiedXmlReference[] = [];
+
   // Verify each signature
   for (let i = 0; i < signatures.length; i++) {
     const signatureNode = signatures[i];
+    const signedInfo = getSingleDirectXmlDsigChild(signatureNode, 'SignedInfo');
+    getSingleDirectXmlDsigChild(signatureNode, 'SignatureValue');
 
     // ==========================================================================
     // SECURITY CHECKS BEFORE SIGNATURE VERIFICATION
@@ -228,10 +263,7 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
     // ==========================================================================
 
     // 1. Check that Reference exists and has valid URI
-    const references = signatureNode.getElementsByTagNameNS(
-      'http://www.w3.org/2000/09/xmldsig#',
-      'Reference'
-    );
+    const references = getDirectXmlDsigChildren(signedInfo, 'Reference');
     if (references.length === 0) {
       throw new Error('No Reference found in signature');
     }
@@ -282,11 +314,12 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
         throw new Error('XSW Protection: Reference URI is required in strict mode');
       }
 
-      const digestMethod = reference.getElementsByTagNameNS(
-        'http://www.w3.org/2000/09/xmldsig#',
-        'DigestMethod'
-      )[0];
+      const digestMethod = getSingleDirectXmlDsigChild(reference, 'DigestMethod');
+      getSingleDirectXmlDsigChild(reference, 'DigestValue');
       const digestAlgorithm = digestMethod?.getAttribute('Algorithm');
+      if (!digestAlgorithm) {
+        throw new Error('DigestMethod Algorithm is required');
+      }
       if (digestAlgorithm === DIGEST_ALGORITHMS.SHA1 && !allowSha1DigestAlgorithm) {
         throw new Error('SHA-1 digest algorithm is not allowed');
       }
@@ -322,17 +355,27 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       }
     }
 
-    // 5. Check signature algorithm (reject SHA-1) BEFORE verification
-    const signatureMethod = signatureNode.getElementsByTagNameNS(
-      'http://www.w3.org/2000/09/xmldsig#',
-      'SignatureMethod'
-    )[0];
-    if (signatureMethod) {
-      const algorithm = signatureMethod.getAttribute('Algorithm');
-      if (algorithm === SIGNATURE_ALGORITHMS.RSA_SHA1 && !allowSha1SignatureAlgorithm) {
-        throw new Error('SHA-1 signature algorithm is not allowed');
-      }
+    for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
+      validateReferenceTransforms(references[referenceIndex]!);
     }
+
+    // 5. Check signature algorithm (reject SHA-1) BEFORE verification
+    const signatureMethod = getSingleDirectXmlDsigChild(signedInfo, 'SignatureMethod');
+    const signatureAlgorithm = signatureMethod?.getAttribute('Algorithm');
+    if (!signatureAlgorithm) {
+      throw new Error('SignatureMethod Algorithm is required');
+    }
+    if (signatureAlgorithm === SIGNATURE_ALGORITHMS.RSA_SHA1 && !allowSha1SignatureAlgorithm) {
+      throw new Error('SHA-1 signature algorithm is not allowed');
+    }
+    if (
+      signatureAlgorithm !== SIGNATURE_ALGORITHMS.RSA_SHA256 &&
+      !(allowSha1SignatureAlgorithm && signatureAlgorithm === SIGNATURE_ALGORITHMS.RSA_SHA1)
+    ) {
+      throw new Error(`Unsupported signature algorithm: ${signatureAlgorithm}`);
+    }
+
+    validateCanonicalizationMethod(signedInfo);
 
     // ==========================================================================
     // CRYPTOGRAPHIC SIGNATURE VERIFICATION
@@ -354,16 +397,95 @@ export function verifyXmlSignature(xml: string, options: VerifyOptions): boolean
       const errors = sigWithErrors.validationErrors || [];
       throw new Error(`Signature verification failed: ${errors.join(', ')}`);
     }
+
+    const signedReferences = sig.getSignedReferences();
+    if (signedReferences.length !== referenceUris.length) {
+      throw new Error('Signature verification did not return every signed reference');
+    }
+    for (let referenceIndex = 0; referenceIndex < signedReferences.length; referenceIndex++) {
+      const signedReference = signedReferences[referenceIndex];
+      const uri = referenceUris[referenceIndex];
+      if (signedReference === undefined || uri === undefined) {
+        throw new Error('Signature verification returned an incomplete signed reference');
+      }
+      verifiedReferences.push({ uri, xml: signedReference });
+    }
   }
 
-  return true;
+  return verifiedReferences;
+}
+
+function validateReferenceTransforms(reference: Element): void {
+  const allowedTransforms = new Set([
+    'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+    CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N,
+    CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N_WITH_COMMENTS,
+  ]);
+  const transformsElement = getSingleDirectXmlDsigChild(reference, 'Transforms');
+  const transforms = getDirectXmlDsigChildren(transformsElement, 'Transform');
+  if (transforms.length > 2) {
+    throw new Error('XML signature Reference uses too many transforms');
+  }
+  if (transforms.length !== 2) {
+    throw new Error('XML signature Reference must use exactly two transforms');
+  }
+  for (let index = 0; index < transforms.length; index++) {
+    const algorithm = transforms[index]?.getAttribute('Algorithm');
+    if (!algorithm || !allowedTransforms.has(algorithm)) {
+      throw new Error(`Unsupported XML signature transform: ${algorithm || 'missing'}`);
+    }
+  }
+  if (
+    transforms[0]?.getAttribute('Algorithm') !==
+      'http://www.w3.org/2000/09/xmldsig#enveloped-signature' ||
+    (transforms[1]?.getAttribute('Algorithm') !== CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N &&
+      transforms[1]?.getAttribute('Algorithm') !==
+        CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N_WITH_COMMENTS)
+  ) {
+    throw new Error(
+      'XML signature transforms must be enveloped-signature followed by exclusive C14N'
+    );
+  }
+}
+
+function validateCanonicalizationMethod(signedInfo: Element): void {
+  const method = getSingleDirectXmlDsigChild(signedInfo, 'CanonicalizationMethod');
+  const algorithm = method.getAttribute('Algorithm');
+  if (
+    algorithm !== CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N &&
+    algorithm !== CANONICALIZATION_ALGORITHMS.EXCLUSIVE_C14N_WITH_COMMENTS
+  ) {
+    throw new Error(`Unsupported canonicalization algorithm: ${algorithm || 'missing'}`);
+  }
+}
+
+function getSingleDirectXmlDsigChild(parent: Element, localName: string): Element {
+  const children = getDirectXmlDsigChildren(parent, localName);
+  if (children.length !== 1) {
+    throw new Error(`XML signature must contain exactly one direct ${localName}`);
+  }
+  return children[0]!;
+}
+
+function getDirectXmlDsigChildren(parent: Element, localName: string): Element[] {
+  const children: Element[] = [];
+  for (let index = 0; index < parent.childNodes.length; index++) {
+    const child = parent.childNodes[index];
+    if (child?.nodeType !== 1 || (child as Element).localName !== localName) continue;
+    const element = child as Element;
+    if (element.namespaceURI !== SAML_NAMESPACES.DS) {
+      throw new Error(`XML signature ${localName} must use the XMLDSig namespace`);
+    }
+    children.push(element);
+  }
+  return children;
 }
 
 /**
  * Check if XML document has a signature
  */
 export function hasSignature(xml: string): boolean {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
   const signatures = doc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature');
   return signatures.length > 0;
 }
@@ -493,7 +615,7 @@ export async function verifyRedirectBindingSignature(
   // Rebuild the signed string (must match exactly what was signed)
   // Per SAML 2.0 Bindings Section 3.4.4.1, the signed string uses URL-encoded values
   let signInput = `${samlParam}=${samlValue}`;
-  if (relayState) {
+  if (relayState !== undefined) {
     signInput += `&RelayState=${relayState}`;
   }
   signInput += `&SigAlg=${encodeURIComponent(sigAlg)}`;
@@ -512,6 +634,63 @@ export async function verifyRedirectBindingSignature(
   const isValid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signatureBytes, data);
 
   return isValid;
+}
+
+/**
+ * Extract exactly one copy of each signed HTTP-Redirect binding parameter while
+ * preserving the original URL encoding used in the signature input.
+ */
+export function parseRedirectBindingSignatureInput(
+  search: string,
+  samlParam: 'SAMLRequest' | 'SAMLResponse'
+): RedirectBindingSignatureInput {
+  const query = search.startsWith('?') ? search.slice(1) : search;
+  const values = new Map<string, string[]>();
+  for (const part of query.split('&')) {
+    if (!part) continue;
+    const separator = part.indexOf('=');
+    const rawName = separator >= 0 ? part.slice(0, separator) : part;
+    const rawValue = separator >= 0 ? part.slice(separator + 1) : '';
+    const name = decodeRedirectQueryComponent(rawName);
+    const existing = values.get(name) ?? [];
+    existing.push(rawValue);
+    values.set(name, existing);
+  }
+
+  for (const name of [samlParam, 'RelayState', 'SigAlg', 'Signature']) {
+    if ((values.get(name)?.length ?? 0) > 1) {
+      throw new Error(`Duplicate HTTP-Redirect parameter: ${name}`);
+    }
+  }
+  const oppositeParam = samlParam === 'SAMLRequest' ? 'SAMLResponse' : 'SAMLRequest';
+  if ((values.get(oppositeParam)?.length ?? 0) > 0) {
+    throw new Error('HTTP-Redirect message cannot contain both SAMLRequest and SAMLResponse');
+  }
+
+  const samlMessage = values.get(samlParam)?.[0];
+  if (samlMessage === undefined) {
+    throw new Error(`Missing ${samlParam} parameter`);
+  }
+
+  const relayState = values.get('RelayState')?.[0];
+  const rawSignature = values.get('Signature')?.[0];
+  const rawSigAlg = values.get('SigAlg')?.[0];
+  return {
+    samlMessage,
+    ...(relayState !== undefined ? { relayState } : {}),
+    ...(rawSignature !== undefined
+      ? { signature: decodeRedirectQueryComponent(rawSignature) }
+      : {}),
+    ...(rawSigAlg !== undefined ? { sigAlg: decodeRedirectQueryComponent(rawSigAlg) } : {}),
+  };
+}
+
+function decodeRedirectQueryComponent(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, ' '));
+  } catch {
+    throw new Error('Malformed HTTP-Redirect query encoding');
+  }
 }
 
 /**
@@ -538,7 +717,7 @@ async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
 /**
  * Import public key from X.509 certificate PEM
  */
-async function importPublicKeyFromCertificate(
+export async function importPublicKeyFromCertificate(
   pem: string,
   options: { hash?: 'SHA-1' | 'SHA-256' } = {}
 ): Promise<CryptoKey> {

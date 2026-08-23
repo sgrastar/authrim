@@ -6,22 +6,35 @@ import type {
   SAMLMetadataVerificationPolicy,
   SAMLMetadataVerificationSummary,
 } from '@authrim/ar-lib-core';
-import { SignedXml } from 'xml-crypto';
+import { SaxesParser, type SaxesTagNS } from 'saxes';
+import { ExclusiveCanonicalization } from 'xml-crypto';
 import {
   parseXml,
-  serializeXml,
   findElement,
   findElements,
-  findDirectChildElement,
   getAttribute,
   getTextContent,
 } from '../common/xml-utils';
 import { DIGEST_ALGORITHMS, SAML_NAMESPACES, SIGNATURE_ALGORITHMS } from '../common/constants';
-import type { SignedXmlWithErrors } from '../common/types';
+import { importPublicKeyFromCertificate } from '../common/signature';
 import { SAMLMetadataValidationError } from './errors';
 
 export const SINGLE_METADATA_FETCH_LIMIT_BYTES = 1024 * 1024;
 export const AGGREGATE_METADATA_FETCH_LIMIT_BYTES = 10 * 1024 * 1024;
+
+const AGGREGATE_XML_LIMITS = {
+  maxBytes: AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
+  maxElements: 100_000,
+  maxAttributes: 200_000,
+  maxDepth: 64,
+  maxEntities: 10_000,
+} as const;
+
+const AGGREGATE_SIGNATURE_LIMITS = {
+  maxBytes: 128 * 1024,
+  maxElements: 512,
+  maxAttributes: 1024,
+} as const;
 
 export interface ParsedAggregateMetadata {
   metadataXml: string;
@@ -30,58 +43,104 @@ export interface ParsedAggregateMetadata {
   entities: SAMLMetadataEntitySummary[];
 }
 
+export interface VerifiedAggregateMetadata {
+  aggregate: ParsedAggregateMetadata;
+  verification: SAMLMetadataVerificationSummary;
+}
+
+interface ScannedAggregateMetadata {
+  rootId: string;
+  rootIdOccurrences: number;
+  validUntil?: string;
+  rootSignatureXml?: string;
+  entityCount: number;
+  entityXml: string[];
+}
+
+interface PreparedAggregateSignature {
+  signedReference: string;
+  signedInfo: Uint8Array;
+  signatureValue: Uint8Array;
+}
+
 export function isAggregateMetadata(xml: string): boolean {
-  const doc = parseXml(xml);
-  const root = doc.documentElement;
-  return root?.namespaceURI === SAML_NAMESPACES.MD && root.localName === 'EntitiesDescriptor';
+  if (utf8ByteLength(xml) > AGGREGATE_XML_LIMITS.maxBytes) {
+    throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum size');
+  }
+  let rootIsAggregate = false;
+  let depth = 0;
+  let elementCount = 0;
+  let attributeCount = 0;
+  const parser = new SaxesParser({ xmlns: true });
+  parser.on('doctype', () => {
+    throw new SAMLMetadataValidationError(
+      'XML security error: DOCTYPE declarations are not allowed'
+    );
+  });
+  parser.on('processinginstruction', () => {
+    throw new SAMLMetadataValidationError('SAML metadata processing instructions are not allowed');
+  });
+  parser.on('opentag', (tag) => {
+    depth++;
+    elementCount++;
+    attributeCount += Object.keys(tag.attributes).length;
+    if (depth > AGGREGATE_XML_LIMITS.maxDepth) {
+      throw new SAMLMetadataValidationError('SAML metadata exceeds maximum depth');
+    }
+    if (elementCount > AGGREGATE_XML_LIMITS.maxElements) {
+      throw new SAMLMetadataValidationError('SAML metadata exceeds maximum element count');
+    }
+    if (attributeCount > AGGREGATE_XML_LIMITS.maxAttributes) {
+      throw new SAMLMetadataValidationError('SAML metadata exceeds maximum attribute count');
+    }
+    if (depth === 1) {
+      rootIsAggregate = tag.uri === SAML_NAMESPACES.MD && tag.local === 'EntitiesDescriptor';
+    }
+  });
+  parser.on('closetag', () => {
+    depth--;
+  });
+  try {
+    parser.write(xml).close();
+  } catch (error) {
+    throw toAggregateValidationError(error);
+  }
+  return rootIsAggregate;
 }
 
 export function parseAggregateMetadata(xml: string): ParsedAggregateMetadata {
-  const doc = parseXml(xml);
-  const root = doc.documentElement;
-  if (
-    !root ||
-    root.namespaceURI !== SAML_NAMESPACES.MD ||
-    root.localName !== 'EntitiesDescriptor'
-  ) {
-    throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing EntitiesDescriptor');
-  }
-
-  const rootId = getAttribute(root, 'ID');
-  if (!rootId) {
-    throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing root ID');
-  }
-
-  const entities = findElements(root, SAML_NAMESPACES.MD, 'EntityDescriptor').map((entity) =>
-    summarizeEntityDescriptor(entity)
-  );
-  if (entities.length === 0) {
-    throw new SAMLMetadataValidationError(
-      'Invalid aggregate metadata: no EntityDescriptor entries'
-    );
-  }
-
-  return {
-    metadataXml: xml,
-    rootId,
-    validUntil: getAttribute(root, 'validUntil') || undefined,
-    entities,
-  };
+  return buildParsedAggregateMetadata(xml, scanAggregateMetadata(xml));
 }
 
 export function extractEntityDescriptorXml(xml: string, entityId: string): string {
-  const doc = parseXml(xml);
-  const entities = findElements(doc, SAML_NAMESPACES.MD, 'EntityDescriptor');
-  const entity = entities.find((candidate) => getAttribute(candidate, 'entityID') === entityId);
-  if (!entity) {
+  const entities = extractEntityDescriptorXmls(xml, [entityId]);
+  const entityXml = entities.get(entityId);
+  if (!entityXml) {
     throw new SAMLMetadataValidationError(
       `Aggregate metadata does not contain entityID: ${entityId}`
     );
   }
+  return entityXml;
+}
 
-  const clone = entity.cloneNode(true) as Element;
-  copyNamespaceDeclarations(entity, clone);
-  return serializeXml(clone);
+export function extractEntityDescriptorXmls(
+  xml: string,
+  entityIds: Iterable<string>
+): Map<string, string> {
+  const requestedEntityIds = new Set(entityIds);
+  if (requestedEntityIds.size === 0) {
+    return new Map();
+  }
+  const scan = scanAggregateMetadata(xml, requestedEntityIds);
+  const results = new Map<string, string>();
+  for (const entityXml of scan.entityXml) {
+    const entity = parseEntityDescriptor(entityXml);
+    const entityId = getAttribute(entity, 'entityID');
+    if (entityId && requestedEntityIds.has(entityId) && !results.has(entityId)) {
+      results.set(entityId, entityXml);
+    }
+  }
+  return results;
 }
 
 export function resolveAggregateSignaturePolicy(env: Env): SAMLMetadataVerificationPolicy {
@@ -101,21 +160,33 @@ export function resolveAggregateSignaturePolicy(env: Env): SAMLMetadataVerificat
   return isProduction ? 'strict' : 'warn';
 }
 
-export function verifyAggregateMetadataSignature(
+export async function verifyAggregateMetadataSignature(
   xml: string,
   metadataUrl: string | undefined,
   trustProfiles: SAMLFederationTrustProfile[],
   policy: SAMLMetadataVerificationPolicy
-): SAMLMetadataVerificationSummary {
+): Promise<SAMLMetadataVerificationSummary> {
+  return (await verifyAggregateMetadata(xml, metadataUrl, trustProfiles, policy)).verification;
+}
+
+export async function verifyAggregateMetadata(
+  xml: string,
+  metadataUrl: string | undefined,
+  trustProfiles: SAMLFederationTrustProfile[],
+  policy: SAMLMetadataVerificationPolicy
+): Promise<VerifiedAggregateMetadata> {
+  const scan = scanAggregateMetadata(xml, undefined, false);
   if (policy === 'disabled') {
     return {
-      status: 'skipped',
-      policy,
-      warnings: ['Aggregate metadata signature verification is disabled.'],
+      aggregate: parseAggregateMetadata(xml),
+      verification: {
+        status: 'skipped',
+        policy,
+        warnings: ['Aggregate metadata signature verification is disabled.'],
+      },
     };
   }
 
-  const aggregate = parseAggregateMetadata(xml);
   const matchingProfiles = trustProfiles.filter(
     (profile) => profile.enabled && metadataUrlMatchesProfile(metadataUrl, profile)
   );
@@ -125,26 +196,21 @@ export function verifyAggregateMetadataSignature(
     const summary: SAMLMetadataVerificationSummary = {
       status: policy === 'strict' ? 'failed' : 'unverified',
       policy,
-      signedElementId: aggregate.rootId,
+      signedElementId: scan.rootId,
       warnings: ['No enabled federation trust profile matched this metadata URL.'],
       error: 'No matching federation trust profile',
     };
     if (policy === 'strict') {
       throw new SAMLMetadataValidationError(summary.error!);
     }
-    return summary;
+    return { aggregate: parseAggregateMetadata(xml), verification: summary };
   }
 
-  const rootSignature = findDirectChildElement(
-    parseXml(xml).documentElement,
-    SAML_NAMESPACES.DS,
-    'Signature'
-  );
-  if (!rootSignature) {
+  if (!scan.rootSignatureXml) {
     const summary: SAMLMetadataVerificationSummary = {
       status: policy === 'strict' ? 'failed' : 'unverified',
       policy,
-      signedElementId: aggregate.rootId,
+      signedElementId: scan.rootId,
       trustProfileId: matchingProfiles[0]?.id,
       trustProfileName: matchingProfiles[0]?.name,
       warnings: ['Aggregate metadata root is not signed.'],
@@ -153,20 +219,25 @@ export function verifyAggregateMetadataSignature(
     if (policy === 'strict') {
       throw new SAMLMetadataValidationError(summary.error!);
     }
-    return summary;
+    return { aggregate: parseAggregateMetadata(xml), verification: summary };
   }
 
-  const referenceUris = Array.from(
-    rootSignature.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Reference')
-  )
+  const signatureNode = parseXml(scan.rootSignatureXml).documentElement;
+  const signedInfo = getSingleDirectDsigChild(signatureNode, 'SignedInfo');
+  const references = getDirectDsigChildren(signedInfo, 'Reference');
+  const referenceUris = references
     .map((reference) => getAttribute(reference as Element, 'URI'))
     .filter((uri): uri is string => Boolean(uri));
 
-  if (referenceUris.length !== 1 || referenceUris[0] !== `#${aggregate.rootId}`) {
+  if (
+    references.length !== 1 ||
+    referenceUris.length !== 1 ||
+    referenceUris[0] !== `#${scan.rootId}`
+  ) {
     const summary: SAMLMetadataVerificationSummary = {
       status: policy === 'strict' ? 'failed' : 'unverified',
       policy,
-      signedElementId: aggregate.rootId,
+      signedElementId: scan.rootId,
       trustProfileId: matchingProfiles[0]?.id,
       trustProfileName: matchingProfiles[0]?.name,
       warnings: [
@@ -177,21 +248,36 @@ export function verifyAggregateMetadataSignature(
     if (policy === 'strict') {
       throw new SAMLMetadataValidationError(summary.error!);
     }
-    return summary;
+    return { aggregate: parseAggregateMetadata(xml), verification: summary };
+  }
+
+  let prepared: PreparedAggregateSignature | undefined;
+  try {
+    prepared = await prepareAggregateSignature(xml, scan);
+  } catch (error) {
+    warnings.push(error instanceof Error ? error.message : 'Signature verification failed');
   }
 
   for (const profile of matchingProfiles) {
     for (const certificate of profile.certificates) {
+      if (!prepared) break;
       try {
-        verifyRootAggregateSignature(xml, aggregate.rootId, certificate.certificate);
+        await verifyPreparedAggregateSignature(prepared, certificate.certificate);
+        const verifiedAggregate = parseAggregateMetadata(prepared.signedReference);
+        if (verifiedAggregate.rootId !== scan.rootId) {
+          throw new Error('Verified aggregate root ID does not match the received document');
+        }
         return {
-          status: 'verified',
-          policy,
-          trustProfileId: profile.id,
-          trustProfileName: profile.name,
-          certificateFingerprintSha256: certificate.fingerprintSha256,
-          signedElementId: aggregate.rootId,
-          verifiedAt: Date.now(),
+          aggregate: verifiedAggregate,
+          verification: {
+            status: 'verified',
+            policy,
+            trustProfileId: profile.id,
+            trustProfileName: profile.name,
+            certificateFingerprintSha256: certificate.fingerprintSha256,
+            signedElementId: scan.rootId,
+            verifiedAt: Date.now(),
+          },
         };
       } catch (error) {
         warnings.push(error instanceof Error ? error.message : 'Signature verification failed');
@@ -202,7 +288,7 @@ export function verifyAggregateMetadataSignature(
   const summary: SAMLMetadataVerificationSummary = {
     status: policy === 'strict' ? 'failed' : 'unverified',
     policy,
-    signedElementId: aggregate.rootId,
+    signedElementId: scan.rootId,
     trustProfileId: matchingProfiles[0]?.id,
     trustProfileName: matchingProfiles[0]?.name,
     warnings: warnings.slice(0, 5),
@@ -211,7 +297,7 @@ export function verifyAggregateMetadataSignature(
   if (policy === 'strict') {
     throw new SAMLMetadataValidationError(summary.error!);
   }
-  return summary;
+  return { aggregate: parseAggregateMetadata(xml), verification: summary };
 }
 
 export async function fingerprintCertificateSha256(certificate: string): Promise<string> {
@@ -349,104 +435,573 @@ function isHttpsUrl(value: string): boolean {
   }
 }
 
-function verifyRootAggregateSignature(xml: string, rootId: string, certificateOrKey: string): void {
-  const doc = parseXml(xml);
-  const signatureNode = findDirectChildElement(
-    doc.documentElement,
-    SAML_NAMESPACES.DS,
-    'Signature'
-  );
-  if (!signatureNode) {
+async function prepareAggregateSignature(
+  xml: string,
+  scan: ScannedAggregateMetadata
+): Promise<PreparedAggregateSignature> {
+  if (!scan.rootSignatureXml) {
     throw new Error('Aggregate metadata root is not signed');
   }
-  const references = signatureNode.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Reference');
+  const signatureNode = parseXml(scan.rootSignatureXml).documentElement;
+  const signedInfo = getSingleDirectDsigChild(signatureNode, 'SignedInfo');
+  const references = getDirectDsigChildren(signedInfo, 'Reference');
   if (references.length !== 1) {
     throw new Error('Aggregate signature must contain exactly one Reference');
   }
 
   const referenceUri = references[0]?.getAttribute('URI');
-  if (referenceUri !== `#${rootId}`) {
+  if (referenceUri !== `#${scan.rootId}`) {
     throw new Error(
-      `Aggregate signature Reference URI "${referenceUri}" does not match root "#${rootId}"`
+      `Aggregate signature Reference URI "${referenceUri}" does not match root "#${scan.rootId}"`
     );
   }
 
-  const referencedElements = findElementsById(doc, rootId);
-  if (referencedElements.length !== 1) {
+  if (scan.rootIdOccurrences !== 1) {
     throw new Error(
-      `Aggregate signature expected exactly one element with ID "${rootId}", found ${referencedElements.length}`
+      `Aggregate signature expected exactly one element with ID "${scan.rootId}", found ${scan.rootIdOccurrences}`
     );
   }
 
-  const signatureMethod = signatureNode.getElementsByTagNameNS(
-    SAML_NAMESPACES.DS,
-    'SignatureMethod'
-  )[0];
-  if (signatureMethod?.getAttribute('Algorithm') === SIGNATURE_ALGORITHMS.RSA_SHA1) {
-    throw new Error('SHA-1 signature algorithm is not allowed');
+  const canonicalizationMethod = getSingleDirectDsigChild(signedInfo, 'CanonicalizationMethod');
+  if (
+    canonicalizationMethod.getAttribute('Algorithm') !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
+  ) {
+    throw new Error('Aggregate SignedInfo canonicalization must use exclusive C14N');
   }
 
-  const digestMethod = references[0]?.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'DigestMethod')[0];
-  if (digestMethod?.getAttribute('Algorithm') === DIGEST_ALGORITHMS.SHA1) {
-    throw new Error('SHA-1 digest algorithm is not allowed');
+  const signatureMethod = getSingleDirectDsigChild(signedInfo, 'SignatureMethod');
+  if (signatureMethod.getAttribute('Algorithm') !== SIGNATURE_ALGORITHMS.RSA_SHA256) {
+    throw new Error('Aggregate signature algorithm must be RSA-SHA256');
   }
 
-  const signature = new SignedXml();
-  signature.publicCert = certificateOrKey;
-  signature.loadSignature(signatureNode);
-  if (!signature.checkSignature(xml)) {
-    const errors = (signature as unknown as SignedXmlWithErrors).validationErrors || [];
-    throw new Error(`Signature verification failed: ${errors.join(', ')}`);
+  const digestMethod = getSingleDirectDsigChild(references[0]!, 'DigestMethod');
+  if (digestMethod.getAttribute('Algorithm') !== DIGEST_ALGORITHMS.SHA256) {
+    throw new Error('Aggregate digest algorithm must be SHA-256');
+  }
+
+  const transformsElement = getSingleDirectDsigChild(references[0]!, 'Transforms');
+  const transforms = getDirectDsigChildren(transformsElement, 'Transform').map((transform) =>
+    transform.getAttribute('Algorithm')
+  );
+  if (
+    transforms.length !== 2 ||
+    transforms[0] !== 'http://www.w3.org/2000/09/xmldsig#enveloped-signature' ||
+    transforms[1] !== 'http://www.w3.org/2001/10/xml-exc-c14n#'
+  ) {
+    throw new Error(
+      'Aggregate signature transforms must be enveloped-signature followed by exclusive C14N'
+    );
+  }
+
+  if (signatureNode.getElementsByTagNameNS('*', 'InclusiveNamespaces').length > 0) {
+    throw new Error('Aggregate signature InclusiveNamespaces is not supported');
+  }
+
+  const digestValue = getRequiredElementText(
+    getSingleDirectDsigChild(references[0]!, 'DigestValue'),
+    'DigestValue'
+  );
+  const signatureValue = decodeBase64(
+    getRequiredElementText(
+      getSingleDirectDsigChild(signatureNode, 'SignatureValue'),
+      'SignatureValue'
+    ),
+    'SignatureValue'
+  );
+  const signedInfoCanonical = new ExclusiveCanonicalization().process(signedInfo, {});
+  const signedReference = canonicalizeAggregateReference(xml);
+  const actualDigest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(signedReference))
+  );
+  if (encodeBase64(actualDigest) !== digestValue.replace(/\s+/g, '')) {
+    throw new Error('Aggregate metadata reference digest is invalid');
+  }
+
+  return {
+    signedReference,
+    signedInfo: new TextEncoder().encode(signedInfoCanonical),
+    signatureValue,
+  };
+}
+
+async function verifyPreparedAggregateSignature(
+  prepared: PreparedAggregateSignature,
+  certificate: string
+): Promise<void> {
+  const publicKey = await importPublicKeyFromCertificate(certificate);
+  const valid = await crypto.subtle.verify(
+    'RSASSA-PKCS1-v1_5',
+    publicKey,
+    toArrayBuffer(prepared.signatureValue),
+    toArrayBuffer(prepared.signedInfo)
+  );
+  if (!valid) {
+    throw new Error('Aggregate SignedInfo signature is invalid');
   }
 }
 
-function findElementsById(doc: Document, id: string): Element[] {
-  const results: Element[] = [];
+function canonicalizeAggregateReference(xml: string): string {
+  let depth = 0;
+  let skippedSignatureDepth: number | undefined;
+  const output: string[] = [];
+  const renderedNamespaces: Array<Map<string, string>> = [];
+  const parser = new SaxesParser({ xmlns: true });
 
-  function traverse(node: Node): void {
-    if (node.nodeType === 1 && (node as Element).getAttribute('ID') === id) {
-      results.push(node as Element);
-    }
-    if (!node.childNodes) {
+  parser.on('doctype', () => {
+    throw new SAMLMetadataValidationError(
+      'XML security error: DOCTYPE declarations are not allowed'
+    );
+  });
+  parser.on('processinginstruction', () => {
+    throw new SAMLMetadataValidationError('SAML metadata processing instructions are not allowed');
+  });
+  parser.on('opentag', (tag) => {
+    depth++;
+    const inherited = new Map(renderedNamespaces[renderedNamespaces.length - 1] ?? []);
+    renderedNamespaces.push(inherited);
+
+    if (
+      skippedSignatureDepth === undefined &&
+      depth === 2 &&
+      tag.uri === SAML_NAMESPACES.DS &&
+      tag.local === 'Signature'
+    ) {
+      skippedSignatureDepth = depth;
       return;
     }
-    for (let i = 0; i < node.childNodes.length; i++) {
-      traverse(node.childNodes[i]!);
+    if (skippedSignatureDepth !== undefined) return;
+
+    output.push(serializeExclusiveCanonicalOpenTag(tag, inherited));
+  });
+  parser.on('text', (text) => {
+    if (skippedSignatureDepth === undefined && depth > 0) {
+      output.push(escapeCanonicalText(text));
+    }
+  });
+  parser.on('cdata', (text) => {
+    if (skippedSignatureDepth === undefined && depth > 0) {
+      output.push(escapeCanonicalText(text));
+    }
+  });
+  parser.on('closetag', (tag) => {
+    if (skippedSignatureDepth === undefined) {
+      output.push(`</${tag.name}>`);
+    } else if (skippedSignatureDepth === depth) {
+      skippedSignatureDepth = undefined;
+    }
+    renderedNamespaces.pop();
+    depth--;
+  });
+
+  try {
+    parser.write(xml).close();
+  } catch (error) {
+    throw toAggregateValidationError(error);
+  }
+  return output.join('');
+}
+
+function serializeExclusiveCanonicalOpenTag(
+  tag: SaxesTagNS,
+  renderedNamespaces: Map<string, string>
+): string {
+  const namespacesToRender = new Map<string, string>();
+  if (tag.prefix) {
+    if (renderedNamespaces.get(tag.prefix) !== tag.uri) {
+      namespacesToRender.set(tag.prefix, tag.uri);
+    }
+  } else if ((renderedNamespaces.get('') ?? '') !== tag.uri) {
+    namespacesToRender.set('', tag.uri);
+  }
+
+  const attributes = Object.values(tag.attributes).filter(
+    (attribute) => attribute.prefix !== 'xmlns' && attribute.name !== 'xmlns'
+  );
+  for (const attribute of attributes) {
+    if (
+      attribute.prefix &&
+      attribute.prefix !== 'xml' &&
+      renderedNamespaces.get(attribute.prefix) !== attribute.uri
+    ) {
+      namespacesToRender.set(attribute.prefix, attribute.uri);
     }
   }
 
-  traverse(doc);
-  return results;
+  const namespaceXml = Array.from(namespacesToRender)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([prefix, uri]) => {
+      renderedNamespaces.set(prefix, uri);
+      const name = prefix ? `xmlns:${prefix}` : 'xmlns';
+      return ` ${name}="${escapeCanonicalAttribute(uri)}"`;
+    })
+    .join('');
+  const attributeXml = attributes
+    .sort((left, right) => {
+      const leftKey = `${left.uri || ''}\u0000${left.local}`;
+      const rightKey = `${right.uri || ''}\u0000${right.local}`;
+      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    })
+    .map((attribute) => ` ${attribute.name}="${escapeCanonicalAttribute(attribute.value)}"`)
+    .join('');
+
+  return `<${tag.name}${namespaceXml}${attributeXml}>`;
 }
 
-function copyNamespaceDeclarations(source: Element, target: Element): void {
-  let current: Element | null = source;
-  while (current) {
-    for (let i = 0; i < current.attributes.length; i++) {
-      const attr = current.attributes[i];
-      if (
-        (attr.name === 'xmlns' || attr.name.startsWith('xmlns:')) &&
-        !hasAttributeNamed(target, attr.name)
-      ) {
-        target.setAttribute(attr.name, attr.value);
+function escapeCanonicalText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r/g, '&#xD;');
+}
+
+function escapeCanonicalAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\t/g, '&#x9;')
+    .replace(/\n/g, '&#xA;')
+    .replace(/\r/g, '&#xD;');
+}
+
+function getRequiredElementText(element: Element, localName: string): string {
+  const value = getTextContent(element)?.trim();
+  if (!value) {
+    throw new Error(`Aggregate signature ${localName} is empty`);
+  }
+  return value;
+}
+
+function getSingleDirectDsigChild(parent: Element, localName: string): Element {
+  const children = getDirectDsigChildren(parent, localName);
+  if (children.length !== 1) {
+    throw new Error(`Aggregate signature must contain exactly one direct ${localName}`);
+  }
+  return children[0]!;
+}
+
+function getDirectDsigChildren(parent: Element, localName: string): Element[] {
+  const children: Element[] = [];
+  for (let index = 0; index < parent.childNodes.length; index++) {
+    const child = parent.childNodes[index];
+    if (child?.nodeType !== 1 || (child as Element).localName !== localName) continue;
+    const element = child as Element;
+    if (element.namespaceURI !== SAML_NAMESPACES.DS) {
+      throw new Error(`Aggregate signature ${localName} must use the XMLDSig namespace`);
+    }
+    children.push(element);
+  }
+  return children;
+}
+
+function decodeBase64(value: string, field: string): Uint8Array {
+  const normalized = value.replace(/\s+/g, '');
+  if (!normalized || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error(`Aggregate signature ${field} is not valid base64`);
+  }
+  try {
+    return Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0));
+  } catch {
+    throw new Error(`Aggregate signature ${field} is not valid base64`);
+  }
+}
+
+function encodeBase64(value: Uint8Array): string {
+  let binary = '';
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function toArrayBuffer(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
+}
+
+function buildParsedAggregateMetadata(
+  xml: string,
+  scan: ScannedAggregateMetadata
+): ParsedAggregateMetadata {
+  assertAggregateMetadataIsCurrent(scan.validUntil);
+  const entities = scan.entityXml.map((entityXml) =>
+    summarizeEntityDescriptor(parseEntityDescriptor(entityXml))
+  );
+  if (entities.length === 0) {
+    throw new SAMLMetadataValidationError(
+      'Invalid aggregate metadata: no EntityDescriptor entries'
+    );
+  }
+  return {
+    metadataXml: xml,
+    rootId: scan.rootId,
+    validUntil: scan.validUntil,
+    entities,
+  };
+}
+
+function parseEntityDescriptor(xml: string): Element {
+  if (utf8ByteLength(xml) > SINGLE_METADATA_FETCH_LIMIT_BYTES) {
+    throw new SAMLMetadataValidationError(
+      'Invalid aggregate metadata: EntityDescriptor exceeds size limit'
+    );
+  }
+  const root = parseXml(xml).documentElement;
+  if (root.namespaceURI !== SAML_NAMESPACES.MD || root.localName !== 'EntityDescriptor') {
+    throw new SAMLMetadataValidationError('Invalid aggregate metadata: invalid EntityDescriptor');
+  }
+  return root;
+}
+
+function scanAggregateMetadata(
+  xml: string,
+  requestedEntityIds?: ReadonlySet<string>,
+  captureEntities = true
+): ScannedAggregateMetadata {
+  if (utf8ByteLength(xml) > AGGREGATE_XML_LIMITS.maxBytes) {
+    throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum size');
+  }
+
+  let depth = 0;
+  let elementCount = 0;
+  let attributeCount = 0;
+  let entityCount = 0;
+  let rootId = '';
+  let validUntil: string | undefined;
+  let rootIdOccurrences = 0;
+  let captureEntityDepth: number | undefined;
+  let captureEntity = false;
+  let entityBuffer: string[] = [];
+  let captureSignatureDepth: number | undefined;
+  let signatureBuffer: string[] = [];
+  let signatureBytes = 0;
+  let signatureElementCount = 0;
+  let signatureAttributeCount = 0;
+  let rootSignatureXml: string | undefined;
+  const entityXml: string[] = [];
+  const namespaceStack: Array<Record<string, string>> = [];
+  const parser = new SaxesParser({ xmlns: true });
+
+  const appendSignatureChunk = (chunk: string): void => {
+    signatureBytes += utf8ByteLength(chunk);
+    if (signatureBytes > AGGREGATE_SIGNATURE_LIMITS.maxBytes) {
+      throw new SAMLMetadataValidationError('Aggregate signature exceeds maximum size');
+    }
+    signatureBuffer.push(chunk);
+  };
+
+  const countSignatureElement = (tag: SaxesTagNS): void => {
+    signatureElementCount++;
+    signatureAttributeCount += Object.keys(tag.attributes).length;
+    if (signatureElementCount > AGGREGATE_SIGNATURE_LIMITS.maxElements) {
+      throw new SAMLMetadataValidationError('Aggregate signature exceeds maximum element count');
+    }
+    if (signatureAttributeCount > AGGREGATE_SIGNATURE_LIMITS.maxAttributes) {
+      throw new SAMLMetadataValidationError('Aggregate signature exceeds maximum attribute count');
+    }
+  };
+
+  parser.on('doctype', () => {
+    throw new SAMLMetadataValidationError(
+      'XML security error: DOCTYPE declarations are not allowed'
+    );
+  });
+  parser.on('processinginstruction', () => {
+    throw new SAMLMetadataValidationError('SAML metadata processing instructions are not allowed');
+  });
+  parser.on('opentag', (tag) => {
+    depth++;
+    const inScopeNamespaces = {
+      ...(namespaceStack[namespaceStack.length - 1] ?? {}),
+      ...tag.ns,
+    };
+    namespaceStack.push(inScopeNamespaces);
+    elementCount++;
+    attributeCount += Object.keys(tag.attributes).length;
+    if (depth > AGGREGATE_XML_LIMITS.maxDepth) {
+      throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum depth');
+    }
+    if (elementCount > AGGREGATE_XML_LIMITS.maxElements) {
+      throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum element count');
+    }
+    if (attributeCount > AGGREGATE_XML_LIMITS.maxAttributes) {
+      throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum attribute count');
+    }
+
+    const id = getSaxesAttribute(tag, 'ID');
+    if (depth === 1) {
+      if (tag.uri !== SAML_NAMESPACES.MD || tag.local !== 'EntitiesDescriptor') {
+        throw new SAMLMetadataValidationError(
+          'Invalid aggregate metadata: missing EntitiesDescriptor'
+        );
+      }
+      rootId = id ?? '';
+      if (!rootId) {
+        throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing root ID');
+      }
+      validUntil = getSaxesAttribute(tag, 'validUntil');
+    }
+    if (tag.uri === SAML_NAMESPACES.MD && tag.local === 'EntitiesDescriptor') {
+      assertAggregateMetadataIsCurrent(getSaxesAttribute(tag, 'validUntil'));
+    }
+    if (id === rootId && rootId) {
+      rootIdOccurrences++;
+    }
+
+    if (
+      captureEntityDepth === undefined &&
+      tag.uri === SAML_NAMESPACES.MD &&
+      tag.local === 'EntityDescriptor'
+    ) {
+      entityCount++;
+      if (entityCount > AGGREGATE_XML_LIMITS.maxEntities) {
+        throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum entity count');
+      }
+      const entityId = getSaxesAttribute(tag, 'entityID') ?? '';
+      captureEntity = captureEntities && (!requestedEntityIds || requestedEntityIds.has(entityId));
+      captureEntityDepth = depth;
+      entityBuffer = [];
+    } else if (
+      captureEntityDepth !== undefined &&
+      tag.uri === SAML_NAMESPACES.MD &&
+      tag.local === 'EntityDescriptor'
+    ) {
+      throw new SAMLMetadataValidationError('Invalid aggregate metadata: nested EntityDescriptor');
+    }
+
+    if (captureEntity && captureEntityDepth !== undefined) {
+      entityBuffer.push(
+        serializeSaxesOpenTag(tag, depth === captureEntityDepth ? inScopeNamespaces : undefined)
+      );
+    }
+
+    if (
+      captureSignatureDepth === undefined &&
+      depth === 2 &&
+      tag.uri === SAML_NAMESPACES.DS &&
+      tag.local === 'Signature'
+    ) {
+      if (rootSignatureXml) {
+        throw new SAMLMetadataValidationError(
+          'Invalid aggregate metadata: multiple root signatures'
+        );
+      }
+      captureSignatureDepth = depth;
+      signatureBuffer = [];
+      signatureBytes = 0;
+      signatureElementCount = 0;
+      signatureAttributeCount = 0;
+      countSignatureElement(tag);
+      appendSignatureChunk(serializeSaxesOpenTag(tag, inScopeNamespaces));
+    } else if (captureSignatureDepth !== undefined && depth > captureSignatureDepth) {
+      countSignatureElement(tag);
+      appendSignatureChunk(serializeSaxesOpenTag(tag));
+    }
+  });
+  parser.on('text', (text) => {
+    const escaped = escapeXmlText(text);
+    if (captureEntity) entityBuffer.push(escaped);
+    if (captureSignatureDepth !== undefined) appendSignatureChunk(escaped);
+  });
+  parser.on('cdata', (text) => {
+    const escaped = escapeXmlText(text);
+    if (captureEntity) entityBuffer.push(escaped);
+    if (captureSignatureDepth !== undefined) appendSignatureChunk(escaped);
+  });
+  parser.on('closetag', (tag) => {
+    if (captureEntity && captureEntityDepth !== undefined) {
+      entityBuffer.push(`</${tag.name}>`);
+    }
+    if (captureSignatureDepth !== undefined) {
+      appendSignatureChunk(`</${tag.name}>`);
+    }
+
+    if (captureEntityDepth === depth) {
+      if (captureEntity) {
+        entityXml.push(entityBuffer.join(''));
+      }
+      captureEntityDepth = undefined;
+      captureEntity = false;
+      entityBuffer = [];
+    }
+    if (captureSignatureDepth === depth) {
+      rootSignatureXml = signatureBuffer.join('');
+      captureSignatureDepth = undefined;
+      signatureBuffer = [];
+    }
+    namespaceStack.pop();
+    depth--;
+  });
+
+  try {
+    parser.write(xml).close();
+  } catch (error) {
+    throw toAggregateValidationError(error);
+  }
+
+  if (!rootId) {
+    throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing EntitiesDescriptor');
+  }
+  if (entityCount === 0) {
+    throw new SAMLMetadataValidationError(
+      'Invalid aggregate metadata: no EntityDescriptor entries'
+    );
+  }
+  return { rootId, rootIdOccurrences, validUntil, rootSignatureXml, entityCount, entityXml };
+}
+
+function serializeSaxesOpenTag(
+  tag: SaxesTagNS,
+  inScopeNamespaces?: Readonly<Record<string, string>>
+): string {
+  const attributes = Object.values(tag.attributes);
+  const existingNames = new Set(attributes.map((attribute) => attribute.name));
+  const serializedAttributes = attributes.map(
+    (attribute) => ` ${attribute.name}="${escapeXmlAttribute(attribute.value)}"`
+  );
+
+  if (inScopeNamespaces) {
+    for (const [prefix, uri] of Object.entries(inScopeNamespaces)) {
+      if (prefix === 'xml') continue;
+      const name = prefix ? `xmlns:${prefix}` : 'xmlns';
+      if (!existingNames.has(name)) {
+        serializedAttributes.push(` ${name}="${escapeXmlAttribute(uri)}"`);
       }
     }
-    current = current.parentNode?.nodeType === 1 ? (current.parentNode as Element) : null;
   }
+  return `<${tag.name}${serializedAttributes.join('')}>`;
+}
 
-  if (!hasAttributeNamed(target, 'xmlns')) {
-    target.setAttribute('xmlns', SAML_NAMESPACES.MD);
+function getSaxesAttribute(tag: SaxesTagNS, name: string): string | undefined {
+  return Object.values(tag.attributes).find((attribute) => attribute.name === name)?.value;
+}
+
+function escapeXmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return escapeXmlText(value).replace(/"/g, '&quot;').replace(/\r/g, '&#13;');
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function assertAggregateMetadataIsCurrent(validUntil: string | undefined, now = Date.now()): void {
+  if (!validUntil) return;
+  const expiresAt = Date.parse(validUntil);
+  if (!Number.isFinite(expiresAt)) {
+    throw new SAMLMetadataValidationError('Invalid aggregate metadata: invalid validUntil');
   }
-  if (!hasAttributeNamed(target, 'xmlns:ds')) {
-    target.setAttribute('xmlns:ds', SAML_NAMESPACES.DS);
+  if (expiresAt <= now) {
+    throw new SAMLMetadataValidationError('Invalid aggregate metadata: expired validUntil');
   }
 }
 
-function hasAttributeNamed(element: Element, name: string): boolean {
-  for (let i = 0; i < element.attributes.length; i++) {
-    if (element.attributes[i]?.name === name) {
-      return true;
-    }
-  }
-  return serializeXml(element).includes(`${name}=`);
+function toAggregateValidationError(error: unknown): SAMLMetadataValidationError {
+  if (error instanceof SAMLMetadataValidationError) return error;
+  return new SAMLMetadataValidationError(
+    error instanceof Error
+      ? `Invalid aggregate metadata: ${error.message}`
+      : 'Invalid aggregate metadata'
+  );
 }

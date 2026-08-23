@@ -478,9 +478,9 @@ describe('academic and research federation profiles', () => {
     ).toBe('eduPersonScopedAffiliation');
   });
 
-  it('fails closed for an unsigned eduGAIN-style aggregate under strict trust policy', () => {
+  it('fails closed for an unsigned eduGAIN-style aggregate under strict trust policy', async () => {
     expect.hasAssertions();
-    expect(() =>
+    await expect(
       verifyAggregateMetadataSignature(
         ACADEMIC_AGGREGATE_METADATA,
         'https://metadata.example.edu/edugain.xml',
@@ -495,12 +495,12 @@ describe('academic and research federation profiles', () => {
         ],
         'strict'
       )
-    ).toThrow('Aggregate metadata root is not signed');
+    ).rejects.toThrow('Aggregate metadata root is not signed');
   });
 
-  it('marks an unsigned aggregate unverified rather than trusted under warn policy', () => {
+  it('marks an unsigned aggregate unverified rather than trusted under warn policy', async () => {
     expect.hasAssertions();
-    const result = verifyAggregateMetadataSignature(
+    const result = await verifyAggregateMetadataSignature(
       ACADEMIC_AGGREGATE_METADATA,
       'https://metadata.example.edu/edugain.xml',
       [

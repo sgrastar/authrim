@@ -38,7 +38,7 @@ overrides:
   devalue: ^5.8.1
   minimatch@<3.1.4: 3.1.4
   minimatch@>=9.0.0 <9.0.7: 9.0.7
-  '@xmldom/xmldom': ^0.8.13
+  '@xmldom/xmldom': ^0.8.15
   dompurify: 3.4.13
   nanoid@<3.3.18: 3.3.18
   nanoid@>=4.0.0 <5.1.16: 5.1.16
@@ -830,8 +830,8 @@ importers:
         specifier: workspace:*
         version: link:../ar-lib-field-mapping
       '@xmldom/xmldom':
-        specifier: ^0.8.13
-        version: 0.8.13
+        specifier: ^0.8.15
+        version: 0.8.15
       hono:
         specifier: 4.13.2
         version: 4.13.2
@@ -841,6 +841,9 @@ importers:
       pako:
         specifier: ^2.1.0
         version: 2.1.0
+      saxes:
+        specifier: 6.0.0
+        version: 6.0.0
       xml-crypto:
         specifier: ^6.0.0
         version: 6.1.2
@@ -3286,10 +3289,9 @@ packages:
     resolution: {integrity: sha512-CJDxIgE5I0FH+ttq/Fxy6nRpxP70+e2O048EPe85J2use3XKdatVM7dDVvFNjQudd9B49NPoZ+8PG49zj4Er8Q==}
     engines: {node: '>= 16'}
 
-  '@xmldom/xmldom@0.8.13':
-    resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
+  '@xmldom/xmldom@0.8.15':
+    resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
     engines: {node: '>=10.0.0'}
-    deprecated: this version has critical issues, please update to the latest version
 
   '@xyflow/svelte@1.5.0':
     resolution: {integrity: sha512-kHJVwMtabN7xthDJqLvx5wGT5qjOAVV90J9a26geDS51lrGsGb7CCxNRiZCMuVDlRkczGVIy9dkqdph6FL4slQ==}
@@ -8808,7 +8810,7 @@ snapshots:
 
   '@xmldom/is-dom-node@1.0.1': {}
 
-  '@xmldom/xmldom@0.8.13': {}
+  '@xmldom/xmldom@0.8.15': {}
 
   '@xyflow/svelte@1.5.0(svelte@5.56.3(@typescript-eslint/types@8.53.1))':
     dependencies:
@@ -12025,7 +12027,7 @@ snapshots:
   xml-crypto@6.1.2:
     dependencies:
       '@xmldom/is-dom-node': 1.0.1
-      '@xmldom/xmldom': 0.8.13
+      '@xmldom/xmldom': 0.8.15
       xpath: 0.0.33
 
   xml-name-validator@5.0.0: {}

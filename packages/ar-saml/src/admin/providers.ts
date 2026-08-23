@@ -54,6 +54,7 @@ import {
   createAuditLog,
   hasAdminPermission,
   bumpAuthenticationMethodsCacheRevision,
+  readRequestJsonWithLimit,
 } from '@authrim/ar-lib-core';
 import {
   parseXml,
@@ -81,12 +82,12 @@ import {
   AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
   SINGLE_METADATA_FETCH_LIMIT_BYTES,
   extractEntityDescriptorXml,
+  extractEntityDescriptorXmls,
   fingerprintCertificateSha256,
   getLogoUrl,
   isAggregateMetadata,
-  parseAggregateMetadata,
   resolveAggregateSignaturePolicy,
-  verifyAggregateMetadataSignature,
+  verifyAggregateMetadata,
 } from './aggregate-metadata';
 import {
   getSAMLNextSigningCertificates,
@@ -126,6 +127,8 @@ import {
 import { resolveSAMLMetadataSigningMode, shouldSignSAMLMetadata } from '../common/metadata-signing';
 
 type AdminSAMLContext = Context<{ Bindings: Env }>;
+const SINGLE_METADATA_REQUEST_LIMIT_BYTES = 2 * 1024 * 1024;
+const AGGREGATE_METADATA_REQUEST_LIMIT_BYTES = 12 * 1024 * 1024;
 type AdminSAMLAuthContext = Context<{
   Bindings: Env;
   Variables: { adminAuth?: AdminAuthContext };
@@ -1202,7 +1205,10 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
       return forbidden;
     }
 
-    const body = (await c.req.json()) as SAMLMetadataPreviewRequest;
+    const body = await readSAMLAdminJsonWithLimit<SAMLMetadataPreviewRequest>(
+      c,
+      AGGREGATE_METADATA_REQUEST_LIMIT_BYTES
+    );
     const resolvedMetadata = await resolveMetadataImportInput(c, body, {
       maxResponseSize: AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
     });
@@ -1212,10 +1218,9 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
 
     if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
       const tenantId = resolveSAMLTenantIdFromContext(c);
-      const aggregate = parseAggregateMetadata(resolvedMetadata.metadataXml);
       const policy = resolveAggregateSignaturePolicy(c.env);
       const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
-      const verification = verifyAggregateMetadataSignature(
+      const { aggregate, verification } = await verifyAggregateMetadata(
         resolvedMetadata.metadataXml,
         resolvedMetadata.metadataUrl,
         trustProfiles,
@@ -1225,7 +1230,7 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
       const preview = await storeAggregatePreview(c.env, {
         previewId,
         tenantId,
-        metadataXml: resolvedMetadata.metadataXml,
+        metadataXml: aggregate.metadataXml,
         metadataUrl: resolvedMetadata.metadataUrl,
         entities: aggregate.entities,
         verification,
@@ -1240,6 +1245,8 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
         verification,
       });
     }
+
+    assertSingleMetadataSize(resolvedMetadata.metadataXml);
 
     let providerType: 'saml_idp' | 'saml_sp';
     let config: SAMLIdPConfig | SAMLSPConfig;
@@ -1470,7 +1477,10 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       return forbidden;
     }
 
-    const body = (await c.req.json()) as SAMLProviderCreateRequest;
+    const body = await readSAMLAdminJsonWithLimit<SAMLProviderCreateRequest>(
+      c,
+      SINGLE_METADATA_REQUEST_LIMIT_BYTES
+    );
 
     const hasMetadataInput = Boolean(body.metadataXml || body.metadataUrl);
 
@@ -1730,7 +1740,10 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const body = (await c.req.json()) as SAMLProviderUpdateRequest;
+    const body = await readSAMLAdminJsonWithLimit<SAMLProviderUpdateRequest>(
+      c,
+      SINGLE_METADATA_REQUEST_LIMIT_BYTES
+    );
     const existingConfig = JSON.parse(existing.config_json);
 
     // Merge config updates
@@ -1892,7 +1905,10 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const body = (await c.req.json()) as MetadataImportRequest;
+    const body = await readSAMLAdminJsonWithLimit<MetadataImportRequest>(
+      c,
+      SINGLE_METADATA_REQUEST_LIMIT_BYTES
+    );
 
     const resolvedMetadata = await resolveMetadataImportInput(c, body, {
       maxResponseSize: SINGLE_METADATA_FETCH_LIMIT_BYTES,
@@ -2078,16 +2094,17 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       }
       const policy = resolveAggregateSignaturePolicy(c.env);
       const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
-      const verification = verifyAggregateMetadataSignature(
+      const verified = await verifyAggregateMetadata(
         fetchedMetadataXml,
         metadataUrl,
         trustProfiles,
         policy
       );
       metadataXml = extractEntityDescriptorXml(
-        fetchedMetadataXml,
+        verified.aggregate.metadataXml,
         aggregateImport.aggregateEntityId
       );
+      const verification = verified.verification;
       aggregateImport = {
         ...aggregateImport,
         aggregateSourceUrl: metadataUrl,
@@ -2648,6 +2665,12 @@ function metadataIsAggregateOrThrow(metadataXml: string): boolean {
   }
 }
 
+function assertSingleMetadataSize(metadataXml: string): void {
+  if (new TextEncoder().encode(metadataXml).byteLength > SINGLE_METADATA_FETCH_LIMIT_BYTES) {
+    throw new SAMLMetadataValidationError('Single-entity SAML metadata exceeds size limit');
+  }
+}
+
 function toSAMLMetadataValidationError(error: unknown): SAMLMetadataValidationError {
   if (error instanceof SAMLMetadataValidationError) {
     return error;
@@ -2676,6 +2699,10 @@ async function resolveMetadataImportInput(
   options: { maxResponseSize?: number } = {}
 ): Promise<{ metadataXml: string; metadataUrl?: string } | Response> {
   if (input.metadataXml) {
+    const maxResponseSize = options.maxResponseSize ?? SINGLE_METADATA_FETCH_LIMIT_BYTES;
+    if (new TextEncoder().encode(input.metadataXml).byteLength > maxResponseSize) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
     return { metadataXml: input.metadataXml };
   }
 
@@ -2703,6 +2730,23 @@ async function resolveMetadataImportInput(
     return { metadataXml, metadataUrl: input.metadataUrl };
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+  }
+}
+
+async function readSAMLAdminJsonWithLimit<T>(c: AdminSAMLContext, maxBytes: number): Promise<T> {
+  try {
+    // Hono always exposes the raw Request in production. The fallback keeps direct unit-handler
+    // contexts usable without weakening the deployed request-body limit.
+    if (c.req.raw instanceof Request) {
+      return await readRequestJsonWithLimit<T>(c.req.raw, maxBytes);
+    }
+    return (await c.req.json()) as T;
+  } catch (error) {
+    throw new SAMLMetadataValidationError(
+      error instanceof Error && error.message.includes('maximum size')
+        ? 'SAML metadata request body exceeds size limit'
+        : 'Invalid SAML metadata request body'
+    );
   }
 }
 
@@ -3107,10 +3151,15 @@ async function processAggregateBatchCreate(
         .filter((key): key is string => Boolean(key))
     );
 
+    const extractedEntities = extractEntityDescriptorXmls(preview.metadataXml, input.entityIds);
+
     let successfulImports = 0;
     for (const entityId of input.entityIds) {
       try {
-        const metadataXml = extractEntityDescriptorXml(preview.metadataXml, entityId);
+        const metadataXml = extractedEntities.get(entityId);
+        if (!metadataXml) {
+          throw new Error(`Aggregate metadata does not contain entityID: ${entityId}`);
+        }
         const providerType = input.providerType ?? detectSAMLMetadataProviderType(metadataXml);
         if (providerType !== 'saml_idp' && providerType !== 'saml_sp') {
           throw new Error('Unsupported SAML metadata role');

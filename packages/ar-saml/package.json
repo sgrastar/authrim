@@ -16,10 +16,11 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-field-mapping": "workspace:*",
-    "@xmldom/xmldom": "^0.8.13",
+    "@xmldom/xmldom": "^0.8.15",
     "hono": "4.13.2",
     "jose": "^6.2.9",
     "pako": "^2.1.0",
+    "saxes": "6.0.0",
     "xml-crypto": "^6.0.0"
   },
   "devDependencies": {
