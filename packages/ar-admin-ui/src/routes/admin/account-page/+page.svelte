@@ -63,11 +63,18 @@
 	const DEFAULT_PAGE: AccountPageDefinition = {
 		schema_version: 'authrim.account_page.v1',
 		base_preset_id: 'authrim-default',
-		base_preset_version: 1,
+		base_preset_version: 2,
 		screens: [
 			{
 				id: 'overview',
 				screen_key: 'account_overview',
+				width: 'full',
+				enabled: true,
+				condition: 'always'
+			},
+			{
+				id: 'launchers',
+				screen_key: 'account_launchers',
 				width: 'full',
 				enabled: true,
 				condition: 'always'
@@ -253,7 +260,8 @@
 			account_totp_widget: t('認証アプリ管理', 'Authenticator app management'),
 			account_consent_widget: t('同意管理', 'Consent management'),
 			account_activity_widget: t('操作履歴', 'Account activity'),
-			account_social_account_widget: t('外部アカウント', 'Connected accounts')
+			account_social_account_widget: t('外部アカウント', 'Connected accounts'),
+			account_launcher_widget: t('マイアプリ', 'My applications')
 		};
 		return labels[field.block_type ?? 'identity_field'] ?? field.label;
 	}

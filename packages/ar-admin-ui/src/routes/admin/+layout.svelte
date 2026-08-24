@@ -119,6 +119,11 @@
 				icon: 'i-ph-layout'
 			},
 			{
+				path: '/admin/launchers',
+				label: $LL.admin_nav_launchers(),
+				icon: 'i-ph-rocket-launch'
+			},
+			{
 				path: '/admin/tenant-discovery',
 				label: $LL.admin_nav_tenant_discovery(),
 				icon: 'i-ph-signpost'

@@ -137,13 +137,14 @@ function baseSp(overrides: Record<string, unknown> = {}) {
 
 const consentTransactionId = '12345678-1234-4234-8234-123456789abc';
 
-function context(sp?: string, consentTx?: string) {
+function context(sp?: string, consentTx?: string, relayState?: string) {
   return {
     env: { STATE_STORE: {} },
     req: {
       query: vi.fn((name: string) => {
         if (name === 'sp') return sp;
         if (name === 'consent_tx') return consentTx;
+        if (name === 'relay_state') return relayState;
         return undefined;
       }),
       header: vi.fn((name: string) =>
@@ -216,6 +217,26 @@ describe('IdP-initiated SSO', () => {
     expect(response.status).toBe(302);
     expect(response.headers.get('location')).toContain('/flow/login');
     expect(response.headers.get('location')).toContain('return_to=');
+  });
+
+  it('preserves RelayState through the interactive login redirect', async () => {
+    mocks.builtin = true;
+    const relayState = 'https://sp.example.test/home';
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId, relayState)
+    );
+    const returnTo = new URL(response.headers.get('location') ?? '').searchParams.get('return_to');
+
+    expect(returnTo).not.toBeNull();
+    expect(new URL(returnTo ?? '').searchParams.get('relay_state')).toBe(relayState);
+  });
+
+  it('rejects RelayState values over the SAML binding limit', async () => {
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId, 'a'.repeat(81))
+    );
+
+    expect(response.status).toBe(400);
   });
 
   it('fails safely when no interactive UI is configured', async () => {
@@ -319,6 +340,26 @@ describe('IdP-initiated SSO', () => {
     const calls = mocks.buildResponse.mock.calls as unknown as Array<[Record<string, unknown>]>;
     expect(calls[0]?.[0]).not.toHaveProperty('inResponseTo');
     expect(mocks.applySigning).toHaveBeenCalled();
+  });
+
+  it('includes RelayState in the response sent to the service provider', async () => {
+    mocks.cookieSessionId = 'session-id';
+    mocks.sessionResponse = new Response(JSON.stringify({ userId: 'user-a' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    mocks.user = { id: 'user-a', email: 'user@example.test' };
+    mocks.sp = baseSp({ identityMapping: { catalog: { entries: [] } } });
+    const relayState = 'https://sp.example.test/home';
+
+    const response = await handleIdPInitiated(
+      context('https://sp.example.test', consentTransactionId, relayState)
+    );
+    const html = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(html).toContain('RelayState');
+    expect(html).toContain(relayState);
   });
 
   it('loads runtime identity mapping and applies signing policy', async () => {

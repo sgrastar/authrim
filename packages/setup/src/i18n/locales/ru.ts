@@ -620,7 +620,6 @@ const ru: Translations = {
   'delete.confirm': 'Вы уверены, что хотите удалить "{{env}}"?',
   'delete.confirmPermanent':
     '⚠️  Все ресурсы для "{{env}}" будут безвозвратно удалены. Продолжить?',
-  'delete.confirmWarning': 'Это действие нельзя отменить!',
   'delete.deleting': 'Удаление {{resource}}...',
   'delete.deleted': '{{resource}} удалён',
   'delete.error': 'Не удалось удалить {{resource}}',
@@ -632,6 +631,8 @@ const ru: Translations = {
   'delete.kvNamespaces': 'Пространства имён KV',
   'delete.queues': 'Очереди',
   'delete.r2Buckets': 'Бакеты R2',
+  'delete.pages': 'Проекты Pages',
+  'delete.partialSuccess': 'Выбранные ресурсы удалены, остальные данные окружения сохранены',
 
   // Info command
   'info.title': 'Информация об окружении',
@@ -910,8 +911,7 @@ const ru: Translations = {
   'web.env.openSetup': 'Открыть настройку',
   'web.env.copyUrl': 'Копировать',
   'web.env.deleteTitle': 'Удаление окружения',
-  'web.env.deleteWarning':
-    'Это действие нельзя отменить. Следующие ресурсы будут безвозвратно удалены:',
+  'web.env.deleteWarning': 'Будут удалены следующие выбранные ресурсы:',
   'web.env.confirmDelete': 'Удалить выбранное',
   'web.env.cancel': 'Отмена',
 
@@ -1223,8 +1223,7 @@ const ru: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Удаление окружения',
-  'web.delete.warning':
-    'Это действие необратимо. Все выбранные ресурсы будут безвозвратно удалены.',
+  'web.delete.warning': 'Выбранные ресурсы будут удалены из этого окружения.',
   'web.delete.environment': 'Окружение:',
   'web.delete.selectResources': 'Выберите ресурсы для удаления:',
   'web.delete.workers': 'Workers',
@@ -1269,6 +1268,9 @@ const ru: Translations = {
   'web.status.adminNotConfigured': 'Администратор не настроен',
   'web.status.initializing': 'Инициализация...',
   'web.status.found': 'Найдено: {{count}}',
+  'web.status.operationInProgress':
+    'Уже выполняется другая операция настройки. Дождитесь её завершения и повторите попытку.',
+  'web.status.warning': 'Предупреждение:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Пересоздать (удалить и создать)',

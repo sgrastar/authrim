@@ -322,7 +322,6 @@ export interface Translations {
   'delete.title': string;
   'delete.prompt': string;
   'delete.confirm': string;
-  'delete.confirmWarning': string;
   'delete.deleting': string;
   'delete.deleted': string;
   'delete.error': string;
@@ -334,6 +333,8 @@ export interface Translations {
   'delete.kvNamespaces': string;
   'delete.queues': string;
   'delete.r2Buckets': string;
+  'delete.pages': string;
+  'delete.partialSuccess': string;
 
   // Info command
   'info.title': string;

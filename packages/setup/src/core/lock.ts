@@ -201,6 +201,40 @@ export interface SharedKVLockReconciliationResult {
   missingBindings: Array<{ binding: string; name: string }>;
 }
 
+export interface DeletedEnvironmentResourceNames {
+  workers: string[];
+  d1: string[];
+  kv: string[];
+  queues: string[];
+  r2: string[];
+}
+
+function omitResourceNames<T extends { name: string }>(
+  resources: Record<string, T> | undefined,
+  deletedNames: string[]
+): Record<string, T> | undefined {
+  if (!resources || deletedNames.length === 0) return resources;
+  const deleted = new Set(deletedNames);
+  return Object.fromEntries(
+    Object.entries(resources).filter(([, resource]) => !deleted.has(resource.name))
+  );
+}
+
+/** Preserve an environment lock after partial deletion while removing stale resource entries. */
+export function reconcileLockAfterResourceDeletion(
+  lock: AuthrimLock,
+  deleted: DeletedEnvironmentResourceNames
+): AuthrimLock {
+  return {
+    ...lock,
+    d1: omitResourceNames(lock.d1, deleted.d1) ?? {},
+    kv: omitResourceNames(lock.kv, deleted.kv) ?? {},
+    queues: omitResourceNames(lock.queues, deleted.queues),
+    r2: omitResourceNames(lock.r2, deleted.r2),
+    workers: omitResourceNames(lock.workers, deleted.workers),
+  };
+}
+
 // =============================================================================
 // Lock File Operations
 // =============================================================================

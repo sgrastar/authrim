@@ -1190,13 +1190,16 @@ export async function waitForInitialBootstrapHandoff(input: {
     const progressIdentity = `${totalBindings}:${completedBindings}:${String(
       row.latest_binding_update ?? ''
     )}`;
-    if (progressIdentity !== lastProgressIdentity) {
+    const progressChanged = progressIdentity !== lastProgressIdentity;
+    if (progressChanged) {
       lastProgressIdentity = progressIdentity;
       stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
+      input.onProgress?.(
+        pendingBindings === 0 && totalBindings > 0
+          ? `Control verified ${totalBindings} Worker binding checks; confirming stable inventory...`
+          : `Control is reconciling Worker bindings: ${completedBindings} complete, ${pendingBindings} pending (${totalBindings} discovered)`
+      );
     }
-    input.onProgress?.(
-      `Control bootstrap verification progress: ${completedBindings}/${totalBindings} binding checks complete (${pendingBindings} remaining)...`
-    );
     const bindingsAreQuiescent =
       pendingBindings === 0 &&
       totalBindings > 0 &&

@@ -624,7 +624,6 @@ const de: Translations = {
   'delete.prompt': 'Ressourcen zum Löschen auswählen',
   'delete.confirm': 'Sind Sie sicher, dass Sie "{{env}}" löschen möchten?',
   'delete.confirmPermanent': '⚠️ Dies löscht dauerhaft alle Ressourcen für "{{env}}". Fortfahren?',
-  'delete.confirmWarning': 'Diese Aktion kann nicht rückgängig gemacht werden!',
   'delete.deleting': 'Lösche {{resource}}...',
   'delete.deleted': '{{resource}} gelöscht',
   'delete.error': 'Löschen von {{resource}} fehlgeschlagen',
@@ -636,6 +635,9 @@ const de: Translations = {
   'delete.kvNamespaces': 'KV-Namespaces',
   'delete.queues': 'Warteschlangen',
   'delete.r2Buckets': 'R2-Buckets',
+  'delete.pages': 'Pages-Projekte',
+  'delete.partialSuccess':
+    'Die ausgewählten Ressourcen wurden gelöscht; der übrige Umgebungsstatus wurde beibehalten',
 
   // Info command
   'info.title': 'Umgebungsinformationen',
@@ -920,8 +922,7 @@ const de: Translations = {
   'web.env.openSetup': 'Einrichtung öffnen',
   'web.env.copyUrl': 'Kopieren',
   'web.env.deleteTitle': 'Umgebung löschen',
-  'web.env.deleteWarning':
-    'Diese Aktion kann nicht rückgängig gemacht werden. Folgende Ressourcen werden dauerhaft gelöscht:',
+  'web.env.deleteWarning': 'Die folgenden ausgewählten Ressourcen werden gelöscht:',
   'web.env.confirmDelete': 'Auswahl löschen',
   'web.env.cancel': 'Abbrechen',
 
@@ -1236,8 +1237,7 @@ const de: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Umgebung löschen',
-  'web.delete.warning':
-    'Diese Aktion ist unwiderruflich. Alle ausgewählten Ressourcen werden dauerhaft gelöscht.',
+  'web.delete.warning': 'Die ausgewählten Ressourcen werden aus dieser Umgebung gelöscht.',
   'web.delete.environment': 'Umgebung:',
   'web.delete.selectResources': 'Zu löschende Ressourcen auswählen:',
   'web.delete.workers': 'Workers',
@@ -1283,6 +1283,9 @@ const de: Translations = {
   'web.status.adminNotConfigured': 'Admin nicht konfiguriert',
   'web.status.initializing': 'Initialisiere...',
   'web.status.found': '{{count}} gefunden',
+  'web.status.operationInProgress':
+    'Ein anderer Einrichtungsvorgang wird bereits ausgeführt. Warten Sie, bis er abgeschlossen ist, und versuchen Sie es erneut.',
+  'web.status.warning': 'Warnung:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Neu bereitstellen (Löschen & Erstellen)',

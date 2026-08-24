@@ -607,7 +607,6 @@ const zhCN: Translations = {
   'delete.prompt': '选择要删除的资源',
   'delete.confirm': '确定要删除 "{{env}}"？',
   'delete.confirmPermanent': '⚠️ 这将永久删除 "{{env}}" 的所有资源。继续？',
-  'delete.confirmWarning': '此操作无法撤销！',
   'delete.deleting': '删除 {{resource}}...',
   'delete.deleted': '{{resource}} 已删除',
   'delete.error': '删除 {{resource}} 失败',
@@ -619,6 +618,8 @@ const zhCN: Translations = {
   'delete.kvNamespaces': 'KV 命名空间',
   'delete.queues': '队列',
   'delete.r2Buckets': 'R2 存储桶',
+  'delete.pages': 'Pages 项目',
+  'delete.partialSuccess': '已删除所选资源，并保留了其余环境状态',
 
   // Info command
   'info.title': '环境信息',
@@ -880,7 +881,7 @@ const zhCN: Translations = {
   'web.env.openSetup': '打开设置',
   'web.env.copyUrl': '复制',
   'web.env.deleteTitle': '删除环境',
-  'web.env.deleteWarning': '此操作无法撤销。以下资源将被永久删除：',
+  'web.env.deleteWarning': '将删除以下选中的资源：',
   'web.env.confirmDelete': '删除所选',
   'web.env.cancel': '取消',
 
@@ -1173,7 +1174,7 @@ const zhCN: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '删除环境',
-  'web.delete.warning': '此操作不可逆。所有选定的资源将被永久删除。',
+  'web.delete.warning': '将从此环境中删除所选资源。',
   'web.delete.environment': '环境：',
   'web.delete.selectResources': '选择要删除的资源：',
   'web.delete.workers': 'Workers',
@@ -1217,6 +1218,8 @@ const zhCN: Translations = {
   'web.status.adminNotConfigured': '管理员未配置',
   'web.status.initializing': '初始化中...',
   'web.status.found': '找到 {{count}} 个',
+  'web.status.operationInProgress': '另一个设置操作正在进行中。请等待其完成后重试。',
+  'web.status.warning': '警告：',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '重新预配（删除并创建）',

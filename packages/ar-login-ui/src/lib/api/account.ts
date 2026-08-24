@@ -103,6 +103,31 @@ export type AccountOperation = {
 	metadata?: Record<string, unknown>;
 };
 
+export type AccountLauncher = {
+	id: string;
+	name: string;
+	description: string | null;
+	category: string | null;
+	launch_type:
+		| 'bookmark'
+		| 'saml_sp_initiated'
+		| 'oidc_third_party_initiated'
+		| 'saml_idp_initiated';
+	open_in_new_tab: boolean;
+	icon_type: 'phosphor' | 'image';
+	icon_value: string;
+	icon_color: string;
+	background_color: string;
+	grid_width: number;
+	sort_order: number;
+	enabled: boolean;
+	allow_favorite: boolean;
+	created_at: number;
+	updated_at: number;
+	favorite: boolean;
+	launch_href: string;
+};
+
 export type IdentifierReplacementOperation = {
 	id: string;
 	state:
@@ -177,7 +202,8 @@ export type AccountPageScreenField = {
 		| 'account_totp_widget'
 		| 'account_consent_widget'
 		| 'account_activity_widget'
-		| 'account_social_account_widget';
+		| 'account_social_account_widget'
+		| 'account_launcher_widget';
 	block_id?: string;
 	text?: string | null;
 	help_text?: string | null;
@@ -325,6 +351,17 @@ export const accountAPI = {
 		}),
 
 	getCapabilities: () => accountFetch<AccountCapabilities>('/api/account/capabilities'),
+
+	getLaunchers: () => accountFetch<{ launchers: AccountLauncher[] }>('/api/account/launchers'),
+
+	setLauncherFavorite: (id: string, favorite: boolean) =>
+		accountFetch<{ launcher_id: string; favorite: boolean }>(
+			`/api/account/launchers/${encodeURIComponent(id)}/favorite`,
+			{
+				method: 'PUT',
+				body: JSON.stringify({ favorite })
+			}
+		),
 
 	createPasskeyReauthOptions: () =>
 		accountFetch<{ options: PublicKeyCredentialRequestOptionsJSON; challenge_id: string }>(

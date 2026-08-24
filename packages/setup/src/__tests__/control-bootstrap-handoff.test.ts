@@ -912,7 +912,7 @@ describe('initial Control topology handoff registration', () => {
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
     expect(progress).toEqual([
-      'Control bootstrap verification progress: 0/2 binding checks complete (2 remaining)...',
+      'Control is reconciling Worker bindings: 0 complete, 2 pending (2 discovered)',
     ]);
 
     await expect(

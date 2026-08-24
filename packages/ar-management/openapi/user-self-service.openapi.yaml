@@ -83,6 +83,107 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
       security: *accountSession
+  /api/account/launchers:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountLaunchers
+      summary: List visible application launchers.
+      description: >-
+        Returns enabled launchers whose user, group, or attribute audience matches the current
+        account. Application identifiers, configured target URLs, and audience rules are omitted.
+      responses:
+        '200':
+          description: Visible application launchers and per-account favorite state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountLauncher'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  '/api/account/launchers/{id}/launch':
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountLaunchersByIdLaunch
+      summary: Launch an assigned application.
+      description: >-
+        Re-evaluates the current account's audience assignment and redirects to the configured
+        bookmark, SP-initiated SAML, OIDC third-party initiated, or legacy IdP-initiated target.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '302':
+          description: Redirect to the resolved application launch target.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  '/api/account/launchers/{id}/favorite':
+    put:
+      tags:
+        - Account Page
+      operationId: putApiAccountLaunchersByIdFavorite
+      summary: Set launcher favorite state.
+      description: >-
+        Adds or removes the visible launcher from the current account's favorites. Browser clients
+        are subject to the Account Page Origin/Referer CSRF validation used by other account
+        mutations.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [favorite]
+              properties:
+                favorite: { type: boolean }
+      responses:
+        '200':
+          description: Updated favorite state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [launcher_id, favorite]
+                properties:
+                  launcher_id: { type: string }
+                  favorite: { type: boolean }
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
   /api/account/reauth/status:
     get:
       tags:
@@ -1514,6 +1615,51 @@ components:
               profile:
                 sub: user_123
   schemas:
+    AccountLauncher:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - category
+        - launch_type
+        - open_in_new_tab
+        - icon_type
+        - icon_value
+        - icon_color
+        - background_color
+        - grid_width
+        - sort_order
+        - enabled
+        - allow_favorite
+        - created_at
+        - updated_at
+        - favorite
+        - launch_href
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        category: { type: [string, 'null'] }
+        launch_type:
+          type: string
+          enum: [bookmark, saml_sp_initiated, oidc_third_party_initiated, saml_idp_initiated]
+        open_in_new_tab: { type: boolean }
+        icon_type:
+          type: string
+          enum: [phosphor, image]
+        icon_value: { type: string }
+        icon_color: { type: string }
+        background_color: { type: string }
+        grid_width: { type: integer, minimum: 1, maximum: 8 }
+        sort_order: { type: integer, minimum: 0 }
+        enabled: { type: boolean }
+        allow_favorite: { type: boolean }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+        favorite: { type: boolean }
+        launch_href: { type: string }
     JsonObject:
       type: object
       additionalProperties: true

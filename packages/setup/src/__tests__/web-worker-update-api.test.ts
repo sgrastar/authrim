@@ -693,11 +693,13 @@ describe('setup web worker update API', () => {
     const statusBody = (await statusResponse.json()) as {
       status: string;
       progress: string[];
+      deploymentProgress: unknown;
     };
 
     expect(statusBody.status).toBe('deploying');
     expect(statusBody.progress).toContain('Starting worker update for environment: test');
     expect(statusBody.progress).toContain('Deploying ar-auth...');
+    expect(statusBody.deploymentProgress).toBeNull();
 
     deployRelease.resolve();
 
@@ -1411,6 +1413,14 @@ describe('setup web worker update API', () => {
 
     finishBuild.resolve();
     expect((await deployment).status).toBe(500);
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'error',
+      deploymentProgress: {
+        operation: 'deploy',
+        status: 'error',
+        message: expect.stringContaining('failed'),
+      },
+    });
     await expect(readFile(operationLockPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
@@ -1427,6 +1437,9 @@ describe('setup web worker update API', () => {
     config.components.loginUi = false;
     config.components.adminUi = false;
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    configureDownstreamIntrospectionDeploymentMock.mockRejectedValueOnce(
+      new Error('optional introspection provider unavailable')
+    );
 
     const events: string[] = [];
     applyReleaseSchemaUpdatePlanMock.mockImplementation(async () => {
@@ -1528,6 +1541,33 @@ describe('setup web worker update API', () => {
     const responseBody = await response.json();
     expect(response.status, JSON.stringify(responseBody)).toBe(200);
     expect(responseBody).toMatchObject({ success: true });
+    const statusBody = await (await app.request('/deploy/status')).json();
+    expect(statusBody.deploymentProgress).toMatchObject({
+      operation: 'deploy',
+      step: 10,
+      totalSteps: 10,
+      status: 'complete',
+    });
+    expect(statusBody.progress).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Optional downstream grant introspection was deferred'),
+      ])
+    );
+    expect(JSON.stringify(statusBody.progress)).not.toContain(
+      'optional introspection provider unavailable'
+    );
+    const progressLog = await readFile(statusBody.logPath, 'utf-8');
+    const detailLogPath = progressLog.match(/Detailed log: (.+)$/mu)?.[1]?.trim();
+    expect(detailLogPath).toBeTruthy();
+    await expect(readFile(detailLogPath!, 'utf-8')).resolves.toContain(
+      'optional introspection provider unavailable'
+    );
+    expect(configureDownstreamIntrospectionDeploymentMock).toHaveBeenCalledOnce();
+    expect(configureDownstreamIntrospectionDeploymentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knownRouterReadyBaseUrls: expect.arrayContaining([expect.any(String)]),
+      })
+    );
     expect(events).toEqual([
       'schema',
       'release',
@@ -1590,6 +1630,76 @@ describe('setup web worker update API', () => {
     expect(lock.workers['ar-admin-ui']).toBeUndefined();
   });
 
+  it('returns the concrete bootstrap failure in the initial deployment response', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    await writeDraftManifest('0.2.0');
+    await rm(join(tempDir!, 'packages'), { recursive: true, force: true });
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.controlPlane.automaticProvisioning = true;
+    config.cloudflare.accountId = 'account-id';
+    config.components.loginUi = false;
+    config.components.adminUi = false;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    resolveMissingUiWorkerBindingTargetsMock.mockResolvedValue({
+      loginUi: false,
+      adminUi: false,
+    });
+    deployAllMock.mockImplementation(async (_options, components) => {
+      const results = components.map((component, index) => ({
+        component,
+        workerName: `${env}-${component}`,
+        version: '0.2.0',
+        cloudflareVersionId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        deployedAt: '2026-07-22T01:00:00.000Z',
+        success: true,
+      }));
+      return {
+        totalComponents: results.length,
+        successCount: results.length,
+        failedCount: 0,
+        results,
+      };
+    });
+    ensureInitialNotificationProviderConfigurationMock.mockRejectedValueOnce(
+      new Error('notification provider configuration rejected')
+    );
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const response = await app.request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+      body: JSON.stringify({
+        env,
+        rootDir: tempDir,
+        skipBuild: true,
+        runMigrations: true,
+        bootstrapToken: 'bootstrap-token-1234567890',
+        tokenOwnership: 'account',
+      }),
+    });
+
+    const responseBody = await response.json();
+    expect(response.status, JSON.stringify(responseBody)).toBe(200);
+    expect(responseBody).toMatchObject({
+      success: false,
+      error:
+        'Initial notification provider bootstrap failed: notification provider configuration rejected',
+    });
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'error',
+      error:
+        'Initial notification provider bootstrap failed: notification provider configuration rejected',
+    });
+  });
+
   it('rejects a caller-selected subset before initial deployment build work', async () => {
     const env = 'test';
     await writeEnvironment(env);
@@ -1634,6 +1744,14 @@ describe('setup web worker update API', () => {
         'ar-router',
         'ar-saml',
       ]),
+    });
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'error',
+      error: 'Initial deployment must include every enabled Worker component.',
+      deploymentProgress: {
+        operation: 'deploy',
+        status: 'error',
+      },
     });
     expect(buildApiPackagesMock).not.toHaveBeenCalled();
     expect(deployAllMock).not.toHaveBeenCalled();
@@ -1793,6 +1911,32 @@ describe('setup web worker update API', () => {
         requiredCommand: 'authrim-setup update --env test',
       });
     }
+  });
+
+  it('persists a dedicated progress log for a manual Web migration run', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+
+    const response = await app.request('/migrations/run', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, rootDir: tempDir }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = await response.json();
+    expect(responseBody).toMatchObject({
+      success: true,
+      logPath: expect.stringMatching(/-update\.log$/u),
+    });
+    await expect(readFile(responseBody.logPath, 'utf-8')).resolves.toContain(
+      'Running D1 migrations for environment: test'
+    );
   });
 
   it('configures Service Site fallback and deploys ar-router', async () => {
@@ -2018,6 +2162,48 @@ describe('setup web worker update API', () => {
     );
   });
 
+  it('retains an actionable error when a bulk Worker update partially fails', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await addVersionedWorkerPackage(env, 'ar-router', '0.1.0', '0.2.0');
+    deployAllMock.mockResolvedValue({
+      totalComponents: 1,
+      successCount: 0,
+      failedCount: 1,
+      results: [
+        {
+          component: 'ar-router',
+          workerName: 'test-ar-router',
+          version: '0.2.0',
+          success: false,
+          error: 'Cloudflare deployment rejected',
+        },
+      ],
+    });
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+
+    const response = await app.request('/update/workers', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, onlyChanged: true }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: 'Worker update failed for 1 of 1 component(s).',
+    });
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'error',
+      error: 'Worker update failed for 1 of 1 component(s).',
+      deploymentProgress: null,
+    });
+  });
+
   it('does not overwrite existing UI workers with placeholder env during router updates', async () => {
     const env = 'test';
     await writeEnvironment(env);
@@ -2153,7 +2339,15 @@ describe('setup web worker update API', () => {
     });
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ success: true, component: 'ar-auth' });
+    const responseBody = await response.json();
+    expect(responseBody).toMatchObject({
+      success: true,
+      component: 'ar-auth',
+      logPath: expect.stringMatching(/-update\.log$/u),
+    });
+    await expect(readFile(responseBody.logPath, 'utf-8')).resolves.toContain(
+      'Deploying component: ar-auth'
+    );
     expect(loadDeploySecretsFromKeysMock).toHaveBeenCalledWith(expect.any(String), ['ar-auth']);
     expect(deployAllMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2168,6 +2362,77 @@ describe('setup web worker update API', () => {
       }),
       ['ar-auth']
     );
+  });
+
+  it('rejects a concurrent Web mutation instead of queueing a duplicate deployment', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    let releaseDeployment!: () => void;
+    let markDeploymentStarted!: () => void;
+    const deploymentGate = new Promise<void>((resolve) => {
+      releaseDeployment = resolve;
+    });
+    const deploymentStarted = new Promise<void>((resolve) => {
+      markDeploymentStarted = resolve;
+    });
+    deployAllMock.mockImplementationOnce(async () => {
+      markDeploymentStarted();
+      await deploymentGate;
+      return {
+        totalComponents: 1,
+        successCount: 1,
+        failedCount: 0,
+        results: [
+          {
+            success: true,
+            component: 'ar-auth',
+            workerName: 'test-ar-auth',
+            version: '0.2.0',
+            deployedAt: '2026-06-18T00:00:00.000Z',
+          },
+        ],
+      };
+    });
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const request = () =>
+      app.request('/deploy/component/ar-auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': token,
+        },
+        body: JSON.stringify({ env, skipBuild: true }),
+      });
+
+    const firstRequest = request();
+    await deploymentStarted;
+    const duplicateResponse = await request();
+    const competingControlResponse = await app.request('/control/pending-operations/execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+      body: JSON.stringify({ environmentId: env, operationId: 'operation-1' }),
+    });
+    releaseDeployment();
+    const firstResponse = await firstRequest;
+
+    expect(duplicateResponse.status).toBe(409);
+    await expect(duplicateResponse.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'setup_operation_in_progress',
+    });
+    expect(competingControlResponse.status).toBe(409);
+    await expect(competingControlResponse.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'setup_operation_in_progress',
+    });
+    expect(firstResponse.status).toBe(200);
+    expect(deployAllMock).toHaveBeenCalledOnce();
   });
 
   it('returns failure when an individual Worker deployment never becomes visible', async () => {
@@ -2207,6 +2472,27 @@ describe('setup web worker update API', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: false,
       error: expect.stringContaining('deployment visibility timeout'),
+    });
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'error',
+      error: expect.stringContaining('deployment visibility timeout'),
+      deploymentProgress: null,
+    });
+
+    waitForWorkerDeploymentsReadyMock.mockResolvedValue({ ready: true });
+    const retryResponse = await app.request('/deploy/component/ar-auth', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env, skipBuild: true }),
+    });
+    expect(retryResponse.status).toBe(200);
+    await expect((await app.request('/deploy/status')).json()).resolves.toMatchObject({
+      status: 'complete',
+      error: null,
+      deploymentProgress: null,
     });
   });
 

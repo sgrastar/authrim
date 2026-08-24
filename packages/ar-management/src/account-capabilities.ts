@@ -28,6 +28,7 @@ const ACCOUNT_SCREEN_BLOCK_TYPES = new Set([
   'account_consent_widget',
   'account_activity_widget',
   'account_social_account_widget',
+  'account_launcher_widget',
 ]);
 
 function safeLinkHref(value: unknown): string | undefined {

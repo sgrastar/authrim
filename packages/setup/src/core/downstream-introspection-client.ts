@@ -2,11 +2,8 @@ import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
-  fetchWithTimeout,
-  readResponseJsonWithLimit,
-  readResponseTextWithLimit,
-} from './http-limits.js';
+import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import {
   requestAdminMachineAccessToken,
   setupMachineKeyFilesExist,
@@ -19,8 +16,13 @@ export interface DownstreamIntrospectionClientConfig {
   adminBearerToken?: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
+  /** Raw provider/router errors for persisted detailed logs only. */
+  onDetail?: (message: string) => void;
   retryDelayMs?: number;
   maxRetries?: number;
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  allowPublicDnsFallback?: boolean;
 }
 
 export interface DownstreamIntrospectionClientResult {
@@ -62,8 +64,46 @@ const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 24;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS = 2000;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS = 15000;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return true;
+  }
+  return await new Promise<boolean>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve(true);
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeoutId);
+      resolve(false);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+
+interface DownstreamIntrospectionHttpOptions {
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  allowPublicDnsFallback?: boolean;
+  onDnsFallback?: (message: string) => void;
+}
+
+function fetchDownstreamIntrospectionApi(
+  input: string | URL,
+  init: globalThis.RequestInit,
+  options: DownstreamIntrospectionHttpOptions
+): Promise<Response> {
+  return fetchWithDnsFallback(
+    input,
+    { ...init, signal: options.signal },
+    {
+      deadlineAt: options.deadlineAt,
+      allowPublicDnsFallback: options.allowPublicDnsFallback,
+      onDnsFallback: options.onDnsFallback,
+    }
+  );
 }
 
 function isRetryableDownstreamIntrospectionError(error?: string | null): boolean {
@@ -91,12 +131,36 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('gateway timeout') ||
     normalized.includes('admin_machine_token_failed:404') ||
     normalized.includes('tenant not found') ||
+    normalized.includes('lookup_registry_snapshot_unavailable') ||
+    normalized.includes('missing_snapshot') ||
+    normalized.includes('missing_generation') ||
     normalized.includes('connection reset') ||
     normalized.includes('econnreset') ||
     normalized.includes('enotfound') ||
     normalized.includes('eai_again') ||
     normalized.includes('network connection lost')
   );
+}
+
+function describeReadinessWait(error: string): string {
+  const normalized = error.toLowerCase();
+  if (
+    normalized.includes('tenant not found') ||
+    normalized.includes('admin_machine_token_failed:404')
+  ) {
+    return 'Waiting for tenant routing to propagate';
+  }
+  if (
+    normalized.includes('lookup_registry_snapshot_unavailable') ||
+    normalized.includes('missing_snapshot') ||
+    normalized.includes('missing_generation')
+  ) {
+    return 'Waiting for the runtime directory snapshot to propagate';
+  }
+  if (normalized.includes('admin_machine_token_failed')) {
+    return 'Waiting for setup machine access to become available';
+  }
+  return 'Waiting for the deployed API route to propagate';
 }
 
 function describeOperationError(error: unknown): string {
@@ -144,14 +208,16 @@ function buildAdminHeaders(adminBearerToken: string, tenantId?: string): Record<
 async function findClientByName(
   apiBaseUrl: string,
   adminBearerToken: string,
-  tenantId?: string
+  tenantId: string | undefined,
+  httpOptions: DownstreamIntrospectionHttpOptions
 ): Promise<{ clientId: string; needsDescriptionUpdate: boolean } | null> {
-  const response = await fetchWithTimeout(
+  const response = await fetchDownstreamIntrospectionApi(
     `${apiBaseUrl}/api/admin/clients?search=${encodeURIComponent(DOWNSTREAM_INTROSPECTION_CLIENT_NAME)}&limit=10`,
     {
       method: 'GET',
       headers: buildAdminHeaders(adminBearerToken, tenantId),
-    }
+    },
+    httpOptions
   );
 
   if (!response.ok) {
@@ -180,9 +246,10 @@ async function updateClientDescription(
   apiBaseUrl: string,
   adminBearerToken: string,
   clientId: string,
-  tenantId?: string
+  tenantId: string | undefined,
+  httpOptions: DownstreamIntrospectionHttpOptions
 ): Promise<void> {
-  const response = await fetchWithTimeout(
+  const response = await fetchDownstreamIntrospectionApi(
     `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`,
     {
       method: 'PUT',
@@ -190,7 +257,8 @@ async function updateClientDescription(
       body: JSON.stringify({
         description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
       }),
-    }
+    },
+    httpOptions
   );
 
   if (!response.ok) {
@@ -205,14 +273,16 @@ async function getClientById(
   apiBaseUrl: string,
   adminBearerToken: string,
   clientId: string,
-  tenantId?: string
+  tenantId: string | undefined,
+  httpOptions: DownstreamIntrospectionHttpOptions
 ): Promise<boolean> {
-  const response = await fetchWithTimeout(
+  const response = await fetchDownstreamIntrospectionApi(
     `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}`,
     {
       method: 'GET',
       headers: buildAdminHeaders(adminBearerToken, tenantId),
-    }
+    },
+    httpOptions
   );
 
   if (response.status === 404) {
@@ -233,15 +303,17 @@ async function regenerateClientSecret(
   apiBaseUrl: string,
   adminBearerToken: string,
   clientId: string,
-  tenantId?: string
+  tenantId: string | undefined,
+  httpOptions: DownstreamIntrospectionHttpOptions
 ): Promise<string> {
-  const response = await fetchWithTimeout(
+  const response = await fetchDownstreamIntrospectionApi(
     `${apiBaseUrl}/api/admin/clients/${encodeURIComponent(clientId)}/regenerate-secret`,
     {
       method: 'POST',
       headers: buildAdminHeaders(adminBearerToken, tenantId),
       body: JSON.stringify({ revoke_existing_tokens: false }),
-    }
+    },
+    httpOptions
   );
 
   if (!response.ok) {
@@ -263,31 +335,36 @@ async function createClient(
   apiBaseUrl: string,
   adminBearerToken: string,
   tenantId: string | undefined,
-  idempotencyKey: string
+  idempotencyKey: string,
+  httpOptions: DownstreamIntrospectionHttpOptions
 ): Promise<{
   clientId: string;
   clientSecret: string;
 }> {
-  const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients`, {
-    method: 'POST',
-    headers: {
-      ...buildAdminHeaders(adminBearerToken, tenantId),
-      'Idempotency-Key': idempotencyKey,
+  const response = await fetchDownstreamIntrospectionApi(
+    `${apiBaseUrl}/api/admin/clients`,
+    {
+      method: 'POST',
+      headers: {
+        ...buildAdminHeaders(adminBearerToken, tenantId),
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify({
+        client_name: DOWNSTREAM_INTROSPECTION_CLIENT_NAME,
+        description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
+        application_type: 'service',
+        token_endpoint_auth_method: 'client_secret_basic',
+        redirect_uris: ['https://downstream-introspection.authrim.invalid/callback'],
+        grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
+        response_types: ['code'],
+        scope: 'openid',
+        is_trusted: true,
+        skip_consent: true,
+        client_credentials_allowed: true,
+      }),
     },
-    body: JSON.stringify({
-      client_name: DOWNSTREAM_INTROSPECTION_CLIENT_NAME,
-      description: DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
-      application_type: 'service',
-      token_endpoint_auth_method: 'client_secret_basic',
-      redirect_uris: ['https://downstream-introspection.authrim.invalid/callback'],
-      grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
-      response_types: ['code'],
-      scope: 'openid',
-      is_trusted: true,
-      skip_consent: true,
-      client_credentials_allowed: true,
-    }),
-  });
+    httpOptions
+  );
 
   if (!response.ok) {
     const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
@@ -355,15 +432,32 @@ export async function ensureDownstreamIntrospectionClient(
     adminBearerToken: providedAdminBearerToken,
     tenantId,
     onProgress,
+    onDetail,
     retryDelayMs = DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS,
     maxRetries = DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES,
+    deadlineAt,
+    signal,
+    allowPublicDnsFallback,
   } = input;
 
   try {
+    const startedAt = Date.now();
     let adminBearerToken: string | null = providedAdminBearerToken?.trim() || null;
     const createIdempotencyKey = `setup-downstream-client-${randomBytes(18).toString('base64url')}`;
+    const httpOptions: DownstreamIntrospectionHttpOptions = {
+      deadlineAt,
+      signal,
+      allowPublicDnsFallback,
+      onDnsFallback: onDetail,
+    };
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (getRemainingDeadlineMs(deadlineAt) <= 0 || signal?.aborted) {
+        return {
+          success: false,
+          error: 'optional_integration_deadline_exceeded',
+        };
+      }
       try {
         if (!adminBearerToken) {
           if (setupMachineKeyFilesExist(keysDir)) {
@@ -373,6 +467,10 @@ export async function ensureDownstreamIntrospectionClient(
                 apiBaseUrl,
                 keysDir,
                 tenantId,
+                deadlineAt,
+                signal,
+                allowPublicDnsFallback,
+                onDnsFallback: onDetail,
               })
             ).accessToken;
           } else {
@@ -390,7 +488,8 @@ export async function ensureDownstreamIntrospectionClient(
             apiBaseUrl,
             adminBearerToken,
             stored.clientId,
-            tenantId
+            tenantId,
+            httpOptions
           ).catch(() => false);
           if (exists) {
             onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
@@ -403,7 +502,12 @@ export async function ensureDownstreamIntrospectionClient(
           }
         }
 
-        const existing = await findClientByName(apiBaseUrl, adminBearerToken, tenantId);
+        const existing = await findClientByName(
+          apiBaseUrl,
+          adminBearerToken,
+          tenantId,
+          httpOptions
+        );
 
         if (existing) {
           if (existing.needsDescriptionUpdate) {
@@ -411,7 +515,8 @@ export async function ensureDownstreamIntrospectionClient(
               apiBaseUrl,
               adminBearerToken,
               existing.clientId,
-              tenantId
+              tenantId,
+              httpOptions
             );
           }
           onProgress?.(`Regenerating downstream introspection client secret: ${existing.clientId}`);
@@ -419,7 +524,8 @@ export async function ensureDownstreamIntrospectionClient(
             apiBaseUrl,
             adminBearerToken,
             existing.clientId,
-            tenantId
+            tenantId,
+            httpOptions
           );
           await writeClientCredentials(keysDir, existing.clientId, clientSecret);
           return {
@@ -436,7 +542,8 @@ export async function ensureDownstreamIntrospectionClient(
           apiBaseUrl,
           adminBearerToken,
           tenantId,
-          createIdempotencyKey
+          createIdempotencyKey,
+          httpOptions
         );
         await writeClientCredentials(keysDir, created.clientId, created.clientSecret);
 
@@ -449,10 +556,18 @@ export async function ensureDownstreamIntrospectionClient(
         };
       } catch (error) {
         const message = describeOperationError(error);
+        if (getRemainingDeadlineMs(deadlineAt) <= 0 || signal?.aborted) {
+          onDetail?.(`Downstream introspection setup deadline reached: ${message}`);
+          return {
+            success: false,
+            error: 'optional_integration_deadline_exceeded',
+          };
+        }
         const shouldRetry =
           attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
 
         if (!shouldRetry) {
+          onDetail?.(`Downstream introspection setup failed: ${message}`);
           return {
             success: false,
             error: message,
@@ -462,12 +577,22 @@ export async function ensureDownstreamIntrospectionClient(
         adminBearerToken = providedAdminBearerToken?.trim() || null;
         const delayMs = Math.min(
           retryDelayMs * attempt,
-          DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS
+          DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS,
+          getRemainingDeadlineMs(deadlineAt)
+        );
+        const elapsedSeconds = Math.max(1, Math.ceil((Date.now() - startedAt) / 1000));
+        onDetail?.(
+          `Downstream introspection readiness attempt ${attempt}/${maxRetries} failed: ${message}`
         );
         onProgress?.(
-          `Downstream introspection client request hit a temporary router readiness error (${message}). Retrying in ${Math.ceil(delayMs / 1000)}s...`
+          `${describeReadinessWait(message)} (${elapsedSeconds}s elapsed, attempt ${attempt}/${maxRetries}). Retrying in ${Math.ceil(delayMs / 1000)}s...`
         );
-        await sleep(delayMs);
+        if (delayMs <= 0 || !(await sleep(delayMs, signal))) {
+          return {
+            success: false,
+            error: 'optional_integration_deadline_exceeded',
+          };
+        }
       }
     }
 

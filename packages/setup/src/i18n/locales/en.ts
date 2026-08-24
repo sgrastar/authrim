@@ -619,7 +619,6 @@ const en: Translations = {
   'delete.confirm': 'Are you sure you want to delete "{{env}}"?',
   'delete.confirmPermanent':
     '⚠️  This will permanently delete all resources for "{{env}}". Continue?',
-  'delete.confirmWarning': 'This action cannot be undone!',
   'delete.deleting': 'Deleting {{resource}}...',
   'delete.deleted': '{{resource}} deleted',
   'delete.error': 'Failed to delete {{resource}}',
@@ -631,6 +630,8 @@ const en: Translations = {
   'delete.kvNamespaces': 'KV Namespaces',
   'delete.queues': 'Queues',
   'delete.r2Buckets': 'R2 Buckets',
+  'delete.pages': 'Pages projects',
+  'delete.partialSuccess': 'Selected resources deleted; remaining environment state was preserved',
 
   // Info command
   'info.title': 'Environment Information',
@@ -909,8 +910,7 @@ const en: Translations = {
   'web.env.openSetup': 'Open Setup',
   'web.env.copyUrl': 'Copy',
   'web.env.deleteTitle': 'Delete Environment',
-  'web.env.deleteWarning':
-    'This action cannot be undone. The following resources will be permanently deleted:',
+  'web.env.deleteWarning': 'The following selected resources will be deleted:',
   'web.env.confirmDelete': 'Delete Selected',
   'web.env.cancel': 'Cancel',
 
@@ -1221,8 +1221,7 @@ const en: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Delete Environment',
-  'web.delete.warning':
-    'This action is irreversible. All selected resources will be permanently deleted.',
+  'web.delete.warning': 'The selected resources will be deleted from this environment.',
   'web.delete.environment': 'Environment:',
   'web.delete.selectResources': 'Select resources to delete:',
   'web.delete.workers': 'Workers',
@@ -1268,6 +1267,9 @@ const en: Translations = {
   'web.status.adminNotConfigured': 'Admin Not Configured',
   'web.status.initializing': 'Initializing...',
   'web.status.found': '{{count}} found',
+  'web.status.operationInProgress':
+    'Another setup operation is already in progress. Wait for it to finish and retry.',
+  'web.status.warning': 'Warning:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Re-provision (Delete & Create)',

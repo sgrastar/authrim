@@ -6,7 +6,7 @@
  * Security Notes:
  * - This API is designed to be accessed from localhost only
  * - A session token is generated on server start to prevent unauthorized access
- * - Operations are serialized to prevent race conditions
+ * - Concurrent mutation requests are rejected to prevent duplicate side effects
  */
 
 import { Hono } from 'hono';
@@ -68,6 +68,7 @@ import {
   createLockFile,
   loadLockFileAuto,
   mergeLockFiles,
+  reconcileLockAfterResourceDeletion,
   saveLockFile,
   type AuthrimLock,
 } from '../core/lock.js';
@@ -88,6 +89,10 @@ import { saveMasterWranglerConfigs, syncWranglerConfigs } from '../core/wrangler
 import { buildWorkerDeploymentResourceIds } from '../core/deployment-resource-ids.js';
 import { refreshWorkerDeploymentArtifacts } from '../core/worker-deployment-artifacts.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
+import {
+  updateDeploymentProgress,
+  type DeploymentProgressSnapshot,
+} from '../core/deployment-progress.js';
 import {
   buildInitialAdminSetupUrl,
   buildUrlsConfig,
@@ -251,6 +256,7 @@ import {
 } from '../core/worker-readiness.js';
 import {
   configureDownstreamIntrospectionDeployment,
+  createDownstreamIntrospectionFailure,
   resolveDownstreamIntrospectionKeysDir,
 } from '../core/downstream-introspection-deploy.js';
 import { appendFile, writeFile, chmod, mkdir } from 'node:fs/promises';
@@ -375,23 +381,48 @@ export async function buildWebInitialHandoffResumeSummary(input: {
 // Operation Lock (prevents concurrent state mutations)
 // =============================================================================
 
-let operationLock: Promise<void> = Promise.resolve();
+class SetupOperationInProgressError extends Error {
+  constructor() {
+    super('Another setup operation is already in progress. Wait for it to finish and retry.');
+    this.name = 'SetupOperationInProgressError';
+  }
+}
+
+const EnvironmentDeleteRequestSchema = z
+  .object({
+    deleteWorkers: z.boolean().optional().default(true),
+    deleteD1: z.boolean().optional().default(true),
+    deleteKV: z.boolean().optional().default(true),
+    deleteQueues: z.boolean().optional().default(true),
+    deleteR2: z.boolean().optional().default(true),
+    deletePages: z.boolean().optional().default(true),
+  })
+  .strict();
+
+function isEnvironmentOperationConflict(message: unknown): boolean {
+  return (
+    typeof message === 'string' &&
+    /^(?:environment_operation_in_progress|environment_changed_while_waiting_for_operation_lock|environment_operation_lock_unavailable):/u.test(
+      message
+    )
+  );
+}
+
+let webOperationRunning = false;
 
 /**
- * Acquire operation lock to serialize state mutations
+ * Reject a mutation while another Web setup operation is running
  */
 async function withLock<T>(operation: () => Promise<T>): Promise<T> {
-  const previousOperation = operationLock;
-  let releaseLock!: () => void;
-  operationLock = new Promise((resolve) => {
-    releaseLock = resolve;
-  });
-  await previousOperation;
+  if (webOperationRunning) {
+    throw new SetupOperationInProgressError();
+  }
+  webOperationRunning = true;
 
   try {
     return await operation();
   } finally {
-    releaseLock();
+    webOperationRunning = false;
   }
 }
 
@@ -412,6 +443,7 @@ interface SetupState {
     current: number;
     total: number;
   } | null;
+  deploymentProgress: DeploymentProgressSnapshot | null;
 }
 
 interface ProgressLogState {
@@ -429,9 +461,11 @@ const state: SetupState = {
   deployResults: [],
   logPath: null,
   operationProgress: null,
+  deploymentProgress: null,
 };
 
 let progressLogState: ProgressLogState | null = null;
+let deploymentProgressTracking = false;
 
 function buildDomainRoutingValidationResult(config: AuthrimConfig) {
   const conflicts = validateDomainRoutingConfig({
@@ -512,9 +546,17 @@ async function beginProgressLog(
         ? join(findAuthrimBaseDir(process.cwd()), AUTHRIM_DIR, 'logs', env)
         : join(resolveProgressLogKeysDir(env), 'logs');
     await mkdir(logsDir, { recursive: true, mode: 0o700 });
-    const baseName = `${formatLogTimestamp()}-${operation}`;
-    const filePath = join(logsDir, `${baseName}.log`);
-    const detailFilePath = join(logsDir, `${baseName}.detail.log`);
+    const timestampedBaseName = `${formatLogTimestamp()}-${operation}`;
+    let sequence = 0;
+    let baseName = timestampedBaseName;
+    let filePath = join(logsDir, `${baseName}.log`);
+    let detailFilePath = join(logsDir, `${baseName}.detail.log`);
+    while (existsSync(filePath) || existsSync(detailFilePath)) {
+      sequence += 1;
+      baseName = `${timestampedBaseName}-${sequence}`;
+      filePath = join(logsDir, `${baseName}.log`);
+      detailFilePath = join(logsDir, `${baseName}.detail.log`);
+    }
     await writeFile(filePath, '', { encoding: 'utf-8', mode: 0o600 });
     await writeFile(detailFilePath, '', { encoding: 'utf-8', mode: 0o600 });
     progressLogState = {
@@ -561,6 +603,15 @@ async function flushProgressLog(): Promise<void> {
 function addProgress(message: string): void {
   const timestamp = new Date().toISOString();
   state.progress.push(message);
+  if (deploymentProgressTracking) {
+    state.deploymentProgress = updateDeploymentProgress(state.deploymentProgress, message);
+    if (
+      state.deploymentProgress.status === 'complete' ||
+      state.deploymentProgress.status === 'error'
+    ) {
+      deploymentProgressTracking = false;
+    }
+  }
   appendProgressLogLine(`[${timestamp}] ${message}\n`);
 }
 
@@ -692,31 +743,48 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
   rootDir: string;
   config?: Partial<AuthrimConfig> | null;
   components: string[];
+  knownRouterReadyBaseUrls?: string[];
   dryRun?: boolean;
 }): Promise<void> {
-  const { env, rootDir, config, components, dryRun } = options;
+  const { env, rootDir, config, components, knownRouterReadyBaseUrls, dryRun } = options;
   if (dryRun || !components.includes('ar-userinfo')) {
     return;
   }
 
   const keysDir = resolveWebDeploymentKeysDir(rootDir, env);
-  const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
-    env,
-    rootDir,
-    keysDir,
-    apiBaseUrl: resolveIssuerUrl(config, { env }),
-    apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
-    tenantId: config?.tenant?.name,
-    dryRun,
-    onProgress: addProgress,
-  });
+  let downstreamSetupResult;
+  try {
+    downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+      env,
+      rootDir,
+      keysDir,
+      apiBaseUrl: resolveIssuerUrl(config, { env }),
+      apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
+      knownRouterReadyBaseUrls,
+      tenantId: config?.tenant?.name,
+      dryRun,
+      onProgress: addProgress,
+      onDetail: addDetailProgress,
+    });
+  } catch (error) {
+    const detail = sanitizeError(error);
+    addDetailProgress(`Downstream introspection setup failed unexpectedly: ${detail}`);
+    downstreamSetupResult = createDownstreamIntrospectionFailure(detail);
+  }
 
   if (!downstreamSetupResult.success) {
+    addDetailProgress(
+      `Downstream introspection setup deferred: ${downstreamSetupResult.error ?? 'Unknown error'}`
+    );
+    addProgress('⚠️ Optional downstream grant introspection was deferred.');
     addProgress(
-      `⚠️ Downstream introspection client setup skipped: ${downstreamSetupResult.error ?? 'Unknown error'}`
+      downstreamSetupResult.impact ?? 'Core login, Admin UI, and token issuance remain available.'
+    );
+    addProgress(
+      downstreamSetupResult.nextAction ?? 'Rerun deploy to retry the optional integration.'
     );
     for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
-      addProgress(`⚠️ ${error}`);
+      addDetailProgress(`Downstream introspection secret upload failed: ${error}`);
     }
     return;
   }
@@ -744,6 +812,33 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
 function clearProgress(): void {
   state.progress = [];
   state.operationProgress = null;
+  state.deploymentProgress = null;
+  deploymentProgressTracking = false;
+}
+
+function startInitialDeploymentProgress(): void {
+  clearProgress();
+  deploymentProgressTracking = true;
+}
+
+function markInitialDeploymentError(message: string): void {
+  state.status = 'error';
+  state.error = message;
+  addProgress(`❌ ${message}`);
+}
+
+function markOperationError(message: string): string {
+  state.status = 'error';
+  state.error = message;
+  addProgress(`❌ ${message}`);
+  return message;
+}
+
+function markInitialDeploymentManualAction(): void {
+  if (state.deploymentProgress) {
+    state.deploymentProgress = { ...state.deploymentProgress, terminal: true };
+  }
+  deploymentProgressTracking = false;
 }
 
 /**
@@ -837,6 +932,43 @@ function handleRouterReadinessFailure(
 
 export function createApiRoutes(): Hono {
   const api = new Hono();
+
+  api.onError((error, c) => {
+    if (error instanceof SetupOperationInProgressError) {
+      return c.json(
+        {
+          success: false,
+          error: error.message,
+          errorCode: 'setup_operation_in_progress',
+        },
+        409
+      );
+    }
+    return c.json({ success: false, error: sanitizeError(error) }, 500);
+  });
+
+  api.use('*', async (c, next) => {
+    await next();
+    if (c.res.status !== 500 || !c.res.headers.get('Content-Type')?.includes('application/json')) {
+      return;
+    }
+    const payload = (await c.res
+      .clone()
+      .json()
+      .catch(() => null)) as { error?: unknown } | null;
+    if (!isEnvironmentOperationConflict(payload?.error)) {
+      return;
+    }
+    c.res = c.json(
+      {
+        ...payload,
+        success: false,
+        error: 'Another setup operation is already in progress. Wait for it to finish and retry.',
+        errorCode: 'setup_operation_in_progress',
+      },
+      409
+    );
+  });
 
   // Session token validation middleware for mutating operations
   const validateSession = async (
@@ -2725,7 +2857,7 @@ export function createApiRoutes(): Hono {
           throw new Error(`Failed to sync wrangler configs: ${syncResult.errors.join(', ')}`);
         }
 
-        state.status = 'configuring';
+        state.status = 'complete';
         addProgress('Provisioning complete!');
         addProgress(`📁 Config saved: ${envPaths.config}`);
         addProgress(`📁 Lock saved:   ${envPaths.lock}`);
@@ -3033,7 +3165,7 @@ export function createApiRoutes(): Hono {
         state.status = 'deploying';
         state.error = null;
         state.logPath = await beginProgressLog(env, 'deploy');
-        clearProgress();
+        startInitialDeploymentProgress();
 
         // Debug: Log the resolved rootDir for migrations
         addProgress(`📂 Working directory: ${resolvedRootDir}`);
@@ -3076,12 +3208,15 @@ export function createApiRoutes(): Hono {
           (!automaticProvisioning && hasBootstrapInput) ||
           (automaticProvisioning && !existingControlTokenBootstrapReady && !hasBootstrapInput)
         ) {
+          const bootstrapInputError = automaticProvisioning
+            ? 'Automatic provisioning requires one bootstrap token or an existing ready Control authority'
+            : 'Bootstrap token input is not allowed when Automatic provisioning is off';
+          markInitialDeploymentError(bootstrapInputError);
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: automaticProvisioning
-                ? 'Automatic provisioning requires one bootstrap token or an existing ready Control authority'
-                : 'Bootstrap token input is not allowed when Automatic provisioning is off',
+              error: bootstrapInputError,
             },
             409
           );
@@ -3103,15 +3238,22 @@ export function createApiRoutes(): Hono {
             !Array.isArray(requestedComponents) ||
             requestedComponents.some((component) => typeof component !== 'string')
           ) {
-            return c.json({ success: false, error: 'Invalid initial deployment components.' }, 400);
+            const invalidComponentsError = 'Invalid initial deployment components.';
+            markInitialDeploymentError(invalidComponentsError);
+            await flushProgressLog();
+            return c.json({ success: false, error: invalidComponentsError }, 400);
           }
           const requested = [...new Set(requestedComponents)].sort();
           const required = [...enabledComponents].sort();
           if (JSON.stringify(requested) !== JSON.stringify(required)) {
+            const incompleteComponentsError =
+              'Initial deployment must include every enabled Worker component.';
+            markInitialDeploymentError(incompleteComponentsError);
+            await flushProgressLog();
             return c.json(
               {
                 success: false,
-                error: 'Initial deployment must include every enabled Worker component.',
+                error: incompleteComponentsError,
                 requiredComponents: required,
               },
               409
@@ -3189,12 +3331,15 @@ export function createApiRoutes(): Hono {
         });
         const missingStreamTargets = initialTargets.filter((target) => !target.streamId);
         if (missingStreamTargets.length > 0) {
+          const missingStreamError = `No release migration stream exists for: ${missingStreamTargets
+            .map((target) => target.connectionRef ?? target.id)
+            .join(', ')}`;
+          markInitialDeploymentError(missingStreamError);
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: `No release migration stream exists for: ${missingStreamTargets
-                .map((target) => target.connectionRef ?? target.id)
-                .join(', ')}`,
+              error: missingStreamError,
             },
             400
           );
@@ -3203,10 +3348,14 @@ export function createApiRoutes(): Hono {
           initialTargets.filter((target) => !target.automatic).map((target) => target.id)
         );
         if (initialManualTargetIds.size > 0 && externalSchemaReady !== true && !dryRun) {
+          const externalSchemaError =
+            'External database migrations must be verified before initial deployment.';
+          markInitialDeploymentError(externalSchemaError);
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: 'External database migrations must be verified before initial deployment.',
+              error: externalSchemaError,
             },
             409
           );
@@ -3245,10 +3394,13 @@ export function createApiRoutes(): Hono {
             { automaticProvisioning: automaticProvisioning && !bootstrapToken }
           );
           if (missingControlSecrets.length > 0) {
+            const missingSecretsError = `Missing required Control Worker secrets: ${missingControlSecrets.join(', ')}`;
+            markInitialDeploymentError(missingSecretsError);
+            await flushProgressLog();
             return c.json(
               {
                 success: false,
-                error: `Missing required Control Worker secrets: ${missingControlSecrets.join(', ')}`,
+                error: missingSecretsError,
               },
               409
             );
@@ -3282,8 +3434,7 @@ export function createApiRoutes(): Hono {
             onProgress: addProgress,
           });
           if (!migrationsResult.success) {
-            state.status = 'error';
-            state.error = 'Database migration failed before Worker deployment.';
+            markInitialDeploymentError('Database migration failed before Worker deployment.');
             await flushProgressLog();
             return c.json(
               {
@@ -3556,6 +3707,7 @@ export function createApiRoutes(): Hono {
               state.error = 'Manual wildcard DNS setup required';
               addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
               addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+              markInitialDeploymentManualAction();
               await flushProgressLog();
               return c.json(
                 {
@@ -3764,6 +3916,7 @@ export function createApiRoutes(): Hono {
           const readinessResult = await waitForRouterWorkerReady({
             apiBaseUrl,
             onProgress: addProgress,
+            onDetail: addDetailProgress,
           });
           if (!readinessResult.ready) {
             handleRouterReadinessFailure(
@@ -3845,6 +3998,7 @@ export function createApiRoutes(): Hono {
         // Complete post-deploy bootstrap only after the schema-first step above.
         let initialTenantResult = null;
         let initialNotificationProviderSuccess = true;
+        let initialNotificationProviderError: string | null = null;
         let initialAdminRolesResult = null;
         let setupMachineAccessResult = null;
         let adminUiBffMachineAccessResult = null;
@@ -3880,10 +4034,9 @@ export function createApiRoutes(): Hono {
                 );
               } catch (error) {
                 initialNotificationProviderSuccess = false;
+                initialNotificationProviderError = sanitizeError(error);
                 addProgress(
-                  `⚠️ Initial notification provider bootstrap failed: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`
+                  `⚠️ Initial notification provider bootstrap failed: ${initialNotificationProviderError}`
                 );
               }
             }
@@ -4024,6 +4177,7 @@ export function createApiRoutes(): Hono {
             rootDir: resolve(rootDir),
             config: cfg,
             components: enabledComponents ?? [],
+            knownRouterReadyBaseUrls: [apiBaseUrl],
             dryRun,
           });
         }
@@ -4251,6 +4405,7 @@ export function createApiRoutes(): Hono {
           uiWorkersSuccess &&
           migrationsSuccess &&
           initialTenantSuccess &&
+          initialNotificationProviderSuccess &&
           initialAdminRolesSuccess &&
           setupMachineAccessSuccess &&
           adminUiBffMachineAccessSuccess &&
@@ -4295,8 +4450,14 @@ export function createApiRoutes(): Hono {
             state.error = `Migrations failed: ${errors.join(', ')}`;
           } else if (!initialTenantSuccess) {
             state.error = `Initial tenant bootstrap failed: ${initialTenantResult?.error || 'unknown error'}`;
+          } else if (!initialNotificationProviderSuccess) {
+            state.error = `Initial notification provider bootstrap failed: ${initialNotificationProviderError || 'unknown error'}`;
           } else if (!initialAdminRolesSuccess) {
             state.error = `Initial admin role bootstrap failed: ${initialAdminRolesResult?.error || 'unknown error'}`;
+          } else if (!setupMachineAccessSuccess) {
+            state.error = `Setup machine access bootstrap failed: ${setupMachineAccessResult?.error || 'unknown error'}`;
+          } else if (!adminUiBffMachineAccessSuccess) {
+            state.error = `Admin UI BFF machine access bootstrap failed: ${adminUiBffMachineAccessResult?.error || 'unknown error'}`;
           } else if (!defaultCanonicalCatalogSeedSuccess) {
             state.error = `Default canonical field catalog seed failed: ${defaultCanonicalCatalogSeedResult?.error || 'unknown error'}`;
           } else if (!runtimeProfileSeedSuccess) {
@@ -4310,6 +4471,7 @@ export function createApiRoutes(): Hono {
 
         return c.json({
           success: deploymentSucceeded,
+          error: state.error,
           summary,
           uiWorkersResult: uiWorkersSummary,
           migrationsResult,
@@ -4348,6 +4510,7 @@ export function createApiRoutes(): Hono {
       results: state.deployResults,
       logPath: state.logPath,
       operationProgress: state.operationProgress,
+      deploymentProgress: state.deploymentProgress,
     });
   });
 
@@ -4363,6 +4526,8 @@ export function createApiRoutes(): Hono {
       state.deployResults = [];
       state.logPath = null;
       state.operationProgress = null;
+      state.deploymentProgress = null;
+      deploymentProgressTracking = false;
 
       return c.json({ success: true });
     });
@@ -4451,7 +4616,7 @@ export function createApiRoutes(): Hono {
         );
 
         addProgress('Setting up initial admin...');
-        addProgress(`Looking for setup token at: ${tokenPath}`);
+        addDetailProgress(`Looking for setup token at: ${tokenPath}`);
 
         const result = await completeInitialSetup({
           env,
@@ -4462,7 +4627,7 @@ export function createApiRoutes(): Hono {
           onProgress: addProgress,
         });
 
-        addProgress(`completeInitialSetup result: ${JSON.stringify(result)}`);
+        addProgress('Initial admin setup request completed');
 
         if (result.alreadyCompleted) {
           addProgress('Initial admin setup already completed');
@@ -4474,7 +4639,7 @@ export function createApiRoutes(): Hono {
         }
 
         if (result.success && result.setupUrl) {
-          addProgress(`Setup token stored successfully. URL: ${result.setupUrl}`);
+          addProgress('Setup token stored successfully');
           return c.json({
             success: true,
             setupUrl: result.setupUrl,
@@ -4771,143 +4936,160 @@ export function createApiRoutes(): Hono {
   });
 
   api.post('/control/pending-operations/execute', async (c) => {
-    if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
-      return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
-    }
-    if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
-      return c.json({ success: false, error: 'Invalid setup origin' }, 403);
-    }
-    const parsed = z
-      .object({
-        environmentId: EnvNameSchema,
-        operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u),
-      })
-      .strict()
-      .safeParse(await c.req.json());
-    if (!parsed.success) {
-      return c.json({ success: false, error: 'Invalid Control operation request' }, 400);
-    }
-    try {
-      const baseDir = findAuthrimBaseDir(process.cwd());
-      const { lock, path: lockPath } = await loadLockFileAuto(baseDir, parsed.data.environmentId);
-      const controlDatabase = lock?.d1.CONTROL_DB;
-      if (!controlDatabase) {
-        return c.json({ success: false, error: 'Control database is not configured' }, 409);
+    return withLock(async () => {
+      if (!sessionToken || c.req.header('X-Session-Token') !== sessionToken) {
+        return c.json({ success: false, error: 'Invalid or missing session token' }, 401);
       }
-      const [shardOperations, pluginOperations, pluginCleanupOperations, tenantDrOperations] =
-        await Promise.all([
-          listPendingControlOperatorOperations({ controlDatabaseName: controlDatabase.name }),
-          listPendingPluginControlOperatorOperations({ controlDatabaseName: controlDatabase.name }),
-          listPendingPluginControlCleanupOperations({
-            controlDatabaseName: controlDatabase.name,
-          }),
-          listPendingTenantDisasterRecoveryOperatorOperations({
-            controlDatabaseName: controlDatabase.name,
-          }),
-        ]);
-      const operations = [
-        ...shardOperations,
-        ...pluginOperations,
-        ...pluginCleanupOperations,
-        ...tenantDrOperations,
-      ];
-      const operation = operations.find(
-        (candidate) =>
-          candidate.operationId === parsed.data.operationId &&
-          candidate.environmentId === parsed.data.environmentId
-      );
-      if (!operation) {
-        return c.json({ success: false, error: 'Pending Control operation was not found' }, 404);
+      if (!isSameLoopbackOrigin(c.req.url, c.req.header('Origin'))) {
+        return c.json({ success: false, error: 'Invalid setup origin' }, 403);
       }
-      if (
-        operation.operationKind !== 'provision_plugin_resources' &&
-        operation.operationKind !== 'cleanup_plugin_resources' &&
-        operation.currentStep !== 'create_d1' &&
-        operation.currentStep !== 'apply_migrations' &&
-        operation.currentStep !== 'reconcile_worker_bindings'
-      ) {
-        return c.json(
-          {
-            success: false,
-            error: 'This Control operation step is not executable by this setup version',
-            operation,
-          },
-          409
+      const parsed = z
+        .object({
+          environmentId: EnvNameSchema,
+          operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u),
+        })
+        .strict()
+        .safeParse(await c.req.json());
+      if (!parsed.success) {
+        return c.json({ success: false, error: 'Invalid Control operation request' }, 400);
+      }
+      let operationLock:
+        | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+        | undefined;
+      try {
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        operationLock = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
+          env: parsed.data.environmentId,
+          operation: `web-control-operation:${parsed.data.operationId}`,
+        });
+        const { lock, path: lockPath } = await loadLockFileAuto(baseDir, parsed.data.environmentId);
+        const controlDatabase = lock?.d1.CONTROL_DB;
+        if (!controlDatabase) {
+          return c.json({ success: false, error: 'Control database is not configured' }, 409);
+        }
+        const [shardOperations, pluginOperations, pluginCleanupOperations, tenantDrOperations] =
+          await Promise.all([
+            listPendingControlOperatorOperations({ controlDatabaseName: controlDatabase.name }),
+            listPendingPluginControlOperatorOperations({
+              controlDatabaseName: controlDatabase.name,
+            }),
+            listPendingPluginControlCleanupOperations({
+              controlDatabaseName: controlDatabase.name,
+            }),
+            listPendingTenantDisasterRecoveryOperatorOperations({
+              controlDatabaseName: controlDatabase.name,
+            }),
+          ]);
+        const operations = [
+          ...shardOperations,
+          ...pluginOperations,
+          ...pluginCleanupOperations,
+          ...tenantDrOperations,
+        ];
+        const operation = operations.find(
+          (candidate) =>
+            candidate.operationId === parsed.data.operationId &&
+            candidate.environmentId === parsed.data.environmentId
         );
-      }
-      const resolved = resolvePaths({ baseDir, env: parsed.data.environmentId });
-      const configPath =
-        resolved.type === 'new'
-          ? (resolved.paths as EnvironmentPaths).config
-          : (resolved.paths as LegacyPaths).config;
-      const config = existsSync(configPath)
-        ? parseEnvironmentConfigForEnv(
-            JSON.parse(await readFile(configPath, 'utf-8')),
-            parsed.data.environmentId
-          )
-        : null;
-      if (
-        (operation.operationKind === 'provision_plugin_resources' ||
-          operation.operationKind === 'cleanup_plugin_resources') &&
-        !config
-      ) {
-        return c.json({ success: false, error: 'Control environment config is unavailable' }, 409);
-      }
-      const result =
-        operation.operationKind === 'provision_plugin_resources'
-          ? await executeSetupPluginControlOperator({
-              controlDatabaseId: controlDatabase.id,
-              migrationReleaseBucketName:
-                lock.r2?.MIGRATION_RELEASES?.name ??
-                `${parsed.data.environmentId}-migration-releases`,
+        if (!operation) {
+          return c.json({ success: false, error: 'Pending Control operation was not found' }, 404);
+        }
+        if (
+          operation.operationKind !== 'provision_plugin_resources' &&
+          operation.operationKind !== 'cleanup_plugin_resources' &&
+          operation.currentStep !== 'create_d1' &&
+          operation.currentStep !== 'apply_migrations' &&
+          operation.currentStep !== 'reconcile_worker_bindings'
+        ) {
+          return c.json(
+            {
+              success: false,
+              error: 'This Control operation step is not executable by this setup version',
               operation,
-              expectedAccountId: config?.cloudflare?.accountId,
-            })
-          : operation.operationKind === 'cleanup_plugin_resources'
-            ? await executeSetupPluginCleanupOperator({
+            },
+            409
+          );
+        }
+        const resolved = resolvePaths({ baseDir, env: parsed.data.environmentId });
+        const configPath =
+          resolved.type === 'new'
+            ? (resolved.paths as EnvironmentPaths).config
+            : (resolved.paths as LegacyPaths).config;
+        const config = existsSync(configPath)
+          ? parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(configPath, 'utf-8')),
+              parsed.data.environmentId
+            )
+          : null;
+        if (
+          (operation.operationKind === 'provision_plugin_resources' ||
+            operation.operationKind === 'cleanup_plugin_resources') &&
+          !config
+        ) {
+          return c.json(
+            { success: false, error: 'Control environment config is unavailable' },
+            409
+          );
+        }
+        const result =
+          operation.operationKind === 'provision_plugin_resources'
+            ? await executeSetupPluginControlOperator({
                 controlDatabaseId: controlDatabase.id,
+                migrationReleaseBucketName:
+                  lock.r2?.MIGRATION_RELEASES?.name ??
+                  `${parsed.data.environmentId}-migration-releases`,
                 operation,
                 expectedAccountId: config?.cloudflare?.accountId,
               })
-            : operation.currentStep === 'create_d1'
-              ? await executeSetupControlOperatorCreate({
+            : operation.operationKind === 'cleanup_plugin_resources'
+              ? await executeSetupPluginCleanupOperator({
                   controlDatabaseId: controlDatabase.id,
                   operation,
                   expectedAccountId: config?.cloudflare?.accountId,
                 })
-              : operation.currentStep === 'apply_migrations'
-                ? await executeSetupControlOperatorMigration({
+              : operation.currentStep === 'create_d1'
+                ? await executeSetupControlOperatorCreate({
                     controlDatabaseId: controlDatabase.id,
-                    migrationReleaseBucketName:
-                      lock.r2?.MIGRATION_RELEASES?.name ??
-                      `${parsed.data.environmentId}-migration-releases`,
                     operation,
                     expectedAccountId: config?.cloudflare?.accountId,
                   })
-                : await executeSetupControlOperatorWorkerBindings({
-                    controlDatabaseId: controlDatabase.id,
-                    operation,
-                    expectedAccountId: config?.cloudflare?.accountId,
-                  });
-      if (
-        operation.operationKind === 'cleanup_plugin_resources' ||
-        (operation.operationKind === 'provision_plugin_resources' &&
-          result.state === 'awaiting_smoke')
-      ) {
-        await refreshWorkerDeploymentArtifacts({
-          baseDir,
-          env: parsed.data.environmentId,
-          config: config!,
-          lock,
-          lockPath,
-          components: ['ar-plugin-runner'],
-          registeredBy: 'setup:web-control-provision-plugin-resources',
-        });
+                : operation.currentStep === 'apply_migrations'
+                  ? await executeSetupControlOperatorMigration({
+                      controlDatabaseId: controlDatabase.id,
+                      migrationReleaseBucketName:
+                        lock.r2?.MIGRATION_RELEASES?.name ??
+                        `${parsed.data.environmentId}-migration-releases`,
+                      operation,
+                      expectedAccountId: config?.cloudflare?.accountId,
+                    })
+                  : await executeSetupControlOperatorWorkerBindings({
+                      controlDatabaseId: controlDatabase.id,
+                      operation,
+                      expectedAccountId: config?.cloudflare?.accountId,
+                    });
+        if (
+          operation.operationKind === 'cleanup_plugin_resources' ||
+          (operation.operationKind === 'provision_plugin_resources' &&
+            result.state === 'awaiting_smoke')
+        ) {
+          await refreshWorkerDeploymentArtifacts({
+            baseDir,
+            env: parsed.data.environmentId,
+            config: config!,
+            lock,
+            lockPath,
+            components: ['ar-plugin-runner'],
+            registeredBy: 'setup:web-control-provision-plugin-resources',
+          });
+        }
+        return c.json({ success: true, result });
+      } catch (error) {
+        return c.json({ success: false, error: sanitizeError(error) }, 500);
+      } finally {
+        await operationLock?.release();
       }
-      return c.json({ success: true, result });
-    } catch (error) {
-      return c.json({ success: false, error: sanitizeError(error) }, 500);
-    }
+    });
   });
 
   // List all detected Authrim environments (no auth required - read-only)
@@ -5392,15 +5574,28 @@ export function createApiRoutes(): Hono {
           return c.json({ success: false, error: 'Invalid environment name' }, 400);
         }
         const env = envResult.data;
-        const body = await c.req.json();
-        const {
-          deleteWorkers = true,
-          deleteD1 = true,
-          deleteKV = true,
-          deleteQueues = true,
-          deleteR2 = true,
-          deletePages = true,
-        } = body;
+        let requestBody: unknown;
+        try {
+          requestBody = await c.req.json();
+        } catch {
+          return c.json({ success: false, error: 'Invalid environment deletion request' }, 400);
+        }
+        const bodyResult = EnvironmentDeleteRequestSchema.safeParse(requestBody);
+        if (!bodyResult.success) {
+          return c.json({ success: false, error: 'Invalid environment deletion request' }, 400);
+        }
+        const { deleteWorkers, deleteD1, deleteKV, deleteQueues, deleteR2, deletePages } =
+          bodyResult.data;
+        if (
+          ![deleteWorkers, deleteD1, deleteKV, deleteQueues, deleteR2, deletePages].some(Boolean)
+        ) {
+          return c.json(
+            { success: false, error: 'Select at least one resource type to delete' },
+            400
+          );
+        }
+        const deletesEntireEnvironment =
+          deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
 
         state.status = 'provisioning'; // Reuse provisioning status
         state.error = null;
@@ -5437,10 +5632,12 @@ export function createApiRoutes(): Hono {
           environmentObservedRemotely,
         });
         if (!deleteDecision.allowed) {
+          const error = markOperationError(environmentOperationBlockMessage(deleteDecision));
+          await flushProgressLog();
           return c.json(
             {
               success: false,
-              error: environmentOperationBlockMessage(deleteDecision),
+              error,
             },
             409
           );
@@ -5448,6 +5645,7 @@ export function createApiRoutes(): Hono {
 
         const result = await deleteEnvironment({
           env,
+          environmentKnownLocally: Boolean(operationLock.lock),
           deleteWorkers,
           deleteD1,
           deleteKV,
@@ -5461,22 +5659,47 @@ export function createApiRoutes(): Hono {
             ? Object.values(operationLock.lock.queues).map((entry) => entry.name)
             : [],
           onProgress: addProgress,
+          onDetail: addDetailProgress,
           onResourceProgress: ({ current, total }) => {
             state.operationProgress = { operation: 'delete', current, total };
           },
         });
 
-        const cleanupResult = await cleanupLocalEnvironmentArtifacts({
-          baseDir,
-          env,
-          packagesDir: join(findAuthrimBaseDir(process.cwd()), 'packages'),
-          keysBaseDir: process.cwd(),
-          onProgress: addProgress,
-        });
-        if (cleanupResult.errors.length > 0) {
-          result.errors.push(...cleanupResult.errors);
+        const deletedLockResourceCount =
+          result.deleted.workers.length +
+          result.deleted.d1.length +
+          result.deleted.kv.length +
+          result.deleted.queues.length +
+          result.deleted.r2.length;
+        if (operationLock.lock && deletedLockResourceCount > 0) {
+          await saveLockFile(
+            reconcileLockAfterResourceDeletion(operationLock.lock, result.deleted),
+            operationLock.lockFilePath
+          );
+        }
+
+        if (result.success && deletesEntireEnvironment) {
+          const cleanupResult = await cleanupLocalEnvironmentArtifacts({
+            baseDir,
+            env,
+            packagesDir: join(findAuthrimBaseDir(process.cwd()), 'packages'),
+            keysBaseDir: process.cwd(),
+            onProgress: addProgress,
+          });
+          if (cleanupResult.errors.length > 0) {
+            result.errors.push(...cleanupResult.errors);
+          }
+        } else if (!result.success) {
+          addProgress('⚠️ Local environment state preserved for deletion retry and diagnosis');
+        } else {
+          addProgress('Local environment state preserved for resource types not selected');
         }
         result.success = result.errors.length === 0;
+        result.completion = result.success
+          ? result.manualR2.length > 0
+            ? 'manual_action_required'
+            : 'complete'
+          : 'failed';
 
         if (state.logPath) {
           addProgress(`📝 Progress log saved: ${state.logPath}`);
@@ -5487,15 +5710,20 @@ export function createApiRoutes(): Hono {
           state.error = result.errors.join(', ');
         }
 
-        return c.json({
-          success: result.success,
-          deleted: result.deleted,
-          manualR2: result.manualR2,
-          errors: result.errors,
-          progress: state.progress,
-          operationProgress: state.operationProgress,
-          logPath: state.logPath,
-        });
+        return c.json(
+          {
+            success: result.success,
+            error: state.error,
+            completion: result.completion,
+            deleted: result.deleted,
+            manualR2: result.manualR2,
+            errors: result.errors,
+            progress: state.progress,
+            operationProgress: state.operationProgress,
+            logPath: state.logPath,
+          },
+          result.success ? 200 : 500
+        );
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
@@ -6210,6 +6438,7 @@ export function createApiRoutes(): Hono {
           const readinessResult = await waitForRouterWorkerReady({
             apiBaseUrl,
             onProgress: addProgress,
+            onDetail: addDetailProgress,
           });
           if (!readinessResult.ready) {
             handleRouterReadinessFailure(
@@ -6230,8 +6459,9 @@ export function createApiRoutes(): Hono {
             await saveLock(lock, lockPath);
           }
         } else {
+          state.error = `Worker update failed for ${summary.failedCount} of ${summary.totalComponents} component(s).`;
           addProgress(
-            `Updated ${summary.successCount}/${summary.totalComponents}, ${summary.failedCount} failed`
+            `❌ Updated ${summary.successCount}/${summary.totalComponents}, ${summary.failedCount} failed`
           );
         }
         await flushProgressLog();
@@ -6239,6 +6469,7 @@ export function createApiRoutes(): Hono {
         return c.json({
           success: summary.failedCount === 0,
           summary,
+          error: state.error,
           updatedComponents: componentsToUpdate,
           progress: state.progress,
           logPath: state.logPath,
@@ -6313,7 +6544,10 @@ export function createApiRoutes(): Hono {
         const env = parseResult.data;
 
         state.status = 'deploying';
+        state.error = null;
+        state.deployResults = [];
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
         addProgress(`Deploying component: ${componentName}`);
 
         // Check if it's a UI Worker component or API Worker component.
@@ -6323,11 +6557,13 @@ export function createApiRoutes(): Hono {
         const isWorkerComponent = WORKER_COMPONENTS.includes(componentName as WorkerComponent);
 
         if (!isUiWorkerComponent && !isWorkerComponent) {
-          state.status = 'error';
+          const error = markOperationError(
+            `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS].join(', ')}`
+          );
           return c.json(
             {
               success: false,
-              error: `Unknown component: ${componentName}. Valid components: ${[...WORKER_COMPONENTS, ...UI_WORKER_COMPONENTS].join(', ')}`,
+              error,
             },
             400
           );
@@ -6335,8 +6571,8 @@ export function createApiRoutes(): Hono {
 
         let { lock: componentDeploymentLock } = await loadLockFileAuto(rootDir, env);
         if (!componentDeploymentLock) {
-          state.status = 'error';
-          return c.json({ success: false, error: `Environment "${env}" not found.` }, 404);
+          const error = markOperationError(`Environment "${env}" not found.`);
+          return c.json({ success: false, error }, 404);
         }
         if (!dryRun) {
           operationLock = await acquireEnvironmentOperationForEnvironment({
@@ -6354,11 +6590,13 @@ export function createApiRoutes(): Hono {
           'worker_redeploy'
         );
         if (!deploymentGuard.allowed) {
-          state.status = 'error';
+          const error = markOperationError(
+            releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion)
+          );
           return c.json(
             {
               success: false,
-              error: releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion),
+              error,
               requiredCommand: `authrim-setup update --env ${env}`,
             },
             409
@@ -6393,11 +6631,8 @@ export function createApiRoutes(): Hono {
             await ensureSupplementalKeysForWebDeploy(keysDir);
           }
           if (!cfg) {
-            state.status = 'error';
-            return c.json(
-              { success: false, error: 'Environment config is required for UI deployment' },
-              400
-            );
+            const error = markOperationError('Environment config is required for UI deployment');
+            return c.json({ success: false, error }, 400);
           }
 
           // Build first (unless skipped)
@@ -6410,8 +6645,8 @@ export function createApiRoutes(): Hono {
             const uiDir = join(rootDir, 'packages', componentName);
 
             if (!existsSync(uiDir)) {
-              state.status = 'error';
-              return c.json({ success: false, error: `Package not found: ${componentName}` }, 404);
+              const error = markOperationError(`Package not found: ${componentName}`);
+              return c.json({ success: false, error }, 404);
             }
 
             // Get the tenant-aware API base URL.
@@ -6470,6 +6705,7 @@ export function createApiRoutes(): Hono {
                 const readinessResult = await waitForRouterWorkerReady({
                   apiBaseUrl,
                   onProgress: addProgress,
+                  onDetail: addDetailProgress,
                 });
                 if (!readinessResult.ready) {
                   handleRouterReadinessFailure(
@@ -6636,15 +6872,18 @@ export function createApiRoutes(): Hono {
                 type: 'ui-worker',
                 projectName: result.projectName,
                 deployedAt: result.deployedAt,
+                logPath: state.logPath,
               });
             } else {
-              state.status = 'error';
+              const error = markOperationError(
+                result.error || `${componentName} deployment failed`
+              );
               return c.json(
                 {
                   success: false,
                   component: componentName,
                   type: 'ui-worker',
-                  error: result.error,
+                  error,
                 },
                 500
               );
@@ -6659,6 +6898,7 @@ export function createApiRoutes(): Hono {
             type: 'ui-worker',
             dryRun: true,
             message: `Would deploy ${componentName} to Workers`,
+            logPath: state.logPath,
           });
         } else {
           // Deploy Worker component
@@ -6749,8 +6989,8 @@ export function createApiRoutes(): Hono {
             });
 
             if (!buildResult.success) {
-              state.status = 'error';
-              return c.json({ success: false, error: `Build failed: ${buildResult.error}` }, 500);
+              const error = markOperationError(`Build failed: ${buildResult.error}`);
+              return c.json({ success: false, error }, 500);
             }
           }
 
@@ -6818,11 +7058,8 @@ export function createApiRoutes(): Hono {
                 missingUiBindingTargets
               );
               if (placeholder.failedCount > 0) {
-                state.status = 'error';
-                return c.json(
-                  { success: false, error: 'UI Worker binding-target deployment failed' },
-                  500
-                );
+                const error = markOperationError('UI Worker binding-target deployment failed');
+                return c.json({ success: false, error }, 500);
               }
             }
           }
@@ -6896,25 +7133,26 @@ export function createApiRoutes(): Hono {
               workerName: result.workerName,
               deployedAt: result.deployedAt,
               version: result.version,
+              logPath: state.logPath,
             });
           } else {
-            state.status = 'error';
+            const error = markOperationError(result?.error || 'dependency deployment failed');
             return c.json(
               {
                 success: false,
                 component: componentName,
                 type: 'worker',
-                error: result?.error || 'dependency deployment failed',
+                error,
               },
               500
             );
           }
         }
       } catch (error) {
-        state.status = 'error';
-        state.error = sanitizeError(error);
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        const sanitizedError = markOperationError(sanitizeError(error));
+        return c.json({ success: false, error: sanitizedError, logPath: state.logPath }, 500);
       } finally {
+        await flushProgressLog();
         await operationLock?.release();
       }
     });
@@ -6952,7 +7190,7 @@ export function createApiRoutes(): Hono {
       const { lock } = await loadLockFileAuto(rootDir, env);
       if (!lock) return c.json({ success: false, error: `Environment "${env}" not found.` }, 404);
       const productVersion = await getRootProductVersion(rootDir);
-      const migrationsRoot = await findMigrationsRoot(rootDir, addProgress);
+      const migrationsRoot = await findMigrationsRoot(rootDir);
       if (!migrationsRoot.path) throw new Error('Migrations directory not found.');
       const installedRelease =
         !lock.productVersion && Object.keys(lock.workers ?? {}).length === 0
@@ -6966,7 +7204,7 @@ export function createApiRoutes(): Hono {
               productVersion,
               lock,
             });
-      const result = await getD1MigrationStatusForEnvironment(env, rootDir, addProgress, {
+      const result = await getD1MigrationStatusForEnvironment(env, rootDir, undefined, {
         productVersion,
         allowDraft: installedRelease.draft,
       });
@@ -7034,7 +7272,10 @@ export function createApiRoutes(): Hono {
           );
         }
 
+        state.status = 'deploying';
+        state.error = null;
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
         addProgress(`📜 Applying database migrations for environment: ${env}`);
         const migrationsRoot = await findMigrationsRoot(rootDir, addProgress);
         if (!migrationsRoot.path) throw new Error('Migrations directory not found.');
@@ -7056,15 +7297,25 @@ export function createApiRoutes(): Hono {
         });
 
         if (result.success) {
+          state.status = 'complete';
           addProgress('✅ Database migrations completed successfully');
         } else {
+          state.status = 'error';
+          state.error = 'Database migrations failed';
           addProgress('❌ Database migrations failed');
         }
 
-        return c.json({ ...result, success: result.success, progress: state.progress });
+        return c.json({
+          ...result,
+          success: result.success,
+          progress: state.progress,
+          logPath: state.logPath,
+        });
       } catch (error) {
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        const sanitizedError = markOperationError(sanitizeError(error));
+        return c.json({ success: false, error: sanitizedError, logPath: state.logPath }, 500);
       } finally {
+        await flushProgressLog();
         await operationLock?.release();
       }
     });
@@ -7112,7 +7363,10 @@ export function createApiRoutes(): Hono {
           );
         }
 
+        state.status = 'deploying';
+        state.error = null;
         clearProgress();
+        state.logPath = await beginProgressLog(env, 'update');
         addProgress(`📜 Running D1 migrations for environment: ${env}`);
         const migrationsRoot = await findMigrationsRoot(resolvedRootDir, addProgress);
         if (!migrationsRoot.path) throw new Error('Migrations directory not found.');
@@ -7127,8 +7381,11 @@ export function createApiRoutes(): Hono {
         });
 
         if (result.success) {
+          state.status = 'complete';
           addProgress('✅ All migrations completed successfully');
         } else {
+          state.status = 'error';
+          state.error = 'Some migrations failed';
           addProgress('❌ Some migrations failed');
         }
 
@@ -7138,10 +7395,13 @@ export function createApiRoutes(): Hono {
           pii: result.pii,
           admin: result.admin,
           progress: state.progress,
+          logPath: state.logPath,
         });
       } catch (error) {
-        return c.json({ success: false, error: sanitizeError(error) }, 500);
+        const sanitizedError = markOperationError(sanitizeError(error));
+        return c.json({ success: false, error: sanitizedError, logPath: state.logPath }, 500);
       } finally {
+        await flushProgressLog();
         await operationLock?.release();
       }
     });

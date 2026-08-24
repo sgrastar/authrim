@@ -20,6 +20,7 @@
 	} from '$lib/api/account';
 	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
 	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
+	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
 	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
@@ -392,7 +393,8 @@
 			account_totp_widget: $LL.account_totp(),
 			account_consent_widget: $LL.account_consentTitle(),
 			account_activity_widget: $LL.account_activityTitle(),
-			account_social_account_widget: $LL.account_socialAccounts()
+			account_social_account_widget: $LL.account_socialAccounts(),
+			account_launcher_widget: $LL.account_launcherTitle()
 		};
 		const title = defaultTitles[field.block_type ?? 'text'];
 		const defaultLabels = new Set([
@@ -405,7 +407,8 @@
 			'Authenticator app',
 			'Consent information',
 			'Account activity',
-			'Connected accounts'
+			'Connected accounts',
+			'My applications'
 		]);
 		const systemWidgetFields = new Set([
 			'account.profile',
@@ -415,7 +418,8 @@
 			'account.totp',
 			'account.consents',
 			'account.activity',
-			'account.social_accounts'
+			'account.social_accounts',
+			'account.launchers'
 		]);
 		return !field.label ||
 			defaultLabels.has(field.label) ||
@@ -1390,6 +1394,8 @@
 												onClearTotpEnrollment={() => (totpEnrollment = null)}
 												onReauth={() => requestReauth()}
 											/>
+										{:else if field.block_type === 'account_launcher_widget'}
+											<AccountLauncherSection title={accountWidgetTitle(field)} />
 										{/if}
 									</div>
 								{/if}

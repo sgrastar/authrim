@@ -2139,12 +2139,30 @@ export async function getOptionalKVKeyByNamespaceId(
 /**
  * Delete a D1 database
  */
+function isCloudflareResourceAlreadyAbsent(error: unknown): boolean {
+  const detail = [
+    error instanceof Error ? error.message : String(error),
+    typeof (error as { stderr?: unknown })?.stderr === 'string'
+      ? (error as { stderr: string }).stderr
+      : '',
+    typeof (error as { stdout?: unknown })?.stdout === 'string'
+      ? (error as { stdout: string }).stdout
+      : '',
+  ]
+    .join('\n')
+    .toLowerCase();
+  return /(?:not found|does not exist|could not find|no such (?:database|queue|resource))/u.test(
+    detail
+  );
+}
+
 export async function deleteD1Database(name: string): Promise<boolean> {
   for (let attempt = 1; attempt <= 6; attempt++) {
     try {
       await wrangler(['d1', 'delete', name, '--skip-confirmation']);
       return true;
     } catch (error) {
+      if (isCloudflareResourceAlreadyAbsent(error)) return true;
       const message = error instanceof Error ? error.message.toLowerCase() : '';
       const retryable =
         message.includes('429') ||
@@ -5568,6 +5586,8 @@ export interface EnvironmentInfo {
 
 export interface DeleteOptions {
   env: string;
+  /** The environment still has a local operation lock even if remote inventory is already empty. */
+  environmentKnownLocally?: boolean;
   deleteWorkers?: boolean;
   deleteD1?: boolean;
   deleteKV?: boolean;
@@ -5579,6 +5599,8 @@ export interface DeleteOptions {
   queueConsumerDetachPropagationDelayMs?: number;
   workerDeletePropagationDelayMs?: number;
   onProgress?: (message: string) => void;
+  /** Idempotent no-op and raw diagnostic messages for detailed logs only. */
+  onDetail?: (message: string) => void;
   onResourceProgress?: (progress: { current: number; total: number }) => void;
 }
 
@@ -6242,8 +6264,8 @@ export async function deleteQueue(name: string): Promise<boolean> {
   try {
     await wrangler(['queues', 'delete', name]);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return isCloudflareResourceAlreadyAbsent(error);
   }
 }
 
@@ -6678,6 +6700,7 @@ export async function deleteR2Bucket(
  */
 export async function deleteEnvironment(options: DeleteOptions): Promise<{
   success: boolean;
+  completion: 'complete' | 'manual_action_required' | 'failed';
   deleted: {
     workers: string[];
     d1: string[];
@@ -6691,6 +6714,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
 }> {
   const {
     env,
+    environmentKnownLocally = false,
     deleteWorkers = true,
     deleteD1 = true,
     deleteKV = true,
@@ -6702,8 +6726,11 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     queueConsumerDetachPropagationDelayMs = QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS,
     workerDeletePropagationDelayMs = WORKER_DELETE_PROPAGATION_DELAY_MS,
     onProgress = console.log,
+    onDetail,
     onResourceProgress,
   } = options;
+  const deletesEntireEnvironment =
+    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
 
   validateEnvName(env);
 
@@ -6741,6 +6768,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
 
   if (
     !envInfo &&
+    !environmentKnownLocally &&
     safeKnownD1Names.length === 0 &&
     safeKnownQueueNames.length === 0 &&
     managedD1.length === 0 &&
@@ -6749,6 +6777,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   ) {
     return {
       success: false,
+      completion: 'failed',
       deleted,
       manualR2,
       errors: [`Environment '${env}' not found`],
@@ -6821,11 +6850,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   // Queue consumers must be detached before Cloudflare allows the Worker script to be deleted.
   const queuesForConsumerDetach =
     deleteWorkers && envInfo.workers.length > 0
-      ? Array.from(
-          new Map(
-            [...envInfo.queues, ...(await listQueues())].map((queue) => [queue.name, queue])
-          ).values()
-        )
+      ? Array.from(new Map(envInfo.queues.map((queue) => [queue.name, queue])).values())
       : envInfo.queues;
   if (deleteWorkers && envInfo.workers.length > 0 && queuesForConsumerDetach.length > 0) {
     const queueConsumerWorkerNames = getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers);
@@ -6834,7 +6859,13 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       await deleteQueueConsumersForWorkers(
         queuesForConsumerDetach,
         queueConsumerWorkerNames,
-        onProgress
+        (message) => {
+          if (message.includes('(not attached or already removed)')) {
+            onDetail?.(message);
+            return;
+          }
+          onProgress(message);
+        }
       );
       if (queueConsumerDetachPropagationDelayMs > 0) {
         onProgress(
@@ -6896,15 +6927,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         onProgress(`  ✅ ${bucket.name}`);
       } else if (r2Result.status === 'manual_cleanup_required') {
         manualR2.push(r2Result.target);
-        errors.push(
-          `R2 bucket ${bucket.name} requires manual cleanup (${r2Result.target.objectCount} objects)`
-        );
         onProgress(`  ⚠️ ${bucket.name} requires manual Dashboard cleanup`);
       } else {
-        errors.push(
-          `Failed to delete R2: ${bucket.name} (bucket may still contain objects or require manual cleanup)`
-        );
-        onProgress(`  ❌ ${bucket.name}`);
+        errors.push(`Failed to delete R2: ${bucket.name} (${r2Result.error})`);
+        onProgress(`  ❌ ${bucket.name} - ${r2Result.error}`);
       }
       reportResourceProcessed();
     }
@@ -6994,18 +7020,29 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleted.pages.length;
 
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  if (errors.length === 0) {
+  if (errors.length > 0) {
+    onProgress(`❌ Environment '${env}' deletion encountered ${errors.length} error(s)`);
+  } else if (manualR2.length > 0) {
+    onProgress(
+      `⚠️ Environment '${env}' resources were deleted; ${manualR2.length} R2 bucket(s) await manual cleanup`
+    );
+  } else if (deletesEntireEnvironment) {
     onProgress(`✅ Environment '${env}' deleted successfully!`);
   } else {
-    onProgress(`⚠️ Environment '${env}' partially deleted`);
+    onProgress(`✅ Selected resources for '${env}' deleted; remaining environment preserved`);
   }
   onProgress(`   Deleted: ${totalDeleted} resources`);
+  if (manualR2.length > 0) {
+    onProgress(`   Manual actions: ${manualR2.length}`);
+  }
   if (errors.length > 0) {
     onProgress(`   Errors: ${errors.length}`);
   }
 
   return {
     success: errors.length === 0,
+    completion:
+      errors.length > 0 ? 'failed' : manualR2.length > 0 ? 'manual_action_required' : 'complete',
     deleted,
     manualR2,
     errors,

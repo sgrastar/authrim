@@ -645,6 +645,18 @@ export type {
 } from './types/screens';
 
 export { ACCOUNT_PAGE_PRESET_VERSION, DEFAULT_ACCOUNT_PAGE_DEFINITION } from './types/screens';
+export type {
+  AccountLauncher,
+  ApplicationLauncher,
+  LauncherApplicationType,
+  LauncherAttributeMatch,
+  LauncherAttributeOperator,
+  LauncherAttributeRule,
+  LauncherIconType,
+  LauncherLaunchType,
+  LauncherVisibility,
+  LauncherVisibilityMode,
+} from './types/launchers';
 
 export { setBoundedMapEntry } from './utils/bounded-cache';
 

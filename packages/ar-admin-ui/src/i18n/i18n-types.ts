@@ -387,6 +387,10 @@ type RootTranslation = {
 	 */
 	admin_nav_account_page: string
 	/**
+	 * L​a​u​n​c​h​e​r​s
+	 */
+	admin_nav_launchers: string
+	/**
 	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
 	 */
 	admin_nav_tenant_discovery: string
@@ -33610,6 +33614,10 @@ export type TranslationFunctions = {
 	 * Account page
 	 */
 	admin_nav_account_page: () => LocalizedString
+	/**
+	 * Launchers
+	 */
+	admin_nav_launchers: () => LocalizedString
 	/**
 	 * Tenant Discovery
 	 */

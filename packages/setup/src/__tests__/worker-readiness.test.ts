@@ -18,6 +18,7 @@ vi.mock('../core/public-dns-fetch.js', () => ({
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
+  waitForTenantRoutingReady,
   waitForWorkerDeploymentsReady,
   waitForWorkerHttpReady,
 } from '../core/worker-readiness.js';
@@ -123,6 +124,7 @@ describe('waitForRouterWorkerReady', () => {
 
     const result = await waitForRouterWorkerReady({
       apiBaseUrl: 'https://api.example.com',
+      allowPublicDnsFallback: false,
       maxWaitMs: 0,
       initialDelayMs: 1,
     });
@@ -131,6 +133,122 @@ describe('waitForRouterWorkerReady', () => {
     expect(result.error).toContain('fetch failed');
     expect(result.error).toContain('ENOTFOUND');
     expect(result.error).toContain('api.example.com');
+  });
+
+  it('uses public DNS immediately after the system resolver misses the router hostname', async () => {
+    const details: string[] = [];
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ status: 'ok' }), 200)
+    );
+
+    const result = await waitForRouterWorkerReady({
+      apiBaseUrl: 'https://api.example.com',
+      maxWaitMs: 0,
+      onDetail: (message) => details.push(message),
+    });
+
+    expect(result).toMatchObject({ ready: true, attempts: 1 });
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://api.example.com/api/health',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
+    expect(details.join('\n')).toContain('Cloudflare public DNS');
+  });
+
+  it('does not use public DNS to bypass an HTTP routing failure', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse('not found', 404));
+
+    const result = await waitForRouterWorkerReady({
+      apiBaseUrl: 'https://api.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({ ready: false, attempts: 1 });
+    expect(mocks.fetchWithPublicDns).not.toHaveBeenCalled();
+  });
+});
+
+describe('waitForTenantRoutingReady', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    mocks.fetchWithPublicDns.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('waits through tenant directory propagation without exposing raw errors in progress', async () => {
+    const progress: string[] = [];
+    const details: string[] = [];
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'not_found', message: 'Tenant not found' }), 404)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ issuer: 'https://first.example.com' }), 200)
+      );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 1_000,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      onProgress: (message) => progress.push(message),
+      onDetail: (message) => details.push(message),
+    });
+
+    expect(result).toMatchObject({ ready: true, attempts: 2, issuer: 'https://first.example.com' });
+    expect(progress.some((message) => message.includes('Waiting for tenant routing'))).toBe(true);
+    expect(progress.join('\n')).not.toContain('Tenant not found');
+    expect(details.join('\n')).toContain('Tenant not found');
+  });
+
+  it('rejects discovery metadata for a different issuer', async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ issuer: 'https://other.example.com' }), 200)
+    );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({ ready: false });
+    expect(result.error).toContain('Unexpected issuer');
+  });
+
+  it('reads discovery metadata returned through public DNS fallback', async () => {
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ issuer: 'https://first.example.com' }), 200)
+    );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({
+      ready: true,
+      attempts: 1,
+      issuer: 'https://first.example.com',
+    });
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://first.example.com/.well-known/openid-configuration',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
   });
 });
 

@@ -9,14 +9,21 @@ export async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  if (init.signal?.aborted) {
+    controller.abort();
+  } else {
+    init.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  }
 
   try {
     return await fetch(input, {
       ...init,
-      signal: init.signal ?? controller.signal,
+      signal: controller.signal,
     });
   } finally {
     clearTimeout(timeoutId);
+    init.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 

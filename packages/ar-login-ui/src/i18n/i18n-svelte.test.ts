@@ -18,7 +18,19 @@ const persistentSurfaceKeys = [
 	'common_loading',
 	'common_footerLinks',
 	'login_createAccount',
-	'register_alreadyHaveAccount'
+	'register_alreadyHaveAccount',
+	'account_launcherTitle',
+	'account_launcherDescription',
+	'account_launcherLoadFailed',
+	'account_launcherEmpty',
+	'account_launcherSearch',
+	'account_launcherAllCategories',
+	'account_launcherFavorites',
+	'account_launcherNoMatches',
+	'account_launcherFavoriteAdd',
+	'account_launcherFavoriteRemove',
+	'account_launcherFavoriteUpdateFailed',
+	'account_launcherLegacy'
 ] as const;
 
 describe('i18n-svelte locale registration', () => {

@@ -630,7 +630,6 @@ const fr: Translations = {
   'delete.confirm': 'Êtes-vous sûr de vouloir supprimer "{{env}}" ?',
   'delete.confirmPermanent':
     '⚠️ Cela supprimera définitivement toutes les ressources de "{{env}}". Continuer ?',
-  'delete.confirmWarning': 'Cette action ne peut pas être annulée !',
   'delete.deleting': 'Suppression de {{resource}}...',
   'delete.deleted': '{{resource}} supprimé',
   'delete.error': 'Échec de la suppression de {{resource}}',
@@ -642,6 +641,9 @@ const fr: Translations = {
   'delete.kvNamespaces': 'Namespaces KV',
   'delete.queues': "Files d'attente",
   'delete.r2Buckets': 'Buckets R2',
+  'delete.pages': 'Projets Pages',
+  'delete.partialSuccess':
+    "Les ressources sélectionnées ont été supprimées et le reste de l'état de l'environnement a été conservé",
 
   // Info command
   'info.title': "Informations sur l'Environnement",
@@ -929,8 +931,7 @@ const fr: Translations = {
   'web.env.openSetup': 'Ouvrir la Configuration',
   'web.env.copyUrl': 'Copier',
   'web.env.deleteTitle': "Supprimer l'Environnement",
-  'web.env.deleteWarning':
-    'Cette action ne peut pas être annulée. Les ressources suivantes seront supprimées définitivement :',
+  'web.env.deleteWarning': 'Les ressources sélectionnées suivantes seront supprimées :',
   'web.env.confirmDelete': 'Supprimer la Sélection',
   'web.env.cancel': 'Annuler',
 
@@ -1247,8 +1248,7 @@ const fr: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': "Supprimer l'Environnement",
-  'web.delete.warning':
-    'Cette action est irréversible. Toutes les ressources sélectionnées seront supprimées définitivement.',
+  'web.delete.warning': 'Les ressources sélectionnées seront supprimées de cet environnement.',
   'web.delete.environment': 'Environnement :',
   'web.delete.selectResources': 'Sélectionnez les ressources à supprimer :',
   'web.delete.workers': 'Workers',
@@ -1294,6 +1294,9 @@ const fr: Translations = {
   'web.status.adminNotConfigured': 'Admin Non Configuré',
   'web.status.initializing': 'Initialisation...',
   'web.status.found': '{{count}} trouvé(s)',
+  'web.status.operationInProgress':
+    'Une autre opération de configuration est déjà en cours. Attendez qu’elle se termine, puis réessayez.',
+  'web.status.warning': 'Avertissement :',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Re-provisionner (Supprimer et Créer)',

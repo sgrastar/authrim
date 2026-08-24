@@ -51,6 +51,7 @@ import { extractAuthrimSessionIdFromCookieHeader } from '../common/session-cooki
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { resolveSAMLAuthnContextClassRef } from './authn-context';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
+import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
 import {
   enforceSAMLAttributeReleaseConsent,
   SAMLAttributeReleaseConsentRequiredError,
@@ -73,6 +74,8 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
   try {
     // Get SP entity ID from query parameter
     const spEntityId = c.req.query('sp');
+    const relayState = c.req.query('relay_state');
+    assertSAMLRelayStateSize(relayState);
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const { issuerUrl, idpEntityId } = await getSAMLLocalEntityIds(env, tenantId);
 
@@ -98,6 +101,7 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         issuerUrl,
         tenantId,
         spEntityId,
+        relayState,
         consentTransactionId: consentTransactionId ?? crypto.randomUUID(),
       });
     }
@@ -131,14 +135,20 @@ export async function handleIdPInitiated(c: Context<{ Bindings: Env }>): Promise
         issuerUrl,
         tenantId,
         spEntityId,
+        relayState,
         consentTransactionId: crypto.randomUUID(),
         consentRetry: true,
       });
     }
 
     // Return auto-submit form
-    return sendSAMLResponse(spConfig, responseXml);
+    return sendSAMLResponse(spConfig, responseXml, relayState);
   } catch (error) {
+    if (error instanceof SAMLRelayStateTooLargeError) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'relay_state', reason: error.message },
+      });
+    }
     log.error('IdP-Initiated SSO Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -160,12 +170,14 @@ async function redirectToIdPInitiatedConsentFlow(
     issuerUrl: string;
     tenantId: string;
     spEntityId: string;
+    relayState?: string;
     consentTransactionId: string;
     consentRetry?: boolean;
   }
 ): Promise<Response> {
   const returnUrl = new URL('/saml/idp/init', input.issuerUrl);
   returnUrl.searchParams.set('sp', input.spEntityId);
+  if (input.relayState) returnUrl.searchParams.set('relay_state', input.relayState);
   returnUrl.searchParams.set('consent_tx', input.consentTransactionId);
   if (input.consentRetry) returnUrl.searchParams.set('consent_retry', '1');
   const loginParameters = {

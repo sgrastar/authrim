@@ -237,6 +237,14 @@
 			descriptionJa: '外部アカウントの連携一覧と連携・解除状態を表示します。',
 			descriptionEn: 'Connected external accounts and link or unlink states.',
 			icon: 'i-ph-link'
+		},
+		{
+			type: 'account_launcher_widget',
+			labelJa: 'ランチャーWidget',
+			labelEn: 'Launcher widget',
+			descriptionJa: '割り当て済みアプリの検索、カテゴリ、お気に入り、起動を表示します。',
+			descriptionEn: 'Assigned application search, categories, favorites, and launch actions.',
+			icon: 'i-ph-rocket-launch'
 		}
 	];
 	const accountWidgetTypes = new Set<ScreenBlockType>([
@@ -247,7 +255,8 @@
 		'account_totp_widget',
 		'account_consent_widget',
 		'account_activity_widget',
-		'account_social_account_widget'
+		'account_social_account_widget',
+		'account_launcher_widget'
 	]);
 	const authMethodOptions: AuthMethodOption[] = [
 		{ value: 'passkey', label: 'Passkey' },

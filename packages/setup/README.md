@@ -58,6 +58,22 @@ R2 topology conversion.
 - Node.js `>=20.0.0`
 - `pnpm@9` for repository development
 - Wrangler CLI installed and authenticated with `wrangler login`
+
+### Deployment readiness and DNS propagation
+
+CLI and Web deployments perform readiness checks from the setup Node.js process; they do not depend
+on `curl`, `dig`, or another operating-system command. When the system resolver returns `ENOTFOUND`
+or `EAI_AGAIN` for a new HTTPS custom domain, setup retries through Cloudflare public DNS while
+preserving the original hostname for TLS and SNI validation. HTTP failures are never bypassed as DNS
+failures.
+
+The core API router readiness gate remains required. Post-deploy readiness for optional downstream
+grant introspection uses one shared 60-second budget across router readiness, tenant discovery, Admin
+machine token issuance, and Admin API client configuration. It probes candidate origins concurrently
+and reuses the router result already verified by the core deployment gate. If that optional setup does
+not converge within the budget, setup records it as deferred and continues with core login, Admin UI,
+and token issuance available.
+
 - A Cloudflare account that can create Workers, D1 databases, KV namespaces, and R2 buckets
 
 For repository development, the root project currently expects Node `>=22`.
@@ -275,8 +291,9 @@ and remove both the Admin D1 principal and local key files before reporting succ
 action, and cleanup failures are reported separately; an uncertain cleanup is never treated as a
 successful capacity operation. The complete bootstrap/action/cleanup interval holds the existing
 per-environment setup operation lock, so CLI, Web, deploy, update, and delete cannot race the fixed
-ephemeral principal or its local key files. Concurrent Web submissions are queued before acquiring
-that cross-process lock.
+ephemeral principal or its local key files. While one Web mutation is running, another submission is
+rejected with `409 setup_operation_in_progress`; the operator can retry after the active operation
+finishes. Accepted operations then acquire the cross-process environment lock.
 
 Preview or request the same profiles from the CLI without exposing physical resource inputs:
 
@@ -378,7 +395,9 @@ npx @authrim/setup delete --env staging
 npx @authrim/setup delete --env staging --yes --no-r2
 ```
 
-Resource keep flags include `--no-workers`, `--no-d1`, `--no-kv`, `--no-queues`, and `--no-r2`.
+Resource keep flags include `--no-workers`, `--no-d1`, `--no-kv`, `--no-queues`, `--no-r2`, and
+`--no-pages`. Partial deletion preserves the local environment state for the resource types that
+remain.
 
 ### `info`
 

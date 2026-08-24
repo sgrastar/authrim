@@ -157,10 +157,11 @@ describe('url-config helpers', () => {
       'https://first.multi-tenant.authrim.com',
     ]);
     // Token and admin setup endpoints resolve the tenant from the host before
-    // X-Tenant-Id can help, so tenant-aware issuer URL must be tried first.
+    // X-Tenant-Id can help. The naked base domain is therefore not a valid
+    // fallback when naked-domain routing is disabled.
     expect(
       resolveApiBaseUrlCandidates(config, { env: 'mt', purpose: 'tenant-scoped-admin' })
-    ).toEqual(['https://first.multi-tenant.authrim.com', 'https://multi-tenant.authrim.com']);
+    ).toEqual(['https://first.multi-tenant.authrim.com']);
   });
 
   it('keeps workers.dev candidates only when workers.dev is expected to be enabled', () => {

@@ -5,6 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
 
+type MockSpinner = {
+  text: string;
+  isSpinning: boolean;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+  succeed: ReturnType<typeof vi.fn>;
+  fail: ReturnType<typeof vi.fn>;
+  warn: ReturnType<typeof vi.fn>;
+};
+
 const mocks = vi.hoisted(() => ({
   buildApiPackages: vi.fn(),
   loadDeploySecretsFromKeys: vi.fn(),
@@ -52,6 +62,7 @@ const mocks = vi.hoisted(() => ({
   checkWranglerStatus: vi.fn(),
   syncWranglerConfigs: vi.fn(),
   waitForRouterWorkerReady: vi.fn(),
+  waitForTenantRoutingReady: vi.fn(),
   waitForWorkerDeploymentsReady: vi.fn(),
   waitForWorkerHttpReady: vi.fn(),
   buildWorkerHttpReadinessTargets: vi.fn(),
@@ -62,18 +73,36 @@ const mocks = vi.hoisted(() => ({
   completeInitialSetup: vi.fn(),
   prepareAdminUiBffDeployment: vi.fn(),
   printCliCapabilitySummary: vi.fn(),
+  configureDownstreamIntrospectionDeployment: vi.fn(),
+  oraSpinners: [] as MockSpinner[],
 }));
 
 vi.mock('ora', () => ({
   default: vi.fn(() => {
     const spinner = {
       text: '',
+      isSpinning: false,
       start: vi.fn(),
+      stop: vi.fn(),
       succeed: vi.fn(),
       fail: vi.fn(),
       warn: vi.fn(),
     };
-    spinner.start.mockReturnValue(spinner);
+    spinner.start.mockImplementation(() => {
+      spinner.isSpinning = true;
+      return spinner;
+    });
+    spinner.stop.mockImplementation(() => {
+      spinner.isSpinning = false;
+      return spinner;
+    });
+    for (const settle of [spinner.succeed, spinner.fail, spinner.warn]) {
+      settle.mockImplementation(() => {
+        spinner.isSpinning = false;
+        return spinner;
+      });
+    }
+    mocks.oraSpinners.push(spinner);
     return spinner;
   }),
 }));
@@ -199,6 +228,7 @@ vi.mock('../core/worker-readiness.js', async (importOriginal) => {
   return {
     ...actual,
     waitForRouterWorkerReady: mocks.waitForRouterWorkerReady,
+    waitForTenantRoutingReady: mocks.waitForTenantRoutingReady,
     waitForWorkerDeploymentsReady: mocks.waitForWorkerDeploymentsReady,
     waitForWorkerHttpReady: mocks.waitForWorkerHttpReady,
     buildWorkerHttpReadinessTargets: mocks.buildWorkerHttpReadinessTargets,
@@ -229,11 +259,21 @@ vi.mock('../core/admin-ui-bff-deployment.js', () => ({
   prepareAdminUiBffDeployment: mocks.prepareAdminUiBffDeployment,
 }));
 
+vi.mock('../core/downstream-introspection-deploy.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../core/downstream-introspection-deploy.js')>();
+  return {
+    ...actual,
+    configureDownstreamIntrospectionDeployment: mocks.configureDownstreamIntrospectionDeployment,
+  };
+});
+
 vi.mock('../cli/capability-summary.js', () => ({
   printCliCapabilitySummary: mocks.printCliCapabilitySummary,
 }));
 
 import { buildInitialHandoffResumeSummary, deployCommand } from '../cli/commands/deploy.js';
+import { initI18n } from '../i18n/index.js';
 
 const originalCwd = process.cwd();
 let root: string;
@@ -350,9 +390,11 @@ function successfulDeploymentSummary(
 
 describe('CLI initial deployment', () => {
   beforeEach(async () => {
+    await initI18n('en');
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-cli-initial-deploy-')));
     process.chdir(root);
     vi.clearAllMocks();
+    mocks.oraSpinners.length = 0;
 
     mocks.isWranglerInstalled.mockResolvedValue(true);
     mocks.checkAuth.mockResolvedValue({
@@ -508,6 +550,11 @@ describe('CLI initial deployment', () => {
       ready: true,
       checkedUrl: 'https://test.example.com/api/health',
     });
+    mocks.waitForTenantRoutingReady.mockResolvedValue({
+      ready: true,
+      checkedUrl: 'https://test.example.com/.well-known/openid-configuration',
+      issuer: 'https://test.example.com',
+    });
     mocks.ensureInitialControlPlaneResources.mockResolvedValue({ success: true, skipped: true });
     mocks.ensureInitialTenantInD1.mockResolvedValue({ success: true });
     mocks.ensureInitialAdminRolesInD1.mockResolvedValue({ success: true });
@@ -528,11 +575,46 @@ describe('CLI initial deployment', () => {
       namespaces: ['authrim-platform', 'headless'],
     });
     mocks.completeInitialSetup.mockResolvedValue({ success: true, alreadyCompleted: true });
+    mocks.configureDownstreamIntrospectionDeployment.mockResolvedValue({
+      success: true,
+      skipped: true,
+    });
   });
 
   afterEach(async () => {
     process.chdir(originalCwd);
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('stops the prerequisite spinner when the Cloudflare check throws', async () => {
+    mocks.isWranglerInstalled.mockRejectedValueOnce(new Error('wrangler check failed'));
+
+    await expect(
+      deployCommand({ env: 'headless', source: root, skipBuild: true, yes: true })
+    ).rejects.toThrow('wrangler check failed');
+    expect(
+      mocks.oraSpinners.some((spinner) =>
+        spinner.fail.mock.calls.some(([message]) => String(message).includes('An error occurred'))
+      )
+    ).toBe(true);
+  });
+
+  it('stops the active deployment spinner when an operation throws unexpectedly', async () => {
+    await writeHeadlessEnvironment('headless');
+    mocks.applyReleaseSchemaUpdatePlan.mockRejectedValueOnce(
+      new Error('unexpected schema executor failure')
+    );
+
+    await expect(
+      deployCommand({ env: 'headless', source: root, skipBuild: true, yes: true })
+    ).rejects.toThrow('unexpected schema executor failure');
+
+    expect(
+      mocks.oraSpinners.some((spinner) =>
+        spinner.fail.mock.calls.some(([message]) => String(message).includes('Deployment failed'))
+      )
+    ).toBe(true);
+    expect(mocks.oraSpinners.every((spinner) => spinner.isSpinning === false)).toBe(true);
   });
 
   it('applies schema before API Workers and keeps both UI Workers disabled', async () => {
@@ -870,5 +952,62 @@ describe('CLI initial deployment', () => {
     const firstQueryIndex = events.indexOf('query');
     expect(schemaIndex).toBeGreaterThanOrEqual(0);
     expect(firstQueryIndex === -1 || firstQueryIndex > schemaIndex).toBe(true);
+  });
+
+  it('keeps optional introspection failures diagnostic and does not print undefined guidance', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.configureDownstreamIntrospectionDeployment.mockResolvedValueOnce({
+      success: false,
+      error: 'secret write failed',
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deployCommand({ env, source: root, skipBuild: true, yes: true });
+      const output = log.mock.calls.flat().join('\n');
+      expect(output).toContain('Reason: secret write failed');
+      expect(output).toContain('Core login, Admin UI, and token issuance remain available.');
+      expect(output).not.toContain('undefined');
+      expect(
+        mocks.oraSpinners.some((spinner) =>
+          spinner.warn.mock.calls.some(([message]) =>
+            String(message).includes('Optional downstream grant introspection was deferred')
+          )
+        )
+      ).toBe(true);
+      expect(mocks.configureDownstreamIntrospectionDeployment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knownRouterReadyBaseUrls: expect.arrayContaining([expect.any(String)]),
+        })
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('defers an unexpected optional introspection exception without failing core deployment', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.configureDownstreamIntrospectionDeployment.mockRejectedValueOnce(
+      new Error('unexpected downstream failure')
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await expect(
+        deployCommand({ env, source: root, skipBuild: true, yes: true })
+      ).resolves.toBeUndefined();
+      expect(log.mock.calls.flat().join('\n')).toContain('Reason: unexpected downstream failure');
+      expect(
+        mocks.oraSpinners.some((spinner) =>
+          spinner.warn.mock.calls.some(([message]) =>
+            String(message).includes('Optional downstream grant introspection was deferred')
+          )
+        )
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 });

@@ -615,7 +615,6 @@ const ko: Translations = {
   'delete.confirm': '"{{env}}"를 삭제하시겠습니까?',
   'delete.confirmPermanent':
     '⚠️  "{{env}}"의 모든 리소스가 영구적으로 삭제됩니다. 계속하시겠습니까?',
-  'delete.confirmWarning': '이 작업은 취소할 수 없습니다!',
   'delete.deleting': '{{resource}} 삭제 중...',
   'delete.deleted': '{{resource}} 삭제됨',
   'delete.error': '{{resource}} 삭제 실패',
@@ -627,6 +626,8 @@ const ko: Translations = {
   'delete.kvNamespaces': 'KV 네임스페이스',
   'delete.queues': '큐',
   'delete.r2Buckets': 'R2 버킷',
+  'delete.pages': 'Pages 프로젝트',
+  'delete.partialSuccess': '선택한 리소스를 삭제하고 나머지 환경 상태는 유지했습니다',
 
   // Info command
   'info.title': '환경 정보',
@@ -899,7 +900,7 @@ const ko: Translations = {
   'web.env.openSetup': '설정 열기',
   'web.env.copyUrl': '복사',
   'web.env.deleteTitle': '환경 삭제',
-  'web.env.deleteWarning': '이 작업은 취소할 수 없습니다. 다음 리소스가 영구적으로 삭제됩니다:',
+  'web.env.deleteWarning': '선택한 다음 리소스를 삭제합니다:',
   'web.env.confirmDelete': '선택 항목 삭제',
   'web.env.cancel': '취소',
 
@@ -1204,7 +1205,7 @@ const ko: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '환경 삭제',
-  'web.delete.warning': '이 작업은 되돌릴 수 없습니다. 선택한 모든 리소스가 영구적으로 삭제됩니다.',
+  'web.delete.warning': '선택한 리소스를 이 환경에서 삭제합니다.',
   'web.delete.environment': '환경:',
   'web.delete.selectResources': '삭제할 리소스 선택:',
   'web.delete.workers': 'Workers',
@@ -1249,6 +1250,9 @@ const ko: Translations = {
   'web.status.adminNotConfigured': '관리자 미구성',
   'web.status.initializing': '초기화 중...',
   'web.status.found': '{{count}}개 발견됨',
+  'web.status.operationInProgress':
+    '다른 설정 작업이 이미 진행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.',
+  'web.status.warning': '경고:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '재프로비저닝 (삭제 및 생성)',

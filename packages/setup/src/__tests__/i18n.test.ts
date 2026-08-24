@@ -119,6 +119,15 @@ describe('setup i18n locale contracts', () => {
     expect(getTranslationsForWeb('ru')['banner.title']).toBe('Authrim Setup');
   });
 
+  it('keeps every supported locale in exact key parity with English', async () => {
+    const englishKeys = Object.keys(await loadTranslations('en')).sort();
+
+    for (const locale of getSupportedLocales()) {
+      const localeKeys = Object.keys(await loadTranslations(locale.code)).sort();
+      expect(localeKeys, locale.code).toEqual(englishKeys);
+    }
+  });
+
   it('provides localized initial deployment recovery guidance for every supported locale', async () => {
     const keys = [
       'web.envDetail.initialDeployRecoveryTitle',
@@ -147,6 +156,24 @@ describe('setup i18n locale contracts', () => {
       if (locale.code !== 'en') {
         expect(translations['web.envDetail.initialDeployRecoveryManifestChanged']).not.toBe(
           english['web.envDetail.initialDeployRecoveryManifestChanged']
+        );
+      }
+    }
+  });
+
+  it('localizes the concurrent setup operation message for every supported locale', async () => {
+    const english = await loadTranslations('en');
+
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      expect(translations['web.status.operationInProgress'], locale.code).toBeTruthy();
+      expect(translations['web.status.warning'], locale.code).toBeTruthy();
+      if (locale.code !== 'en') {
+        expect(translations['web.status.operationInProgress'], locale.code).not.toBe(
+          english['web.status.operationInProgress']
+        );
+        expect(translations['web.status.warning'], locale.code).not.toBe(
+          english['web.status.warning']
         );
       }
     }

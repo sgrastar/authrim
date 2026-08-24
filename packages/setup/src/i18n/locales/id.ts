@@ -619,7 +619,6 @@ const id: Translations = {
   'delete.confirm': 'Apakah Anda yakin ingin menghapus "{{env}}"?',
   'delete.confirmPermanent':
     '⚠️  Ini akan menghapus semua sumber daya untuk "{{env}}" secara permanen. Lanjutkan?',
-  'delete.confirmWarning': 'Tindakan ini tidak dapat dibatalkan!',
   'delete.deleting': 'Menghapus {{resource}}...',
   'delete.deleted': '{{resource}} dihapus',
   'delete.error': 'Gagal menghapus {{resource}}',
@@ -631,6 +630,9 @@ const id: Translations = {
   'delete.kvNamespaces': 'KV Namespace',
   'delete.queues': 'Queue',
   'delete.r2Buckets': 'Bucket R2',
+  'delete.pages': 'Proyek Pages',
+  'delete.partialSuccess':
+    'Resource yang dipilih telah dihapus dan status environment lainnya tetap disimpan',
 
   // Info command
   'info.title': 'Informasi Environment',
@@ -909,8 +911,7 @@ const id: Translations = {
   'web.env.openSetup': 'Buka Pengaturan',
   'web.env.copyUrl': 'Salin',
   'web.env.deleteTitle': 'Hapus Environment',
-  'web.env.deleteWarning':
-    'Tindakan ini tidak dapat dibatalkan. Sumber daya berikut akan dihapus secara permanen:',
+  'web.env.deleteWarning': 'Resource pilihan berikut akan dihapus:',
   'web.env.confirmDelete': 'Hapus yang Dipilih',
   'web.env.cancel': 'Batal',
 
@@ -1221,8 +1222,7 @@ const id: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Hapus Environment',
-  'web.delete.warning':
-    'Tindakan ini tidak dapat dibatalkan. Semua sumber daya yang dipilih akan dihapus secara permanen.',
+  'web.delete.warning': 'Resource yang dipilih akan dihapus dari environment ini.',
   'web.delete.environment': 'Environment:',
   'web.delete.selectResources': 'Pilih sumber daya untuk dihapus:',
   'web.delete.workers': 'Workers',
@@ -1268,6 +1268,9 @@ const id: Translations = {
   'web.status.adminNotConfigured': 'Admin Belum Dikonfigurasi',
   'web.status.initializing': 'Menginisialisasi...',
   'web.status.found': '{{count}} ditemukan',
+  'web.status.operationInProgress':
+    'Operasi penyiapan lain sedang berlangsung. Tunggu hingga selesai, lalu coba lagi.',
+  'web.status.warning': 'Peringatan:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Re-provision (Hapus & Buat)',

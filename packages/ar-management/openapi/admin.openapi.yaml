@@ -48,6 +48,7 @@ tags:
   - name: Flows
   - name: Health
   - name: Jobs
+  - name: Launchers
   - name: Logging - Administration
   - name: Logging - Destinations
   - name: Logging - Notifications
@@ -11627,6 +11628,199 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/launchers:
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminLaunchers
+      summary: List application launchers.
+      description: Lists every launcher definition for the current tenant, including disabled entries and audience rules.
+      responses:
+        '200':
+          description: Tenant launcher definitions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApplicationLauncher'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags: [Launchers]
+      operationId: postApiAdminLaunchers
+      summary: Create an application launcher.
+      description: Creates a launcher with an independently configured launch method, layout, and audience.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationLauncherInput'
+      responses:
+        '201':
+          description: Created launcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/ApplicationLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/launchers/options:
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminLauncherOptions
+      summary: List launcher editor options.
+      description: Returns OIDC clients, groups, known attribute keys, and supported Phosphor icon names.
+      responses:
+        '200':
+          description: Launcher editor options.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [oidc_clients, groups, attribute_keys, phosphor_icons]
+                properties:
+                  oidc_clients:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [client_id, client_name, initiate_login_uri, logo_uri]
+                      properties:
+                        client_id: { type: string }
+                        client_name: { type: string }
+                        initiate_login_uri: { type: [string, 'null'], format: uri }
+                        logo_uri: { type: [string, 'null'], format: uri }
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, group_key, display_name]
+                      properties:
+                        id: { type: string }
+                        group_key: { type: string }
+                        display_name: { type: string }
+                  attribute_keys:
+                    type: array
+                    items: { type: string }
+                  phosphor_icons:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/launchers/order:
+    put:
+      tags: [Launchers]
+      operationId: putApiAdminLaunchersOrder
+      summary: Replace the launcher display order.
+      description: Atomically assigns normalized sort orders to the complete current launcher collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [launcher_ids]
+              properties:
+                launcher_ids:
+                  type: array
+                  maxItems: 500
+                  uniqueItems: true
+                  items:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{1,100}$'
+      responses:
+        '200':
+          description: Reordered launcher definitions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApplicationLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/launchers/{id}':
+    put:
+      tags: [Launchers]
+      operationId: putApiAdminLaunchersById
+      summary: Update an application launcher.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationLauncherInput'
+      responses:
+        '200':
+          description: Updated launcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/ApplicationLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags: [Launchers]
+      operationId: deleteApiAdminLaunchersById
+      summary: Delete an application launcher.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '204': { description: Launcher deleted. }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/screens:
     get:
       tags:
@@ -11734,6 +11928,7 @@ paths:
                           - account_consent_widget
                           - account_activity_widget
                           - account_social_account_widget
+                          - account_launcher_widget
                       block_id:
                         type: string
                       value_type:
@@ -11946,6 +12141,7 @@ paths:
                           - account_consent_widget
                           - account_activity_widget
                           - account_social_account_widget
+                          - account_launcher_widget
                       block_id:
                         type: string
                       value_type:
@@ -44122,6 +44318,111 @@ components:
             created_at: 1770000000000
             updated_at: 1770000000000
   schemas:
+    LauncherAttributeRule:
+      type: object
+      additionalProperties: false
+      required: [id, attribute_key, operator, attribute_value]
+      properties:
+        id: { type: string, maxLength: 100 }
+        attribute_key: { type: string, maxLength: 128 }
+        operator:
+          type: string
+          enum: [equals, not_equals, contains, starts_with, ends_with, exists]
+        attribute_value: { type: [string, 'null'], maxLength: 500 }
+    LauncherVisibility:
+      type: object
+      additionalProperties: false
+      required: [mode, attribute_match, user_ids, group_ids, attribute_rules]
+      properties:
+        mode:
+          type: string
+          enum: [everyone, users, groups, attributes]
+        attribute_match:
+          type: string
+          enum: [all, any]
+        user_ids:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string }
+        group_ids:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string }
+        attribute_rules:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/LauncherAttributeRule'
+    ApplicationLauncherInput:
+      type: object
+      additionalProperties: false
+      required:
+        - application_type
+        - application_id
+        - name
+        - description
+        - category
+        - launch_type
+        - launch_url
+        - deep_link_url
+        - open_in_new_tab
+        - icon_type
+        - icon_value
+        - icon_color
+        - background_color
+        - grid_width
+        - sort_order
+        - enabled
+        - allow_favorite
+        - visibility
+      properties:
+        application_type:
+          type: string
+          enum: [standalone, oidc_client, saml_sp]
+        application_id:
+          type: [string, 'null']
+          maxLength: 500
+          description: >-
+            Referenced OIDC client or SAML service-provider identifier. Must be null when
+            application_type is standalone.
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 1000 }
+        category: { type: [string, 'null'], maxLength: 100 }
+        launch_type:
+          type: string
+          enum: [bookmark, saml_sp_initiated, oidc_third_party_initiated, saml_idp_initiated]
+        launch_url: { type: [string, 'null'], format: uri }
+        deep_link_url:
+          type: [string, 'null']
+          format: uri
+          description: >-
+            Optional target forwarded as target_link_uri for OIDC third-party initiated login or as
+            RelayState for SAML IdP-initiated login. For SAML SP-initiated launch, include any
+            application-specific destination in launch_url instead; this field must be null.
+        open_in_new_tab: { type: boolean }
+        icon_type:
+          type: string
+          enum: [phosphor, image]
+        icon_value: { type: string, minLength: 1, maxLength: 2048 }
+        icon_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        background_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        grid_width: { type: integer, minimum: 1, maximum: 8 }
+        sort_order: { type: integer, minimum: 0, maximum: 1000000 }
+        enabled: { type: boolean }
+        allow_favorite: { type: boolean }
+        visibility:
+          $ref: '#/components/schemas/LauncherVisibility'
+    ApplicationLauncher:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationLauncherInput'
+        - type: object
+          required: [id, created_at, updated_at]
+          properties:
+            id: { type: string }
+            created_at: { type: integer, format: int64 }
+            updated_at: { type: integer, format: int64 }
     AdminControlReleaseRolloutStatus:
       type: object
       additionalProperties: false

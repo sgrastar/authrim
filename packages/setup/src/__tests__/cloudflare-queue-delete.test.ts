@@ -8,6 +8,7 @@ vi.mock('execa', () => ({
 }));
 
 import {
+  deleteD1Database,
   deleteEnvironment,
   deleteQueue,
   deleteQueueConsumer,
@@ -156,6 +157,17 @@ describe('Cloudflare Queue deletion helpers', () => {
     );
   });
 
+  it('treats already-absent D1 and Queue resources as idempotent deletion success', async () => {
+    execaMock.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'The requested resource does not exist',
+    });
+
+    await expect(deleteD1Database('test-authrim-core-db')).resolves.toBe(true);
+    await expect(deleteQueue('test-audit-queue')).resolves.toBe(true);
+  });
+
   it('detects queue-only environments so orphan Queues can be deleted', async () => {
     mockCloudflareInventory([{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }]);
 
@@ -210,6 +222,88 @@ describe('Cloudflare Queue deletion helpers', () => {
     await expect(detectEnvironments()).resolves.toEqual([]);
   });
 
+  it('classifies a large R2 bucket as a manual action rather than a deletion error', async () => {
+    mockCloudflareInventory([], [], [{ name: 'test-diagnostic-logs' }], undefined, [], 2_000);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      errors: [],
+      manualR2: [{ bucketName: 'test-diagnostic-logs', objectCount: 2_000 }],
+    });
+  });
+
+  it('preserves the provider error when an R2 bucket deletion actually fails', async () => {
+    mockCloudflareInventory(
+      [],
+      [],
+      [{ name: 'test-diagnostic-logs' }],
+      undefined,
+      [],
+      0,
+      'permission denied by Cloudflare'
+    );
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      completion: 'failed',
+      manualR2: [],
+      errors: [expect.stringContaining('permission denied by Cloudflare')],
+    });
+  });
+
+  it('does not probe Queue consumers belonging to another environment', async () => {
+    mockCloudflareInventory(
+      [
+        { queue_name: 'test-audit-queue', queue_id: 'queue-test' },
+        { queue_name: 'prod-audit-queue', queue_id: 'queue-prod' },
+      ],
+      [{ id: 'test-ar-auth' }]
+    );
+
+    await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    const detachCalls = execaMock.mock.calls
+      .map(([, args]) => (args as string[]).join(' '))
+      .filter((args) => args.includes('queues consumer worker remove'));
+    expect(detachCalls).toEqual([
+      'wrangler queues consumer worker remove test-audit-queue test-ar-auth',
+    ]);
+  });
+
   it('deletes an R2-only environment through the API without querying a missing D1 catalog', async () => {
     mockCloudflareInventory([], [], [{ name: 'test-plugin-bundles' }]);
 
@@ -254,6 +348,66 @@ describe('Cloudflare Queue deletion helpers', () => {
       'delete',
       'test-audit-queue',
     ]);
+  });
+
+  it('completes a deletion retry when lock-recorded D1 and Queues are already absent', async () => {
+    mockCloudflareInventory([], [], [], undefined, [], 0, undefined, [
+      'test-authrim-core-db',
+      'test-audit-queue',
+    ]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: true,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownD1Names: ['test-authrim-core-db'],
+      knownQueueNames: ['test-audit-queue'],
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'complete',
+      errors: [],
+      deleted: {
+        d1: ['test-authrim-core-db'],
+        queues: ['test-audit-queue'],
+      },
+    });
+  });
+
+  it('completes a local cleanup retry when the operation lock remains after remote deletion', async () => {
+    mockCloudflareInventory([]);
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: true,
+      deleteD1: true,
+      deleteKV: true,
+      deleteQueues: true,
+      deleteR2: true,
+      deletePages: true,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'complete',
+      errors: [],
+      deleted: {
+        workers: [],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [],
+        pages: [],
+      },
+    });
   });
 
   it('deletes only exact environment-owned D1 databases discovered from remote inventory', async () => {
@@ -375,6 +529,29 @@ describe('Cloudflare Queue deletion helpers', () => {
       )
     ).toHaveLength(3);
   });
+
+  it('describes a partial resource deletion without claiming the environment was deleted', async () => {
+    mockCloudflareInventory([], [{ id: 'test-ar-auth' }]);
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: false,
+      deletePages: false,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result.success).toBe(true);
+    expect(progress).toContain(
+      "✅ Selected resources for 'test' deleted; remaining environment preserved"
+    );
+    expect(progress).not.toContain("✅ Environment 'test' deleted successfully!");
+  });
 });
 
 function mockCloudflareInventory(
@@ -382,7 +559,10 @@ function mockCloudflareInventory(
   workers: Array<{ id: string }> = [],
   r2Buckets: Array<{ name: string }> = [],
   workerDeleteFailureName?: string,
-  d1Databases: Array<{ name: string; uuid: string }> = []
+  d1Databases: Array<{ name: string; uuid: string }> = [],
+  r2ObjectCount = 0,
+  r2DeleteFailure?: string,
+  alreadyAbsentDeletes: string[] = []
 ): void {
   process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
@@ -396,8 +576,18 @@ function mockCloudflareInventory(
       } else if (url.includes('/r2/buckets?')) {
         result = { buckets: r2Buckets };
       } else if (url.includes('/r2/buckets/') && url.includes('/objects?')) {
-        result = [];
+        result = Array.from({ length: r2ObjectCount }, (_, index) => ({ key: `item-${index}` }));
       } else if (url.includes('/r2/buckets/') && init?.method === 'DELETE') {
+        if (r2DeleteFailure) {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({
+              success: false,
+              errors: [{ message: r2DeleteFailure }],
+            }),
+          };
+        }
         result = {};
       }
       return {
@@ -435,12 +625,26 @@ function mockCloudflareInventory(
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key.startsWith('d1 delete ')) {
+      if (alreadyAbsentDeletes.some((name) => key.includes(name))) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'The requested resource does not exist',
+        };
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key === 'r2 bucket list' || key === 'pages project list') {
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key.startsWith('queues delete ')) {
+      if (alreadyAbsentDeletes.some((name) => key.includes(name))) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'The requested resource does not exist',
+        };
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     throw new Error(`unexpected wrangler args: ${args.join(' ')}`);
