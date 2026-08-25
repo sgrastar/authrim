@@ -431,6 +431,8 @@ describe('deployWorker', () => {
   });
 
   it('retries transient Cloudflare 503 failures', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-25T00:00:00.000Z'));
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
     const sleep = vi.fn(async () => undefined);
