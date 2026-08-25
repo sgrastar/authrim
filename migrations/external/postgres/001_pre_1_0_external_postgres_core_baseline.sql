@@ -293,6 +293,18 @@ CREATE TABLE public.anonymous_devices (
 );
 
 --
+-- Name: application_launchers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.application_launchers (
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    id text NOT NULL,
+    config_json text NOT NULL,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
+);
+
+--
 -- Name: attribute_verifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -998,6 +1010,17 @@ CREATE TABLE public.identity_subjects (
 );
 
 --
+-- Name: launcher_favorites; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.launcher_favorites (
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    user_id text NOT NULL,
+    launcher_id text NOT NULL,
+    created_at bigint NOT NULL
+);
+
+--
 -- Name: legal_hold_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1619,6 +1642,10 @@ CREATE TABLE public.verified_attributes (
 --
 
 --
+-- Data for Name: application_launchers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+--
 -- Data for Name: attribute_verifications; Type: TABLE DATA; Schema: public; Owner: -
 --
 
@@ -1747,6 +1774,10 @@ INSERT INTO public.flows VALUES ('flow-default-login-no-consent', 'default', NUL
 
 --
 -- Data for Name: identity_subjects; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+--
+-- Data for Name: launcher_favorites; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 --
@@ -1891,6 +1922,13 @@ ALTER TABLE ONLY public.account_support_contexts
 
 ALTER TABLE ONLY public.anonymous_devices
     ADD CONSTRAINT anonymous_devices_pkey PRIMARY KEY (id);
+
+--
+-- Name: application_launchers application_launchers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.application_launchers
+    ADD CONSTRAINT application_launchers_pkey PRIMARY KEY (tenant_id, id);
 
 --
 -- Name: attribute_verifications attribute_verifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -2206,6 +2244,13 @@ ALTER TABLE ONLY public.identity_resolution_events
 
 ALTER TABLE ONLY public.identity_subjects
     ADD CONSTRAINT identity_subjects_pkey PRIMARY KEY (id);
+
+--
+-- Name: launcher_favorites launcher_favorites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.launcher_favorites
+    ADD CONSTRAINT launcher_favorites_pkey PRIMARY KEY (tenant_id, user_id, launcher_id);
 
 --
 -- Name: legal_hold_events legal_hold_events_hold_id_hold_version_key; Type: CONSTRAINT; Schema: public; Owner: -
@@ -2553,6 +2598,12 @@ CREATE INDEX idx_anonymous_devices_expiry ON public.anonymous_devices USING btre
 --
 
 CREATE INDEX idx_anonymous_devices_user ON public.anonymous_devices USING btree (tenant_id, user_id, is_active, last_used_at DESC);
+
+--
+-- Name: idx_application_launchers_updated; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_application_launchers_updated ON public.application_launchers USING btree (tenant_id, updated_at, id);
 
 --
 -- Name: idx_attribute_verifications_runtime_validity; Type: INDEX; Schema: public; Owner: -
@@ -2907,6 +2958,12 @@ CREATE INDEX idx_identity_resolution_events_subject ON public.identity_resolutio
 --
 
 CREATE INDEX idx_identity_subjects_tenant_type ON public.identity_subjects USING btree (tenant_id, subject_type, lifecycle_state);
+
+--
+-- Name: idx_launcher_favorites_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_launcher_favorites_user ON public.launcher_favorites USING btree (tenant_id, user_id, created_at, launcher_id);
 
 --
 -- Name: idx_legal_hold_events_account; Type: INDEX; Schema: public; Owner: -

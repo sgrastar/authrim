@@ -97,9 +97,10 @@ function rootProductVersion(rootDir: string): string {
   return pkg.version;
 }
 
-function assertSemanticBaselineAllowed(input: {
+export function assertSemanticBaselineAllowed(input: {
   version: string;
   manifests: Array<{ manifest: ReleaseMigrationManifest }>;
+  write: boolean;
 }): void {
   if (compareProductVersions(input.version, STABLE_RELEASE_VERSION) > 0) {
     throw new Error(
@@ -112,6 +113,14 @@ function assertSemanticBaselineAllowed(input: {
   if (stableManifest) {
     throw new Error(
       `The stable migration history is immutable after publishing ${stableManifest.manifest.productVersion}`
+    );
+  }
+  const publishedCurrentVersion = input.manifests.find(
+    ({ manifest }) => compareProductVersions(manifest.productVersion, input.version) === 0
+  );
+  if (input.write && publishedCurrentVersion) {
+    throw new Error(
+      `Product version ${input.version} is already published; bump root package.json before rewriting the semantic baseline`
     );
   }
 }
@@ -365,23 +374,40 @@ class PostgresBaselineContainer {
   }
 
   execute(database: string, sql: string): void {
-    run({
-      executable: 'docker',
-      args: [
-        'exec',
-        '--interactive',
-        this.name,
-        'psql',
-        '--no-psqlrc',
-        '--set',
-        'ON_ERROR_STOP=1',
-        '--username',
-        'postgres',
-        '--dbname',
-        database,
-      ],
-      stdin: sql,
-    });
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        run({
+          executable: 'docker',
+          args: [
+            'exec',
+            '--interactive',
+            this.name,
+            'psql',
+            '--no-psqlrc',
+            '--set',
+            'ON_ERROR_STOP=1',
+            '--username',
+            'postgres',
+            '--dbname',
+            database,
+          ],
+          stdin: sql,
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        const connectionWasNotEstablished =
+          (message.includes('connection to server on socket') &&
+            (message.includes('No such file or directory') ||
+              message.includes('Connection refused'))) ||
+          message.includes('the database system is starting up');
+        if (!connectionWasNotEstablished) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+      }
+    }
+    throw lastError;
   }
 
   dump(database: string): string {
@@ -543,6 +569,32 @@ function existingGeneratedFrom(
   );
 }
 
+export function mergeSemanticBaselineProvenance(input: {
+  baselinePath: string;
+  sourceFiles: readonly ReleaseMigrationFile[];
+  priorGeneratedFrom?: readonly ReleaseMigrationFile[];
+}): ReleaseMigrationFile[] {
+  const expanded = input.sourceFiles.flatMap((source) =>
+    source.path === input.baselinePath && input.priorGeneratedFrom?.length
+      ? input.priorGeneratedFrom
+      : [source]
+  );
+  const checksumsByPath = new Map<string, string>();
+  const merged: ReleaseMigrationFile[] = [];
+
+  for (const source of expanded) {
+    const existingChecksum = checksumsByPath.get(source.path);
+    if (existingChecksum && existingChecksum !== source.checksum) {
+      throw new Error(`Conflicting semantic baseline provenance checksum: ${source.path}`);
+    }
+    if (existingChecksum) continue;
+    checksumsByPath.set(source.path, source.checksum);
+    merged.push(source);
+  }
+
+  return merged;
+}
+
 function applySemanticRewrite(input: {
   migrationsRoot: string;
   productVersion: string;
@@ -593,10 +645,11 @@ function applySemanticRewrite(input: {
       schemaChecksum: baseline.schemaChecksum,
       seedChecksum: baseline.seedChecksum,
       objectCount: baseline.objectCount,
-      generatedFrom:
-        baseline.sourceFiles.length === 1 && baseline.sourceFiles[0]?.path === baseline.path
-          ? (priorProvenance.get(baseline.stream.id) ?? baseline.sourceFiles)
-          : baseline.sourceFiles,
+      generatedFrom: mergeSemanticBaselineProvenance({
+        baselinePath: baseline.path,
+        sourceFiles: baseline.sourceFiles,
+        priorGeneratedFrom: priorProvenance.get(baseline.stream.id),
+      }),
     })),
   };
   writeFileAtomically(
@@ -615,7 +668,11 @@ export function runSemanticBaselineMigrations(input: {
 }): void {
   const migrationsRoot = join(input.rootDir, 'migrations');
   const manifests = listReleaseMigrationManifests(migrationsRoot);
-  assertSemanticBaselineAllowed({ version: input.productVersion, manifests });
+  assertSemanticBaselineAllowed({
+    version: input.productVersion,
+    manifests,
+    write: input.write,
+  });
   const current = generateReleaseMigrationManifest({
     migrationsRoot,
     productVersion: input.productVersion,

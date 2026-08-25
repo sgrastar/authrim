@@ -3625,6 +3625,21 @@ CREATE TABLE IF NOT EXISTS "oauth_client_consents" (
   consent_version INTEGER DEFAULT 1,
   UNIQUE (tenant_id, user_id, client_id)
 );
+CREATE TABLE application_launchers (
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  id TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (tenant_id, id)
+);
+CREATE TABLE launcher_favorites (
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  user_id TEXT NOT NULL,
+  launcher_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (tenant_id, user_id, launcher_id)
+);
 CREATE TRIGGER trg_account_creation_operation_status_transition
 BEFORE UPDATE OF status ON account_creation_operations
 WHEN OLD.status <> NEW.status AND NOT (
@@ -4648,5 +4663,9 @@ CREATE INDEX idx_lookup_retention_policy_projection_outbox_runnable
 CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id);
 CREATE INDEX idx_consents_expires_at_active ON oauth_client_consents(expires_at);
 CREATE INDEX idx_consents_user ON oauth_client_consents(tenant_id, user_id);
+CREATE INDEX idx_application_launchers_updated
+  ON application_launchers (tenant_id, updated_at, id);
+CREATE INDEX idx_launcher_favorites_user
+  ON launcher_favorites (tenant_id, user_id, created_at, launcher_id);
 
 PRAGMA foreign_keys = ON;
