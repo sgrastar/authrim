@@ -160,7 +160,9 @@ describe('FAPI 2.0 profile integration', () => {
 
   it('requires a DPoP proof before consuming an FAPI authorization code', async () => {
     await setSettings({ fapi: { enabled: true, requireDpop: true } });
-    const code = generateSecureRandomString(48);
+    // Keep this fixture unambiguously in the legacy (non-sharded) format. A fully random
+    // base64url value can occasionally resemble the `<shard>_<opaque>` production format.
+    const code = `legacy-${generateSecureRandomString(48)}`;
     const codeStore = env.AUTH_CODE_STORE.get(
       env.AUTH_CODE_STORE.idFromName('tenant:default:auth-code')
     );
