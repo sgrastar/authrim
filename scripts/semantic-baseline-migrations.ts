@@ -97,9 +97,10 @@ function rootProductVersion(rootDir: string): string {
   return pkg.version;
 }
 
-function assertSemanticBaselineAllowed(input: {
+export function assertSemanticBaselineAllowed(input: {
   version: string;
   manifests: Array<{ manifest: ReleaseMigrationManifest }>;
+  write: boolean;
 }): void {
   if (compareProductVersions(input.version, STABLE_RELEASE_VERSION) > 0) {
     throw new Error(
@@ -112,6 +113,14 @@ function assertSemanticBaselineAllowed(input: {
   if (stableManifest) {
     throw new Error(
       `The stable migration history is immutable after publishing ${stableManifest.manifest.productVersion}`
+    );
+  }
+  const publishedCurrentVersion = input.manifests.find(
+    ({ manifest }) => compareProductVersions(manifest.productVersion, input.version) === 0
+  );
+  if (input.write && publishedCurrentVersion) {
+    throw new Error(
+      `Product version ${input.version} is already published; bump root package.json before rewriting the semantic baseline`
     );
   }
 }
@@ -659,7 +668,11 @@ export function runSemanticBaselineMigrations(input: {
 }): void {
   const migrationsRoot = join(input.rootDir, 'migrations');
   const manifests = listReleaseMigrationManifests(migrationsRoot);
-  assertSemanticBaselineAllowed({ version: input.productVersion, manifests });
+  assertSemanticBaselineAllowed({
+    version: input.productVersion,
+    manifests,
+    write: input.write,
+  });
   const current = generateReleaseMigrationManifest({
     migrationsRoot,
     productVersion: input.productVersion,
