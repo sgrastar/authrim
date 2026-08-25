@@ -3540,6 +3540,12 @@ CREATE TABLE logging_message_jobs (
   completed_at INTEGER,
   expires_at INTEGER
 );
+CREATE TABLE scheduled_task_leases (
+  task_id TEXT PRIMARY KEY,
+  lease_token TEXT NOT NULL,
+  lease_until INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TRIGGER trg_admin_agent_grants_require_snapshot_insert
 BEFORE INSERT ON admin_agent_grants
 FOR EACH ROW
@@ -4207,12 +4213,5 @@ CREATE UNIQUE INDEX ux_destination_profiles_active_resource_server_client
       ELSE NULL
     END
   );
-
-CREATE TABLE scheduled_task_leases (
-  task_id TEXT PRIMARY KEY,
-  lease_token TEXT NOT NULL,
-  lease_until INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
 
 PRAGMA foreign_keys = ON;

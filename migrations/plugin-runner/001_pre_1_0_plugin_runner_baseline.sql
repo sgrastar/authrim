@@ -486,6 +486,11 @@ CREATE TABLE plugin_runner_dynamic_worker_resources (
       OR (resource_kind = 'r2_bucket' AND host_binding_ref GLOB 'PRES_R2_*'))),
   CHECK (length(control_operation_id) BETWEEN 1 AND 256)
 );
+CREATE TABLE plugin_runner_r2_metric_scan_state (
+  binding TEXT PRIMARY KEY CHECK (binding = 'PLUGIN_BUNDLES'),
+  accumulator_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TRIGGER trg_plugin_runner_notification_route_entry_enabled
 BEFORE INSERT ON plugin_runner_notification_route_entries
 WHEN NOT EXISTS (
@@ -599,12 +604,6 @@ WHEN OLD.control_operation_id <> NEW.control_operation_id
 BEGIN
   SELECT RAISE(ABORT, 'plugin_dynamic_resource_operation_fenced');
 END;
-CREATE TABLE plugin_runner_r2_metric_scan_state (
-  binding TEXT PRIMARY KEY CHECK (binding = 'PLUGIN_BUNDLES'),
-  accumulator_json TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-
 CREATE INDEX idx_plugin_runner_shards_due
   ON plugin_runner_shard_cursors(next_due_at, lease_expires_at);
 CREATE UNIQUE INDEX idx_plugin_runner_one_active_sweep

@@ -7,10 +7,10 @@
       "id": "d1-core",
       "dialect": "sqlite",
       "path": "001_pre_1_0_core_baseline.sql",
-      "checksum": "915f3228767f7966012a0f5830839e85d2f1ea4538b22f62da72481938a4845a",
-      "schemaChecksum": "1ae1fa9b053178fa0dc43f7a064bccdf88545b7a1a477b7f0ddb61c848ebf812",
+      "checksum": "775e2c11e1f508595f7db02e129ea91817ac40038b04ab4ec1083e500bf5f532",
+      "schemaChecksum": "9252b3509e098cf4aed86c81942cb6dedc34e1d3759fb1c1893d275fb7374074",
       "seedChecksum": "c8fdfb75fd369aef08269d0debc6fe3e2f51a5d87ce383d46ae708f278bd8f54",
-      "objectCount": 628,
+      "objectCount": 632,
       "generatedFrom": [
         {
           "path": "001_core_foundation.sql",
@@ -211,6 +211,10 @@
         {
           "path": "052_consent_records_cross_database_client_reference.sql",
           "checksum": "be10cbdafc39c89bbadb1a22ec76ba82303075695f773ad73911f617439c7199"
+        },
+        {
+          "path": "002_application_launchers.sql",
+          "checksum": "a6b958b0929003da494c5f5b89df080ed585f447bc3ced27787e6543f716f1ed"
         }
       ]
     },
@@ -269,10 +273,10 @@
       "id": "d1-admin",
       "dialect": "sqlite",
       "path": "001_pre_1_0_admin_baseline.sql",
-      "checksum": "eed6ad45eae2f252f3bfb68796eaa6cbcb59a8092ddc75ba2dba14710b3d5176",
-      "schemaChecksum": "e052f4e50d7a6b3df84472760f95d823e0a51bdee495fc0d8b8217d8a3f84753",
+      "checksum": "825d5f507121e184da98b48a9478057d12cd639e6d80a22990db36db0a12439a",
+      "schemaChecksum": "e9bc2d006dd12c010ef3b65c2051d56d54f28b913f1fa929851fca44e9f6976b",
       "seedChecksum": "eb08176dd89bdb8305b8ae5b8b25b5e6ee147b85deae548d78a91df36a786d53",
-      "objectCount": 455,
+      "objectCount": 456,
       "generatedFrom": [
         {
           "path": "001_admin_users_rbac_security.sql",
@@ -432,10 +436,10 @@
       "id": "d1-control",
       "dialect": "sqlite",
       "path": "001_pre_1_0_control_baseline.sql",
-      "checksum": "f77b002a5dea73735372c9f7a80127e13c7ca5d9d940ae24c217fcd8a381a3db",
-      "schemaChecksum": "d07cab22a8a1a22049321ee99272ed34a0b1bceb1ed4acc3fa6cf12ec7d56d98",
+      "checksum": "3237581f71fcc99f1b3c1a327d718b190e13984ae079818410683b4c20192624",
+      "schemaChecksum": "f07e3369106ee17a75beefdcf282a5e7a6fa24850c4bf502d1b76bf1a0a34e55",
       "seedChecksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "objectCount": 206,
+      "objectCount": 208,
       "generatedFrom": [
         {
           "path": "001_control_plane.sql",
@@ -570,10 +574,10 @@
       "id": "d1-plugin-runner",
       "dialect": "sqlite",
       "path": "001_pre_1_0_plugin_runner_baseline.sql",
-      "checksum": "278dab4dd68e1b13b7d064e4e5fb7affc28c2615cccd3c1c82022c02ec7d0aa0",
-      "schemaChecksum": "10fc30c08df7cf76562e127670c8ecba0cc074e1145a50da81b0fb9cabed800a",
+      "checksum": "34ce8fa8e868f52440db6327eb3e0c09df30ff2f6d0819b20c074d927c87329a",
+      "schemaChecksum": "fdd1cd8ff36354912997aab6ba36f5275b05b29c0945a4855a3a0ad0ad673c7b",
       "seedChecksum": "044189a43eb672fa9475e5b482138b9d808b5fbb8b2b5da8369043406aa432fe",
-      "objectCount": 50,
+      "objectCount": 51,
       "generatedFrom": [
         {
           "path": "001_plugin_runner.sql",
@@ -621,10 +625,10 @@
       "id": "external-postgres-core",
       "dialect": "postgres",
       "path": "001_pre_1_0_external_postgres_core_baseline.sql",
-      "checksum": "0f973c251ffcaa548e632a107f55f5da4fdceb00c152c4738695bbaabf76218e",
-      "schemaChecksum": "ddb8e561e7d773cb1be86f20a048cd43f9e9b42e82c143d7825982d232d19d2d",
-      "seedChecksum": "23262c43e510094414a668c4404bdde0a5a4abcea554ecdc44c9cdb903060625",
-      "objectCount": 61,
+      "checksum": "759812af42a04525f5cc0e68659061009c558f132461c147533096a47bd98e1d",
+      "schemaChecksum": "183aaad2fda22c688df34af9e7db72d4cdc7a2d31e38e38192c8cb2e9a99f437",
+      "seedChecksum": "fa30e5a54481e56847d7e64aff5fae286bc7bb572f8aaccfddb19f52c3c6fe3b",
+      "objectCount": 63,
       "generatedFrom": [
         {
           "path": "001_external_durable_core.sql",
@@ -693,6 +697,10 @@
         {
           "path": "024_external_account_support_context_and_legal_holds.sql",
           "checksum": "7ed99f8aba042bbacf25a5d94243e40635ebce6109b07f507953326e7c0acb4e"
+        },
+        {
+          "path": "003_application_launchers.sql",
+          "checksum": "891a1686a8df052f7924af7527151225b0a48cf90379ec94a45475d71e684144"
         }
       ]
     },
