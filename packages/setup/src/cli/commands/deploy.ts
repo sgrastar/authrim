@@ -12,6 +12,14 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
+
+function updateOraSpinner(spinner: ReturnType<typeof ora>, message: string): void {
+  if (spinner.isSpinning === false) {
+    console.log(message);
+    return;
+  }
+  spinner.text = message;
+}
 import {
   saveLockFile,
   loadLockFileAuto,
@@ -98,7 +106,9 @@ import { ensureLoginUiClient } from '../../core/login-ui-client.js';
 import { prepareAdminUiBffDeployment } from '../../core/admin-ui-bff-deployment.js';
 import {
   configureDownstreamIntrospectionDeployment,
+  createDownstreamIntrospectionFailure,
   resolveDownstreamIntrospectionKeysDir,
+  type ConfigureDownstreamIntrospectionDeploymentResult,
 } from '../../core/downstream-introspection-deploy.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
@@ -184,6 +194,10 @@ import {
   completeTopologyUpdate,
   topologyUpdateResumeInstruction,
 } from '../../core/topology-update.js';
+import {
+  updateDeploymentProgress,
+  type DeploymentProgressSnapshot,
+} from '../../core/deployment-progress.js';
 
 // =============================================================================
 // Types
@@ -538,24 +552,35 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   console.log(chalk.bold('\n🚀 Authrim Deploy\n'));
 
   // Check prerequisites
-  const spinner = ora('Checking prerequisites...').start();
+  const spinner = ora(t('prereq.checking')).start();
+  let prerequisiteSpinnerSettled = false;
+  let auth: Awaited<ReturnType<typeof checkAuth>>;
+  try {
+    if (!(await isWranglerInstalled())) {
+      spinner.fail(t('prereq.wranglerNotInstalled'));
+      prerequisiteSpinnerSettled = true;
+      console.log(chalk.yellow('\n' + t('prereq.wranglerInstallHint')));
+      console.log('  npm install -g wrangler');
+      process.exit(1);
+    }
 
-  if (!(await isWranglerInstalled())) {
-    spinner.fail('Wrangler is not installed');
-    console.log(chalk.yellow('\nInstall wrangler:'));
-    console.log('  npm install -g wrangler');
-    process.exit(1);
+    auth = await checkAuth();
+    if (!auth.isLoggedIn) {
+      spinner.fail(t('prereq.notLoggedIn'));
+      prerequisiteSpinnerSettled = true;
+      console.log(chalk.yellow('\n' + t('prereq.loginHint')));
+      console.log('  wrangler login');
+      process.exit(1);
+    }
+
+    spinner.succeed(t('prereq.loggedInAs', { email: auth.email || '-' }));
+    prerequisiteSpinnerSettled = true;
+  } catch (error) {
+    if (!prerequisiteSpinnerSettled) {
+      spinner.fail(t('error.generic'));
+    }
+    throw error;
   }
-
-  const auth = await checkAuth();
-  if (!auth.isLoggedIn) {
-    spinner.fail('Not logged in to Cloudflare');
-    console.log(chalk.yellow('\nLogin with:'));
-    console.log('  wrangler login');
-    process.exit(1);
-  }
-
-  spinner.succeed(`Logged in as ${auth.email || 'unknown'}`);
 
   const workersSubdomain = await getWorkersSubdomain();
   await printCliCapabilitySummary({
@@ -1289,6 +1314,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     ? undefined
     : await acquireEnvironmentOperationLock(lockPath, 'deploy');
   let deploymentSecrets: Record<string, string> = {};
+  let activeDeploySpinner: ReturnType<typeof ora> | undefined;
+  const startDeploySpinner = (text: string): ReturnType<typeof ora> => {
+    const nextSpinner = ora(text).start();
+    activeDeploySpinner = nextSpinner;
+    return nextSpinner;
+  };
+  const failUnexpectedActiveSpinner = (): void => {
+    if (activeDeploySpinner?.isSpinning) {
+      activeDeploySpinner.fail(t('error.deployFailed'));
+    }
+  };
   try {
     if (operationLock) {
       const lockedEnvironment = await loadLockFileAuto(baseDir, env);
@@ -1389,7 +1425,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     }
 
     if (!options.dryRun) {
-      const resourceReconciliationSpinner = ora('Refreshing Cloudflare resource IDs...').start();
+      const resourceReconciliationSpinner = startDeploySpinner(
+        'Refreshing Cloudflare resource IDs...'
+      );
       try {
         const [databases, namespaces] = await Promise.all([listD1Databases(), listKVNamespaces()]);
         const d1Reconciliation = reconcileD1ResourcesInLock(currentLock, env, databases);
@@ -1449,7 +1487,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       });
       await saveLockFile(currentLock, lockPath);
 
-      const initialMigrationSpinner = ora('Applying initial release schema...').start();
+      const initialMigrationSpinner = startDeploySpinner('Applying initial release schema...');
       const automaticInitialTargets = initialTargets.filter((target) => target.automatic);
       const initialSchemaPlan = buildReleaseSchemaUpdatePlan({
         targetManifest: initialRelease.manifest,
@@ -1462,7 +1500,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         concurrency: 2,
         backfillLegacyChecksums: !initialRelease.draft,
         onProgress: (message) => {
-          initialMigrationSpinner.text = message;
+          updateOraSpinner(initialMigrationSpinner, message);
         },
       });
       if (!result.success) {
@@ -1522,7 +1560,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       if (!migrationReleaseBucket) {
         throw new Error('migration_release_bucket_required_for_release_publication');
       }
-      const releaseSpinner = ora('Publishing migration release artifact...').start();
+      const releaseSpinner = startDeploySpinner('Publishing migration release artifact...');
       try {
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot: migrationsRootResult.path,
@@ -1532,7 +1570,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           environmentId: env,
           actorId: 'setup:deploy',
           onProgress: (message) => {
-            releaseSpinner.text = message;
+            updateOraSpinner(releaseSpinner, message);
           },
         });
         releaseSpinner.succeed(
@@ -1549,7 +1587,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (structureType === 'new' && lock && !resumeInitialHandoff) {
       const mayMutateTenantTopology = deploymentOperationKind !== 'worker_redeploy';
       if (mayMutateTenantTopology) {
-        const controlPlaneBootstrapSpinner = ora('Checking Control Plane D1 bindings...').start();
+        const controlPlaneBootstrapSpinner = startDeploySpinner(
+          'Checking Control Plane D1 bindings...'
+        );
         if (options.dryRun) {
           // A fresh Control DB has no bootstrap tables until the schema-first deploy runs.
           // Keep dry-run mutation-free and avoid querying or creating tenant resources here.
@@ -1564,7 +1604,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             rootDir,
             release: deploymentRelease,
             onProgress: (msg) => {
-              controlPlaneBootstrapSpinner.text = msg;
+              updateOraSpinner(controlPlaneBootstrapSpinner, msg);
             },
           });
           if (controlPlaneBootstrapResult.success) {
@@ -1617,7 +1657,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         }
       }
 
-      const masterSpinner = ora('Refreshing generated wrangler configs...').start();
+      const masterSpinner = startDeploySpinner('Refreshing generated wrangler configs...');
       if (!options.dryRun && currentLock.workers?.['ar-control']) {
         try {
           const projected = await refreshLockFromControlGeneratedState({
@@ -1626,7 +1666,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           });
           currentLock = projected.lock;
           await saveLockFile(currentLock, lockPath);
-          masterSpinner.text = `Loaded Control DB bindings (+${projected.added.length} ~${projected.changed.length} -${projected.removed.length})`;
+          updateOraSpinner(
+            masterSpinner,
+            `Loaded Control DB bindings (+${projected.added.length} ~${projected.changed.length} -${projected.removed.length})`
+          );
         } catch (error) {
           masterSpinner.fail('Control DB generated-state projection failed');
           console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
@@ -1666,7 +1709,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         environmentId: env,
         components: CORE_WORKER_COMPONENTS,
         onProgress: (message) => {
-          masterSpinner.text = message;
+          updateOraSpinner(masterSpinner, message);
         },
       });
       const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
@@ -1676,7 +1719,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         capabilityManifestBaseDir: rootDir,
         placementModeByComponent,
         onProgress: (msg) => {
-          masterSpinner.text = msg;
+          updateOraSpinner(masterSpinner, msg);
         },
       });
 
@@ -1696,7 +1739,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           console.error(chalk.red('\nCONTROL_DB is required for desired Worker inventory.'));
           process.exit(1);
         }
-        const inventorySpinner = ora('Registering desired Worker inventory...').start();
+        const inventorySpinner = startDeploySpinner('Registering desired Worker inventory...');
         try {
           const inventory = await compileControlWorkerInventoryFromArtifacts({
             baseDir: rootDir,
@@ -1714,7 +1757,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             },
             registeredBy: 'setup:deploy',
             onProgress: (message) => {
-              inventorySpinner.text = message;
+              updateOraSpinner(inventorySpinner, message);
             },
           });
           if (isInitialDeployment) {
@@ -1772,7 +1815,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             bucketName: currentLock.r2?.PLUGIN_BUNDLES?.name,
             pluginRunnerDatabaseName: currentLock.d1?.PLUGIN_RUNNER_DB?.name,
             onProgress: (message) => {
-              inventorySpinner.text = message;
+              updateOraSpinner(inventorySpinner, message);
             },
           });
           await registerExternalCapabilities({
@@ -1795,7 +1838,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const packagesDir = join(rootDir, 'packages');
 
       if (existsSync(packagesDir)) {
-        const syncSpinner = ora('Checking wrangler.toml sync status...').start();
+        const syncSpinner = startDeploySpinner('Checking wrangler.toml sync status...');
 
         try {
           const { checkWranglerStatus, syncWranglerConfigs } =
@@ -1831,7 +1874,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             }
 
             if (action === 'backup' || action === 'overwrite') {
-              const resyncSpinner = ora('Syncing wrangler configs...').start();
+              const resyncSpinner = startDeploySpinner('Syncing wrangler configs...');
               const syncResult = await syncWranglerConfigs(
                 {
                   baseDir,
@@ -1840,7 +1883,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   force: true,
                   dryRun: options.dryRun,
                   onProgress: (msg) => {
-                    resyncSpinner.text = msg;
+                    updateOraSpinner(resyncSpinner, msg);
                   },
                 },
                 async () => action as SyncAction
@@ -1862,7 +1905,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             // Check if any need to be created
             const needsSync = status.filter((s) => s.masterExists && !s.deployExists);
             if (needsSync.length > 0) {
-              syncSpinner.text = 'Syncing wrangler configs to packages...';
+              updateOraSpinner(syncSpinner, 'Syncing wrangler configs to packages...');
               const syncResult = await syncWranglerConfigs(
                 {
                   baseDir,
@@ -1888,7 +1931,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     // Check if wrangler.toml files exist at all, if not generate them from lock file
     const sampleWranglerPath = join(rootDir, 'packages', 'ar-lib-core', 'wrangler.toml');
     if (!existsSync(sampleWranglerPath) && lock && !resumeInitialHandoff) {
-      const genSpinner = ora('Generating wrangler configs from lock file...').start();
+      const genSpinner = startDeploySpinner('Generating wrangler configs from lock file...');
 
       try {
         const resourceIds = await buildWorkerDeploymentResourceIds({
@@ -1897,7 +1940,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           environmentId: env,
           components: CORE_WORKER_COMPONENTS,
           onProgress: (message) => {
-            genSpinner.text = message;
+            updateOraSpinner(genSpinner, message);
           },
         });
 
@@ -2049,12 +2092,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     // Build packages first (unless skipped or dry-run)
     if (!resumeInitialHandoff && !options.skipBuild && !options.dryRun) {
-      const buildSpinner = ora('Building packages...').start();
+      const buildSpinner = startDeploySpinner('Building packages...');
 
       const buildResult = await buildApiPackages({
         rootDir,
         onProgress: (msg) => {
-          buildSpinner.text = msg;
+          updateOraSpinner(buildSpinner, msg);
         },
       });
 
@@ -2249,7 +2292,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       workersSubdomain: deploymentWorkersSubdomain,
     });
     if (!options.dryRun && !options.component && summary.failedCount === 0) {
-      const workerDeploymentSpinner = ora('Verifying Worker deployments...').start();
+      const workerDeploymentSpinner = startDeploySpinner('Verifying Worker deployments...');
       const workerDeploymentResult = await waitForWorkerDeploymentsReady({
         targets: summary.results
           .filter((result) => result.success)
@@ -2258,7 +2301,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             deployedAt: result.deployedAt,
           })),
         onProgress: (msg) => {
-          workerDeploymentSpinner.text = msg;
+          updateOraSpinner(workerDeploymentSpinner, msg);
         },
       });
       if (workerDeploymentResult.ready) {
@@ -2294,7 +2337,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         if (!accountId || !controlDatabaseName) {
           throw new Error('control_token_bootstrap_target_missing');
         }
-        const tokenSpinner = ora('Registering scoped Control Worker tokens...').start();
+        const tokenSpinner = startDeploySpinner('Registering scoped Control Worker tokens...');
         let bootstrapToken = '';
         try {
           tokenSpinner.stop();
@@ -2369,18 +2412,24 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         { workersDevEnabled: !config.urls?.api?.custom }
       );
       if (workerHttpTargets.length > 0) {
-        const workerHttpSpinner = ora('Verifying Worker HTTP health...').start();
-        const workerHttpResult = await waitForWorkerHttpReady({
-          targets: workerHttpTargets,
-          allowTenantRegistryBootstrapGap: isInitialDeployment,
-          onProgress: (msg) => {
-            workerHttpSpinner.text = msg;
-          },
-        });
+        const workerHttpSpinner = startDeploySpinner('[5/10] Verifying Worker HTTP health...');
+        let workerHttpResult: Awaited<ReturnType<typeof waitForWorkerHttpReady>>;
+        try {
+          workerHttpResult = await waitForWorkerHttpReady({
+            targets: workerHttpTargets,
+            allowTenantRegistryBootstrapGap: isInitialDeployment,
+            onProgress: (msg) => {
+              updateOraSpinner(workerHttpSpinner, `[5/10] ${msg}`);
+            },
+          });
+        } catch (error) {
+          workerHttpSpinner.fail('[5/10] Worker HTTP health checks failed unexpectedly');
+          throw error;
+        }
         if (workerHttpResult.ready) {
-          workerHttpSpinner.succeed('Worker HTTP health checks passed');
+          workerHttpSpinner.succeed('[5/10] Worker HTTP health checks passed');
         } else {
-          workerHttpSpinner.fail('Worker HTTP health checks failed');
+          workerHttpSpinner.fail('[5/10] Worker HTTP health checks failed');
           console.error(chalk.red(`  ${workerHttpResult.error || 'unknown health check error'}`));
           process.exit(1);
         }
@@ -2392,18 +2441,26 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           : `https://${env}-ar-router.workers.dev`;
       }
 
-      const readinessSpinner = ora('Waiting for API router to become reachable...').start();
-      const readinessResult = await waitForRouterWorkerReady({
-        apiBaseUrl: deploymentApiBaseUrl,
-        onProgress: (msg) => {
-          readinessSpinner.text = msg;
-        },
-      });
+      const readinessSpinner = startDeploySpinner(
+        '[5/10] Waiting for API router to become reachable...'
+      );
+      let readinessResult: Awaited<ReturnType<typeof waitForRouterWorkerReady>>;
+      try {
+        readinessResult = await waitForRouterWorkerReady({
+          apiBaseUrl: deploymentApiBaseUrl,
+          onProgress: (msg) => {
+            updateOraSpinner(readinessSpinner, `[5/10] ${msg}`);
+          },
+        });
+      } catch (error) {
+        readinessSpinner.fail('[5/10] API router readiness check failed unexpectedly');
+        throw error;
+      }
 
       if (readinessResult.ready) {
-        readinessSpinner.succeed('API router is reachable');
+        readinessSpinner.succeed('[5/10] API router is reachable');
       } else {
-        readinessSpinner.fail('API router did not become reachable');
+        readinessSpinner.fail('[5/10] API router did not become reachable');
         console.error(
           chalk.red(
             `  ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
@@ -2418,7 +2475,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         if (!controlDatabaseName || !controlDatabaseId) {
           throw new Error('control_database_required');
         }
-        const handoffSpinner = ora('Handing initial D1 topology to Control...').start();
+        const handoffSpinner = startDeploySpinner(
+          '[6/10] Handing initial D1 topology to Control...'
+        );
         try {
           const alreadyAccepted =
             resumeInitialHandoff &&
@@ -2427,14 +2486,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               controlDatabaseName,
             }));
           if (alreadyAccepted) {
-            handoffSpinner.succeed('Initial D1 topology was already accepted by Control');
+            handoffSpinner.succeed('[6/10] Initial D1 topology was already accepted by Control');
           } else {
             const deployedWorkerCount = new Set(
               summary.results
                 .filter((result) => result.success || result.trafficCommitted)
                 .map((result) => result.workerName)
             ).size;
-            handoffSpinner.text = `Waiting for Control verification of ${deployedWorkerCount} Worker(s)...`;
+            updateOraSpinner(
+              handoffSpinner,
+              `[6/10] Waiting for Control verification of ${deployedWorkerCount} Worker(s)...`
+            );
             let acceleratorFallbackReported = false;
             const smokeKeyState = currentLock.controlKeyState?.smokeRpc;
             await waitForInitialBootstrapHandoff({
@@ -2444,7 +2506,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               stallTimeoutMs: 5 * 60_000,
               pollIntervalMs: 2_000,
               onProgress: (message) => {
-                handoffSpinner.text = message;
+                updateOraSpinner(handoffSpinner, `[6/10] ${message}`);
               },
               advanceBindings:
                 config.controlPlane?.automaticProvisioning === true
@@ -2461,8 +2523,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                         } catch {
                           if (!acceleratorFallbackReported) {
                             acceleratorFallbackReported = true;
-                            handoffSpinner.text =
-                              'Control bootstrap acceleration unavailable; continuing with scheduled verification...';
+                            updateOraSpinner(
+                              handoffSpinner,
+                              '[6/10] Control bootstrap acceleration unavailable; continuing with scheduled verification...'
+                            );
                           }
                         }
                       }
@@ -2489,10 +2553,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   executeWorkerBindings: false,
                 }),
             });
-            handoffSpinner.succeed('Initial D1 topology accepted by Control');
+            handoffSpinner.succeed('[6/10] Initial D1 topology accepted by Control');
           }
         } catch (error) {
-          handoffSpinner.fail('Initial D1 topology handoff failed');
+          handoffSpinner.fail('[6/10] Initial D1 topology handoff failed');
           throw error;
         }
       }
@@ -2520,12 +2584,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         return;
       }
       setupMachineAccessCleanupDone = true;
-      const cleanupSpinner = ora('Removing setup machine access...').start();
+      const cleanupSpinner = startDeploySpinner('Removing setup machine access...');
       const cleanupResult = await cleanupSetupMachineAccessInD1(
         env,
         getResolvedKeysDir(),
         (msg) => {
-          cleanupSpinner.text = msg;
+          updateOraSpinner(cleanupSpinner, msg);
         }
       );
       if (cleanupResult.success) {
@@ -2548,7 +2612,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
       const migrationsSpinner = isInitialDeployment
         ? undefined
-        : ora('Running migrations...').start();
+        : startDeploySpinner('Running migrations...');
 
       try {
         const migrationsResult = isInitialDeployment
@@ -2557,7 +2621,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               env,
               rootDir,
               (msg) => {
-                if (migrationsSpinner) migrationsSpinner.text = msg;
+                if (migrationsSpinner) updateOraSpinner(migrationsSpinner, msg);
               },
               {
                 productVersion: targetProductVersion,
@@ -2572,9 +2636,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             );
           }
 
-          const bootstrapSpinner = ora('Ensuring initial tenant exists...').start();
+          const bootstrapSpinner = startDeploySpinner('Ensuring initial tenant exists...');
           const bootstrapResult = await ensureInitialTenantInD1(env, config, (msg) => {
-            bootstrapSpinner.text = msg;
+            updateOraSpinner(bootstrapSpinner, msg);
           });
 
           if (bootstrapResult.success) {
@@ -2588,9 +2652,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           if (isInitialDeployment && initialTenantSuccess) {
-            const notificationProviderSpinner = ora(
+            const notificationProviderSpinner = startDeploySpinner(
               'Materializing initial notification provider order...'
-            ).start();
+            );
             try {
               const notificationProviderResult =
                 await ensureInitialNotificationProviderConfiguration({
@@ -2611,9 +2675,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             }
           }
 
-          const adminRolesSpinner = ora('Ensuring initial admin roles exist...').start();
+          const adminRolesSpinner = startDeploySpinner('Ensuring initial admin roles exist...');
           const adminRolesResult = await ensureInitialAdminRolesInD1(env, config, (msg) => {
-            adminRolesSpinner.text = msg;
+            updateOraSpinner(adminRolesSpinner, msg);
           });
 
           if (adminRolesResult.success) {
@@ -2626,13 +2690,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             initialAdminRolesSuccess = false;
           }
 
-          const setupMachineSpinner = ora('Ensuring setup machine access exists...').start();
+          const setupMachineSpinner = startDeploySpinner('Ensuring setup machine access exists...');
           const setupMachineResult = await ensureSetupMachineAccessInD1(
             env,
             config,
             getResolvedKeysDir(),
             (msg) => {
-              setupMachineSpinner.text = msg;
+              updateOraSpinner(setupMachineSpinner, msg);
             }
           );
 
@@ -2647,13 +2711,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           if (config.components.adminUi ?? true) {
-            const adminUiBffSpinner = ora('Ensuring Admin UI BFF machine access exists...').start();
+            const adminUiBffSpinner = startDeploySpinner(
+              'Ensuring Admin UI BFF machine access exists...'
+            );
             const adminUiBffResult = await ensureAdminUiBffMachineAccessInD1(
               env,
               config,
               getResolvedKeysDir(),
               (msg) => {
-                adminUiBffSpinner.text = msg;
+                updateOraSpinner(adminUiBffSpinner, msg);
               }
             );
 
@@ -2668,9 +2734,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             }
           }
 
-          const catalogSeedSpinner = ora('Seeding default canonical field catalog...').start();
+          const catalogSeedSpinner = startDeploySpinner(
+            'Seeding default canonical field catalog...'
+          );
           const catalogSeedResult = await seedDefaultCanonicalCatalog(env, config, (msg) => {
-            catalogSeedSpinner.text = msg;
+            updateOraSpinner(catalogSeedSpinner, msg);
           });
 
           if (catalogSeedResult.success) {
@@ -2685,9 +2753,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             defaultCanonicalCatalogSeedSuccess = false;
           }
 
-          const profileSeedSpinner = ora('Seeding runtime profiles...').start();
+          const profileSeedSpinner = startDeploySpinner('Seeding runtime profiles...');
           const profileSeedResult = await seedRuntimeProfiles(env, config, (msg) => {
-            profileSeedSpinner.text = msg;
+            updateOraSpinner(profileSeedSpinner, msg);
           });
 
           if (profileSeedResult.success) {
@@ -2702,9 +2770,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             runtimeProfileSeedSuccess = false;
           }
 
-          const controlPlaneSnapshotSpinner = ora(
+          const controlPlaneSnapshotSpinner = startDeploySpinner(
             'Publishing initial Control Plane runtime snapshot...'
-          ).start();
+          );
           const controlPlaneSnapshotResult = await publishInitialControlPlaneRuntimeSnapshot({
             env,
             config,
@@ -2713,7 +2781,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             keysDir: getResolvedKeysDir(),
             release: deploymentRelease.manifest,
             onProgress: (msg) => {
-              controlPlaneSnapshotSpinner.text = msg;
+              updateOraSpinner(controlPlaneSnapshotSpinner, msg);
             },
           });
           if (controlPlaneSnapshotResult.success) {
@@ -2732,13 +2800,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                 { workersDevEnabled: !config.urls?.api?.custom }
               );
               if (postBootstrapTargets.length > 0) {
-                const postBootstrapHealthSpinner = ora(
+                const postBootstrapHealthSpinner = startDeploySpinner(
                   'Verifying tenant-aware Worker health after runtime snapshot...'
-                ).start();
+                );
                 const postBootstrapHealth = await waitForWorkerHttpReady({
                   targets: postBootstrapTargets,
                   onProgress: (msg) => {
-                    postBootstrapHealthSpinner.text = msg;
+                    updateOraSpinner(postBootstrapHealthSpinner, msg);
                   },
                 });
                 if (!postBootstrapHealth.ready) {
@@ -2802,18 +2870,40 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
     if (shouldConfigureDownstreamIntrospectionClient) {
       const keysDir = getResolvedKeysDir();
-      const downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
-        env,
-        rootDir,
-        keysDir,
-        apiBaseUrl: deploymentApiBaseUrl,
-        apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
-        tenantId: config.tenant?.name,
-        dryRun: options.dryRun,
-        onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
-      });
+      const downstreamSpinner = startDeploySpinner(
+        '[8/10] Checking tenant routing for optional integrations...'
+      );
+      let downstreamProgress: DeploymentProgressSnapshot | null = null;
+      let downstreamSetupResult: ConfigureDownstreamIntrospectionDeploymentResult;
+      try {
+        downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+          env,
+          rootDir,
+          keysDir,
+          apiBaseUrl: deploymentApiBaseUrl,
+          apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+            env,
+            purpose: 'tenant-scoped-admin',
+          }),
+          knownRouterReadyBaseUrls: deploymentApiBaseUrl ? [deploymentApiBaseUrl] : undefined,
+          tenantId: config.tenant?.name,
+          dryRun: options.dryRun,
+          onProgress: (msg) => {
+            downstreamProgress = updateDeploymentProgress(downstreamProgress, msg);
+            updateOraSpinner(
+              downstreamSpinner,
+              `[${downstreamProgress.step}/${downstreamProgress.totalSteps}] ${msg}`
+            );
+          },
+        });
+      } catch (error) {
+        downstreamSetupResult = createDownstreamIntrospectionFailure(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
 
       if (downstreamSetupResult.success && downstreamSetupResult.redeployResult?.deployedAt) {
+        downstreamSpinner.succeed('[9/10] Downstream grant introspection is ready');
         currentLock = updateLockWithDeployments(currentLock, [
           downstreamSetupResult.redeployResult,
         ]);
@@ -2824,14 +2914,27 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           )
         );
       } else if (!downstreamSetupResult.success) {
+        downstreamSpinner.warn('[9/10] Optional downstream grant introspection was deferred');
         console.log(
           chalk.yellow(
-            `\n⚠️  Downstream introspection client setup skipped: ${downstreamSetupResult.error}`
+            `  ${downstreamSetupResult.impact ?? 'Core login, Admin UI, and token issuance remain available.'}`
+          )
+        );
+        console.log(
+          chalk.gray(
+            `  Reason: ${downstreamSetupResult.error ?? 'Unknown optional integration error'}`
+          )
+        );
+        console.log(
+          chalk.gray(
+            `  ${downstreamSetupResult.nextAction ?? 'Rerun deploy to retry the optional integration.'}`
           )
         );
         for (const error of downstreamSetupResult.secretUploadErrors ?? []) {
           console.log(chalk.red(`  • ${error}`));
         }
+      } else {
+        downstreamSpinner.succeed('[9/10] Downstream grant introspection is ready');
       }
     }
 
@@ -2843,7 +2946,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       bootstrapSuccess &&
       (config.components.loginUi || config.components.adminUi)
     ) {
-      console.log(chalk.bold('\n📱 Deploying UI to Cloudflare Workers...\n'));
+      console.log(chalk.bold('\n📱 [10/10] Deploying UI to Cloudflare Workers...\n'));
 
       let apiBaseUrl = deploymentApiBaseUrl;
       if (!apiBaseUrl) {
@@ -3132,7 +3235,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const baseUrl = resolveIssuerUrl(config, { env });
 
       if (baseUrl) {
-        const setupSpinner = ora('Setting up initial admin...').start();
+        const setupSpinner = startDeploySpinner('Setting up initial admin...');
 
         try {
           // Use appropriate keys directory based on structure
@@ -3142,7 +3245,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             baseDir,
             legacy: structureType === 'legacy',
             onProgress: (msg) => {
-              setupSpinner.text = msg;
+              updateOraSpinner(setupSpinner, msg);
             },
           };
           // Support legacy keysDir option
@@ -3229,6 +3332,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       if (failureAction === 'throw') throw new Error('deploy_command_blocking_failure');
     }
   } finally {
+    failUnexpectedActiveSpinner();
     await operationLock?.release();
   }
 }

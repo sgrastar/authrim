@@ -381,6 +381,7 @@ describe('admin screens', () => {
       'account_consents',
       'account_custom',
       'account_devices',
+      'account_launchers',
       'account_overview',
       'account_passkeys',
       'account_profile',

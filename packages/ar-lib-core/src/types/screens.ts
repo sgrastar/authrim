@@ -24,7 +24,8 @@ export type ScreenBlockType =
   | 'account_totp_widget'
   | 'account_consent_widget'
   | 'account_activity_widget'
-  | 'account_social_account_widget';
+  | 'account_social_account_widget'
+  | 'account_launcher_widget';
 
 export type ScreenValueType = 'text' | 'boolean';
 export type ScreenCanvasLayout = 'narrow' | 'wide';
@@ -163,7 +164,7 @@ export interface AccountPagesDocument {
   pages: AccountPageRecord[];
 }
 
-export const ACCOUNT_PAGE_PRESET_VERSION = 1;
+export const ACCOUNT_PAGE_PRESET_VERSION = 2;
 
 export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
   schema_version: 'authrim.account_page.v1',
@@ -173,6 +174,13 @@ export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
     {
       id: 'overview',
       screen_key: 'account_overview',
+      width: 'full',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'launchers',
+      screen_key: 'account_launchers',
       width: 'full',
       enabled: true,
       condition: 'always',

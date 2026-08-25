@@ -2337,6 +2337,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletePermanently': 'Delete permanently',
           'web.delete.manualR2Title': 'Large R2 buckets were not deleted automatically. Empty them in Cloudflare Dashboard:',
           'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'All other selected environment resources were deleted. One or more R2 buckets are waiting for the manual actions below; this is not an API failure.',
         },
         ja: {
           'web.common.setupTool': 'セットアップツール',
@@ -2472,6 +2473,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletePermanently': '完全に削除する',
           'web.delete.manualR2Title': '大容量のR2バケットは自動削除していません。Cloudflare DashboardでEmpty Bucketを実行してください：',
           'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
+          'web.delete.manualR2Summary': '選択したその他の環境リソースは削除済みです。以下のR2バケットだけが手動作業待ちです。APIエラーではありません。',
         },
         'zh-CN': {
           'web.common.setupTool': '设置工具',
@@ -2515,6 +2517,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': '删除目标',
           'web.delete.resourcesLabel': '资源',
           'web.delete.deletePermanently': '永久删除',
+          'web.delete.manualR2Title': '大型 R2 存储桶不会自动删除。请在 Cloudflare Dashboard 中将其清空：',
+          'web.delete.manualR2Open': '打开 R2 Dashboard ↗',
+          'web.delete.manualR2Summary': '其他选中的环境资源已删除。以下 R2 存储桶正在等待手动操作；这不是 API 错误。',
         },
         'zh-TW': {
           'web.common.setupTool': '設定工具',
@@ -2558,6 +2563,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': '刪除目標',
           'web.delete.resourcesLabel': '資源',
           'web.delete.deletePermanently': '永久刪除',
+          'web.delete.manualR2Title': '大型 R2 儲存貯體不會自動刪除。請在 Cloudflare Dashboard 中將其清空：',
+          'web.delete.manualR2Open': '開啟 R2 Dashboard ↗',
+          'web.delete.manualR2Summary': '其他已選取的環境資源已刪除。以下 R2 儲存貯體正在等待手動操作；這不是 API 錯誤。',
         },
         es: {
           'web.common.setupTool': 'Herramienta de setup',
@@ -2601,6 +2609,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Objetivo',
           'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Eliminar definitivamente',
+          'web.delete.manualR2Title': 'Los buckets R2 grandes no se eliminan automáticamente. Vacíelos en Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Abrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Los demás recursos seleccionados del entorno se eliminaron. Los siguientes buckets R2 esperan una acción manual; no es un error de la API.',
         },
         pt: {
           'web.common.setupTool': 'Ferramenta de setup',
@@ -2644,6 +2655,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Alvo',
           'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Excluir permanentemente',
+          'web.delete.manualR2Title': 'Buckets R2 grandes não são excluídos automaticamente. Esvazie-os no Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Abrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Os outros recursos selecionados do ambiente foram excluídos. Os buckets R2 abaixo aguardam uma ação manual; isso não é um erro da API.',
         },
         fr: {
           'web.common.setupTool': 'Outil de setup',
@@ -2687,6 +2701,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Cible',
           'web.delete.resourcesLabel': 'ressources',
           'web.delete.deletePermanently': 'Supprimer définitivement',
+          'web.delete.manualR2Title': 'Les grands buckets R2 ne sont pas supprimés automatiquement. Videz-les dans Cloudflare Dashboard :',
+          'web.delete.manualR2Open': 'Ouvrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Les autres ressources sélectionnées ont été supprimées. Les buckets R2 ci-dessous attendent une action manuelle ; il ne s’agit pas d’une erreur API.',
         },
         de: {
           'web.common.setupTool': 'Setup-Tool',
@@ -2730,6 +2747,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Ziel',
           'web.delete.resourcesLabel': 'Ressourcen',
           'web.delete.deletePermanently': 'Endgültig löschen',
+          'web.delete.manualR2Title': 'Große R2-Buckets werden nicht automatisch gelöscht. Leeren Sie sie im Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'R2 Dashboard öffnen ↗',
+          'web.delete.manualR2Summary': 'Die übrigen ausgewählten Umgebungsressourcen wurden gelöscht. Die folgenden R2-Buckets warten auf eine manuelle Aktion; dies ist kein API-Fehler.',
         },
         ko: {
           'web.common.setupTool': '설정 도구',
@@ -2773,6 +2793,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': '삭제 대상',
           'web.delete.resourcesLabel': '리소스',
           'web.delete.deletePermanently': '영구 삭제',
+          'web.delete.manualR2Title': '대용량 R2 버킷은 자동으로 삭제되지 않습니다. Cloudflare Dashboard에서 비워 주세요:',
+          'web.delete.manualR2Open': 'R2 Dashboard 열기 ↗',
+          'web.delete.manualR2Summary': '선택한 다른 환경 리소스는 삭제되었습니다. 아래 R2 버킷은 수동 작업을 기다리고 있으며 API 오류가 아닙니다.',
         },
         ru: {
           'web.common.setupTool': 'Инструмент setup',
@@ -2816,6 +2839,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Цель удаления',
           'web.delete.resourcesLabel': 'ресурсов',
           'web.delete.deletePermanently': 'Удалить навсегда',
+          'web.delete.manualR2Title': 'Большие бакеты R2 не удаляются автоматически. Очистите их в Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Открыть R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Остальные выбранные ресурсы окружения удалены. Указанные ниже бакеты R2 ожидают ручного действия; это не ошибка API.',
         },
         id: {
           'web.common.setupTool': 'Alat setup',
@@ -2859,6 +2885,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deleteTarget': 'Target hapus',
           'web.delete.resourcesLabel': 'resource',
           'web.delete.deletePermanently': 'Hapus permanen',
+          'web.delete.manualR2Title': 'Bucket R2 berukuran besar tidak dihapus secara otomatis. Kosongkan melalui Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Buka R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Resource environment lain yang dipilih sudah dihapus. Bucket R2 berikut menunggu tindakan manual; ini bukan error API.',
         },
       };
       const envDynamicCopyByLocale = {
@@ -2871,7 +2900,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Environment Management - Delete',
           'web.env.heroDeleteTitle': 'Delete {{env}}',
-          'web.env.heroDeleteAside': '<b>This action cannot be undone.</b> Selected resources will be permanently deleted from Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Review your selection.</b> Selected resources will be deleted from Cloudflare.',
           'web.env.accountMeta': 'Account <b>{{account}}</b>',
           'web.env.modeSingle': 'Single tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -2951,7 +2980,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'モード {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '環境管理 - 削除確認',
           'web.env.heroDeleteTitle': '環境 {{env}} を削除',
-          'web.env.heroDeleteAside': '<b>この操作は取り消せません。</b>選択したリソースはCloudflareアカウントから完全に削除されます。',
+          'web.env.heroDeleteAside': '<b>選択内容を確認してください。</b>選択したリソースをCloudflareアカウントから削除します。',
           'web.env.accountMeta': 'アカウント <b>{{account}}</b>',
           'web.env.modeSingle': 'シングルテナント',
           'web.env.modeMulti': 'マルチテナント',
@@ -3031,7 +3060,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '模式 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '环境管理 - 删除确认',
           'web.env.heroDeleteTitle': '删除环境 {{env}}',
-          'web.env.heroDeleteAside': '<b>此操作无法撤销。</b>选中的资源将从 Cloudflare 中永久删除。',
+          'web.env.heroDeleteAside': '<b>请确认您的选择。</b>选中的资源将从 Cloudflare 中删除。',
           'web.env.accountMeta': '账户 <b>{{account}}</b>',
           'web.env.modeSingle': '单租户',
           'web.env.modeMulti': '多租户',
@@ -3111,7 +3140,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '模式 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '環境管理 - 刪除確認',
           'web.env.heroDeleteTitle': '刪除環境 {{env}}',
-          'web.env.heroDeleteAside': '<b>此操作無法復原。</b>選取的資源將從 Cloudflare 永久刪除。',
+          'web.env.heroDeleteAside': '<b>請確認您的選擇。</b>選取的資源將從 Cloudflare 刪除。',
           'web.env.accountMeta': '帳戶 <b>{{account}}</b>',
           'web.env.modeSingle': '單租戶',
           'web.env.modeMulti': '多租戶',
@@ -3191,7 +3220,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modo {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gestión de entornos - Eliminar',
           'web.env.heroDeleteTitle': 'Eliminar {{env}}',
-          'web.env.heroDeleteAside': '<b>Esta acción no se puede deshacer.</b> Los recursos seleccionados se eliminarán permanentemente de Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Revise su selección.</b> Los recursos seleccionados se eliminarán de Cloudflare.',
           'web.env.accountMeta': 'Cuenta <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant único',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3270,7 +3299,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modo {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gerenciamento de ambientes - Exclusão',
           'web.env.heroDeleteTitle': 'Excluir {{env}}',
-          'web.env.heroDeleteAside': '<b>Esta ação não pode ser desfeita.</b> Os recursos selecionados serão removidos permanentemente do Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Revise sua seleção.</b> Os recursos selecionados serão removidos do Cloudflare.',
           'web.env.accountMeta': 'Conta <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant único',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3349,7 +3378,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gestion des environnements - Suppression',
           'web.env.heroDeleteTitle': 'Supprimer {{env}}',
-          'web.env.heroDeleteAside': '<b>Cette action est irréversible.</b> Les ressources sélectionnées seront supprimées définitivement de Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Vérifiez votre sélection.</b> Les ressources sélectionnées seront supprimées de Cloudflare.',
           'web.env.accountMeta': 'Compte <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant unique',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3428,7 +3457,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modus {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Umgebungsverwaltung - Löschen',
           'web.env.heroDeleteTitle': '{{env}} löschen',
-          'web.env.heroDeleteAside': '<b>Diese Aktion kann nicht rückgängig gemacht werden.</b> Ausgewählte Ressourcen werden dauerhaft aus Cloudflare gelöscht.',
+          'web.env.heroDeleteAside': '<b>Prüfen Sie Ihre Auswahl.</b> Ausgewählte Ressourcen werden aus Cloudflare gelöscht.',
           'web.env.accountMeta': 'Konto <b>{{account}}</b>',
           'web.env.modeSingle': 'Single-Tenant',
           'web.env.modeMulti': 'Multi-Tenant',
@@ -3507,7 +3536,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '모드 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '환경 관리 - 삭제 확인',
           'web.env.heroDeleteTitle': '{{env}} 삭제',
-          'web.env.heroDeleteAside': '<b>이 작업은 되돌릴 수 없습니다.</b> 선택한 리소스는 Cloudflare에서 영구 삭제됩니다.',
+          'web.env.heroDeleteAside': '<b>선택 내용을 확인하세요.</b> 선택한 리소스는 Cloudflare에서 삭제됩니다.',
           'web.env.accountMeta': '계정 <b>{{account}}</b>',
           'web.env.modeSingle': '단일 테넌트',
           'web.env.modeMulti': '멀티 테넌트',
@@ -3586,7 +3615,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Режим {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Управление средами - удаление',
           'web.env.heroDeleteTitle': 'Удалить {{env}}',
-          'web.env.heroDeleteAside': '<b>Это действие нельзя отменить.</b> Выбранные ресурсы будут навсегда удалены из Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Проверьте выбранные элементы.</b> Выбранные ресурсы будут удалены из Cloudflare.',
           'web.env.accountMeta': 'Аккаунт <b>{{account}}</b>',
           'web.env.modeSingle': 'Single-tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3665,7 +3694,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Manajemen environment - Hapus',
           'web.env.heroDeleteTitle': 'Hapus {{env}}',
-          'web.env.heroDeleteAside': '<b>Tindakan ini tidak dapat dibatalkan.</b> Resource yang dipilih akan dihapus permanen dari Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Periksa pilihan Anda.</b> Resource yang dipilih akan dihapus dari Cloudflare.',
           'web.env.accountMeta': 'Akun <b>{{account}}</b>',
           'web.env.modeSingle': 'Single tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3736,6 +3765,173 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.countProjects': '{{count}} Pages',
         },
       };
+      const deployProgressCopyByLocale = {
+        en: {
+          'web.deploy.phase.preparation': 'Preparing deployment',
+          'web.deploy.phase.schema': 'Applying database schema',
+          'web.deploy.phase.configuration': 'Generating configuration',
+          'web.deploy.phase.workers': 'Deploying API Workers',
+          'web.deploy.phase.verification': 'Verifying Worker readiness',
+          'web.deploy.phase.control': 'Reconciling the Control Plane',
+          'web.deploy.phase.bootstrap': 'Bootstrapping tenant services',
+          'web.deploy.phase.routing': 'Verifying tenant routing',
+          'web.deploy.phase.integrations': 'Configuring optional integrations',
+          'web.deploy.phase.ui': 'Deploying Login and Admin UI',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Deployment phase {{current}} of {{total}}',
+          'web.deploy.phase.complete': 'Deployment complete!',
+        },
+        ja: {
+          'web.deploy.phase.preparation': 'デプロイを準備しています',
+          'web.deploy.phase.schema': 'データベーススキーマを適用しています',
+          'web.deploy.phase.configuration': '設定を生成しています',
+          'web.deploy.phase.workers': 'API Workerをデプロイしています',
+          'web.deploy.phase.verification': 'Workerの準備状態を確認しています',
+          'web.deploy.phase.control': 'コントロールプレーンを整合しています',
+          'web.deploy.phase.bootstrap': 'テナントサービスを初期化しています',
+          'web.deploy.phase.routing': 'テナントルーティングを確認しています',
+          'web.deploy.phase.integrations': '任意の連携機能を設定しています',
+          'web.deploy.phase.ui': 'Login UIとAdmin UIをデプロイしています',
+          'web.deploy.phase.progress': 'フェーズ {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'デプロイフェーズ {{current}} / {{total}}',
+          'web.deploy.phase.complete': 'デプロイが完了しました',
+        },
+        'zh-CN': {
+          'web.deploy.phase.preparation': '正在准备部署',
+          'web.deploy.phase.schema': '正在应用数据库架构',
+          'web.deploy.phase.configuration': '正在生成配置',
+          'web.deploy.phase.workers': '正在部署 API Workers',
+          'web.deploy.phase.verification': '正在验证 Worker 就绪状态',
+          'web.deploy.phase.control': '正在协调控制平面',
+          'web.deploy.phase.bootstrap': '正在初始化租户服务',
+          'web.deploy.phase.routing': '正在验证租户路由',
+          'web.deploy.phase.integrations': '正在配置可选集成',
+          'web.deploy.phase.ui': '正在部署 Login UI 和 Admin UI',
+          'web.deploy.phase.progress': '阶段 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '部署阶段 {{current}}，共 {{total}} 个阶段',
+          'web.deploy.phase.complete': '部署完成！',
+        },
+        'zh-TW': {
+          'web.deploy.phase.preparation': '正在準備部署',
+          'web.deploy.phase.schema': '正在套用資料庫結構',
+          'web.deploy.phase.configuration': '正在產生設定',
+          'web.deploy.phase.workers': '正在部署 API Workers',
+          'web.deploy.phase.verification': '正在驗證 Worker 就緒狀態',
+          'web.deploy.phase.control': '正在協調控制平面',
+          'web.deploy.phase.bootstrap': '正在初始化租戶服務',
+          'web.deploy.phase.routing': '正在驗證租戶路由',
+          'web.deploy.phase.integrations': '正在設定選用整合',
+          'web.deploy.phase.ui': '正在部署 Login UI 和 Admin UI',
+          'web.deploy.phase.progress': '階段 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '部署階段 {{current}}，共 {{total}} 個階段',
+          'web.deploy.phase.complete': '部署完成！',
+        },
+        es: {
+          'web.deploy.phase.preparation': 'Preparando el despliegue',
+          'web.deploy.phase.schema': 'Aplicando el esquema de la base de datos',
+          'web.deploy.phase.configuration': 'Generando la configuración',
+          'web.deploy.phase.workers': 'Desplegando los API Workers',
+          'web.deploy.phase.verification': 'Verificando la disponibilidad de los Workers',
+          'web.deploy.phase.control': 'Reconciliando el plano de control',
+          'web.deploy.phase.bootstrap': 'Inicializando los servicios del tenant',
+          'web.deploy.phase.routing': 'Verificando el enrutamiento del tenant',
+          'web.deploy.phase.integrations': 'Configurando integraciones opcionales',
+          'web.deploy.phase.ui': 'Desplegando Login UI y Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase de despliegue {{current}} de {{total}}',
+          'web.deploy.phase.complete': '¡Despliegue completado!',
+        },
+        pt: {
+          'web.deploy.phase.preparation': 'Preparando o deploy',
+          'web.deploy.phase.schema': 'Aplicando o schema do banco de dados',
+          'web.deploy.phase.configuration': 'Gerando a configuração',
+          'web.deploy.phase.workers': 'Fazendo deploy dos API Workers',
+          'web.deploy.phase.verification': 'Verificando a disponibilidade dos Workers',
+          'web.deploy.phase.control': 'Reconciliando o plano de controle',
+          'web.deploy.phase.bootstrap': 'Inicializando os serviços do tenant',
+          'web.deploy.phase.routing': 'Verificando o roteamento do tenant',
+          'web.deploy.phase.integrations': 'Configurando integrações opcionais',
+          'web.deploy.phase.ui': 'Fazendo deploy da Login UI e Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase de deploy {{current}} de {{total}}',
+          'web.deploy.phase.complete': 'Deploy concluído!',
+        },
+        fr: {
+          'web.deploy.phase.preparation': 'Préparation du déploiement',
+          'web.deploy.phase.schema': 'Application du schéma de base de données',
+          'web.deploy.phase.configuration': 'Génération de la configuration',
+          'web.deploy.phase.workers': 'Déploiement des API Workers',
+          'web.deploy.phase.verification': 'Vérification de la disponibilité des Workers',
+          'web.deploy.phase.control': 'Réconciliation du plan de contrôle',
+          'web.deploy.phase.bootstrap': 'Initialisation des services du tenant',
+          'web.deploy.phase.routing': 'Vérification du routage du tenant',
+          'web.deploy.phase.integrations': 'Configuration des intégrations facultatives',
+          'web.deploy.phase.ui': 'Déploiement de Login UI et Admin UI',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Phase de déploiement {{current}} sur {{total}}',
+          'web.deploy.phase.complete': 'Déploiement terminé !',
+        },
+        de: {
+          'web.deploy.phase.preparation': 'Deployment wird vorbereitet',
+          'web.deploy.phase.schema': 'Datenbankschema wird angewendet',
+          'web.deploy.phase.configuration': 'Konfiguration wird erzeugt',
+          'web.deploy.phase.workers': 'API Workers werden bereitgestellt',
+          'web.deploy.phase.verification': 'Worker-Bereitschaft wird geprüft',
+          'web.deploy.phase.control': 'Control Plane wird abgeglichen',
+          'web.deploy.phase.bootstrap': 'Tenant-Dienste werden initialisiert',
+          'web.deploy.phase.routing': 'Tenant-Routing wird geprüft',
+          'web.deploy.phase.integrations': 'Optionale Integrationen werden konfiguriert',
+          'web.deploy.phase.ui': 'Login UI und Admin UI werden bereitgestellt',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Deployment-Phase {{current}} von {{total}}',
+          'web.deploy.phase.complete': 'Deployment abgeschlossen!',
+        },
+        ko: {
+          'web.deploy.phase.preparation': '배포를 준비하는 중',
+          'web.deploy.phase.schema': '데이터베이스 스키마를 적용하는 중',
+          'web.deploy.phase.configuration': '구성을 생성하는 중',
+          'web.deploy.phase.workers': 'API Worker를 배포하는 중',
+          'web.deploy.phase.verification': 'Worker 준비 상태를 확인하는 중',
+          'web.deploy.phase.control': '컨트롤 플레인을 조정하는 중',
+          'web.deploy.phase.bootstrap': '테넌트 서비스를 초기화하는 중',
+          'web.deploy.phase.routing': '테넌트 라우팅을 확인하는 중',
+          'web.deploy.phase.integrations': '선택적 연동을 구성하는 중',
+          'web.deploy.phase.ui': 'Login UI와 Admin UI를 배포하는 중',
+          'web.deploy.phase.progress': '단계 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '배포 단계 {{current}} / {{total}}',
+          'web.deploy.phase.complete': '배포가 완료되었습니다!',
+        },
+        ru: {
+          'web.deploy.phase.preparation': 'Подготовка развертывания',
+          'web.deploy.phase.schema': 'Применение схемы базы данных',
+          'web.deploy.phase.configuration': 'Создание конфигурации',
+          'web.deploy.phase.workers': 'Развертывание API Workers',
+          'web.deploy.phase.verification': 'Проверка готовности Workers',
+          'web.deploy.phase.control': 'Согласование Control Plane',
+          'web.deploy.phase.bootstrap': 'Инициализация сервисов тенанта',
+          'web.deploy.phase.routing': 'Проверка маршрутизации тенанта',
+          'web.deploy.phase.integrations': 'Настройка дополнительных интеграций',
+          'web.deploy.phase.ui': 'Развертывание Login UI и Admin UI',
+          'web.deploy.phase.progress': 'Этап {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Этап развертывания {{current}} из {{total}}',
+          'web.deploy.phase.complete': 'Развертывание завершено!',
+        },
+        id: {
+          'web.deploy.phase.preparation': 'Menyiapkan deployment',
+          'web.deploy.phase.schema': 'Menerapkan skema database',
+          'web.deploy.phase.configuration': 'Membuat konfigurasi',
+          'web.deploy.phase.workers': 'Men-deploy API Workers',
+          'web.deploy.phase.verification': 'Memverifikasi kesiapan Workers',
+          'web.deploy.phase.control': 'Merekonsiliasi Control Plane',
+          'web.deploy.phase.bootstrap': 'Menginisialisasi layanan tenant',
+          'web.deploy.phase.routing': 'Memverifikasi routing tenant',
+          'web.deploy.phase.integrations': 'Mengonfigurasi integrasi opsional',
+          'web.deploy.phase.ui': 'Men-deploy Login UI dan Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase deployment {{current}} dari {{total}}',
+          'web.deploy.phase.complete': 'Deployment selesai!',
+        },
+      };
       const themeCopyByLocale = {
         en: {
           'web.theme.switchLight': 'Switch to light mode',
@@ -3791,6 +3987,8 @@ ${SETUP_WEB_UI_STYLE}</style>
         ...(envManagementCopyByLocale[language] || {}),
         ...envDynamicCopyByLocale.en,
         ...(envDynamicCopyByLocale[language] || {}),
+        ...deployProgressCopyByLocale.en,
+        ...(deployProgressCopyByLocale[language] || {}),
         ...(themeCopyByLocale[language] || themeCopyByLocale.en),
       };
     }
@@ -5277,8 +5475,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <div class="progress-side provision-progress-wide">
               <div id="provision-progress-ui" class="provision-progress-panel">
                 <div class="percent"><span id="provision-percent">46</span><small>%</small></div>
-                <div class="percentbar">
-                  <i id="provision-progress-bar" style="width: 46%"></i>
+                <div class="percentbar setup-progress-track" role="progressbar" aria-labelledby="provision-current-task" aria-valuemin="0" aria-valuemax="100" aria-valuenow="46">
+                  <i id="provision-progress-bar" class="setup-progress-fill" style="width: 46%"></i>
                 </div>
                 <div class="elapsed">
                   <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
@@ -5406,11 +5604,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
               <div id="deploy-progress-ui" class="deploy-progress-panel hidden">
                 <div class="percent"><span id="deploy-percent">0</span><small>%</small></div>
-                <div class="percentbar"><i id="deploy-progress-bar" style="width: 0%"></i></div>
+                <div class="percentbar setup-progress-track" aria-hidden="true"><i id="deploy-progress-bar" class="setup-progress-fill" style="width: 0%"></i></div>
+                <div id="deploy-phase-rail" class="deploy-phase-rail" role="progressbar" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1">
+                  ${Array.from({ length: 10 }, (_, index) => `<span data-deploy-phase="${index + 1}" aria-hidden="true"></span>`).join('')}
+                </div>
                 <div class="elapsed">
                   <span id="deploy-current-task" data-i18n="web.status.initializing">Initializing...</span>
                   <span id="deploy-progress-text" data-i18n="web.deploy.elapsedPending">Waiting for progress...</span>
-                  <span id="deploy-spinner" class="spinner"></span>
+                  <div id="deploy-current-message-line" class="deploy-current-message running" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="deploy-spinner" class="ora-frame" aria-hidden="true">⠋</span>
+                    <span id="deploy-current-message">Initializing...</span>
+                  </div>
                 </div>
                 <button type="button" class="log-toggle" id="deploy-log-toggle">
                   <span class="arrow">▶</span>
@@ -5422,6 +5626,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 <div class="cap">
                   <span data-i18n="web.deploy.wranglerLog">wrangler log</span>
                   <button type="button" id="deploy-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
+                </div>
+                <div id="deploy-log-ora" class="ora-log-line">
+                  <span id="deploy-log-ora-frame" class="ora-frame" aria-hidden="true">⠋</span>
+                  <span id="deploy-log-ora-text">Preparing deployment...</span>
                 </div>
                 <pre id="deploy-output"></pre>
               </div>
@@ -5528,7 +5736,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <button type="button" class="btn sm hidden" id="btn-start-database-only-update" aria-busy="false" data-i18n="web.envDetail.releaseUpdateDatabaseOnlyAction">Update databases only (advanced)</button>
           </div>
           <div id="release-update-progress" class="release-update-progress hidden">
-            <div class="release-progress-line"><span id="release-update-stage" data-i18n="web.envDetail.releaseUpdatePreparing">Preparing the update...</span><i></i></div>
+            <div class="release-progress-line">
+              <span id="release-update-stage" data-i18n="web.envDetail.releaseUpdatePreparing">Preparing the update...</span>
+              <div class="setup-progress-track release-progress-track" role="progressbar" aria-labelledby="release-update-stage">
+                <i id="release-update-progress-bar" class="setup-progress-fill indeterminate"></i>
+              </div>
+            </div>
             <details>
               <summary data-i18n="web.envDetail.releaseUpdateDetails">Show update details</summary>
               <pre id="release-update-log"></pre>
@@ -5904,7 +6117,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           <div class="alert danger-alert">
             <div class="a-head" data-i18n="web.delete.finalConfirmation">Final Confirmation</div>
-            <p id="delete-confirm-copy"><span data-i18n="web.delete.warning">This action is irreversible. All selected resources will be permanently deleted.</span></p>
+            <p id="delete-confirm-copy"><span data-i18n="web.delete.warning">The selected resources will be deleted from this environment.</span></p>
             <div class="delete-confirm-input-wrap">
               <input class="f-input sm" id="delete-confirm-input" type="text" autocomplete="off">
             </div>
@@ -5921,8 +6134,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="spinner" id="delete-spinner"></div>
           <span id="delete-current-task" data-i18n="web.provision.initializing">Initializing...</span>
         </div>
-        <div class="progress-bar-wrapper">
-          <div class="progress-bar" id="delete-progress-bar" style="width: 0%"></div>
+        <div class="progress-bar-wrapper setup-progress-track" role="progressbar" aria-labelledby="delete-current-task" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="delete-progress-bar" class="progress-bar setup-progress-fill" style="width: 0%"></div>
         </div>
         <div class="progress-text" id="delete-progress-text">0 / 0 resources</div>
 
@@ -6296,22 +6509,34 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let envCardRenderGeneration = 0;
     let migrationStatusLoadGeneration = 0;
     let migrationApplyInProgress = false;
+    let inFlightMutationRequests = 0;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
     // API helpers (with session token authentication)
     async function api(endpoint, options = {}) {
       const { headers: customHeaders, body, ...restOptions } = options;
-      const response = await fetch('/api' + endpoint, {
-        ...restOptions,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Token': SESSION_TOKEN,
-          ...(customHeaders || {}),
-        },
-        body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-      });
-      return response.json();
+      const method = String(restOptions.method || 'GET').toUpperCase();
+      const isMutation = method !== 'GET' && method !== 'HEAD';
+      if (isMutation) inFlightMutationRequests += 1;
+      try {
+        const response = await fetch('/api' + endpoint, {
+          ...restOptions,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Token': SESSION_TOKEN,
+            ...(customHeaders || {}),
+          },
+          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+        });
+        const result = await response.json();
+        if (result?.errorCode === 'setup_operation_in_progress') {
+          result.error = t('web.status.operationInProgress');
+        }
+        return result;
+      } finally {
+        if (isMutation) inFlightMutationRequests = Math.max(0, inFlightMutationRequests - 1);
+      }
     }
 
     const WILDCARD_DNS_MANUAL_COPY_DATA = ${wildcardDnsManualCopyJson};
@@ -6856,8 +7081,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return String(message || '')
         .replaceAll('✅', '✓')
         .replaceAll('❌', '✕')
-        .replaceAll('⚠️', 'Warning:')
-        .replaceAll('⚠', 'Warning:')
+        .replaceAll('⚠️', t('web.status.warning'))
+        .replaceAll('⚠', t('web.status.warning'))
         .replaceAll('📁', '')
         .replaceAll('📝', 'Log:')
         .replaceAll('☁️', '')
@@ -6941,6 +7166,151 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     setupLogCopyButton('worker-update-log-copy-btn', 'worker-update-log');
     setupLogCopyButton('ui-update-log-copy-btn', 'ui-update-log');
 
+    const WEB_ORA_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const DEPLOY_PHASE_LABEL_KEYS = {
+      preparation: 'web.deploy.phase.preparation',
+      schema: 'web.deploy.phase.schema',
+      configuration: 'web.deploy.phase.configuration',
+      workers: 'web.deploy.phase.workers',
+      verification: 'web.deploy.phase.verification',
+      control: 'web.deploy.phase.control',
+      bootstrap: 'web.deploy.phase.bootstrap',
+      routing: 'web.deploy.phase.routing',
+      integrations: 'web.deploy.phase.integrations',
+      ui: 'web.deploy.phase.ui',
+    };
+    const DEPLOY_PHASE_IDS = Object.keys(DEPLOY_PHASE_LABEL_KEYS);
+    let deployOraTimer = null;
+    let deployOraFrameIndex = 0;
+    let lastRenderedDeployStep = 1;
+
+    function stopDeployOraTimer() {
+      if (deployOraTimer) window.clearInterval(deployOraTimer);
+      deployOraTimer = null;
+    }
+
+    function paintDeployOraFrame(frame) {
+      const mainFrame = document.getElementById('deploy-spinner');
+      const logFrame = document.getElementById('deploy-log-ora-frame');
+      if (mainFrame) mainFrame.textContent = frame;
+      if (logFrame) logFrame.textContent = frame;
+    }
+
+    function startDeployOraTimer() {
+      stopDeployOraTimer();
+      deployOraFrameIndex = 0;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        paintDeployOraFrame('•');
+        return;
+      }
+      paintDeployOraFrame(WEB_ORA_FRAMES[deployOraFrameIndex]);
+      deployOraFrameIndex += 1;
+      deployOraTimer = window.setInterval(() => {
+        paintDeployOraFrame(WEB_ORA_FRAMES[deployOraFrameIndex % WEB_ORA_FRAMES.length]);
+        deployOraFrameIndex += 1;
+      }, 80);
+    }
+
+    function updateProgressBarVisual(progressBar, percent, status = 'running', indeterminate = false) {
+      if (!progressBar) return;
+      const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
+      progressBar.classList.toggle('indeterminate', indeterminate);
+      progressBar.classList.toggle('is-complete', status === 'complete');
+      progressBar.classList.toggle('is-error', status === 'error');
+      progressBar.style.width = indeterminate ? '28%' : normalizedPercent + '%';
+
+      const track = progressBar.closest('.setup-progress-track');
+      if (!track || track.getAttribute('role') !== 'progressbar') return;
+      if (indeterminate) {
+        track.removeAttribute('aria-valuenow');
+        track.setAttribute('aria-busy', 'true');
+      } else {
+        track.setAttribute('aria-valuenow', String(normalizedPercent));
+        track.removeAttribute('aria-busy');
+      }
+    }
+
+    function markProgressBarError(prefix) {
+      const progressBar = document.getElementById(prefix + '-progress-bar');
+      const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
+      updateProgressBarVisual(progressBar, currentWidth, 'error');
+    }
+
+    function renderDeploymentSnapshot(snapshot) {
+      if (!snapshot || snapshot.operation !== 'deploy') return;
+      const total = Math.max(1, Number(snapshot.totalSteps) || 10);
+      const step = Math.min(
+        total,
+        Math.max(lastRenderedDeployStep, Math.max(1, Number(snapshot.step) || 1))
+      );
+      lastRenderedDeployStep = step;
+      const terminal =
+        snapshot.status === 'complete' ||
+        snapshot.status === 'error' ||
+        snapshot.terminal === true;
+      const percent = snapshot.status === 'complete'
+        ? 100
+        : Math.min(99, Math.round(((step - 0.5) / total) * 100));
+      const progressBar = document.getElementById('deploy-progress-bar');
+      const percentEl = document.getElementById('deploy-percent');
+      const currentTask = document.getElementById('deploy-current-task');
+      const progressText = document.getElementById('deploy-progress-text');
+      const rail = document.getElementById('deploy-phase-rail');
+      const currentMessageLine = document.getElementById('deploy-current-message-line');
+      const currentMessage = document.getElementById('deploy-current-message');
+      const oraLine = document.getElementById('deploy-log-ora');
+      const oraText = document.getElementById('deploy-log-ora-text');
+
+      updateProgressBarVisual(progressBar, percent, snapshot.status);
+      if (percentEl) percentEl.textContent = String(percent);
+      const renderedPhase = DEPLOY_PHASE_IDS[step - 1] || snapshot.phase;
+      const phaseLabelKey = DEPLOY_PHASE_LABEL_KEYS[renderedPhase];
+      const phaseLabel = phaseLabelKey ? t(phaseLabelKey) : renderedPhase;
+      if (currentTask && currentTask.textContent !== phaseLabel) {
+        currentTask.textContent = phaseLabel;
+      }
+      if (progressText) {
+        progressText.textContent = t('web.deploy.phase.progress', { current: step, total });
+      }
+      if (rail) {
+        rail.setAttribute('aria-valuemax', String(total));
+        rail.setAttribute('aria-valuenow', String(step));
+        rail.setAttribute(
+          'aria-label',
+          t('web.deploy.phase.aria', { current: step, total })
+        );
+        rail.setAttribute('aria-valuetext', phaseLabel);
+        rail.querySelectorAll('[data-deploy-phase]').forEach((item) => {
+          const itemStep = Number(item.getAttribute('data-deploy-phase'));
+          item.className = itemStep < step
+            ? 'complete'
+            : itemStep === step
+              ? snapshot.status
+              : '';
+        });
+      }
+      if (oraLine) oraLine.className = 'ora-log-line ' + snapshot.status;
+      if (currentMessageLine) {
+        currentMessageLine.className = 'deploy-current-message ' + snapshot.status;
+      }
+      const oraMessage = snapshot.message || phaseLabel || '';
+      if (currentMessage && currentMessage.textContent !== oraMessage) {
+        currentMessage.textContent = oraMessage;
+      }
+      if (oraText && oraText.textContent !== oraMessage) {
+        oraText.textContent = oraMessage;
+      }
+
+      if (terminal) {
+        stopDeployOraTimer();
+        paintDeployOraFrame(
+          snapshot.status === 'complete' ? '✓' : snapshot.status === 'error' ? '✕' : '!'
+        );
+      } else if (!deployOraTimer) {
+        startDeployOraTimer();
+      }
+    }
+
     // Progress UI update helper
     function updateProgressUI(prefix, current, total, currentTask) {
       const progressBar = document.getElementById(prefix + '-progress-bar');
@@ -6951,14 +7321,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (progressBar && total > 0) {
         const isIndeterminate = prefix === 'delete' && current === 0;
-        progressBar.classList.toggle('indeterminate', isIndeterminate);
-        if (isIndeterminate) {
-          progressBar.style.width = '28%';
-        } else {
-          const percent = Math.min(Math.round((current / total) * 100), 100);
-          progressBar.style.width = percent + '%';
-          if (percentEl) percentEl.textContent = String(percent);
-        }
+        const percent = Math.min(Math.round((current / total) * 100), 100);
+        updateProgressBarVisual(
+          progressBar,
+          percent,
+          current >= total ? 'complete' : 'running',
+          isIndeterminate
+        );
+        if (!isIndeterminate && percentEl) percentEl.textContent = String(percent);
       }
       if (progressText) {
         // For deploy, show percentage; for others, show count
@@ -7036,10 +7406,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return null;
     }
 
-    function getExpectedDeployWorkerCount() {
-      return 12;
-    }
-
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
       let completed = false;
@@ -7089,132 +7455,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       return { handle, complete };
-    }
-
-    function createDeployProgressTracker() {
-      let percent = 0;
-      let currentTask = t('web.status.initializing');
-      let expectedWorkers = getExpectedDeployWorkerCount();
-      let finalUiStarted = false;
-      const workerCompleted = new Set();
-      const counters = {};
-
-      function setProgress(nextPercent, task) {
-        const normalized = Math.max(0, Math.min(Math.round(nextPercent), 99));
-        percent = Math.max(percent, normalized);
-        if (task) currentTask = task;
-        updateProgressUI('deploy', percent, 100, currentTask);
-      }
-
-      function complete(task) {
-        percent = 100;
-        currentTask = task || 'Deployment complete!';
-        updateProgressUI('deploy', 100, 100, currentTask);
-      }
-
-      function bump(key, start, end, step, task) {
-        counters[key] = (counters[key] || 0) + 1;
-        setProgress(Math.min(start + counters[key] * step, end), task);
-      }
-
-      function trackWorkerSuccess(message) {
-        const match = message.match(/^\\s*✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+deployed successfully/i);
-        if (!match) return false;
-
-        workerCompleted.add(match[1]);
-        const completed = workerCompleted.size;
-        const workerPercent = 45 + (Math.min(completed, expectedWorkers) / expectedWorkers) * 21;
-        setProgress(workerPercent, 'Deploying API Workers (' + completed + '/' + expectedWorkers + ')');
-        return true;
-      }
-
-      return {
-        handle(message) {
-          const taskInfo = parseProgressMessage(message);
-          const totalMatch = message.match(/^Total:\\s+(\\d+)\\s*$/);
-          if (totalMatch) {
-            expectedWorkers = Math.max(parseInt(totalMatch[1], 10), 1);
-            setProgress(66, 'API Workers deployed (' + workerCompleted.size + '/' + expectedWorkers + ')');
-            return;
-          }
-
-          if (message.includes('Clearing build cache')) {
-            setProgress(2, 'Preparing build...');
-          } else if (message.includes('Building packages')) {
-            setProgress(6, 'Building packages...');
-          } else if (message.includes('Packages built successfully')) {
-            setProgress(12, 'Packages built successfully');
-          } else if (message.includes('Uploading secrets from')) {
-            setProgress(14, 'Uploading secrets...');
-          } else if (message.includes('uploaded')) {
-            bump('secrets', 14, 29, 1, 'Uploading secrets...');
-          } else if (message.includes('Refreshing wrangler.toml')) {
-            setProgress(31, 'Refreshing Worker configuration...');
-          } else if (message.includes('wrangler.toml files refreshed')) {
-            setProgress(34, 'Worker configuration refreshed');
-          } else if (message.includes('Ensuring wildcard DNS')) {
-            setProgress(36, 'Checking wildcard DNS...');
-          } else if (message.includes('Wildcard DNS resolves')) {
-            setProgress(38, 'Wildcard DNS ready');
-          } else if (message.includes('Preparing UI Worker binding targets')) {
-            setProgress(39, 'Preparing UI Worker bindings...');
-          } else if (
-            !finalUiStarted &&
-            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
-          ) {
-            bump('uiBindingBuild', 39, 42, 1.5, taskInfo || 'Preparing UI Worker bindings...');
-          } else if (!finalUiStarted && message.includes('deployed as UI Worker')) {
-            bump('uiBindingDeploy', 42, 44, 1, 'UI Worker bindings ready');
-          } else if (message.includes('Starting Authrim deployment')) {
-            setProgress(45, 'Deploying API Workers (0/' + expectedWorkers + ')');
-          } else if (trackWorkerSuccess(message)) {
-            return;
-          } else if (message.includes('Deployment Summary')) {
-            setProgress(66, 'API Worker deployment summary');
-          } else if (message.includes('Verifying Worker deployments')) {
-            setProgress(68, 'Verifying Worker deployments...');
-          } else if (message.includes('Worker deployments are visible')) {
-            setProgress(71, 'Worker deployments are visible');
-          } else if (message.includes('Verifying Worker HTTP health')) {
-            setProgress(73, 'Checking Worker health...');
-          } else if (message.includes('Worker HTTP health checks passed')) {
-            setProgress(76, 'Worker health checks passed');
-          } else if (message.includes('Waiting for API router')) {
-            setProgress(78, 'Waiting for API router...');
-          } else if (message.includes('API router is reachable')) {
-            setProgress(80, 'API router is reachable');
-          } else if (message.includes('Running D1 database migrations')) {
-            setProgress(82, 'Running database migrations...');
-          } else if (message.includes('Database migrations completed successfully')) {
-            setProgress(87, 'Database migrations complete');
-          } else if (
-            message.includes('Ensuring initial tenant') ||
-            message.includes('Ensuring initial admin roles') ||
-            message.includes('Ensuring setup machine access') ||
-            message.includes('Seeding runtime profiles') ||
-            message.includes('runtime snapshot')
-          ) {
-            bump('bootstrap', 87, 91, 1, taskInfo || 'Finalizing runtime bootstrap...');
-          } else if (message.includes('Deploying Login/Admin UI')) {
-            finalUiStarted = true;
-            setProgress(92, 'Deploying Login/Admin UI...');
-          } else if (
-            finalUiStarted &&
-            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
-          ) {
-            bump('finalUiBuild', 92, 95, 1.5, taskInfo || 'Building UI Workers...');
-          } else if (finalUiStarted && message.includes('deployed as UI Worker')) {
-            bump('finalUiDeploy', 95, 98, 1.5, 'Deploying UI Workers...');
-          } else if (message.includes('All UI packages deployed to Workers')) {
-            setProgress(98, 'UI Workers deployed');
-          } else if (message.includes('Deployment complete')) {
-            complete('✓ Deployment complete!');
-          } else if (taskInfo) {
-            setProgress(percent, taskInfo);
-          }
-        },
-        complete,
-      };
     }
 
     // Safe DOM element creation helpers
@@ -7321,8 +7561,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const progressDiv = document.getElementById(prefix + '-progress-ui');
       const percentEl = document.getElementById(prefix + '-percent');
 
-      if (progressBar) progressBar.style.width = '0%';
-      if (progressBar) progressBar.classList.remove('indeterminate');
+      updateProgressBarVisual(progressBar, 0);
       if (percentEl) percentEl.textContent = '0';
       if (spinner) spinner.style.display = 'block';
       if (progressDiv) progressDiv.classList.add('hidden');
@@ -9960,6 +10199,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
         output.textContent += '\\nError: ' + error.message + '\\n';
+        markProgressBarError('provision');
         scrollToBottom(log);
         status.textContent = t('web.status.error');
         status.className = '';
@@ -10165,8 +10405,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btn.disabled = true;
       btn.classList.add('hidden');
       btnBack.classList.add('hidden');
-      btnCancel.classList.remove('hidden');
-      btnGotoComplete.classList.remove('hidden');
       btnGotoComplete.disabled = true;
       status.innerHTML = escapeHtml(t('web.envDetail.workers')) + ' <b>0</b> / 14';
       status.className = '';
@@ -10176,12 +10414,21 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         'control-token-bootstrap-row',
         'deploy-manual-wildcard-warning',
       ]);
-      setLogVisibility('deploy-log-toggle', 'deploy-log', true);
+      setLogVisibility('deploy-log-toggle', 'deploy-log', false);
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
-      const deployProgress = createDeployProgressTracker();
       let pollInterval = null;
+      let lastProgressLength = 0;
+      lastRenderedDeployStep = 1;
       updateProgressUI('deploy', 0, 100, t('web.status.initializing'));
+      renderDeploymentSnapshot({
+        operation: 'deploy',
+        phase: 'preparation',
+        step: 1,
+        totalSteps: 10,
+        status: 'running',
+        message: t('web.status.startingDeploy'),
+      });
 
       try {
         // Generate wrangler configs first
@@ -10199,7 +10446,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         scrollToBottom(log);
 
         // Poll for status updates
-        let lastProgressLength = 0;
         pollInterval = setInterval(async () => {
           try {
             const statusResult = await api('/deploy/status');
@@ -10211,10 +10457,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               const newMessages = progress.slice(lastProgressLength);
               newMessages.forEach(msg => {
                 output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
-                deployProgress.handle(msg);
               });
               lastProgressLength = progress.length;
               scrollToBottom(log);
+            }
+            if (statusResult.deploymentProgress) {
+              renderDeploymentSnapshot(statusResult.deploymentProgress);
             }
           } catch (e) {
             // Ignore transient polling errors while deployment is running.
@@ -10243,7 +10491,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         if (result.success) {
           // Final progress update
-          deployProgress.complete('✓ Deployment complete!');
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'ui',
+            step: 10,
+            totalSteps: 10,
+            status: 'complete',
+            message: t('web.deploy.phase.complete'),
+          });
           output.textContent += '\\n✓ Deployment complete!\\n';
           if (result.logPath) {
             output.textContent += 'Log: ' + result.logPath + '\\n';
@@ -10340,6 +10595,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           btnBack.classList.remove('hidden');
           btnCancel.classList.add('hidden');
           btnGotoComplete.classList.add('hidden');
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'routing',
+            step: 8,
+            totalSteps: 10,
+            status: 'warning',
+            message: t('web.deploy.manualWildcardTitle'),
+            terminal: true,
+          });
           return;
         } else {
           if (result.logPath) {
@@ -10356,6 +10620,34 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
         status.textContent = t('web.status.error');
         status.className = '';
+        let renderedServerSnapshot = false;
+        try {
+          const finalStatus = await api('/deploy/status');
+          const finalProgress = finalStatus.progress || [];
+          if (finalProgress.length < lastProgressLength) lastProgressLength = 0;
+          if (finalProgress.length > lastProgressLength) {
+            finalProgress.slice(lastProgressLength).forEach((message) => {
+              output.textContent += formatProgressMessageForDisplay(message) + '\\n';
+            });
+            lastProgressLength = finalProgress.length;
+          }
+          if (finalStatus.deploymentProgress) {
+            renderDeploymentSnapshot(finalStatus.deploymentProgress);
+            renderedServerSnapshot = true;
+          }
+        } catch {
+          // Fall back to a preparation-phase error when final server state is unavailable.
+        }
+        if (!renderedServerSnapshot) {
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'preparation',
+            step: 1,
+            totalSteps: 10,
+            status: 'error',
+            message: error.message,
+          });
+        }
         btn.disabled = false;
         let recoveryStatus = null;
         try {
@@ -11323,6 +11615,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
       const spinner = button?.querySelector('.inline-action-spinner');
       const progressPanel = document.getElementById('release-update-progress');
+      const progressBar = document.getElementById('release-update-progress-bar');
       const stage = document.getElementById('release-update-stage');
       const log = document.getElementById('release-update-log');
       button.disabled = true;
@@ -11330,6 +11623,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       button.setAttribute('aria-busy', 'true');
       spinner?.classList.remove('hidden');
       progressPanel?.classList.remove('hidden');
+      updateProgressBarVisual(progressBar, 28, 'running', true);
       card.dataset.state = 'updating';
       if (stage) stage.textContent = t('web.envDetail.releaseUpdatePreparing');
       if (log) log.textContent = '';
@@ -11382,6 +11676,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           return;
         }
         card.dataset.state = 'complete';
+        updateProgressBarVisual(progressBar, 100, 'complete');
         document.getElementById('release-update-title').textContent =
           t('web.envDetail.releaseUpdateComplete');
         document.getElementById('release-update-message').textContent =
@@ -11396,6 +11691,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         await loadWorkerVersionComparison(envName);
       } catch (error) {
         card.dataset.state = 'blocked';
+        updateProgressBarVisual(progressBar, 28, 'error');
         document.getElementById('release-update-title').textContent =
           t('web.envDetail.releaseUpdateFailed');
         document.getElementById('release-update-message').textContent =
@@ -13520,7 +13816,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     window.addEventListener('beforeunload', (event) => {
-      if (!migrationApplyInProgress) return;
+      if (!migrationApplyInProgress && inFlightMutationRequests === 0) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -13990,7 +14286,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         result.classList.remove('hidden');
 
-        if (deleteResult.success) {
+        if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
+          updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          result.textContent = '';
+          result.appendChild(createAlert('warning', t('web.delete.manualR2Summary')));
+          appendManualR2CleanupNotice(result, deleteResult.manualR2);
+        } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
@@ -14006,6 +14307,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             showSection('envList');
           }, 2000);
         } else {
+          markProgressBarError('delete');
           result.textContent = '';
           result.appendChild(createAlert('error', t('web.delete.errorList', { errors: (deleteResult.errors || []).join(', ') })));
           appendManualR2CleanupNotice(result, deleteResult.manualR2);
@@ -14014,6 +14316,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         clearInterval(pollInterval);
+        markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
         result.appendChild(createAlert('error', t('web.status.errorWithMessage', { error: error.message })));

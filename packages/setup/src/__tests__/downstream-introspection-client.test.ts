@@ -46,6 +46,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
 
   it('retries when the router is not yet reachable on workers.dev', async () => {
     const progress: string[] = [];
+    const details: string[] = [];
 
     fetchMock
       .mockResolvedValueOnce(
@@ -78,12 +79,15 @@ describe('ensureDownstreamIntrospectionClient', () => {
       keysDir: tempDir,
       tenantId: 'default',
       onProgress: (message) => progress.push(message),
+      onDetail: (message) => details.push(message),
       retryDelayMs: 1,
       maxRetries: 2,
     });
 
     expect(result.success).toBe(true);
     expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
+    expect(progress.join('\n')).not.toContain('workers_dev_script_not_found');
+    expect(details.join('\n')).toContain('workers_dev_script_not_found');
     expect(fetchMock).toHaveBeenCalledTimes(3);
     await expect(
       readFile(join(tempDir, 'downstream_grant_introspection_client_id.txt'), 'utf-8')
@@ -91,6 +95,44 @@ describe('ensureDownstreamIntrospectionClient', () => {
     await expect(
       readFile(join(tempDir, 'downstream_grant_introspection_client_secret.txt'), 'utf-8')
     ).resolves.toContain('downstream-secret-1');
+  });
+
+  it('retries while the runtime lookup registry snapshot is propagating', async () => {
+    const progress: string[] = [];
+    const details: string[] = [];
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'lookup_registry_snapshot_unavailable' }), 500)
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            client: {
+              client_id: 'downstream-client-snapshot',
+              client_name: 'Downstream Grant Introspection',
+              client_secret: 'downstream-secret-snapshot',
+            },
+          },
+          201
+        )
+      );
+
+    const result = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://first.example.com',
+      adminBearerToken,
+      keysDir: tempDir,
+      tenantId: 'first',
+      onProgress: (message) => progress.push(message),
+      onDetail: (message) => details.push(message),
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result.success).toBe(true);
+    expect(progress.join('\n')).toContain('Waiting for the runtime directory snapshot');
+    expect(progress.join('\n')).not.toContain('lookup_registry_snapshot_unavailable');
+    expect(details.join('\n')).toContain('lookup_registry_snapshot_unavailable');
   });
 
   it('sends X-Tenant-Id for tenant-scoped admin APIs', async () => {
@@ -356,6 +398,23 @@ describe('ensureDownstreamIntrospectionClient', () => {
       success: false,
       error: expect.stringContaining('Failed to check downstream introspection client (403)'),
     });
+  });
+
+  it('does not start Admin API work after the shared optional-integration deadline', async () => {
+    await expect(
+      ensureDownstreamIntrospectionClient({
+        apiBaseUrl: 'https://issuer.test',
+        adminBearerToken,
+        keysDir: tempDir,
+        maxRetries: 24,
+        deadlineAt: Date.now() - 1,
+        allowPublicDnsFallback: true,
+      })
+    ).resolves.toEqual({
+      success: false,
+      error: 'optional_integration_deadline_exceeded',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('loads deployable secrets only when both files contain values', async () => {

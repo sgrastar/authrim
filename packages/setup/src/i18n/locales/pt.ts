@@ -623,7 +623,6 @@ const pt: Translations = {
   'delete.confirm': 'Tem certeza de que deseja excluir "{{env}}"?',
   'delete.confirmPermanent':
     '⚠️ Isso excluirá permanentemente todos os recursos de "{{env}}". Continuar?',
-  'delete.confirmWarning': 'Esta ação não pode ser desfeita!',
   'delete.deleting': 'Excluindo {{resource}}...',
   'delete.deleted': '{{resource}} excluído',
   'delete.error': 'Falha ao excluir {{resource}}',
@@ -635,6 +634,9 @@ const pt: Translations = {
   'delete.kvNamespaces': 'Namespaces KV',
   'delete.queues': 'Filas',
   'delete.r2Buckets': 'Buckets R2',
+  'delete.pages': 'Projetos do Pages',
+  'delete.partialSuccess':
+    'Os recursos selecionados foram excluídos e o restante do estado do ambiente foi preservado',
 
   // Info command
   'info.title': 'Informações do Ambiente',
@@ -919,8 +921,7 @@ const pt: Translations = {
   'web.env.openSetup': 'Abrir Configuração',
   'web.env.copyUrl': 'Copiar',
   'web.env.deleteTitle': 'Excluir Ambiente',
-  'web.env.deleteWarning':
-    'Esta ação não pode ser desfeita. Os seguintes recursos serão excluídos permanentemente:',
+  'web.env.deleteWarning': 'Os seguintes recursos selecionados serão excluídos:',
   'web.env.confirmDelete': 'Excluir Selecionados',
   'web.env.cancel': 'Cancelar',
 
@@ -1233,8 +1234,7 @@ const pt: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Excluir Ambiente',
-  'web.delete.warning':
-    'Esta ação é irreversível. Todos os recursos selecionados serão excluídos permanentemente.',
+  'web.delete.warning': 'Os recursos selecionados serão excluídos deste ambiente.',
   'web.delete.environment': 'Ambiente:',
   'web.delete.selectResources': 'Selecione recursos para excluir:',
   'web.delete.workers': 'Workers',
@@ -1280,6 +1280,9 @@ const pt: Translations = {
   'web.status.adminNotConfigured': 'Admin Não Configurado',
   'web.status.initializing': 'Inicializando...',
   'web.status.found': '{{count}} encontrado(s)',
+  'web.status.operationInProgress':
+    'Outra operação de configuração já está em andamento. Aguarde a conclusão e tente novamente.',
+  'web.status.warning': 'Aviso:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Re-provisionar (Excluir e Criar)',

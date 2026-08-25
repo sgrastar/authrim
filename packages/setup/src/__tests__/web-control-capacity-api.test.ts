@@ -149,7 +149,7 @@ describe('setup Web Control capacity API', () => {
     expect(capacity.preview).not.toHaveBeenCalled();
   });
 
-  it('serializes concurrent capacity requests before creating ephemeral machine access', async () => {
+  it('rejects a concurrent capacity request before creating duplicate machine access', async () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
     const body = {
@@ -168,14 +168,18 @@ describe('setup Web Control capacity API', () => {
     const first = app.request('http://localhost/control/capacity/preview', request(token, body));
     await vi.waitFor(() => expect(capacity.preview).toHaveBeenCalledTimes(1));
     const second = app.request('http://localhost/control/capacity/preview', request(token, body));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const secondResponse = await second;
     expect(capacity.preview).toHaveBeenCalledTimes(1);
     expect(machineAccess.run).toHaveBeenCalledTimes(1);
+    expect(secondResponse.status).toBe(409);
+    await expect(secondResponse.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'setup_operation_in_progress',
+    });
 
     releaseFirst(preview);
     await expect(first).resolves.toMatchObject({ status: 200 });
-    await expect(second).resolves.toMatchObject({ status: 200 });
-    expect(capacity.preview).toHaveBeenCalledTimes(2);
-    expect(machineAccess.run).toHaveBeenCalledTimes(2);
+    expect(capacity.preview).toHaveBeenCalledTimes(1);
+    expect(machineAccess.run).toHaveBeenCalledTimes(1);
   });
 });

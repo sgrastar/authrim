@@ -501,6 +501,54 @@ type RootTranslation = {
 	 */
 	account_operationSessionRevoked: string
 	/**
+	 * M​y​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	account_launcherTitle: string
+	/**
+	 * S​e​a​r​c​h​ ​a​n​d​ ​o​p​e​n​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​.
+	 */
+	account_launcherDescription: string
+	/**
+	 * A​p​p​l​i​c​a​t​i​o​n​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.
+	 */
+	account_launcherLoadFailed: string
+	/**
+	 * N​o​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	account_launcherEmpty: string
+	/**
+	 * S​e​a​r​c​h​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	account_launcherSearch: string
+	/**
+	 * A​l​l​ ​c​a​t​e​g​o​r​i​e​s
+	 */
+	account_launcherAllCategories: string
+	/**
+	 * F​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavorites: string
+	/**
+	 * N​o​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​m​a​t​c​h​ ​t​h​e​s​e​ ​f​i​l​t​e​r​s​.
+	 */
+	account_launcherNoMatches: string
+	/**
+	 * A​d​d​ ​t​o​ ​f​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavoriteAdd: string
+	/**
+	 * R​e​m​o​v​e​ ​f​r​o​m​ ​f​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavoriteRemove: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​u​p​d​a​t​e​ ​t​h​e​ ​f​a​v​o​r​i​t​e​ ​s​t​a​t​u​s​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_launcherFavoriteUpdateFailed: string
+	/**
+	 * L​e​g​a​c​y​ ​m​o​d​e
+	 */
+	account_launcherLegacy: string
+	/**
 	 * G​r​a​n​t​e​d​ ​p​e​r​m​i​s​s​i​o​n​s
 	 */
 	account_consentTitle: string
@@ -1938,6 +1986,54 @@ export type TranslationFunctions = {
 	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString
+	/**
+	 * My applications
+	 */
+	account_launcherTitle: () => LocalizedString
+	/**
+	 * Search and open the applications available to you.
+	 */
+	account_launcherDescription: () => LocalizedString
+	/**
+	 * Applications could not be loaded.
+	 */
+	account_launcherLoadFailed: () => LocalizedString
+	/**
+	 * No applications are available.
+	 */
+	account_launcherEmpty: () => LocalizedString
+	/**
+	 * Search applications
+	 */
+	account_launcherSearch: () => LocalizedString
+	/**
+	 * All categories
+	 */
+	account_launcherAllCategories: () => LocalizedString
+	/**
+	 * Favorites
+	 */
+	account_launcherFavorites: () => LocalizedString
+	/**
+	 * No applications match these filters.
+	 */
+	account_launcherNoMatches: () => LocalizedString
+	/**
+	 * Add to favorites
+	 */
+	account_launcherFavoriteAdd: () => LocalizedString
+	/**
+	 * Remove from favorites
+	 */
+	account_launcherFavoriteRemove: () => LocalizedString
+	/**
+	 * Could not update the favorite status. Please try again.
+	 */
+	account_launcherFavoriteUpdateFailed: () => LocalizedString
+	/**
+	 * Legacy mode
+	 */
+	account_launcherLegacy: () => LocalizedString
 	/**
 	 * Granted permissions
 	 */

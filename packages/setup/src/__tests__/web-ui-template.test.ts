@@ -128,6 +128,20 @@ describe('getHtmlTemplate', () => {
     }
   });
 
+  it('localizes setup-operation conflicts from their stable API error code', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("result?.errorCode === 'setup_operation_in_progress'");
+    expect(html).toContain("result.error = t('web.status.operationInProgress')");
+    expect(html).toContain(".replaceAll('⚠️', t('web.status.warning'))");
+  });
+
   it('shows one description and one example for each user ID format', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -233,10 +247,50 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('data-i18n="web.delete.resourcesLabel">resources</span>');
     expect(html).not.toContain('web.delete.resourcesIrreversible');
     expect(html).not.toContain('リソース - 戻すことはできません');
+    expect(html).not.toContain('This action is irreversible');
+    expect(html).not.toMatch(/cannot be undone|取り消せません|irreversible/iu);
+    expect(en['web.delete.warning']).not.toMatch(/irreversible|cannot be undone/iu);
+    expect(ja['web.delete.warning']).not.toMatch(/取り消せません|元に戻せません/iu);
     expect(html).toContain("statusResult.operationProgress?.operation === 'delete'");
-    expect(html).toContain("progressBar.classList.toggle('indeterminate', isIndeterminate)");
-    expect(SETUP_WEB_UI_STYLE).toContain('.progress-bar.indeterminate');
+    expect(html).toContain("progressBar.classList.toggle('indeterminate', indeterminate)");
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.indeterminate');
     expect(SETUP_WEB_UI_STYLE).toContain('@keyframes delete-progress-indeterminate');
+  });
+
+  it('uses the shared solid progress treatment in light and dark themes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const progressBarId of [
+      'provision-progress-bar',
+      'deploy-progress-bar',
+      'delete-progress-bar',
+      'release-update-progress-bar',
+    ]) {
+      expect(html).toMatch(
+        new RegExp(`id="${progressBarId}"[^>]*class="[^"]*setup-progress-fill`, 'u')
+      );
+    }
+    expect(html.match(/class="[^"]*setup-progress-track[^"]*"/gu)).toHaveLength(4);
+    expect(html).toContain('function updateProgressBarVisual(');
+    expect(html).toContain("progressBar.classList.toggle('is-complete', status === 'complete')");
+    expect(html).toContain("progressBar.classList.toggle('is-error', status === 'error')");
+    expect(html).toContain("markProgressBarError('provision')");
+    expect(html).toContain("markProgressBarError('delete')");
+
+    expect(SETUP_WEB_UI_STYLE).toContain('--progress-fill: #9a7b36;');
+    expect(SETUP_WEB_UI_STYLE).toContain('--progress-fill: #c9a86a;');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill::after');
+    expect(SETUP_WEB_UI_STYLE).toContain('background: var(--progress-head);');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.is-complete');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.is-error');
+    expect(SETUP_WEB_UI_STYLE).toContain('@media (prefers-reduced-motion: reduce) {');
+    expect(SETUP_WEB_UI_STYLE).not.toContain('repeating-linear-gradient');
   });
 
   it('offers in-place initial deployment recovery after a failed deploy request', () => {
@@ -649,9 +703,29 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('id="deploy-progress-ui" class="deploy-progress-panel hidden"');
     expect(html).toContain('class="logbox hidden" id="deploy-log"');
     expect(html).toContain('<span id="deploy-percent">0</span>');
+    expect(html).toContain('id="deploy-phase-rail"');
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-valuenow="1"');
+    expect(html.match(/data-deploy-phase="\d+"/gu)).toHaveLength(10);
+    expect(html).toContain('id="deploy-log-ora"');
+    expect(html).toContain("const WEB_ORA_FRAMES = ['⠋', '⠙'");
+    expect(html).toContain("setLogVisibility('deploy-log-toggle', 'deploy-log', false)");
+    expect(html).toContain('statusResult.deploymentProgress');
+    expect(html).toContain('id="deploy-current-message-line"');
+    expect(html).toContain('id="deploy-current-message"');
+    expect(html).toContain('currentMessage.textContent = oraMessage');
+    expect(html).toContain('oraText.textContent = oraMessage');
+    expect(html).toContain("const finalStatus = await api('/deploy/status')");
+    expect(html).toContain('renderDeploymentSnapshot(finalStatus.deploymentProgress)');
+    expect(html).toContain('if (!renderedServerSnapshot)');
+    expect(html).not.toContain("btnCancel.classList.remove('hidden')");
+    expect(html).not.toContain("btnGotoComplete.classList.remove('hidden')");
     expect(html).not.toContain('prod-ar-userinfo uploading...');
     expect(html).not.toContain('bindings: D1(3) KV(9) DO(12)');
     expect(SETUP_WEB_UI_STYLE).toContain('.deploy-ready-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.ora-log-line');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-current-message');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail');
   });
 
   it('dismisses setup guidance when provisioning or deployment starts', () => {
@@ -738,11 +812,41 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain('function createDeployProgressTracker()');
-    expect(html).toContain("setProgress(68, 'Verifying Worker deployments...')");
-    expect(html).toContain("Deploying API Workers (' + completed + '/' + expectedWorkers + ')");
+    expect(html).toContain('function renderDeploymentSnapshot(snapshot)');
+    expect(html).toContain('Math.max(lastRenderedDeployStep');
+    expect(html).toContain("snapshot.status === 'error' ||");
+    expect(html).toContain('snapshot.terminal === true');
+    expect(html).toContain("rail.setAttribute('aria-valuenow', String(step))");
+    expect(html).toContain("rail.setAttribute('aria-valuetext', phaseLabel)");
+    expect(html).toContain('oraText.textContent !== oraMessage');
+    expect(html).toContain('const renderedPhase = DEPLOY_PHASE_IDS[step - 1] || snapshot.phase');
+    expect(html).toContain("t('web.deploy.phase.progress', { current: step, total })");
+    expect(html).toContain("message: t('web.deploy.manualWildcardTitle')");
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail span.running');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail span.waiting');
+    expect(html).not.toContain('const deployProgress = createDeployProgressTracker()');
+    expect(html).not.toContain('function createDeployProgressTracker()');
     expect(html).not.toContain("Processing... ' + completedCount + ' steps completed");
     expect(html).not.toContain('totalComponents = Math.max');
+  });
+
+  it('localizes deployment phase labels and accessibility text', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("preparation: 'web.deploy.phase.preparation'");
+    expect(html).toContain("t('web.deploy.phase.aria', { current: step, total })");
+    expect(html).toContain("'web.deploy.phase.preparation': 'デプロイを準備しています'");
+    expect(html).toContain("'web.deploy.phase.complete': 'デプロイが完了しました'");
+    expect(html.match(/'web.deploy.phase.preparation'/gu)).toHaveLength(
+      SUPPORTED_LOCALES.length + 1
+    );
+    expect(html.match(/'web.delete.manualR2Summary'/gu)).toHaveLength(SUPPORTED_LOCALES.length + 1);
   });
 
   it('keeps provisioning progress complete after trailing log messages and polling races', () => {
@@ -754,7 +858,7 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
     const trackerSource = html.match(
-      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}function createDeployProgressTracker\(\))/u
+      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}\/\/ Safe DOM element creation helpers)/u
     )?.[0];
     expect(trackerSource).toBeTruthy();
     const progressUpdates: Array<{ current: number; total: number; task: string }> = [];
@@ -934,6 +1038,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('operation.tenantId');
     expect(html).toContain("api('/control/pending-operations/execute'");
     expect(html).toContain('Run pending operation');
+    expect(html).toContain('let inFlightMutationRequests = 0;');
+    expect(html).toContain('inFlightMutationRequests === 0');
     expect(html).not.toContain('pending.tenantId =');
   });
 

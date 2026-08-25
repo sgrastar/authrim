@@ -3705,6 +3705,13 @@ const settings = new Map<string, DevSettings>([
 
 const accountScreenPresets = [
 	['overview', 'account_overview', 'Account overview', 'アカウント概要', 'heading'],
+	[
+		'launchers',
+		'account_launchers',
+		'Application launchers',
+		'マイアプリ',
+		'account_launcher_widget'
+	],
 	['profile', 'account_profile', 'User profile', 'ユーザー情報', 'account_profile_widget'],
 	['devices', 'account_devices', 'Devices', 'デバイス', 'account_device_list_widget'],
 	['sessions', 'account_sessions', 'Sessions', 'セッション', 'account_session_widget'],
@@ -3755,6 +3762,100 @@ const devScreens = new Map<string, DevScreen>(
 			updated_at: NOW
 		}
 	])
+);
+
+const devLaunchers = new Map<string, Record<string, unknown>>(
+	[
+		{
+			id: 'dev-launcher-docs',
+			application_type: 'standalone',
+			application_id: null,
+			name: 'Engineering Handbook',
+			description: 'Architecture notes, runbooks, and team standards.',
+			category: 'Knowledge',
+			launch_type: 'bookmark',
+			launch_url: 'https://docs.example.com/',
+			deep_link_url: null,
+			open_in_new_tab: true,
+			icon_type: 'phosphor',
+			icon_value: 'book-open',
+			icon_color: '#ffffff',
+			background_color: '#2563eb',
+			grid_width: 3,
+			sort_order: 10,
+			enabled: true,
+			allow_favorite: true,
+			visibility: {
+				mode: 'everyone',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: [],
+				attribute_rules: []
+			},
+			created_at: NOW,
+			updated_at: NOW
+		},
+		{
+			id: 'dev-launcher-console',
+			application_type: 'oidc_client',
+			application_id: 'dev-oidc-client',
+			name: 'Operations Console',
+			description: 'Monitor production services and deployment health.',
+			category: 'Operations',
+			launch_type: 'oidc_third_party_initiated',
+			launch_url: 'https://app.example.com/login/initiate',
+			deep_link_url: 'https://app.example.com/operations',
+			open_in_new_tab: false,
+			icon_type: 'phosphor',
+			icon_value: 'chart-line-up',
+			icon_color: '#ecfdf5',
+			background_color: '#047857',
+			grid_width: 5,
+			sort_order: 20,
+			enabled: true,
+			allow_favorite: true,
+			visibility: {
+				mode: 'groups',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: ['dev-group-operators'],
+				attribute_rules: []
+			},
+			created_at: NOW,
+			updated_at: NOW
+		},
+		{
+			id: 'dev-launcher-legacy',
+			application_type: 'saml_sp',
+			application_id: 'dev-saml-sp',
+			name: 'Legacy Finance',
+			description: 'Legacy IdP-initiated finance application.',
+			category: 'Finance',
+			launch_type: 'saml_idp_initiated',
+			launch_url: null,
+			deep_link_url: null,
+			open_in_new_tab: true,
+			icon_type: 'phosphor',
+			icon_value: 'bank',
+			icon_color: '#fffbeb',
+			background_color: '#92400e',
+			grid_width: 2,
+			sort_order: 30,
+			enabled: false,
+			allow_favorite: false,
+			visibility: {
+				mode: 'attributes',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: [],
+				attribute_rules: [
+					{ id: 'region', attribute_key: 'region', operator: 'equals', attribute_value: 'JP' }
+				]
+			},
+			created_at: NOW,
+			updated_at: NOW
+		}
+	].map((launcher) => [String(launcher.id), launcher])
 );
 
 const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
@@ -11493,6 +11594,115 @@ async function handleScreens(event: RequestEvent, segments: string[]): Promise<R
 	return null;
 }
 
+async function handleLaunchers(event: RequestEvent, segments: string[]): Promise<Response | null> {
+	if (segments[0] !== 'launchers') return null;
+	const method = event.request.method;
+	if (segments[1] === 'options' && method === 'GET') {
+		return json({
+			oidc_clients: [
+				{
+					client_id: 'dev-oidc-client',
+					client_name: 'Operations Console',
+					initiate_login_uri: 'https://app.example.com/login/initiate',
+					logo_uri: null
+				}
+			],
+			groups: [
+				{ id: 'dev-group-operators', group_key: 'operators', display_name: 'Operators' },
+				{ id: 'dev-group-engineering', group_key: 'engineering', display_name: 'Engineering' }
+			],
+			attribute_keys: ['email', 'email_verified', 'department', 'region', 'locale'],
+			phosphor_icons: [
+				'airplane-tilt',
+				'bank',
+				'book-open',
+				'books',
+				'briefcase',
+				'browser',
+				'buildings',
+				'calendar',
+				'chart-line-up',
+				'chat-circle-text',
+				'cloud',
+				'code',
+				'compass',
+				'database',
+				'envelope-simple',
+				'folder-open',
+				'gear',
+				'github-logo',
+				'globe',
+				'graduation-cap',
+				'house',
+				'identification-card',
+				'key',
+				'link',
+				'monitor',
+				'notebook',
+				'presentation-chart',
+				'rocket-launch',
+				'shield-check',
+				'shopping-cart',
+				'student',
+				'terminal-window',
+				'users-three',
+				'wrench'
+			]
+		});
+	}
+	if (segments[1] === 'order' && method === 'PUT') {
+		const input = await readJson(event.request);
+		const launcherIds = Array.isArray(input.launcher_ids) ? input.launcher_ids : [];
+		if (
+			launcherIds.length !== devLaunchers.size ||
+			launcherIds.some((id) => typeof id !== 'string' || !devLaunchers.has(id)) ||
+			new Set(launcherIds).size !== launcherIds.length
+		) {
+			return json(
+				{ error_description: 'Launcher collection changed. Refresh and try again.' },
+				409
+			);
+		}
+		const updatedAt = Date.now();
+		const launchers = launcherIds.map((id, index) => {
+			const launcher = devLaunchers.get(id as string)!;
+			const updated = { ...launcher, sort_order: index * 10, updated_at: updatedAt };
+			devLaunchers.set(id as string, updated);
+			return updated;
+		});
+		return json({ launchers });
+	}
+
+	const launcherId = segments[1];
+	if (!launcherId && method === 'GET') return json({ launchers: [...devLaunchers.values()] });
+	if (!launcherId && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `dev-launcher-${Date.now()}`;
+		const launcher = { ...input, id, created_at: Date.now(), updated_at: Date.now() };
+		devLaunchers.set(id, launcher);
+		return json({ launcher }, 201);
+	}
+	const launcher = launcherId ? devLaunchers.get(launcherId) : undefined;
+	if (!launcher) return json({ error_description: 'Dev mock launcher not found' }, 404);
+	if (method === 'PUT') {
+		const input = await readJson(event.request);
+		const updated = {
+			...launcher,
+			...input,
+			id: launcherId,
+			created_at: launcher.created_at,
+			updated_at: Date.now()
+		};
+		devLaunchers.set(launcherId, updated);
+		return json({ launcher: updated });
+	}
+	if (method === 'DELETE') {
+		devLaunchers.delete(launcherId);
+		return new Response(null, { status: 204 });
+	}
+	return null;
+}
+
 async function handleScopedClientSettings(
 	event: RequestEvent,
 	segments: string[]
@@ -13092,6 +13302,8 @@ export async function handleDevAdminMock(
 	}
 	const screensResponse = await handleScreens(event, segments);
 	if (screensResponse) return screensResponse;
+	const launchersResponse = await handleLaunchers(event, segments);
+	if (launchersResponse) return launchersResponse;
 	const settingsResponse = await handleSettings(event, segments);
 	if (settingsResponse) return settingsResponse;
 	if (segments[0] === 'logging-policies' && segments[1] === 'notifications') {

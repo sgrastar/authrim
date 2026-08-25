@@ -508,6 +508,17 @@ import {
   adminScreenUpdateHandler,
 } from './admin-screens';
 import {
+  adminLauncherCreateHandler,
+  adminLauncherDeleteHandler,
+  adminLauncherOptionsHandler,
+  adminLauncherOrderHandler,
+  adminLaunchersListHandler,
+  adminLauncherUpdateHandler,
+  getAccountLaunchersHandler,
+  launchAccountLauncherHandler,
+  setAccountLauncherFavoriteHandler,
+} from './launchers';
+import {
   adminOidcScopeCreateHandler,
   adminOidcScopeDeleteHandler,
   adminOidcScopesListHandler,
@@ -1493,6 +1504,9 @@ app.patch('/api/account/profile', updateAccountProfileHandler);
 app.post('/api/account/return', createAccountReturnHandler);
 app.post('/api/account/return/:id/consume', consumeAccountReturnHandler);
 app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
+app.get('/api/account/launchers', getAccountLaunchersHandler);
+app.get('/api/account/launchers/:id/launch', launchAccountLauncherHandler);
+app.put('/api/account/launchers/:id/favorite', setAccountLauncherFavoriteHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
 app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOptionsHandler);
 app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
@@ -2654,7 +2668,38 @@ app.post(
   adminCredentialOfferCreateHandler
 );
 
-// Screen profiles used by Flow form nodes.
+// Application launcher management.
+app.get(
+  '/api/admin/launchers/options',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminLauncherOptionsHandler
+);
+app.get(
+  '/api/admin/launchers',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminLaunchersListHandler
+);
+app.post(
+  '/api/admin/launchers',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherCreateHandler
+);
+app.put(
+  '/api/admin/launchers/order',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherOrderHandler
+);
+app.put(
+  '/api/admin/launchers/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherUpdateHandler
+);
+app.delete(
+  '/api/admin/launchers/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherDeleteHandler
+);
+
 app.get(
   '/api/admin/screens',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),

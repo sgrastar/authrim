@@ -606,6 +606,7 @@ function validateLoginUIPatch(body: SettingsPatchRequest): {
                     'account_consent_widget',
                     'account_activity_widget',
                     'account_social_account_widget',
+                    'account_launcher_widget',
                   ].includes(String(field.block_type))
                 ) {
                   throw new Error('Account screen snapshots contain an unsupported block type');

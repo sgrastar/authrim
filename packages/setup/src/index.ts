@@ -836,6 +836,7 @@ program
   .option('--no-kv', 'Keep KV namespaces')
   .option('--no-queues', 'Keep Queues')
   .option('--no-r2', 'Keep R2 buckets')
+  .option('--no-pages', 'Keep legacy Pages projects')
   .option('--all', 'Delete all resource types (default)')
   .action(deleteCommand);
 

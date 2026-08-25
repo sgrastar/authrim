@@ -26,7 +26,8 @@ export type ScreenBlockType =
 	| 'account_totp_widget'
 	| 'account_consent_widget'
 	| 'account_activity_widget'
-	| 'account_social_account_widget';
+	| 'account_social_account_widget'
+	| 'account_launcher_widget';
 export type ScreenValueType = 'text' | 'boolean';
 export type ScreenCanvasLayout = 'narrow' | 'wide';
 export type ScreenHumanVerificationTiming = 'initial' | 'submit';

@@ -9,19 +9,24 @@ An open-source, serverless **Identity Hub** that combines authentication, author
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fsgrastar%2Fauthrim.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fsgrastar%2Fauthrim?ref=badge_shield)
 
-<table>
-<tr>
-<td>
+<table style="border:none">
+<tbody><tr style="border:none">
+<td style="border:none">
 <a href="https://openid.net/certification/">
-  <img src="./docs/images/openid-certified.jpg" alt="OpenID Certified" height="100">
+  <img src="https://github.com/sgrastar/authrim/raw/main/docs/images/openid-certified.jpg" alt="OpenID Certified" height="100">
 </a>
 </td>
-<td>
-✓ <a href="https://openid.net/certification/certified-openid-providers-profiles/">OpenID Provider</a> (7 profiles)<br>
-✓ <a href="https://openid.net/certification/certified-openid-providers-for-logout-profiles/">Logout Profiles</a> (4 profiles)
+<td style="font-size:75%;border:none">
+✓ <a href="https://openid.net/certification/certified-openid-providers-profiles/">OpenID Provider &amp; Profiles</a> (7 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-providers-for-logout-profiles/">OpenID Provider Logout Profiles</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-relying-parties-profiles/">OpenID Relying Parties &amp; Profiles</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-relying-parties-logout-profiles/">OpenID Relying Parties &amp; Logout Profiles</a> (2 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-2-0-op-security-profile-final-message-signing-final/">FAPI 2.0 OP &amp; Message Signing</a> (5 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-2-0-rp-security-profile-final-message-signing-final/">FAPI 2.0 RP &amp; Message Signing</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-ciba-openid-providers-profiles/">FAPI-CIBA OP</a> (2 profiles)
 </td>
 </tr>
-</table>
+</tbody></table>
 
 ## ⚠️ Pre-1.0 Software
 
@@ -118,18 +123,18 @@ Authrim is currently pre-1.0. Core protocol and platform capabilities are implem
 
 | Area                             | Implementation    | Operational maturity | Notes                                                                                                                                                                                                             |
 | -------------------------------- | ----------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpenID Provider                  | Complete          | Ready                | Certified OpenID Provider and Logout profiles                                                                                                                                                                     |
-| OAuth/OIDC advanced profiles     | Complete          | In progress          | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange, session management, introspection, and revocation                                                                                                        |
-| FAPI profiles                    | Complete          | In progress          | FAPI 2.0 Final DPoP, Client Credentials, Message Signing, and RP Suite plans completed without functional failures; formal certification publication is planned                                                   |
+| OpenID Provider / RP certification | Complete          | Ready                | Certified OpenID Provider, Session OP, Logout, Relying Party, and Relying Party Logout profiles                                                                                                                   |
+| OAuth/OIDC advanced profiles     | Complete          | In progress          | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange, session management, introspection, and revocation; OIDC Session Management is covered by the certified Session OP profile, while token exchange is not separately certified |
+| FAPI profiles                    | Complete          | Ready                | Certified FAPI 2.0 OP/RP Security Profile, Message Signing, and Client Credentials profiles                                                                                                                       |
 | SAML 2.0 IdP/SP                  | Hardening active  | In progress          | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, signing certificate rollover, encryption options, SSO/SLO correlation, and Admin UI operations                                   |
 | SCIM 2.0                         | Inbound complete  | In progress          | Users, Groups, and Bulk receiver with Mapping Set-based writes; outbound provisioning is out of scope                                                                                                             |
 | Authentication                   | Complete          | In progress          | Passkey, email code, social login, anonymous login and upgrade, Direct Auth, device flow, and CIBA                                                                                                                 |
-| CIBA                             | Complete          | In progress          | Backchannel authentication, approval, polling, and request storage; FAPI-CIBA private-key Poll/Ping Suite plans completed without functional failures                                                            |
+| CIBA                             | Complete          | Ready                | Certified FAPI-CIBA Poll and Ping profiles using private-key authentication                                                                                                                                        |
 | Native SSO                       | Complete          | In progress          | `device_secret`, `ds_hash`, DPoP-bound token exchange, token revocation/introspection, and device management                                                                                                       |
 | Authorization                    | Complete          | In progress          | RBAC, ABAC, ReBAC, token embedding, real-time check API, and authorization update push                                                                                                                             |
 | Identity Hub                     | Complete          | In progress          | External IdP integration, account linking, identity stitching, and tenant discovery                                                                                                                               |
 | Account lifecycle and governance | Baseline complete | In progress          | Durable account lifecycle, identifier replacement, support context, legal holds, retention controls, and email delivery history                                                                                   |
-| VC/DID                           | Partial           | Experimental         | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; official Final and HAIP Suite plans currently have known failures                                                                      |
+| VC/DID                           | Partial           | Experimental         | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; OpenID4VCI/VP 1.0 + HAIP certification has not been obtained and Suite validation continues |
 | JavaScript SDKs                  | Complete          | In progress          | Core, web, server, and SvelteKit packages                                                                                                                                                                         |
 | Admin/Login UI                   | Basic complete    | In progress          | Admin operations cover identity, SAML, storage, logging, governance, and Control Plane surfaces; Login UI production-flow hardening continues                                                                     |
 | Unified Control Plane            | Basic complete    | In progress          | Signed Runtime Registry and Lookup routes resolve single- or multi-shard D1 assignments with `shared_pool` or `tenant_exclusive` placement                                                                         |

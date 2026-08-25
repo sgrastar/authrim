@@ -45,7 +45,8 @@ export async function cleanupLocalEnvironmentArtifacts(
     }
   };
 
-  await removeDirIfExists(envPaths.root, 'environment directory');
+  // Keep the lock/config inventory until every independent cleanup step has run. If key or
+  // wrangler cleanup fails, the operator can retry without losing the environment record.
   await removeDirIfExists(externalKeysDir, 'external keys directory');
   await removeDirIfExists(legacyKeysDir, 'legacy keys directory');
 
@@ -76,6 +77,12 @@ export async function cleanupLocalEnvironmentArtifacts(
         onProgress?.(`  ⚠️ ${message}`);
       }
     }
+  }
+
+  if (errors.length === 0) {
+    await removeDirIfExists(envPaths.root, 'environment directory');
+  } else {
+    onProgress?.('  ⚠️ Preserved environment directory for local cleanup retry');
   }
 
   return { removed, errors };

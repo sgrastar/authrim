@@ -176,11 +176,14 @@ name = "single-ar-saml"
       'utf-8'
     );
 
+    const progress: string[] = [];
+
     const result = await cleanupLocalEnvironmentArtifacts({
       baseDir,
       env: 'test',
       packagesDir,
       keysBaseDir: baseDir,
+      onProgress: (message) => progress.push(message),
     });
 
     expect(result.errors).toEqual([]);
@@ -192,5 +195,30 @@ name = "single-ar-saml"
     await expect(readFile(join(samlDir, 'wrangler.toml'), 'utf-8')).resolves.toContain(
       '[env.single]'
     );
+    expect(progress.at(-1)).toContain('Removed environment directory');
+  });
+
+  it('preserves the environment inventory when a preceding local cleanup step fails', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-failure-'));
+    tempDirs.push(baseDir);
+
+    const envDir = join(baseDir, '.authrim', 'test');
+    const brokenWranglerPath = join(baseDir, 'packages', 'ar-saml', 'wrangler.toml');
+    await mkdir(envDir, { recursive: true });
+    await mkdir(brokenWranglerPath, { recursive: true });
+    await writeFile(join(envDir, 'lock.json'), '{"env":"test"}', 'utf-8');
+
+    const result = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env: 'test',
+      packagesDir: join(baseDir, 'packages'),
+      keysBaseDir: baseDir,
+    });
+
+    expect(result.errors).toEqual([
+      expect.stringContaining('Failed to clean wrangler.toml for ar-saml'),
+    ]);
+    expect(existsSync(envDir)).toBe(true);
+    await expect(readFile(join(envDir, 'lock.json'), 'utf-8')).resolves.toContain('"test"');
   });
 });

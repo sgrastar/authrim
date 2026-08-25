@@ -58,6 +58,7 @@ const adminShell = {
 	admin_nav_login_methods: '認証方法',
 	admin_nav_login_ui: 'ログインUI',
 	admin_nav_account_page: 'アカウントページ',
+	admin_nav_launchers: 'ランチャー',
 	admin_nav_tenant_discovery: 'テナントディスカバリー',
 	admin_nav_info: '情報',
 	admin_nav_settings: '設定',

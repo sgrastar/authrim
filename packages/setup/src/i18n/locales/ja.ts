@@ -616,7 +616,6 @@ const ja: Translations = {
   'delete.prompt': '削除するリソースを選択',
   'delete.confirm': '"{{env}}"を削除してもよろしいですか？',
   'delete.confirmPermanent': '⚠️  "{{env}}"のすべてのリソースが完全に削除されます。続行しますか？',
-  'delete.confirmWarning': 'この操作は元に戻せません！',
   'delete.deleting': '{{resource}}を削除中...',
   'delete.deleted': '{{resource}}を削除しました',
   'delete.error': '{{resource}}の削除に失敗しました',
@@ -628,6 +627,8 @@ const ja: Translations = {
   'delete.kvNamespaces': 'KV名前空間',
   'delete.queues': 'Queues',
   'delete.r2Buckets': 'R2バケット',
+  'delete.pages': 'Pagesプロジェクト',
+  'delete.partialSuccess': '選択したリソースを削除し、残りの環境情報は保持しました',
 
   // Info command
   'info.title': '環境情報',
@@ -907,7 +908,7 @@ const ja: Translations = {
   'web.env.openSetup': '設定を開く',
   'web.env.copyUrl': 'コピー',
   'web.env.deleteTitle': '環境を削除',
-  'web.env.deleteWarning': 'この操作は取り消せません。以下のリソースが完全に削除されます:',
+  'web.env.deleteWarning': '以下の選択したリソースを削除します:',
   'web.env.confirmDelete': '選択項目を削除',
   'web.env.cancel': 'キャンセル',
 
@@ -1216,7 +1217,7 @@ const ja: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '環境を削除',
-  'web.delete.warning': 'この操作は取り消せません。選択したリソースはすべて完全に削除されます。',
+  'web.delete.warning': '選択したリソースをこの環境から削除します。',
   'web.delete.environment': '環境:',
   'web.delete.selectResources': '削除するリソースを選択:',
   'web.delete.workers': 'Workers',
@@ -1261,6 +1262,9 @@ const ja: Translations = {
   'web.status.adminNotConfigured': '管理者未設定',
   'web.status.initializing': '初期化中...',
   'web.status.found': '{{count}}件検出',
+  'web.status.operationInProgress':
+    '別のセットアップ操作を実行中です。完了後にもう一度お試しください。',
+  'web.status.warning': '警告：',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '再プロビジョニング（削除して作成）',

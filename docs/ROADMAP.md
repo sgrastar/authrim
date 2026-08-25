@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-07-20
+date: 2026-08-25
 description: "Authrim roadmap organized by product maturity workstreams."
 type: roadmap
 tags:
@@ -26,8 +26,9 @@ The exact release date depends on UI consolidation, SAML interoperability valida
 | Area                              | Status                                               | Notes                                                                                                                                                                                                                                                                   |
 | --- | --- | --- |
 | Core OIDC/OAuth implementation    | Implemented                                          | Authorization, token, UserInfo, discovery, logout, PAR, DPoP, JAR, JARM, JWE, token exchange, client credentials                                                                                                                                                        |
-| FAPI profiles                     | Implemented / official Suite tested                  | FAPI 2.0 Final DPoP OpenID Connect, Client Credentials, Message Signing OP, and corresponding RP plans have completed without functional failures; formal certification publication is still planned                                                                    |
-| CIBA                              | Implemented / official Suite tested                  | Backchannel authentication, approval, polling, and request storage paths exist; FAPI-CIBA private-key Poll and Ping plans completed without functional failures, while Ping retains Suite-side incoming TLS warnings                                                    |
+| OpenID certification              | Certified / maintained                               | Authrim 0.4.0 is certified for OpenID Provider, Session OP, Logout, Relying Party, and Relying Party Logout profiles                                                                                                                                    |
+| FAPI profiles                     | Certified / maintained                               | FAPI 2.0 OP/RP Security Profile, Message Signing, and Client Credentials profiles are certified                                                                                                                                                         |
+| CIBA                              | Certified / maintained                               | FAPI-CIBA Poll and Ping profiles using private-key authentication are certified; Suite-side incoming TLS warnings remain documented for Ping                                                                                                        |
 | SAML 2.0 IdP/SP                   | Active / implementation substantially complete       | Core protocol support, local entity metadata, entityID style, interactive login redirect policy, signing subject/rollover, and metadata import/export are implemented; interoperability and DR assumptions are tracked below                                            |
 | SCIM 2.0 | Inbound implemented | Users, Groups, and Bulk receiver are available; outbound provisioning is out of scope |
 | Policy engine                     | Implemented                                          | RBAC, ABAC, ReBAC, token embedding, real-time check API                                                                                                                                                                                                                 |
@@ -63,6 +64,7 @@ The following foundations are implemented and have unit/integration test coverag
 - [x] Fresh root migration set for new deployments
 - [x] Setup-managed D1/R2 resource inventory in Admin UI
 - [x] Load testing and OpenID conformance test automation
+- [x] OpenID Foundation certification for Authrim 0.4.0: Core OP, Logout, RP, RP Logout, FAPI 2.0 OP/RP, and FAPI-CIBA profiles
 
 ---
 
@@ -254,6 +256,7 @@ Authrim should not be recommended for production migration until these baseline 
 | Direct LDAP/AD integration           | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML.                                                                         |
 | Direct MTLS termination              | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate.                       |
 | SFTP storage or delivery             | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                                                     |
+| FAPI 1.0 Final and regional profiles | Deferred. Authrim prioritizes FAPI 2.0 and FAPI-CIBA. Supporting FAPI 1.0 would add a second long-term compatibility surface, including legacy message-signing and ecosystem-specific requirements. Revisit only when a concrete customer or regulatory requirement exists. |
 
 ---
 
@@ -277,9 +280,10 @@ This section is a compressed history of major completed work. It replaces the ol
 | 2026-01    | JavaScript SDK ecosystem: core, web, server, SvelteKit                                                                                                                  |
 | 2026-04/05 | Runtime profiles, storage portability, audit export, Hyperdrive-backed PostgreSQL/MySQL work                                                                            |
 | 2026-05    | SAML local entity info, signing subject/rollover UI, tenant discovery WAYF, setup migration consolidation, database/storage inventory, and managed logging control work |
+| 2026-08    | OpenID Foundation certification for Authrim 0.4.0: OpenID Provider, Logout, RP, RP Logout, FAPI 2.0 OP/RP, and FAPI-CIBA profiles                                      |
 
 ---
 
-> **Last Update:** 2026-07-20
+> **Last Update:** 2026-08-25
 >
 > **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, OpenID4VC Final/HAIP interoperability, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA

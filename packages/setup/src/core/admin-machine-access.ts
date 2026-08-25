@@ -4,11 +4,8 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
 import { generateEs256KeyPair, type JWK } from './keys.js';
-import {
-  fetchWithTimeout,
-  readResponseJsonWithLimit,
-  readResponseTextWithLimit,
-} from './http-limits.js';
+import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import { getPortableSqlExpressions } from './sql-portability.js';
 
 export const ADMIN_MACHINE_AUDIENCE = 'authrim:admin-api';
@@ -51,6 +48,10 @@ export interface AdminMachineTokenRequest {
   clientId?: string;
   scopes?: readonly string[];
   timeoutMs?: number;
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  allowPublicDnsFallback?: boolean;
+  onDnsFallback?: (message: string) => void;
 }
 
 export interface AdminMachineTokenResponse {
@@ -96,8 +97,23 @@ function parseRetryAfterSeconds(body: string): number | null {
   }
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return true;
+  }
+  return await new Promise<boolean>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve(true);
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeoutId);
+      resolve(false);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function buildPermissionValuesSql(principalId: string, permissions: readonly string[]): string {
@@ -291,6 +307,9 @@ export async function requestAdminMachineAccessToken(
   const clientId = options.clientId ?? SETUP_MACHINE_CLIENT_ID;
   const scopes = options.scopes ?? SETUP_MACHINE_DEFAULT_SCOPES;
   for (let attempt = 1; attempt <= ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+    if (getRemainingDeadlineMs(options.deadlineAt) <= 0 || options.signal?.aborted) {
+      throw new Error('admin_machine_token_deadline_exceeded');
+    }
     const assertion = await createSetupMachineClientAssertion({
       tokenEndpoint,
       keysDir: options.keysDir,
@@ -306,7 +325,7 @@ export async function requestAdminMachineAccessToken(
       scope: scopes.join(' '),
     });
 
-    const response = await fetchWithTimeout(
+    const response = await fetchWithDnsFallback(
       tokenEndpoint,
       {
         method: 'POST',
@@ -316,8 +335,14 @@ export async function requestAdminMachineAccessToken(
           ...(options.tenantId ? { 'X-Tenant-Id': options.tenantId } : {}),
         },
         body: form.toString(),
+        signal: options.signal,
       },
-      options.timeoutMs
+      {
+        timeoutMs: options.timeoutMs,
+        deadlineAt: options.deadlineAt,
+        allowPublicDnsFallback: options.allowPublicDnsFallback,
+        onDnsFallback: options.onDnsFallback,
+      }
     );
 
     if (!response.ok) {
@@ -328,7 +353,13 @@ export async function requestAdminMachineAccessToken(
         retryAfterSeconds &&
         attempt < ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS
       ) {
-        await sleep(retryAfterSeconds * 1000 + 1000);
+        const delayMs = Math.min(
+          retryAfterSeconds * 1000 + 1000,
+          getRemainingDeadlineMs(options.deadlineAt)
+        );
+        if (delayMs <= 0 || !(await sleep(delayMs, options.signal))) {
+          throw new Error('admin_machine_token_deadline_exceeded');
+        }
         continue;
       }
       throw new Error(`admin_machine_token_failed:${response.status}:${body}`);

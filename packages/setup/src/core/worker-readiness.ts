@@ -11,12 +11,19 @@ export interface RouterReadinessOptions {
   apiBaseUrl: string;
   path?: string;
   maxWaitMs?: number;
+  /** Absolute shared deadline used when several readiness probes run as one operation. */
+  deadlineAt?: number;
   initialDelayMs?: number;
   maxDelayMs?: number;
   requestTimeoutMs?: number;
   requiredConsecutiveSuccesses?: number;
   successDelayMs?: number;
+  /** Retry DNS misses through Cloudflare public DNS while preserving TLS hostname validation. */
+  allowPublicDnsFallback?: boolean;
+  signal?: AbortSignal;
   onProgress?: (message: string) => void;
+  /** Raw readiness failures for persisted detailed logs only. */
+  onDetail?: (message: string) => void;
 }
 
 export interface RouterReadinessResult {
@@ -25,6 +32,26 @@ export interface RouterReadinessResult {
   elapsedMs: number;
   checkedUrl: string;
   error?: string;
+}
+
+export interface TenantRoutingReadinessOptions {
+  apiBaseUrl: string;
+  maxWaitMs?: number;
+  /** Absolute shared deadline used when several readiness probes run as one operation. */
+  deadlineAt?: number;
+  initialDelayMs?: number;
+  maxDelayMs?: number;
+  requestTimeoutMs?: number;
+  /** Retry DNS misses through Cloudflare public DNS while preserving TLS hostname validation. */
+  allowPublicDnsFallback?: boolean;
+  signal?: AbortSignal;
+  onProgress?: (message: string) => void;
+  /** Raw readiness failures for persisted detailed logs only. */
+  onDetail?: (message: string) => void;
+}
+
+export interface TenantRoutingReadinessResult extends RouterReadinessResult {
+  issuer?: string;
 }
 
 export interface WorkerDeploymentReadinessTarget {
@@ -71,6 +98,26 @@ const APP_WORKER_HEALTH_PATHS: Record<string, string> = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sleepUntilRetry(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (!signal) {
+    await sleep(ms);
+    return true;
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve(true);
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeoutId);
+      resolve(false);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function normalizeBaseUrl(value: string): string {
@@ -141,6 +188,40 @@ async function describeReadinessFailure(response: Response): Promise<string> {
   return compactBody ? `HTTP ${response.status}: ${compactBody}` : `HTTP ${response.status}`;
 }
 
+async function fetchReadinessResponse(options: {
+  checkedUrl: string;
+  requestTimeoutMs: number;
+  allowPublicDnsFallback: boolean;
+  signal?: AbortSignal;
+  onDetail?: (message: string) => void;
+}): Promise<Response> {
+  const init: globalThis.RequestInit = {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache',
+    },
+    signal: options.signal,
+  };
+
+  try {
+    return await fetchWithTimeout(options.checkedUrl, init, options.requestTimeoutMs);
+  } catch (error) {
+    if (
+      !options.allowPublicDnsFallback ||
+      options.signal?.aborted ||
+      !isDnsResolutionError(error)
+    ) {
+      throw error;
+    }
+
+    options.onDetail?.(
+      `System DNS could not resolve ${new URL(options.checkedUrl).hostname}; retrying through Cloudflare public DNS.`
+    );
+    return await fetchWithPublicDns(options.checkedUrl, init, options.requestTimeoutMs);
+  }
+}
+
 async function hasExpectedTenantRegistryBootstrapGap(
   response: Response,
   workerName: string,
@@ -181,33 +262,41 @@ export async function waitForRouterWorkerReady(
   const initialDelayMs = options.initialDelayMs ?? DEFAULT_ROUTER_READINESS_INITIAL_DELAY_MS;
   const maxDelayMs = options.maxDelayMs ?? DEFAULT_ROUTER_READINESS_MAX_DELAY_MS;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_ROUTER_READINESS_REQUEST_TIMEOUT_MS;
+  const allowPublicDnsFallback = options.allowPublicDnsFallback ?? true;
   const requiredConsecutiveSuccesses = Math.max(options.requiredConsecutiveSuccesses ?? 1, 1);
   const successDelayMs = Math.max(options.successDelayMs ?? 1_000, 0);
   const startedAt = Date.now();
-  const deadline = startedAt + maxWaitMs;
+  const deadline = Math.min(startedAt + maxWaitMs, options.deadlineAt ?? Number.POSITIVE_INFINITY);
+  const effectiveMaxWaitMs = Math.max(deadline - startedAt, 0);
   let attempts = 0;
   let delayMs = initialDelayMs;
   let lastError = 'not checked';
   let consecutiveSuccesses = 0;
 
   options.onProgress?.(
-    `Waiting for API router to become reachable: ${checkedUrl} (timeout ${formatElapsed(maxWaitMs)})`
+    `Waiting for API router to become reachable: ${checkedUrl} (timeout ${formatElapsed(effectiveMaxWaitMs)})`
   );
 
   while (true) {
+    if (options.signal?.aborted) {
+      return {
+        ready: false,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        checkedUrl,
+        error: 'readiness_check_aborted',
+      };
+    }
     attempts += 1;
     try {
-      const response = await fetchWithTimeout(
+      const attemptTimeoutMs = Math.max(Math.min(requestTimeoutMs, deadline - Date.now()), 1);
+      const response = await fetchReadinessResponse({
         checkedUrl,
-        {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            'Cache-Control': 'no-cache',
-          },
-        },
-        requestTimeoutMs
-      );
+        requestTimeoutMs: attemptTimeoutMs,
+        allowPublicDnsFallback,
+        signal: options.signal,
+        onDetail: options.onDetail,
+      });
 
       if (response.ok) {
         consecutiveSuccesses += 1;
@@ -228,7 +317,9 @@ export async function waitForRouterWorkerReady(
           `API router responded successfully (${consecutiveSuccesses}/${requiredConsecutiveSuccesses}); confirming route stability...`
         );
         const remainingMs = Math.max(deadline - Date.now(), 0);
-        await sleep(Math.min(successDelayMs, remainingMs));
+        if (!(await sleepUntilRetry(Math.min(successDelayMs, remainingMs), options.signal))) {
+          continue;
+        }
         delayMs = initialDelayMs;
         continue;
       }
@@ -240,8 +331,10 @@ export async function waitForRouterWorkerReady(
       lastError = describeFetchError(error);
     }
 
+    options.onDetail?.(`API router readiness attempt ${attempts} failed: ${lastError}`);
+
     const now = Date.now();
-    if (now >= deadline || maxWaitMs <= 0) {
+    if (now >= deadline || effectiveMaxWaitMs <= 0 || options.signal?.aborted) {
       const elapsedMs = now - startedAt;
       return {
         ready: false,
@@ -255,9 +348,115 @@ export async function waitForRouterWorkerReady(
     const remainingMs = Math.max(deadline - now, 0);
     const nextDelayMs = Math.min(delayMs, maxDelayMs, remainingMs);
     options.onProgress?.(
-      `API router is not reachable yet (${lastError}). Retrying in ${formatElapsed(nextDelayMs)}...`
+      `Waiting for API routing to propagate (${formatElapsed(now - startedAt)} elapsed, attempt ${attempts}). Retrying in ${formatElapsed(nextDelayMs)}...`
     );
-    await sleep(nextDelayMs);
+    await sleepUntilRetry(nextDelayMs, options.signal);
+    delayMs = Math.min(delayMs * 2, maxDelayMs);
+  }
+}
+
+/**
+ * Wait for tenant-aware routing and discovery metadata, not only the router health endpoint.
+ * A successful Worker deployment can precede tenant directory and runtime snapshot propagation.
+ */
+export async function waitForTenantRoutingReady(
+  options: TenantRoutingReadinessOptions
+): Promise<TenantRoutingReadinessResult> {
+  const checkedUrl = buildReadinessUrl(options.apiBaseUrl, '/.well-known/openid-configuration');
+  const expectedIssuer = normalizeBaseUrl(options.apiBaseUrl);
+  const maxWaitMs = options.maxWaitMs ?? DEFAULT_ROUTER_READINESS_MAX_WAIT_MS;
+  const initialDelayMs = options.initialDelayMs ?? DEFAULT_ROUTER_READINESS_INITIAL_DELAY_MS;
+  const maxDelayMs = options.maxDelayMs ?? DEFAULT_ROUTER_READINESS_MAX_DELAY_MS;
+  const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_ROUTER_READINESS_REQUEST_TIMEOUT_MS;
+  const allowPublicDnsFallback = options.allowPublicDnsFallback ?? true;
+  const startedAt = Date.now();
+  const deadline = Math.min(startedAt + maxWaitMs, options.deadlineAt ?? Number.POSITIVE_INFINITY);
+  const effectiveMaxWaitMs = Math.max(deadline - startedAt, 0);
+  let attempts = 0;
+  let delayMs = initialDelayMs;
+  let lastError = 'not checked';
+
+  options.onProgress?.(
+    `Checking tenant routing and runtime discovery (timeout ${formatElapsed(effectiveMaxWaitMs)})...`
+  );
+
+  while (true) {
+    if (options.signal?.aborted) {
+      return {
+        ready: false,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        checkedUrl,
+        error: 'readiness_check_aborted',
+      };
+    }
+    attempts += 1;
+    try {
+      const attemptTimeoutMs = Math.max(Math.min(requestTimeoutMs, deadline - Date.now()), 1);
+      const response = await fetchReadinessResponse({
+        checkedUrl,
+        requestTimeoutMs: attemptTimeoutMs,
+        allowPublicDnsFallback,
+        signal: options.signal,
+        onDetail: options.onDetail,
+      });
+
+      if (response.ok) {
+        const body = await readResponseTextWithLimit(response, 16_384);
+        let issuer = '';
+        try {
+          const parsed = JSON.parse(body) as { issuer?: unknown };
+          if (typeof parsed.issuer === 'string') {
+            issuer = parsed.issuer.replace(/\/+$/, '');
+          } else {
+            lastError = 'Discovery metadata did not contain a string issuer';
+          }
+        } catch {
+          lastError = 'Discovery metadata was not valid JSON';
+        }
+
+        if (issuer === expectedIssuer) {
+          const elapsedMs = Date.now() - startedAt;
+          options.onProgress?.(
+            `Tenant routing and runtime discovery are ready after ${formatElapsed(elapsedMs)} (${attempts} attempt${attempts === 1 ? '' : 's'})`
+          );
+          return {
+            ready: true,
+            attempts,
+            elapsedMs,
+            checkedUrl,
+            issuer,
+          };
+        }
+
+        if (issuer) {
+          lastError = `Unexpected issuer: ${issuer}`;
+        }
+      } else {
+        lastError = await describeReadinessFailure(response);
+      }
+    } catch (error) {
+      lastError = describeFetchError(error);
+    }
+
+    options.onDetail?.(`Tenant routing readiness attempt ${attempts} failed: ${lastError}`);
+    const now = Date.now();
+    if (now >= deadline || effectiveMaxWaitMs <= 0 || options.signal?.aborted) {
+      return {
+        ready: false,
+        attempts,
+        elapsedMs: now - startedAt,
+        checkedUrl,
+        error: lastError,
+      };
+    }
+
+    const remainingMs = Math.max(deadline - now, 0);
+    const nextDelayMs = Math.min(delayMs, maxDelayMs, remainingMs);
+    options.onProgress?.(
+      `Waiting for tenant routing and runtime discovery (${formatElapsed(now - startedAt)} elapsed, attempt ${attempts}). Retrying in ${formatElapsed(nextDelayMs)}...`
+    );
+    await sleepUntilRetry(nextDelayMs, options.signal);
     delayMs = Math.min(delayMs * 2, maxDelayMs);
   }
 }

@@ -53,7 +53,9 @@ describe('critical authorization-code token lifecycle', () => {
   });
 
   async function storeAuthorizationCode(options: { tenantId?: string } = {}): Promise<string> {
-    const code = generateSecureRandomString(48);
+    // Keep this fixture unambiguously in the legacy (non-sharded) format. A fully random
+    // base64url value can occasionally resemble the `<shard>_<opaque>` production format.
+    const code = `legacy-${generateSecureRandomString(48)}`;
     const stub = env.AUTH_CODE_STORE.get(
       env.AUTH_CODE_STORE.idFromName('tenant:default:auth-code')
     );

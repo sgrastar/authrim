@@ -559,11 +559,24 @@ paths:
           $ref: "#/components/responses/Html"
         "302":
           $ref: "#/components/responses/Redirect"
+        "400":
+          description: The RelayState exceeds the SAML binding size limit.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
       parameters:
         - name: sp
           in: query
           required: false
           description: Service Provider EntityID to start IdP-initiated SSO for.
+          schema:
+            type: string
+        - name: relay_state
+          in: query
+          required: false
+          description: Optional RelayState forwarded to the Service Provider. Limited to 80 UTF-8 bytes.
           schema:
             type: string
 components:

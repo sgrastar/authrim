@@ -65,6 +65,7 @@ const SCREEN_BLOCK_TYPES = new Set([
   'account_consent_widget',
   'account_activity_widget',
   'account_social_account_widget',
+  'account_launcher_widget',
 ]);
 const ACCOUNT_WIDGET_BLOCK_TYPES = new Set([
   'account_profile_widget',
@@ -75,6 +76,7 @@ const ACCOUNT_WIDGET_BLOCK_TYPES = new Set([
   'account_consent_widget',
   'account_activity_widget',
   'account_social_account_widget',
+  'account_launcher_widget',
 ]);
 const ACCOUNT_SCREEN_BLOCK_TYPES = new Set([
   'layout_row',
@@ -1499,6 +1501,22 @@ const DEFAULT_SCREENS: Array<{
         label: 'Manage your account',
         required: false,
         block_type: 'heading',
+        order: 10,
+      },
+    ],
+  },
+  {
+    screen_key: 'account_launchers',
+    display_name: 'Application launchers',
+    description: 'Search and open the applications available to the signed-in account.',
+    screen_kind: 'account',
+    settings: { canvas_layout: 'wide' },
+    fields: [
+      {
+        field: 'account.launchers',
+        label: 'My applications',
+        required: false,
+        block_type: 'account_launcher_widget',
         order: 10,
       },
     ],

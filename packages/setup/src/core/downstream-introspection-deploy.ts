@@ -5,7 +5,7 @@ import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
 } from './downstream-introspection-client.js';
-import { waitForRouterWorkerReady } from './worker-readiness.js';
+import { waitForRouterWorkerReady, waitForTenantRoutingReady } from './worker-readiness.js';
 import { findKeysDirectory, getExternalKeysDir, resolvePaths, type LegacyPaths } from './paths.js';
 
 export interface ResolveDownstreamIntrospectionKeysDirOptions {
@@ -21,18 +21,49 @@ export interface ConfigureDownstreamIntrospectionDeploymentOptions {
   keysDir: string;
   apiBaseUrl?: string;
   apiBaseUrls?: string[];
+  /** Router origins already verified earlier in this deployment operation. */
+  knownRouterReadyBaseUrls?: string[];
+  /** One shared budget for every optional-integration readiness candidate and phase. */
+  readinessBudgetMs?: number;
   tenantId?: string;
   dryRun?: boolean;
   onProgress?: (message: string) => void;
+  /** Raw readiness and provider errors for persisted detailed logs only. */
+  onDetail?: (message: string) => void;
 }
 
 export interface ConfigureDownstreamIntrospectionDeploymentResult {
   success: boolean;
   skipped?: boolean;
+  deferred?: boolean;
   error?: string;
   clientId?: string;
   secretUploadErrors?: string[];
   redeployResult?: DeployResult;
+  impact?: string;
+  retryable?: boolean;
+  nextAction?: string;
+}
+
+const DOWNSTREAM_INTROSPECTION_IMPACT =
+  'Core login, Admin UI, and token issuance are available, but downstream grant introspection is not configured.';
+const DOWNSTREAM_INTROSPECTION_NEXT_ACTION =
+  'Rerun deploy to retry the optional integration after routing propagation completes.';
+const DEFAULT_DOWNSTREAM_READINESS_BUDGET_MS = 60_000;
+
+export function createDownstreamIntrospectionFailure(
+  error: string,
+  details: Omit<ConfigureDownstreamIntrospectionDeploymentResult, 'success' | 'error'> = {}
+): ConfigureDownstreamIntrospectionDeploymentResult {
+  return {
+    success: false,
+    deferred: true,
+    error,
+    impact: DOWNSTREAM_INTROSPECTION_IMPACT,
+    retryable: true,
+    nextAction: DOWNSTREAM_INTROSPECTION_NEXT_ACTION,
+    ...details,
+  };
 }
 
 export function resolveDownstreamIntrospectionKeysDir(
@@ -103,7 +134,7 @@ async function resolveDownstreamIntrospectionApiBaseUrlCandidates(
 export async function configureDownstreamIntrospectionDeployment(
   options: ConfigureDownstreamIntrospectionDeploymentOptions
 ): Promise<ConfigureDownstreamIntrospectionDeploymentResult> {
-  const { env, rootDir, keysDir, tenantId, dryRun, onProgress } = options;
+  const { env, rootDir, keysDir, tenantId, dryRun, onProgress, onDetail } = options;
 
   if (dryRun) {
     return {
@@ -118,47 +149,131 @@ export async function configureDownstreamIntrospectionDeployment(
     options.apiBaseUrls
   );
   const errors: string[] = [];
+  const knownRouterReadyBaseUrls = new Set(
+    (options.knownRouterReadyBaseUrls ?? []).map(normalizeBaseUrl)
+  );
+  const readinessBudgetMs = Math.max(
+    options.readinessBudgetMs ?? DEFAULT_DOWNSTREAM_READINESS_BUDGET_MS,
+    0
+  );
+  const readinessDeadlineAt = Date.now() + readinessBudgetMs;
+  const readinessController = new AbortController();
 
-  for (const apiBaseUrl of apiBaseUrls) {
-    onProgress?.(`Preparing downstream introspection client via ${apiBaseUrl}`);
+  onProgress?.(
+    `Checking tenant routing for optional integrations (shared timeout ${Math.ceil(readinessBudgetMs / 1000)}s)...`
+  );
 
-    const readinessResult = await waitForRouterWorkerReady({
-      apiBaseUrl,
-      maxWaitMs: 300_000,
-      requestTimeoutMs: 15_000,
-      requiredConsecutiveSuccesses: 3,
-      successDelayMs: 1_500,
-      onProgress,
-    });
-    if (!readinessResult.ready) {
-      errors.push(
-        `${apiBaseUrl}: router readiness failed at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown error'}`
-      );
-      continue;
+  const readyApiBaseUrl = await new Promise<string | undefined>((resolveReady) => {
+    if (apiBaseUrls.length === 0) {
+      resolveReady(undefined);
+      return;
     }
 
+    let remaining = apiBaseUrls.length;
+    let settled = false;
+    const finishCandidate = (apiBaseUrl?: string) => {
+      if (settled) return;
+      if (apiBaseUrl) {
+        settled = true;
+        readinessController.abort();
+        resolveReady(apiBaseUrl);
+        return;
+      }
+      remaining -= 1;
+      if (remaining === 0) {
+        settled = true;
+        resolveReady(undefined);
+      }
+    };
+
+    for (const apiBaseUrl of apiBaseUrls) {
+      void (async () => {
+        onDetail?.(`Downstream introspection API candidate: ${apiBaseUrl}`);
+
+        if (knownRouterReadyBaseUrls.has(apiBaseUrl)) {
+          onDetail?.(`Reusing successful API router readiness check: ${apiBaseUrl}`);
+        } else {
+          const readinessResult = await waitForRouterWorkerReady({
+            apiBaseUrl,
+            maxWaitMs: readinessBudgetMs,
+            deadlineAt: readinessDeadlineAt,
+            requestTimeoutMs: 15_000,
+            requiredConsecutiveSuccesses: 3,
+            successDelayMs: 1_500,
+            allowPublicDnsFallback: true,
+            signal: readinessController.signal,
+            onProgress,
+            onDetail,
+          });
+          if (!readinessResult.ready) {
+            if (readinessController.signal.aborted) return;
+            const detail = `${apiBaseUrl}: router readiness failed at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown error'}`;
+            errors.push(detail);
+            onDetail?.(detail);
+            finishCandidate();
+            return;
+          }
+        }
+
+        const tenantRoutingResult = await waitForTenantRoutingReady({
+          apiBaseUrl,
+          maxWaitMs: readinessBudgetMs,
+          deadlineAt: readinessDeadlineAt,
+          requestTimeoutMs: 15_000,
+          allowPublicDnsFallback: true,
+          signal: readinessController.signal,
+          onProgress,
+          onDetail,
+        });
+        if (!tenantRoutingResult.ready) {
+          if (readinessController.signal.aborted) return;
+          const detail = `${apiBaseUrl}: tenant routing readiness failed at ${tenantRoutingResult.checkedUrl}: ${tenantRoutingResult.error || 'unknown error'}`;
+          errors.push(detail);
+          onDetail?.(detail);
+          finishCandidate();
+          return;
+        }
+
+        finishCandidate(apiBaseUrl);
+      })().catch((error) => {
+        if (readinessController.signal.aborted) return;
+        const detail = `${apiBaseUrl}: readiness check failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`;
+        errors.push(detail);
+        onDetail?.(detail);
+        finishCandidate();
+      });
+    }
+  });
+
+  if (readyApiBaseUrl) {
+    const apiBaseUrl = readyApiBaseUrl;
+    onProgress?.('Configuring downstream grant introspection...');
     const introspectionClientResult = await ensureDownstreamIntrospectionClient({
       apiBaseUrl,
       keysDir,
       tenantId,
       maxRetries: 24,
+      deadlineAt: readinessDeadlineAt,
+      allowPublicDnsFallback: true,
       onProgress,
+      onDetail,
     });
 
     if (!introspectionClientResult.success) {
-      errors.push(
-        `${apiBaseUrl}: ${introspectionClientResult.error ?? 'Unknown downstream introspection client error'}`
-      );
-      continue;
+      const detail = `${apiBaseUrl}: ${introspectionClientResult.error ?? 'Unknown downstream introspection client error'}`;
+      errors.push(detail);
+      onDetail?.(detail);
+      return createDownstreamIntrospectionFailure(detail);
     }
 
     const introspectionSecrets = await loadDownstreamIntrospectionClientSecrets(keysDir);
     if (!introspectionSecrets) {
-      return {
-        success: false,
-        error: 'Downstream introspection client secrets were not written to disk',
-        clientId: introspectionClientResult.clientId,
-      };
+      return createDownstreamIntrospectionFailure(
+        'Downstream introspection client secrets were not written to disk',
+        {
+          clientId: introspectionClientResult.clientId,
+        }
+      );
     }
 
     onProgress?.('Deploying ar-userinfo with downstream introspection secrets...');
@@ -173,12 +288,13 @@ export async function configureDownstreamIntrospectionDeployment(
     } satisfies DeployOptions);
 
     if (!redeployResult.success) {
-      return {
-        success: false,
-        error: redeployResult.error ?? 'Failed to redeploy ar-userinfo',
-        clientId: introspectionClientResult.clientId,
-        redeployResult,
-      };
+      return createDownstreamIntrospectionFailure(
+        redeployResult.error ?? 'Failed to redeploy ar-userinfo',
+        {
+          clientId: introspectionClientResult.clientId,
+          redeployResult,
+        }
+      );
     }
 
     return {
@@ -188,11 +304,9 @@ export async function configureDownstreamIntrospectionDeployment(
     };
   }
 
-  return {
-    success: false,
-    error:
-      errors.length > 0
-        ? errors.join('; ')
-        : 'No API base URL candidates were available for downstream introspection setup',
-  };
+  return createDownstreamIntrospectionFailure(
+    errors.length > 0
+      ? errors.join('; ')
+      : 'No API base URL candidates were available for downstream introspection setup'
+  );
 }

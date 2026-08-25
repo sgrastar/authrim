@@ -463,6 +463,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'tenant settings'
   ),
   ...byMethod(
+    '/api/admin/launchers',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'application launchers'
+  ),
+  ...byMethod(
+    '/api/admin/launchers/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'application launchers'
+  ),
+  ...byMethod(
     '/api/admin/platform/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
