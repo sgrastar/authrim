@@ -49,6 +49,7 @@ export interface InitialAccountDirectoryWriteContext {
 export interface InitialAccountDirectoryWriteDependencies {
   writeAuthoritative(context: InitialAccountDirectoryWriteContext): Promise<void>;
   reserveIdentifiers?: (publication: AccountDirectoryPublication) => Promise<void>;
+  releaseIdentifiers?: (publication: AccountDirectoryPublication) => Promise<void>;
   lookupForBucket?: (virtualBucket: number) => Promise<D1Database>;
   now?: () => number;
 }
@@ -85,7 +86,8 @@ async function allocateAccountRouteWithElasticCapacity(
   accountIdBlindDigest: string,
   dataRoles: readonly ['tenant_core/users', 'tenant_pii']
 ) {
-  if (!env.CONTROL) throw new Error('account_directory_control_unavailable');
+  const control = env.CONTROL;
+  if (!control) throw new Error('account_directory_control_unavailable');
   const request = {
     tenantId: input.tenantId,
     accountIdBlindDigest,
@@ -95,41 +97,43 @@ async function allocateAccountRouteWithElasticCapacity(
     dataRoles: [...dataRoles],
   };
   try {
-    return await env.CONTROL.allocateAccountRoute(request);
+    return await control.allocateAccountRoute(request);
   } catch (error) {
+    const ensureCapacity = control.ensureTenantShardCapacity?.bind(control);
     if (
       !(error instanceof Error) ||
       error.message !== 'control_account_allocation_capacity_unavailable' ||
-      !env.CONTROL.ensureTenantShardCapacity
+      !ensureCapacity
     ) {
       throw error;
     }
-  }
-
-  const capacity = await Promise.all(
-    dataRoles.map((dataRole) =>
-      env.CONTROL!.ensureTenantShardCapacity!({
-        tenantId: input.tenantId,
-        dataRole,
-        residencyPolicyId: input.residencyPolicyId,
-        residencyPartition: input.residencyPartition,
-        idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
-      })
-    )
-  );
-  for (const [index, result] of capacity.entries()) {
-    if (
-      !result ||
-      (result.state !== 'ready' && result.state !== 'provisioning' && result.state !== 'blocked') ||
-      (result.state === 'ready' && result.target.dataRole !== dataRoles[index])
-    ) {
-      throw new Error('account_directory_capacity_response_invalid');
+    const capacity = await Promise.all(
+      dataRoles.map((dataRole) =>
+        ensureCapacity({
+          tenantId: input.tenantId,
+          dataRole,
+          residencyPolicyId: input.residencyPolicyId,
+          residencyPartition: input.residencyPartition,
+          idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
+        })
+      )
+    );
+    for (const [index, result] of capacity.entries()) {
+      if (
+        !result ||
+        (result.state !== 'ready' &&
+          result.state !== 'provisioning' &&
+          result.state !== 'blocked') ||
+        (result.state === 'ready' && result.target.dataRole !== dataRoles[index])
+      ) {
+        throw new Error('account_directory_capacity_response_invalid');
+      }
     }
+    if (capacity.some((result) => result.state !== 'ready')) {
+      throw new Error('control_account_allocation_capacity_unavailable');
+    }
+    return control.allocateAccountRoute(request);
   }
-  if (capacity.some((result) => result.state !== 'ready')) {
-    throw new Error('control_account_allocation_capacity_unavailable');
-  }
-  return env.CONTROL.allocateAccountRoute(request);
 }
 
 function d1Binding(env: Env, bindingRef: string): D1Database {
@@ -249,6 +253,95 @@ async function reserveInitialIdentifiers(
   }
 }
 
+async function releaseInitialIdentifiers(
+  env: Env,
+  publication: AccountDirectoryPublication,
+  dependencies: InitialAccountDirectoryWriteDependencies,
+  now: number
+): Promise<void> {
+  if (dependencies.releaseIdentifiers) {
+    await dependencies.releaseIdentifiers(publication);
+    return;
+  }
+  if (dependencies.reserveIdentifiers) return;
+  if (!publication.indexes.some((index) => index.indexKind !== 'account_id')) return;
+  const lookupForBucket =
+    dependencies.lookupForBucket ?? (await lookupResolverFromEnvironment(env));
+  await new InitialAccountIdentifierReservationService({
+    lookupForBucket,
+    now: () => now,
+  }).release(publication);
+}
+
+function accountRouteAllocationRequest(publication: AccountDirectoryPublication) {
+  const accountIndex = publication.indexes.find((index) => index.indexKind === 'account_id');
+  if (!accountIndex) throw new Error('account_directory_allocation_commit_invalid');
+  return {
+    tenantId: publication.tenantId,
+    accountIdBlindDigest: accountIndex.digest,
+    residencyPolicyId: publication.routeProjection.residencyPolicyId,
+    residencyPartition: publication.routeProjection.targets[0]?.residencyPartition ?? '',
+    idempotencyKey: publication.idempotencyKey,
+    dataRoles: ['tenant_core/users', 'tenant_pii'] as const,
+  };
+}
+
+async function commitInitialAccountRouteAllocation(
+  env: Env,
+  publication: AccountDirectoryPublication
+): Promise<void> {
+  if (!env.CONTROL?.commitAccountRoute) {
+    throw new Error('account_directory_allocation_commit_unavailable');
+  }
+  const dataRoles = ['tenant_core/users', 'tenant_pii'] as const;
+  const request = accountRouteAllocationRequest(publication);
+  const committed = validateControlAccountRouteAllocationResult(
+    await env.CONTROL.commitAccountRoute({ ...request, dataRoles: [...dataRoles] }),
+    {
+      tenantId: publication.tenantId,
+      residencyPolicyId: publication.routeProjection.residencyPolicyId,
+      residencyPartition: publication.routeProjection.targets[0]?.residencyPartition ?? '',
+      dataRoles,
+    }
+  );
+  const projectedByRole = new Map(
+    publication.routeProjection.targets.map((target) => [target.dataRole, target] as const)
+  );
+  for (const target of committed.targets) {
+    const projected = projectedByRole.get(target.dataRole);
+    if (
+      !projected ||
+      projected.residencyPartition !== target.residencyPartition ||
+      projected.shardId !== target.shardId ||
+      projected.bindingRef !== target.bindingRef ||
+      projected.requiredBindingRouteGeneration !== target.routeGeneration
+    ) {
+      throw new Error('account_directory_allocation_commit_route_mismatch');
+    }
+  }
+}
+
+async function releaseInitialAccountRouteAllocation(
+  env: Env,
+  publication: AccountDirectoryPublication
+): Promise<void> {
+  if (!env.CONTROL?.releaseAccountRoute) {
+    throw new Error('account_directory_allocation_release_unavailable');
+  }
+  const request = accountRouteAllocationRequest(publication);
+  await env.CONTROL.releaseAccountRoute({ ...request, dataRoles: [...request.dataRoles] });
+}
+
+async function rollbackInitialReservations(
+  env: Env,
+  publication: AccountDirectoryPublication,
+  dependencies: InitialAccountDirectoryWriteDependencies,
+  now: number
+): Promise<void> {
+  await releaseInitialIdentifiers(env, publication, dependencies, now);
+  await releaseInitialAccountRouteAllocation(env, publication);
+}
+
 export async function executeInitialAccountDirectoryWrite(
   env: Env,
   input: InitialAccountDirectoryPublicationInput,
@@ -260,7 +353,14 @@ export async function executeInitialAccountDirectoryWrite(
   }
   const publication = await buildInitialAccountDirectoryPublication(env, input);
   const targets = await resolveInitialAccountDirectoryWriteTargets(env, publication);
-  await reserveInitialIdentifiers(env, publication, dependencies, now);
+  try {
+    await reserveInitialIdentifiers(env, publication, dependencies, now);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'directory_identifier_reservation_conflict') {
+      await rollbackInitialReservations(env, publication, dependencies, now);
+    }
+    throw error;
+  }
   const tenantCoreUsers = ensureDatabaseAdapter(
     targets.tenantCoreUsers,
     'account-directory-tenant-core-users'
@@ -271,6 +371,7 @@ export async function executeInitialAccountDirectoryWrite(
     tenantPii: ensureDatabaseAdapter(targets.tenantPii, 'account-directory-tenant-pii'),
     residencyPartition: targets.residencyPartition,
   });
+  await commitInitialAccountRouteAllocation(env, publication);
   await markAccountDirectoryPublicationReady(tenantCoreUsers, publication.operationId, now);
   return {
     publication,
@@ -297,6 +398,14 @@ export async function executeDurableInitialAccountDirectoryWrite(
     now,
   });
   if (operation.status === 'blocked' || operation.status === 'canceled') {
+    if (
+      operation.status === 'blocked' &&
+      operation.lastErrorCode === 'directory_identifier_reservation_conflict' &&
+      operation.publication
+    ) {
+      await rollbackInitialReservations(env, operation.publication, dependencies, now);
+      throw new Error('directory_identifier_reservation_conflict');
+    }
     throw new Error(`account_creation_operation_${operation.status}`);
   }
   let publication = operation.publication;
@@ -318,6 +427,7 @@ export async function executeDurableInitialAccountDirectoryWrite(
     );
   }
   if (operation.status === 'succeeded') {
+    await commitInitialAccountRouteAllocation(env, publication);
     return {
       operation,
       publication,
@@ -335,7 +445,20 @@ export async function executeDurableInitialAccountDirectoryWrite(
     'account-directory-tenant-core-users'
   );
   if (['preparing', 'reserved', 'writing'].includes(operation.status)) {
-    await reserveInitialIdentifiers(env, publication, dependencies, now);
+    try {
+      await reserveInitialIdentifiers(env, publication, dependencies, now);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'directory_identifier_reservation_conflict') {
+        await dependencies.operationRepository.recordDirectoryOutcome({
+          publication,
+          outcome: 'blocked',
+          now,
+          errorCode: 'directory_identifier_reservation_conflict',
+        });
+        await rollbackInitialReservations(env, publication, dependencies, now);
+      }
+      throw error;
+    }
   }
   if (operation.status === 'preparing') {
     operation = await dependencies.operationRepository.transition(operation, 'reserved', now);
@@ -356,6 +479,9 @@ export async function executeDurableInitialAccountDirectoryWrite(
     log.info('Durable account authoritative write completed', {
       stage: 'authoritative_write_completed',
     });
+    log.info('Account route allocation commit started', { stage: 'allocation_commit_started' });
+    await commitInitialAccountRouteAllocation(env, publication);
+    log.info('Account route allocation commit completed', { stage: 'allocation_commit_completed' });
     log.info('Directory outbox ready transition started', { stage: 'outbox_ready_started' });
     await markAccountDirectoryPublicationReady(tenantCoreUsers, publication.operationId, now);
     log.info('Directory outbox ready transition completed', { stage: 'outbox_ready_completed' });

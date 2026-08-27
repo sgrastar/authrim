@@ -1052,8 +1052,15 @@ export async function executePhase1Harness(input: {
       flag: 'wx',
     }
   );
-  const report = buildPhase1Report({ config: input.config, runner, integrity, runId: id });
   const controlEvents = await readJsonlEvidence(controlEventsPath);
+  const report = buildPhase1Report({
+    config: input.config,
+    runner,
+    integrity,
+    runId: id,
+    baseline,
+    controlEvents,
+  });
   const timelineSvg = buildPhase1TimelineSvg({
     baseline,
     controlEvents,
@@ -1070,6 +1077,11 @@ export async function executePhase1Harness(input: {
       }
     ),
     writeFile(resolve(runDirectory, 'summary.md'), report.markdown, { mode: 0o600, flag: 'wx' }),
+    writeFile(
+      resolve(runDirectory, 'provisioning-evidence.json'),
+      `${JSON.stringify(report.summary.provisioning, null, 2)}\n`,
+      { mode: 0o600, flag: 'wx' }
+    ),
     writeFile(resolve(runDirectory, 'timeline.svg'), timelineSvg, { mode: 0o600, flag: 'wx' }),
     writeFile(
       resolve(runDirectory, 'cleanup.json'),

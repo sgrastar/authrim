@@ -124,4 +124,41 @@ export class InitialAccountIdentifierReservationService {
 
     return { reservedCount: reservable.length };
   }
+
+  async release(value: AccountDirectoryPublication): Promise<{ releasedCount: number }> {
+    const publication = await validateAccountDirectoryPublication(value);
+    const now = this.dependencies.now();
+    if (!Number.isSafeInteger(now) || now < 1) {
+      throw new Error('directory_identifier_reservation_time_invalid');
+    }
+    let releasedCount = 0;
+    for (const index of publication.indexes.filter((entry) => entry.indexKind !== 'account_id')) {
+      const lookup = primary(await this.dependencies.lookupForBucket(index.virtualBucket));
+      const result = await lookup
+        .prepare(
+          `UPDATE lookup_identifier_reservations
+              SET reservation_state = 'released', lease_expires_at = NULL,
+                  released_at = COALESCE(released_at, ?), updated_at = ?
+            WHERE virtual_bucket = ? AND tenant_id = ? AND index_kind = ?
+              AND normalization_version = ? AND hmac_key_generation = ?
+              AND identifier_blind_digest = ? AND account_id = ? AND operation_id = ?
+              AND reservation_state = 'reserved'`
+        )
+        .bind(
+          now,
+          now,
+          index.virtualBucket,
+          publication.tenantId,
+          index.indexKind,
+          index.normalizationVersion,
+          index.hmacKeyGeneration,
+          index.digest,
+          publication.accountId,
+          publication.operationId
+        )
+        .run();
+      releasedCount += Number(result.meta?.changes ?? 0);
+    }
+    return { releasedCount };
+  }
 }

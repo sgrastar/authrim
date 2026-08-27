@@ -267,6 +267,27 @@ describe('AccountDirectoryCoordinator', () => {
     );
   });
 
+  it('releases only reservations owned by the failed operation and replays idempotently', async () => {
+    await reservations().reserve(publication);
+
+    await expect(reservations().release(publication)).resolves.toEqual({ releasedCount: 1 });
+    await expect(reservations().release(publication)).resolves.toEqual({ releasedCount: 0 });
+
+    expect(
+      lookupDatabase
+        .prepare(
+          `SELECT reservation_state, lease_expires_at, released_at, committed_at
+             FROM lookup_identifier_reservations`
+        )
+        .get()
+    ).toEqual({
+      reservation_state: 'released',
+      lease_expires_at: null,
+      released_at: 90,
+      committed_at: null,
+    });
+  });
+
   it('resumes forward after response loss at final account activation', async () => {
     await reservations().reserve(publication);
     tenant.failOnceFor = "SET directory_publication_state = 'active'";

@@ -1833,6 +1833,26 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  commitAccountRoute(input: unknown) {
+    return rpcResult(() => {
+      const caller = authorizedCaller(this.ctx.props);
+      return new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).commit(input, caller.environmentId);
+    });
+  }
+
+  releaseAccountRoute(input: unknown) {
+    return rpcResult(() => {
+      const caller = authorizedCaller(this.ctx.props);
+      return new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).release(input, caller.environmentId);
+    });
+  }
+
   listAccountDirectorySourceShards(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);

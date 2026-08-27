@@ -82,6 +82,7 @@ import {
 } from './account-directory-removal-producer';
 import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -2766,12 +2767,7 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const createUser = body.create_user !== false;
     const tenantMetadata = getTenantMetadataContextFromHono(c);
-    const legacyStorageProfileId = (
-      tenantMetadata as (typeof tenantMetadata & { storageProfileId?: string }) | undefined
-    )?.storageProfileId;
-    const tenantD1 =
-      tenantMetadata?.route?.allocationScope === 'tenant_exclusive' ||
-      legacyStorageProfileId === 'builtin:storage:tenant-d1';
+    const tenantD1 = usesRoutedAccountStorage(tenantMetadata);
     const effectiveStorageProfile = {
       id: tenantD1 ? 'builtin:storage:tenant-d1' : 'builtin:storage:standard',
       sessionColdPersistence: tenantD1 ? 'disabled' : 'enabled',

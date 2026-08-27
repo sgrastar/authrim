@@ -197,6 +197,43 @@ export interface Phase1IntegrityResult {
   passed: boolean;
 }
 
+export interface Phase1LookupForecastDecisionEvidence {
+  observedAt: string;
+  decisionGeneration: number | null;
+  observedActiveRouteCount: number | null;
+  observedSuccessfulPublicationCount: number | null;
+  sampleRateMicrorowsPerSecond: number | null;
+  ewmaRateMicrorowsPerSecond: number | null;
+  forecastHorizonSeconds: number | null;
+  forecastNewRouteCount: number | null;
+  projectedActiveRouteCount: number | null;
+  usableCapacityRouteCount: number | null;
+}
+
+export interface Phase1ProvisioningEventEvidence {
+  desiredResourceId: string;
+  operationId: string | null;
+  dataRole: string;
+  deterministicName: string;
+  decisionAt: string;
+  readyAt: string | null;
+  decisionToReadyMs: number | null;
+  timingSource: 'control_state' | 'observer';
+  lookupForecast: Phase1LookupForecastDecisionEvidence | null;
+}
+
+export interface Phase1ProvisioningEvidence {
+  events: Phase1ProvisioningEventEvidence[];
+  readyLatencyMs: {
+    count: number;
+    minimum: number | null;
+    p50: number | null;
+    p95: number | null;
+    maximum: number | null;
+    mean: number | null;
+  };
+}
+
 export interface Phase1Summary {
   schemaVersion: 1;
   runId: string;
@@ -216,6 +253,7 @@ export interface Phase1Summary {
     eventualSuccessRate: number;
     immediate201Rate: number;
   };
+  provisioning: Phase1ProvisioningEvidence;
   integrity: Phase1IntegrityResult;
 }
 

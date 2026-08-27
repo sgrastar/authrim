@@ -1447,6 +1447,10 @@ export interface ControlServiceBinding {
   allocateAccountRoute(
     request: ControlAccountRouteAllocationRequest
   ): Promise<ControlAccountRouteAllocationResult>;
+  commitAccountRoute?(
+    request: ControlAccountRouteAllocationRequest
+  ): Promise<ControlAccountRouteAllocationResult>;
+  releaseAccountRoute?(request: ControlAccountRouteAllocationRequest): Promise<void>;
   listAccountDirectorySourceShards(input: {
     afterShardId: string | null;
     limit: number;

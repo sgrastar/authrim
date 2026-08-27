@@ -327,6 +327,99 @@ describe('account route allocation', () => {
     });
   });
 
+  it('commits both account route reservations atomically and replays idempotently', async () => {
+    const allocated = await service.allocate(request(), 'env-test');
+    const committed = await service.commit(request(), 'env-test');
+    expect(committed).toEqual(allocated);
+    expect(await service.commit(request(), 'env-test')).toEqual(committed);
+    expect(
+      database
+        .prepare(
+          `SELECT data_role, reservation_state, committed_at
+             FROM control_tenant_shard_allocations
+            ORDER BY data_role`
+        )
+        .all()
+    ).toEqual([
+      {
+        data_role: 'tenant_core/users',
+        reservation_state: 'committed',
+        committed_at: 100,
+      },
+      { data_role: 'tenant_pii', reservation_state: 'committed', committed_at: 100 },
+    ]);
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM control_audit_events`).get()).toEqual({
+      count: 4,
+    });
+  });
+
+  it('releases both uncommitted reservations atomically and restores capacity once', async () => {
+    await service.allocate(request(), 'env-test');
+
+    await service.release(request(), 'env-test');
+    await service.release(request(), 'env-test');
+
+    expect(
+      database
+        .prepare(
+          `SELECT data_role, reservation_state, capacity_counted_at
+             FROM control_tenant_shard_allocations ORDER BY data_role`
+        )
+        .all()
+    ).toEqual([
+      {
+        data_role: 'tenant_core/users',
+        reservation_state: 'released',
+        capacity_counted_at: null,
+      },
+      { data_role: 'tenant_pii', reservation_state: 'released', capacity_counted_at: null },
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT shard_id, allocated_account_count FROM control_shard_capacity
+            WHERE shard_id IN ('users-b', 'pii-a') ORDER BY shard_id`
+        )
+        .all()
+    ).toEqual([
+      { shard_id: 'pii-a', allocated_account_count: 1 },
+      { shard_id: 'users-b', allocated_account_count: 10 },
+    ]);
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM control_audit_events`).get()).toEqual({
+      count: 4,
+    });
+    await expect(service.commit(request(), 'env-test')).rejects.toThrow(
+      'control_account_allocation_commit_not_found'
+    );
+    await expect(service.allocate(request(), 'env-test')).rejects.toThrow(
+      'control_account_allocation_idempotency_conflict'
+    );
+  });
+
+  it('refuses to release committed account routes', async () => {
+    await service.allocate(request(), 'env-test');
+    await service.commit(request(), 'env-test');
+
+    await expect(service.release(request(), 'env-test')).rejects.toThrow(
+      'control_account_allocation_release_committed'
+    );
+  });
+
+  it('fails closed when an account route commit does not match the reservation idempotency key', async () => {
+    await service.allocate(request(), 'env-test');
+    await expect(
+      service.commit(request({ idempotencyKey: 'different-account-operation' }), 'env-test')
+    ).rejects.toThrow('control_account_allocation_commit_not_found');
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_tenant_shard_allocations
+            WHERE reservation_state = 'committed'`
+        )
+        .get()
+    ).toEqual({ count: 0 });
+  });
+
   it('rejects idempotency reuse for another blind account digest', async () => {
     await service.allocate(request(), 'env-test');
     await expect(

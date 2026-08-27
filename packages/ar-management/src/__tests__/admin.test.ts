@@ -749,13 +749,14 @@ function createMockContext(options: {
   const defaultTenantMetadata = options.tenantMetadataContext ?? {
     tenantId: options.tenantId ?? 'default',
     coreDb: mockDB,
-    route: {
-      allocationScope:
-        runtimeStorageProfileId === 'builtin:storage:tenant-d1'
-          ? 'tenant_exclusive'
-          : 'shared_pool',
-      source: mockDB,
-    },
+    ...(runtimeStorageProfileId === 'builtin:storage:tenant-d1'
+      ? {
+          route: {
+            allocationScope: 'tenant_exclusive',
+            source: mockDB,
+          },
+        }
+      : {}),
   };
 
   // Store context values (simulating Hono's context store)
@@ -1036,6 +1037,50 @@ describe('Admin API Handlers', () => {
       });
       expect(resolveAccountDataContextByIdentifier).not.toHaveBeenCalled();
       expect(c.get('accountDataContext')).toBeUndefined();
+      expect(storeChallengeRpc).toHaveBeenCalledOnce();
+    });
+
+    it('uses Lookup routing for shared-pool storage', async () => {
+      const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'shared@example.com', create_user: false },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          route: { allocationScope: 'shared_pool' },
+        },
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
+      });
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => ({
+        tenantId: 'default',
+        accountId: 'account-shared',
+        legacyUserId: 'user-shared',
+        coreDb: context.env.DB,
+        user: {
+          id: 'user-shared',
+          email: 'shared@example.com',
+          name: 'Shared User',
+          active: 1,
+          email_verified: 0,
+          account_type: 'end_user',
+          created_at: '2023-11-14T22:13:20.000Z',
+        },
+      }));
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
+        indexKind: 'email_exact',
+        identifier: 'shared@example.com',
+        trustedEmail: 'shared@example.com',
+      });
       expect(storeChallengeRpc).toHaveBeenCalledOnce();
     });
 
@@ -1686,7 +1731,7 @@ describe('Admin API Handlers', () => {
       expect(JSON.stringify(body)).not.toContain('coreBindingRef');
     });
 
-    it('uses exact routed search from server-owned tenant metadata without runtime sources', async () => {
+    it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
       const userId = 'user-metadata-route';
       const createdAt = Date.UTC(2026, 6, 10, 10, 40, 0);
       canonicalRuntimeUsers.set(userId, {
@@ -1723,8 +1768,11 @@ describe('Admin API Handlers', () => {
           dbPII: pii,
           tenantMetadataContext: {
             tenantId: 'default',
-            storageProfileId: 'builtin:storage:tenant-d1',
             coreDb: core,
+            route: {
+              allocationScope: 'shared_pool',
+              source: core,
+            },
           },
         })
       );

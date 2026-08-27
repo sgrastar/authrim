@@ -9,6 +9,8 @@ import {
   type Phase1HarnessConfig,
   type Phase1Baseline,
   type Phase1IntegrityResult,
+  type Phase1ProvisioningEvidence,
+  type Phase1ProvisioningEventEvidence,
   type Phase1Summary,
 } from './schemas.js';
 import type { Phase1RunnerResult } from './run.js';
@@ -19,6 +21,167 @@ function percent(value: number): string {
 
 function numeric(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function controlTimestamp(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return null;
+  const milliseconds = value >= 100_000_000_000 ? value : value * 1_000;
+  return Number.isSafeInteger(milliseconds) ? milliseconds : null;
+}
+
+function observedTimestamp(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const epoch = Date.parse(value);
+  return Number.isFinite(epoch) ? epoch : null;
+}
+
+function isoTimestamp(epoch: number): string {
+  return new Date(epoch).toISOString();
+}
+
+function dataRole(value: Record<string, unknown>): string {
+  if (typeof value.desired_spec_json === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value.desired_spec_json);
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        typeof (parsed as Record<string, unknown>).data_role === 'string'
+      ) {
+        return String((parsed as Record<string, unknown>).data_role);
+      }
+    } catch {
+      // The verifier reports malformed desired-resource state separately.
+    }
+  }
+  const deterministicName = value.deterministic_name;
+  if (typeof deterministicName === 'string') {
+    if (deterministicName.includes('-tenant-core-users-')) return 'tenant_core/users';
+    if (deterministicName.includes('-tenant-pii-')) return 'tenant_pii';
+    if (deterministicName.includes('-tenant-lookup-')) return 'lookup';
+  }
+  return typeof value.resource_kind === 'string' ? value.resource_kind : 'unknown';
+}
+
+function percentile(sorted: readonly number[], fraction: number): number | null {
+  if (sorted.length === 0) return null;
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+}
+
+export function buildPhase1ProvisioningEvidence(input: {
+  baseline?: Phase1Baseline;
+  controlEvents?: Array<Record<string, unknown>>;
+}): Phase1ProvisioningEvidence {
+  const baselineResources = new Set(
+    input.baseline?.control.desiredResources.map((row) => String(row.desired_resource_id)) ?? []
+  );
+  const forecastsByOperation = new Map<string, Phase1ProvisioningEventEvidence['lookupForecast']>();
+  const resources = new Map<
+    string,
+    {
+      operationId: string | null;
+      dataRole: string;
+      deterministicName: string;
+      decisionAt: number;
+      readyAt: number | null;
+      timingSource: 'control_state' | 'observer';
+    }
+  >();
+  const events = [...(input.controlEvents ?? [])].sort((left, right) =>
+    String(left.observedAt).localeCompare(String(right.observedAt))
+  );
+  for (const event of events) {
+    const current =
+      event.current && typeof event.current === 'object' && !Array.isArray(event.current)
+        ? (event.current as Record<string, unknown>)
+        : null;
+    const observedAt = observedTimestamp(event.observedAt);
+    if (!current || observedAt === null) continue;
+    if (event.entity === 'lookupForecasts') {
+      const operationId = current.requested_operation_id;
+      if (typeof operationId !== 'string' || forecastsByOperation.has(operationId)) continue;
+      forecastsByOperation.set(operationId, {
+        observedAt: isoTimestamp(observedAt),
+        decisionGeneration: numeric(current.decision_generation),
+        observedActiveRouteCount: numeric(current.observed_active_route_count),
+        observedSuccessfulPublicationCount: numeric(current.observed_successful_publication_count),
+        sampleRateMicrorowsPerSecond: numeric(current.sample_rate_microrows_per_second),
+        ewmaRateMicrorowsPerSecond: numeric(current.ewma_rate_microrows_per_second),
+        forecastHorizonSeconds: numeric(current.forecast_horizon_seconds),
+        forecastNewRouteCount: numeric(current.forecast_new_route_count),
+        projectedActiveRouteCount: numeric(current.projected_active_route_count),
+        usableCapacityRouteCount: numeric(current.usable_capacity_route_count),
+      });
+      continue;
+    }
+    if (event.entity !== 'desiredResources') continue;
+    const desiredResourceId = current.desired_resource_id;
+    if (typeof desiredResourceId !== 'string' || baselineResources.has(desiredResourceId)) continue;
+    const existing = resources.get(desiredResourceId);
+    const internalCreatedAt = controlTimestamp(current.created_at);
+    const decisionAt = existing?.decisionAt ?? internalCreatedAt ?? observedAt;
+    const timingSource =
+      existing?.timingSource ?? (internalCreatedAt === null ? 'observer' : 'control_state');
+    const internalReadyAt =
+      current.provisioning_state === 'ready' ? controlTimestamp(current.updated_at) : null;
+    resources.set(desiredResourceId, {
+      operationId:
+        existing?.operationId ??
+        (typeof current.origin_operation_id === 'string' ? current.origin_operation_id : null),
+      dataRole: existing?.dataRole ?? dataRole(current),
+      deterministicName:
+        existing?.deterministicName ??
+        (typeof current.deterministic_name === 'string' ? current.deterministic_name : 'unknown'),
+      decisionAt,
+      readyAt:
+        existing?.readyAt ??
+        (current.provisioning_state === 'ready' ? (internalReadyAt ?? observedAt) : null),
+      timingSource,
+    });
+  }
+  const provisioningEvents = [...resources.entries()]
+    .map(
+      ([desiredResourceId, resource]): Phase1ProvisioningEventEvidence => ({
+        desiredResourceId,
+        operationId: resource.operationId,
+        dataRole: resource.dataRole,
+        deterministicName: resource.deterministicName,
+        decisionAt: isoTimestamp(resource.decisionAt),
+        readyAt: resource.readyAt === null ? null : isoTimestamp(resource.readyAt),
+        decisionToReadyMs:
+          resource.readyAt === null ? null : Math.max(0, resource.readyAt - resource.decisionAt),
+        timingSource: resource.timingSource,
+        lookupForecast:
+          resource.operationId === null
+            ? null
+            : (forecastsByOperation.get(resource.operationId) ?? null),
+      })
+    )
+    .sort(
+      (left, right) =>
+        left.decisionAt.localeCompare(right.decisionAt) ||
+        left.desiredResourceId.localeCompare(right.desiredResourceId)
+    );
+  const durations = provisioningEvents
+    .flatMap((event) => (event.decisionToReadyMs === null ? [] : [event.decisionToReadyMs]))
+    .sort((left, right) => left - right);
+  const evidence: Phase1ProvisioningEvidence = {
+    events: provisioningEvents,
+    readyLatencyMs: {
+      count: durations.length,
+      minimum: durations[0] ?? null,
+      p50: percentile(durations, 0.5),
+      p95: percentile(durations, 0.95),
+      maximum: durations.at(-1) ?? null,
+      mean:
+        durations.length === 0
+          ? null
+          : Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length),
+    },
+  };
+  assertPhase1EvidenceIsSecretFree(evidence);
+  return evidence;
 }
 
 export function buildPhase1TimelineSvg(input: {
@@ -166,6 +329,8 @@ export function buildPhase1Report(input: {
   runner: Phase1RunnerResult;
   integrity: Phase1IntegrityResult;
   runId: string;
+  baseline?: Phase1Baseline;
+  controlEvents?: Array<Record<string, unknown>>;
 }): { summary: Phase1Summary; markdown: string } {
   const eventualSuccessRate =
     input.runner.metrics.scheduled === 0
@@ -176,6 +341,10 @@ export function buildPhase1Report(input: {
   ).length;
   const immediate201Rate =
     input.runner.metrics.scheduled === 0 ? 0 : immediate201 / input.runner.metrics.scheduled;
+  const provisioning = buildPhase1ProvisioningEvidence({
+    baseline: input.baseline,
+    controlEvents: input.controlEvents,
+  });
   const summary: Phase1Summary = {
     schemaVersion: PHASE1_SCHEMA_VERSION,
     runId: input.runId,
@@ -188,6 +357,7 @@ export function buildPhase1Report(input: {
       eventualSuccessRate,
       immediate201Rate,
     },
+    provisioning,
     integrity: input.integrity,
   };
   assertPhase1EvidenceIsSecretFree(summary);
@@ -232,6 +402,41 @@ Finished: ${input.runner.finishedAt}
 | Capacity 503 responses retried | ${input.runner.metrics.capacity503} |
 | Server 5xx responses retried | ${input.runner.metrics.server5xx} |
 | Total retries | ${input.runner.metrics.retries} |
+
+## Provisioning timing evidence
+
+Ready latency count: ${provisioning.readyLatencyMs.count}<br>
+Ready latency min / p50 / p95 / max: ${[
+    provisioning.readyLatencyMs.minimum,
+    provisioning.readyLatencyMs.p50,
+    provisioning.readyLatencyMs.p95,
+    provisioning.readyLatencyMs.maximum,
+  ]
+    .map((value) => (value === null ? '-' : `${(value / 1_000).toFixed(3)}s`))
+    .join(' / ')}
+
+| Data role | Decision | Ready | Decision → ready | Predicted new routes | Projected / usable routes | Operation |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+${
+  provisioning.events.length === 0
+    ? '| _No new D1 resources observed_ | - | - | - | - | - | - |'
+    : provisioning.events
+        .map(
+          (event) =>
+            `| ${event.dataRole} | ${event.decisionAt} | ${event.readyAt ?? '-'} | ${
+              event.decisionToReadyMs === null
+                ? '-'
+                : `${(event.decisionToReadyMs / 1_000).toFixed(3)}s`
+            } | ${event.lookupForecast?.forecastNewRouteCount ?? '-'} | ${
+              event.lookupForecast
+                ? `${event.lookupForecast.projectedActiveRouteCount ?? '-'} / ${
+                    event.lookupForecast.usableCapacityRouteCount ?? '-'
+                  }`
+                : '-'
+            } | ${event.operationId ?? '-'} |`
+        )
+        .join('\n')
+}
 
 ## Integrity checks
 

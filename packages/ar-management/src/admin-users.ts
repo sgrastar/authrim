@@ -68,6 +68,7 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -88,14 +89,7 @@ type AdminRuntimeUserPII = {
 };
 
 function usesTenantD1Storage(c: Context<{ Bindings: Env }>): boolean {
-  const metadata = getTenantMetadataContextFromHono(c);
-  const legacyStorageProfileId = (
-    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
-  )?.storageProfileId;
-  return (
-    metadata?.route?.allocationScope === 'tenant_exclusive' ||
-    legacyStorageProfileId === 'builtin:storage:tenant-d1'
-  );
+  return usesRoutedAccountStorage(getTenantMetadataContextFromHono(c));
 }
 
 function resolveAdminPiiAdapter(

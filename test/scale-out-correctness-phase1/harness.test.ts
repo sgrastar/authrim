@@ -12,7 +12,7 @@ import {
 import { buildPhase1CleanupPlan } from './cleanup.js';
 import { evaluatePhase1Preflight } from './preflight.js';
 import { PHASE1_PREPARE_CONFIRMATION, preparePhase1Policy } from './prepare.js';
-import { buildPhase1Report } from './report.js';
+import { buildPhase1ProvisioningEvidence, buildPhase1Report } from './report.js';
 import { executePhase1Harness, runAccountCreation } from './run.js';
 import {
   PHASE1_EXECUTION_CONFIRMATION,
@@ -33,8 +33,10 @@ import {
   countRoleBoundaryCrossings,
   duplicateForecastDecisions,
   evaluateRoleProvisioningBound,
+  normalizePhase1EpochSeconds,
   recomputeLookupForecastTransition,
   reconcilePublicationCounterSeries,
+  verifyLookupForecastEvents,
   waitForPhase1Quiescence,
 } from './verify.js';
 
@@ -564,6 +566,17 @@ describe('Phase 1 evidence contracts', () => {
         eventualSuccessRate: 0,
         immediate201Rate: 0,
       },
+      provisioning: {
+        events: [],
+        readyLatencyMs: {
+          count: 0,
+          minimum: null,
+          p50: null,
+          p95: null,
+          maximum: null,
+          mean: null,
+        },
+      },
       integrity: {} as Phase1IntegrityResult,
     };
     expect(
@@ -794,7 +807,7 @@ describe('Phase 1 evidence contracts', () => {
           tenant_id: 'tenant-test',
           databaseId: index === 0 ? 1 : 2,
         }));
-        if (sql.includes('FROM users_core WHERE id IN')) {
+        if (sql.includes('FROM identity_accounts account')) {
           const expected = databaseId === 'core-db' ? 1 : 2;
           return queryResult(
             userRows
@@ -808,7 +821,7 @@ describe('Phase 1 evidence contracts', () => {
               }))
           );
         }
-        if (sql.includes('FROM users_pii WHERE id IN')) {
+        if (sql.includes("MAX(CASE WHEN value_key = 'email'")) {
           const expected = databaseId === 'pii-db' ? 1 : 2;
           const emailById = new Map([...createdUsers.entries()].map(([email, id]) => [id, email]));
           return queryResult(
@@ -819,8 +832,8 @@ describe('Phase 1 evidence contracts', () => {
                 if (!email) throw new Error('fixture_email_missing');
                 return {
                   ...row,
-                  email,
-                  preferred_username: `phase1-${sha256(email).slice(0, 24)}`,
+                  email_json: JSON.stringify(email),
+                  preferred_username_json: JSON.stringify(`phase1-${sha256(email).slice(0, 24)}`),
                 };
               })
           );
@@ -838,7 +851,10 @@ describe('Phase 1 evidence contracts', () => {
             })
           );
         }
-        if (sql.includes('COUNT(*) AS row_count FROM users_')) {
+        if (
+          sql.includes('COUNT(*) AS row_count FROM identity_accounts') ||
+          sql.includes('COUNT(DISTINCT owner_id) AS row_count')
+        ) {
           if (params.length !== 0 || sql.includes('WHERE tenant_id')) {
             throw new Error(`shared_shard_count_must_be_global:${databaseId}`);
           }
@@ -902,6 +918,9 @@ describe('Phase 1 evidence contracts', () => {
       readFile(resolve(execution.runDirectory, 'timeline.svg'), 'utf8')
     ).resolves.toContain('<svg');
     await expect(
+      readFile(resolve(execution.runDirectory, 'provisioning-evidence.json'), 'utf8')
+    ).resolves.toContain('readyLatencyMs');
+    await expect(
       readFile(resolve(execution.runDirectory, 'requests.jsonl'), 'utf8')
     ).resolves.toEqual(expect.any(String));
     await expect(
@@ -916,6 +935,7 @@ describe('Phase 1 evidence contracts', () => {
       'summary.json',
       'summary.md',
       'timeline.svg',
+      'provisioning-evidence.json',
       'cleanup.json',
     ]) {
       await rm(resolve(execution.runDirectory, artifact));
@@ -1370,6 +1390,42 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
     ).toEqual({ decreases: 1, deltaMismatches: 1, duplicateEventIds: 1 });
   });
 
+  it('ignores state-only and observer-gap forecast events while rejecting time regressions', () => {
+    const previous = {
+      lookup_capacity_domain_id: 'lookup:default',
+      observed_at: 100,
+      observed_successful_publication_count: 10,
+      capacity_unit_count: 1,
+    };
+    const event = (observedAt: number, sampleInterval: number) => ({
+      entity: 'lookupForecasts',
+      previous,
+      current: {
+        ...previous,
+        observed_at: observedAt,
+        sample_interval_seconds: sampleInterval,
+      },
+    });
+    expect(
+      verifyLookupForecastEvents({
+        events: [event(100, 10), event(130, 10)],
+        policy: {},
+      })
+    ).toBe(0);
+    expect(
+      verifyLookupForecastEvents({
+        events: [event(99, 10)],
+        policy: {},
+      })
+    ).toBe(1);
+  });
+
+  it('normalizes Control operation timestamps expressed in seconds or milliseconds', () => {
+    expect(normalizePhase1EpochSeconds(1_787_770_581)).toBe(1_787_770_581);
+    expect(normalizePhase1EpochSeconds(1_787_770_581_899)).toBe(1_787_770_581);
+    expect(normalizePhase1EpochSeconds('1787770581899')).toBeNull();
+  });
+
   it('detects duplicate forecast idempotency and produces deterministic headline metrics', () => {
     const current = snapshot();
     current.operations = [
@@ -1437,6 +1493,79 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
     });
     expect(report.summary).toMatchObject({ passed: true, metrics: { immediate201Rate: 1 } });
     expect(report.markdown).toContain('Account creation eventual success | 100.000%');
+  });
+
+  it('records forecast-at-decision and decision-to-ready timing for public evidence', () => {
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control: snapshot(),
+      provider: provider(),
+      runId: 'run-provisioning-evidence',
+      now: new Date('2026-08-27T00:00:00.000Z'),
+    });
+    const desired = {
+      desired_resource_id: 'desired-lookup-new',
+      resource_kind: 'd1',
+      deterministic_name: 'scaleout-authrim-tenant-lookup-default-db-new',
+      origin_operation_id: 'operation-lookup-new',
+      created_at: 1_787_770_000,
+      updated_at: 1_787_770_000,
+      provisioning_state: 'requested',
+    };
+    const evidence = buildPhase1ProvisioningEvidence({
+      baseline,
+      controlEvents: [
+        {
+          entity: 'lookupForecasts',
+          observedAt: '2026-08-27T00:00:00.000Z',
+          current: {
+            requested_operation_id: 'operation-lookup-new',
+            decision_generation: 4,
+            observed_active_route_count: 90,
+            observed_successful_publication_count: 120,
+            sample_rate_microrows_per_second: 2_000_000,
+            ewma_rate_microrows_per_second: 500_000,
+            forecast_horizon_seconds: 300,
+            forecast_new_route_count: 150,
+            projected_active_route_count: 240,
+            usable_capacity_route_count: 100,
+          },
+        },
+        {
+          entity: 'desiredResources',
+          observedAt: '2026-08-27T00:00:01.000Z',
+          current: desired,
+        },
+        {
+          entity: 'desiredResources',
+          observedAt: '2026-08-27T00:00:09.000Z',
+          current: {
+            ...desired,
+            provisioning_state: 'ready',
+            updated_at: 1_787_770_008,
+          },
+        },
+      ],
+    });
+    expect(evidence.readyLatencyMs).toMatchObject({
+      count: 1,
+      minimum: 8_000,
+      p50: 8_000,
+      p95: 8_000,
+      maximum: 8_000,
+    });
+    expect(evidence.events).toHaveLength(1);
+    expect(evidence.events[0]).toMatchObject({
+      desiredResourceId: 'desired-lookup-new',
+      dataRole: 'lookup',
+      decisionToReadyMs: 8_000,
+      timingSource: 'control_state',
+    });
+    expect(evidence.events[0]?.lookupForecast).toMatchObject({
+      forecastNewRouteCount: 150,
+      projectedActiveRouteCount: 240,
+      usableCapacityRouteCount: 100,
+    });
   });
 
   it('detects Core/PII over-provisioning beyond required capacity and ready spares', () => {

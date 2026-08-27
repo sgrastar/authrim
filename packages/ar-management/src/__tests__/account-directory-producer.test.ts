@@ -104,7 +104,7 @@ function writableD1(order: string[]) {
 }
 
 function env() {
-  const allocateAccountRoute = vi.fn(async () => ({
+  const allocationResult = {
     tenantId: 'tenant-a',
     residencyPolicyId: 'policy-a',
     targets: [
@@ -125,7 +125,10 @@ function env() {
         routeGeneration: 5,
       },
     ],
-  }));
+  };
+  const allocateAccountRoute = vi.fn(async () => allocationResult);
+  const commitAccountRoute = vi.fn(async () => allocationResult);
+  const releaseAccountRoute = vi.fn(async () => undefined);
   const ensureTenantShardCapacity = vi.fn(
     async ({
       dataRole,
@@ -155,9 +158,16 @@ function env() {
       LOOKUP_HMAC_KEY_SLOT_A: HMAC_KEY,
       TENANT_RUNTIME_REGISTRY: { get: async (key: string) => registry.get(key) ?? null },
       TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: publicJwks,
-      CONTROL: { allocateAccountRoute, ensureTenantShardCapacity },
+      CONTROL: {
+        allocateAccountRoute,
+        commitAccountRoute,
+        releaseAccountRoute,
+        ensureTenantShardCapacity,
+      },
     } as unknown as Env,
     allocateAccountRoute,
+    commitAccountRoute,
+    releaseAccountRoute,
     ensureTenantShardCapacity,
   };
 }
@@ -469,7 +479,7 @@ describe('account directory producer', () => {
   });
 
   it('runs reservation, authoritative write, ready transition, and immediate RPC in order', async () => {
-    const { workerEnv } = env();
+    const { workerEnv, commitAccountRoute } = env();
     const order: string[] = [];
     const core = writableD1(order);
     const pii = writableD1(order);
@@ -487,6 +497,31 @@ describe('account directory producer', () => {
           };
         }),
       },
+    });
+    commitAccountRoute.mockImplementation(async () => {
+      order.push('commit');
+      return {
+        tenantId: 'tenant-a',
+        residencyPolicyId: 'policy-a',
+        targets: [
+          {
+            allocationId: 'allocation-users',
+            dataRole: 'tenant_core/users',
+            residencyPartition: 'jp',
+            shardId: 'users-jp-1',
+            bindingRef: 'TEST_TDB_USERS_JP_1',
+            routeGeneration: 3,
+          },
+          {
+            allocationId: 'allocation-pii',
+            dataRole: 'tenant_pii',
+            residencyPartition: 'jp',
+            shardId: 'pii-jp-1',
+            bindingRef: 'TEST_TDB_PII_JP_1',
+            routeGeneration: 5,
+          },
+        ],
+      };
     });
 
     const result = await executeInitialAccountDirectoryWrite(
@@ -519,11 +554,60 @@ describe('account directory producer', () => {
       accountId: 'account-a',
       operationId: 'operation-account-a',
     });
-    expect(order).toEqual(['reserve', 'write', 'ready', 'publish']);
+    expect(order).toEqual(['reserve', 'write', 'commit', 'ready', 'publish']);
+    expect(commitAccountRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        dataRoles: ['tenant_core/users', 'tenant_pii'],
+      })
+    );
+    expect(JSON.stringify(commitAccountRoute.mock.calls)).not.toContain('person@example.com');
+  });
+
+  it('does not publish a prepared outbox when account route commit fails', async () => {
+    const { workerEnv, commitAccountRoute } = env();
+    const order: string[] = [];
+    const core = writableD1(order);
+    const pii = writableD1(order);
+    const publishAccountDirectory = vi.fn();
+    Object.assign(workerEnv as unknown as Record<string, unknown>, {
+      TEST_TDB_USERS_JP_1: core.binding,
+      TEST_TDB_PII_JP_1: pii.binding,
+      ACCOUNT_DIRECTORY: { publishAccountDirectory },
+    });
+    commitAccountRoute.mockRejectedValueOnce(new Error('control_commit_unavailable'));
+
+    await expect(
+      executeInitialAccountDirectoryWrite(
+        workerEnv,
+        {
+          tenantId: 'tenant-a',
+          accountId: 'account-a',
+          email: 'person@example.com',
+          residencyPolicyId: 'policy-a',
+          residencyPartition: 'jp',
+          idempotencyKey: 'create-account-a',
+          operationId: 'operation-account-a',
+        },
+        {
+          now: () => 100,
+          reserveIdentifiers: async () => {
+            order.push('reserve');
+          },
+          writeAuthoritative: async () => {
+            order.push('write');
+            core.setOutboxPrepared();
+          },
+        }
+      )
+    ).rejects.toThrow('control_commit_unavailable');
+    expect(core.getOutboxStatus()).toBe('prepared');
+    expect(order).toEqual(['reserve', 'write']);
+    expect(publishAccountDirectory).not.toHaveBeenCalled();
   });
 
   it('never writes authoritative account data when identifier reservation fails', async () => {
-    const { workerEnv } = env();
+    const { workerEnv, releaseAccountRoute } = env();
     const order: string[] = [];
     const core = writableD1(order);
     const pii = writableD1(order);
@@ -555,10 +639,95 @@ describe('account directory producer', () => {
     ).rejects.toThrow('directory_identifier_reservation_conflict');
     expect(order).toEqual([]);
     expect(core.getOutboxStatus()).toBeNull();
+    expect(releaseAccountRoute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        dataRoles: ['tenant_core/users', 'tenant_pii'],
+      })
+    );
+  });
+
+  it('blocks a durable conflict after rolling back identifier and route reservations', async () => {
+    const { workerEnv, releaseAccountRoute } = env();
+    const core = writableD1([]);
+    const pii = writableD1([]);
+    Object.assign(workerEnv as unknown as Record<string, unknown>, {
+      TEST_TDB_USERS_JP_1: core.binding,
+      TEST_TDB_PII_JP_1: pii.binding,
+    });
+    let operation: AccountCreationOperation = {
+      operationId: 'operation-conflict',
+      tenantId: 'tenant-a',
+      actorId: 'admin-a',
+      idempotencyKey: 'request-conflict',
+      allocationIdempotencyKey: `account-create:${'c'.repeat(64)}`,
+      requestHash: 'd'.repeat(64),
+      userId: 'user-conflict',
+      accountId: 'account:user-conflict',
+      status: 'preparing',
+      publication: null,
+    };
+    const recordDirectoryOutcome = vi.fn(async () => {
+      operation = {
+        ...operation,
+        status: 'blocked',
+        lastErrorCode: 'directory_identifier_reservation_conflict',
+      };
+      return operation;
+    });
+    const releaseIdentifiers = vi.fn(async () => undefined);
+    const dependencies = {
+      operationRepository: {
+        acquire: vi.fn(async () => operation),
+        recordPublication: vi.fn(
+          async (_current: AccountCreationOperation, publication: AccountDirectoryPublication) => {
+            operation = { ...operation, publication };
+            return operation;
+          }
+        ),
+        recordDirectoryOutcome,
+      } as never,
+      now: () => 100,
+      reserveIdentifiers: vi.fn(async () => {
+        throw new Error('directory_identifier_reservation_conflict');
+      }),
+      releaseIdentifiers,
+      writeAuthoritative: vi.fn(),
+    };
+    const input = {
+      tenantId: 'tenant-a',
+      actorId: 'admin-a',
+      idempotencyKey: 'request-conflict',
+      requestHash: 'd'.repeat(64),
+      candidateOperationId: 'operation-conflict',
+      candidateUserId: 'user-conflict',
+      email: 'duplicate@example.com',
+      residencyPolicyId: 'policy-a',
+      residencyPartition: 'jp',
+    };
+
+    await expect(
+      executeDurableInitialAccountDirectoryWrite(workerEnv, input, dependencies)
+    ).rejects.toThrow('directory_identifier_reservation_conflict');
+    expect(releaseIdentifiers).toHaveBeenCalledOnce();
+    expect(releaseAccountRoute).toHaveBeenCalledOnce();
+    expect(recordDirectoryOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: 'blocked',
+        errorCode: 'directory_identifier_reservation_conflict',
+      })
+    );
+    expect(dependencies.writeAuthoritative).not.toHaveBeenCalled();
+
+    await expect(
+      executeDurableInitialAccountDirectoryWrite(workerEnv, input, dependencies)
+    ).rejects.toThrow('directory_identifier_reservation_conflict');
+    expect(releaseIdentifiers).toHaveBeenCalledTimes(2);
+    expect(releaseAccountRoute).toHaveBeenCalledTimes(2);
   });
 
   it('resumes a durable directory-pending operation without reallocating or rewriting', async () => {
-    const { workerEnv, allocateAccountRoute } = env();
+    const { workerEnv, allocateAccountRoute, commitAccountRoute } = env();
     const order: string[] = [];
     const core = writableD1(order);
     const pii = writableD1(order);
@@ -646,6 +815,7 @@ describe('account directory producer', () => {
     expect(dependencies.reserveIdentifiers).toHaveBeenCalledTimes(1);
     expect(dependencies.writeAuthoritative).toHaveBeenCalledTimes(1);
     expect(allocateAccountRoute).toHaveBeenCalledTimes(1);
+    expect(commitAccountRoute).toHaveBeenCalledTimes(1);
   });
 
   it('returns 202 when immediate RPC delivery is unavailable or loses its response', async () => {

@@ -59,6 +59,11 @@ function chunks<T>(values: readonly T[], size: number): T[][] {
   return output;
 }
 
+export function normalizePhase1EpochSeconds(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return null;
+  return value >= 100_000_000_000 ? Math.floor(value / 1_000) : value;
+}
+
 async function queryRowsInBatches(input: {
   client: Phase1VerificationClient;
   databaseId: string;
@@ -215,7 +220,7 @@ function providerDatabaseIds(
 async function queryPhysicalRows(input: {
   client: Phase1VerificationClient;
   databaseIds: string[];
-  table: 'users_core' | 'users_pii';
+  storageRole: 'core' | 'pii';
   userIds: string[];
 }): Promise<PhysicalRow[]> {
   const perDatabase = await boundedMap(
@@ -226,11 +231,38 @@ async function queryPhysicalRows(input: {
         const placeholders = ids.map(() => '?').join(',');
         return {
           sql:
-            input.table === 'users_core'
-              ? `SELECT id, tenant_id, email_verified, phone_number_verified, is_active, user_type
-                 FROM users_core WHERE id IN (${placeholders})`
-              : `SELECT id, tenant_id, email, preferred_username
-                 FROM users_pii WHERE id IN (${placeholders})`,
+            input.storageRole === 'core'
+              ? `SELECT account.legacy_user_id AS id, account.tenant_id,
+                        CASE WHEN EXISTS (
+                          SELECT 1 FROM contact_points contact
+                           WHERE contact.tenant_id = account.tenant_id
+                             AND contact.account_id = account.id
+                             AND contact.contact_type = 'email'
+                             AND contact.verification_state = 'verified'
+                             AND contact.lifecycle_state = 'active'
+                        ) THEN 1 ELSE 0 END AS email_verified,
+                        CASE WHEN EXISTS (
+                          SELECT 1 FROM contact_points contact
+                           WHERE contact.tenant_id = account.tenant_id
+                             AND contact.account_id = account.id
+                             AND contact.contact_type = 'phone'
+                             AND contact.verification_state = 'verified'
+                             AND contact.lifecycle_state = 'active'
+                        ) THEN 1 ELSE 0 END AS phone_number_verified,
+                        CASE WHEN account.lifecycle_state = 'active' THEN 1 ELSE 0 END AS is_active,
+                        CASE WHEN account.account_type = 'user' THEN 'end_user'
+                             ELSE account.account_type END AS user_type
+                   FROM identity_accounts account
+                  WHERE account.legacy_user_id IN (${placeholders})`
+              : `SELECT owner_id AS id, tenant_id,
+                        MAX(CASE WHEN value_key = 'email' THEN value_json END) AS email_json,
+                        MAX(CASE WHEN value_key = 'preferred_username' THEN value_json END)
+                          AS preferred_username_json
+                   FROM identity_sensitive_values
+                  WHERE owner_type = 'runtime_user' AND lifecycle_state = 'active'
+                    AND value_key IN ('email', 'preferred_username')
+                    AND owner_id IN (${placeholders})
+                  GROUP BY owner_id, tenant_id`,
           params: ids,
         };
       });
@@ -238,24 +270,29 @@ async function queryPhysicalRows(input: {
         client: input.client,
         databaseId,
         statements,
-        label: `${input.table}:${databaseId}`,
+        label: `${input.storageRole}:${databaseId}`,
       });
       return rows.map((row) => {
         if (typeof row.id !== 'string' || typeof row.tenant_id !== 'string') {
-          throw new Error(`phase1_physical_row_invalid:${input.table}`);
+          throw new Error(`phase1_physical_row_invalid:${input.storageRole}`);
         }
+        const email = typeof row.email_json === 'string' ? parseJsonString(row.email_json) : null;
+        const preferredUsername =
+          typeof row.preferred_username_json === 'string'
+            ? parseJsonString(row.preferred_username_json)
+            : null;
         const fieldDigest =
-          input.table === 'users_core'
+          input.storageRole === 'core'
             ? stableJson({
                 emailVerified: row.email_verified,
                 phoneNumberVerified: row.phone_number_verified,
                 active: row.is_active,
                 userType: row.user_type,
               })
-            : typeof row.email === 'string'
+            : email !== null
               ? stableJson({
-                  emailDigest: sha256(row.email),
-                  preferredUsername: row.preferred_username,
+                  emailDigest: sha256(email),
+                  preferredUsername,
                 })
               : '';
         return { databaseId, id: row.id, tenantId: row.tenant_id, fieldDigest };
@@ -268,20 +305,36 @@ async function queryPhysicalRows(input: {
 async function queryShardCounts(input: {
   client: Phase1VerificationClient;
   databaseIds: string[];
-  table: 'users_core' | 'users_pii';
+  storageRole: 'core' | 'pii';
 }): Promise<Map<string, number>> {
   const entries = await boundedMap(input.databaseIds, 8, async (databaseId) => {
+    const sql =
+      input.storageRole === 'core'
+        ? `SELECT COUNT(*) AS row_count FROM identity_accounts`
+        : `SELECT COUNT(DISTINCT owner_id) AS row_count
+             FROM identity_sensitive_values
+            WHERE owner_type = 'runtime_user' AND value_key = 'email'
+              AND lifecycle_state = 'active'`;
     const rows = resultRows(
-      await input.client.queryD1(databaseId, `SELECT COUNT(*) AS row_count FROM ${input.table}`),
-      `count:${input.table}:${databaseId}`
+      await input.client.queryD1(databaseId, sql),
+      `count:${input.storageRole}:${databaseId}`
     );
     const count = rows[0]?.row_count;
     if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
-      throw new Error(`phase1_shard_count_invalid:${input.table}`);
+      throw new Error(`phase1_shard_count_invalid:${input.storageRole}`);
     }
     return [databaseId, count] as const;
   });
   return new Map(entries);
+}
+
+function parseJsonString(value: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 async function queryPendingCoreState(input: {
@@ -538,6 +591,32 @@ export function verifyLookupForecastEvents(input: {
     const last = lastPublicationCount.get(domain);
     if (last !== undefined && publications < last) mismatches += 1;
     lastPublicationCount.set(domain, publications);
+    const currentObservedAt = current.observed_at;
+    const previousObservedAt = previous?.observed_at;
+    const sampleInterval = current.sample_interval_seconds;
+    if (
+      typeof currentObservedAt !== 'number' ||
+      !Number.isSafeInteger(currentObservedAt) ||
+      !Number.isSafeInteger(sampleInterval)
+    ) {
+      mismatches += 1;
+      continue;
+    }
+    if (
+      typeof previousObservedAt === 'number' &&
+      Number.isSafeInteger(previousObservedAt) &&
+      currentObservedAt < previousObservedAt
+    ) {
+      mismatches += 1;
+      continue;
+    }
+    const isForecastObservation =
+      !previous ||
+      (typeof previousObservedAt === 'number' &&
+        Number.isSafeInteger(previousObservedAt) &&
+        currentObservedAt > previousObservedAt &&
+        sampleInterval === currentObservedAt - previousObservedAt);
+    if (!isForecastObservation) continue;
     try {
       if (
         !recomputeLookupForecastTransition({
@@ -718,24 +797,24 @@ export async function verifyPhase1Run(input: {
       queryPhysicalRows({
         client: input.client,
         databaseIds: coreDatabaseIds,
-        table: 'users_core',
+        storageRole: 'core',
         userIds,
       }),
       queryPhysicalRows({
         client: input.client,
         databaseIds: piiDatabaseIds,
-        table: 'users_pii',
+        storageRole: 'pii',
         userIds,
       }),
       queryShardCounts({
         client: input.client,
         databaseIds: coreDatabaseIds,
-        table: 'users_core',
+        storageRole: 'core',
       }),
       queryShardCounts({
         client: input.client,
         databaseIds: piiDatabaseIds,
-        table: 'users_pii',
+        storageRole: 'pii',
       }),
       queryPendingCoreState({
         client: input.client,
@@ -868,7 +947,6 @@ export async function verifyPhase1Run(input: {
     input.baseline.lookupBuckets.map((row) => [row.virtualBucket, row] as const)
   );
   const newLookupShardIds = new Set(newLookupShards.map((row) => String(row.lookup_shard_id)));
-  const usedTransitionShards = new Set<string>();
   let publicationCounterDecreases = 0;
   let publicationCounterDeltaMismatches = 0;
   for (const current of finalLookupBuckets) {
@@ -882,15 +960,17 @@ export async function verifyPhase1Run(input: {
     const activeRouteDelta = current.activeRouteCount - previous.activeRouteCount;
     if (publicationDelta < 0) publicationCounterDecreases += 1;
     if (publicationDelta !== activeRouteDelta) publicationCounterDeltaMismatches += 1;
-    if (
-      previous.lookupShardId !== current.lookupShardId &&
-      newLookupShardIds.has(current.lookupShardId) &&
-      activeRouteDelta > 0
-    ) {
-      usedTransitionShards.add(current.lookupShardId);
-    }
   }
-  const lookupUsedAssignmentTransitions = usedTransitionShards.size;
+  const lookupUsedAssignmentTransitions = finalLookupBuckets.filter((current) => {
+    const previous = baselineLookupBuckets.get(current.virtualBucket);
+    return (
+      !!previous &&
+      previous.lookupShardId !== current.lookupShardId &&
+      current.assignmentGeneration > previous.assignmentGeneration &&
+      newLookupShardIds.has(current.lookupShardId) &&
+      current.activeRouteCount > 0
+    );
+  }).length;
 
   const baselineProvider = new Set(
     input.baseline.provider.databases.map((database) => database.uuid)
@@ -973,17 +1053,19 @@ export async function verifyPhase1Run(input: {
   }
   const provisionedD1Resources = providerAdditions.length - orphanD1Resources;
   const baselineAt = Math.floor(Date.parse(input.baseline.capturedAt) / 1_000);
-  const manualIntervention = finalControl.operations.filter(
-    (row) =>
+  const manualIntervention = finalControl.operations.filter((row) => {
+    const createdAt = normalizePhase1EpochSeconds(row.created_at);
+    return (
       (row.requested_by_type === 'admin' || row.requested_by_type === 'setup') &&
       !(
         typeof row.idempotency_key === 'string' &&
         (row.idempotency_key.startsWith('account-capacity:') ||
           row.idempotency_key.startsWith('low-water:'))
       ) &&
-      typeof row.created_at === 'number' &&
-      row.created_at >= baselineAt
-  ).length;
+      createdAt !== null &&
+      createdAt >= baselineAt
+    );
+  }).length;
   const blockedCapacityOperations = countNewBlockedCapacityOperations(
     input.baseline.control,
     finalControl

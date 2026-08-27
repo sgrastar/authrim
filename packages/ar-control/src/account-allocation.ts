@@ -22,6 +22,8 @@ interface AccountAllocationRow {
   binding_ref: string;
   route_generation: number | string;
   idempotency_key: string;
+  reservation_state: 'reserved' | 'committed' | 'released' | 'failed';
+  committed_at: number | string | null;
 }
 
 interface AccountAllocationPlan {
@@ -109,7 +111,8 @@ export class D1AccountAllocationRepository {
       .prepare(
         `SELECT a.allocation_id, a.environment_id, a.tenant_id,
                 a.account_id_blind_digest, a.data_role, a.residency_partition,
-                a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key
+                a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key,
+                a.reservation_state, a.committed_at
            FROM control_tenant_shard_allocations a
            JOIN control_tenant_shards s
              ON s.shard_id = a.selected_shard_id AND s.environment_id = a.environment_id
@@ -151,7 +154,8 @@ export class D1AccountAllocationRepository {
       .prepare(
         `SELECT a.allocation_id, a.environment_id, a.tenant_id,
                 a.account_id_blind_digest, a.data_role, a.residency_partition,
-                a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key
+                a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key,
+                a.reservation_state, a.committed_at
            FROM control_tenant_shard_allocations a
            JOIN control_tenant_shards s
              ON s.shard_id = a.selected_shard_id AND s.environment_id = a.environment_id
@@ -203,7 +207,12 @@ export class D1AccountAllocationRepository {
       this.getByAccount(plan),
       this.getByIdempotency(plan),
     ]);
-    if (byIdempotency) this.assertMatches(byIdempotency, plan);
+    if (byIdempotency) {
+      this.assertMatches(byIdempotency, plan);
+      if (!['reserved', 'committed'].includes(byIdempotency.reservation_state)) {
+        throw new Error('control_account_allocation_idempotency_conflict');
+      }
+    }
     if (byAccount) return byAccount;
 
     await this.db.batch([
@@ -315,6 +324,274 @@ export class D1AccountAllocationRepository {
     this.assertMatches(result, plan);
     return result;
   }
+
+  async commit(
+    plans: readonly AccountAllocationPlan[],
+    now: number
+  ): Promise<AccountAllocationRow[]> {
+    if (plans.length < 1 || plans.length > 2) {
+      throw new Error('invalid_account_route_data_roles');
+    }
+    const first = plans[0];
+    const roles = plans.map((plan) => plan.dataRole);
+    const readRows = async (): Promise<AccountAllocationRow[]> => {
+      const result = await this.db
+        .prepare(
+          `SELECT a.allocation_id, a.environment_id, a.tenant_id,
+                  a.account_id_blind_digest, a.data_role, a.residency_partition,
+                  a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key,
+                  a.reservation_state, a.committed_at
+             FROM control_tenant_shard_allocations a
+             JOIN control_tenant_shards s
+               ON s.shard_id = a.selected_shard_id AND s.environment_id = a.environment_id
+            WHERE a.environment_id = ? AND a.tenant_id = ?
+              AND a.account_id_blind_digest = ? AND a.residency_partition = ?
+              AND a.idempotency_key = ?
+              AND a.data_role IN (${roles.map(() => '?').join(',')})
+              AND a.reservation_state IN ('reserved', 'committed')
+            ORDER BY a.data_role`
+        )
+        .bind(
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        )
+        .all<AccountAllocationRow>();
+      if (!result.success || !Array.isArray(result.results)) {
+        throw new Error('control_account_allocation_commit_query_failed');
+      }
+      return result.results;
+    };
+    const existing = await readRows();
+    if (existing.length !== plans.length) {
+      throw new Error('control_account_allocation_commit_not_found');
+    }
+    const existingByRole = new Map(existing.map((row) => [row.data_role, row] as const));
+    for (const plan of plans) {
+      const row = existingByRole.get(plan.dataRole);
+      if (!row) throw new Error('control_account_allocation_commit_not_found');
+      this.assertMatches(row, plan);
+      if (row.allocation_id !== plan.allocationId || row.idempotency_key !== plan.idempotencyKey) {
+        throw new Error('control_account_allocation_idempotency_conflict');
+      }
+    }
+
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE control_tenant_shard_allocations
+              SET reservation_state = 'committed', committed_at = COALESCE(committed_at, ?),
+                  updated_at = ?
+            WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+              AND residency_partition = ? AND idempotency_key = ?
+              AND data_role IN (${roles.map(() => '?').join(',')})
+              AND reservation_state IN ('reserved', 'committed')`
+        )
+        .bind(
+          now,
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        ),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_audit_events (
+             event_id, environment_id, event_type, actor_type, resource_kind,
+             resource_id, outcome, redacted_payload_json, created_at
+           )
+           SELECT 'audit:' || allocation_id || ':committed', environment_id,
+                  'control.account_route.committed', 'ar-management',
+                  'tenant_shard_allocation', allocation_id, 'succeeded',
+                  json_object('data_role', data_role,
+                              'residency_partition', residency_partition), ?
+             FROM control_tenant_shard_allocations
+            WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+              AND residency_partition = ? AND idempotency_key = ?
+              AND data_role IN (${roles.map(() => '?').join(',')})
+              AND reservation_state = 'committed'`
+        )
+        .bind(
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        ),
+    ]);
+
+    const reflected = await readRows();
+    if (
+      reflected.length !== plans.length ||
+      reflected.some(
+        (row) =>
+          row.reservation_state !== 'committed' ||
+          row.committed_at === null ||
+          !Number.isSafeInteger(Number(row.committed_at)) ||
+          Number(row.committed_at) < 1
+      )
+    ) {
+      throw new Error('control_account_allocation_commit_failed');
+    }
+    return reflected;
+  }
+
+  async release(plans: readonly AccountAllocationPlan[], now: number): Promise<void> {
+    if (plans.length < 1 || plans.length > 2) {
+      throw new Error('invalid_account_route_data_roles');
+    }
+    const first = plans[0];
+    const roles = plans.map((plan) => plan.dataRole);
+    const readRows = async (): Promise<AccountAllocationRow[]> => {
+      const result = await this.db
+        .prepare(
+          `SELECT a.allocation_id, a.environment_id, a.tenant_id,
+                  a.account_id_blind_digest, a.data_role, a.residency_partition,
+                  a.selected_shard_id, s.binding_ref, a.route_generation, a.idempotency_key,
+                  a.reservation_state, a.committed_at
+             FROM control_tenant_shard_allocations a
+             JOIN control_tenant_shards s
+               ON s.shard_id = a.selected_shard_id AND s.environment_id = a.environment_id
+            WHERE a.environment_id = ? AND a.tenant_id = ?
+              AND a.account_id_blind_digest = ? AND a.residency_partition = ?
+              AND a.idempotency_key = ?
+              AND a.data_role IN (${roles.map(() => '?').join(',')})
+              AND a.reservation_state IN ('reserved', 'committed', 'released')
+            ORDER BY a.data_role`
+        )
+        .bind(
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        )
+        .all<AccountAllocationRow>();
+      if (!result.success || !Array.isArray(result.results)) {
+        throw new Error('control_account_allocation_release_query_failed');
+      }
+      return result.results;
+    };
+    const existing = await readRows();
+    if (existing.length !== plans.length) {
+      throw new Error('control_account_allocation_release_not_found');
+    }
+    const existingByRole = new Map(existing.map((row) => [row.data_role, row] as const));
+    for (const plan of plans) {
+      const row = existingByRole.get(plan.dataRole);
+      if (!row) throw new Error('control_account_allocation_release_not_found');
+      this.assertMatches(row, plan);
+      if (row.allocation_id !== plan.allocationId || row.idempotency_key !== plan.idempotencyKey) {
+        throw new Error('control_account_allocation_idempotency_conflict');
+      }
+      if (row.reservation_state === 'committed') {
+        throw new Error('control_account_allocation_release_committed');
+      }
+    }
+
+    await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE control_shard_capacity
+              SET allocated_account_count = MAX(
+                    allocated_account_count - (
+                      SELECT COUNT(*) FROM control_tenant_shard_allocations allocation
+                       WHERE allocation.selected_shard_id = control_shard_capacity.shard_id
+                         AND allocation.environment_id = ? AND allocation.tenant_id = ?
+                         AND allocation.account_id_blind_digest = ?
+                         AND allocation.residency_partition = ? AND allocation.idempotency_key = ?
+                         AND allocation.data_role IN (${roles.map(() => '?').join(',')})
+                         AND allocation.reservation_state = 'reserved'
+                         AND allocation.capacity_counted_at IS NOT NULL
+                    ),
+                    0
+                  ),
+                  updated_at = ?
+            WHERE shard_id IN (
+              SELECT selected_shard_id FROM control_tenant_shard_allocations
+               WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+                 AND residency_partition = ? AND idempotency_key = ?
+                 AND data_role IN (${roles.map(() => '?').join(',')})
+            )`
+        )
+        .bind(
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles,
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_tenant_shard_allocations
+              SET reservation_state = 'released', capacity_counted_at = NULL, updated_at = ?
+            WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+              AND residency_partition = ? AND idempotency_key = ?
+              AND data_role IN (${roles.map(() => '?').join(',')})
+              AND reservation_state IN ('reserved', 'released')`
+        )
+        .bind(
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        ),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_audit_events (
+             event_id, environment_id, event_type, actor_type, resource_kind,
+             resource_id, outcome, redacted_payload_json, created_at
+           )
+           SELECT 'audit:' || allocation_id || ':released', environment_id,
+                  'control.account_route.released', 'ar-management',
+                  'tenant_shard_allocation', allocation_id, 'succeeded',
+                  json_object('data_role', data_role,
+                              'residency_partition', residency_partition), ?
+             FROM control_tenant_shard_allocations
+            WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+              AND residency_partition = ? AND idempotency_key = ?
+              AND data_role IN (${roles.map(() => '?').join(',')})
+              AND reservation_state = 'released'`
+        )
+        .bind(
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...roles
+        ),
+    ]);
+
+    const reflected = await readRows();
+    if (
+      reflected.length !== plans.length ||
+      reflected.some((row) => row.reservation_state !== 'released' || row.committed_at !== null)
+    ) {
+      throw new Error('control_account_allocation_release_failed');
+    }
+  }
 }
 
 export class ControlAccountAllocationService {
@@ -365,5 +642,75 @@ export class ControlAccountAllocationService {
     };
     assertControlPlaneRecordIsSecretFree(result);
     return result;
+  }
+
+  async commit(
+    input: unknown,
+    environmentId: string
+  ): Promise<ControlAccountRouteAllocationResult> {
+    const safeEnvironmentId = requiredId(environmentId, 'invalid_environment_id');
+    const request = parseRequest(input);
+    const plans = await Promise.all(
+      request.dataRoles.map(async (dataRole): Promise<AccountAllocationPlan> => {
+        const digest = await sha256(
+          [
+            safeEnvironmentId,
+            request.tenantId,
+            request.accountIdBlindDigest,
+            dataRole,
+            request.residencyPartition,
+          ].join('\0')
+        );
+        return {
+          allocationId: `allocation_${digest.slice(0, 32)}`,
+          environmentId: safeEnvironmentId,
+          tenantId: request.tenantId,
+          accountIdBlindDigest: request.accountIdBlindDigest,
+          dataRole,
+          residencyPolicyId: request.residencyPolicyId,
+          residencyPartition: request.residencyPartition,
+          idempotencyKey: request.idempotencyKey,
+        };
+      })
+    );
+    const targets = (await this.repository.commit(plans, this.now()))
+      .map(toTarget)
+      .sort((left, right) => left.dataRole.localeCompare(right.dataRole));
+    const result: ControlAccountRouteAllocationResult = {
+      tenantId: request.tenantId,
+      residencyPolicyId: request.residencyPolicyId,
+      targets,
+    };
+    assertControlPlaneRecordIsSecretFree(result);
+    return result;
+  }
+
+  async release(input: unknown, environmentId: string): Promise<void> {
+    const safeEnvironmentId = requiredId(environmentId, 'invalid_environment_id');
+    const request = parseRequest(input);
+    const plans = await Promise.all(
+      request.dataRoles.map(async (dataRole): Promise<AccountAllocationPlan> => {
+        const digest = await sha256(
+          [
+            safeEnvironmentId,
+            request.tenantId,
+            request.accountIdBlindDigest,
+            dataRole,
+            request.residencyPartition,
+          ].join('\0')
+        );
+        return {
+          allocationId: `allocation_${digest.slice(0, 32)}`,
+          environmentId: safeEnvironmentId,
+          tenantId: request.tenantId,
+          accountIdBlindDigest: request.accountIdBlindDigest,
+          dataRole,
+          residencyPolicyId: request.residencyPolicyId,
+          residencyPartition: request.residencyPartition,
+          idempotencyKey: request.idempotencyKey,
+        };
+      })
+    );
+    await this.repository.release(plans, this.now());
   }
 }
