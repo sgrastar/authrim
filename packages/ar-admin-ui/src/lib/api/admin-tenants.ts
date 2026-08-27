@@ -501,7 +501,7 @@ export const adminTenantsAPI = {
 			{
 				method: 'POST',
 				includeJsonContentType: true,
-				tenantId: id,
+				skipTenantHeader: true,
 				headers: { 'Idempotency-Key': idempotencyKey },
 				body: JSON.stringify(data)
 			}
@@ -519,7 +519,7 @@ export const adminTenantsAPI = {
 	async lifecycleJobs(id: string): Promise<TenantLifecycleJob[]> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs`,
-			{ tenantId: id }
+			{ skipTenantHeader: true }
 		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));
@@ -532,7 +532,7 @@ export const adminTenantsAPI = {
 	async retryLifecycleJob(id: string, jobId: string): Promise<void> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/tenants/${encodeURIComponent(id)}/lifecycle/jobs/${encodeURIComponent(jobId)}/retry`,
-			{ method: 'POST', tenantId: id }
+			{ method: 'POST', skipTenantHeader: true }
 		);
 		if (!response.ok) {
 			const error = await response.json().catch(() => ({}));

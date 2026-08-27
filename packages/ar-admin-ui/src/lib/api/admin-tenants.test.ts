@@ -212,7 +212,7 @@ describe('adminTenantsAPI', () => {
 		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('tenant a');
 	});
 
-	it('sends the tenant detail route ID when loading lifecycle jobs', async () => {
+	it('uses the platform tenant inventory context when loading lifecycle jobs', async () => {
 		const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 			new Response(JSON.stringify({ jobs: [] }), {
 				status: 200,
@@ -223,10 +223,10 @@ describe('adminTenantsAPI', () => {
 		await expect(adminTenantsAPI.lifecycleJobs('fapi2')).resolves.toEqual([]);
 
 		expect(fetchMock.mock.calls[0]?.[0]).toContain('/api/admin/tenants/fapi2/lifecycle/jobs');
-		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('fapi2');
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
-	it('sends the target tenant for lifecycle mutations instead of the selected tenant fallback', async () => {
+	it('uses the platform tenant inventory context for lifecycle mutations', async () => {
 		const response = {
 			job_id: 'job-1',
 			status: 'pending',
@@ -254,7 +254,20 @@ describe('adminTenantsAPI', () => {
 			)
 		).resolves.toEqual(response);
 
-		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBe('fapi2');
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('uses the platform tenant inventory context when retrying a lifecycle job', async () => {
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(null, { status: 204 }));
+
+		await expect(adminTenantsAPI.retryLifecycleJob('fapi2', 'job 1')).resolves.toBeUndefined();
+
+		expect(fetchMock.mock.calls[0]?.[0]).toContain(
+			'/api/admin/tenants/fapi2/lifecycle/jobs/job%201/retry'
+		);
+		expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('X-Tenant-Id')).toBeNull();
 	});
 
 	it('treats a missing latest placement migration as an empty state', async () => {

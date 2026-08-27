@@ -4003,9 +4003,10 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<ProvisioningLease | null> {
     const leaseExpiresAt = now + 5 * 60;
-    const started = await this.db
-      .prepare(
-        `UPDATE control_operations AS candidate
+    const [started] = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE control_operations AS candidate
             SET status = 'running', attempt_count = attempt_count + 1,
                 next_attempt_at = NULL, last_error_code = NULL,
                 lock_owner = ?, lock_expires_at = ?, fencing_token = fencing_token + 1,
@@ -4026,9 +4027,52 @@ export class D1ControlRepository implements ControlRepository {
                 FROM control_environment_resource_policies policy
                WHERE policy.environment_id = candidate.environment_id
             ), 0)`
-      )
-      .bind(ownerId, leaseExpiresAt, now, now, operationId, now)
-      .run();
+        )
+        .bind(ownerId, leaseExpiresAt, now, now, operationId, now),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET status = 'running', attempt_count = attempt_count + 1,
+                  started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE operation_id = ? AND step_key = 'create_d1' AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_desired_resources
+              SET provisioning_state = 'creating', create_started_at = COALESCE(create_started_at, ?), updated_at = ?
+            WHERE origin_operation_id = ? AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_tenant_shards SET status = 'provisioning', updated_at = ?
+            WHERE d1_desired_resource_id IN (
+              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
+            ) AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_lookup_physical_shards SET status = 'provisioning', updated_at = ?
+            WHERE d1_desired_resource_id IN (
+              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
+            ) AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, operationId, operationId, ownerId),
+    ]);
     if ((started.meta.changes ?? 0) === 0) return null;
 
     const row = await this.db
@@ -4042,52 +4086,6 @@ export class D1ControlRepository implements ControlRepository {
       .bind(operationId, ownerId)
       .first<OperationRow>();
     if (!row) return null;
-
-    await this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE control_operation_steps
-              SET status = 'running', attempt_count = attempt_count + 1,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE operation_id = ? AND step_key = 'create_d1' AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_desired_resources
-              SET provisioning_state = 'creating', create_started_at = COALESCE(create_started_at, ?), updated_at = ?
-            WHERE origin_operation_id = ? AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_tenant_shards SET status = 'provisioning', updated_at = ?
-            WHERE d1_desired_resource_id IN (
-              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
-            ) AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_lookup_physical_shards SET status = 'provisioning', updated_at = ?
-            WHERE d1_desired_resource_id IN (
-              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
-            ) AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, operationId, operationId, ownerId, row.fencing_token),
-    ]);
     return { operation: operationView(row), ownerId, fencingToken: row.fencing_token };
   }
 

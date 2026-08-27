@@ -24,9 +24,15 @@ describe('tenant request path classification', () => {
 
   it.each([
     '/api/admin/tenants/fapi2/lifecycle/jobs',
+    '/api/admin/tenants/fapi2/lifecycle/jobs/job-1/retry',
     '/api/admin/tenants/fapi2/lifecycle/suspend',
-    '/api/admin/tenants/fapi2/placement-migrations/latest',
-  ])('extracts the explicit tenant from tenant management subresources: %s', (path) => {
+  ])('keeps platform-owned tenant lifecycle routes in tenant inventory: %s', (path) => {
+    expect(classifyTenantRequestPath(path)).toBe('tenant_inventory_admin');
+    expect(extractTenantScopedPathTenantId(path)).toBe('fapi2');
+  });
+
+  it('extracts the explicit tenant from tenant-managed subresources', () => {
+    const path = '/api/admin/tenants/fapi2/placement-migrations/latest';
     expect(classifyTenantRequestPath(path)).toBe('tenant_scoped_admin');
     expect(extractTenantScopedPathTenantId(path)).toBe('fapi2');
   });

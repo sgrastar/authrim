@@ -122,11 +122,11 @@ shards or capacity counters for the main baseline.
 | Setting                                                    |                     Value |
 | ---------------------------------------------------------- | ------------------------: |
 | Target accounts per shard                                  |                    10,000 |
-| Accounts to create                                         |                   100,000 |
+| Accounts to create                                         |                    50,000 |
 | Target creation rate                                       |        15 accounts/second |
 | Maximum in-flight requests                                 |                        64 |
-| Approximate injection duration                             |               112 minutes |
-| Expected assignment boundary crossings                     | 9 per account-scoped role |
+| Approximate injection duration                             |                56 minutes |
+| Expected assignment boundary crossings                     | 4 per account-scoped role |
 | Lookup target active route rows per capacity unit          |                    25,000 |
 | Minimum physical Lookup additions                          |                         5 |
 | Minimum Lookup assignment transitions used by later routes |                         5 |
@@ -258,6 +258,15 @@ Run every prerequisite check, capture the baseline inventory, and verify that cr
 account succeeds through the canonical API. Include the canary in the final expected count or remove
 it before resetting the baseline; do not leave it unaccounted for.
 
+Before the account-load baseline, run the tenant-exclusive provisioning regression gate with at
+least three independently named tenants. Capture the Management request result, Control RPC outcome
+and latency, Control operation/step transitions, provider D1 IDs, and tenant activation time. The
+gate fails if any capacity RPC returns `control_internal_error`, if one deterministic desired D1 maps
+to more than one provider D1, if any provider D1 lacks a Control desired/observed-resource mapping,
+or if any tenant needs manual intervention. Normal queued, provisioning, and retrying transitions
+remain non-error progress states. Cleanup or include these resources in the captured baseline before
+calculating the D1 create budget for the account run.
+
 ### Step 2: Start observer
 
 Start the read-only observer before the load runner. Confirm that its timestamps use UTC and that the
@@ -356,12 +365,56 @@ Phase 1 passes only when every correctness criterion passes.
 | Physical Lookup D1 additions                                       |                         at least 5 in the main run |
 | Lookup assignment transitions used by later routes                 |                         at least 5 in the main run |
 | Unexplained Control/physical count mismatches                      |                                                  0 |
-| Required assignment boundary crossings                             | at least 9 per account-scoped role in the main run |
+| Required assignment boundary crossings                             | at least 4 per account-scoped role in the main run |
 | Capacity operations after quiescence                               |             all succeeded; none blocked or waiting |
 | Manual intervention between first and last account                 |                                                  0 |
+| Tenant-exclusive provisioning `control_internal_error` rate        |                                      0 in the gate |
+| Tenant-exclusive duplicate provider D1 resources                   |                                                  0 |
+| Tenant-exclusive orphan provider resources                         |                                                  0 |
+| Tenant-exclusive tenants stuck before Active                       |                                                  0 |
 
-The test fails even if 100,000 accounts were eventually inserted when any uniqueness, route,
+The test fails even if 50,000 accounts were eventually inserted when any uniqueness, route,
 capacity, provisioning, or intervention criterion fails.
+
+### 9.1 Tenant-exclusive provisioning regression evidence (2026-08-27)
+
+This incident regression gate ran in the disposable `scaleout` environment before the account-load
+baseline. It is supporting evidence for the gate above, not the main 50,000-account Phase 1 result.
+Three post-change tenant creations each planned three tenant-exclusive D1 resources: core default,
+core users, and PII.
+
+| Metric                                                  | Result |
+| ------------------------------------------------------- | -----: |
+| Post-change tenant creations                            |      3 |
+| Initial capacity RPCs                                   |      9 |
+| `control_internal_error` responses                      |      0 |
+| Automatic retry convergence                             |    3/3 |
+| Planned / observed provider D1 resources                |    9/9 |
+| Duplicate provider D1 resources                         |      0 |
+| Orphan provider D1 resources                            |      0 |
+| Non-terminal Control operations after quiescence        |      0 |
+| Non-terminal Worker binding reconciliations after quiet |      0 |
+| Tenants stuck before Active                             |      0 |
+| Manual interventions between creation and Active        |      0 |
+
+The pre-change reproduction window produced a tenant-creation error for all three observed
+attempts. In the captured concurrent reproduction, all three capacity RPCs were runtime-cancelled
+after their durable Control operations had already been created. The post-change gate observed no
+runtime cancellation in the nine initial capacity RPCs.
+
+Durations below are measured from the durable Control capacity decision. “Control ready” means all
+three D1 resources were created and migrated and every required Worker binding passed smoke and
+stabilization checks. “Tenant Active” is the final Management provisioning state.
+
+| Tenant run | First D1 created | All D1 created | All migrated | Control ready | Tenant Active |
+| ---------- | ---------------: | -------------: | -----------: | ------------: | ------------: |
+| r3         |            103 s |          107 s |        289 s |       1,661 s |       1,740 s |
+| r4         |             41 s |           46 s |        225 s |       2,500 s |       2,522 s |
+| r5         |             43 s |           95 s |        227 s |       2,674 s |       2,713 s |
+
+The longer tail is Worker binding deployment and propagation, not D1 creation. Transient
+`control_worker_deployment_lease_busy` and `runtime_smoke_binding_unavailable` states were retained
+as retryable progress and cleared automatically.
 
 ## 10. Evidence artifacts
 

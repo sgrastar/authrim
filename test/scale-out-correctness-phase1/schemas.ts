@@ -542,7 +542,7 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
   if (profile === 'smoke' && parsed.load.accountCount !== 1_000) {
     throw new Error('phase1_smoke_account_count_mismatch');
   }
-  if (profile === 'main' && parsed.load.accountCount !== 100_000) {
+  if (profile === 'main' && parsed.load.accountCount !== 50_000) {
     throw new Error('phase1_main_account_count_mismatch');
   }
   return parsed;

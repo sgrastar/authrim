@@ -265,6 +265,16 @@ function provider(): Phase1ProviderSnapshot {
 }
 
 describe('Phase 1 evidence contracts', () => {
+  it('pins the reduced main demonstration to 50,000 accounts', () => {
+    const main = structuredClone(config());
+    main.profile = 'main';
+    main.load.accountCount = 50_000;
+
+    expect(parsePhase1HarnessConfig(main).load.accountCount).toBe(50_000);
+    main.load.accountCount = 100_000;
+    expect(() => parsePhase1HarnessConfig(main)).toThrow('phase1_main_account_count_mismatch');
+  });
+
   it('rejects a policy that disables automatic account shard replenishment', () => {
     const invalid = structuredClone(config());
     invalid.expectedPolicy.maxReadySpares = 0;

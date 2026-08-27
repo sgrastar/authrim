@@ -432,7 +432,7 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 400 when X-Tenant-Id does not match a tenant lifecycle path', async () => {
+  it('treats tenant lifecycle jobs as platform-owned tenant inventory', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
       DEFAULT_TENANT_ID: 'default',
@@ -441,12 +441,13 @@ describe('adminTenantPolicyMiddleware', () => {
     });
 
     const res = await app.request(
-      makeRequest('/api/admin/tenants/fapi2/lifecycle/jobs', { 'X-Tenant-Id': 'default' }),
+      makeRequest('/api/admin/tenants/fapi2/lifecycle/jobs'),
       undefined,
       env
     );
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tenantId: 'default', pathTenantId: 'fapi2' });
   });
 
   it('returns 400 when X-Tenant-Id does not match tenant logging override path', async () => {

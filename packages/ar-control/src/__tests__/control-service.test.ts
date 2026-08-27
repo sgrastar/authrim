@@ -1387,6 +1387,10 @@ describe('ControlService tenant shard provisioning', () => {
 
   it('starts one capacity operation when no eligible or in-flight shard exists', async () => {
     const repository = new FakeRepository();
+    const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
+      uuid: 'database-new',
+      name,
+    }));
     const service = new ControlService({
       repository,
       env: env(),
@@ -1394,7 +1398,7 @@ describe('ControlService tenant shard provisioning', () => {
       createApiClient: () =>
         controlApi({
           listD1Databases: async () => [],
-          createD1Database: async ({ name }) => ({ uuid: 'database-new', name }),
+          createD1Database,
         }),
     });
 
@@ -1403,9 +1407,10 @@ describe('ControlService tenant shard provisioning', () => {
     expect(result).toMatchObject({
       state: 'provisioning',
       target: null,
-      operation: { status: 'waiting_retry' },
+      operation: { status: 'queued' },
     });
     expect(repository.operations.size).toBe(1);
+    expect(createD1Database).not.toHaveBeenCalled();
   });
 
   it('converges simultaneous account-capacity requests with distinct caller keys', async () => {
@@ -1545,6 +1550,26 @@ describe('ControlService tenant shard provisioning', () => {
     expect(result.operation?.status).toBe('waiting_retry');
     expect(result.operation?.lastErrorCode).toBe('cloudflare_d1_request_failed');
     expect(JSON.stringify(result)).not.toContain('provider detail');
+    expect(result.operation?.nextAttemptAt).toBeGreaterThanOrEqual(NOW + 30);
+  });
+
+  it('normalizes client construction failures after leasing into a retrying operation', async () => {
+    const repository = new FakeRepository();
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () => {
+        throw new Error('transient client construction failure');
+      },
+    });
+
+    const result = await service.requestTenantShard(request());
+
+    expect(result.operation).toMatchObject({
+      status: 'waiting_retry',
+      lastErrorCode: 'cloudflare_d1_request_failed',
+    });
     expect(result.operation?.nextAttemptAt).toBeGreaterThanOrEqual(NOW + 30);
   });
 

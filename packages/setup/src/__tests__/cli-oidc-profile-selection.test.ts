@@ -93,6 +93,6 @@ describe('CLI OIDC profile setup contract', () => {
 
     expect(initSource).not.toContain('promptCloudflareCustomHostnameToken');
     expect(initSource).not.toContain('cloudflare_api_token.txt');
-    expect(deploySource).toContain('bootstrapToken = await promptForControlTokenBootstrap({');
+    expect(deploySource).toContain('await promptForControlTokenBootstrap({');
   });
 });

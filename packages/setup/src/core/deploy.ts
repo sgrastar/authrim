@@ -731,6 +731,8 @@ function initialControlBootstrapConfig(
   if (
     strategy !== 'direct' ||
     !components.includes('ar-control') ||
+    options.existingComponents === undefined ||
+    existing.has('ar-control') ||
     CONTROL_SMOKE_TARGET_COMPONENTS.every((component) => existing.has(component))
   ) {
     return undefined;

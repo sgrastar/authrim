@@ -1104,8 +1104,15 @@ export class ControlService {
           };
     const operation =
       inFlight ??
-      (await this.requestTenantShardAs(convergedRequest, 'scheduler', expectedEnvironmentId))
-        .operation;
+      (
+        await this.requestTenantShardAs(
+          convergedRequest,
+          'scheduler',
+          expectedEnvironmentId,
+          false,
+          true
+        )
+      ).operation;
     if (!operation) throw new Error('control_capacity_operation_missing');
 
     if (operation.status === 'succeeded') {
@@ -1153,7 +1160,8 @@ export class ControlService {
     input: unknown,
     requestedByType: 'admin' | 'scheduler',
     expectedEnvironmentId?: string,
-    allowLookup = false
+    allowLookup = false,
+    deferExecution = false
   ): Promise<TenantShardRequestResult> {
     const request = parseRequest(input, expectedEnvironmentId, allowLookup);
     const allocationScope = request.allocationScope ?? 'shared_pool';
@@ -1245,6 +1253,9 @@ export class ControlService {
         operation.operationId,
         this.dependencies.now()
       );
+      return { dryRun: false, plan, operation };
+    }
+    if (deferExecution) {
       return { dryRun: false, plan, operation };
     }
     if (operation.status === 'queued' || operation.status === 'running') {
@@ -1532,19 +1543,20 @@ export class ControlService {
       if (!deferred) throw new Error('control_operation_missing_after_defer');
       return deferred;
     }
-    const api =
-      this.dependencies.createApiClient?.(this.dependencies.env) ??
-      createControlApiClients(this.dependencies.env).d1;
     return executeControlProvisioningEffect({
       executor: 'control',
       effect: 'create_d1',
       operation: lease.operation,
-      execute: () =>
-        ensureControlProvisioningD1({
+      execute: () => {
+        const api =
+          this.dependencies.createApiClient?.(this.dependencies.env) ??
+          createControlApiClients(this.dependencies.env).d1;
+        return ensureControlProvisioningD1({
           plan,
           provider: api,
           reserveCreate: () => this.dependencies.repository.reserveD1CreateBudget(lease, now),
-        }),
+        });
+      },
       onSuccess: (databaseId) =>
         this.dependencies.repository.markDatabaseCreated(
           lease,

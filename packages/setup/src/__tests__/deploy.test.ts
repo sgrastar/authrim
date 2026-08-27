@@ -1636,7 +1636,7 @@ describe('deployAll', () => {
     );
   });
 
-  it('bootstraps Control until every runtime smoke target exists, then restores bindings', async () => {
+  it('bootstraps Control on an initial deployment, then restores bindings', async () => {
     const rootDir = createTempRoot();
     const selected = [...CORE_WORKER_COMPONENTS];
     for (const component of selected) {
@@ -1666,7 +1666,7 @@ describe('deployAll', () => {
         rootDir,
         deploymentStrategy: 'direct',
         concurrency: 2,
-        existingComponents: ['ar-control'],
+        existingComponents: [],
         automaticProvisioning: false,
         secrets: {
           RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
@@ -1683,6 +1683,81 @@ describe('deployAll', () => {
       { component: 'ar-control', config: 'wrangler.toml' },
     ]);
     expect(mutations.every(({ config }) => config !== undefined)).toBe(true);
+  });
+
+  it('never replaces an existing Control deployment with the bootstrap config', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: ['ar-control'],
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(configs).toEqual(['wrangler.toml']);
+    expect(configs).not.toContain(controlBootstrapPath);
+  });
+
+  it('fails safe to the full Control config when the existing inventory is unknown', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(join(controlDirectory, 'wrangler.bootstrap.toml'), 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(configs).toEqual(['wrangler.toml']);
   });
 
   it('waits for the VC service-binding target before deploying management', async () => {
