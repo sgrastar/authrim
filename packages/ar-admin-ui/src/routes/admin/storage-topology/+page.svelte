@@ -170,8 +170,8 @@
 			</article>
 			<article class="summary-card">
 				<span>Ready spares</span>
-				<strong>{topology.summary.readySpareCount} / {topology.policy.maxReadySpares}</strong>
-				<small>Ready and unassigned</small>
+				<strong>{formatCount(topology.summary.readySpareCount)} total</strong>
+				<small>Target {topology.policy.maxReadySpares} per placement and role</small>
 			</article>
 			<article
 				class="summary-card"
