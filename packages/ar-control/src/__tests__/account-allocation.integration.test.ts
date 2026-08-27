@@ -63,9 +63,15 @@ class PreparedStatement {
   }
 }
 
-function d1(database: DatabaseSync): D1Database {
+interface D1TestObserver {
+  batchErrors: unknown[];
+  preparedSql: string[];
+}
+
+function d1(database: DatabaseSync, observer?: D1TestObserver): D1Database {
   return {
     prepare(sql: string) {
+      observer?.preparedSql.push(sql);
       return new PreparedStatement(database.prepare(sql));
     },
     async batch(statements: unknown[]) {
@@ -79,6 +85,7 @@ function d1(database: DatabaseSync): D1Database {
         return results;
       } catch (error) {
         database.exec('ROLLBACK');
+        observer?.batchErrors.push(error);
         throw error;
       }
     },
@@ -100,6 +107,7 @@ function request(overrides: Record<string, unknown> = {}) {
 describe('account route allocation', () => {
   let database: DatabaseSync;
   let service: ControlAccountAllocationService;
+  let d1Observer: D1TestObserver;
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
@@ -205,8 +213,9 @@ describe('account route allocation', () => {
          ('env-test', 'tenant-b', 'tenant_core/default', 'default-policy', 'default',
           'default-a', 1, 'active', 'tenant-create-b', 1, 1, 1);`
     );
+    d1Observer = { batchErrors: [], preparedSql: [] };
     service = new ControlAccountAllocationService(
-      new D1AccountAllocationRepository(d1(database)),
+      new D1AccountAllocationRepository(d1(database, d1Observer)),
       () => 100
     );
   });
@@ -441,7 +450,7 @@ describe('account route allocation', () => {
     ).toEqual({ count: 0 });
   });
 
-  it('rolls back every role when one role has no capacity and retries cleanly', async () => {
+  it('returns capacity unavailable without a D1 exception or partial role and retries cleanly', async () => {
     database.exec(
       `UPDATE control_shard_capacity
           SET allocation_status = 'full'
@@ -468,6 +477,8 @@ describe('account route allocation', () => {
     expect(database.prepare(`SELECT COUNT(*) AS count FROM control_audit_events`).get()).toEqual({
       count: 0,
     });
+    expect(d1Observer.batchErrors).toEqual([]);
+    expect(d1Observer.preparedSql.join('\n')).not.toContain('capacity_guard');
 
     database.exec(
       `UPDATE control_shard_capacity

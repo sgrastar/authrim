@@ -209,7 +209,7 @@ export class D1AccountAllocationRepository {
     if (plans.length < 1 || plans.length > 2) {
       throw new Error('invalid_account_route_data_roles');
     }
-    await Promise.all(
+    const existingRows = await Promise.all(
       plans.map(async (plan) => {
         const [byAccount, byIdempotency] = await Promise.all([
           this.getByAccount(plan),
@@ -224,20 +224,38 @@ export class D1AccountAllocationRepository {
         if (byAccount && byAccount.idempotency_key !== plan.idempotencyKey) {
           throw new Error('control_account_allocation_idempotency_conflict');
         }
+        return byAccount ?? byIdempotency;
       })
     );
 
-    const statements = plans.flatMap((plan) => [
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO control_tenant_shard_allocations (
-             allocation_id, environment_id, tenant_id, account_id_blind_digest,
-             data_role, residency_partition, selected_shard_id, reservation_state,
-             idempotency_key, route_generation, capacity_counted_at, created_at, updated_at
-           )
-           SELECT ?, ?, ?, ?, ?, ?, candidate.shard_id, 'reserved', ?, candidate.generation,
-                  NULL, ?, ?
-             FROM (
+    const missingPlans = plans.filter((_plan, index) => !existingRows[index]);
+    const allocationStatement = (() => {
+      if (missingPlans.length === 0) return null;
+      const candidateParameters: unknown[] = [];
+      const candidateQueries = missingPlans.map((plan) => {
+        candidateParameters.push(
+          plan.allocationId,
+          plan.environmentId,
+          plan.tenantId,
+          plan.accountIdBlindDigest,
+          plan.dataRole,
+          plan.residencyPartition,
+          plan.idempotencyKey,
+          now,
+          now,
+          plan.environmentId,
+          plan.tenantId,
+          plan.dataRole,
+          plan.residencyPolicyId,
+          plan.residencyPartition,
+          plan.environmentId,
+          plan.dataRole,
+          plan.residencyPolicyId,
+          plan.residencyPartition
+        );
+        return `SELECT ?, ?, ?, ?, ?, ?, candidate.shard_id, 'reserved', ?,
+                       candidate.generation, NULL, ?, ?
+                  FROM (
                SELECT s.shard_id, s.generation
                  FROM control_tenant_shard_assignments assignment
                  JOIN control_tenant_shards s
@@ -267,48 +285,49 @@ export class D1AccountAllocationRepository {
                 ORDER BY (1.0 * c.allocated_account_count / c.target_account_count),
                          c.allocated_account_count, s.shard_id
                 LIMIT 1
-             ) candidate`
-        )
-        .bind(
-          plan.allocationId,
-          plan.environmentId,
-          plan.tenantId,
-          plan.accountIdBlindDigest,
-          plan.dataRole,
-          plan.residencyPartition,
-          plan.idempotencyKey,
-          now,
-          now,
-          plan.environmentId,
-          plan.tenantId,
-          plan.dataRole,
-          plan.residencyPolicyId,
-          plan.residencyPartition,
-          plan.environmentId,
-          plan.dataRole,
-          plan.residencyPolicyId,
-          plan.residencyPartition
-        ),
-      this.db
+             ) candidate`;
+      });
+      // Reserving every missing role in one statement prevents partial account routes without
+      // manufacturing a constraint violation. Capacity exhaustion is an ordinary zero-row result.
+      return this.db
         .prepare(
-          `UPDATE control_shard_capacity
+          `WITH candidates AS (
+               ${candidateQueries.join('\nUNION ALL\n')}
+             )
+             INSERT OR IGNORE INTO control_tenant_shard_allocations (
+               allocation_id, environment_id, tenant_id, account_id_blind_digest,
+               data_role, residency_partition, selected_shard_id, reservation_state,
+               idempotency_key, route_generation, capacity_counted_at, created_at, updated_at
+             )
+             SELECT * FROM candidates
+              WHERE (SELECT COUNT(*) FROM candidates) = ?`
+        )
+        .bind(...candidateParameters, missingPlans.length);
+    })();
+
+    const statements = [
+      ...(allocationStatement ? [allocationStatement] : []),
+      ...plans.flatMap((plan) => [
+        this.db
+          .prepare(
+            `UPDATE control_shard_capacity
               SET allocated_account_count = allocated_account_count + 1, updated_at = ?
             WHERE shard_id = (
               SELECT selected_shard_id FROM control_tenant_shard_allocations
                WHERE allocation_id = ? AND capacity_counted_at IS NULL
             )`
-        )
-        .bind(now, plan.allocationId),
-      this.db
-        .prepare(
-          `UPDATE control_tenant_shard_allocations
+          )
+          .bind(now, plan.allocationId),
+        this.db
+          .prepare(
+            `UPDATE control_tenant_shard_allocations
               SET capacity_counted_at = ?, updated_at = ?
             WHERE allocation_id = ? AND capacity_counted_at IS NULL`
-        )
-        .bind(now, now, plan.allocationId),
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO control_audit_events (
+          )
+          .bind(now, now, plan.allocationId),
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO control_audit_events (
              event_id, environment_id, event_type, actor_type, resource_kind,
              resource_id, outcome, redacted_payload_json, created_at
            )
@@ -317,65 +336,21 @@ export class D1AccountAllocationRepository {
             WHERE EXISTS (
               SELECT 1 FROM control_tenant_shard_allocations WHERE allocation_id = ?
             )`
-        )
-        .bind(
-          `audit:${plan.allocationId}:allocated`,
-          plan.environmentId,
-          plan.allocationId,
-          JSON.stringify({
-            data_role: plan.dataRole,
-            residency_partition: plan.residencyPartition,
-          }),
-          now,
-          plan.allocationId
-        ),
-    ]);
-    const first = plans[0];
-    // D1 batches are transactional. This deliberately invalid final statement aborts and rolls
-    // back every role reservation when the batch could not reserve the complete requested set.
-    statements.push(
-      this.db
-        .prepare(
-          `INSERT INTO control_operations (
-             operation_id, environment_id, operation_kind, idempotency_key, status,
-             requested_by_type, attempt_count, created_at, updated_at
-           )
-           SELECT ?, ?, 'account_allocation_guard', ?, 'queued', 'capacity_guard', 0, ?, ?
-            WHERE (
-              SELECT COUNT(*) FROM control_tenant_shard_allocations
-               WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
-                 AND residency_partition = ? AND idempotency_key = ?
-                 AND data_role IN (${plans.map(() => '?').join(',')})
-                 AND reservation_state IN ('reserved', 'committed')
-                 AND capacity_counted_at IS NOT NULL
-            ) <> ?`
-        )
-        .bind(
-          `guard_${first.allocationId.slice('allocation_'.length)}`,
-          first.environmentId,
-          `account-allocation-guard:${first.allocationId.slice('allocation_'.length)}`,
-          now,
-          now,
-          first.environmentId,
-          first.tenantId,
-          first.accountIdBlindDigest,
-          first.residencyPartition,
-          first.idempotencyKey,
-          ...plans.map((plan) => plan.dataRole),
-          plans.length
-        )
-    );
-    try {
-      await this.db.batch(statements);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        /CHECK constraint failed: requested_by_type IN/iu.test(error.message)
-      ) {
-        throw new Error('control_account_allocation_capacity_unavailable');
-      }
-      throw error;
-    }
+          )
+          .bind(
+            `audit:${plan.allocationId}:allocated`,
+            plan.environmentId,
+            plan.allocationId,
+            JSON.stringify({
+              data_role: plan.dataRole,
+              residency_partition: plan.residencyPartition,
+            }),
+            now,
+            plan.allocationId
+          ),
+      ]),
+    ];
+    await this.db.batch(statements);
 
     const results = await Promise.all(
       plans.map(async (plan) => {
