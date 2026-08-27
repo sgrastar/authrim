@@ -190,7 +190,7 @@ export interface LowWatermarkRequest {
   residencyPartition: string;
   allocationScope: ControlTenantShardAllocationScope;
   ownerTenantId: string | null;
-  supplyCount: number;
+  activeSupplyCount: number;
 }
 
 export interface PendingMigrationPlan {

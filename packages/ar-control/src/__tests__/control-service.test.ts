@@ -94,7 +94,7 @@ class FakeRepository implements ControlRepository {
   assignableShard: Omit<ControlTenantShardCapacityTarget, 'assignmentGeneration'> | null = null;
   hasAssignment = false;
   capacityOperation: ControlOperationView | null = null;
-  tenantShardSupplyCount = 0;
+  activeTenantShardSupplyCount = 0;
   tenantPlacementPolicy: ControlTenantPlacementPolicy | null = {
     tenantId: 'tenant-test',
     isolationPolicy: 'shared_pool',
@@ -271,8 +271,8 @@ class FakeRepository implements ControlRepository {
     return this.capacityOperation;
   }
 
-  async getTenantShardSupplyCount(): Promise<number> {
-    return this.tenantShardSupplyCount;
+  async getActiveTenantShardSupplyCount(): Promise<number> {
+    return this.activeTenantShardSupplyCount;
   }
 
   async listPendingShardPlans(): Promise<TenantShardPlan[]> {
@@ -1264,7 +1264,7 @@ describe('ControlService tenant shard provisioning', () => {
         residencyPartition: 'jp',
         allocationScope: 'shared_pool',
         ownerTenantId: null,
-        supplyCount: 2,
+        activeSupplyCount: 2,
       },
     ];
     repository.assignableShard = {
@@ -1296,7 +1296,7 @@ describe('ControlService tenant shard provisioning', () => {
       residencyPartition: 'jp',
       allocationScope: 'shared_pool' as const,
       ownerTenantId: null,
-      supplyCount: 2,
+      activeSupplyCount: 2,
     }));
     const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
       uuid: 'database-shared-new',
@@ -1334,7 +1334,7 @@ describe('ControlService tenant shard provisioning', () => {
         residencyPartition: 'jp',
         allocationScope: 'tenant_exclusive',
         ownerTenantId: 'tenant-exclusive',
-        supplyCount: 4,
+        activeSupplyCount: 4,
       },
     ];
     const service = new ControlService({
@@ -1358,6 +1358,51 @@ describe('ControlService tenant shard provisioning', () => {
     expect(created[0]?.idempotencyKey).toMatch(
       /^low-water:tenant_exclusive:tenant-core-users:4:[a-f0-9]{24}$/u
     );
+  });
+
+  it('converges concurrent exclusive low-watermark reconciliations on the active generation', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = {
+      ...required(repository.tenantPlacementPolicy),
+      tenantId: 'tenant-exclusive',
+      isolationPolicy: 'tenant_exclusive',
+    };
+    repository.lowWatermark = [
+      {
+        environmentId: 'env-test',
+        tenantId: 'tenant-exclusive',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'residency-default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+        activeSupplyCount: 3,
+      },
+    ];
+    const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
+      uuid: 'database-exclusive-new',
+      name,
+    }));
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () =>
+        controlApi({
+          listD1Databases: async () => [],
+          createD1Database,
+        }),
+    });
+
+    await expect(
+      Promise.all([service.replenishLowWatermark(), service.replenishLowWatermark()])
+    ).resolves.toEqual([
+      { planned: 1, failed: 0 },
+      { planned: 1, failed: 0 },
+    ]);
+    expect(repository.operations.size).toBe(1);
+    expect(repository.plans.size).toBe(1);
+    expect(createD1Database).toHaveBeenCalledOnce();
   });
 
   it('reuses an in-flight capacity operation instead of creating a duplicate shard', async () => {
@@ -1415,7 +1460,7 @@ describe('ControlService tenant shard provisioning', () => {
 
   it('converges simultaneous account-capacity requests with distinct caller keys', async () => {
     const repository = new FakeRepository();
-    repository.tenantShardSupplyCount = 7;
+    repository.activeTenantShardSupplyCount = 7;
     repository.provisioningAuthority = {
       automaticProvisioningEnabled: false,
       tokenOwnership: 'none',

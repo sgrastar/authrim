@@ -376,7 +376,7 @@ describe('D1ControlRepository lease and budget integration', () => {
 
     const initial = await repository.listLowWatermarkRequests(20, 'env-test');
     await expect(
-      repository.getTenantShardSupplyCount({
+      repository.getActiveTenantShardSupplyCount({
         environmentId: 'env-test',
         dataRole: 'tenant_core/users',
         residencyPolicyId: 'default',
@@ -386,7 +386,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       })
     ).resolves.toBe(1);
     await expect(
-      repository.getTenantShardSupplyCount({
+      repository.getActiveTenantShardSupplyCount({
         environmentId: 'env-test',
         dataRole: 'tenant_core/users',
         residencyPolicyId: 'default',
@@ -409,7 +409,7 @@ describe('D1ControlRepository lease and budget integration', () => {
     ).toMatchObject({
       allocationScope: 'tenant_exclusive',
       ownerTenantId: 'tenant-exclusive',
-      supplyCount: 1,
+      activeSupplyCount: 1,
     });
 
     const exclusiveSpare = {
@@ -432,8 +432,10 @@ describe('D1ControlRepository lease and budget integration', () => {
         ownerTenantId: 'tenant-exclusive',
       })
     ).resolves.toMatchObject({ operationId: exclusiveSpare.operationId, status: 'blocked' });
+    // A pending shard must not advance the low-water generation. Concurrent reconcilers that
+    // observed the same active fleet must therefore derive the same idempotency key.
     await expect(
-      repository.getTenantShardSupplyCount({
+      repository.getActiveTenantShardSupplyCount({
         environmentId: 'env-test',
         dataRole: 'tenant_core/users',
         residencyPolicyId: 'default',
@@ -441,7 +443,7 @@ describe('D1ControlRepository lease and budget integration', () => {
         allocationScope: 'tenant_exclusive',
         ownerTenantId: 'tenant-exclusive',
       })
-    ).resolves.toBe(2);
+    ).resolves.toBe(1);
     expect(
       (await repository.listLowWatermarkRequests(20, 'env-test')).find(
         (request) =>
@@ -488,7 +490,7 @@ describe('D1ControlRepository lease and budget integration', () => {
         (request) =>
           request.tenantId === 'tenant-exclusive' && request.dataRole === 'tenant_core/users'
       )
-    ).toMatchObject({ supplyCount: 2 });
+    ).toMatchObject({ activeSupplyCount: 2 });
 
     await repository.assignTenantShard(
       {
@@ -524,7 +526,7 @@ describe('D1ControlRepository lease and budget integration', () => {
     ).toMatchObject({
       allocationScope: 'shared_pool',
       ownerTenantId: null,
-      supplyCount: 1,
+      activeSupplyCount: 1,
     });
   });
 

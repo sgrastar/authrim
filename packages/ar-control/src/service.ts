@@ -254,6 +254,8 @@ async function capacityUnitIdempotencyKey(input: {
 }
 
 async function lowWatermarkIdempotencyKey(request: LowWatermarkRequest): Promise<string> {
+  // Pending/ready shards must not advance this generation. Otherwise a concurrent caller can
+  // observe the first caller's new pending shard and derive a second key for the same boundary.
   const digest = (
     await sha256(
       JSON.stringify([
@@ -264,11 +266,11 @@ async function lowWatermarkIdempotencyKey(request: LowWatermarkRequest): Promise
         request.residencyPartition,
         request.allocationScope,
         request.ownerTenantId,
-        request.supplyCount,
+        request.activeSupplyCount,
       ])
     )
   ).slice(0, 24);
-  return `low-water:${request.allocationScope}:${slug(request.dataRole)}:${request.supplyCount}:${digest}`;
+  return `low-water:${request.allocationScope}:${slug(request.dataRole)}:${request.activeSupplyCount}:${digest}`;
 }
 
 function parsePlacementPolicyRegistration(
@@ -1089,17 +1091,17 @@ export class ControlService {
     }
 
     const inFlight = await this.dependencies.repository.findCapacityProvisioningOperation(scope);
-    const supplyCount = inFlight
+    const activeSupplyCount = inFlight
       ? null
-      : await this.dependencies.repository.getTenantShardSupplyCount(scope);
+      : await this.dependencies.repository.getActiveTenantShardSupplyCount(scope);
     const convergedRequest =
-      supplyCount === null
+      activeSupplyCount === null
         ? request
         : {
             ...request,
             idempotencyKey: await lowWatermarkIdempotencyKey({
               ...scope,
-              supplyCount,
+              activeSupplyCount,
             }),
           };
     const operation =

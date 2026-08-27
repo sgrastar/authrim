@@ -181,7 +181,7 @@ interface LowWatermarkRow {
   residency_partition: string;
   allocation_scope: ControlTenantShardAllocationScope;
   owner_tenant_id: string | null;
-  supply_count: number;
+  active_supply_count: number;
 }
 
 interface ActiveMigrationReleaseRow {
@@ -345,7 +345,7 @@ export interface ControlRepository {
     allocationScope: ControlTenantShardAllocationScope;
     ownerTenantId: string | null;
   }): Promise<ControlOperationView | null>;
-  getTenantShardSupplyCount(input: {
+  getActiveTenantShardSupplyCount(input: {
     environmentId: string;
     dataRole: TenantShardDataRole;
     residencyPolicyId: string;
@@ -3500,7 +3500,7 @@ export class D1ControlRepository implements ControlRepository {
     return row ? operationView(row) : null;
   }
 
-  async getTenantShardSupplyCount(input: {
+  async getActiveTenantShardSupplyCount(input: {
     environmentId: string;
     dataRole: TenantShardDataRole;
     residencyPolicyId: string;
@@ -3510,14 +3510,14 @@ export class D1ControlRepository implements ControlRepository {
   }): Promise<number> {
     const row = await this.db
       .prepare(
-        `SELECT COUNT(*) AS supply_count
+        `SELECT COUNT(*) AS active_supply_count
            FROM control_tenant_shards shard
           WHERE shard.environment_id = ? AND shard.data_role = ?
             AND shard.residency_policy_id = ? AND shard.residency_partition = ?
             AND shard.allocation_scope = ?
             AND ((? = 'shared_pool' AND shard.owner_tenant_id IS NULL) OR
                  (? = 'tenant_exclusive' AND shard.owner_tenant_id = ?))
-            AND shard.status <> 'deleted'`
+            AND shard.status = 'active'`
       )
       .bind(
         input.environmentId,
@@ -3529,8 +3529,8 @@ export class D1ControlRepository implements ControlRepository {
         input.allocationScope,
         input.ownerTenantId
       )
-      .first<{ supply_count: number }>();
-    return row?.supply_count ?? 0;
+      .first<{ active_supply_count: number }>();
+    return row?.active_supply_count ?? 0;
   }
 
   private async getOperationByIdempotency(
@@ -3674,7 +3674,7 @@ export class D1ControlRepository implements ControlRepository {
                           AND inventory.owner_tenant_id IS NULL) OR
                          (placement.isolation_policy = 'tenant_exclusive'
                           AND inventory.owner_tenant_id = placement.tenant_id))
-                    AND inventory.status <> 'deleted') AS supply_count
+                    AND inventory.status = 'active') AS active_supply_count
            FROM control_residency_partitions p
            JOIN control_tenant_placement_policies placement
              ON placement.environment_id = p.environment_id
@@ -3740,7 +3740,7 @@ export class D1ControlRepository implements ControlRepository {
       residencyPartition: row.residency_partition,
       allocationScope: row.allocation_scope,
       ownerTenantId: row.owner_tenant_id,
-      supplyCount: row.supply_count,
+      activeSupplyCount: row.active_supply_count,
     }));
   }
 
