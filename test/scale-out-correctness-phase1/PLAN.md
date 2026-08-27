@@ -117,19 +117,48 @@ The rehearsal evidence must be stored separately and must not be presented as th
 result. Run it in a different disposable environment from the main demonstration. Do not reuse its
 shards or capacity counters for the main baseline.
 
-### 4.2 Main demonstration
+### 4.2 Publishable standard scenario
+
+Use this profile for every Phase 1 scenario that will be included in public results. Run each
+scenario three times from an independently captured clean baseline. The reduced shard capacity is a
+test acceleration setting; the production scale-out code path and state machine remain unchanged.
 
 | Setting                                                    |                     Value |
 | ---------------------------------------------------------- | ------------------------: |
-| Target accounts per shard                                  |                    10,000 |
+| Target accounts per shard                                  |                       500 |
+| Accounts to create                                         |                     5,000 |
+| Target creation rate                                       |        15 accounts/second |
+| Maximum in-flight requests                                 |                        64 |
+| Unconstrained injection duration                           |           about 6 minutes |
+| Expected assignment boundary crossings                     | 9 per account-scoped role |
+| Expected Lookup route rows created per account             |                         2 |
+| Lookup target active route rows per capacity unit          |                     3,000 |
+| Minimum physical Lookup additions                          |                         5 |
+| Minimum Lookup assignment transitions used by later routes |                         5 |
+
+The elapsed run time is expected to exceed the injection duration because D1 provisioning, Worker
+binding propagation, Lookup bucket migration, and the production 15-minute cutover grace remain in
+the acceptance path. Use a four-hour retry and quiescence window; never shorten the production
+cutover grace to make a result pass.
+
+### 4.3 Representative scale demonstration
+
+| Setting                                                    |                     Value |
+| ---------------------------------------------------------- | ------------------------: |
+| Target accounts per shard                                  |                     5,000 |
 | Accounts to create                                         |                    50,000 |
 | Target creation rate                                       |        15 accounts/second |
 | Maximum in-flight requests                                 |                        64 |
 | Approximate injection duration                             |                56 minutes |
-| Expected assignment boundary crossings                     | 4 per account-scoped role |
+| Expected assignment boundary crossings                     | 9 per account-scoped role |
+| Expected Lookup route rows created per account             |                         2 |
 | Lookup target active route rows per capacity unit          |                    25,000 |
 | Minimum physical Lookup additions                          |                         5 |
 | Minimum Lookup assignment transitions used by later routes |                         5 |
+
+Run this profile for the representative shared-pool, tenant-exclusive, and mixed-placement normal
+paths after their 5,000-account standard runs pass. Failure-injection and regression scenarios remain
+at 5,000 accounts unless the scenario specifically concerns duration or total volume.
 
 The low-watermark is evaluated independently from the hard placement boundary. A final unused ready
 spare may therefore exist after the last account. Expected provisioning counts must be calculated
@@ -346,34 +375,34 @@ separately from the Phase 1 pass/fail result.
 
 Phase 1 passes only when every correctness criterion passes.
 
-| Metric                                                             |                                    Required result |
-| ------------------------------------------------------------------ | -------------------------------------------------: |
-| Logical account eventual success                                   |                                               100% |
-| Immediate creation success (`201`, informational SLO)              |                            reported, not pass/fail |
-| Server `5xx` responses                                             |                                                  0 |
-| Terminal logical account failures                                  |                                                  0 |
-| Lost accounts                                                      |                                                  0 |
-| Duplicate core accounts                                            |                                                  0 |
-| Missing or duplicate PII representations                           |                                                  0 |
-| Lookup route mismatches                                            |                                                  0 |
-| Cross-tenant writes                                                |                                                  0 |
-| Orphan D1 resources                                                |                                                  0 |
-| Duplicate provisioning for one deterministic capacity unit         |                                                  0 |
-| Duplicate Lookup provisioning for one forecast decision generation |                                                  0 |
-| Lookup publication-counter decreases or retry double-counts        |                                                  0 |
-| Lookup forecast recomputation mismatches                           |                                                  0 |
-| Physical Lookup D1 additions                                       |                         at least 5 in the main run |
-| Lookup assignment transitions used by later routes                 |                         at least 5 in the main run |
-| Unexplained Control/physical count mismatches                      |                                                  0 |
-| Required assignment boundary crossings                             | at least 4 per account-scoped role in the main run |
-| Capacity operations after quiescence                               |             all succeeded; none blocked or waiting |
-| Manual intervention between first and last account                 |                                                  0 |
-| Tenant-exclusive provisioning `control_internal_error` rate        |                                      0 in the gate |
-| Tenant-exclusive duplicate provider D1 resources                   |                                                  0 |
-| Tenant-exclusive orphan provider resources                         |                                                  0 |
-| Tenant-exclusive tenants stuck before Active                       |                                                  0 |
+| Metric                                                             |                               Required result |
+| ------------------------------------------------------------------ | --------------------------------------------: |
+| Logical account eventual success                                   |                                          100% |
+| Immediate creation success (`201`, informational SLO)              |                       reported, not pass/fail |
+| Server `5xx` responses                                             |                                             0 |
+| Terminal logical account failures                                  |                                             0 |
+| Lost accounts                                                      |                                             0 |
+| Duplicate core accounts                                            |                                             0 |
+| Missing or duplicate PII representations                           |                                             0 |
+| Lookup route mismatches                                            |                                             0 |
+| Cross-tenant writes                                                |                                             0 |
+| Orphan D1 resources                                                |                                             0 |
+| Duplicate provisioning for one deterministic capacity unit         |                                             0 |
+| Duplicate Lookup provisioning for one forecast decision generation |                                             0 |
+| Lookup publication-counter decreases or retry double-counts        |                                             0 |
+| Lookup forecast recomputation mismatches                           |                                             0 |
+| Physical Lookup D1 additions                                       |          at least 5 in standard and main runs |
+| Lookup assignment transitions used by later routes                 |          at least 5 in standard and main runs |
+| Unexplained Control/physical count mismatches                      |                                             0 |
+| Required assignment boundary crossings                             | at least 9 per role in standard and main runs |
+| Capacity operations after quiescence                               |        all succeeded; none blocked or waiting |
+| Manual intervention between first and last account                 |                                             0 |
+| Tenant-exclusive provisioning `control_internal_error` rate        |                                 0 in the gate |
+| Tenant-exclusive duplicate provider D1 resources                   |                                             0 |
+| Tenant-exclusive orphan provider resources                         |                                             0 |
+| Tenant-exclusive tenants stuck before Active                       |                                             0 |
 
-The test fails even if 50,000 accounts were eventually inserted when any uniqueness, route,
+The test fails even if all 5,000 or 50,000 accounts were eventually inserted when any uniqueness, route,
 capacity, provisioning, or intervention criterion fails.
 
 ### 9.1 Tenant-exclusive provisioning regression evidence (2026-08-27)
@@ -429,9 +458,11 @@ test/scale-out-correctness-phase1/
     requests.jsonl
     control-events.jsonl
     provider-events.jsonl
+    final-state.json
     integrity.json
     summary.json
     summary.md
+    provisioning-evidence.json
     cleanup.json
 ```
 

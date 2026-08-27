@@ -22,6 +22,7 @@ import {
   type Phase1HarnessConfig,
   type Phase1IntegrityResult,
   type Phase1LookupBucketSnapshotRow,
+  type Phase1ProviderSnapshot,
 } from './schemas.js';
 import type { Phase1AccountResult, Phase1RunnerResult } from './run.js';
 
@@ -765,6 +766,40 @@ export function reconcilePublicationCounterSeries(input: {
   return { decreases, deltaMismatches, duplicateEventIds };
 }
 
+const AUTOMATIC_ADMIN_OPERATION_PREFIXES = [
+  'account-capacity:',
+  'low-water:',
+  'tenant-runtime-route:',
+] as const;
+
+export function countManualInterventions(input: {
+  baseline: Phase1Baseline;
+  finalControl: Phase1ControlSnapshot;
+}): number {
+  const baselineAt = Math.floor(Date.parse(input.baseline.capturedAt) / 1_000);
+  const baselineOperationIds = new Set(
+    input.baseline.control.operations.flatMap((row) =>
+      typeof row.operation_id === 'string' ? [row.operation_id] : []
+    )
+  );
+  return input.finalControl.operations.filter((row) => {
+    if (row.requested_by_type !== 'admin' && row.requested_by_type !== 'setup') return false;
+    if (typeof row.operation_id === 'string' && baselineOperationIds.has(row.operation_id)) {
+      return false;
+    }
+    const idempotencyKey =
+      typeof row.idempotency_key === 'string' ? row.idempotency_key : null;
+    if (
+      idempotencyKey !== null &&
+      AUTOMATIC_ADMIN_OPERATION_PREFIXES.some((prefix) => idempotencyKey.startsWith(prefix))
+    ) {
+      return false;
+    }
+    const createdAt = normalizePhase1EpochSeconds(row.created_at);
+    return createdAt !== null && createdAt >= baselineAt;
+  }).length;
+}
+
 export async function verifyPhase1Run(input: {
   config: Phase1HarnessConfig;
   runId: string;
@@ -775,16 +810,21 @@ export async function verifyPhase1Run(input: {
   client: Phase1VerificationClient;
   fetcher?: typeof fetch;
   finalControl?: Phase1ControlSnapshot;
+  finalProvider?: Phase1ProviderSnapshot;
+  finalLookupBuckets?: Phase1LookupBucketSnapshotRow[];
   controlEventsPath?: string;
 }): Promise<Phase1IntegrityResult> {
   const finalControl =
     input.finalControl ??
     (await waitForPhase1Quiescence({ config: input.config, client: input.client }));
-  const finalProvider = await collectProviderSnapshot({ client: input.client });
-  const finalLookupBuckets = await collectLookupBucketSnapshot({
-    client: input.client,
-    control: finalControl,
-  });
+  const finalProvider =
+    input.finalProvider ?? (await collectProviderSnapshot({ client: input.client }));
+  const finalLookupBuckets =
+    input.finalLookupBuckets ??
+    (await collectLookupBucketSnapshot({
+      client: input.client,
+      control: finalControl,
+    }));
   const succeeded = input.runner.accounts.filter((account) => account.userId !== null);
   const submittedAccounts = input.runner.metrics.scheduled;
   const userIds = succeeded.flatMap((account) => (account.userId ? [account.userId] : []));
@@ -1052,20 +1092,10 @@ export async function verifyPhase1Run(input: {
     }
   }
   const provisionedD1Resources = providerAdditions.length - orphanD1Resources;
-  const baselineAt = Math.floor(Date.parse(input.baseline.capturedAt) / 1_000);
-  const manualIntervention = finalControl.operations.filter((row) => {
-    const createdAt = normalizePhase1EpochSeconds(row.created_at);
-    return (
-      (row.requested_by_type === 'admin' || row.requested_by_type === 'setup') &&
-      !(
-        typeof row.idempotency_key === 'string' &&
-        (row.idempotency_key.startsWith('account-capacity:') ||
-          row.idempotency_key.startsWith('low-water:'))
-      ) &&
-      createdAt !== null &&
-      createdAt >= baselineAt
-    );
-  }).length;
+  const manualIntervention = countManualInterventions({
+    baseline: input.baseline,
+    finalControl,
+  });
   const blockedCapacityOperations = countNewBlockedCapacityOperations(
     input.baseline.control,
     finalControl

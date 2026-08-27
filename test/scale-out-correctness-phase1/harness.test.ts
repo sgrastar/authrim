@@ -29,6 +29,7 @@ import {
 } from './schemas.js';
 import {
   countInProgressControlOperations,
+  countManualInterventions,
   countNewBlockedCapacityOperations,
   countRoleBoundaryCrossings,
   duplicateForecastDecisions,
@@ -81,6 +82,7 @@ function config(overrides: Partial<Phase1HarnessConfig['load']> = {}): Phase1Har
       lookupEwmaAlphaBps: 2_500,
       lookupHeadroomBps: 2_000,
       lookupPolicyGeneration: 2,
+      expectedLookupRoutesPerAccount: 2,
       minimumLookupAdditions: 1,
       minimumLookupUsedAssignmentTransitions: 1,
       minimumRoleBoundaryCrossings: 1,
@@ -265,6 +267,18 @@ function provider(): Phase1ProviderSnapshot {
 }
 
 describe('Phase 1 evidence contracts', () => {
+  it('pins the publishable scenario profile to 5,000 accounts', () => {
+    const standard = structuredClone(config());
+    standard.profile = 'standard';
+    standard.load.accountCount = 5_000;
+
+    expect(parsePhase1HarnessConfig(standard).load.accountCount).toBe(5_000);
+    standard.load.accountCount = 1_000;
+    expect(() => parsePhase1HarnessConfig(standard)).toThrow(
+      'phase1_standard_account_count_mismatch'
+    );
+  });
+
   it('pins the reduced main demonstration to 50,000 accounts', () => {
     const main = structuredClone(config());
     main.profile = 'main';
@@ -931,6 +945,9 @@ describe('Phase 1 evidence contracts', () => {
       readFile(resolve(execution.runDirectory, 'provisioning-evidence.json'), 'utf8')
     ).resolves.toContain('readyLatencyMs');
     await expect(
+      readFile(resolve(execution.runDirectory, 'final-state.json'), 'utf8')
+    ).resolves.toContain('lookupBuckets');
+    await expect(
       readFile(resolve(execution.runDirectory, 'requests.jsonl'), 'utf8')
     ).resolves.toEqual(expect.any(String));
     await expect(
@@ -942,6 +959,7 @@ describe('Phase 1 evidence contracts', () => {
 
     for (const artifact of [
       'integrity.json',
+      'final-state.json',
       'summary.json',
       'summary.md',
       'timeline.svg',
@@ -1299,12 +1317,12 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
       now: new Date(),
     });
 
-    expect(baseline.preflight.expectedMinimumD1Creates).toBe(9);
+    expect(baseline.preflight.expectedMinimumD1Creates).toBe(13);
     expect(
       baseline.preflight.checks.find(
         (check) => check.name === 'lookup_addition_acceptance_reachable'
       )?.detail
-    ).toBe('7:1');
+    ).toBe('11:1');
   });
 
   it('fails preflight when lookup forecast additions cannot reach acceptance', () => {
@@ -1323,6 +1341,44 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
         (check) => check.name === 'lookup_addition_acceptance_reachable'
       )?.passed
     ).toBe(false);
+  });
+
+  it('does not report automatic route observations or baseline operations as manual work', () => {
+    const control = snapshot();
+    control.operations.push({
+      operation_id: 'existing-admin-operation',
+      requested_by_type: 'admin',
+      idempotency_key: 'operator-before-baseline',
+      created_at: 1_787_785_100,
+      status: 'running',
+    });
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control,
+      provider: provider(),
+      runId: 'run-manual-classification',
+      now: new Date('2026-08-27T00:20:00.000Z'),
+    });
+    const finalControl = structuredClone(control);
+    finalControl.operations[0].status = 'succeeded';
+    finalControl.operations.push(
+      {
+        operation_id: 'automatic-route-observation',
+        requested_by_type: 'admin',
+        idempotency_key: 'tenant-runtime-route:observation-1',
+        created_at: 1_787_790_100,
+        status: 'succeeded',
+      },
+      {
+        operation_id: 'operator-during-run',
+        requested_by_type: 'setup',
+        idempotency_key: 'setup-deploy-during-run',
+        created_at: 1_787_790_200,
+        status: 'succeeded',
+      }
+    );
+
+    expect(countManualInterventions({ baseline, finalControl })).toBe(1);
   });
 
   it('emits stable control/provider changes and detects role boundaries', () => {

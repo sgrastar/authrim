@@ -3,7 +3,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 export const PHASE1_SCHEMA_VERSION = 1 as const;
 export const PHASE1_EXECUTION_CONFIRMATION = 'AUTHRIM_PHASE1_DISPOSABLE_SCALE_OUT';
 
-export type Phase1ProfileName = 'smoke' | 'main' | 'custom';
+export type Phase1ProfileName = 'smoke' | 'standard' | 'main' | 'custom';
 
 export interface Phase1HarnessConfig {
   schemaVersion: 1;
@@ -46,6 +46,7 @@ export interface Phase1HarnessConfig {
     lookupEwmaAlphaBps: number;
     lookupHeadroomBps: number;
     lookupPolicyGeneration: number;
+    expectedLookupRoutesPerAccount: number;
     minimumLookupAdditions: number;
     minimumLookupUsedAssignmentTransitions: number;
     minimumRoleBoundaryCrossings: number;
@@ -315,7 +316,7 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
   if (root.schemaVersion !== PHASE1_SCHEMA_VERSION)
     throw new Error('phase1_config_version_invalid');
   const profile = string(root.profile, 'phase1_profile_invalid');
-  if (profile !== 'smoke' && profile !== 'main' && profile !== 'custom') {
+  if (profile !== 'smoke' && profile !== 'standard' && profile !== 'main' && profile !== 'custom') {
     throw new Error('phase1_profile_invalid');
   }
   const environment = record(root.environment, 'phase1_environment_invalid');
@@ -468,6 +469,12 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
         1_000_000,
         'phase1_lookup_policy_generation_invalid'
       ),
+      expectedLookupRoutesPerAccount: integer(
+        expectedPolicy.expectedLookupRoutesPerAccount,
+        1,
+        32,
+        'phase1_lookup_routes_per_account_invalid'
+      ),
       minimumLookupAdditions: integer(
         expectedPolicy.minimumLookupAdditions,
         0,
@@ -541,6 +548,9 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
   }
   if (profile === 'smoke' && parsed.load.accountCount !== 1_000) {
     throw new Error('phase1_smoke_account_count_mismatch');
+  }
+  if (profile === 'standard' && parsed.load.accountCount !== 5_000) {
+    throw new Error('phase1_standard_account_count_mismatch');
   }
   if (profile === 'main' && parsed.load.accountCount !== 50_000) {
     throw new Error('phase1_main_account_count_mismatch');

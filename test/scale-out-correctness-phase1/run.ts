@@ -1032,6 +1032,24 @@ export async function executePhase1Harness(input: {
   }
   const finalObservationError: unknown = observationError;
   if (finalObservationError instanceof Error) throw finalObservationError;
+  const [finalProvider, finalLookupBuckets] = await Promise.all([
+    collectProviderSnapshot({ client }),
+    collectLookupBucketSnapshot({ client, control: finalControl }),
+  ]);
+  const finalState = {
+    schemaVersion: PHASE1_SCHEMA_VERSION,
+    runId: id,
+    capturedAt: new Date().toISOString(),
+    control: finalControl,
+    provider: finalProvider,
+    lookupBuckets: finalLookupBuckets,
+  };
+  assertPhase1EvidenceIsSecretFree(finalState);
+  await writeFile(
+    resolve(runDirectory, 'final-state.json'),
+    `${JSON.stringify(finalState, null, 2)}\n`,
+    { mode: 0o600, flag: 'wx' }
+  );
   const integrity = await verifyPhase1Run({
     config: input.config,
     runId: id,
@@ -1042,6 +1060,8 @@ export async function executePhase1Harness(input: {
     client,
     fetcher: input.fetcher,
     finalControl,
+    finalProvider,
+    finalLookupBuckets,
     controlEventsPath,
   });
   await writeFile(

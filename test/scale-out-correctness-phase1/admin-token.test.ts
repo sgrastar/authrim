@@ -45,6 +45,7 @@ function baseConfig() {
       lookupEwmaAlphaBps: 2_500,
       lookupHeadroomBps: 2_000,
       lookupPolicyGeneration: 2,
+      expectedLookupRoutesPerAccount: 2,
       minimumLookupAdditions: 1,
       minimumLookupUsedAssignmentTransitions: 1,
       minimumRoleBoundaryCrossings: 1,

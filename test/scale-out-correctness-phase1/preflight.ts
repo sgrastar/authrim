@@ -274,10 +274,14 @@ export function evaluatePhase1Preflight(input: {
       (typeof row.projected_active_route_count === 'number' ? row.projected_active_route_count : 0),
     0
   );
-  const incomingLookupRoutes = config.load.ratePerSecond * expected.lookupForecastHorizonSeconds;
+  const plannedLookupRoutes = config.load.accountCount * expected.expectedLookupRoutesPerAccount;
+  const incomingLookupRoutes =
+    config.load.ratePerSecond *
+    expected.lookupForecastHorizonSeconds *
+    expected.expectedLookupRoutesPerAccount;
   const projectedLookupRoutes = Math.max(
     currentProjectedLookupRoutes,
-    observedLookupRoutes + incomingLookupRoutes
+    observedLookupRoutes + plannedLookupRoutes + incomingLookupRoutes
   );
   const theoreticalLookupUnits = Math.ceil(projectedLookupRoutes / usableLookupUnit);
   const theoreticalLookupAdditions = Math.max(

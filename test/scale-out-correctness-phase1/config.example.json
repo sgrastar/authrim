@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "profile": "smoke",
+  "profile": "standard",
   "environment": {
-    "environmentId": "phase1-smoke",
-    "baseUrl": "https://phase1-smoke.example.invalid/",
+    "environmentId": "phase1-standard",
+    "baseUrl": "https://phase1-standard.example.invalid/",
     "tenantId": "phase1-tenant",
     "placementPolicy": "shared_pool",
     "disposable": true,
@@ -22,30 +22,31 @@
     "seedEnv": "AUTHRIM_PHASE1_SEED"
   },
   "load": {
-    "accountCount": 1000,
-    "ratePerSecond": 5,
-    "maximumInFlight": 20,
-    "retryWindowSeconds": 7200,
+    "accountCount": 5000,
+    "ratePerSecond": 15,
+    "maximumInFlight": 64,
+    "retryWindowSeconds": 14400,
     "requestTimeoutMs": 30000
   },
   "expectedPolicy": {
-    "targetAccountCount": 100,
+    "targetAccountCount": 500,
     "maxReadySpares": 1,
     "maxD1Resources": 100,
     "dailyD1CreateBudget": 50,
-    "lookupTargetActiveRouteCount": 250,
+    "lookupTargetActiveRouteCount": 3000,
     "lookupForecastHorizonSeconds": 300,
     "lookupEwmaAlphaBps": 2500,
     "lookupHeadroomBps": 2000,
     "lookupPolicyGeneration": 2,
-    "minimumLookupAdditions": 2,
-    "minimumLookupUsedAssignmentTransitions": 2,
+    "expectedLookupRoutesPerAccount": 2,
+    "minimumLookupAdditions": 5,
+    "minimumLookupUsedAssignmentTransitions": 5,
     "minimumRoleBoundaryCrossings": 9
   },
   "observation": {
     "controlIntervalMs": 5000,
     "providerIntervalMs": 15000,
-    "quiescenceTimeoutSeconds": 7200,
+    "quiescenceTimeoutSeconds": 14400,
     "quiescenceStableWindows": 2
   },
   "attestations": {
