@@ -255,7 +255,7 @@
 					><tr
 						><th>Database</th><th>Role</th><th>Scope / owner</th><th>Status</th><th>Health</th><th
 							>Allocation</th
-						><th class="text-right">Accounts</th><th class="text-right">Use</th><th
+						><th class="text-right">Allocated / target</th><th class="text-right">Use</th><th
 							class="text-right">Storage</th
 						></tr
 					></thead
