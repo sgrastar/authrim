@@ -107,6 +107,14 @@ export function evaluatePhase1Preflight(input: {
     (number(environment, 'active_tenant_count') ?? 0) >= 1,
     String(number(environment, 'active_tenant_count') ?? 'missing')
   );
+  const allocationSummary =
+    control.tenantAllocations.find((row) => row.row_kind === 'summary') ?? null;
+  check(
+    checks,
+    'clean_tenant_allocation_baseline',
+    number(allocationSummary, 'allocation_count') === 0,
+    String(number(allocationSummary, 'allocation_count') ?? 'missing')
+  );
 
   for (const role of ['tenant_core/users', 'tenant_pii'] as const) {
     const active = control.tenantAssignments.filter(

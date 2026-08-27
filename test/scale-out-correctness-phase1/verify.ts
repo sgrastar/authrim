@@ -787,8 +787,7 @@ export function countManualInterventions(input: {
     if (typeof row.operation_id === 'string' && baselineOperationIds.has(row.operation_id)) {
       return false;
     }
-    const idempotencyKey =
-      typeof row.idempotency_key === 'string' ? row.idempotency_key : null;
+    const idempotencyKey = typeof row.idempotency_key === 'string' ? row.idempotency_key : null;
     if (
       idempotencyKey !== null &&
       AUTOMATIC_ADMIN_OPERATION_PREFIXES.some((prefix) => idempotencyKey.startsWith(prefix))
@@ -928,44 +927,33 @@ export async function verifyPhase1Run(input: {
       (typeof row.allocated_account_count === 'number' && row.allocated_account_count !== physical)
     );
   }).length;
-  const baselineAllocations = new Set(
-    input.baseline.control.tenantAllocations.map((row) => String(row.allocation_id))
-  );
-  const newAllocations = finalControl.tenantAllocations.filter(
-    (row) => !baselineAllocations.has(String(row.allocation_id))
-  );
-  const shardById = new Map(
-    finalControl.shardCapacities.map((row) => [String(row.shard_id), row] as const)
-  );
-  let allocationMismatches = newAllocations.filter((row) => {
-    const selected = shardById.get(String(row.selected_shard_id));
-    return (
-      row.reservation_state !== 'committed' ||
-      typeof row.capacity_counted_at !== 'number' ||
-      (row.data_role !== 'tenant_core/users' && row.data_role !== 'tenant_pii') ||
-      selected?.data_role !== row.data_role ||
-      selected.status !== 'active'
-    );
-  }).length;
+  const allocationSummary =
+    finalControl.tenantAllocations.find((row) => row.row_kind === 'summary') ?? null;
+  const allocationNumber = (row: Record<string, unknown> | null, key: string): number | null => {
+    const value = row?.[key];
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  };
+  let allocationMismatches = 0;
+  if (allocationNumber(allocationSummary, 'allocation_count') !== submittedAccounts * 2) {
+    allocationMismatches += 1;
+  }
+  if (allocationNumber(allocationSummary, 'distinct_account_count') !== submittedAccounts) {
+    allocationMismatches += 1;
+  }
+  for (const field of [
+    'invalid_state_count',
+    'missing_capacity_count',
+    'invalid_shard_count',
+    'invalid_account_role_count',
+  ]) {
+    if (allocationNumber(allocationSummary, field) !== 0) allocationMismatches += 1;
+  }
   for (const role of ['tenant_core/users', 'tenant_pii']) {
-    if (newAllocations.filter((row) => row.data_role === role).length !== submittedAccounts) {
-      allocationMismatches += 1;
-    }
+    const roleCount = finalControl.tenantAllocations
+      .filter((row) => row.row_kind === 'distribution' && row.data_role === role)
+      .reduce((sum, row) => sum + (allocationNumber(row, 'allocation_count') ?? 0), 0);
+    if (roleCount !== submittedAccounts) allocationMismatches += 1;
   }
-  const allocationRolesByAccount = new Map<string, Set<string>>();
-  for (const allocation of newAllocations) {
-    if (typeof allocation.account_id_blind_digest !== 'string') {
-      allocationMismatches += 1;
-      continue;
-    }
-    const roles = allocationRolesByAccount.get(allocation.account_id_blind_digest) ?? new Set();
-    roles.add(String(allocation.data_role));
-    allocationRolesByAccount.set(allocation.account_id_blind_digest, roles);
-  }
-  allocationMismatches += [...allocationRolesByAccount.values()].filter(
-    (roles) => roles.size !== 2
-  ).length;
-  if (allocationRolesByAccount.size !== submittedAccounts) allocationMismatches += 1;
 
   const coreBoundaryCrossings = countRoleBoundaryCrossings(
     input.baseline.control,

@@ -119,12 +119,53 @@ const CONTROL_QUERIES = [
      FROM control_worker_inventory_drift_findings
     WHERE environment_id = ? AND review_state <> 'resolved'
     ORDER BY severity, worker_script_name, finding_kind`,
-  `SELECT allocation_id, account_id_blind_digest, data_role, residency_partition,
-          selected_shard_id, reservation_state, route_generation,
-          capacity_counted_at, created_at, committed_at, updated_at
-     FROM control_tenant_shard_allocations
-    WHERE environment_id = ? AND tenant_id = ?
-    ORDER BY created_at, allocation_id`,
+  `WITH scoped AS (
+       SELECT a.data_role, a.selected_shard_id, a.reservation_state,
+              a.account_id_blind_digest, a.capacity_counted_at,
+              s.data_role AS selected_shard_role, s.status AS selected_shard_status
+         FROM control_tenant_shard_allocations a
+         LEFT JOIN control_tenant_shards s ON s.shard_id = a.selected_shard_id
+        WHERE a.environment_id = ? AND a.tenant_id = ?
+          AND a.data_role IN ('tenant_core/users', 'tenant_pii')
+     ), account_integrity AS (
+       SELECT account_id_blind_digest
+         FROM scoped
+        GROUP BY account_id_blind_digest
+       HAVING COUNT(*) <> 2
+           OR COUNT(DISTINCT data_role) <> 2
+           OR SUM(CASE WHEN data_role IN ('tenant_core/users', 'tenant_pii') THEN 1 ELSE 0 END) <> 2
+     )
+   SELECT 'summary' AS row_kind, NULL AS data_role, NULL AS selected_shard_id,
+          NULL AS reservation_state, COUNT(*) AS allocation_count,
+          COUNT(DISTINCT account_id_blind_digest) AS distinct_account_count,
+          COALESCE(SUM(CASE WHEN reservation_state <> 'committed' THEN 1 ELSE 0 END), 0)
+            AS invalid_state_count,
+          COALESCE(SUM(CASE WHEN capacity_counted_at IS NULL THEN 1 ELSE 0 END), 0)
+            AS missing_capacity_count,
+          COALESCE(SUM(CASE WHEN selected_shard_role IS NULL
+                              OR selected_shard_role <> data_role
+                              OR selected_shard_status IS NULL
+                              OR selected_shard_status <> 'active' THEN 1 ELSE 0 END), 0)
+            AS invalid_shard_count,
+          (SELECT COUNT(*) FROM account_integrity) AS invalid_account_role_count
+     FROM scoped
+    UNION ALL
+   SELECT 'distribution' AS row_kind, data_role, selected_shard_id, reservation_state,
+          COUNT(*) AS allocation_count,
+          COUNT(DISTINCT account_id_blind_digest) AS distinct_account_count,
+          COALESCE(SUM(CASE WHEN reservation_state <> 'committed' THEN 1 ELSE 0 END), 0)
+            AS invalid_state_count,
+          COALESCE(SUM(CASE WHEN capacity_counted_at IS NULL THEN 1 ELSE 0 END), 0)
+            AS missing_capacity_count,
+          COALESCE(SUM(CASE WHEN selected_shard_role IS NULL
+                              OR selected_shard_role <> data_role
+                              OR selected_shard_status IS NULL
+                              OR selected_shard_status <> 'active' THEN 1 ELSE 0 END), 0)
+            AS invalid_shard_count,
+          0 AS invalid_account_role_count
+     FROM scoped
+    GROUP BY data_role, selected_shard_id, reservation_state
+    ORDER BY row_kind DESC, data_role, selected_shard_id, reservation_state`,
 ] as const;
 
 const CONTROL_QUERY_BATCH_SIZE = 4;
@@ -273,7 +314,7 @@ const ENTITY_KEYS: Record<
   residencyPartitions: ['residency_policy_id', 'residency_partition'],
   shardCapacities: ['shard_id'],
   tenantAssignments: ['data_role', 'assignment_generation', 'shard_id'],
-  tenantAllocations: ['allocation_id'],
+  tenantAllocations: ['row_kind', 'data_role', 'selected_shard_id', 'reservation_state'],
   operations: ['operation_id'],
   operationSteps: ['operation_id', 'step_key'],
   desiredResources: ['desired_resource_id'],

@@ -203,7 +203,20 @@ function snapshot(): Phase1ControlSnapshot {
         shard_id: 'pii-1',
       },
     ],
-    tenantAllocations: [],
+    tenantAllocations: [
+      {
+        row_kind: 'summary',
+        data_role: null,
+        selected_shard_id: null,
+        reservation_state: null,
+        allocation_count: 0,
+        distinct_account_count: 0,
+        invalid_state_count: 0,
+        missing_capacity_count: 0,
+        invalid_shard_count: 0,
+        invalid_account_role_count: 0,
+      },
+    ],
     operations: [],
     operationSteps: [],
     desiredResources: [
@@ -352,6 +365,36 @@ describe('Phase 1 evidence contracts', () => {
     expect(
       baseline.preflight.checks.find((check) => check.name === 'selected_tenant_is_active')?.passed
     ).toBe(true);
+  });
+
+  it('rejects a tenant with existing allocations as a publishable clean baseline', () => {
+    const control = snapshot();
+    const allocationSummary = control.tenantAllocations[0];
+    if (!allocationSummary) throw new Error('fixture_allocation_summary_missing');
+    allocationSummary.allocation_count = 2;
+    allocationSummary.distinct_account_count = 1;
+
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control,
+      provider: provider(),
+      runId: 'run-dirty-allocation-baseline',
+      now: new Date(),
+    });
+
+    expect(
+      baseline.preflight.checks.find((check) => check.name === 'clean_tenant_allocation_baseline')
+        ?.passed
+    ).toBe(false);
+  });
+
+  it('observes allocation integrity as bounded aggregates instead of raw account rows', () => {
+    const allocationQuery = buildControlQueryBatch(config()).at(-1)?.sql ?? '';
+
+    expect(allocationQuery).toContain("'summary' AS row_kind");
+    expect(allocationQuery).toContain('COUNT(DISTINCT account_id_blind_digest)');
+    expect(allocationQuery).toContain("a.data_role IN ('tenant_core/users', 'tenant_pii')");
+    expect(allocationQuery).not.toMatch(/SELECT\s+allocation_id/iu);
   });
 
   it('ignores historical blocked operations but rejects blocks inside the intervention window', () => {
@@ -760,19 +803,34 @@ describe('Phase 1 evidence contracts', () => {
       usable_capacity_route_count: 400,
       capacity_unit_count: 2,
     });
-    final.tenantAllocations.push(
-      ...['user-0', 'user-1'].flatMap((userId, index) =>
-        ['tenant_core/users', 'tenant_pii'].map((role) => ({
-          allocation_id: `allocation-${index}-${role}`,
-          account_id_blind_digest: `digest-${userId}`,
+    final.tenantAllocations = [
+      {
+        row_kind: 'summary',
+        data_role: null,
+        selected_shard_id: null,
+        reservation_state: null,
+        allocation_count: 4,
+        distinct_account_count: 2,
+        invalid_state_count: 0,
+        missing_capacity_count: 0,
+        invalid_shard_count: 0,
+        invalid_account_role_count: 0,
+      },
+      ...['tenant_core/users', 'tenant_pii'].flatMap((role) =>
+        [1, 2].map((generation) => ({
+          row_kind: 'distribution',
           data_role: role,
-          selected_shard_id: `${role === 'tenant_core/users' ? 'core' : 'pii'}-${index + 1}`,
+          selected_shard_id: `${role === 'tenant_core/users' ? 'core' : 'pii'}-${generation}`,
           reservation_state: 'committed',
-          capacity_counted_at: 100,
-          created_at: 100,
+          allocation_count: 1,
+          distinct_account_count: 1,
+          invalid_state_count: 0,
+          missing_capacity_count: 0,
+          invalid_shard_count: 0,
+          invalid_account_role_count: 0,
         }))
-      )
-    );
+      ),
+    ];
     let controlBatchReads = 0;
     let providerReads = 0;
     const createdUsers = new Map<string, string>();
