@@ -34,4 +34,17 @@ describe('deployment script version safety', () => {
     expect(apiSource).toContain("ENABLE_TEST_ENDPOINTS: options.testEndpoints === 'enabled'");
     expect(apiSource).toContain('--test-endpoints must be enabled or disabled');
   });
+
+  it('refreshes Control-generated Worker bindings before API deployment', () => {
+    const apiSource = readFileSync(deployApiPath, 'utf-8');
+    const leaseHookIndex = apiSource.indexOf('beforeWorkerMutations: async () => {');
+    const refreshIndex = apiSource.indexOf('await refreshWorkerDeploymentArtifacts({');
+    const deploymentIndex = apiSource.indexOf('summary = await deployAll(');
+
+    expect(leaseHookIndex).toBeGreaterThan(-1);
+    expect(refreshIndex).toBeGreaterThan(leaseHookIndex);
+    expect(refreshIndex).toBeGreaterThan(-1);
+    expect(deploymentIndex).toBeGreaterThan(refreshIndex);
+    expect(apiSource).toContain('updateLockWithDeployments(workingLock, summary.results)');
+  });
 });

@@ -55,6 +55,9 @@ const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
 const WORKER_DELETE_PROPAGATION_DELAY_MS = 20_000;
 const WORKER_DELETE_MAX_ATTEMPTS = 3;
 const WORKER_DELETE_RETRY_DELAY_MS = 1_000;
+const WORKER_INVENTORY_MAX_ATTEMPTS = 3;
+const WORKER_INVENTORY_REQUEST_TIMEOUT_MS = 10_000;
+const WORKER_INVENTORY_RETRY_DELAY_MS = 1_000;
 // Cloudflare's REST API is rate limited. Keep deletion concurrent, while letting the request
 // retry/backoff logic absorb transient 429/971 responses instead of adding a fixed delay per object.
 const R2_OBJECT_DELETE_CONCURRENCY = 5;
@@ -1891,7 +1894,13 @@ async function listCloudflarePaginatedResourcesViaApi<T>(input: {
     const payload = (await response.json()) as {
       success?: boolean;
       result?: unknown;
-      result_info?: { total_count?: unknown };
+      result_info?: {
+        count?: unknown;
+        page?: unknown;
+        per_page?: unknown;
+        total_count?: unknown;
+        total_pages?: unknown;
+      };
     };
     if (payload.success === false) {
       throw new Error(`Cloudflare ${input.label} returned an unsuccessful response`);
@@ -1900,12 +1909,30 @@ async function listCloudflarePaginatedResourcesViaApi<T>(input: {
     const rows = input.normalizeRows(payload.result);
     resources.push(...rows);
 
-    const totalCount = payload.result_info?.total_count;
-    if (
-      rows.length < perPage ||
-      (typeof totalCount === 'number' && resources.length >= totalCount)
-    ) {
+    const resultInfo = payload.result_info;
+    const totalCount = resultInfo?.total_count;
+    const totalPages = resultInfo?.total_pages;
+    const responsePage = resultInfo?.page;
+    const responsePerPage = resultInfo?.per_page;
+    if (typeof responsePage === 'number' && responsePage !== page) {
+      throw new Error(`Cloudflare ${input.label} returned an unexpected page`);
+    }
+    if (typeof totalCount === 'number' && resources.length >= totalCount) {
       return resources;
+    }
+    if (typeof totalPages === 'number' && page >= totalPages) return resources;
+
+    const authoritativePagination =
+      typeof totalCount === 'number' || typeof totalPages === 'number';
+    if (!authoritativePagination) {
+      const effectivePerPage =
+        typeof responsePerPage === 'number' && responsePerPage > 0 ? responsePerPage : perPage;
+      if (rows.length < effectivePerPage) return resources;
+    }
+    if (rows.length === 0) {
+      throw new Error(
+        `Cloudflare ${input.label} pagination stopped before all resources were read`
+      );
     }
     page++;
   }
@@ -3318,10 +3345,12 @@ export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
+  const placementPolicy = config.tenant?.placementPolicy ?? 'tenant_exclusive';
 
   const tenantIdSql = sqlString(tenantId);
   const tenantCodeSql = sqlString(tenantCode);
   const displayNameSql = sqlString(displayName);
+  const placementPolicySql = sqlString(placementPolicy);
 
   // Note: D1's HTTP API (used by `wrangler d1 execute --command`) does not support
   // explicit BEGIN TRANSACTION / COMMIT statements. Each statement runs as its own
@@ -3334,7 +3363,8 @@ SET id = ${tenantIdSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     lifecycle_state = 'active',
-    updated_at = ${sqlExpr.nowEpochSeconds}
+    isolation_policy = ${placementPolicySql},
+    updated_at = MAX(${sqlExpr.nowEpochSeconds}, updated_at + 1)
 WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
@@ -3385,12 +3415,12 @@ WHERE tenant_id = 'default'
 
 INSERT INTO tenants (
   id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
-  default_tenant_guard, created_at, updated_at
+  default_tenant_guard, created_at, updated_at, isolation_policy
 )
 SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 'active',
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
-       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
+       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}, ${placementPolicySql}
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 
 UPDATE tenants
@@ -3398,7 +3428,8 @@ SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     lifecycle_state = 'active',
-    updated_at = ${sqlExpr.nowEpochSeconds}
+    isolation_policy = ${placementPolicySql},
+    updated_at = MAX(${sqlExpr.nowEpochSeconds}, updated_at + 1)
 WHERE id = ${tenantIdSql};
 `.trim();
 }
@@ -4963,39 +4994,118 @@ export function getQueueConsumerWorkerNamesForDeletion(
     new Set(
       workers
         .map((worker) => worker.name)
-        .filter((workerName) => workerName.startsWith(`${env}-ar-`))
+        // setup/wrangler.ts configures ar-management as the consumer for every Authrim Queue.
+        // Producer-only Workers must not receive consumer removal requests.
+        .filter((workerName) => workerName === `${env}-ar-management`)
     )
   ).sort();
 }
 
 export async function deleteQueueConsumer(queueName: string, workerName: string): Promise<boolean> {
+  const result = await deleteQueueConsumerWithResult(queueName, workerName);
+  return result.status === 'detached' || result.status === 'already_absent';
+}
+
+type QueueConsumerDetachResult =
+  | { status: 'detached' }
+  | { status: 'already_absent'; error: string }
+  | { status: 'failed'; error: string };
+
+type QueueConsumerRestoreResult = { status: 'attached' } | { status: 'failed'; error: string };
+
+function isQueueConsumerAlreadyAbsentError(error: unknown): boolean {
+  const detail = error instanceof Error ? error.message : String(error);
+  return (
+    isCloudflareResourceAlreadyAbsent(error) ||
+    /(?:not attached|already removed|consumer[^\n]*(?:not found|does not exist)|does not have[^\n]*consumer|no such consumer)/iu.test(
+      detail
+    )
+  );
+}
+
+async function deleteQueueConsumerWithResult(
+  queueName: string,
+  workerName: string
+): Promise<QueueConsumerDetachResult> {
   try {
     await wrangler(['queues', 'consumer', 'worker', 'remove', queueName, workerName]);
-    return true;
-  } catch {
-    return false;
+    return { status: 'detached' };
+  } catch (error) {
+    const detail = sanitizeError(error);
+    return isQueueConsumerAlreadyAbsentError(error)
+      ? { status: 'already_absent', error: detail }
+      : { status: 'failed', error: detail };
   }
+}
+
+async function restoreQueueConsumerWithResult(
+  queueName: string,
+  workerName: string
+): Promise<QueueConsumerRestoreResult> {
+  try {
+    // Authrim Queue consumers use Cloudflare's default delivery settings. Omitting optional flags
+    // recreates the exact configuration generated by setup/wrangler.ts.
+    await wrangler(['queues', 'consumer', 'worker', 'add', queueName, workerName]);
+    return { status: 'attached' };
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
+  }
+}
+
+export interface QueueConsumerDetachSummary {
+  removed: Array<{ queueName: string; workerName: string }>;
+  errors: string[];
 }
 
 export async function deleteQueueConsumersForWorkers(
   queues: Array<{ name: string }>,
   workerNames: string[],
   onProgress?: (message: string) => void
-): Promise<Array<{ queueName: string; workerName: string }>> {
+): Promise<QueueConsumerDetachSummary> {
   const removed: Array<{ queueName: string; workerName: string }> = [];
+  const errors: string[] = [];
   for (const workerName of workerNames) {
     for (const queue of queues) {
       onProgress?.(`  ⏳ Detaching ${workerName} from ${queue.name}...`);
-      const success = await deleteQueueConsumer(queue.name, workerName);
-      if (success) {
+      const result = await deleteQueueConsumerWithResult(queue.name, workerName);
+      if (result.status === 'detached') {
         removed.push({ queueName: queue.name, workerName });
         onProgress?.(`  ✅ ${queue.name} -> ${workerName}`);
-      } else {
+      } else if (result.status === 'already_absent') {
         onProgress?.(`  ⚠️ ${queue.name} -> ${workerName} (not attached or already removed)`);
+      } else {
+        const message =
+          `Failed to detach Queue consumer: ${queue.name} -> ${workerName} ` + `(${result.error})`;
+        errors.push(message);
+        onProgress?.(`  ❌ ${queue.name} -> ${workerName} - ${result.error}`);
       }
     }
   }
-  return removed;
+  return { removed, errors };
+}
+
+async function restoreQueueConsumers(
+  consumers: Array<{ queueName: string; workerName: string }>,
+  onProgress?: (message: string) => void
+): Promise<string[]> {
+  const errors: string[] = [];
+  for (const consumer of consumers) {
+    onProgress?.(`  ⏳ Restoring ${consumer.workerName} on ${consumer.queueName}...`);
+    const result = await restoreQueueConsumerWithResult(consumer.queueName, consumer.workerName);
+    if (result.status === 'attached') {
+      onProgress?.(`  ✅ Restored ${consumer.queueName} -> ${consumer.workerName}`);
+    } else {
+      const detail = result.error;
+      const message =
+        `Failed to restore Queue consumer: ${consumer.queueName} -> ${consumer.workerName} ` +
+        `(${detail})`;
+      errors.push(message);
+      onProgress?.(
+        `  ❌ Could not restore ${consumer.queueName} -> ${consumer.workerName} - ${detail}`
+      );
+    }
+  }
+  return errors;
 }
 
 // =============================================================================
@@ -5594,6 +5704,7 @@ export interface DeleteOptions {
   deleteQueues?: boolean;
   deleteR2?: boolean;
   deletePages?: boolean;
+  knownWorkerNames?: string[];
   knownD1Names?: string[];
   knownQueueNames?: string[];
   queueConsumerDetachPropagationDelayMs?: number;
@@ -5602,6 +5713,22 @@ export interface DeleteOptions {
   /** Idempotent no-op and raw diagnostic messages for detailed logs only. */
   onDetail?: (message: string) => void;
   onResourceProgress?: (progress: { current: number; total: number }) => void;
+}
+
+export const ENVIRONMENT_INVENTORY_UNAVAILABLE_ERROR_CODE =
+  'environment_inventory_unavailable' as const;
+
+export class EnvironmentInventoryUnavailableError extends Error {
+  readonly code = ENVIRONMENT_INVENTORY_UNAVAILABLE_ERROR_CODE;
+
+  constructor(resourceType: string, error: unknown) {
+    const detail = sanitizeError(error);
+    super(
+      `Cloudflare ${resourceType} inventory could not be verified. No resources were deleted. ` +
+        `Check your Cloudflare connection and sign-in, then retry. Details: ${detail}`
+    );
+    this.name = 'EnvironmentInventoryUnavailableError';
+  }
 }
 
 const CONTROL_FIXED_D1_SUFFIX = /^(?:core|pii|admin|control|lookup|plugin-runner)-db$/u;
@@ -5651,6 +5778,18 @@ export function filterKnownQueueNamesForEnvironment(env: string, names: string[]
   );
 }
 
+export function filterKnownWorkerNamesForEnvironment(env: string, names: string[]): string[] {
+  validateEnvName(env);
+  return Array.from(
+    new Set(
+      names.filter((name) => {
+        const match = name.match(AUTHRIM_PATTERNS.worker);
+        return match?.[1]?.toLowerCase() === env.toLowerCase();
+      })
+    )
+  ).sort();
+}
+
 export function filterControlManagedD1ForEnvironment(
   env: string,
   databases: Array<{ name: string; uuid: string }>
@@ -5681,12 +5820,16 @@ export function filterControlManagedR2ForEnvironment(
   });
 }
 
-export async function hasControlManagedResourcesForEnvironment(env: string): Promise<boolean> {
+export async function hasControlManagedResourcesForEnvironment(
+  env: string,
+  options: { d1?: boolean; kv?: boolean; r2?: boolean } = {}
+): Promise<boolean> {
   validateEnvName(env);
+  const { d1 = true, kv = true, r2 = true } = options;
   const [databases, namespaces, buckets] = await Promise.all([
-    listD1Databases(),
-    listKVNamespaces(),
-    listR2Buckets({ throwOnError: true }),
+    d1 ? listD1Databases() : [],
+    kv ? listKVNamespaces() : [],
+    r2 ? listR2Buckets({ throwOnError: true }) : [],
   ]);
   return (
     filterControlManagedD1ForEnvironment(env, databases).length > 0 ||
@@ -5696,26 +5839,65 @@ export async function hasControlManagedResourcesForEnvironment(env: string): Pro
 }
 
 /**
- * List all Workers
+ * List all Workers. Inventory failure is never represented as an empty account; callers decide
+ * whether a failed scan is advisory or must stop the operation.
  */
-export async function listWorkers(): Promise<Array<{ name: string; id?: string }>> {
-  try {
-    const accountId = await getAccountId();
-    if (!accountId) return [];
-    const tokenInfo = await getCloudflareApiToken();
-    if (!tokenInfo) return [];
+export async function listWorkers(
+  options: {
+    onRetry?: (message: string) => void;
+  } = {}
+): Promise<Array<{ name: string; id?: string }>> {
+  let lastError: unknown = new Error('Worker inventory was not requested');
 
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
-      { headers: { Authorization: `Bearer ${tokenInfo.token}` } }
-    );
-    if (!response.ok) return [];
+  for (let attempt = 1; attempt <= WORKER_INVENTORY_MAX_ATTEMPTS; attempt++) {
+    try {
+      const accountId = await getAccountId();
+      if (!accountId) {
+        throw new Error('Cloudflare account ID is unavailable');
+      }
+      const tokenInfo = await getCloudflareApiToken();
+      if (!tokenInfo) {
+        throw new Error('Cloudflare API authentication is unavailable');
+      }
 
-    const data = (await response.json()) as { result?: Array<{ id: string }> };
-    return (data.result || []).map((w) => ({ name: w.id }));
-  } catch {
-    return [];
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
+        {
+          headers: { Authorization: `Bearer ${tokenInfo.token}` },
+          signal: AbortSignal.timeout(WORKER_INVENTORY_REQUEST_TIMEOUT_MS),
+        }
+      );
+      if (!response.ok) {
+        throw new Error(`Cloudflare API returned HTTP ${response.status}`);
+      }
+
+      const data = (await response.json()) as {
+        success?: boolean;
+        result?: Array<{ id?: unknown }>;
+      };
+      if (data.success === false || !Array.isArray(data.result)) {
+        throw new Error('Cloudflare API returned an invalid Worker inventory response');
+      }
+      return data.result.map((worker, index) => {
+        if (typeof worker.id !== 'string' || worker.id.trim().length === 0) {
+          throw new Error(`Worker inventory row ${index} did not contain a script name`);
+        }
+        return { name: worker.id.trim() };
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < WORKER_INVENTORY_MAX_ATTEMPTS) {
+        options.onRetry?.(
+          `Worker inventory check failed; retrying (${attempt + 1}/${WORKER_INVENTORY_MAX_ATTEMPTS})...`
+        );
+        if (process.env.NODE_ENV !== 'test') {
+          await sleep(WORKER_INVENTORY_RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
   }
+
+  throw lastError;
 }
 
 /**
@@ -5812,68 +5994,75 @@ export function parseQueueRows(stdout: string): QueueListRow[] {
 }
 
 async function listQueuesViaApi(): Promise<QueueListRow[] | null> {
-  try {
-    return await listCloudflarePaginatedResourcesViaApi({
-      path: 'queues',
-      label: 'Queue list',
-      normalizeRows: normalizeQueueRows,
-    });
-  } catch {
-    return null;
-  }
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'queues',
+    label: 'Queue list',
+    normalizeRows: normalizeQueueRows,
+  });
 }
 
 export async function listQueues(): Promise<Array<{ name: string; id?: string }>> {
-  let wranglerQueues: QueueListRow[] = [];
+  let wranglerError: unknown;
   try {
     const { stdout } = await wrangler(['queues', 'list']);
     // Parse JSON or the table output emitted by current Wrangler versions.
-    wranglerQueues = parseQueueRows(stdout);
-    if (wranglerQueues.length > 0) return wranglerQueues;
-  } catch {
+    return parseQueueRows(stdout);
+  } catch (error) {
+    wranglerError = error;
     // Fall back to the account API below.
   }
 
-  const apiQueues = await listQueuesViaApi();
-  if (apiQueues && apiQueues.length > 0) return apiQueues;
-  return wranglerQueues;
+  try {
+    const apiQueues = await listQueuesViaApi();
+    if (apiQueues) return apiQueues;
+  } catch (apiError) {
+    throw new Error(
+      `Failed to list Queues via Wrangler (${describeInventoryError(
+        wranglerError,
+        'unknown Wrangler error'
+      )}) and the Cloudflare API (${describeInventoryError(apiError, 'unknown API error')})`
+    );
+  }
+
+  throw new Error(
+    `Failed to list Queues via Wrangler (${describeInventoryError(
+      wranglerError,
+      'unknown Wrangler error'
+    )}) and the Cloudflare API`
+  );
 }
 
 /**
  * List legacy Pages projects
  */
 export async function listPagesProjects(): Promise<Array<{ name: string }>> {
-  try {
-    const { stdout } = await wrangler(['pages', 'project', 'list']);
-    // Parse the output - each project is listed with its name
-    const lines = stdout.split('\n').filter((line) => line.trim());
-    const projects: Array<{ name: string }> = [];
+  const { stdout } = await wrangler(['pages', 'project', 'list']);
+  // Parse the output - each project is listed with its name
+  const lines = stdout.split('\n').filter((line) => line.trim());
+  const projects: Array<{ name: string }> = [];
 
-    for (const line of lines) {
-      // Skip header lines and empty lines
-      if (
-        line.startsWith('│') ||
-        line.startsWith('┌') ||
-        line.startsWith('└') ||
-        line.startsWith('├')
-      ) {
-        // Table format - extract project name from table row
-        const cells = line
-          .split('│')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (cells.length > 0 && cells[0] && !cells[0].includes('Name') && !cells[0].includes('─')) {
-          projects.push({ name: cells[0] });
-        }
-      } else if (line.trim() && !line.includes('Projects') && !line.includes('Name')) {
-        // Plain text format
-        projects.push({ name: line.trim() });
+  for (const line of lines) {
+    // Skip header lines and empty lines
+    if (
+      line.startsWith('│') ||
+      line.startsWith('┌') ||
+      line.startsWith('└') ||
+      line.startsWith('├')
+    ) {
+      // Table format - extract project name from table row
+      const cells = line
+        .split('│')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (cells.length > 0 && cells[0] && !cells[0].includes('Name') && !cells[0].includes('─')) {
+        projects.push({ name: cells[0] });
       }
+    } else if (line.trim() && !line.includes('Projects') && !line.includes('Name')) {
+      // Plain text format
+      projects.push({ name: line.trim() });
     }
-    return projects;
-  } catch {
-    return [];
   }
+  return projects;
 }
 
 /**
@@ -5940,18 +6129,59 @@ export async function deletePagesProject(name: string): Promise<boolean> {
 /**
  * Detect all Authrim environments from existing resources
  */
+export type EnvironmentInventoryResource =
+  | 'Workers'
+  | 'D1 databases'
+  | 'KV namespaces'
+  | 'Queues'
+  | 'R2 buckets'
+  | 'Pages projects';
+
+export interface DeletionResourceSelection {
+  deleteWorkers: boolean;
+  deleteD1: boolean;
+  deleteKV: boolean;
+  deleteQueues: boolean;
+  deleteR2: boolean;
+  deletePages: boolean;
+}
+
+export function getRequiredDeletionInventoryResources(
+  selection: DeletionResourceSelection
+): EnvironmentInventoryResource[] {
+  const resources: EnvironmentInventoryResource[] = [];
+  if (selection.deleteWorkers) resources.push('Workers');
+  if (selection.deleteD1) resources.push('D1 databases');
+  if (selection.deleteKV) resources.push('KV namespaces');
+  if (selection.deleteQueues) resources.push('Queues');
+  if (selection.deleteR2) resources.push('R2 buckets');
+  if (selection.deletePages) resources.push('Pages projects');
+  return resources;
+}
+
 export async function detectEnvironments(
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { requiredResources?: readonly EnvironmentInventoryResource[] } = {}
 ): Promise<EnvironmentInfo[]> {
   const environments = new Map<string, EnvironmentInfo>();
 
   const progress = onProgress || (() => {});
+  const requiredResources = new Set(options.requiredResources ?? []);
+  const handleScanError = (resourceType: EnvironmentInventoryResource, error: unknown): void => {
+    const detail = error instanceof Error ? error.message : String(error);
+    progress(`  ⚠️ Could not scan ${resourceType}: ${detail}`);
+    if (requiredResources.has(resourceType)) {
+      throw new EnvironmentInventoryUnavailableError(resourceType, error);
+    }
+  };
 
   // Scan Workers first — environments are only valid if Workers or D1 exist
   progress('Scanning Workers...');
   const workerEnvs = new Set<string>();
   try {
-    const workers = await listWorkers();
+    const workers = await listWorkers({
+      onRetry: progress,
+    });
     for (const w of workers) {
       const match = w.name.match(AUTHRIM_PATTERNS.worker);
       if (match) {
@@ -5972,7 +6202,7 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan Workers: ${error instanceof Error ? error.message : error}`);
+    handleScanError('Workers', error);
   }
 
   progress('Scanning D1 databases...');
@@ -5999,7 +6229,7 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan D1: ${error instanceof Error ? error.message : error}`);
+    handleScanError('D1 databases', error);
   }
 
   progress('Scanning KV namespaces...');
@@ -6016,7 +6246,7 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan KV: ${error instanceof Error ? error.message : error}`);
+    handleScanError('KV namespaces', error);
   }
 
   progress('Scanning Queues...');
@@ -6041,12 +6271,12 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan Queues: ${error instanceof Error ? error.message : error}`);
+    handleScanError('Queues', error);
   }
 
   progress('Scanning R2 buckets...');
   try {
-    const buckets = await listR2Buckets();
+    const buckets = await listR2Buckets({ throwOnError: requiredResources.has('R2 buckets') });
     for (const bucket of buckets) {
       const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
       if (match) {
@@ -6066,7 +6296,7 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(`  ⚠️ Could not scan R2: ${error instanceof Error ? error.message : error}`);
+    handleScanError('R2 buckets', error);
   }
 
   progress('Scanning legacy Pages projects...');
@@ -6083,9 +6313,7 @@ export async function detectEnvironments(
       }
     }
   } catch (error) {
-    progress(
-      `  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`
-    );
+    handleScanError('Pages projects', error);
   }
 
   // Keep independently listed Queues and R2 buckets so interrupted deletion is resumable.
@@ -6103,6 +6331,28 @@ export async function detectEnvironments(
   progress(`Found ${environments.size} environment(s)`);
 
   return Array.from(environments.values()).sort((a, b) => a.env.localeCompare(b.env));
+}
+
+export async function confirmEnvironmentObservedForDeletion(
+  env: string,
+  selection: DeletionResourceSelection,
+  onProgress?: (message: string) => void
+): Promise<boolean> {
+  const environments = await detectEnvironments(onProgress, {
+    requiredResources: getRequiredDeletionInventoryResources(selection),
+  });
+  if (environments.some((candidate) => candidate.env === env)) return true;
+
+  if (!selection.deleteD1 && !selection.deleteKV && !selection.deleteR2) return false;
+  try {
+    return await hasControlManagedResourcesForEnvironment(env, {
+      d1: selection.deleteD1,
+      kv: selection.deleteKV,
+      r2: selection.deleteR2,
+    });
+  } catch (error) {
+    throw new EnvironmentInventoryUnavailableError('Control-managed resources', error);
+  }
 }
 
 /**
@@ -6260,13 +6510,26 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
 /**
  * Delete a Queue
  */
-export async function deleteQueue(name: string): Promise<boolean> {
+type QueueDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'already_absent'; error: string }
+  | { status: 'failed'; error: string };
+
+async function deleteQueueWithResult(name: string): Promise<QueueDeleteResult> {
   try {
     await wrangler(['queues', 'delete', name]);
-    return true;
+    return { status: 'deleted' };
   } catch (error) {
-    return isCloudflareResourceAlreadyAbsent(error);
+    const detail = sanitizeError(error);
+    return isCloudflareResourceAlreadyAbsent(error)
+      ? { status: 'already_absent', error: detail }
+      : { status: 'failed', error: detail };
   }
+}
+
+export async function deleteQueue(name: string): Promise<boolean> {
+  const result = await deleteQueueWithResult(name);
+  return result.status === 'deleted' || result.status === 'already_absent';
 }
 
 const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
@@ -6701,6 +6964,8 @@ export async function deleteR2Bucket(
 export async function deleteEnvironment(options: DeleteOptions): Promise<{
   success: boolean;
   completion: 'complete' | 'manual_action_required' | 'failed';
+  /** True only when the verified inventory contains no Authrim resources after this operation. */
+  environmentEmpty: boolean;
   deleted: {
     workers: string[];
     d1: string[];
@@ -6721,6 +6986,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteQueues = true,
     deleteR2 = true,
     deletePages = true,
+    knownWorkerNames = [],
     knownD1Names = [],
     knownQueueNames = [],
     queueConsumerDetachPropagationDelayMs = QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS,
@@ -6729,9 +6995,6 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onDetail,
     onResourceProgress,
   } = options;
-  const deletesEntireEnvironment =
-    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
-
   validateEnvName(env);
 
   const deleted = {
@@ -6744,24 +7007,57 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   };
   const manualR2: R2ManualCleanupTarget[] = [];
   const errors: string[] = [];
+  let dependentDeletionBlocked = false;
+  let dependentDeletionReason: 'queue_consumer_detach' | 'worker_delete' | 'r2_delete' | null =
+    null;
+  let detachedQueueConsumers: Array<{ queueName: string; workerName: string }> = [];
 
-  // Get environment info first
-  const envs = await detectEnvironments(onProgress);
+  // Inventory verification is a safety boundary. Every selected resource type must be confirmed
+  // before the first destructive request so a transient list failure cannot be mistaken for an
+  // empty account and cause resources to be deleted out of dependency order.
+  const requiredResources = getRequiredDeletionInventoryResources({
+    deleteWorkers,
+    deleteD1,
+    deleteKV,
+    deleteQueues,
+    deleteR2,
+    deletePages,
+  });
+  const envs = await detectEnvironments(onProgress, { requiredResources });
   let envInfo = envs.find((e) => e.env === env);
+  const safeKnownWorkerNames = filterKnownWorkerNamesForEnvironment(env, knownWorkerNames);
   const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
   const safeKnownQueueNames = filterKnownQueueNamesForEnvironment(env, knownQueueNames);
+  const requireInventory = async <T>(
+    resourceType: EnvironmentInventoryResource,
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      throw new EnvironmentInventoryUnavailableError(resourceType, error);
+    }
+  };
   const [managedD1, managedKV, managedR2] = await Promise.all([
     deleteD1
-      ? listD1Databases().then((databases) => filterControlManagedD1ForEnvironment(env, databases))
+      ? requireInventory('D1 databases', () =>
+          listD1Databases().then((databases) =>
+            filterControlManagedD1ForEnvironment(env, databases)
+          )
+        )
       : [],
     deleteKV
-      ? listKVNamespaces().then((namespaces) =>
-          filterControlManagedKVForEnvironment(env, namespaces)
+      ? requireInventory('KV namespaces', () =>
+          listKVNamespaces().then((namespaces) =>
+            filterControlManagedKVForEnvironment(env, namespaces)
+          )
         )
       : [],
     deleteR2
-      ? listR2Buckets({ throwOnError: true }).then((buckets) =>
-          filterControlManagedR2ForEnvironment(env, buckets)
+      ? requireInventory('R2 buckets', () =>
+          listR2Buckets({ throwOnError: true }).then((buckets) =>
+            filterControlManagedR2ForEnvironment(env, buckets)
+          )
         )
       : [],
   ]);
@@ -6769,6 +7065,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   if (
     !envInfo &&
     !environmentKnownLocally &&
+    safeKnownWorkerNames.length === 0 &&
     safeKnownD1Names.length === 0 &&
     safeKnownQueueNames.length === 0 &&
     managedD1.length === 0 &&
@@ -6778,6 +7075,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     return {
       success: false,
       completion: 'failed',
+      environmentEmpty: false,
       deleted,
       manualR2,
       errors: [`Environment '${env}' not found`],
@@ -6793,6 +7091,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       r2: [],
       pages: [],
     };
+  }
+
+  const knownWorkerSet = new Set(envInfo.workers.map((worker) => worker.name));
+  for (const name of safeKnownWorkerNames) {
+    if (!knownWorkerSet.has(name)) {
+      envInfo.workers.push({ name });
+      knownWorkerSet.add(name);
+    }
   }
 
   const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
@@ -6852,13 +7158,15 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteWorkers && envInfo.workers.length > 0
       ? Array.from(new Map(envInfo.queues.map((queue) => [queue.name, queue])).values())
       : envInfo.queues;
+  const queueConsumerWorkerNamesForDeletion = deleteWorkers
+    ? getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers)
+    : [];
   if (deleteWorkers && envInfo.workers.length > 0 && queuesForConsumerDetach.length > 0) {
-    const queueConsumerWorkerNames = getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers);
-    if (queueConsumerWorkerNames.length > 0) {
+    if (queueConsumerWorkerNamesForDeletion.length > 0) {
       onProgress(`📨 Detaching Queue Consumers (${queuesForConsumerDetach.length})...`);
-      await deleteQueueConsumersForWorkers(
+      const detachSummary = await deleteQueueConsumersForWorkers(
         queuesForConsumerDetach,
-        queueConsumerWorkerNames,
+        queueConsumerWorkerNamesForDeletion,
         (message) => {
           if (message.includes('(not attached or already removed)')) {
             onDetail?.(message);
@@ -6867,7 +7175,15 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
           onProgress(message);
         }
       );
-      if (queueConsumerDetachPropagationDelayMs > 0) {
+      detachedQueueConsumers = detachSummary.removed;
+      if (detachSummary.errors.length > 0) {
+        errors.push(...detachSummary.errors);
+        const restoreErrors = await restoreQueueConsumers(detachedQueueConsumers, onProgress);
+        errors.push(...restoreErrors);
+        detachedQueueConsumers = [];
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'queue_consumer_detach';
+      } else if (queueConsumerDetachPropagationDelayMs > 0) {
         onProgress(
           `  ⏳ Waiting ${Math.ceil(
             queueConsumerDetachPropagationDelayMs / 1000
@@ -6880,24 +7196,40 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   }
 
   // Delete Workers before D1/KV because they reference runtime bindings.
-  if (deleteWorkers && envInfo.workers.length > 0) {
+  if (!dependentDeletionBlocked && deleteWorkers && envInfo.workers.length > 0) {
+    const queueConsumerWorkerNameSet = new Set(queueConsumerWorkerNamesForDeletion);
+    const workersForDeletion = [...envInfo.workers].sort((left, right) => {
+      const leftIsConsumer = queueConsumerWorkerNameSet.has(left.name);
+      const rightIsConsumer = queueConsumerWorkerNameSet.has(right.name);
+      return Number(leftIsConsumer) - Number(rightIsConsumer);
+    });
+    const deletedWorkerNames = new Set<string>();
     onProgress(`🔧 Deleting Workers (${envInfo.workers.length})...`);
-    for (const worker of envInfo.workers) {
+    for (const worker of workersForDeletion) {
       onProgress(`  ⏳ Deleting: ${worker.name}...`);
       const workerResult = await deleteWorkerWithResult(worker.name, onProgress);
       if (workerResult.status === 'deleted') {
         deleted.workers.push(worker.name);
+        deletedWorkerNames.add(worker.name);
         onProgress(`  ✅ ${worker.name}`);
       } else if (workerResult.status === 'already_absent') {
         deleted.workers.push(worker.name);
+        deletedWorkerNames.add(worker.name);
         onProgress(`  ⚠️ ${worker.name} (already absent)`);
       } else {
         errors.push(`Failed to delete Worker: ${worker.name} (${workerResult.error})`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'worker_delete';
         onProgress(`  ❌ ${worker.name} - ${workerResult.error}`);
       }
       reportResourceProcessed();
+      if (dependentDeletionBlocked) break;
     }
-    if (queuesForConsumerDetach.length > 0 && workerDeletePropagationDelayMs > 0) {
+    if (
+      !dependentDeletionBlocked &&
+      queuesForConsumerDetach.length > 0 &&
+      workerDeletePropagationDelayMs > 0
+    ) {
       onProgress(
         `  ⏳ Waiting ${Math.ceil(
           workerDeletePropagationDelayMs / 1000
@@ -6905,11 +7237,32 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       );
       await sleep(workerDeletePropagationDelayMs);
     }
+    const consumersToRestore = detachedQueueConsumers.filter(
+      (consumer) => !deletedWorkerNames.has(consumer.workerName)
+    );
+    if (consumersToRestore.length > 0) {
+      onProgress('  ⚠️ Restoring Queue consumers for Workers that could not be deleted...');
+      errors.push(...(await restoreQueueConsumers(consumersToRestore, onProgress)));
+    }
+    onProgress('');
+  }
+
+  if (dependentDeletionReason === 'queue_consumer_detach') {
+    onProgress(
+      '  ⚠️ Stopping before deleting Workers because Queue consumers could not be detached safely.'
+    );
+    onProgress('  ⚠️ Successfully detached consumers were restored; retry the deletion.');
+    onProgress('');
+  } else if (dependentDeletionReason === 'worker_delete') {
+    onProgress(
+      '  ⚠️ Stopping before deleting bound storage and Queues because Worker deletion is incomplete.'
+    );
+    onProgress('  ⚠️ Resolve the Worker error, then retry the environment deletion.');
     onProgress('');
   }
 
   // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
-  if (deleteR2 && envInfo.r2.length > 0) {
+  if (!dependentDeletionBlocked && deleteR2 && envInfo.r2.length > 0) {
     const r2ApiCredentials = await getR2ApiCredentials();
     const knownR2ObjectsByBucket = r2ApiCredentials
       ? new Map<string, string[]>()
@@ -6930,15 +7283,24 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         onProgress(`  ⚠️ ${bucket.name} requires manual Dashboard cleanup`);
       } else {
         errors.push(`Failed to delete R2: ${bucket.name} (${r2Result.error})`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'r2_delete';
         onProgress(`  ❌ ${bucket.name} - ${r2Result.error}`);
       }
       reportResourceProcessed();
     }
     onProgress('');
+    if (dependentDeletionReason === 'r2_delete') {
+      onProgress(
+        '  ⚠️ Stopping before deleting D1 and other resources because R2 deletion is incomplete.'
+      );
+      onProgress('  ⚠️ The R2 object catalog was preserved so the deletion can be retried safely.');
+      onProgress('');
+    }
   }
 
   // Delete D1 databases
-  if (deleteD1 && envInfo.d1.length > 0) {
+  if (!dependentDeletionBlocked && deleteD1 && envInfo.d1.length > 0) {
     onProgress(`📊 Deleting D1 Databases (${envInfo.d1.length})...`);
     for (const db of envInfo.d1) {
       onProgress(`  ⏳ Deleting: ${db.name}...`);
@@ -6956,7 +7318,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   }
 
   // Delete KV namespaces
-  if (deleteKV && envInfo.kv.length > 0) {
+  if (!dependentDeletionBlocked && deleteKV && envInfo.kv.length > 0) {
     onProgress(`🗄️ Deleting KV Namespaces (${envInfo.kv.length})...`);
     for (const kv of envInfo.kv) {
       onProgress(`  ⏳ Deleting: ${kv.name}...`);
@@ -6974,7 +7336,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   }
 
   // Delete legacy Pages projects
-  if (deletePages && envInfo.pages.length > 0) {
+  if (!dependentDeletionBlocked && deletePages && envInfo.pages.length > 0) {
     onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
     for (const project of envInfo.pages) {
       onProgress(`  ⏳ Deleting: ${project.name}...`);
@@ -6993,17 +7355,21 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
 
   // Delete Queues last. Cloudflare can keep transient Worker/Queue references briefly after detach
   // and script deletion, so Queue removal is intentionally delayed until all Worker work is complete.
-  if (deleteQueues && envInfo.queues.length > 0) {
+  if (!dependentDeletionBlocked && deleteQueues && envInfo.queues.length > 0) {
     onProgress(`📨 Deleting Queues (${envInfo.queues.length})...`);
     for (const queue of envInfo.queues) {
       onProgress(`  ⏳ Deleting: ${queue.name}...`);
-      const success = await deleteQueue(queue.name);
-      if (success) {
+      const queueResult = await deleteQueueWithResult(queue.name);
+      if (queueResult.status === 'deleted') {
         deleted.queues.push(queue.name);
         onProgress(`  ✅ ${queue.name}`);
+      } else if (queueResult.status === 'already_absent') {
+        deleted.queues.push(queue.name);
+        onProgress(`  ⚠️ ${queue.name} (already absent)`);
+        onDetail?.(`  ${queue.name}: ${queueResult.error}`);
       } else {
-        errors.push(`Failed to delete Queue: ${queue.name}`);
-        onProgress(`  ❌ ${queue.name}`);
+        errors.push(`Failed to delete Queue: ${queue.name} (${queueResult.error})`);
+        onProgress(`  ❌ ${queue.name} - ${queueResult.error}`);
       }
       reportResourceProcessed();
     }
@@ -7018,6 +7384,23 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleted.queues.length +
     deleted.r2.length +
     deleted.pages.length;
+  const deletedNames = {
+    workers: new Set(deleted.workers),
+    d1: new Set(deleted.d1),
+    kv: new Set(deleted.kv),
+    queues: new Set(deleted.queues),
+    r2: new Set(deleted.r2),
+    pages: new Set(deleted.pages),
+  };
+  const remainingResourceCount =
+    envInfo.workers.filter((resource) => !deletedNames.workers.has(resource.name)).length +
+    envInfo.d1.filter((resource) => !deletedNames.d1.has(resource.name)).length +
+    envInfo.kv.filter((resource) => !deletedNames.kv.has(resource.name)).length +
+    envInfo.queues.filter((resource) => !deletedNames.queues.has(resource.name)).length +
+    envInfo.r2.filter((resource) => !deletedNames.r2.has(resource.name)).length +
+    envInfo.pages.filter((resource) => !deletedNames.pages.has(resource.name)).length;
+  const environmentEmpty =
+    errors.length === 0 && manualR2.length === 0 && remainingResourceCount === 0;
 
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   if (errors.length > 0) {
@@ -7026,7 +7409,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(
       `⚠️ Environment '${env}' resources were deleted; ${manualR2.length} R2 bucket(s) await manual cleanup`
     );
-  } else if (deletesEntireEnvironment) {
+  } else if (environmentEmpty) {
     onProgress(`✅ Environment '${env}' deleted successfully!`);
   } else {
     onProgress(`✅ Selected resources for '${env}' deleted; remaining environment preserved`);
@@ -7043,6 +7426,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     success: errors.length === 0,
     completion:
       errors.length > 0 ? 'failed' : manualR2.length > 0 ? 'manual_action_required' : 'complete',
+    environmentEmpty,
     deleted,
     manualR2,
     errors,

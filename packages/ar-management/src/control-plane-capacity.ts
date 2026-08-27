@@ -95,6 +95,7 @@ function validatePreview(
         'dataRole',
         'residencyPolicyId',
         'residencyPartition',
+        'lookupCapacityDomainId',
         'logicalShardId',
         'databaseName',
         'bindingRef',
@@ -120,6 +121,10 @@ function validatePreview(
       !SAFE_ID.test(target.residencyPolicyId) ||
       typeof target.residencyPartition !== 'string' ||
       !SAFE_PARTITION.test(target.residencyPartition) ||
+      (dataRole === 'lookup'
+        ? typeof target.lookupCapacityDomainId !== 'string' ||
+          !SAFE_ID.test(target.lookupCapacityDomainId)
+        : target.lookupCapacityDomainId !== null) ||
       typeof target.logicalShardId !== 'string' ||
       !SAFE_ID.test(target.logicalShardId) ||
       typeof target.databaseName !== 'string' ||

@@ -286,7 +286,14 @@ async function authenticateMachineAccessToken(
 ): Promise<AdminAuthContext | null> {
   try {
     const header = parseTokenHeader(token);
-    const publicKey = await getAdminAccessTokenVerificationKey(c.env, tenantId, header.kid);
+    // Admin machine credentials live in the platform Admin database and may be scoped to more than
+    // one tenant. Their access tokens are therefore signed by the platform/default Key Manager,
+    // rather than by the tenant selected for an individual Admin API request.
+    const publicKey = await getAdminAccessTokenVerificationKey(
+      c.env,
+      getDefaultTenantId(c.env),
+      header.kid
+    );
     const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
     const payload = (await verifyToken(token, publicKey, issuer, {
       audience: ADMIN_API_AUDIENCE,

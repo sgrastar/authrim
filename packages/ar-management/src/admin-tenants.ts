@@ -299,6 +299,7 @@ function formatTenant(row: TenantRow) {
     tenant_code: row.tenant_code,
     name: row.name,
     description: row.description,
+    isolation_policy: row.isolation_policy,
     lifecycle_state: row.lifecycle_state,
     is_default: row.is_default === 1,
     created_at: row.created_at,
@@ -1060,11 +1061,10 @@ async function formatTenantProvisioningStatus(
   if (!control?.getProvisioningOperation) {
     return { ...base, capacity_operations: [] };
   }
-  const getProvisioningOperation = control.getProvisioningOperation.bind(control);
   const entries = await Promise.all(
     Object.entries(operation.capacityOperationIds).map(async ([dataRole, operationId]) => {
       try {
-        const detail = await getProvisioningOperation(operationId);
+        const detail = await control.getProvisioningOperation!(operationId);
         if (!detail) return null;
         return {
           data_role: dataRole,

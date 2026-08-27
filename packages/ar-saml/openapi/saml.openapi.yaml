@@ -24,77 +24,77 @@ paths:
         - Health
       summary: Return SAML Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
   /saml/idp/metadata:
     get:
       tags:
         - SAML IdP
       summary: Return SAML IdP metadata XML.
       responses:
-        "200":
-          $ref: "#/components/responses/Xml"
+        '200':
+          $ref: '#/components/responses/Xml'
   /saml/idp/sso:
     get:
       tags:
         - SAML IdP
       summary: Handle IdP SSO redirect binding.
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
-        "302":
+        '200':
+          $ref: '#/components/responses/Html'
+        '302':
           description: Redirect response.
     post:
       tags:
         - SAML IdP
       summary: Handle IdP SSO POST binding.
       requestBody:
-        $ref: "#/components/requestBodies/SamlForm"
+        $ref: '#/components/requestBodies/SamlForm'
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
+        '200':
+          $ref: '#/components/responses/Html'
   /saml/idp/slo:
     get:
       tags:
         - SAML IdP
       summary: Handle IdP SLO redirect binding.
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
-        "302":
+        '200':
+          $ref: '#/components/responses/Html'
+        '302':
           description: Redirect response.
     post:
       tags:
         - SAML IdP
       summary: Handle IdP SLO POST binding.
       requestBody:
-        $ref: "#/components/requestBodies/SamlForm"
+        $ref: '#/components/requestBodies/SamlForm'
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
+        '200':
+          $ref: '#/components/responses/Html'
   /saml/metadata:
     get:
       tags:
         - SAML SP
       summary: Return SAML SP metadata XML.
       responses:
-        "200":
-          $ref: "#/components/responses/Xml"
+        '200':
+          $ref: '#/components/responses/Xml'
   /saml/sp/metadata:
     get:
       tags:
         - SAML SP
       summary: Return SAML SP metadata XML.
       responses:
-        "200":
-          $ref: "#/components/responses/Xml"
+        '200':
+          $ref: '#/components/responses/Xml'
   /saml/sp/login:
     get:
       tags:
         - SAML SP
       summary: Start SAML SP login.
       responses:
-        "302":
+        '302':
           description: Redirect response.
   /saml/sp/acs:
     post:
@@ -102,11 +102,11 @@ paths:
         - SAML SP
       summary: Receive SAML SP assertion consumer POST.
       requestBody:
-        $ref: "#/components/requestBodies/SamlForm"
+        $ref: '#/components/requestBodies/SamlForm'
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
-        "302":
+        '200':
+          $ref: '#/components/responses/Html'
+        '302':
           description: Redirect response.
   /saml/sp/slo:
     get:
@@ -114,17 +114,17 @@ paths:
         - SAML SP
       summary: Handle SAML SP logout redirect binding.
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
+        '200':
+          $ref: '#/components/responses/Html'
     post:
       tags:
         - SAML SP
       summary: Handle SAML SP logout POST binding.
       requestBody:
-        $ref: "#/components/requestBodies/SamlForm"
+        $ref: '#/components/requestBodies/SamlForm'
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
+        '200':
+          $ref: '#/components/responses/Html'
   /api/admin/saml-settings:
     get:
       tags:
@@ -134,8 +134,8 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
     put:
       tags:
         - SAML Admin
@@ -144,10 +144,10 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/SAMLSettingsUpdate"
+        $ref: '#/components/requestBodies/SAMLSettingsUpdate'
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSettings"
+        '200':
+          $ref: '#/components/responses/SAMLSettings'
   /api/admin/saml-providers:
     get:
       tags:
@@ -157,8 +157,8 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
     post:
       tags:
         - SAML Admin
@@ -167,12 +167,12 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/SAMLProviderCreate"
+        $ref: '#/components/requestBodies/SAMLProviderCreate'
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLProvider"
-        "201":
-          $ref: "#/components/responses/SAMLProvider"
+        '200':
+          $ref: '#/components/responses/SAMLProvider'
+        '201':
+          $ref: '#/components/responses/SAMLProvider'
   /api/admin/saml-providers/{id}:
     get:
       tags:
@@ -182,10 +182,10 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
     put:
       tags:
         - SAML Admin
@@ -194,12 +194,12 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLProviderUpdate"
+        $ref: '#/components/requestBodies/SAMLProviderUpdate'
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLProvider"
+        '200':
+          $ref: '#/components/responses/SAMLProvider'
     delete:
       tags:
         - SAML Admin
@@ -208,10 +208,10 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
   /api/admin/saml-attribute-presets:
     get:
       tags:
@@ -221,8 +221,8 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       responses:
-        "200":
-          $ref: "#/components/responses/Json"
+        '200':
+          $ref: '#/components/responses/Json'
     post:
       tags:
         - SAML Admin
@@ -231,12 +231,12 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/SAMLAttributePresetCreate"
+        $ref: '#/components/requestBodies/SAMLAttributePresetCreate'
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLAttributePreset"
-        "201":
-          $ref: "#/components/responses/SAMLAttributePreset"
+        '200':
+          $ref: '#/components/responses/SAMLAttributePreset'
+        '201':
+          $ref: '#/components/responses/SAMLAttributePreset'
   /api/admin/saml-metadata/preview:
     post:
       tags:
@@ -246,21 +246,22 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       requestBody:
-        $ref: "#/components/requestBodies/SAMLAggregateMetadataInput"
+        $ref: '#/components/requestBodies/SAMLAggregateMetadataInput'
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLMetadataPreview"
+        '200':
+          $ref: '#/components/responses/SAMLMetadataPreview'
   /api/admin/saml-attribute-presets/{id}:
     delete:
       tags:
         - SAML Admin
       operationId: deleteApiAdminSamlAttributePresetsById
       summary: Delete SAML attribute preset.
-      description: Deletes a custom SAML attribute preset for the current tenant. Only presets whose id
+      description:
+        Deletes a custom SAML attribute preset for the current tenant. Only presets whose id
         starts with `custom:` are deletable; built-in presets are rejected.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLDeleteSuccess"
+        '200':
+          $ref: '#/components/responses/SAMLDeleteSuccess'
       parameters:
         - name: id
           in: path
@@ -277,11 +278,12 @@ paths:
         - SAML Admin
       operationId: getApiAdminSamlMetadataBatchesByBatchId
       summary: Get aggregate metadata batch status.
-      description: Returns the status, progress counters, and per-entity results for an aggregate SAML
+      description:
+        Returns the status, progress counters, and per-entity results for an aggregate SAML
         metadata batch-create job.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLBatchStatus"
+        '200':
+          $ref: '#/components/responses/SAMLBatchStatus'
       parameters:
         - name: batchId
           in: path
@@ -299,10 +301,10 @@ paths:
       description: Parses a PEM certificate or fetches a certificate from an HTTPS URL, then returns
         normalized certificate metadata and validation diagnostics.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLTrustCertificatePreview"
+        '200':
+          $ref: '#/components/responses/SAMLTrustCertificatePreview'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLTrustCertificatePreview"
+        $ref: '#/components/requestBodies/SAMLTrustCertificatePreview'
       security: *a1
   /api/admin/saml-metadata/previews/{previewId}/batch-create:
     post:
@@ -310,15 +312,17 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlMetadataPreviewsByPreviewIdBatchCreate
       summary: Start aggregate metadata batch create.
-      description: Starts an asynchronous provider creation job from selected EntityDescriptor entries in
-        an aggregate metadata preview.
+      description:
+        Starts an asynchronous provider creation job from selected EntityDescriptor entries in
+        an aggregate metadata preview. When enabled is false and identityMapping is omitted, mixed IdP and
+        SP selections are registered as disabled providers so each provider can be mapped and enabled later.
       responses:
-        "202":
-          $ref: "#/components/responses/SAMLBatchStatus"
-        "400":
+        '202':
+          $ref: '#/components/responses/SAMLBatchStatus'
+        '400':
           description: >
-            The selected entities, provider role, Mapping Set, or per-SP destination field policy
-            is invalid. No asynchronous batch is started.
+            The selected entities, provider role, Mapping Set, enabled-state requirement, or per-SP
+            destination field policy is invalid. No asynchronous batch is started.
           content:
             application/json:
               schema:
@@ -332,7 +336,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLMetadataBatchCreate"
+        $ref: '#/components/requestBodies/SAMLMetadataBatchCreate'
       security: *a1
   /api/admin/saml-metadata/previews/{previewId}/entities:
     get:
@@ -340,11 +344,12 @@ paths:
         - SAML Admin
       operationId: getApiAdminSamlMetadataPreviewsByPreviewIdEntities
       summary: List aggregate metadata preview entities.
-      description: Lists EntityDescriptor summaries discovered in an aggregate metadata preview, with
+      description:
+        Lists EntityDescriptor summaries discovered in an aggregate metadata preview, with
         optional text and keyword filtering.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLMetadataEntityList"
+        '200':
+          $ref: '#/components/responses/SAMLMetadataEntityList'
       parameters:
         - name: previewId
           in: path
@@ -391,8 +396,8 @@ paths:
       description: Imports single-entity SAML metadata into an existing provider, preserving custom
         settings while updating metadata-derived configuration and refresh status.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLMetadataImport"
+        '200':
+          $ref: '#/components/responses/SAMLMetadataImport'
       parameters:
         - name: id
           in: path
@@ -401,7 +406,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLMetadataInput"
+        $ref: '#/components/requestBodies/SAMLMetadataInput'
       security: *a1
   /api/admin/saml-providers/{id}/refresh-metadata:
     post:
@@ -409,11 +414,12 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdRefreshMetadata
       summary: Refresh SAML provider metadata.
-      description: Fetches metadata from the configured or supplied HTTPS metadata URL and updates the
+      description:
+        Fetches metadata from the configured or supplied HTTPS metadata URL and updates the
         provider configuration, certificate validation state, and metadata refresh status.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLMetadataRefresh"
+        '200':
+          $ref: '#/components/responses/SAMLMetadataRefresh'
       parameters:
         - name: id
           in: path
@@ -422,7 +428,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLMetadataRefresh"
+        $ref: '#/components/requestBodies/SAMLMetadataRefresh'
       security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/promote-next:
     post:
@@ -430,11 +436,12 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdSigningRolloverPromoteNext
       summary: Promote next SAML signing certificate.
-      description: Promotes the provider signing policy next certificate to active and can retain the
+      description:
+        Promotes the provider signing policy next certificate to active and can retain the
         previous active certificate as backup.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSigningRollover"
+        '200':
+          $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
         - name: id
           in: path
@@ -443,7 +450,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLSigningRollover"
+        $ref: '#/components/requestBodies/SAMLSigningRollover'
       security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/publish-next:
     post:
@@ -451,11 +458,12 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlProvidersByIdSigningRolloverPublishNext
       summary: Publish next SAML signing certificate.
-      description: Adds a next signing certificate to the provider signing policy for metadata publication
+      description:
+        Adds a next signing certificate to the provider signing policy for metadata publication
         before activation.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSigningRollover"
+        '200':
+          $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
         - name: id
           in: path
@@ -464,7 +472,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLSigningRollover"
+        $ref: '#/components/requestBodies/SAMLSigningRollover'
       security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/retire-backup:
     post:
@@ -475,8 +483,8 @@ paths:
       description: Removes the backup signing certificate from the provider signing policy after a
         rollover has completed.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSigningRollover"
+        '200':
+          $ref: '#/components/responses/SAMLSigningRollover'
       parameters:
         - name: id
           in: path
@@ -485,7 +493,7 @@ paths:
           schema:
             type: string
       requestBody:
-        $ref: "#/components/requestBodies/SAMLSigningRollover"
+        $ref: '#/components/requestBodies/SAMLSigningRollover'
       security: *a1
   /api/admin/saml-settings/local-signing:
     post:
@@ -493,13 +501,14 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigning
       summary: Update local SAML signing keys.
-      description: Creates, publishes, promotes, deletes, or retires tenant-local SAML signing keys for
+      description:
+        Creates, publishes, promotes, deletes, or retires tenant-local SAML signing keys for
         the IdP or SP role and returns the updated SAML settings.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSettings"
+        '200':
+          $ref: '#/components/responses/SAMLSettings'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLLocalSigning"
+        $ref: '#/components/requestBodies/SAMLLocalSigning'
       security: *a1
   /api/admin/saml-settings/local-signing/dr-bundle:
     post:
@@ -507,13 +516,14 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigningDrBundle
       summary: Export local SAML signing DR bundle.
-      description: Exports a passphrase-encrypted disaster recovery bundle containing tenant-local SAML
+      description:
+        Exports a passphrase-encrypted disaster recovery bundle containing tenant-local SAML
         signing settings and private signing keys. The response is marked no-store.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLDRBundle"
+        '200':
+          $ref: '#/components/responses/SAMLDRBundle'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLDRBundleExport"
+        $ref: '#/components/requestBodies/SAMLDRBundleExport'
       security: *a1
   /api/admin/saml-settings/local-signing/dr-bundle/import:
     post:
@@ -521,13 +531,14 @@ paths:
         - SAML Admin
       operationId: postApiAdminSamlSettingsLocalSigningDrBundleImport
       summary: Import local SAML signing DR bundle.
-      description: Decrypts and imports a local SAML signing disaster recovery bundle into the current
+      description:
+        Decrypts and imports a local SAML signing disaster recovery bundle into the current
         tenant, then returns the reloaded SAML settings.
       responses:
-        "200":
-          $ref: "#/components/responses/SAMLSettings"
+        '200':
+          $ref: '#/components/responses/SAMLSettings'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLDRBundleImport"
+        $ref: '#/components/requestBodies/SAMLDRBundleImport'
       security: *a1
   /saml/idp/attribute-release-consent:
     post:
@@ -535,31 +546,33 @@ paths:
         - SAML IdP
       operationId: postSamlIdpAttributeReleaseConsent
       summary: Submit SAML attribute release consent.
-      description: Processes the browser form submitted from the SAML attribute release consent challenge.
+      description:
+        Processes the browser form submitted from the SAML attribute release consent challenge.
         Approval stores consent and redirects back to the SSO resume URL; denial returns a SAML
         protocol error response to the Service Provider.
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
-        "302":
-          $ref: "#/components/responses/Redirect"
+        '200':
+          $ref: '#/components/responses/Html'
+        '302':
+          $ref: '#/components/responses/Redirect'
       requestBody:
-        $ref: "#/components/requestBodies/SAMLAttributeReleaseConsentForm"
+        $ref: '#/components/requestBodies/SAMLAttributeReleaseConsentForm'
   /saml/idp/init:
     get:
       tags:
         - SAML IdP
       operationId: getSamlIdpInit
       summary: Start IdP-initiated SAML SSO.
-      description: Starts IdP-initiated SSO for the `sp` EntityID. Without `sp`, returns an HTML Service
+      description:
+        Starts IdP-initiated SSO for the `sp` EntityID. Without `sp`, returns an HTML Service
         Provider selection page. If the user is not authenticated, redirects to the configured login
         URL.
       responses:
-        "200":
-          $ref: "#/components/responses/Html"
-        "302":
-          $ref: "#/components/responses/Redirect"
-        "400":
+        '200':
+          $ref: '#/components/responses/Html'
+        '302':
+          $ref: '#/components/responses/Redirect'
+        '400':
           description: The RelayState exceeds the SAML binding size limit.
           content:
             application/json:
@@ -622,7 +635,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLSettingsUpdateRequest"
+            $ref: '#/components/schemas/SAMLSettingsUpdateRequest'
           example:
             entityIdStyle: tenant_path
             interactiveLoginUrlPolicy: tenant_login_url
@@ -631,7 +644,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLProviderCreateRequest"
+            $ref: '#/components/schemas/SAMLProviderCreateRequest'
           example:
             name: Example SAML IdP
             providerType: saml_idp
@@ -644,7 +657,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLProviderUpdateRequest"
+            $ref: '#/components/schemas/SAMLProviderUpdateRequest'
           example:
             name: Example SAML IdP
             enabled: true
@@ -655,7 +668,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLAttributePresetCreateRequest"
+            $ref: '#/components/schemas/SAMLAttributePresetCreateRequest'
           example:
             label: Custom profile attributes
             attributeReleasePolicy:
@@ -667,7 +680,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataInput"
+            $ref: '#/components/schemas/SAMLMetadataInput'
           example:
             metadataUrl: https://idp.example.com/metadata.xml
     SAMLAggregateMetadataInput:
@@ -676,7 +689,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLAggregateMetadataInput"
+            $ref: '#/components/schemas/SAMLAggregateMetadataInput'
           example:
             metadataUrl: https://federation.example.com/aggregate-metadata.xml
     SAMLTrustCertificatePreview:
@@ -684,7 +697,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLTrustCertificatePreviewRequest"
+            $ref: '#/components/schemas/SAMLTrustCertificatePreviewRequest'
           example:
             certificate: -----BEGIN CERTIFICATE-----...
     SAMLMetadataBatchCreate:
@@ -692,7 +705,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataBatchCreateRequest"
+            $ref: '#/components/schemas/SAMLMetadataBatchCreateRequest'
           example:
             entityIds:
               - https://idp.example.com/metadata
@@ -703,7 +716,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataRefreshRequest"
+            $ref: '#/components/schemas/SAMLMetadataRefreshRequest'
           example:
             metadataUrl: https://idp.example.com/metadata.xml
     SAMLSigningRollover:
@@ -711,7 +724,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLSigningRolloverRequest"
+            $ref: '#/components/schemas/SAMLSigningRolloverRequest'
           example:
             certificate: -----BEGIN CERTIFICATE-----...
             metadataCertificatePublication: active_next
@@ -720,7 +733,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLLocalSigningRequest"
+            $ref: '#/components/schemas/SAMLLocalSigningRequest'
           example:
             role: idp
             action: publish_next
@@ -729,7 +742,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLDRBundleExportRequest"
+            $ref: '#/components/schemas/SAMLDRBundleExportRequest'
           example:
             passphrase: correct horse battery staple
     SAMLDRBundleImport:
@@ -737,7 +750,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLDRBundleImportRequest"
+            $ref: '#/components/schemas/SAMLDRBundleImportRequest'
           example:
             bundle:
               version: saml-local-signing-dr-bundle-v1
@@ -747,7 +760,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLAttributeReleaseConsentRequest"
+            $ref: '#/components/schemas/SAMLAttributeReleaseConsentRequest'
           example:
             requestId: consent_123
             decision: approve
@@ -758,7 +771,7 @@ components:
       content:
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/SAMLAttributeReleaseConsentForm"
+            $ref: '#/components/schemas/SAMLAttributeReleaseConsentForm'
           example:
             saml_request_id: saml_req_123
             saml_sp_entity_id: https://sp.example.com/metadata
@@ -790,7 +803,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLSettingsResponse"
+            $ref: '#/components/schemas/SAMLSettingsResponse'
           example:
             tenantId: tenant_123
             entityIdStyle: tenant_path
@@ -818,7 +831,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLProviderResponse"
+            $ref: '#/components/schemas/SAMLProviderResponse'
           example:
             id: provider_123
             name: Example SAML IdP
@@ -834,7 +847,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLAttributePresetResponse"
+            $ref: '#/components/schemas/SAMLAttributePresetResponse'
           example:
             preset:
               id: custom:preset_123
@@ -854,7 +867,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataPreviewResponse"
+            $ref: '#/components/schemas/SAMLMetadataPreviewResponse'
           example:
             kind: single
             providerType: saml_idp
@@ -867,7 +880,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLTrustCertificatePreviewResponse"
+            $ref: '#/components/schemas/SAMLTrustCertificatePreviewResponse'
           example:
             fingerprintSha256: AB:CD:EF
             subject: CN=Example
@@ -880,7 +893,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLBatchStatus"
+            $ref: '#/components/schemas/SAMLBatchStatus'
           example:
             batchId: batch_123
             tenantId: tenant_123
@@ -901,7 +914,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataImportResponse"
+            $ref: '#/components/schemas/SAMLMetadataImportResponse'
           example:
             success: true
             config:
@@ -915,7 +928,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataRefreshResponse"
+            $ref: '#/components/schemas/SAMLMetadataRefreshResponse'
           example:
             success: true
             changed: true
@@ -930,7 +943,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLSigningRolloverResponse"
+            $ref: '#/components/schemas/SAMLSigningRolloverResponse'
           example:
             success: true
             config:
@@ -944,7 +957,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLDRBundleResponse"
+            $ref: '#/components/schemas/SAMLDRBundleResponse'
           example:
             kind: authrim.saml_local_signing_secret_dr_bundle.encrypted.v1
             version: 1
@@ -952,7 +965,8 @@ components:
             generatedAt: 2026-06-19T00:00:00.000Z
             encrypted: true
             sensitive: true
-            warning: This bundle is passphrase-encrypted and contains SAML private signing keys after
+            warning:
+              This bundle is passphrase-encrypted and contains SAML private signing keys after
               decryption. Store it offline.
             kdf:
               name: PBKDF2
@@ -969,7 +983,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLAttributeReleaseConsentResponse"
+            $ref: '#/components/schemas/SAMLAttributeReleaseConsentResponse'
           example:
             success: true
             status: approved
@@ -979,7 +993,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SuccessResponse"
+            $ref: '#/components/schemas/SuccessResponse'
           example:
             success: true
     SAMLDeleteSuccess:
@@ -987,7 +1001,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLDeleteResponse"
+            $ref: '#/components/schemas/SAMLDeleteResponse'
           example:
             success: true
     SAMLMetadataEntityList:
@@ -995,7 +1009,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SAMLMetadataEntityListResponse"
+            $ref: '#/components/schemas/SAMLMetadataEntityListResponse'
           example:
             previewId: preview_123
             total: 1
@@ -1118,7 +1132,7 @@ components:
           items:
             type: string
         identityMapping:
-          $ref: "#/components/schemas/SAMLIdentityMapping"
+          $ref: '#/components/schemas/SAMLIdentityMapping'
         attributeReleaseConsent:
           type: object
           additionalProperties: false
@@ -1166,9 +1180,12 @@ components:
             - saml_idp
             - saml_sp
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         enabled:
           type: boolean
+          description: >
+            Defaults to true. A Field Mapping Set is required when true. When false, the provider may be
+            registered without identityMapping and configured later from its detail page.
         metadataUrl:
           type: string
           format: uri
@@ -1185,9 +1202,12 @@ components:
         name:
           type: string
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         enabled:
           type: boolean
+          description: >
+            Enabling requires a valid role-compatible Field Mapping Set. Disabled providers may retain no
+            identityMapping while configuration is pending.
     SAMLProviderResponse:
       type: object
       required:
@@ -1207,7 +1227,7 @@ components:
             - saml_idp
             - saml_sp
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         enabled:
           type: boolean
         createdAt:
@@ -1322,7 +1342,7 @@ components:
                 - saml_idp
                 - saml_sp
             config:
-              $ref: "#/components/schemas/SAMLProviderConfig"
+              $ref: '#/components/schemas/SAMLProviderConfig'
         - type: object
           required:
             - kind
@@ -1393,9 +1413,12 @@ components:
         attributePresetId:
           type: string
         identityMapping:
-          $ref: "#/components/schemas/SAMLIdentityMapping"
+          $ref: '#/components/schemas/SAMLIdentityMapping'
         enabled:
           type: boolean
+          description: >
+            Defaults to true. Set false to register selected entities without identityMapping for later
+            per-provider setup; this deferred-setup mode also accepts mixed IdP and SP selections.
     SAMLBatchStatus:
       type: object
       required:
@@ -1470,7 +1493,7 @@ components:
           enum:
             - true
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         enabled:
           type: boolean
         metadataRefreshStatus:
@@ -1500,7 +1523,7 @@ components:
         expired:
           type: boolean
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         enabled:
           type: boolean
         metadataRefreshStatus:
@@ -1541,7 +1564,7 @@ components:
           enum:
             - true
         config:
-          $ref: "#/components/schemas/SAMLProviderConfig"
+          $ref: '#/components/schemas/SAMLProviderConfig'
         signingKeyPolicy:
           type: object
           additionalProperties: true
@@ -1738,11 +1761,11 @@ components:
         entities:
           type: array
           items:
-            $ref: "#/components/schemas/SAMLMetadataEntitySummary"
+            $ref: '#/components/schemas/SAMLMetadataEntitySummary'
         keywordFacets:
           type: array
           items:
-            $ref: "#/components/schemas/SAMLMetadataKeywordFacet"
+            $ref: '#/components/schemas/SAMLMetadataKeywordFacet'
     SAMLMetadataEntitySummary:
       type: object
       required:

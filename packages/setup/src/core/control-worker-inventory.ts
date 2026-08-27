@@ -424,10 +424,12 @@ INSERT OR IGNORE INTO control_environment_resource_policies (
 
 INSERT OR IGNORE INTO control_residency_partitions (
   environment_id, residency_policy_id, residency_partition,
-  jurisdiction, location_hint, status, created_at, updated_at
+  jurisdiction, location_hint, status, created_at, updated_at,
+  lookup_capacity_domain_id
 ) SELECT
   ${sqlString(environmentId)}, ${sqlString(residencyPolicyId)},
-  ${sqlString(residencyPartition)}, NULL, NULL, 'active', ${now}, ${now}
+  ${sqlString(residencyPartition)}, NULL, NULL, 'active', ${now}, ${now},
+  ${sqlString(`lookup:${residencyPolicyId}:${residencyPartition}`)}
 WHERE NOT EXISTS (
   SELECT 1 FROM control_residency_partitions
    WHERE environment_id = ${sqlString(environmentId)}

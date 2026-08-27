@@ -50,6 +50,7 @@ function d1() {
 
 function env(current: ControlLookupBucketMigrationView | null) {
   const checkpoint = vi.fn(async (input) => view(input.nextState));
+  const release = vi.fn(async () => current ?? view('dual_write'));
   const cutover = vi.fn(async () => view('grace'));
   const complete = vi.fn(async () => view('complete'));
   const block = vi.fn(async () => view('blocked'));
@@ -57,6 +58,7 @@ function env(current: ControlLookupBucketMigrationView | null) {
     CONTROL: {
       claimNextLookupBucketMigration: vi.fn(async () => current),
       checkpointLookupBucketMigration: checkpoint,
+      releaseLookupBucketMigration: release,
       cutoverLookupBucketMigration: cutover,
       completeLookupBucketMigration: complete,
       blockLookupBucketMigration: block,
@@ -64,7 +66,7 @@ function env(current: ControlLookupBucketMigrationView | null) {
     LOOKUP_A: d1(),
     LOOKUP_B: d1(),
   } as unknown as Env;
-  return { workerEnv, checkpoint, cutover, complete, block };
+  return { workerEnv, checkpoint, release, cutover, complete, block };
 }
 
 describe('processNextLookupBucketMigration', () => {
@@ -117,6 +119,51 @@ describe('processNextLookupBucketMigration', () => {
     expect(plan).toHaveBeenCalledWith(expect.objectContaining({ observedAt: 600 }));
   });
 
+  it('waits for forecast-provisioned Lookup capacity before bucket migration', async () => {
+    const planned = env(null);
+    const plan = vi.fn();
+    const reconcile = vi.fn(async () => [
+      {
+        residencyPolicyId: 'global',
+        residencyPartition: 'default',
+        status: 'provisioning' as const,
+        observedAt: 600,
+        observedActiveRouteCount: 80_000,
+        observedSuccessfulPublicationCount: 10_000,
+        sampleIntervalSeconds: 600,
+        sampleRateMicrorowsPerSecond: 10_000_000,
+        ewmaRateMicrorowsPerSecond: 2_500_000,
+        forecastHorizonSeconds: 3_600,
+        forecastNewRouteCount: 9_000,
+        projectedActiveRouteCount: 89_000,
+        usableCapacityRouteCount: 80_000,
+        capacityUnitCount: 1,
+        additionalUnitsRequired: 1,
+        decisionGeneration: 1,
+        requestedOperationId: 'lookup-forecast-operation',
+        lastErrorCode: null,
+      },
+    ]);
+    Object.assign(planned.workerEnv.CONTROL ?? {}, {
+      planNextLookupBucketMigration: plan,
+      reconcileLookupScaleOut: reconcile,
+    });
+
+    await expect(
+      processNextLookupBucketMigration(planned.workerEnv, {
+        ownerId: 'scheduler-1',
+        now: () => 600,
+      })
+    ).resolves.toEqual({
+      status: 'progressed',
+      operationId: 'lookup-forecast-operation',
+      state: 'lookup_capacity_provisioning',
+      processedRows: 0,
+    });
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(plan).not.toHaveBeenCalled();
+  });
+
   it('does not scan every Lookup D1 outside the ten-minute planning boundary', async () => {
     const planned = env(null);
     const plan = vi.fn();
@@ -132,6 +179,52 @@ describe('processNextLookupBucketMigration', () => {
     ).resolves.toMatchObject({ status: 'idle' });
     expect(loadMocks.collect).not.toHaveBeenCalled();
     expect(plan).not.toHaveBeenCalled();
+  });
+
+  it('keeps observing scale-out while an existing bucket migration progresses', async () => {
+    const active = env(view('dual_write'));
+    const reconcile = vi.fn(async () => [
+      {
+        residencyPolicyId: 'global',
+        residencyPartition: 'default',
+        status: 'provisioning' as const,
+        observedAt: 600,
+        observedActiveRouteCount: 80_000,
+        observedSuccessfulPublicationCount: 10_000,
+        sampleIntervalSeconds: 600,
+        sampleRateMicrorowsPerSecond: 10_000_000,
+        ewmaRateMicrorowsPerSecond: 2_500_000,
+        forecastHorizonSeconds: 3_600,
+        forecastNewRouteCount: 9_000,
+        projectedActiveRouteCount: 89_000,
+        usableCapacityRouteCount: 80_000,
+        capacityUnitCount: 1,
+        additionalUnitsRequired: 1,
+        decisionGeneration: 1,
+        requestedOperationId: 'lookup-forecast-operation',
+        lastErrorCode: null,
+      },
+    ]);
+    Object.assign(active.workerEnv.CONTROL ?? {}, {
+      planNextLookupBucketMigration: vi.fn(),
+      reconcileLookupScaleOut: reconcile,
+    });
+
+    await expect(
+      processNextLookupBucketMigration(active.workerEnv, {
+        ownerId: 'scheduler-1',
+        now: () => 600,
+      })
+    ).resolves.toMatchObject({ status: 'progressed', state: 'backfilling' });
+    expect(reconcile).toHaveBeenCalledOnce();
+    expect(active.checkpoint).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedState: 'dual_write', nextState: 'backfilling' })
+    );
+    expect(active.release).toHaveBeenCalledWith({
+      operationId: 'lookup-bucket:operation',
+      ownerId: 'scheduler-1',
+      fencingToken: 3,
+    });
   });
 
   it('enables backfill before copying rows', async () => {

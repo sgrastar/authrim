@@ -146,6 +146,7 @@ import { timeTokenRequestDiagnosticOperation } from './request-diagnostics';
 import {} from '@authrim/ar-lib-core';
 // Tenant context
 import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
+import { getDefaultTenantId } from '@authrim/ar-lib-core/utils/issuer';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -7966,10 +7967,11 @@ async function handleAdminMachineClientCredentialsGrant(
   const credentialTenantScopes = await machineRepo.getCredentialTenantScopes(credential.id);
   const tenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
 
+  const adminSigningTenantId = getDefaultTenantId(c.env);
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    const signingKey = await getSigningKeyFromKeyManager(c.env, adminSigningTenantId);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -8011,13 +8013,14 @@ async function handleAdminMachineClientCredentialsGrant(
     sender_constrained: dpopJkt !== undefined,
     scope: grantedScopes.join(' '),
     tenant_scope: tenantScope,
+    signing_tenant_id: adminSigningTenantId,
     ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
   };
 
   let accessToken: string;
   let accessTokenJti = '';
   try {
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, adminSigningTenantId);
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,

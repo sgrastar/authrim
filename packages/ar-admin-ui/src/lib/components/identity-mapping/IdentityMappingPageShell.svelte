@@ -148,9 +148,8 @@
 		selectedFieldMappingVersion?.latestSnapshot?.id ?? null
 	);
 	const selectedFieldMappingActive = $derived(
-		selectedFieldMappingSetSummary?.lifecycleState === 'active' ||
-			selectedFieldMappingVersion?.lifecycleState === 'active' ||
-			selectedFieldMappingVersion?.latestSnapshot?.lifecycleState === 'active'
+		selectedFieldMappingSetSummary?.lifecycleState === 'active' &&
+			selectedFieldMappingVersion?.lifecycleState === 'active'
 	);
 	const policyNameConflict = $derived(findPolicyNameConflict(policyDisplayName));
 	const policySelectorOptions = $derived(
@@ -618,9 +617,7 @@
 		version: IdentityMappingFieldMappingVersionSummary
 	): boolean {
 		if (policy.lifecycleState !== 'active') return false;
-		return (
-			version.lifecycleState === 'active' || version.latestSnapshot?.lifecycleState === 'active'
-		);
+		return version.lifecycleState === 'active';
 	}
 
 	function isRouteFieldMappingVersion(
@@ -640,10 +637,7 @@
 			return side === 'source' ? sides.source : sides.destination;
 		});
 		return (
-			versions.find(
-				(version) =>
-					version.lifecycleState === 'active' || version.latestSnapshot?.lifecycleState === 'active'
-			) ??
+			versions.find((version) => version.lifecycleState === 'active') ??
 			versions.find((version) => version.latestSnapshot?.id) ??
 			versions[0] ??
 			null
@@ -759,12 +753,16 @@
 						<div class="policy-version-actions">
 							<button
 								type="button"
+								class:active-state={selectedFieldMappingActive}
 								onclick={activateSelectedFieldMappingVersion}
+								aria-pressed={selectedFieldMappingActive}
 								disabled={!selectedFieldMappingVersion ||
 									selectedFieldMappingActive ||
 									policyOperationBusy}
 							>
-								{$LL.admin_identity_mapping_editor_activate()}
+								{selectedFieldMappingActive
+									? `✓ ${$LL.admin_identity_mapping_editor_active()}`
+									: $LL.admin_identity_mapping_editor_activate()}
 							</button>
 							<button
 								type="button"
@@ -789,14 +787,16 @@
 							</span>
 							<span>
 								{selectedFieldMappingActive
-									? (selectedFieldMappingSetSummary?.lifecycleState ?? 'active')
+									? $LL.admin_identity_mapping_editor_active()
 									: selectedFieldMappingSnapshotId
 										? $LL.admin_identity_mapping_editor_snapshot_ready()
 										: $LL.admin_identity_mapping_editor_no_snapshot()}
 							</span>
 						</div>
 						{#if policyOperationStatus}
-							<p class="policy-operation-status">{policyOperationStatus}</p>
+							<p class="policy-operation-status" role="status" aria-live="polite">
+								{policyOperationStatus}
+							</p>
 						{/if}
 					</div>
 				{/if}
@@ -1090,6 +1090,13 @@
 	.policy-version-actions button:disabled {
 		cursor: not-allowed;
 		opacity: 0.55;
+	}
+
+	.policy-version-actions button.active-state:disabled {
+		border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-border));
+		color: var(--color-success);
+		background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface));
+		opacity: 1;
 	}
 
 	.policy-version-actions .danger-action {

@@ -455,6 +455,54 @@ describe('deployWorker', () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
+  it('retries traffic promotion while an uploaded Worker version becomes visible', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T00:00:00.000Z'));
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    const sleep = vi.fn(async () => undefined);
+    let uploadAttempts = 0;
+    let promotionAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        uploadAttempts++;
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('versions') && commandArgs.includes('deploy')) {
+        promotionAttempts++;
+        if (promotionAttempts === 1) {
+          throw commandError(
+            'The requested Worker version could not be found, please check the ID [code: 100146]'
+          );
+        }
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
+    );
+    expect(uploadAttempts).toBe(1);
+    expect(promotionAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
   it('does not retry deterministic Cloudflare 400 failures', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
@@ -1248,6 +1296,9 @@ describe('deployAll', () => {
           required: true,
           coordinator: fakeDeploymentLeaseCoordinator(leaseCalls),
         },
+        beforeWorkerMutations: async () => {
+          leaseCalls.push('refresh-generated-bindings');
+        },
       },
       ['ar-lib-core']
     );
@@ -1257,6 +1308,7 @@ describe('deployAll', () => {
     expect(commandCalls.some((command) => command.includes('wrangler deploy'))).toBe(true);
     expect(leaseCalls).toEqual([
       'acquire:test-ar-lib-core:version-source',
+      'refresh-generated-bindings',
       'renew:test-ar-lib-core:1',
       'start:test-ar-lib-core:deployment-source',
       'assert:test-ar-lib-core:2',

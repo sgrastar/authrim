@@ -193,6 +193,8 @@ export interface Translations {
   'keys.generating': string;
   'keys.generated': string;
   'keys.existing': string;
+  'keys.existingWarning': string;
+  'keys.replaced': string;
   'keys.error': string;
   'keys.regeneratePrompt': string;
   'keys.regenerateWarning': string;
@@ -335,6 +337,7 @@ export interface Translations {
   'delete.r2Buckets': string;
   'delete.pages': string;
   'delete.partialSuccess': string;
+  'delete.inventoryUnavailable': string;
 
   // Info command
   'info.title': string;

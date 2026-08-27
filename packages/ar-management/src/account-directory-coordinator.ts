@@ -335,7 +335,36 @@ export class AccountDirectoryCoordinator {
 
     for (const index of publication.indexes) {
       const lookup = primary(await lookupForBucket(index.virtualBucket));
+      const publicationCounter = await lookup
+        .prepare(`SELECT 1 AS present FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+        .bind(index.virtualBucket)
+        .first<{ present: number }>();
+      if (publicationCounter?.present !== 1) {
+        throw new Error('directory_publication_counter_missing');
+      }
       await lookup.batch([
+        lookup
+          .prepare(
+            `UPDATE lookup_bucket_counters
+                SET successful_route_publication_count = successful_route_publication_count + 1,
+                    publication_counter_updated_at = MAX(publication_counter_updated_at, ?)
+              WHERE virtual_bucket = ?
+                AND EXISTS (
+                  SELECT 1 FROM lookup_identifiers
+                   WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
+                     AND hmac_key_generation = ? AND identifier_blind_digest = ?
+                     AND tenant_id = ? AND account_id = ? AND route_projection_json = ?
+                     AND lifecycle_state = 'pending'
+                )`
+          )
+          .bind(
+            now,
+            index.virtualBucket,
+            ...indexParams(index),
+            publication.tenantId,
+            publication.accountId,
+            projection
+          ),
         lookup
           .prepare(
             `UPDATE lookup_identifiers SET lifecycle_state = 'active', updated_at = ?

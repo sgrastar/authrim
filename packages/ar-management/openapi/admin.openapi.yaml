@@ -359,12 +359,24 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
         '503':
-          $ref: '#/components/responses/Error'
+          description: Account capacity is being provisioned. Retry the same idempotent request.
+          headers:
+            Retry-After:
+              description: Minimum suggested delay before retrying, in seconds.
+              schema:
+                type: integer
+                minimum: 1
+                example: 10
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       description: >-
         Allocate an account route and create a user in the selected tenant. Returns 201 only after
         Lookup directory publication is active. A transient publication delay returns 202 with a
         durable operation identifier that can be resumed by retrying the same request and
-        Idempotency-Key.
+        Idempotency-Key. While elastic D1 capacity is being provisioned, the endpoint returns 503
+        with Retry-After; clients must retry the same request and Idempotency-Key after that delay.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -57456,6 +57468,7 @@ components:
         - dataRole
         - residencyPolicyId
         - residencyPartition
+        - lookupCapacityDomainId
         - logicalShardId
         - databaseName
         - bindingRef
@@ -57479,11 +57492,16 @@ components:
           type: string
         dataRole:
           type: string
-          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+          enum: [tenant_core/default, tenant_core/users, tenant_pii, lookup]
         residencyPolicyId:
           type: string
         residencyPartition:
           type: string
+        lookupCapacityDomainId:
+          type: [string, 'null']
+          maxLength: 128
+          description: >-
+            Explicit Lookup capacity-sharing boundary. Non-null only when dataRole is lookup.
         logicalShardId:
           type: string
         databaseName:
@@ -57495,7 +57513,7 @@ components:
           enum: [enabled, disabled]
         migrationStreamId:
           type: string
-          enum: [d1-core, d1-pii]
+          enum: [d1-core, d1-pii, d1-lookup]
     AdminControlCapacityProvisioningPreview:
       type: object
       additionalProperties: false

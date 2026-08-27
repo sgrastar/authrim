@@ -321,33 +321,65 @@ async function upsertIdentifier(input: {
       throw new Error('tenant_dr_lookup_reservation_conflict');
     }
   }
-  await session
-    .prepare(
-      `INSERT INTO lookup_identifiers (
+  const publicationCounter = await session
+    .prepare(`SELECT 1 AS present FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+    .bind(input.index.virtualBucket)
+    .first<{ present: number }>();
+  if (publicationCounter?.present !== 1) {
+    throw new Error('tenant_dr_lookup_publication_counter_missing');
+  }
+  await session.batch([
+    session
+      .prepare(
+        `UPDATE lookup_bucket_counters
+            SET successful_route_publication_count = successful_route_publication_count + 1,
+                publication_counter_updated_at = MAX(publication_counter_updated_at, ?)
+          WHERE virtual_bucket = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM lookup_identifiers
+               WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
+                 AND hmac_key_generation = ? AND identifier_blind_digest = ?
+                 AND tenant_id = ? AND account_id = ? AND lifecycle_state = 'active'
+            )`
+      )
+      .bind(
+        input.now,
+        input.index.virtualBucket,
+        input.index.virtualBucket,
+        input.index.indexKind,
+        input.index.normalizationVersion,
+        input.index.hmacKeyGeneration,
+        input.index.digest,
+        input.tenantId,
+        input.accountId
+      ),
+    session
+      .prepare(
+        `INSERT OR IGNORE INTO lookup_identifiers (
          virtual_bucket, index_kind, normalization_version, hmac_key_generation,
          identifier_blind_digest, tenant_id, account_id, route_schema_version,
          account_route_generation, required_binding_route_generation, residency_policy_id,
          route_projection_json, tenant_lifecycle_state, runtime_route_status,
          lifecycle_state, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'active', 'active', ?, ?)`
-    )
-    .bind(
-      input.index.virtualBucket,
-      input.index.indexKind,
-      input.index.normalizationVersion,
-      input.index.hmacKeyGeneration,
-      input.index.digest,
-      input.tenantId,
-      input.accountId,
-      input.route.schemaVersion,
-      input.route.accountRouteGeneration,
-      Math.max(...input.route.targets.map((target) => target.requiredBindingRouteGeneration)),
-      input.route.residencyPolicyId,
-      routeJson,
-      input.now,
-      input.now
-    )
-    .run();
+      )
+      .bind(
+        input.index.virtualBucket,
+        input.index.indexKind,
+        input.index.normalizationVersion,
+        input.index.hmacKeyGeneration,
+        input.index.digest,
+        input.tenantId,
+        input.accountId,
+        input.route.schemaVersion,
+        input.route.accountRouteGeneration,
+        Math.max(...input.route.targets.map((target) => target.requiredBindingRouteGeneration)),
+        input.route.residencyPolicyId,
+        routeJson,
+        input.now,
+        input.now
+      ),
+  ]);
   const reflected = await session
     .prepare(
       `SELECT route_projection_json, lifecycle_state FROM lookup_identifiers

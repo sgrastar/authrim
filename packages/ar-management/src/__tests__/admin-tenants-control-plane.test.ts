@@ -302,10 +302,14 @@ describe('Control Plane tenant management', () => {
     });
 
     const response = await adminTenantsListHandler(createContext({}));
-    const body = (await response.json()) as { tenants: Array<{ id: string }> };
+    const body = (await response.json()) as {
+      tenants: Array<{ id: string; isolation_policy: string }>;
+    };
 
     expect(response.status).toBe(200);
-    expect(body.tenants).toEqual([expect.objectContaining({ id: 'first' })]);
+    expect(body.tenants).toEqual([
+      expect.objectContaining({ id: 'first', isolation_policy: 'tenant_exclusive' }),
+    ]);
     expect(adapters.adminAdapter.calls).toEqual([]);
   });
 
@@ -436,6 +440,7 @@ describe('Control Plane tenant management', () => {
       createContext({ id: 'second', name: 'Second Tenant' })
     );
     const body = (await response.json()) as {
+      isolation_policy: string;
       lifecycle_state: string;
       provisioning: {
         mode: string;
@@ -447,6 +452,7 @@ describe('Control Plane tenant management', () => {
 
     expect(response.status).toBe(202);
     expect(body).toMatchObject({
+      isolation_policy: 'tenant_exclusive',
       lifecycle_state: 'provisioning',
       provisioning: {
         mode: 'control-plane',
@@ -592,6 +598,39 @@ describe('Control Plane tenant management', () => {
   });
 
   it('returns the persisted Control provisioning status without mutating it', async () => {
+    const getProvisioningOperation = vi.fn(async () => ({
+      operationId: 'control-op-default',
+      environmentId: 'test',
+      operationKind: 'provision_shard' as const,
+      status: 'running' as const,
+      attemptCount: 1,
+      nextAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: 100,
+      updatedAt: 102,
+      completedAt: null,
+      steps: [
+        {
+          stepKey: 'create_d1',
+          status: 'running' as const,
+          attemptCount: 1,
+          nextAttemptAt: null,
+          lastErrorCode: null,
+          observedResourceId: null,
+          progressCurrent: null,
+          progressTotal: null,
+          startedAt: 101,
+          completedAt: null,
+          updatedAt: 102,
+        },
+      ],
+      availableActions: [],
+    }));
+    Object.defineProperty(getProvisioningOperation, 'bind', {
+      value: () => {
+        throw new Error('cloudflare_rpc_method_bind_is_not_supported');
+      },
+    });
     const operation = {
       operation_id: 'tenant-create-second',
       environment_id: 'test',
@@ -605,6 +644,7 @@ describe('Control Plane tenant management', () => {
       idempotency_key: 'tenant-create-second',
       status: 'waiting_retry',
       current_step: 'capacity_check',
+      isolation_policy: 'tenant_exclusive',
       capacity_operation_ids_json: '{"tenant_core/default":"control-op-default"}',
       default_route_allocation_json: null,
       attempt_count: 2,
@@ -654,12 +694,19 @@ describe('Control Plane tenant management', () => {
     });
 
     const response = await adminTenantProvisioningStatusHandler(
-      createContext({}, {}, { id: 'second' })
+      createContext(
+        {},
+        {
+          CONTROL: { getProvisioningOperation } as unknown as Env['CONTROL'],
+        },
+        { id: 'second' }
+      )
     );
     const body = (await response.json()) as {
       status: string;
       current_step: string;
       capacity_operation_ids: Record<string, string>;
+      capacity_operations: Array<{ operation_id: string; status: string }>;
     };
 
     expect(response.status).toBe(200);
@@ -667,7 +714,9 @@ describe('Control Plane tenant management', () => {
       status: 'waiting_retry',
       current_step: 'capacity_check',
       capacity_operation_ids: { 'tenant_core/default': 'control-op-default' },
+      capacity_operations: [{ operation_id: 'control-op-default', status: 'running' }],
     });
+    expect(getProvisioningOperation).toHaveBeenCalledWith('control-op-default');
     expect(adapters.adminAdapter.execute).not.toHaveBeenCalled();
   });
 

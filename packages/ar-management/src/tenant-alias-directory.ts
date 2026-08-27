@@ -279,11 +279,26 @@ async function writePreparedAliases(
       activeRouteMigration,
       reusable
     );
-    targets.push({ index, projectionJson, uniqueOwner, reusable, session });
+    targets.push({
+      index,
+      projectionJson,
+      uniqueOwner,
+      reusable,
+      session,
+    });
   }
 
   for (const { index, projectionJson, session } of targets) {
-    const result = await session
+    if (state === 'active') {
+      const publicationCounter = await session
+        .prepare(`SELECT 1 AS present FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+        .bind(index.virtualBucket)
+        .first<{ present: number }>();
+      if (publicationCounter?.present !== 1) {
+        throw new Error('tenant_alias_publication_counter_missing');
+      }
+    }
+    const aliasWrite = session
       .prepare(
         `INSERT INTO lookup_tenant_aliases (
            virtual_bucket, alias_kind, alias_sha256_digest, tenant_id,
@@ -310,8 +325,36 @@ async function writePreparedAliases(
         state,
         now,
         now
-      )
-      .run();
+      );
+    const results = await session.batch([
+      ...(state === 'active'
+        ? [
+            session
+              .prepare(
+                `UPDATE lookup_bucket_counters
+                    SET successful_route_publication_count = successful_route_publication_count + 1,
+                        publication_counter_updated_at = MAX(publication_counter_updated_at, ?)
+                  WHERE virtual_bucket = ?
+                    AND NOT EXISTS (
+                      SELECT 1 FROM lookup_tenant_aliases
+                       WHERE virtual_bucket = ? AND alias_kind = ?
+                         AND alias_sha256_digest = ? AND tenant_id = ?
+                         AND lifecycle_state = 'active'
+                    )`
+              )
+              .bind(
+                now,
+                index.virtualBucket,
+                index.virtualBucket,
+                index.aliasKind,
+                index.digest,
+                input.tenantId
+              ),
+          ]
+        : []),
+      aliasWrite,
+    ]);
+    const result = results[results.length - 1];
     if (!result.success) {
       throw new Error('tenant_alias_write_failed');
     }

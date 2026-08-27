@@ -164,6 +164,8 @@ describe('validateSetupDomainInputs', () => {
     expect(issues).toEqual([
       expect.objectContaining({
         field: 'apiDomain',
+        kind: 'baseDomainDepth',
+        hostname: 'first.multi-tenant.authrim.com',
         suggestion: 'multi-tenant.authrim.com',
       }),
     ]);
@@ -179,6 +181,8 @@ describe('validateSetupDomainInputs', () => {
     expect(issues).toEqual([
       expect.objectContaining({
         field: 'loginUiDomain',
+        kind: 'uiDomainDepth',
+        hostname: 'login.tenantname.subdomain.example.com',
         suggestion: 'login-tenantname.subdomain.example.com',
       }),
       expect.objectContaining({

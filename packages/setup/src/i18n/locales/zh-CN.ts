@@ -31,7 +31,7 @@ const zhCN: Translations = {
 
   // Main menu
   'menu.prompt': '您想做什么？',
-  'menu.quick': '快速安装（5分钟）',
+  'menu.quick': '快速安装',
   'menu.quickDesc': '以最少配置部署 Authrim',
   'menu.custom': '自定义安装',
   'menu.customDesc': '逐步配置所有选项',
@@ -103,6 +103,8 @@ const zhCN: Translations = {
   'prereq.notLoggedIn': '未登录 Cloudflare',
   'prereq.loginHint': '运行以下命令进行身份验证：',
   'prereq.loggedInAs': '已连接到 Cloudflare ({{email}})',
+  'prereq.authenticated': '已连接到 Cloudflare',
+  'prereq.checkFailed': '无法检查 wrangler',
   'prereq.accountId': '账户 ID：{{accountId}}',
 
   // Environment
@@ -178,6 +180,12 @@ const zhCN: Translations = {
   'domain.zoneCheckSkipped': '已跳过区域检查，继续设置...',
   'domain.continueWithoutZone': '不验证区域继续？',
   'domain.configureBinding': '为 Workers 配置自定义域名绑定',
+  'domain.configureBindingDesc':
+    '将基础域名直接分配给路由 Worker，由 Cloudflare 管理 DNS 和 TLS 证书。租户子域名继续使用通配符路由。',
+  'domain.customHostnamesDesc': '使用 Cloudflare Custom Hostnames 自动配置租户自定义域名。',
+  'domain.customHostnamesPrivacy':
+    '令牌仅保存在本地密钥文件中并作为 Worker 密钥上传；不会保存到 D1、KV 或安装配置中。',
+  'domain.customHostnamesPrompt': '启用 Cloudflare Custom Hostnames 自动化？',
   'domain.action.retryCheck': '重新检查',
   'domain.action.reloadPage': '重新加载页面',
   'domain.action.openCloudflareDashboard': '打开 Cloudflare 控制台',
@@ -218,6 +226,11 @@ const zhCN: Translations = {
   'domain.apiDomain': 'API / 发行者域名（例如：auth.example.com）',
   'domain.loginUiDomain': '登录 UI 域名（按回车跳过）',
   'domain.adminUiDomain': '管理 UI 域名（按回车跳过）',
+  'domain.baseDomainDepthError':
+    'Base Domain 必须是租户 URL 使用的父域名。“{{hostname}}”在注册域名之前包含过多标签。',
+  'domain.uiDomainDepthError': '{{label}} 域名“{{hostname}}”对标准租户域名模型而言层级过深。',
+  'domain.suggestedHost': '建议的主机名：{{hostname}}',
+  'domain.uiRequiresOwnRoute': '{{label}} 自定义域名需要单独的 Worker 路由。',
   'domain.enterDomains': '输入自定义域名（留空使用 Cloudflare 默认）',
   'domain.singleTenantNote': '在单租户模式下，发行者 URL = API 域名',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 域名）',
@@ -266,6 +279,7 @@ const zhCN: Translations = {
   'keys.generated': '密钥已生成 ({{path}})',
   'keys.existing': '环境 "{{env}}" 的密钥已存在',
   'keys.existingWarning': '现有密钥将被覆盖。',
+  'keys.replaced': '确认环境名称可用后，已替换现有密钥。',
   'keys.error': '生成密钥失败',
   'keys.regeneratePrompt': '重新生成密钥？',
   'keys.regenerateWarning': '这将使所有现有令牌失效！',
@@ -316,6 +330,15 @@ const zhCN: Translations = {
   'config.shards': '分片',
   'config.sec': '秒',
   'config.automatic': '自动',
+  'config.d1Routing': 'D1 路由：',
+  'config.placement': '放置策略：',
+  'config.provisioning': '资源预配：',
+  'config.uiEnvNoApi': '配置 API URL 后将创建 ui.env。',
+  'config.wranglerConfigsSaved': '已保存 {{count}} 个 wrangler.toml 主配置',
+  'config.wranglerConfigsPartial': '部分 wrangler 配置无法保存',
+  'config.wranglerConfigsSyncing': '正在将 wrangler 配置同步到软件包...',
+  'config.wranglerConfigsSynced': '已将 wrangler 配置同步到 {{count}} 个组件',
+  'config.wranglerConfigsSyncFailed': 'wrangler 配置同步失败',
 
   // Deploy
   'deploy.prompt': '使用此配置开始安装？',
@@ -345,6 +368,8 @@ const zhCN: Translations = {
   'deploy.wranglerKeep': '📝 保留手动更改（按原样部署）',
   'deploy.wranglerBackup': '💾 备份并用主版本覆盖',
   'deploy.wranglerOverwrite': '⚠️ 用主版本覆盖（丢失更改）',
+  'deploy.initialProvisioningFailed':
+    'Cloudflare 资源预配未完成。未创建环境锁；请重新运行 init 以安全恢复。',
 
   // Email provider
   'email.title': '邮件提供商',
@@ -400,15 +425,22 @@ const zhCN: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': '输入 Cloudflare API 令牌',
   'cf.apiTokenValidation': '请输入有效的 API 令牌',
-
-  // OIDC Profile
-  'profile.prompt': '选择 OIDC 配置文件',
-  'profile.basicOp': '基础 OP（标准 OIDC 提供商）',
-  'profile.basicOpDesc': '标准 OIDC 功能',
-  'profile.fapiRw': 'FAPI 读写（金融级）',
-  'profile.fapiRwDesc': 'FAPI 1.0 读写安全配置文件合规',
-  'profile.fapi2Security': 'FAPI 2.0 安全配置文件',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 安全配置文件合规（最高安全）',
+  'cf.apiTokenCreationMethod': '您想如何创建 API 令牌？',
+  'cf.apiTokenCreateFromLink': '从预配置链接创建（推荐）',
+  'cf.apiTokenCreateFromLinkDesc': '打开 Cloudflare，所需权限和区域已预先选择',
+  'cf.apiTokenCreateManually': '手动创建',
+  'cf.apiTokenCreateManuallyDesc': '查看所需权限并自行配置令牌',
+  'cf.apiTokenTemplateUrl': 'Cloudflare 令牌创建 URL：',
+  'cf.apiTokenTemplateOpenPrompt': '按 Enter 在浏览器中打开 Cloudflare',
+  'cf.apiTokenTemplateOpened': '已打开 Cloudflare 令牌创建页面',
+  'cf.apiTokenTemplateOpenFailed': '无法打开浏览器。请手动打开下面的 URL。',
+  'cf.apiTokenManualTitle': '请使用以下设置创建用户 API 令牌：',
+  'cf.apiTokenManualType': '使用 API Token，不要使用 Global API Key。',
+  'cf.apiTokenManualPermission': '权限：Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': '区域资源：Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '不要添加无关的权限或区域。',
+  'cf.apiTokenSecretOnce': '令牌密钥只显示一次。离开 Cloudflare 前请复制。',
+  'cf.apiTokenSelectedZone': '此环境使用的区域',
 
   // Tenant configuration
   'tenant.title': '租户模式',
@@ -426,6 +458,17 @@ const zhCN: Translations = {
   'tenant.defaultTenantPrompt': '默认租户名称（标识符）',
   'tenant.defaultTenantValidation': '仅允许小写字母数字和连字符',
   'tenant.displayNamePrompt': '默认租户显示名称',
+  'tenant.domainSetupHint': '留空则在单租户模式下使用 workers.dev。',
+  'tenant.customDomainExamples': '使用自定义域名时：',
+  'tenant.nakedDomainExample': 'https://example.com（不含租户子域名的 issuer）',
+  'tenant.subdomainExample': 'https://acme.example.com（包含租户子域名的 issuer）',
+  'tenant.idRules':
+    '租户 ID 长度必须为 1–63 个字符，以小写字母开头，且只能包含小写字母、数字和连字符。',
+  'tenant.randomIdHint': '随机租户 ID 可避免在 issuer URL 中暴露客户或企业名称。',
+  'tenant.randomIdPrompt': '生成随机租户 ID？（{{id}}）',
+  'tenant.initialDisplayName': '初始租户',
+  'tenant.nakedDomainPrompt': '将基础域名用作主租户的 issuer？',
+  'tenant.primaryTenantPrompt': '基础域名使用的主租户 ID（留空则使用初始租户）',
   'tenant.singleTenantTitle': '单租户 URL 配置',
   'tenant.singleTenantNote1': '在单租户模式下：',
   'tenant.singleTenantNote2': '发行者 URL = API 自定义域名（或 workers.dev 后备）',
@@ -508,6 +551,14 @@ const zhCN: Translations = {
   'complete.urls': 'URL：',
   'complete.configLocation': '配置：',
   'complete.keysLocation': '密钥：',
+  'complete.createdResources': '已创建的资源：',
+  'complete.generatedFiles': '已生成的文件：',
+  'complete.automaticStep1': '1. 应用架构并部署完整版本：',
+  'complete.automaticStep2': '2. 出现提示时，创建并输入一次性 Cloudflare 引导令牌。',
+  'complete.automaticStep2Detail': 'Setup 会将拆分的子令牌直接注册到 Control，然后撤销引导令牌。',
+  'complete.manualStep1': '1. 使用当前 Wrangler OAuth 登录应用架构并部署：',
+  'complete.manualStep2': '2. 使用 Setup 执行 Admin 请求的待处理资源预配操作。',
+  'complete.manualStep2Detail': '自动资源预配已关闭；Control 不会存储 Cloudflare API 令牌。',
 
   // Resource provisioning
   'resource.provisioning': '预配 {{resource}}...',
@@ -565,6 +616,8 @@ const zhCN: Translations = {
   // Common
   'common.yes': '是',
   'common.no': '否',
+  'common.example': '示例',
+  'common.comingSoon': '即将推出',
   'common.continue': '继续',
   'common.cancel': '取消',
   'common.skip': '跳过',
@@ -620,6 +673,7 @@ const zhCN: Translations = {
   'delete.r2Buckets': 'R2 存储桶',
   'delete.pages': 'Pages 项目',
   'delete.partialSuccess': '已删除所选资源，并保留了其余环境状态',
+  'delete.inventoryUnavailable': '无法验证 Cloudflare 资源清单，因此未开始删除',
 
   // Info command
   'info.title': '环境信息',

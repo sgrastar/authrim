@@ -142,6 +142,50 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain(".replaceAll('⚠️', t('web.status.warning'))");
   });
 
+  it('shows retryable deletion inventory errors without an empty error alert', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("result?.errorCode === 'environment_inventory_unavailable'");
+    expect(html).toContain("result.error = t('web.delete.inventoryUnavailable')");
+    expect(html).toContain('function apiErrorMessages(result)');
+    expect(html).toContain("messages.length > 0 ? messages : [t('web.status.unknownError')]");
+    expect(html).not.toContain("(deleteResult.errors || []).join(', ')");
+  });
+
+  it('distinguishes final environment cleanup from a successful partial deletion', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('deleteResult.environmentDeleted === true');
+    expect(html).toContain("'web.delete.success' : 'web.delete.partialSuccess'");
+    expect(html).toContain('環境と残りのローカル状態は保持されています。');
+  });
+
+  it('reports key replacement only after guarded generation succeeds', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('keyResult.replacedExistingKeys === true');
+    expect(html).toContain("t('keys.replaced')");
+    expect(html).not.toContain("output.textContent += '   Existing keys will be overwritten.");
+  });
+
   it('shows one description and one example for each user ID format', () => {
     const html = getHtmlTemplate(
       'session-token',

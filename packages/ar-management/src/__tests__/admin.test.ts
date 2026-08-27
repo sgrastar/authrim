@@ -29,6 +29,7 @@ const {
   attemptAccountRemovals,
   eraseAccountPii,
   produceNotificationDelivery,
+  resolveCustomClaimRuntimeSources,
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
@@ -62,6 +63,7 @@ const {
   attemptAccountRemovals: vi.fn(),
   eraseAccountPii: vi.fn(),
   produceNotificationDelivery: vi.fn(),
+  resolveCustomClaimRuntimeSources: vi.fn(),
 }));
 
 vi.mock('../account-directory-producer', () => ({
@@ -189,17 +191,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           }
         : null
     ),
-    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      schemaDb: env.DB,
-      nonPiiDb: env.DB,
-      piiDb: env.DB_PII ?? null,
-    })),
+    resolveCustomClaimRuntimeSourcesFromEnv: resolveCustomClaimRuntimeSources,
     resolveCustomClaimRuntimeSourcesFromHono: vi.fn(
       async (c: { get(key: string): unknown; env: Partial<Env> }) => {
         const account = c.get('accountDataContext') as
@@ -922,6 +914,17 @@ describe('Admin API Handlers', () => {
     resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
+    resolveCustomClaimRuntimeSources.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    }));
     produceNotificationDelivery.mockReset().mockResolvedValue({
       reference: {
         tenantId: 'default',
@@ -2598,6 +2601,66 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('allocates elastic D1 targets before the new account has a resolved PII route', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: 'account:elastic-user-id',
+          legacy_user_id: 'elastic-user-id',
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          email_verified: 0,
+          phone_number_verified: 0,
+          account_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      const bootstrapPii = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          account_id: 'account:elastic-user-id',
+          email: 'elastic-user@example.com',
+        },
+      });
+      resolveAccountCreationTargets.mockResolvedValueOnce({
+        tenantCoreUsers: mockDB,
+        tenantPii: bootstrapPii,
+        residencyPartition: 'default',
+      });
+      resolveCustomClaimRuntimeSources.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:audit:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        schemaDb: mockDB,
+        nonPiiDb: null,
+        piiDb: null,
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-elastic-user' },
+        body: { email: 'elastic-user@example.com' },
+        db: mockDB,
+        dbPII: bootstrapPii,
+        envOverrides: {
+          CONTROL: {} as Env['CONTROL'],
+        },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(executeDurableAccountCreation).toHaveBeenCalledOnce();
+      expect(resolveAccountCreationTargets).toHaveBeenCalledOnce();
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.anything() }),
+        201
+      );
+    });
+
     it('should create a canonical runtime user when runtime cutover is enabled', async () => {
       const mockDB = createMockDB({
         runResult: { success: true },
@@ -2761,6 +2824,7 @@ describe('Admin API Handlers', () => {
         },
         503
       );
+      expect(c._responseHeaders.get('Retry-After')).toBe('10');
     });
   });
 

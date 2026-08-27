@@ -38,6 +38,7 @@ const adminIdentityMapping = {
 		'{name:string} already exists. Choose a different field mapping set name.',
 	admin_identity_mapping_editor_no_policy_selected: 'No Field Mapping Set selected',
 	admin_identity_mapping_editor_activate: 'Activate',
+	admin_identity_mapping_editor_active: 'Active',
 	admin_identity_mapping_editor_delete: 'Delete',
 	admin_identity_mapping_editor_confirm_delete: 'Confirm Delete',
 	admin_identity_mapping_editor_side_not_selected: 'side not selected',
@@ -70,6 +71,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_created_description:
 		'Field mapping set created from the Admin UI Flow Editor.',
 	admin_identity_mapping_editor_load_failed: 'Failed to load field mapping state',
+	admin_identity_mapping_flow_profile_status: 'Profile status',
 
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
 	admin_identity_mapping_profiles_title: 'Source & Destination Profiles',

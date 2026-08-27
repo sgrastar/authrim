@@ -45,10 +45,28 @@ describe('deploy prompt policy', () => {
     const readinessIndex = source.indexOf(
       'const workerDeploymentResult = await waitForWorkerDeploymentsReady({'
     );
-    const promptIndex = source.indexOf('bootstrapToken = await promptForControlTokenBootstrap({');
+    const promptIndex = source.indexOf('await promptForControlTokenBootstrap({');
 
     expect(readinessIndex).toBeGreaterThan(-1);
     expect(promptIndex).toBeGreaterThan(readinessIndex);
+  });
+
+  it('detects bootstrap token ownership after receiving the secret', () => {
+    const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
+    const tokenInputIndex = source.indexOf(
+      'bootstrapToken = options.cloudflareBootstrapTokenFile'
+    );
+    const ownershipDetectionIndex = source.indexOf(
+      'const detectedOwnership = await detectCloudflareTokenOwnership({'
+    );
+    const bootstrapIndex = source.indexOf('await completeControlTokenBootstrap({');
+
+    expect(tokenInputIndex).toBeGreaterThan(-1);
+    expect(ownershipDetectionIndex).toBeGreaterThan(tokenInputIndex);
+    expect(bootstrapIndex).toBeGreaterThan(ownershipDetectionIndex);
+    expect(source.slice(bootstrapIndex, bootstrapIndex + 500)).toContain(
+      'ownership: detectedOwnership'
+    );
   });
 
   it('requires Control token bootstrap only for the initial automatic deployment', () => {

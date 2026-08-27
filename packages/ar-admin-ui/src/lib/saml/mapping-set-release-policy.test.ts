@@ -15,7 +15,7 @@ describe('SAML Mapping Set release policy', () => {
 					fieldMappingSetId: 'set-1',
 					versionLabel: 'v1',
 					lifecycleState: 'active',
-					destinationProfileIds: ['saml-profile']
+					destinationProfileIds: ['destination-profile-saml-profile']
 				}
 			],
 			destinationProfiles: [
@@ -58,7 +58,7 @@ describe('SAML Mapping Set release policy', () => {
 						fieldMappingSetId: 'set-1',
 						versionLabel: 'v1',
 						lifecycleState: 'active',
-						destinationProfileIds: ['saml-profile']
+						destinationProfileIds: ['destination-profile-saml-profile']
 					}
 				],
 				destinationProfiles: [

@@ -236,6 +236,12 @@ function getObjectEncryptionKeyVersion(env: Env): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_OBJECT_KEY_VERSION;
 }
 
+function hasSensitiveDetailDeliveryQueue(env: Env): boolean {
+  return [env.LOGGING_DELIVERY_CRITICAL_QUEUE, env.LOGGING_DELIVERY_QUEUE].some(
+    (queue) => !!queue && typeof queue.send === 'function'
+  );
+}
+
 async function storeAdminAuditDetail(
   c: Context<any, any, any>,
   adminAdapter: DatabaseAdapter,
@@ -244,7 +250,11 @@ async function storeAdminAuditDetail(
   detail: AdminAuditDetailPayload,
   createdAt: number
 ): Promise<string | null> {
-  if (!c.env.SENSITIVE_DETAILS || !c.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+  if (
+    !c.env.SENSITIVE_DETAILS ||
+    !c.env.OBJECT_ENCRYPTION_ROOT_KEY ||
+    !hasSensitiveDetailDeliveryQueue(c.env)
+  ) {
     return null;
   }
 
@@ -438,7 +448,7 @@ export async function writeAdminAuditLog(
         logType: 'admin_audit',
         surface: 'admin_audit',
         tenantKeyResolver: createLoggingTenantKeyResolverFromSource(
-          adminAdapter,
+          c.env.DB,
           'admin-audit-archive'
         ),
         records: [

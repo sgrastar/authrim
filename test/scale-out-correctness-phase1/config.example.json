@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "profile": "smoke",
+  "environment": {
+    "environmentId": "phase1-smoke",
+    "baseUrl": "https://phase1-smoke.example.invalid/",
+    "tenantId": "phase1-tenant",
+    "placementPolicy": "shared_pool",
+    "disposable": true,
+    "executionConfirmation": "AUTHRIM_PHASE1_DISPOSABLE_SCALE_OUT",
+    "emailDomain": "accounts.phase1.test.invalid",
+    "sourceCommit": "0000000",
+    "controlDatabaseId": "replace-with-control-d1-uuid"
+  },
+  "credentials": {
+    "adminMachineClientIdEnv": "AUTHRIM_PHASE1_ADMIN_MACHINE_CLIENT_ID",
+    "adminMachineKidEnv": "AUTHRIM_PHASE1_ADMIN_MACHINE_KID",
+    "adminMachinePrivateJwkBase64Env": "AUTHRIM_PHASE1_ADMIN_MACHINE_PRIVATE_JWK_BASE64",
+    "cloudflareAccountIdEnv": "AUTHRIM_PHASE1_CLOUDFLARE_ACCOUNT_ID",
+    "cloudflareD1ReadTokenEnv": "AUTHRIM_PHASE1_D1_READ_TOKEN",
+    "cloudflareD1WriteTokenEnv": "AUTHRIM_PHASE1_D1_WRITE_TOKEN",
+    "seedEnv": "AUTHRIM_PHASE1_SEED"
+  },
+  "load": {
+    "accountCount": 1000,
+    "ratePerSecond": 5,
+    "maximumInFlight": 20,
+    "retryWindowSeconds": 7200,
+    "requestTimeoutMs": 30000
+  },
+  "expectedPolicy": {
+    "targetAccountCount": 100,
+    "maxReadySpares": 1,
+    "maxD1Resources": 100,
+    "dailyD1CreateBudget": 50,
+    "lookupTargetActiveRouteCount": 250,
+    "lookupForecastHorizonSeconds": 300,
+    "lookupEwmaAlphaBps": 2500,
+    "lookupHeadroomBps": 2000,
+    "lookupPolicyGeneration": 2,
+    "minimumLookupAdditions": 2,
+    "minimumLookupUsedAssignmentTransitions": 2,
+    "minimumRoleBoundaryCrossings": 9
+  },
+  "observation": {
+    "controlIntervalMs": 5000,
+    "providerIntervalMs": 15000,
+    "quiescenceTimeoutSeconds": 7200,
+    "quiescenceStableWindows": 2
+  },
+  "attestations": {
+    "workersPaidPlan": true,
+    "scheduledTriggerLastSucceededAt": "2026-08-27T00:00:00.000Z",
+    "noManualInterventionFrom": "2026-08-27T00:00:00.000Z"
+  }
+}

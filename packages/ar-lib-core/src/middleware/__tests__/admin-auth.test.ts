@@ -153,8 +153,19 @@ function createMockEnv(overrides: Partial<Env> = {}): Env {
 /**
  * Create a test Hono app with admin auth middleware
  */
-function createTestApp(env: Env, options: Parameters<typeof adminAuthMiddleware>[0] = {}) {
+function createTestApp(
+  env: Env,
+  options: Parameters<typeof adminAuthMiddleware>[0] = {},
+  contextTenantId?: string
+) {
   const app = new Hono<{ Bindings: Env }>();
+
+  if (contextTenantId) {
+    app.use('/api/admin/*', async (c, next) => {
+      c.set('tenantId', contextTenantId);
+      await next();
+    });
+  }
 
   // Apply admin auth middleware
   app.use('/api/admin/*', adminAuthMiddleware(options));
@@ -1048,23 +1059,32 @@ describe('adminAuthMiddleware', () => {
       expect(response.status).toBe(200);
     });
 
-    it('should verify a machine token with the tenant key manager when no static JWK matches', async () => {
-      const fixture = await createMachineAccessFixture(['default']);
+    it('should verify a cross-tenant machine token with the platform key manager', async () => {
+      const fixture = await createMachineAccessFixture(['tenant-b']);
       const getAllPublicKeysRpc = vi.fn().mockResolvedValue([fixture.publicJwk]);
       const keyManager = {
-        idFromName: vi.fn().mockReturnValue('tenant-key-manager-id'),
+        idFromName: vi.fn().mockReturnValue('platform-key-manager-id'),
         get: vi.fn().mockReturnValue({ getAllPublicKeysRpc }),
       };
       const db = createMockDB({
         machinePrincipal: fixture.machinePrincipal,
         machineCredential: fixture.machineCredential,
+        machinePrincipalTenantScopes: [{ scope_mode: 'allow', tenant_id: 'tenant-b' }],
+        machineCredentialTenantScopes: [{ scope_mode: 'allow', tenant_id: 'tenant-b' }],
       });
       const app = createTestApp(
-        createMockEnv({ DB: db, KEY_MANAGER: keyManager as unknown as Env['KEY_MANAGER'] })
+        createMockEnv({
+          DB: db,
+          BASE_DOMAIN: 'example.com',
+          DEFAULT_TENANT_ID: 'default',
+          KEY_MANAGER: keyManager as unknown as Env['KEY_MANAGER'],
+        }),
+        {},
+        'tenant-b'
       );
 
       const response = await app.fetch(
-        new Request('http://localhost/api/admin/test', {
+        new Request('https://test.example.com/api/admin/test', {
           headers: { Authorization: `Bearer ${fixture.token}` },
         })
       );

@@ -1164,7 +1164,11 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const hasInitialPiiTarget = customClaimSources.piiDb !== null || hasPIIDatabase(c);
+    // A new account has no Lookup route (and therefore no account data context) yet. The fixed
+    // bootstrap PII binding still proves that PII storage is configured; Control allocates the
+    // account's authoritative D1 targets below.
+    const hasInitialPiiTarget =
+      customClaimSources.piiDb !== null || hasPIIDatabase(c) || c.env.DB_PII !== undefined;
     if (!hasInitialPiiTarget) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1324,6 +1328,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       error instanceof Error &&
       error.message === 'control_account_allocation_capacity_unavailable'
     ) {
+      c.header('Retry-After', '10');
       return c.json(
         {
           error: 'temporarily_unavailable',

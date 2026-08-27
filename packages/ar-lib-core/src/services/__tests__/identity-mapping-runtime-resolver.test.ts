@@ -86,8 +86,8 @@ describe('resolveRuntimeIdentityMappingBinding', () => {
       id: 'activation-sp',
       fieldMappingSetId: 'field_mapping_sp',
       fieldMappingVersionId: 'version_sp',
-      destinationProfileId: 'destination-profile-saml',
-      destinationProfileIds: ['destination-profile-saml'],
+      destinationProfileId: 'destination_profile_saml',
+      destinationProfileIds: ['destination_profile_saml'],
     });
     expect(binding?.edges).toEqual([
       {
@@ -296,7 +296,8 @@ class ResolverAdapter implements DatabaseAdapter {
     }
     if (sql.includes('JOIN mapping_rule_edges')) {
       const destinationProfileId =
-        this.input.destinationProfilesByVersion?.[String(params[1])] ?? 'destination-profile-saml';
+        this.input.destinationProfilesByVersion?.[String(params[1])] ??
+        'destination-profile-destination_profile_saml';
       return [
         {
           id: 'edge_email',

@@ -286,6 +286,8 @@ export interface DeployOptions {
   };
   /** Internal state shared by one deployment operation and its rollback/cleanup paths. */
   deploymentLeaseSession?: WorkerDeploymentLeaseSession;
+  /** Refresh generated deployment artifacts after all required Worker leases are held. */
+  beforeWorkerMutations?: () => Promise<void>;
 }
 
 export interface DeployResult {
@@ -884,7 +886,7 @@ function classifyRetry(error: unknown): RetryKind {
     return 'rate-limit';
   }
   if (
-    /\b5\d{2}\b|\b7010\b|service unavailable|internal server error|fetch failed|network error|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|connection reset|timed out|und_err/i.test(
+    /\b5\d{2}\b|\b7010\b|\b100146\b|requested Worker version could not be found|service unavailable|internal server error|fetch failed|network error|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|connection reset|timed out|und_err/i.test(
       message
     )
   ) {
@@ -1618,7 +1620,11 @@ async function runSingleWorkerWithDeploymentLease<T>(
   succeeded: (result: T) => boolean
 ): Promise<T> {
   const existingSession = options.deploymentLeaseSession;
-  if (existingSession || options.dryRun || !options.deploymentLease) return operation();
+  if (existingSession || options.dryRun) return operation();
+  if (!options.deploymentLease) {
+    await options.beforeWorkerMutations?.();
+    return operation();
+  }
   const context = await getWorkerDeploymentContext(component, options);
   if (isDeployResult(context)) return operation();
   const throttle = makeThrottle({ ...options, concurrency: 1 });
@@ -1632,6 +1638,7 @@ async function runSingleWorkerWithDeploymentLease<T>(
   options.deploymentLeaseSession = session;
   let success = false;
   try {
+    await options.beforeWorkerMutations?.();
     const result = await operation();
     success = succeeded(result);
     return result;
@@ -2305,6 +2312,9 @@ export async function deployAll(
   let deploymentSucceeded = false;
 
   try {
+    if (!options.dryRun) {
+      await options.beforeWorkerMutations?.();
+    }
     let resultMap: Map<WorkerComponent, DeployResult>;
     if (options.dryRun) {
       resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {

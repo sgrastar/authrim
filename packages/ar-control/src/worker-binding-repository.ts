@@ -354,6 +354,25 @@ export class D1WorkerBindingRepository {
           )`
         )
         .bind(),
+      this.db
+        .prepare(
+          `DELETE FROM control_worker_deployment_leases AS lease
+            WHERE lease.mutation_started = 0
+              AND EXISTS (
+                SELECT 1 FROM control_operations operation
+                 WHERE operation.operation_id = lease.owner_operation_id
+                   AND operation.environment_id = lease.environment_id
+                   AND operation.status IN ('succeeded', 'canceled')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = lease.owner_operation_id
+                   AND target.environment_id = lease.environment_id
+                   AND target.worker_script_name = lease.worker_script_name
+                   AND target.state NOT IN ('succeeded', 'blocked', 'rolled_back')
+              )`
+        )
+        .bind(),
     ]);
 
     const completionCandidates = await this.db
@@ -1507,6 +1526,81 @@ export class D1WorkerBindingRepository {
               )`
         )
         .bind(now, now, operationId, operationId),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_tenant_shard_assignments (
+             environment_id, tenant_id, data_role, residency_policy_id,
+             residency_partition, shard_id, assignment_generation, assignment_state,
+             source_operation_id, created_at, activated_at, updated_at
+           )
+           SELECT shard.environment_id, placement.tenant_id, shard.data_role,
+                  shard.residency_policy_id, shard.residency_partition, shard.shard_id,
+                  COALESCE((
+                    SELECT MAX(existing.assignment_generation) + 1
+                      FROM control_tenant_shard_assignments existing
+                     WHERE existing.environment_id = shard.environment_id
+                       AND existing.tenant_id = placement.tenant_id
+                       AND existing.data_role = shard.data_role
+                       AND existing.residency_partition = shard.residency_partition
+                  ), 1),
+                  'active', ?, ?, ?, ?
+             FROM control_tenant_shards shard
+             JOIN control_desired_resources desired
+               ON desired.desired_resource_id = shard.d1_desired_resource_id
+              AND desired.environment_id = shard.environment_id
+             JOIN control_tenant_placement_policies placement
+               ON placement.environment_id = shard.environment_id
+              AND placement.policy_state = 'active'
+              AND placement.isolation_policy = shard.allocation_scope
+              AND (
+                (placement.isolation_policy = 'shared_pool'
+                 AND shard.owner_tenant_id IS NULL) OR
+                (placement.isolation_policy = 'tenant_exclusive'
+                 AND shard.owner_tenant_id = placement.tenant_id)
+              )
+             JOIN control_shard_capacity capacity ON capacity.shard_id = shard.shard_id
+            WHERE shard.status = 'active'
+              AND shard.data_role IN ('tenant_core/users', 'tenant_pii')
+              AND desired.origin_operation_id = ?
+              AND desired.provisioning_state = 'ready'
+              AND capacity.health_status = 'healthy'
+              AND capacity.allocation_status = 'eligible'
+              AND (capacity.target_account_count - capacity.allocated_account_count) * 5 >=
+                  capacity.target_account_count
+              AND EXISTS (
+                SELECT 1 FROM control_operations
+                 WHERE operation_id = ? AND status = 'succeeded'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM control_tenant_shard_assignments assigned
+                  JOIN control_tenant_shards assigned_shard
+                    ON assigned_shard.shard_id = assigned.shard_id
+                   AND assigned_shard.environment_id = assigned.environment_id
+                  JOIN control_shard_capacity assigned_capacity
+                    ON assigned_capacity.shard_id = assigned.shard_id
+                 WHERE assigned.environment_id = shard.environment_id
+                   AND assigned.tenant_id = placement.tenant_id
+                   AND assigned.data_role = shard.data_role
+                   AND assigned.residency_policy_id = shard.residency_policy_id
+                   AND assigned.residency_partition = shard.residency_partition
+                   AND assigned.assignment_state = 'active'
+                   AND assigned_shard.status = 'active'
+                   AND assigned_shard.allocation_scope = placement.isolation_policy
+                   AND (
+                     (placement.isolation_policy = 'shared_pool'
+                      AND assigned_shard.owner_tenant_id IS NULL) OR
+                     (placement.isolation_policy = 'tenant_exclusive'
+                      AND assigned_shard.owner_tenant_id = placement.tenant_id)
+                   )
+                   AND assigned_capacity.health_status = 'healthy'
+                   AND assigned_capacity.allocation_status = 'eligible'
+                   AND (assigned_capacity.target_account_count -
+                        assigned_capacity.allocated_account_count) * 5 >=
+                       assigned_capacity.target_account_count
+              )`
+        )
+        .bind(operationId, now, now, now, operationId, operationId),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1) return false;
     const activatedTenantShards = results[1]?.meta.changes ?? 0;

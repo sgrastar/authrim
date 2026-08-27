@@ -121,6 +121,7 @@ function plan(suffix: string): TenantShardPlan {
     dataRole: 'tenant_core/users',
     residencyPolicyId: 'default',
     residencyPartition: 'jp',
+    lookupCapacityDomainId: null,
     logicalShardId: `users:jp:${suffix}`,
     databaseName: `authrim-test-users-jp-${suffix}`,
     bindingRef: `TDB_USERS_${suffix.toUpperCase()}`,
@@ -285,6 +286,12 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/002_lookup_predictive_scale_out.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -318,6 +325,208 @@ describe('D1ControlRepository lease and budget integration', () => {
   });
 
   afterEach(() => database.close());
+
+  it('detects and assigns low-watermark capacity for shared and exclusive tenants', async () => {
+    database.exec(`
+      INSERT INTO control_tenant_placement_policies (
+        environment_id, tenant_id, isolation_policy, policy_generation, policy_state,
+        source_operation_id, idempotency_key, activated_at, created_at, updated_at
+      ) VALUES
+        ('env-test', 'tenant-shared', 'shared_pool', 1, 'active',
+         'op-release', 'placement-shared', 2, 2, 2),
+        ('env-test', 'tenant-exclusive', 'tenant_exclusive', 1, 'active',
+         'op-release', 'placement-exclusive', 2, 2, 2);
+    `);
+    const shared = plan('low-water-shared');
+    const exclusive = {
+      ...plan('low-water-exclusive'),
+      allocationScope: 'tenant_exclusive' as const,
+      ownerTenantId: 'tenant-exclusive',
+    };
+    await repository.createShardPlan(shared, 3, 'admin');
+    await repository.createShardPlan(exclusive, 3, 'admin');
+    database
+      .prepare(
+        `UPDATE control_tenant_shards SET status = 'active'
+          WHERE shard_id IN (?, ?)`
+      )
+      .run(shared.shardId, exclusive.shardId);
+    database
+      .prepare(
+        `INSERT INTO control_shard_capacity (
+           shard_id, target_account_count, allocated_account_count, observed_account_count,
+           health_status, allocation_status, updated_at
+         ) VALUES (?, 100, 10, 10, 'healthy', 'eligible', 3),
+                  (?, 100, 90, 90, 'healthy', 'eligible', 3)`
+      )
+      .run(shared.shardId, exclusive.shardId);
+    database
+      .prepare(
+        `INSERT INTO control_tenant_shard_assignments (
+           environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
+           shard_id, assignment_generation, assignment_state, source_operation_id,
+           created_at, activated_at, updated_at
+         ) VALUES
+           ('env-test', 'tenant-shared', 'tenant_core/users', 'default', 'jp',
+            ?, 1, 'active', 'op-release', 3, 3, 3),
+           ('env-test', 'tenant-exclusive', 'tenant_core/users', 'default', 'jp',
+            ?, 1, 'active', 'op-release', 3, 3, 3)`
+      )
+      .run(shared.shardId, exclusive.shardId);
+
+    const initial = await repository.listLowWatermarkRequests(20, 'env-test');
+    await expect(
+      repository.getTenantShardSupplyCount({
+        environmentId: 'env-test',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'default',
+        residencyPartition: 'jp',
+        allocationScope: 'shared_pool',
+        ownerTenantId: null,
+      })
+    ).resolves.toBe(1);
+    await expect(
+      repository.getTenantShardSupplyCount({
+        environmentId: 'env-test',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+      })
+    ).resolves.toBe(1);
+    expect(
+      initial.find(
+        (request) =>
+          request.tenantId === 'tenant-shared' && request.dataRole === 'tenant_core/users'
+      )
+    ).toBeUndefined();
+    expect(
+      initial.find(
+        (request) =>
+          request.tenantId === 'tenant-exclusive' && request.dataRole === 'tenant_core/users'
+      )
+    ).toMatchObject({
+      allocationScope: 'tenant_exclusive',
+      ownerTenantId: 'tenant-exclusive',
+      supplyCount: 1,
+    });
+
+    const exclusiveSpare = {
+      ...plan('low-water-exclusive-spare'),
+      allocationScope: 'tenant_exclusive' as const,
+      ownerTenantId: 'tenant-exclusive',
+    };
+    await repository.createShardPlan(exclusiveSpare, 4, 'scheduler');
+    database
+      .prepare(`UPDATE control_operations SET status = 'blocked' WHERE operation_id = ?`)
+      .run(exclusiveSpare.operationId);
+    await expect(
+      repository.findCapacityProvisioningOperation({
+        environmentId: 'env-test',
+        tenantId: 'tenant-exclusive',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+      })
+    ).resolves.toMatchObject({ operationId: exclusiveSpare.operationId, status: 'blocked' });
+    await expect(
+      repository.getTenantShardSupplyCount({
+        environmentId: 'env-test',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+      })
+    ).resolves.toBe(2);
+    expect(
+      (await repository.listLowWatermarkRequests(20, 'env-test')).find(
+        (request) =>
+          request.tenantId === 'tenant-exclusive' && request.dataRole === 'tenant_core/users'
+      )
+    ).toBeUndefined();
+
+    database
+      .prepare(`UPDATE control_tenant_shards SET status = 'active' WHERE shard_id = ?`)
+      .run(exclusiveSpare.shardId);
+    database
+      .prepare(
+        `INSERT INTO control_shard_capacity (
+           shard_id, target_account_count, allocated_account_count, observed_account_count,
+           health_status, allocation_status, updated_at
+         ) VALUES (?, 100, 0, 0, 'healthy', 'eligible', 4)`
+      )
+      .run(exclusiveSpare.shardId);
+    database
+      .prepare(
+        `UPDATE control_desired_resources
+            SET desired_state = 'present', provisioning_state = 'ready',
+                observed_resource_id = ?
+          WHERE desired_resource_id = ?`
+      )
+      .run('observed-low-water-exclusive-spare', exclusiveSpare.desiredResourceId);
+    database
+      .prepare(
+        `INSERT INTO control_observed_resources (
+           observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
+           provider_name, resource_kind, ownership_fingerprint, observed_state,
+           observed_spec_json, observed_at
+         ) VALUES (?, 'env-test', ?, 'database-low-water-exclusive-spare', ?, 'd1', ?,
+                   'present', '{}', 4)`
+      )
+      .run(
+        'observed-low-water-exclusive-spare',
+        exclusiveSpare.desiredResourceId,
+        exclusiveSpare.databaseName,
+        exclusiveSpare.ownershipFingerprint
+      );
+    expect(
+      (await repository.listLowWatermarkRequests(20, 'env-test')).find(
+        (request) =>
+          request.tenantId === 'tenant-exclusive' && request.dataRole === 'tenant_core/users'
+      )
+    ).toMatchObject({ supplyCount: 2 });
+
+    await repository.assignTenantShard(
+      {
+        environmentId: 'env-test',
+        tenantId: 'tenant-exclusive',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'default',
+        residencyPartition: 'jp',
+        shardId: exclusiveSpare.shardId,
+        sourceOperationId: exclusiveSpare.operationId,
+      },
+      5
+    );
+    expect(
+      (await repository.listLowWatermarkRequests(20, 'env-test')).find(
+        (request) =>
+          request.tenantId === 'tenant-exclusive' && request.dataRole === 'tenant_core/users'
+      )
+    ).toBeUndefined();
+
+    database
+      .prepare(
+        `UPDATE control_shard_capacity
+            SET allocated_account_count = 90, observed_account_count = 90
+          WHERE shard_id = ?`
+      )
+      .run(shared.shardId);
+    expect(
+      (await repository.listLowWatermarkRequests(20, 'env-test')).find(
+        (request) =>
+          request.tenantId === 'tenant-shared' && request.dataRole === 'tenant_core/users'
+      )
+    ).toMatchObject({
+      allocationScope: 'shared_pool',
+      ownerTenantId: null,
+      supplyCount: 1,
+    });
+  });
 
   it('reports durable release rollout progress and the Admin mutation fence', async () => {
     await expect(repository.getReleaseMigrationRolloutStatus('env-test')).resolves.toEqual({
@@ -1125,6 +1334,77 @@ describe('D1ControlRepository lease and budget integration', () => {
     });
     expect(shared.targets).toHaveLength(4);
     expect(shared.targets.map((target) => target.minimumRequiredUnits)).toEqual([1, 1, 1, 1]);
+
+    database.exec(`
+      UPDATE control_residency_partitions
+         SET lookup_capacity_domain_id = 'lookup:shared:jp'
+       WHERE environment_id = 'env-test' AND residency_policy_id = 'default';
+      INSERT INTO control_residency_partitions (
+        environment_id, residency_policy_id, residency_partition, location_hint,
+        lookup_capacity_domain_id, status, created_at, updated_at
+      ) VALUES (
+        'env-test', 'secondary', 'jp', 'apac', 'lookup:shared:jp', 'active', 2, 2
+      );
+    `);
+    const sharedCapacityDomain = await repository.getCapacityPlannerInput(
+      'env-test',
+      'shared_pool',
+      null
+    );
+    const sharedLookupTargets = sharedCapacityDomain.targets.filter(
+      (target) => target.resources[0]?.dataRole === 'lookup'
+    );
+    expect(sharedLookupTargets).toHaveLength(1);
+    expect(sharedLookupTargets[0]).toMatchObject({
+      unitKey: 'lookup:shared:jp',
+      resources: [
+        expect.objectContaining({
+          lookupCapacityDomainId: 'lookup:shared:jp',
+          residencyPolicyId: 'default',
+          residencyPartition: 'jp',
+        }),
+      ],
+    });
+    database.exec(`
+      UPDATE control_residency_partitions
+         SET jurisdiction = 'eu', location_hint = NULL
+       WHERE environment_id = 'env-test' AND residency_policy_id = 'secondary';
+    `);
+    await expect(
+      repository.getCapacityPlannerInput('env-test', 'shared_pool', null)
+    ).rejects.toThrow('control_lookup_capacity_domain_incompatible');
+    database.exec(`
+      DELETE FROM control_residency_partitions
+       WHERE environment_id = 'env-test' AND residency_policy_id = 'secondary';
+      UPDATE control_residency_partitions
+         SET lookup_capacity_domain_id = NULL
+       WHERE environment_id = 'env-test' AND residency_policy_id = 'default';
+      INSERT INTO control_desired_resources (
+        desired_resource_id, environment_id, resource_kind, logical_shard_id,
+        deterministic_name, ownership_fingerprint, provisioning_state,
+        origin_operation_id, desired_spec_json, created_at, updated_at
+      ) VALUES (
+        'resource-lookup-drift', 'env-test', 'd1', 'lookup-drift',
+        'authrim-test-lookup-drift', 'fingerprint-lookup-drift', 'active',
+        'op-release',
+        '{"residency_policy_id":"default","lookup_capacity_domain_id":"lookup:stale:jp"}',
+        2, 2
+      );
+      INSERT INTO control_lookup_physical_shards (
+        lookup_shard_id, environment_id, residency_partition, binding_ref,
+        d1_desired_resource_id, status, created_at, updated_at
+      ) VALUES (
+        'lookup-drift', 'env-test', 'jp', 'LOOKUP_DRIFT',
+        'resource-lookup-drift', 'active', 2, 2
+      );
+    `);
+    await expect(
+      repository.getCapacityPlannerInput('env-test', 'shared_pool', null)
+    ).rejects.toThrow('control_lookup_capacity_domain_drift');
+    database.exec(`
+      DELETE FROM control_lookup_physical_shards WHERE lookup_shard_id = 'lookup-drift';
+      DELETE FROM control_desired_resources WHERE desired_resource_id = 'resource-lookup-drift';
+    `);
 
     const sharedDefaultPlan: TenantShardPlan = {
       ...plan('shared-default-pending'),
@@ -2403,6 +2683,30 @@ describe('D1ControlRepository lease and budget integration', () => {
     ).toEqual({ count: 0 });
   });
 
+  it('reclaims a non-mutating Worker lease left by a completed operation', async () => {
+    database
+      .prepare(
+        `INSERT INTO control_worker_deployment_leases (
+           environment_id, worker_script_name, owner_operation_id, fencing_token,
+           lease_expires_at, expected_source_version_id, mutation_started, updated_at
+         ) VALUES ('env-test', 'test-ar-bridge', 'op-release', 1, 1000,
+                   'version-before', 0, 101)`
+      )
+      .run();
+
+    const bindingRepository = new D1WorkerBindingRepository(d1Adapter(database));
+    await bindingRepository.ensurePendingTargets(102);
+
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_worker_deployment_leases
+            WHERE owner_operation_id = 'op-release'`
+        )
+        .get()
+    ).toEqual({ count: 0 });
+  });
+
   it('resumes migration and retains an adopted-binding lease through smoke', async () => {
     const shardPlan = plan('migration');
     await repository.createShardPlan(shardPlan, 100, 'scheduler');
@@ -2861,6 +3165,44 @@ describe('D1ControlRepository lease and budget integration', () => {
           WHERE shard_id = ? AND status = 'failed'`
       )
       .run(target.shardId);
+    await repository.registerTenantPlacementPolicy(
+      {
+        environmentId: target.environmentId,
+        tenantId: 'tenant-test',
+        isolationPolicy: 'shared_pool',
+        sourceOperationId: 'tenant-create-test',
+        idempotencyKey: 'tenant-placement-test',
+      },
+      170
+    );
+    await repository.registerTenantPlacementPolicy(
+      {
+        environmentId: target.environmentId,
+        tenantId: 'tenant-shared-second',
+        isolationPolicy: 'shared_pool',
+        sourceOperationId: 'tenant-create-shared-second',
+        idempotencyKey: 'tenant-placement-shared-second',
+      },
+      170
+    );
+    await repository.registerTenantPlacementPolicy(
+      {
+        environmentId: target.environmentId,
+        tenantId: 'tenant-exclusive-other',
+        isolationPolicy: 'tenant_exclusive',
+        sourceOperationId: 'tenant-create-exclusive-other',
+        idempotencyKey: 'tenant-placement-exclusive-other',
+      },
+      170
+    );
+    database
+      .prepare(
+        `UPDATE control_tenant_placement_policies
+            SET policy_state = 'active', activated_at = 170, updated_at = 170
+          WHERE environment_id = ?
+            AND tenant_id IN ('tenant-test', 'tenant-shared-second', 'tenant-exclusive-other')`
+      )
+      .run(target.environmentId);
     await expect(bindingRepository.completeOperationIfReady(target.operationId, 170)).resolves.toBe(
       true
     );
@@ -2887,30 +3229,39 @@ describe('D1ControlRepository lease and budget integration', () => {
       health_status: 'healthy',
       allocation_status: 'eligible',
     });
-    await repository.registerTenantPlacementPolicy(
+    expect(
+      database
+        .prepare(
+          `SELECT tenant_id, assignment_generation, source_operation_id
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = ? AND shard_id = ?
+            ORDER BY tenant_id`
+        )
+        .all(target.environmentId, target.shardId)
+    ).toEqual([
       {
-        environmentId: target.environmentId,
-        tenantId: 'tenant-test',
-        isolationPolicy: 'shared_pool',
-        sourceOperationId: 'tenant-create-test',
-        idempotencyKey: 'tenant-placement-test',
+        tenant_id: 'tenant-shared-second',
+        assignment_generation: 1,
+        source_operation_id: target.operationId,
       },
-      170
-    );
+      {
+        tenant_id: 'tenant-test',
+        assignment_generation: 1,
+        source_operation_id: target.operationId,
+      },
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = ? AND tenant_id = 'tenant-exclusive-other'`
+        )
+        .get(target.environmentId)
+    ).toEqual({ count: 0 });
     if (target.dataRole === 'lookup') {
       throw new Error('expected_tenant_shard_plan');
     }
-    await expect(
-      repository.findAssignableTenantShard({
-        environmentId: target.environmentId,
-        tenantId: 'tenant-test',
-        dataRole: target.dataRole,
-        residencyPolicyId: shardPlan.residencyPolicyId,
-        residencyPartition: target.residencyPartition,
-        allocationScope: 'shared_pool',
-        ownerTenantId: null,
-      })
-    ).resolves.toMatchObject({ shardId: target.shardId, allocationScope: 'shared_pool' });
     await repository.assignTenantShard(
       {
         environmentId: target.environmentId,
@@ -2923,6 +3274,17 @@ describe('D1ControlRepository lease and budget integration', () => {
       },
       170
     );
+    await expect(
+      repository.findAssignableTenantShard({
+        environmentId: target.environmentId,
+        tenantId: 'tenant-test',
+        dataRole: target.dataRole,
+        residencyPolicyId: shardPlan.residencyPolicyId,
+        residencyPartition: target.residencyPartition,
+        allocationScope: 'shared_pool',
+        ownerTenantId: null,
+      })
+    ).resolves.toBeNull();
     await expect(
       repository.findEligibleTenantShard({
         environmentId: target.environmentId,
@@ -2981,6 +3343,138 @@ describe('D1ControlRepository lease and budget integration', () => {
       observed_version_id: 'version-superseding',
       observed_deployment_id: 'deployment-superseding',
     });
+  });
+
+  it('assigns an activated exclusive shard only to its owning tenant', async () => {
+    for (const [tenantId, isolationPolicy] of [
+      ['tenant-exclusive-owner', 'tenant_exclusive'],
+      ['tenant-exclusive-other', 'tenant_exclusive'],
+      ['tenant-shared-other', 'shared_pool'],
+    ] as const) {
+      await repository.registerTenantPlacementPolicy(
+        {
+          environmentId: 'env-test',
+          tenantId,
+          isolationPolicy,
+          sourceOperationId: `tenant-create-${tenantId}`,
+          idempotencyKey: `tenant-placement-${tenantId}`,
+        },
+        100
+      );
+    }
+    database.exec(`
+      UPDATE control_tenant_placement_policies
+         SET policy_state = 'active', activated_at = 100, updated_at = 100
+       WHERE environment_id = 'env-test';
+    `);
+
+    const shardPlan = {
+      ...plan('exclusive-activation'),
+      allocationScope: 'tenant_exclusive' as const,
+      ownerTenantId: 'tenant-exclusive-owner',
+    };
+    await repository.createShardPlan(shardPlan, 101, 'scheduler');
+    const createLease = await repository.tryStartProvisioning(
+      shardPlan.operationId,
+      'create-owner',
+      101
+    );
+    if (!createLease) throw new Error('expected_create_lease');
+    await repository.markDatabaseCreated(
+      createLease,
+      shardPlan,
+      'exclusive-database-id',
+      'disabled',
+      102
+    );
+    const [migrationPlan] = await repository.listPendingMigrationPlans(10);
+    if (!migrationPlan) throw new Error('expected_migration_plan');
+    const migrationLease = await repository.tryStartMigration(
+      shardPlan.operationId,
+      'migration-owner',
+      103
+    );
+    if (!migrationLease) throw new Error('expected_migration_lease');
+    await repository.markMigrationReady(
+      migrationLease,
+      migrationPlan,
+      {
+        totalFiles: 1,
+        appliedFiles: 1,
+        skippedFiles: 0,
+        responseLossRecoveries: 0,
+        lastFilename: '001_schema.sql',
+      },
+      104
+    );
+    database.exec(`
+      INSERT INTO control_desired_worker_inventory (
+        environment_id, worker_script_name, package_name, deployment_target,
+        capability_manifest_digest, source_manifest_path, source_manifest_hash,
+        generated_artifact_hash, source_kind, source_reference, status,
+        registered_by_operation_id, registered_by, registered_at
+      ) VALUES (
+        'env-test', 'test-exclusive-auth', '@authrim/ar-auth', 'test-exclusive-auth',
+        '${'1'.repeat(64)}', 'packages/ar-auth/authrim.worker-capabilities.json',
+        '${'2'.repeat(64)}', '${'3'.repeat(64)}', 'core_manifest', 'test-fixture', 'active',
+        'op-release', 'setup:test', 105
+      );
+      INSERT INTO control_worker_required_data_roles (
+        environment_id, worker_script_name, data_role, source_manifest_hash, updated_at
+      ) VALUES (
+        'env-test', 'test-exclusive-auth', 'tenant_core/users', '${'2'.repeat(64)}', 105
+      );
+    `);
+    const bindingRepository = new D1WorkerBindingRepository(d1Adapter(database));
+    await bindingRepository.ensurePendingTargets(105);
+    database
+      .prepare(
+        `UPDATE control_worker_binding_reconciliations
+            SET state = 'succeeded', expected_source_version_id = 'version-before',
+                previous_restore_settings_json = '{}', completed_at = 106, updated_at = 106
+          WHERE operation_id = ?`
+      )
+      .run(shardPlan.operationId);
+    database
+      .prepare(
+        `UPDATE control_operation_steps
+            SET status = 'running', started_at = COALESCE(started_at, 105), updated_at = 105
+          WHERE operation_id = ? AND status = 'queued'`
+      )
+      .run(shardPlan.operationId);
+    database
+      .prepare(
+        `UPDATE control_operation_steps
+            SET status = 'succeeded', completed_at = 106, updated_at = 106
+          WHERE operation_id = ? AND status = 'running'`
+      )
+      .run(shardPlan.operationId);
+    database
+      .prepare(
+        `UPDATE control_operations
+            SET status = 'running', next_attempt_at = NULL, updated_at = 106
+          WHERE operation_id = ?`
+      )
+      .run(shardPlan.operationId);
+
+    await expect(
+      bindingRepository.completeOperationIfReady(shardPlan.operationId, 107)
+    ).resolves.toBe(true);
+    expect(
+      database
+        .prepare(
+          `SELECT tenant_id, assignment_generation, source_operation_id
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = 'env-test' AND shard_id = ?`
+        )
+        .all(shardPlan.shardId)
+    ).toEqual([
+      {
+        tenant_id: 'tenant-exclusive-owner',
+        assignment_generation: 1,
+        source_operation_id: shardPlan.operationId,
+      },
+    ]);
   });
 
   it('fences stale owners and records redacted retry audit evidence', async () => {

@@ -86,6 +86,10 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('onCompileDraft');
 		expect(flowEditor).toContain('transform_input');
 		expect(flowEditor).toContain('admin_identity_mapping_flow_transform_step');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_profile_status');
+		expect(pageShell).toContain('admin_identity_mapping_editor_active');
+		expect(pageShell).toContain('aria-pressed={selectedFieldMappingActive}');
+		expect(pageShell).toContain('role="status" aria-live="polite"');
 		expect(flowEditor).toContain('admin_identity_mapping_flow_operation');
 		expect(flowEditor).toContain('copy');
 		expect(flowEditor).toContain('concat');

@@ -81,6 +81,10 @@ program
   .option('--config <path>', 'Load existing configuration file')
   .option('--keep <path>', 'Keep source files at specified path')
   .option('--env <name>', 'Environment name (prod, staging, dev)', 'prod')
+  .option(
+    '--tenant-placement <mode>',
+    'Initial tenant placement policy (tenant_exclusive or shared_pool)'
+  )
   .option('--lang <code>', 'Language (en, ja, zh-CN, etc.)')
   .action(initCommand);
 
@@ -106,6 +110,10 @@ program
     'Confirm required external database migrations were applied with operator-managed tooling'
   )
   .option('--keys-dir <path>', 'Keys directory')
+  .option(
+    '--cloudflare-bootstrap-token-file <path>',
+    'Read and delete a one-time Cloudflare bootstrap token from a mode 0600 regular file'
+  )
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
 

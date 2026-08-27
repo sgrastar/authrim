@@ -3291,14 +3291,19 @@ export class IdentityMappingControlPlaneRepository {
         row.source_ref_json,
         row.target_ref_json
       )) {
-        if (profileId.startsWith('source-profile-') || profileId.startsWith('external-source-')) {
-          summary.sourceProfileIds.add(profileId);
+        if (
+          profileId.startsWith('source-profile-') ||
+          profileId.startsWith('source_profile_') ||
+          profileId.startsWith('external-source-')
+        ) {
+          summary.sourceProfileIds.add(normalizeSourceProfileReference(profileId));
         }
         if (
           profileId.startsWith('destination-profile-') ||
+          profileId.startsWith('destination_profile_') ||
           profileId.startsWith('protocol-destination-')
         ) {
-          summary.destinationProfileIds.add(profileId);
+          summary.destinationProfileIds.add(normalizeDestinationProfileReference(profileId));
         }
       }
       const rule = summary.rules.get(row.rule_id) ?? {
@@ -3660,18 +3665,70 @@ export class IdentityMappingControlPlaneRepository {
       fieldMappingVersionId,
       snapshot.catalog_version_id
     );
+    const now = this.now();
     if (snapshot.lifecycle_state === 'active') {
-      return {
-        id: input.snapshotId,
-        tenantId,
-        fieldMappingSetId,
-        fieldMappingVersionId,
-        lifecycleState: 'active',
-        alreadyActive: true,
-      };
+      const existingActivation = await this.adapter.queryOne<{ id: string }>(
+        `SELECT id
+           FROM field_mapping_activations
+          WHERE tenant_id = ?
+            AND field_mapping_set_id = ?
+            AND field_mapping_version_id = ?
+            AND lifecycle_state = ?
+          LIMIT 1`,
+        [tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+      );
+      if (existingActivation) {
+        await this.adapter.transaction(async (tx) => {
+          await tx.execute(
+            `UPDATE field_mapping_versions
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ?
+                AND field_mapping_set_id = ?
+                AND id <> ?
+                AND lifecycle_state = ?`,
+            ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+          );
+          await tx.execute(
+            `UPDATE compiled_mapping_snapshots
+                SET lifecycle_state = ?, activated_at = ?
+              WHERE tenant_id = ?
+                AND field_mapping_version_id IN (
+                  SELECT id
+                    FROM field_mapping_versions
+                   WHERE tenant_id = ?
+                     AND field_mapping_set_id = ?
+                     AND id <> ?
+                )
+                AND lifecycle_state = ?`,
+            ['retired', now, tenantId, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+          );
+          await tx.execute(
+            `UPDATE field_mapping_versions
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+            ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId]
+          );
+          await tx.execute(
+            `UPDATE field_mapping_sets
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ? AND id = ?`,
+            ['active', now, tenantId, fieldMappingSetId]
+          );
+        });
+        return {
+          id: existingActivation.id,
+          tenantId,
+          fieldMappingSetId,
+          fieldMappingVersionId,
+          snapshotId: input.snapshotId,
+          lifecycleState: 'active',
+          alreadyActive: true,
+        };
+      }
+      // A snapshot without an activation is not live. Continue through the normal activation
+      // transaction so the complete activation record is restored.
     }
 
-    const now = this.now();
     const holderId = input.holderId ?? createId('activation_holder');
     const leaseKey = `field_mapping:${fieldMappingSetId}:activate`;
     await this.acquireActivationLease(tenantId, leaseKey, holderId, now);
@@ -3687,8 +3744,14 @@ export class IdentityMappingControlPlaneRepository {
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, tenantId, fieldMappingVersionId, 'active']
+          WHERE tenant_id = ?
+            AND field_mapping_version_id IN (
+              SELECT id
+                FROM field_mapping_versions
+               WHERE tenant_id = ? AND field_mapping_set_id = ?
+            )
+            AND lifecycle_state = ?`,
+        ['retired', now, tenantId, tenantId, fieldMappingSetId, 'active']
       );
       await tx.execute(
         `INSERT INTO field_mapping_activations (
@@ -3708,6 +3771,15 @@ export class IdentityMappingControlPlaneRepository {
           now,
           now,
         ]
+      );
+      await tx.execute(
+        `UPDATE field_mapping_versions
+            SET lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ?
+            AND field_mapping_set_id = ?
+            AND id <> ?
+            AND lifecycle_state = ?`,
+        ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
         `UPDATE field_mapping_versions
@@ -3765,6 +3837,31 @@ export class IdentityMappingControlPlaneRepository {
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ? AND lifecycle_state = ?`,
         ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+      );
+      await tx.execute(
+        `UPDATE field_mapping_sets
+            SET lifecycle_state = CASE
+                  WHEN EXISTS (
+                    SELECT 1
+                      FROM field_mapping_activations a
+                     WHERE a.tenant_id = ?
+                       AND a.field_mapping_set_id = ?
+                       AND a.lifecycle_state = ?
+                  ) THEN ?
+                  ELSE ?
+                END,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [
+          tenantId,
+          fieldMappingSetId,
+          'active',
+          'active',
+          'published',
+          now,
+          tenantId,
+          fieldMappingSetId,
+        ]
       );
     });
     return {
@@ -6165,6 +6262,11 @@ export class IdentityMappingControlPlaneRepository {
       const sourceEntry = findCatalogEntryForMappingRef(sourceEntries, sourceRef);
       const sourceNamespace = readStringValue(sourceRef.namespace);
       if (!sourceEntry) {
+        if (isBuiltInSystemIdentityMappingReference(sourceRef)) {
+          // Runtime-owned identifiers are not custom claims and therefore are intentionally absent
+          // from the tenant's canonical custom-claim catalog.
+          continue;
+        }
         if (sourceNamespace === 'authrim.profile') {
           throw badRequest(
             `mapping source field is missing from compiled catalog: ${readStringValue(sourceRef.path) ?? 'unknown'}`
@@ -7957,11 +8059,14 @@ function isSourceProfileMappingReference(profileId: string): boolean {
 }
 
 function sourceProfileReferenceCandidates(profileId: string): string[] {
-  const candidates = new Set([profileId]);
-  if (profileId.startsWith('source-profile-')) {
-    candidates.add(profileId.slice('source-profile-'.length));
-  }
+  const candidates = new Set([profileId, normalizeSourceProfileReference(profileId)]);
   return [...candidates];
+}
+
+function normalizeSourceProfileReference(profileId: string): string {
+  return profileId.startsWith('source-profile-')
+    ? profileId.slice('source-profile-'.length)
+    : profileId;
 }
 
 function isDestinationProfileMappingReference(profileId: string | null): boolean {
@@ -7971,12 +8076,20 @@ function isDestinationProfileMappingReference(profileId: string | null): boolean
   );
 }
 
+function isBuiltInSystemIdentityMappingReference(ref: Record<string, unknown>): boolean {
+  const catalogEntryId = readStringValue(ref.catalogEntryId);
+  return Boolean(catalogEntryId?.startsWith('system.identity.'));
+}
+
 function destinationProfileReferenceCandidates(profileId: string): string[] {
-  const candidates = new Set([profileId]);
-  if (profileId.startsWith('destination-profile-')) {
-    candidates.add(profileId.slice('destination-profile-'.length));
-  }
+  const candidates = new Set([profileId, normalizeDestinationProfileReference(profileId)]);
   return [...candidates];
+}
+
+function normalizeDestinationProfileReference(profileId: string): string {
+  return profileId.startsWith('destination-profile-')
+    ? profileId.slice('destination-profile-'.length)
+    : profileId;
 }
 
 function findCatalogEntryForMappingRef(

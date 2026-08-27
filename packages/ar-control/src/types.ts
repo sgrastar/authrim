@@ -133,6 +133,7 @@ export interface TenantShardRequest {
   dataRole: ProvisionedD1DataRole;
   residencyPolicyId: string;
   residencyPartition: string;
+  lookupCapacityDomainId?: string;
   idempotencyKey: string;
   allocationScope?: ControlTenantShardAllocationScope;
   ownerTenantId?: string | null;
@@ -148,6 +149,7 @@ export interface TenantShardPlan {
   dataRole: ProvisionedD1DataRole;
   residencyPolicyId: string;
   residencyPartition: string;
+  lookupCapacityDomainId: string | null;
   logicalShardId: string;
   databaseName: string;
   bindingRef: string;
@@ -182,9 +184,12 @@ export interface TenantShardRequestResult {
 
 export interface LowWatermarkRequest {
   environmentId: string;
+  tenantId: string;
   dataRole: TenantShardDataRole;
   residencyPolicyId: string;
   residencyPartition: string;
+  allocationScope: ControlTenantShardAllocationScope;
+  ownerTenantId: string | null;
   supplyCount: number;
 }
 

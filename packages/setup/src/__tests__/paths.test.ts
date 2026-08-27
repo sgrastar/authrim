@@ -253,6 +253,14 @@ describe('paths module', () => {
       expect(envs).toContain('beta');
     });
 
+    it('should include an environment whose only durable local record is lock.json', () => {
+      const envDir = join(testDir, AUTHRIM_DIR, 'retry-env');
+      mkdirSync(envDir, { recursive: true });
+      writeFileSync(join(envDir, 'lock.json'), '{}');
+
+      expect(listEnvironments(testDir)).toContain('retry-env');
+    });
+
     it('should include environments from env-specific legacy config filenames', () => {
       writeFileSync(
         join(testDir, getLegacyConfigFileName('preview')),

@@ -33,6 +33,7 @@ function preview(
         dataRole: 'tenant_core/users',
         residencyPolicyId: 'residency-default',
         residencyPartition: 'jp',
+        lookupCapacityDomainId: null,
         logicalShardId: 'users:jp:1234',
         databaseName: 'authrim-test-users-jp-1234',
         bindingRef: 'TDB_USERS_1234_CORE',

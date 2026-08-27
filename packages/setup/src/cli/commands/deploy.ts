@@ -10,7 +10,7 @@ import { confirm, password, select } from '@inquirer/prompts';
 import { t, getLocale } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { readFile, writeFile } from 'node:fs/promises';
+import { lstat, readFile, unlink, writeFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
 
 function updateOraSpinner(spinner: ReturnType<typeof ora>, message: string): void {
@@ -167,6 +167,7 @@ import { getMissingRequiredDeploySecrets } from '../../core/secrets.js';
 import {
   buildCloudflareBootstrapTemplateUrl,
   CloudflareTokenBootstrapError,
+  detectCloudflareTokenOwnership,
   selectPreferredCloudflareTokenOwnership,
   validateDirectControlTokens,
   type CloudflareTokenOwnership,
@@ -218,6 +219,8 @@ export interface DeployCommandOptions {
   parallel?: boolean;
   yes?: boolean;
   keysDir?: string;
+  /** One-use secret file consumed before Control token bootstrap. */
+  cloudflareBootstrapTokenFile?: string;
   externalSchemaReady?: boolean;
   /** Test-only operator experiment; never inferred from normal environment configuration. */
   placement?: string;
@@ -542,6 +545,25 @@ async function promptForControlTokenBootstrap(input: {
       validate: (value) => (value.trim() ? true : 'The one-time bootstrap token is required.'),
     })
   ).trim();
+}
+
+export async function consumeControlBootstrapTokenFile(path: string): Promise<string> {
+  const absolutePath = resolve(path);
+  const stat = await lstat(absolutePath);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error('The Cloudflare bootstrap token path must be a regular file.');
+  }
+  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
+    throw new Error('The Cloudflare bootstrap token file must have mode 0600.');
+  }
+
+  const token = (await readFile(absolutePath, 'utf8')).trim();
+  if (token.length < 20 || token.length > 4096 || /\s/u.test(token)) {
+    throw new Error('The Cloudflare bootstrap token file contains an invalid token.');
+  }
+
+  await unlink(absolutePath);
+  return token;
 }
 
 // =============================================================================
@@ -2346,11 +2368,20 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               'The Control Worker needs a one-time Cloudflare API token to create its scoped D1, Workers, KV, and R2 credentials.'
             )
           );
-          bootstrapToken = await promptForControlTokenBootstrap({
+          bootstrapToken = options.cloudflareBootstrapTokenFile
+            ? await consumeControlBootstrapTokenFile(options.cloudflareBootstrapTokenFile)
+            : await promptForControlTokenBootstrap({
+                accountId,
+                environment: env,
+                ownership: pendingBootstrap.ownership,
+              });
+          const detectedOwnership = await detectCloudflareTokenOwnership({
             accountId,
-            environment: env,
-            ownership: pendingBootstrap.ownership,
+            token: bootstrapToken,
           });
+          if (!detectedOwnership) {
+            throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_inactive');
+          }
           tokenSpinner.start('Registering scoped Control Worker tokens...');
           await completeControlTokenBootstrap({
             accountId,
@@ -2358,7 +2389,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             rootDir,
             controlDatabaseName,
             bootstrapToken,
-            ownership: pendingBootstrap.ownership,
+            ownership: detectedOwnership,
             resourceClasses: resolveControlTokenResourceClasses(config),
           });
           bootstrapToken = '';

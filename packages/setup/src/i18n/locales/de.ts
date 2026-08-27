@@ -31,7 +31,7 @@ const de: Translations = {
 
   // Main menu
   'menu.prompt': 'Was möchten Sie tun?',
-  'menu.quick': 'Schnelleinrichtung (5 Minuten)',
+  'menu.quick': 'Schnelleinrichtung',
   'menu.quickDesc': 'Authrim mit minimaler Konfiguration bereitstellen',
   'menu.custom': 'Benutzerdefinierte Einrichtung',
   'menu.customDesc': 'Alle Optionen Schritt für Schritt konfigurieren',
@@ -105,6 +105,8 @@ const de: Translations = {
   'prereq.notLoggedIn': 'Nicht bei Cloudflare angemeldet',
   'prereq.loginHint': 'Führen Sie folgenden Befehl zur Authentifizierung aus:',
   'prereq.loggedInAs': 'Mit Cloudflare verbunden ({{email}})',
+  'prereq.authenticated': 'Mit Cloudflare verbunden',
+  'prereq.checkFailed': 'Wrangler konnte nicht geprüft werden',
   'prereq.accountId': 'Konto-ID: {{accountId}}',
 
   // Environment
@@ -183,6 +185,13 @@ const de: Translations = {
   'domain.zoneCheckSkipped': 'Zone-Überprüfung übersprungen, Einrichtung wird fortgesetzt...',
   'domain.continueWithoutZone': 'Ohne Zone-Verifizierung fortfahren?',
   'domain.configureBinding': 'Custom-Domain-Binding für Workers konfigurieren',
+  'domain.configureBindingDesc':
+    'Weist die Basisdomain direkt dem Router-Worker zu, damit Cloudflare DNS und TLS-Zertifikat verwaltet. Mandanten-Subdomains verwenden weiterhin Wildcard-Routing.',
+  'domain.customHostnamesDesc':
+    'Mandantenspezifische Domains mit Cloudflare Custom Hostnames automatisieren.',
+  'domain.customHostnamesPrivacy':
+    'Das Token wird nur in einer lokalen Secret-Datei gespeichert und als Worker-Secret hochgeladen; es wird nicht in D1, KV oder der Setup-Konfiguration gespeichert.',
+  'domain.customHostnamesPrompt': 'Cloudflare Custom Hostnames-Automatisierung aktivieren?',
   'domain.action.retryCheck': 'Erneut prüfen',
   'domain.action.reloadPage': 'Seite neu laden',
   'domain.action.openCloudflareDashboard': 'Cloudflare-Dashboard öffnen',
@@ -228,6 +237,13 @@ const de: Translations = {
   'domain.apiDomain': 'API-/Aussteller-Domain (z.B. auth.beispiel.de)',
   'domain.loginUiDomain': 'Login-UI-Domain (Enter zum Überspringen)',
   'domain.adminUiDomain': 'Admin-UI-Domain (Enter zum Überspringen)',
+  'domain.baseDomainDepthError':
+    'Base Domain muss die übergeordnete Domain der Mandanten-URLs sein. „{{hostname}}“ enthält zu viele Bezeichnungen vor der registrierten Domain.',
+  'domain.uiDomainDepthError':
+    'Die {{label}}-Domain „{{hostname}}“ ist für das Standardmodell der Mandantendomains zu tief.',
+  'domain.suggestedHost': 'Empfohlener Host: {{hostname}}',
+  'domain.uiRequiresOwnRoute':
+    'Die benutzerdefinierte Domain für {{label}} benötigt eine eigene Worker-Route.',
   'domain.enterDomains':
     'Benutzerdefinierte Domains eingeben (leer lassen für Cloudflare-Standards)',
   'domain.singleTenantNote': 'Im Single-Tenant-Modus: Aussteller-URL = API-Domain',
@@ -277,6 +293,8 @@ const de: Translations = {
   'keys.generated': 'Schlüssel generiert ({{path}})',
   'keys.existing': 'Schlüssel existieren bereits für Umgebung "{{env}}"',
   'keys.existingWarning': 'Vorhandene Schlüssel werden überschrieben.',
+  'keys.replaced':
+    'Die vorhandenen Schlüssel wurden ersetzt, nachdem die Verfügbarkeit der Umgebung bestätigt wurde.',
   'keys.error': 'Schlüssel konnten nicht generiert werden',
   'keys.regeneratePrompt': 'Schlüssel neu generieren?',
   'keys.regenerateWarning': 'Dies macht alle vorhandenen Tokens ungültig!',
@@ -327,6 +345,18 @@ const de: Translations = {
   'config.shards': 'Shards',
   'config.sec': 'Sek',
   'config.automatic': 'Automatisch',
+  'config.d1Routing': 'D1-Routing:',
+  'config.placement': 'Platzierung:',
+  'config.provisioning': 'Bereitstellung:',
+  'config.uiEnvNoApi': 'ui.env wird erstellt, sobald eine API-URL konfiguriert ist.',
+  'config.wranglerConfigsSaved': '{{count}} wrangler.toml-Masterkonfigurationen gespeichert',
+  'config.wranglerConfigsPartial':
+    'Einige Wrangler-Konfigurationen konnten nicht gespeichert werden',
+  'config.wranglerConfigsSyncing': 'Wrangler-Konfigurationen werden mit Paketen synchronisiert...',
+  'config.wranglerConfigsSynced':
+    'Wrangler-Konfigurationen mit {{count}} Komponenten synchronisiert',
+  'config.wranglerConfigsSyncFailed':
+    'Wrangler-Konfigurationen konnten nicht synchronisiert werden',
 
   // Deploy
   'deploy.prompt': 'Einrichtung mit dieser Konfiguration starten?',
@@ -357,6 +387,8 @@ const de: Translations = {
   'deploy.wranglerKeep': '📝 Manuelle Änderungen behalten (wie vorliegend bereitstellen)',
   'deploy.wranglerBackup': '💾 Sichern und mit Master überschreiben',
   'deploy.wranglerOverwrite': '⚠️ Mit Master überschreiben (Änderungen verlieren)',
+  'deploy.initialProvisioningFailed':
+    'Die Cloudflare-Bereitstellung wurde nicht abgeschlossen. Es wurde keine Umgebungssperre erstellt; führen Sie init erneut aus, um sicher fortzufahren.',
 
   // Email provider
   'email.title': 'E-Mail-Anbieter',
@@ -413,15 +445,25 @@ const de: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Cloudflare API-Token eingeben',
   'cf.apiTokenValidation': 'Bitte geben Sie einen gültigen API-Token ein',
-
-  // OIDC Profile
-  'profile.prompt': 'OIDC-Profil auswählen',
-  'profile.basicOp': 'Basis-OP (Standard-OIDC-Anbieter)',
-  'profile.basicOpDesc': 'Standard-OIDC-Funktionen',
-  'profile.fapiRw': 'FAPI Read-Write (Finanzgrad)',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Write Sicherheitsprofil-kompatibel',
-  'profile.fapi2Security': 'FAPI 2.0 Sicherheitsprofil',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 Sicherheitsprofil-kompatibel (höchste Sicherheit)',
+  'cf.apiTokenCreationMethod': 'Wie möchten Sie den API-Token erstellen?',
+  'cf.apiTokenCreateFromLink': 'Über einen vorkonfigurierten Link erstellen (empfohlen)',
+  'cf.apiTokenCreateFromLinkDesc': 'Cloudflare mit vorausgewählter Berechtigung und Zone öffnen',
+  'cf.apiTokenCreateManually': 'Manuell erstellen',
+  'cf.apiTokenCreateManuallyDesc':
+    'Erforderliche Berechtigung prüfen und den Token selbst konfigurieren',
+  'cf.apiTokenTemplateUrl': 'URL zur Cloudflare-Token-Erstellung:',
+  'cf.apiTokenTemplateOpenPrompt': 'Drücken Sie Enter, um Cloudflare im Browser zu öffnen',
+  'cf.apiTokenTemplateOpened': 'Cloudflare-Seite zur Token-Erstellung geöffnet',
+  'cf.apiTokenTemplateOpenFailed':
+    'Der Browser konnte nicht geöffnet werden. Öffnen Sie die folgende URL manuell.',
+  'cf.apiTokenManualTitle': 'Erstellen Sie einen Benutzer-API-Token mit diesen Einstellungen:',
+  'cf.apiTokenManualType': 'Verwenden Sie einen API-Token, nicht den Global API Key.',
+  'cf.apiTokenManualPermission': 'Berechtigung: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zonenressource: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': 'Fügen Sie keine unnötigen Berechtigungen oder Zonen hinzu.',
+  'cf.apiTokenSecretOnce':
+    'Das Token-Geheimnis wird nur einmal angezeigt. Kopieren Sie es, bevor Sie Cloudflare verlassen.',
+  'cf.apiTokenSelectedZone': 'die von dieser Umgebung verwendete Zone',
 
   // Tenant configuration
   'tenant.title': 'Tenant-Modus',
@@ -440,6 +482,19 @@ const de: Translations = {
   'tenant.defaultTenantPrompt': 'Standard-Tenant-Name (Bezeichner)',
   'tenant.defaultTenantValidation': 'Nur Kleinbuchstaben, Zahlen und Bindestriche erlaubt',
   'tenant.displayNamePrompt': 'Standard-Tenant-Anzeigename',
+  'tenant.domainSetupHint': 'Leer lassen, um workers.dev im Einzelmandantenmodus zu verwenden.',
+  'tenant.customDomainExamples': 'Mit einer benutzerdefinierten Domain:',
+  'tenant.nakedDomainExample': 'https://example.com (Issuer ohne Mandanten-Subdomain)',
+  'tenant.subdomainExample': 'https://acme.example.com (Issuer mit Mandanten-Subdomain)',
+  'tenant.idRules':
+    'Mandanten-IDs müssen 1–63 Zeichen lang sein, mit einem Kleinbuchstaben beginnen und dürfen nur Kleinbuchstaben, Zahlen und Bindestriche enthalten.',
+  'tenant.randomIdHint':
+    'Eine zufällige Mandanten-ID verhindert, dass Kunden- oder Firmennamen in der Issuer-URL erscheinen.',
+  'tenant.randomIdPrompt': 'Zufällige Mandanten-ID erzeugen? ({{id}})',
+  'tenant.initialDisplayName': 'Erster Mandant',
+  'tenant.nakedDomainPrompt': 'Basisdomain als Issuer für den primären Mandanten verwenden?',
+  'tenant.primaryTenantPrompt':
+    'Primäre Mandanten-ID für die Basisdomain (leer lassen für den ersten Mandanten)',
   'tenant.singleTenantTitle': 'Single-Tenant URL-Konfiguration',
   'tenant.singleTenantNote1': 'Im Single-Tenant-Modus:',
   'tenant.singleTenantNote2':
@@ -525,6 +580,19 @@ const de: Translations = {
   'complete.urls': 'URLs:',
   'complete.configLocation': 'Konfiguration:',
   'complete.keysLocation': 'Schlüssel:',
+  'complete.createdResources': 'Erstellte Ressourcen:',
+  'complete.generatedFiles': 'Generierte Dateien:',
+  'complete.automaticStep1': '1. Schemas anwenden und das vollständige Release bereitstellen:',
+  'complete.automaticStep2':
+    '2. Bei Aufforderung ein einmaliges Cloudflare-Bootstrap-Token erstellen und eingeben.',
+  'complete.automaticStep2Detail':
+    'Setup registriert aufgeteilte untergeordnete Token direkt bei Control und widerruft das Bootstrap-Token.',
+  'complete.manualStep1':
+    '1. Schemas anwenden und mit der aktuellen Wrangler-OAuth-Anmeldung bereitstellen:',
+  'complete.manualStep2':
+    '2. Mit Setup ausstehende, von Admin angeforderte Bereitstellungen ausführen.',
+  'complete.manualStep2Detail':
+    'Die automatische Bereitstellung ist aus; in Control wird kein Cloudflare-API-Token gespeichert.',
 
   // Resource provisioning
   'resource.provisioning': 'Stelle {{resource}} bereit...',
@@ -582,6 +650,8 @@ const de: Translations = {
   // Common
   'common.yes': 'Ja',
   'common.no': 'Nein',
+  'common.example': 'Beispiel',
+  'common.comingSoon': 'demnächst',
   'common.continue': 'Weiter',
   'common.cancel': 'Abbrechen',
   'common.skip': 'Überspringen',
@@ -638,6 +708,8 @@ const de: Translations = {
   'delete.pages': 'Pages-Projekte',
   'delete.partialSuccess':
     'Die ausgewählten Ressourcen wurden gelöscht; der übrige Umgebungsstatus wurde beibehalten',
+  'delete.inventoryUnavailable':
+    'Die Löschung wurde nicht gestartet, da der Cloudflare-Ressourcenbestand nicht verifiziert werden konnte',
 
   // Info command
   'info.title': 'Umgebungsinformationen',

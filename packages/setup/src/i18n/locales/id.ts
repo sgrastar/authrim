@@ -31,7 +31,7 @@ const id: Translations = {
 
   // Main menu
   'menu.prompt': 'Apa yang ingin Anda lakukan?',
-  'menu.quick': 'Pengaturan Cepat (5 menit)',
+  'menu.quick': 'Pengaturan Cepat',
   'menu.quickDesc': 'Deploy Authrim dengan konfigurasi minimal',
   'menu.custom': 'Pengaturan Kustom',
   'menu.customDesc': 'Konfigurasikan semua opsi langkah demi langkah',
@@ -104,6 +104,8 @@ const id: Translations = {
   'prereq.notLoggedIn': 'Belum masuk ke Cloudflare',
   'prereq.loginHint': 'Jalankan perintah berikut untuk autentikasi:',
   'prereq.loggedInAs': 'Terhubung ke Cloudflare ({{email}})',
+  'prereq.authenticated': 'Terhubung ke Cloudflare',
+  'prereq.checkFailed': 'Gagal memeriksa wrangler',
   'prereq.accountId': 'ID Akun: {{accountId}}',
 
   // Environment
@@ -182,6 +184,13 @@ const id: Translations = {
   'domain.zoneCheckSkipped': 'Pemeriksaan zona dilewati, melanjutkan pengaturan...',
   'domain.continueWithoutZone': 'Lanjutkan tanpa verifikasi zona?',
   'domain.configureBinding': 'Konfigurasi binding domain kustom untuk Workers',
+  'domain.configureBindingDesc':
+    'Tetapkan domain dasar langsung ke Worker router agar Cloudflare mengelola DNS dan sertifikat TLS. Subdomain tenant tetap menggunakan routing wildcard.',
+  'domain.customHostnamesDesc':
+    'Otomatiskan domain khusus tenant dengan Cloudflare Custom Hostnames.',
+  'domain.customHostnamesPrivacy':
+    'Token hanya disimpan dalam file rahasia lokal dan diunggah sebagai rahasia Worker; token tidak disimpan di D1, KV, atau konfigurasi setup.',
+  'domain.customHostnamesPrompt': 'Aktifkan otomatisasi Cloudflare Custom Hostnames?',
   'domain.action.retryCheck': 'Periksa lagi',
   'domain.action.reloadPage': 'Muat ulang halaman',
   'domain.action.openCloudflareDashboard': 'Buka dashboard Cloudflare',
@@ -226,6 +235,12 @@ const id: Translations = {
   'domain.apiDomain': 'Domain API / Issuer (contoh: auth.example.com)',
   'domain.loginUiDomain': 'Domain UI Login (Enter untuk lewati)',
   'domain.adminUiDomain': 'Domain UI Admin (Enter untuk lewati)',
+  'domain.baseDomainDepthError':
+    'Base Domain harus berupa domain induk yang digunakan URL tenant. "{{hostname}}" memiliki terlalu banyak label sebelum domain terdaftar.',
+  'domain.uiDomainDepthError':
+    'Domain {{label}} "{{hostname}}" terlalu dalam untuk model domain tenant standar.',
+  'domain.suggestedHost': 'Host yang disarankan: {{hostname}}',
+  'domain.uiRequiresOwnRoute': 'Domain kustom {{label}} memerlukan rute Worker sendiri.',
   'domain.enterDomains': 'Masukkan domain kustom (kosongkan untuk menggunakan default Cloudflare)',
   'domain.singleTenantNote': 'Dalam mode single-tenant, URL Issuer = domain API',
   'domain.usingWorkersDev': '(menggunakan domain Cloudflare workers.dev)',
@@ -274,6 +289,7 @@ const id: Translations = {
   'keys.generated': 'Kunci dihasilkan ({{path}})',
   'keys.existing': 'Kunci sudah ada untuk environment "{{env}}"',
   'keys.existingWarning': 'Kunci yang ada akan ditimpa.',
+  'keys.replaced': 'Kunci yang ada diganti setelah ketersediaan environment dikonfirmasi.',
   'keys.error': 'Gagal menghasilkan kunci',
   'keys.regeneratePrompt': 'Regenerasi kunci?',
   'keys.regenerateWarning': 'Ini akan membatalkan semua token yang ada!',
@@ -324,6 +340,15 @@ const id: Translations = {
   'config.shards': 'shard',
   'config.sec': 'detik',
   'config.automatic': 'Otomatis',
+  'config.d1Routing': 'Routing D1:',
+  'config.placement': 'Penempatan:',
+  'config.provisioning': 'Penyediaan:',
+  'config.uiEnvNoApi': 'ui.env akan dibuat setelah URL API dikonfigurasi.',
+  'config.wranglerConfigsSaved': 'Menyimpan {{count}} konfigurasi master wrangler.toml',
+  'config.wranglerConfigsPartial': 'Beberapa konfigurasi wrangler tidak dapat disimpan',
+  'config.wranglerConfigsSyncing': 'Menyinkronkan konfigurasi wrangler ke paket...',
+  'config.wranglerConfigsSynced': 'Konfigurasi wrangler disinkronkan ke {{count}} komponen',
+  'config.wranglerConfigsSyncFailed': 'Gagal menyinkronkan konfigurasi wrangler',
 
   // Deploy
   'deploy.prompt': 'Mulai pengaturan dengan konfigurasi ini?',
@@ -354,6 +379,8 @@ const id: Translations = {
   'deploy.wranglerKeep': '📝 Simpan perubahan manual (deploy apa adanya)',
   'deploy.wranglerBackup': '💾 Backup dan timpa dengan master',
   'deploy.wranglerOverwrite': '⚠️  Timpa dengan master (kehilangan perubahan)',
+  'deploy.initialProvisioningFailed':
+    'Penyediaan Cloudflare tidak selesai. Kunci lingkungan tidak dibuat; jalankan init lagi untuk melanjutkan dengan aman.',
 
   // Email provider
   'email.title': 'Penyedia Email',
@@ -410,15 +437,24 @@ const id: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Masukkan Token API Cloudflare',
   'cf.apiTokenValidation': 'Silakan masukkan Token API yang valid',
-
-  // OIDC Profile
-  'profile.prompt': 'Pilih profil OIDC',
-  'profile.basicOp': 'Basic OP (Penyedia OIDC Standar)',
-  'profile.basicOpDesc': 'Fitur OIDC standar',
-  'profile.fapiRw': 'FAPI Read-Write (Tingkat Finansial)',
-  'profile.fapiRwDesc': 'Sesuai dengan Profil Keamanan FAPI 1.0 Read-Write',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc': 'Sesuai dengan Profil Keamanan FAPI 2.0 (keamanan tertinggi)',
+  'cf.apiTokenCreationMethod': 'Bagaimana Anda ingin membuat token API?',
+  'cf.apiTokenCreateFromLink': 'Buat dari tautan yang sudah dikonfigurasi (disarankan)',
+  'cf.apiTokenCreateFromLinkDesc':
+    'Buka Cloudflare dengan izin dan zona yang diperlukan sudah dipilih',
+  'cf.apiTokenCreateManually': 'Buat secara manual',
+  'cf.apiTokenCreateManuallyDesc': 'Tinjau izin yang diperlukan dan konfigurasikan token sendiri',
+  'cf.apiTokenTemplateUrl': 'URL pembuatan token Cloudflare:',
+  'cf.apiTokenTemplateOpenPrompt': 'Tekan Enter untuk membuka Cloudflare di browser',
+  'cf.apiTokenTemplateOpened': 'Halaman pembuatan token Cloudflare telah dibuka',
+  'cf.apiTokenTemplateOpenFailed': 'Browser tidak dapat dibuka. Buka URL berikut secara manual.',
+  'cf.apiTokenManualTitle': 'Buat token API pengguna dengan pengaturan berikut:',
+  'cf.apiTokenManualType': 'Gunakan API Token, bukan Global API Key.',
+  'cf.apiTokenManualPermission': 'Izin: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Sumber daya zona: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': 'Jangan tambahkan izin atau zona yang tidak terkait.',
+  'cf.apiTokenSecretOnce':
+    'Rahasia token hanya ditampilkan sekali. Salin sebelum meninggalkan Cloudflare.',
+  'cf.apiTokenSelectedZone': 'zona yang digunakan lingkungan ini',
 
   // Tenant configuration
   'tenant.title': 'Mode Tenant',
@@ -436,6 +472,19 @@ const id: Translations = {
   'tenant.defaultTenantPrompt': 'Nama tenant default (identifier)',
   'tenant.defaultTenantValidation': 'Hanya huruf kecil, angka, dan tanda hubung yang diizinkan',
   'tenant.displayNamePrompt': 'Nama tampilan tenant default',
+  'tenant.domainSetupHint': 'Kosongkan untuk memakai workers.dev dalam mode tenant tunggal.',
+  'tenant.customDomainExamples': 'Dengan domain kustom:',
+  'tenant.nakedDomainExample': 'https://example.com (issuer tanpa subdomain tenant)',
+  'tenant.subdomainExample': 'https://acme.example.com (issuer dengan subdomain tenant)',
+  'tenant.idRules':
+    'ID tenant harus 1–63 karakter, diawali huruf kecil, dan hanya berisi huruf kecil, angka, serta tanda hubung.',
+  'tenant.randomIdHint':
+    'ID tenant acak mencegah nama pelanggan atau bisnis terlihat pada URL issuer.',
+  'tenant.randomIdPrompt': 'Buat ID tenant acak? ({{id}})',
+  'tenant.initialDisplayName': 'Tenant Awal',
+  'tenant.nakedDomainPrompt': 'Gunakan domain dasar sebagai issuer untuk tenant utama?',
+  'tenant.primaryTenantPrompt':
+    'ID tenant utama untuk domain dasar (kosongkan untuk memakai tenant awal)',
   'tenant.singleTenantTitle': 'Konfigurasi URL Single-tenant',
   'tenant.singleTenantNote1': 'Dalam mode single-tenant:',
   'tenant.singleTenantNote2': 'URL Issuer = domain kustom API (atau fallback workers.dev)',
@@ -519,6 +568,18 @@ const id: Translations = {
   'complete.urls': 'URL:',
   'complete.configLocation': 'Konfigurasi:',
   'complete.keysLocation': 'Kunci:',
+  'complete.createdResources': 'Sumber Daya yang Dibuat:',
+  'complete.generatedFiles': 'File yang Dihasilkan:',
+  'complete.automaticStep1': '1. Terapkan skema dan deploy rilis lengkap:',
+  'complete.automaticStep2':
+    '2. Saat diminta, buat dan masukkan token bootstrap Cloudflare sekali pakai.',
+  'complete.automaticStep2Detail':
+    'Setup mendaftarkan token turunan terpisah langsung ke Control dan mencabut token bootstrap.',
+  'complete.manualStep1': '1. Terapkan skema dan deploy dengan login OAuth Wrangler saat ini:',
+  'complete.manualStep2':
+    '2. Gunakan Setup untuk menjalankan operasi penyediaan tertunda yang diminta dari Admin.',
+  'complete.manualStep2Detail':
+    'Penyediaan otomatis nonaktif; tidak ada token API Cloudflare yang disimpan di Control.',
 
   // Resource provisioning
   'resource.provisioning': 'Menyediakan {{resource}}...',
@@ -576,6 +637,8 @@ const id: Translations = {
   // Common
   'common.yes': 'Ya',
   'common.no': 'Tidak',
+  'common.example': 'Contoh',
+  'common.comingSoon': 'segera hadir',
   'common.continue': 'Lanjutkan',
   'common.cancel': 'Batal',
   'common.skip': 'Lewati',
@@ -633,6 +696,8 @@ const id: Translations = {
   'delete.pages': 'Proyek Pages',
   'delete.partialSuccess':
     'Resource yang dipilih telah dihapus dan status environment lainnya tetap disimpan',
+  'delete.inventoryUnavailable':
+    'Penghapusan tidak dimulai karena inventaris resource Cloudflare tidak dapat diverifikasi',
 
   // Info command
   'info.title': 'Informasi Environment',

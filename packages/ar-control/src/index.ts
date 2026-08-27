@@ -52,6 +52,7 @@ import { LookupHmacKeyStatePublisher } from './lookup-hmac-key-state-publisher';
 import { LookupHmacKeyStateService, validateLookupHmacKeyMetadata } from './lookup-hmac-key-state';
 import { PluginRunnerRegistryPublisher } from './plugin-runner-registry-publisher';
 import { LookupBucketMigrationService } from './lookup-bucket-migration';
+import { LookupScaleOutForecastService } from './lookup-scale-out-forecast';
 import { LookupRetentionProjectionService } from './lookup-retention-projection';
 import { ReadReplicationService } from './read-replication';
 import {
@@ -100,7 +101,7 @@ function service(env: ControlEnv): ControlService {
 }
 
 const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
 
 async function rpcResult<T>(operation: () => Promise<T>): Promise<T> {
   try {
@@ -928,6 +929,8 @@ function lookupBucketLoadSnapshot(input: unknown) {
           'assignmentGeneration',
           'activeIdentifierCount',
           'activeAliasCount',
+          'successfulRoutePublicationCount',
+          'publicationCounterUpdatedAt',
           'counterUpdatedAt',
         ],
         'invalid_lookup_bucket_load_observation'
@@ -1904,6 +1907,17 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  releaseLookupBucketMigration(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+        Math.floor(Date.now() / 1000)
+      ).release(caller.environmentId, lookupBucketMigrationCutover(input));
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
   cutoverLookupBucketMigration(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
@@ -1955,6 +1969,95 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       ).planNextAutomaticMigration(caller.environmentId, lookupBucketLoadSnapshot(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
+    });
+  }
+
+  reconcileLookupScaleOut(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
+        Math.floor(Date.now() / 1000)
+      );
+      const result = await forecast.observe(caller.environmentId, lookupBucketLoadSnapshot(input));
+      if (!result.capacityRequest) {
+        assertControlPlaneRecordIsSecretFree(result.views);
+        return result.views;
+      }
+      const request = result.capacityRequest;
+      let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
+      try {
+        capacity = await service(this.env).requestLookupScaleOutCapacity(
+          request,
+          caller.environmentId
+        );
+      } catch (error) {
+        const terminalErrorCode =
+          error instanceof Error &&
+          /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
+            error.message
+          )
+            ? error.message
+            : null;
+        if (terminalErrorCode) {
+          await forecast.blockCapacityRequest(caller.environmentId, request, terminalErrorCode);
+          const views = result.views.map((view) =>
+            view.lookupCapacityDomainId === request.lookupCapacityDomainId
+              ? { ...view, status: 'blocked' as const, lastErrorCode: terminalErrorCode }
+              : view
+          );
+          assertControlPlaneRecordIsSecretFree(views);
+          return views;
+        }
+        const errorCode = 'lookup_scale_out_capacity_request_retry';
+        await forecast.recordCapacityRequestRetry(caller.environmentId, request, errorCode);
+        const views = result.views.map((view) =>
+          view.lookupCapacityDomainId === request.lookupCapacityDomainId
+            ? {
+                ...view,
+                status: 'provisioning' as const,
+                requestedOperationId: null,
+                lastErrorCode: errorCode,
+              }
+            : view
+        );
+        assertControlPlaneRecordIsSecretFree(views);
+        return views;
+      }
+      if (!capacity.operation) {
+        const errorCode = 'lookup_scale_out_capacity_operation_pending';
+        await forecast.recordCapacityRequestRetry(caller.environmentId, request, errorCode);
+        const views = result.views.map((view) =>
+          view.lookupCapacityDomainId === request.lookupCapacityDomainId
+            ? { ...view, status: 'provisioning' as const, lastErrorCode: errorCode }
+            : view
+        );
+        assertControlPlaneRecordIsSecretFree(views);
+        return views;
+      }
+      const operation = capacity.operation;
+      await forecast.recordProvisioningOperation(
+        caller.environmentId,
+        request,
+        operation.operationId,
+        operation.status,
+        operation.lastErrorCode
+      );
+      const operationBlocked = operation.status === 'blocked' || operation.status === 'canceled';
+      const operationErrorCode = operationBlocked
+        ? (operation.lastErrorCode ?? 'lookup_scale_out_capacity_operation_blocked')
+        : null;
+      const views = result.views.map((view) =>
+        view.lookupCapacityDomainId === request.lookupCapacityDomainId
+          ? {
+              ...view,
+              status: operationBlocked ? ('blocked' as const) : view.status,
+              requestedOperationId: operation.operationId,
+              lastErrorCode: operationErrorCode,
+            }
+          : view
+      );
+      assertControlPlaneRecordIsSecretFree(views);
+      return views;
     });
   }
 

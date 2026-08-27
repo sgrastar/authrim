@@ -6158,6 +6158,14 @@ type RootTranslation = {
 	 */
 	admin_saml_detail_provider_status_desc: string
 	/**
+	 * C​h​o​o​s​e​ ​a​n​d​ ​s​a​v​e​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​b​e​f​o​r​e​ ​e​n​a​b​l​i​n​g​ ​t​h​i​s​ ​p​r​o​v​i​d​e​r​.
+	 */
+	admin_saml_detail_provider_status_mapping_required: string
+	/**
+	 * T​h​i​s​ ​p​r​o​v​i​d​e​r​ ​w​a​s​ ​r​e​g​i​s​t​e​r​e​d​ ​i​n​ ​a​ ​d​i​s​a​b​l​e​d​ ​s​t​a​t​e​.​ ​C​h​o​o​s​e​ ​t​h​e​ ​a​p​p​r​o​p​r​i​a​t​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​b​e​l​o​w​,​ ​t​h​e​n​ ​e​n​a​b​l​e​ ​a​n​d​ ​s​a​v​e​ ​t​h​e​ ​p​r​o​v​i​d​e​r​.
+	 */
+	admin_saml_detail_mapping_pending: string
+	/**
 	 * B​a​s​i​c​ ​I​n​f​o​r​m​a​t​i​o​n
 	 */
 	admin_saml_detail_basic_information: string
@@ -6338,6 +6346,14 @@ type RootTranslation = {
 	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_saml_detail_identity_mapping_policy_default: string
+	/**
+	 * S​e​l​e​c​t​ ​a​n​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​.
+	 */
+	admin_saml_detail_identity_mapping_policy_required: string
+	/**
+	 * N​o​ ​a​c​t​i​v​e​ ​c​o​m​p​a​t​i​b​l​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	admin_saml_detail_identity_mapping_policy_no_compatible: string
 	/**
 	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​i​n​b​o​u​n​d​ ​a​n​d​ ​o​u​t​b​o​u​n​d​ ​S​A​M​L​ ​a​t​t​r​i​b​u​t​e​ ​m​a​p​p​i​n​g​.
 	 */
@@ -6590,6 +6606,10 @@ type RootTranslation = {
 	 */
 	admin_saml_new_create_providers_desc: string
 	/**
+	 * S​e​l​e​c​t​e​d​ ​I​d​P​ ​a​n​d​ ​S​P​ ​e​n​t​i​t​i​e​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​ ​a​s​ ​d​i​s​a​b​l​e​d​ ​p​r​o​v​i​d​e​r​s​.​ ​C​h​o​o​s​e​ ​t​h​e​ ​a​p​p​r​o​p​r​i​a​t​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​o​n​ ​e​a​c​h​ ​p​r​o​v​i​d​e​r​ ​d​e​t​a​i​l​ ​p​a​g​e​,​ ​t​h​e​n​ ​e​n​a​b​l​e​ ​t​h​e​ ​p​r​o​v​i​d​e​r​.
+	 */
+	admin_saml_new_aggregate_mapping_after_create: string
+	/**
 	 * F​e​d​e​r​a​t​i​o​n​ ​T​r​u​s​t​ ​P​r​o​f​i​l​e
 	 */
 	admin_saml_new_federation_trust_profile: string
@@ -6690,6 +6710,21 @@ type RootTranslation = {
 	 * @param {number} total
 	 */
 	admin_saml_new_batch_progress: RequiredParams<'failed' | 'processed' | 'succeeded' | 'total'>
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​c​o​m​p​l​e​t​e​.​ ​C​o​n​f​i​g​u​r​e​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​f​o​r​ ​e​a​c​h​ ​p​r​o​v​i​d​e​r​ ​b​e​f​o​r​e​ ​e​n​a​b​l​i​n​g​ ​i​t​.
+	 */
+	admin_saml_new_batch_mapping_next: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​{​n​a​m​e​}
+	 * @param {string} name
+	 */
+	admin_saml_new_configure_created_provider: RequiredParams<'name'>
+	/**
+	 * {​e​n​t​i​t​y​I​d​}​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​g​i​s​t​e​r​e​d​:​ ​{​e​r​r​o​r​}
+	 * @param {string} entityId
+	 * @param {string} error
+	 */
+	admin_saml_new_provider_import_failed: RequiredParams<'entityId' | 'error'>
 	/**
 	 * C​h​o​o​s​e​ ​P​r​o​v​i​d​e​r​ ​T​y​p​e
 	 */
@@ -25384,6 +25419,10 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_activate: string
 	/**
+	 * A​c​t​i​v​e
+	 */
+	admin_identity_mapping_editor_active: string
+	/**
 	 * D​e​l​e​t​e
 	 */
 	admin_identity_mapping_editor_delete: string
@@ -25483,6 +25522,10 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​t​a​t​e
 	 */
 	admin_identity_mapping_editor_load_failed: string
+	/**
+	 * P​r​o​f​i​l​e​ ​s​t​a​t​u​s
+	 */
+	admin_identity_mapping_flow_profile_status: string
 	/**
 	 * S​o​u​r​c​e​ ​&​ ​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -39311,6 +39354,14 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_detail_provider_status_desc: () => LocalizedString
 	/**
+	 * Choose and save a Field Mapping Set before enabling this provider.
+	 */
+	admin_saml_detail_provider_status_mapping_required: () => LocalizedString
+	/**
+	 * This provider was registered in a disabled state. Choose the appropriate Field Mapping Set below, then enable and save the provider.
+	 */
+	admin_saml_detail_mapping_pending: () => LocalizedString
+	/**
 	 * Basic Information
 	 */
 	admin_saml_detail_basic_information: () => LocalizedString
@@ -39490,6 +39541,14 @@ export type TranslationFunctions = {
 	 * Select a Field Mapping Set
 	 */
 	admin_saml_detail_identity_mapping_policy_default: () => LocalizedString
+	/**
+	 * Select an active Field Mapping Set.
+	 */
+	admin_saml_detail_identity_mapping_policy_required: () => LocalizedString
+	/**
+	 * No active compatible Field Mapping Sets are available.
+	 */
+	admin_saml_detail_identity_mapping_policy_no_compatible: () => LocalizedString
 	/**
 	 * Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.
 	 */
@@ -39739,6 +39798,10 @@ export type TranslationFunctions = {
 	 */
 	admin_saml_new_create_providers_desc: () => LocalizedString
 	/**
+	 * Selected IdP and SP entities are registered as disabled providers. Choose the appropriate Field Mapping Set on each provider detail page, then enable the provider.
+	 */
+	admin_saml_new_aggregate_mapping_after_create: () => LocalizedString
+	/**
 	 * Federation Trust Profile
 	 */
 	admin_saml_new_federation_trust_profile: () => LocalizedString
@@ -39830,6 +39893,18 @@ export type TranslationFunctions = {
 	 * Processed {processed} / {total} · Succeeded {succeeded} · Failed {failed}
 	 */
 	admin_saml_new_batch_progress: (arg: { failed: number, processed: number, succeeded: number, total: number }) => LocalizedString
+	/**
+	 * Registration is complete. Configure a Field Mapping Set for each provider before enabling it.
+	 */
+	admin_saml_new_batch_mapping_next: () => LocalizedString
+	/**
+	 * Configure {name}
+	 */
+	admin_saml_new_configure_created_provider: (arg: { name: string }) => LocalizedString
+	/**
+	 * {entityId} could not be registered: {error}
+	 */
+	admin_saml_new_provider_import_failed: (arg: { entityId: string, error: string }) => LocalizedString
 	/**
 	 * Choose Provider Type
 	 */
@@ -58249,6 +58324,10 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_activate: () => LocalizedString
 	/**
+	 * Active
+	 */
+	admin_identity_mapping_editor_active: () => LocalizedString
+	/**
 	 * Delete
 	 */
 	admin_identity_mapping_editor_delete: () => LocalizedString
@@ -58344,6 +58423,10 @@ Remove this role from {email}?
 	 * Failed to load field mapping state
 	 */
 	admin_identity_mapping_editor_load_failed: () => LocalizedString
+	/**
+	 * Profile status
+	 */
+	admin_identity_mapping_flow_profile_status: () => LocalizedString
 	/**
 	 * Source & Destination Profiles - Authrim Admin
 	 */

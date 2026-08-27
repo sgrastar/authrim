@@ -101,6 +101,7 @@ const capacityPreview: ControlCapacityProvisioningPreview = {
       dataRole: 'tenant_core/users',
       residencyPolicyId: 'residency-default',
       residencyPartition: 'jp',
+      lookupCapacityDomainId: null,
       logicalShardId: 'users:jp:capacity-1',
       databaseName: 'test-authrim-tenant-users-jp-capacity-1-db',
       bindingRef: 'TEST_TDB_USERS_CAPACITY_1_CORE',

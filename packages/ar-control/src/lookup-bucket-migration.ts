@@ -26,12 +26,14 @@ interface AssignmentRow {
   target_lookup_shard_id: string | null;
   source_binding_ref: string;
   source_residency_partition: string;
+  source_lookup_capacity_domain_id?: string;
 }
 
 interface TargetShardRow {
   lookup_shard_id: string;
   binding_ref: string;
   residency_partition: string;
+  lookup_capacity_domain_id: string;
   status: string;
 }
 
@@ -82,6 +84,7 @@ interface PlanAssignmentRow {
 interface PlanShardRow {
   lookup_shard_id: string;
   residency_partition: string;
+  lookup_capacity_domain_id: string;
   capacity_weight: number | string;
 }
 
@@ -199,11 +202,27 @@ export class LookupBucketMigrationService {
         .all<PlanAssignmentRow>(),
       session
         .prepare(
-          `SELECT shard.lookup_shard_id, shard.residency_partition, shard.capacity_weight
+          `SELECT shard.lookup_shard_id, shard.residency_partition,
+                  COALESCE(
+                    json_extract(desired.desired_spec_json, '$.lookup_capacity_domain_id'),
+                    residency.lookup_capacity_domain_id,
+                    'lookup:' || residency.residency_policy_id || ':' ||
+                      residency.residency_partition
+                  ) AS lookup_capacity_domain_id,
+                  shard.capacity_weight
              FROM control_lookup_physical_shards shard
              JOIN control_environments environment
                ON environment.environment_id = shard.environment_id
               AND environment.lifecycle_state = 'active'
+             JOIN control_desired_resources desired
+               ON desired.environment_id = shard.environment_id
+              AND desired.desired_resource_id = shard.d1_desired_resource_id
+             JOIN control_residency_partitions residency
+               ON residency.environment_id = shard.environment_id
+              AND residency.residency_policy_id =
+                  json_extract(desired.desired_spec_json, '$.residency_policy_id')
+              AND residency.residency_partition = shard.residency_partition
+              AND residency.status = 'active'
             WHERE shard.environment_id = ? AND shard.status = 'active'
             ORDER BY shard.lookup_shard_id
             LIMIT 4096`
@@ -226,8 +245,12 @@ export class LookupBucketMigrationService {
         observation.activeIdentifierCount < 0 ||
         !Number.isSafeInteger(observation.activeAliasCount) ||
         observation.activeAliasCount < 0 ||
+        !Number.isSafeInteger(observation.successfulRoutePublicationCount) ||
+        observation.successfulRoutePublicationCount < 0 ||
+        !Number.isSafeInteger(observation.publicationCounterUpdatedAt) ||
+        observation.publicationCounterUpdatedAt < 0 ||
+        observation.publicationCounterUpdatedAt > input.observedAt + 5 ||
         !Number.isSafeInteger(observation.counterUpdatedAt) ||
-        observation.counterUpdatedAt < input.observedAt - 24 * 60 * 60 ||
         observation.counterUpdatedAt > input.observedAt + 5
       ) {
         throw new Error('control_lookup_bucket_load_observation_invalid');
@@ -239,6 +262,7 @@ export class LookupBucketMigrationService {
       {
         lookupShardId: string;
         residencyPartition: string;
+        lookupCapacityDomainId: string;
         capacityWeight: number;
         total: number;
         buckets: { virtualBucket: number; assignmentGeneration: number; count: number }[];
@@ -249,6 +273,7 @@ export class LookupBucketMigrationService {
       if (
         !SAFE_ID.test(row.lookup_shard_id) ||
         !SAFE_ID.test(row.residency_partition) ||
+        !SAFE_ID.test(row.lookup_capacity_domain_id) ||
         !Number.isFinite(capacityWeight) ||
         capacityWeight <= 0
       ) {
@@ -257,6 +282,7 @@ export class LookupBucketMigrationService {
       shards.set(row.lookup_shard_id, {
         lookupShardId: row.lookup_shard_id,
         residencyPartition: row.residency_partition,
+        lookupCapacityDomainId: row.lookup_capacity_domain_id,
         capacityWeight,
         total: 0,
         buckets: [],
@@ -302,7 +328,7 @@ export class LookupBucketMigrationService {
       for (const target of values) {
         if (
           source.lookupShardId === target.lookupShardId ||
-          source.residencyPartition !== target.residencyPartition ||
+          source.lookupCapacityDomainId !== target.lookupCapacityDomainId ||
           source.total / source.capacityWeight <= target.total / target.capacityWeight
         ) {
           continue;
@@ -397,11 +423,26 @@ export class LookupBucketMigrationService {
                 assignment.assignment_generation, assignment.state,
                 assignment.target_lookup_shard_id,
                 source.binding_ref AS source_binding_ref,
-                source.residency_partition AS source_residency_partition
+                source.residency_partition AS source_residency_partition,
+                COALESCE(
+                  json_extract(source_desired.desired_spec_json, '$.lookup_capacity_domain_id'),
+                  source_residency.lookup_capacity_domain_id,
+                  'lookup:' || source_residency.residency_policy_id || ':' ||
+                    source_residency.residency_partition
+                ) AS source_lookup_capacity_domain_id
            FROM control_lookup_bucket_assignments assignment
            JOIN control_lookup_physical_shards source
              ON source.environment_id = assignment.environment_id
             AND source.lookup_shard_id = assignment.lookup_shard_id
+           JOIN control_desired_resources source_desired
+             ON source_desired.environment_id = source.environment_id
+            AND source_desired.desired_resource_id = source.d1_desired_resource_id
+           JOIN control_residency_partitions source_residency
+             ON source_residency.environment_id = source.environment_id
+            AND source_residency.residency_policy_id =
+                json_extract(source_desired.desired_spec_json, '$.residency_policy_id')
+            AND source_residency.residency_partition = source.residency_partition
+            AND source_residency.status = 'active'
           WHERE assignment.environment_id = ? AND assignment.virtual_bucket = ?`
       )
       .bind(environmentId, virtualBucket)
@@ -416,16 +457,35 @@ export class LookupBucketMigrationService {
     }
     const target = await session
       .prepare(
-        `SELECT lookup_shard_id, binding_ref, residency_partition, status
-           FROM control_lookup_physical_shards
-          WHERE environment_id = ? AND lookup_shard_id = ?`
+        `SELECT shard.lookup_shard_id, shard.binding_ref, shard.residency_partition,
+                COALESCE(
+                  json_extract(desired.desired_spec_json, '$.lookup_capacity_domain_id'),
+                  residency.lookup_capacity_domain_id,
+                  'lookup:' || residency.residency_policy_id || ':' ||
+                    residency.residency_partition
+                ) AS lookup_capacity_domain_id,
+                shard.status
+           FROM control_lookup_physical_shards shard
+           JOIN control_desired_resources desired
+             ON desired.environment_id = shard.environment_id
+            AND desired.desired_resource_id = shard.d1_desired_resource_id
+           JOIN control_residency_partitions residency
+             ON residency.environment_id = shard.environment_id
+            AND residency.residency_policy_id =
+                json_extract(desired.desired_spec_json, '$.residency_policy_id')
+            AND residency.residency_partition = shard.residency_partition
+            AND residency.status = 'active'
+          WHERE shard.environment_id = ? AND shard.lookup_shard_id = ?`
       )
       .bind(environmentId, targetLookupShardId)
       .first<TargetShardRow>();
     if (
       !target ||
       target.status !== 'active' ||
+      !SAFE_ID.test(target.lookup_capacity_domain_id) ||
+      !SAFE_ID.test(assignment.source_lookup_capacity_domain_id ?? '') ||
       target.residency_partition !== assignment.source_residency_partition ||
+      target.lookup_capacity_domain_id !== assignment.source_lookup_capacity_domain_id ||
       !SAFE_BINDING.test(target.binding_ref) ||
       !SAFE_BINDING.test(assignment.source_binding_ref)
     ) {
@@ -915,6 +975,47 @@ export class LookupBucketMigrationService {
       now
     );
     return this.view(environmentId, operationIdValue);
+  }
+
+  async release(
+    environmentId: string,
+    input: ControlLookupBucketMigrationCutoverRequest
+  ): Promise<ControlLookupBucketMigrationView> {
+    safeId(environmentId, 'invalid_lookup_bucket_migration_environment');
+    safeId(input.operationId, 'invalid_lookup_bucket_migration_operation');
+    safeId(input.ownerId, 'invalid_lookup_bucket_migration_owner');
+    if (!Number.isSafeInteger(input.fencingToken) || input.fencingToken < 1) {
+      throw new Error('invalid_lookup_bucket_migration_fencing_token');
+    }
+    const current = await this.view(environmentId, input.operationId);
+    if (current.state === 'complete' || current.state === 'blocked') {
+      throw new Error('control_lookup_bucket_migration_state_conflict');
+    }
+    await this.assertClaim(environmentId, input, current.state);
+    const now = this.now();
+    const session = primary(this.db);
+    const released = await this.db.batch([
+      session
+        .prepare(
+          `UPDATE control_directory_rewrite_leases
+              SET lease_expires_at = ?, updated_at = ?
+            WHERE environment_id = ? AND operation_id = ? AND owner_id = ?
+              AND fencing_token = ? AND mutation_started = 1 AND lease_expires_at > ?`
+        )
+        .bind(now, now, environmentId, input.operationId, input.ownerId, input.fencingToken, now),
+      session
+        .prepare(
+          `UPDATE control_operations
+              SET lock_expires_at = ?, updated_at = ?
+            WHERE operation_id = ? AND environment_id = ? AND status = 'running'
+              AND lock_owner = ? AND fencing_token = ?`
+        )
+        .bind(now, now, input.operationId, environmentId, input.ownerId, input.fencingToken),
+    ]);
+    if (released.some((result) => (result.meta.changes ?? 0) !== 1)) {
+      throw new Error('control_lookup_bucket_migration_release_stale');
+    }
+    return this.view(environmentId, input.operationId);
   }
 
   async prepareCutover(

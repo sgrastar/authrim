@@ -151,6 +151,7 @@ export interface ControlCapacityProvisioningTargetPreview {
   dataRole: 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii' | 'lookup';
   residencyPolicyId: string;
   residencyPartition: string;
+  lookupCapacityDomainId: string | null;
   logicalShardId: string;
   databaseName: string;
   bindingRef: string;
@@ -923,6 +924,8 @@ export interface ControlLookupBucketLoadObservation {
   assignmentGeneration: number;
   activeIdentifierCount: number;
   activeAliasCount: number;
+  successfulRoutePublicationCount: number;
+  publicationCounterUpdatedAt: number;
   counterUpdatedAt: number;
 }
 
@@ -930,6 +933,28 @@ export interface ControlLookupBucketLoadSnapshotRequest {
   ownerId: string;
   observedAt: number;
   buckets: ControlLookupBucketLoadObservation[];
+}
+
+export interface ControlLookupScaleOutForecastView {
+  lookupCapacityDomainId: string;
+  residencyPolicyId: string;
+  residencyPartition: string;
+  status: 'warming' | 'stable' | 'provisioning' | 'blocked';
+  observedAt: number;
+  observedActiveRouteCount: number;
+  observedSuccessfulPublicationCount: number;
+  sampleIntervalSeconds: number;
+  sampleRateMicrorowsPerSecond: number;
+  ewmaRateMicrorowsPerSecond: number;
+  forecastHorizonSeconds: number;
+  forecastNewRouteCount: number;
+  projectedActiveRouteCount: number;
+  usableCapacityRouteCount: number;
+  capacityUnitCount: number;
+  additionalUnitsRequired: number;
+  decisionGeneration: number;
+  requestedOperationId: string | null;
+  lastErrorCode: string | null;
 }
 
 export interface ControlLookupRetentionPolicyProjectionRequest {
@@ -1443,6 +1468,9 @@ export interface ControlServiceBinding {
   checkpointLookupBucketMigration?(
     input: ControlLookupBucketMigrationCheckpointRequest
   ): Promise<ControlLookupBucketMigrationView>;
+  releaseLookupBucketMigration?(
+    input: ControlLookupBucketMigrationCutoverRequest
+  ): Promise<ControlLookupBucketMigrationView>;
   cutoverLookupBucketMigration?(
     input: ControlLookupBucketMigrationCutoverRequest
   ): Promise<ControlLookupBucketMigrationView>;
@@ -1455,6 +1483,9 @@ export interface ControlServiceBinding {
   planNextLookupBucketMigration?(
     input: ControlLookupBucketLoadSnapshotRequest
   ): Promise<ControlLookupBucketMigrationView | null>;
+  reconcileLookupScaleOut?(
+    input: ControlLookupBucketLoadSnapshotRequest
+  ): Promise<ControlLookupScaleOutForecastView[]>;
   applyLookupRetentionPolicyProjection?(
     input: ControlLookupRetentionPolicyProjectionRequest
   ): Promise<ControlLookupRetentionPolicyProjectionView>;

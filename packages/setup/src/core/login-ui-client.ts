@@ -98,11 +98,22 @@ function isRetryableLoginUiClientError(error?: string | null): boolean {
     normalized.includes('bad gateway') ||
     normalized.includes('service unavailable') ||
     normalized.includes('gateway timeout') ||
+    normalized.includes('lookup_registry_snapshot_unavailable') ||
+    normalized.includes('lookup_registry_public_jwks_unavailable') ||
+    normalized.includes('lookup_registry_generation_mismatch') ||
     normalized.includes('connection reset') ||
     normalized.includes('econnreset') ||
     normalized.includes('enotfound') ||
     normalized.includes('eai_again')
   );
+}
+
+function describeLoginUiClientRetry(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes('lookup_registry_')) {
+    return 'Login UI client request is waiting for the runtime lookup registry to propagate';
+  }
+  return 'Login UI client request hit a temporary router readiness error';
 }
 
 interface AdminClientListResponse {
@@ -454,8 +465,8 @@ export async function ensureLoginUiClient(
         }
       }
 
-      const shouldRetry = attempt < maxRetries && retryableError !== null;
-      if (!shouldRetry) {
+      const retryReason = retryableError;
+      if (attempt >= maxRetries || retryReason === null) {
         return {
           success: false,
           error: lastError || 'Login UI client creation failed',
@@ -464,7 +475,7 @@ export async function ensureLoginUiClient(
 
       const delayMs = Math.min(retryDelayMs * attempt, 10000);
       onProgress?.(
-        `Login UI client request hit a temporary router readiness error. Retrying in ${Math.ceil(delayMs / 1000)}s...`
+        `${describeLoginUiClientRetry(retryReason)}. Retrying in ${Math.ceil(delayMs / 1000)}s...`
       );
       await sleep(delayMs);
     }
