@@ -946,6 +946,10 @@ export interface ControlAccountRouteAllocationResult {
   targets: ControlAccountRouteAllocationTarget[];
 }
 
+export type ControlAccountRouteAllocationAttempt =
+  | { state: 'allocated'; allocation: ControlAccountRouteAllocationResult }
+  | { state: 'capacity_unavailable' };
+
 export interface ControlAccountDirectorySourceShard {
   shardId: string;
   bindingRef: string;
@@ -1566,6 +1570,9 @@ export interface ControlServiceBinding {
   allocateAccountRoute(
     request: ControlAccountRouteAllocationRequest
   ): Promise<ControlAccountRouteAllocationResult>;
+  tryAllocateAccountRoute?(
+    request: ControlAccountRouteAllocationRequest
+  ): Promise<ControlAccountRouteAllocationAttempt>;
   commitAccountRoute?(
     request: ControlAccountRouteAllocationRequest
   ): Promise<ControlAccountRouteAllocationResult>;

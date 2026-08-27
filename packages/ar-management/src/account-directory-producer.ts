@@ -96,8 +96,21 @@ async function allocateAccountRouteWithElasticCapacity(
     idempotencyKey: input.idempotencyKey,
     dataRoles: [...dataRoles],
   };
+  const allocateOnce = async () => {
+    if (typeof control.tryAllocateAccountRoute === 'function') {
+      const attempt = await control.tryAllocateAccountRoute(request);
+      if (attempt.state === 'capacity_unavailable') {
+        throw new Error('control_account_allocation_capacity_unavailable');
+      }
+      if (attempt.state !== 'allocated' || !attempt.allocation) {
+        throw new Error('account_directory_capacity_response_invalid');
+      }
+      return attempt.allocation;
+    }
+    return control.allocateAccountRoute(request);
+  };
   try {
-    return await control.allocateAccountRoute(request);
+    return await allocateOnce();
   } catch (error) {
     if (
       !(error instanceof Error) ||
@@ -131,7 +144,7 @@ async function allocateAccountRouteWithElasticCapacity(
     if (capacity.some((result) => result.state !== 'ready')) {
       throw new Error('control_account_allocation_capacity_unavailable');
     }
-    return control.allocateAccountRoute(request);
+    return allocateOnce();
   }
 }
 

@@ -291,6 +291,33 @@ describe('account directory producer', () => {
     expect(allocateAccountRoute).toHaveBeenCalledTimes(1);
   });
 
+  it('treats the non-throwing Control capacity outcome as a retryable allocation boundary', async () => {
+    const { workerEnv, allocateAccountRoute, ensureTenantShardCapacity } = env();
+    const tryAllocateAccountRoute = vi
+      .fn()
+      .mockResolvedValueOnce({ state: 'capacity_unavailable' })
+      .mockImplementationOnce(async () => ({
+        state: 'allocated',
+        allocation: await allocateAccountRoute(),
+      }));
+    Object.assign(workerEnv.CONTROL!, { tryAllocateAccountRoute });
+
+    await expect(
+      buildInitialAccountDirectoryPublication(workerEnv, {
+        tenantId: 'tenant-a',
+        accountId: 'account-a',
+        residencyPolicyId: 'policy-a',
+        residencyPartition: 'jp',
+        idempotencyKey: 'create-account-a',
+        operationId: 'operation-account-a',
+      })
+    ).resolves.toMatchObject({ accountId: 'account-a' });
+
+    expect(tryAllocateAccountRoute).toHaveBeenCalledTimes(2);
+    expect(ensureTenantShardCapacity).toHaveBeenCalledTimes(2);
+    expect(allocateAccountRoute).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed when the capacity response does not match the requested role', async () => {
     const { workerEnv, allocateAccountRoute, ensureTenantShardCapacity } = env();
     allocateAccountRoute.mockRejectedValueOnce(

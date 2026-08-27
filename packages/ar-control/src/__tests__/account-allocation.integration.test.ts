@@ -445,6 +445,9 @@ describe('account route allocation', () => {
     await expect(
       service.allocate(request({ dataRoles: ['tenant_core/users'] }), 'env-test')
     ).rejects.toThrow('control_account_allocation_capacity_unavailable');
+    await expect(
+      service.tryAllocate(request({ dataRoles: ['tenant_core/users'] }), 'env-test')
+    ).resolves.toEqual({ state: 'capacity_unavailable' });
     expect(
       database.prepare(`SELECT COUNT(*) AS count FROM control_tenant_shard_allocations`).get()
     ).toEqual({ count: 0 });

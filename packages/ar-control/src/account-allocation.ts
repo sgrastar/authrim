@@ -1,6 +1,7 @@
 import {
   assertControlPlaneRecordIsSecretFree,
   type ControlAccountDataRole,
+  type ControlAccountRouteAllocationAttempt,
   type ControlAccountRouteAllocationRequest,
   type ControlAccountRouteAllocationResult,
   type ControlAccountRouteAllocationTarget,
@@ -675,6 +676,23 @@ export class ControlAccountAllocationService {
     };
     assertControlPlaneRecordIsSecretFree(result);
     return result;
+  }
+
+  async tryAllocate(
+    input: unknown,
+    environmentId: string
+  ): Promise<ControlAccountRouteAllocationAttempt> {
+    try {
+      return { state: 'allocated', allocation: await this.allocate(input, environmentId) };
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'control_account_allocation_capacity_unavailable'
+      ) {
+        return { state: 'capacity_unavailable' };
+      }
+      throw error;
+    }
   }
 
   async commit(

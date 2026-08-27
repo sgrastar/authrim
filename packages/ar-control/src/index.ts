@@ -1872,6 +1872,16 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  tryAllocateAccountRoute(input: unknown) {
+    return rpcResult(() => {
+      const caller = authorizedCaller(this.ctx.props);
+      return new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).tryAllocate(input, caller.environmentId);
+    });
+  }
+
   commitAccountRoute(input: unknown) {
     return rpcResult(() => {
       const caller = authorizedCaller(this.ctx.props);
