@@ -202,20 +202,32 @@ export class D1AccountAllocationRepository {
     }
   }
 
-  async allocate(plan: AccountAllocationPlan, now: number): Promise<AccountAllocationRow> {
-    const [byAccount, byIdempotency] = await Promise.all([
-      this.getByAccount(plan),
-      this.getByIdempotency(plan),
-    ]);
-    if (byIdempotency) {
-      this.assertMatches(byIdempotency, plan);
-      if (!['reserved', 'committed'].includes(byIdempotency.reservation_state)) {
-        throw new Error('control_account_allocation_idempotency_conflict');
-      }
+  async allocate(
+    plans: readonly AccountAllocationPlan[],
+    now: number
+  ): Promise<AccountAllocationRow[]> {
+    if (plans.length < 1 || plans.length > 2) {
+      throw new Error('invalid_account_route_data_roles');
     }
-    if (byAccount) return byAccount;
+    await Promise.all(
+      plans.map(async (plan) => {
+        const [byAccount, byIdempotency] = await Promise.all([
+          this.getByAccount(plan),
+          this.getByIdempotency(plan),
+        ]);
+        if (byIdempotency) {
+          this.assertMatches(byIdempotency, plan);
+          if (!['reserved', 'committed'].includes(byIdempotency.reservation_state)) {
+            throw new Error('control_account_allocation_idempotency_conflict');
+          }
+        }
+        if (byAccount && byAccount.idempotency_key !== plan.idempotencyKey) {
+          throw new Error('control_account_allocation_idempotency_conflict');
+        }
+      })
+    );
 
-    await this.db.batch([
+    const statements = plans.flatMap((plan) => [
       this.db
         .prepare(
           `INSERT OR IGNORE INTO control_tenant_shard_allocations (
@@ -318,11 +330,62 @@ export class D1AccountAllocationRepository {
           plan.allocationId
         ),
     ]);
+    const first = plans[0];
+    // D1 batches are transactional. This deliberately invalid final statement aborts and rolls
+    // back every role reservation when the batch could not reserve the complete requested set.
+    statements.push(
+      this.db
+        .prepare(
+          `INSERT INTO control_operations (
+             operation_id, environment_id, operation_kind, idempotency_key, status,
+             requested_by_type, attempt_count, created_at, updated_at
+           )
+           SELECT ?, ?, 'account_allocation_guard', ?, 'queued', 'capacity_guard', 0, ?, ?
+            WHERE (
+              SELECT COUNT(*) FROM control_tenant_shard_allocations
+               WHERE environment_id = ? AND tenant_id = ? AND account_id_blind_digest = ?
+                 AND residency_partition = ? AND idempotency_key = ?
+                 AND data_role IN (${plans.map(() => '?').join(',')})
+                 AND reservation_state IN ('reserved', 'committed')
+                 AND capacity_counted_at IS NOT NULL
+            ) <> ?`
+        )
+        .bind(
+          `guard_${first.allocationId.slice('allocation_'.length)}`,
+          first.environmentId,
+          `account-allocation-guard:${first.allocationId.slice('allocation_'.length)}`,
+          now,
+          now,
+          first.environmentId,
+          first.tenantId,
+          first.accountIdBlindDigest,
+          first.residencyPartition,
+          first.idempotencyKey,
+          ...plans.map((plan) => plan.dataRole),
+          plans.length
+        )
+    );
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /CHECK constraint failed: requested_by_type IN/iu.test(error.message)
+      ) {
+        throw new Error('control_account_allocation_capacity_unavailable');
+      }
+      throw error;
+    }
 
-    const result = (await this.getByAccount(plan)) ?? (await this.getByIdempotency(plan));
-    if (!result) throw new Error('control_account_allocation_capacity_unavailable');
-    this.assertMatches(result, plan);
-    return result;
+    const results = await Promise.all(
+      plans.map(async (plan) => {
+        const result = (await this.getByAccount(plan)) ?? (await this.getByIdempotency(plan));
+        if (!result) throw new Error('control_account_allocation_capacity_unavailable');
+        this.assertMatches(result, plan);
+        return result;
+      })
+    );
+    return results;
   }
 
   async commit(
@@ -606,35 +669,30 @@ export class ControlAccountAllocationService {
   ): Promise<ControlAccountRouteAllocationResult> {
     const safeEnvironmentId = requiredId(environmentId, 'invalid_environment_id');
     const request = parseRequest(input);
-    const targets: ControlAccountRouteAllocationTarget[] = [];
-    for (const dataRole of request.dataRoles) {
-      const digest = await sha256(
-        [
-          safeEnvironmentId,
-          request.tenantId,
-          request.accountIdBlindDigest,
+    const plans = await Promise.all(
+      request.dataRoles.map(async (dataRole): Promise<AccountAllocationPlan> => {
+        const digest = await sha256(
+          [
+            safeEnvironmentId,
+            request.tenantId,
+            request.accountIdBlindDigest,
+            dataRole,
+            request.residencyPartition,
+          ].join('\0')
+        );
+        return {
+          allocationId: `allocation_${digest.slice(0, 32)}`,
+          environmentId: safeEnvironmentId,
+          tenantId: request.tenantId,
+          accountIdBlindDigest: request.accountIdBlindDigest,
           dataRole,
-          request.residencyPartition,
-        ].join('\0')
-      );
-      targets.push(
-        toTarget(
-          await this.repository.allocate(
-            {
-              allocationId: `allocation_${digest.slice(0, 32)}`,
-              environmentId: safeEnvironmentId,
-              tenantId: request.tenantId,
-              accountIdBlindDigest: request.accountIdBlindDigest,
-              dataRole,
-              residencyPolicyId: request.residencyPolicyId,
-              residencyPartition: request.residencyPartition,
-              idempotencyKey: request.idempotencyKey,
-            },
-            this.now()
-          )
-        )
-      );
-    }
+          residencyPolicyId: request.residencyPolicyId,
+          residencyPartition: request.residencyPartition,
+          idempotencyKey: request.idempotencyKey,
+        };
+      })
+    );
+    const targets = (await this.repository.allocate(plans, this.now())).map(toTarget);
     const result: ControlAccountRouteAllocationResult = {
       tenantId: request.tenantId,
       residencyPolicyId: request.residencyPolicyId,

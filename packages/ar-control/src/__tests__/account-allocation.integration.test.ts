@@ -441,6 +441,58 @@ describe('account route allocation', () => {
     ).toEqual({ count: 0 });
   });
 
+  it('rolls back every role when one role has no capacity and retries cleanly', async () => {
+    database.exec(
+      `UPDATE control_shard_capacity
+          SET allocation_status = 'full'
+        WHERE shard_id IN ('pii-a', 'pii-b')`
+    );
+
+    await expect(service.allocate(request(), 'env-test')).rejects.toThrow(
+      'control_account_allocation_capacity_unavailable'
+    );
+    expect(
+      database.prepare(`SELECT COUNT(*) AS count FROM control_tenant_shard_allocations`).get()
+    ).toEqual({ count: 0 });
+    expect(
+      database
+        .prepare(
+          `SELECT shard_id, allocated_account_count FROM control_shard_capacity
+            WHERE shard_id IN ('users-a', 'users-b') ORDER BY shard_id`
+        )
+        .all()
+    ).toEqual([
+      { shard_id: 'users-a', allocated_account_count: 50 },
+      { shard_id: 'users-b', allocated_account_count: 10 },
+    ]);
+    expect(database.prepare(`SELECT COUNT(*) AS count FROM control_audit_events`).get()).toEqual({
+      count: 0,
+    });
+
+    database.exec(
+      `UPDATE control_shard_capacity
+          SET allocation_status = 'eligible'
+        WHERE shard_id IN ('pii-a', 'pii-b')`
+    );
+    await expect(service.allocate(request(), 'env-test')).resolves.toMatchObject({
+      targets: [
+        { dataRole: 'tenant_core/users', shardId: 'users-b' },
+        { dataRole: 'tenant_pii', shardId: 'pii-a' },
+      ],
+    });
+    expect(
+      database.prepare(`SELECT COUNT(*) AS count FROM control_tenant_shard_allocations`).get()
+    ).toEqual({ count: 2 });
+  });
+
+  it('rejects a second idempotency key for an existing blind account', async () => {
+    await service.allocate(request(), 'env-test');
+
+    await expect(
+      service.allocate(request({ idempotencyKey: 'different-account-operation' }), 'env-test')
+    ).rejects.toThrow('control_account_allocation_idempotency_conflict');
+  });
+
   it('rejects malformed or duplicate role requests without reflecting blind input', async () => {
     await expect(
       service.allocate(request({ accountIdBlindDigest: 'raw-account-id' }), 'env-test')
