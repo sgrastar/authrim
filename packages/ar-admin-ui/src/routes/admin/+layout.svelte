@@ -216,6 +216,11 @@
 		operations: [
 			{ path: '/admin/scale', label: $LL.admin_nav_scale(), icon: 'i-ph-chart-bar' },
 			{
+				path: '/admin/storage-topology',
+				label: 'Storage Topology',
+				icon: 'i-ph-database'
+			},
+			{
 				path: '/admin/control-plane',
 				label: $LL.admin_nav_control_plane(),
 				icon: 'i-ph-git-diff'

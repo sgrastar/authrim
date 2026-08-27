@@ -104,6 +104,97 @@ const capacityPreview = {
 	]
 } as const;
 
+const storageTopology = {
+	environmentId: 'test',
+	generatedAt: 1_800_000_100,
+	policy: {
+		maxConcurrentProvisioning: 2,
+		maxReadySpares: 1,
+		maxD1Resources: 200,
+		dailyD1CreateBudget: 50,
+		targetAccountCount: 500
+	},
+	summary: {
+		providerInventoryAvailable: true,
+		providerD1Count: 2,
+		controlManagedD1Count: 1,
+		tenantShardCount: 1,
+		lookupShardCount: 0,
+		activeTenantShardCount: 1,
+		readySpareCount: 0,
+		provisioningD1Count: 0,
+		failedD1Count: 0,
+		accountCount: 12,
+		inFlightOperationCount: 0,
+		blockedOperationCount: 0
+	},
+	tenants: [
+		{
+			tenantId: 'tenant-1',
+			isolationPolicy: 'tenant_exclusive',
+			policyState: 'active',
+			accountCount: 12,
+			assignedShardCount: 1
+		}
+	],
+	tenantShards: [
+		{
+			shardId: 'shard-1',
+			desiredResourceId: 'desired-1',
+			databaseName: 'test-authrim-tenant-users-db-1',
+			providerDatabaseId: 'database-1',
+			dataRole: 'tenant_core/users',
+			allocationScope: 'tenant_exclusive',
+			ownerTenantId: 'tenant-1',
+			residencyPartition: 'default',
+			status: 'active',
+			healthStatus: 'healthy',
+			allocationStatus: 'eligible',
+			targetAccountCount: 500,
+			allocatedAccountCount: 12,
+			observedAccountCount: 12,
+			storageBytes: 4096,
+			activeAssignmentCount: 1,
+			createdAt: 1_800_000_000,
+			updatedAt: 1_800_000_100
+		}
+	],
+	lookupShards: [],
+	operations: [
+		{
+			operationId: 'operation-1',
+			tenantId: 'tenant-1',
+			dataRole: 'tenant_core/users',
+			databaseName: 'test-authrim-tenant-users-db-1',
+			providerDatabaseId: 'database-1',
+			provisioningState: 'active',
+			status: 'succeeded',
+			attemptCount: 1,
+			lastErrorCode: null,
+			decidedAt: 1_800_000_000,
+			createStartedAt: 1_800_000_001,
+			readyAt: 1_800_000_010,
+			updatedAt: 1_800_000_010
+		}
+	],
+	providerDatabases: [
+		{
+			databaseId: 'database-1',
+			databaseName: 'test-authrim-tenant-users-db-1',
+			createdAt: '2027-01-15T08:00:00.000Z',
+			fileSizeBytes: 4096,
+			managedByControl: true
+		},
+		{
+			databaseId: 'database-fixed',
+			databaseName: 'test-authrim-control-db',
+			createdAt: null,
+			fileSizeBytes: null,
+			managedByControl: false
+		}
+	]
+} as const;
+
 const tenantRecovery = {
 	operationId: 'tenant-recovery-1',
 	environmentId: 'test',
@@ -182,6 +273,34 @@ describe('admin control-plane API', () => {
 		const [url, init] = fetchMock.mock.calls[0] ?? [];
 		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/provisioning-authority');
 		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('loads the redacted storage topology without a tenant header', async () => {
+		const fetchMock = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response(JSON.stringify({ topology: storageTopology })));
+
+		await expect(adminControlPlaneAPI.getStorageTopology()).resolves.toEqual({
+			topology: storageTopology
+		});
+		const [url, init] = fetchMock.mock.calls[0] ?? [];
+		expect(requestPath(url)).toBe('/api/admin/platform/control-plane/storage-topology');
+		expect((init?.headers as Headers).get('X-Tenant-Id')).toBeNull();
+	});
+
+	it('fails closed when a storage topology contains an unexpected sensitive field', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					topology: { ...storageTopology, cloudflareApiToken: 'forbidden' }
+				})
+			)
+		);
+
+		await expect(adminControlPlaneAPI.getStorageTopology()).rejects.toMatchObject({
+			status: 502,
+			message: 'CONTROL_PLANE_RESPONSE_INVALID'
+		});
 	});
 
 	it('loads release rollout progress for the persistent Admin banner', async () => {

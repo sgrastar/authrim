@@ -187,6 +187,124 @@ export interface ControlProvisioningAuthorityStatus {
   activeExecutor: 'control' | 'setup_operator';
 }
 
+export interface ControlStorageTopologyPolicy {
+  maxConcurrentProvisioning: number;
+  maxReadySpares: number;
+  maxD1Resources: number;
+  dailyD1CreateBudget: number;
+  targetAccountCount: number;
+}
+
+export interface ControlStorageTopologySummary {
+  providerInventoryAvailable: boolean;
+  providerD1Count: number | null;
+  controlManagedD1Count: number;
+  tenantShardCount: number;
+  lookupShardCount: number;
+  activeTenantShardCount: number;
+  readySpareCount: number;
+  provisioningD1Count: number;
+  failedD1Count: number;
+  accountCount: number;
+  inFlightOperationCount: number;
+  blockedOperationCount: number;
+}
+
+export interface ControlStorageTopologyTenant {
+  tenantId: string;
+  isolationPolicy: ControlTenantIsolationPolicy;
+  policyState: ControlTenantPlacementPolicy['state'];
+  accountCount: number;
+  assignedShardCount: number;
+}
+
+export interface ControlStorageTopologyTenantShard {
+  shardId: string;
+  desiredResourceId: string;
+  databaseName: string;
+  providerDatabaseId: string | null;
+  dataRole: ControlTenantShardDataRole;
+  allocationScope: ControlTenantShardAllocationScope;
+  ownerTenantId: string | null;
+  residencyPartition: string;
+  status:
+    | 'requested'
+    | 'provisioning'
+    | 'ready'
+    | 'active'
+    | 'degraded'
+    | 'failed'
+    | 'retired'
+    | 'deleting'
+    | 'deleted';
+  healthStatus: 'unknown' | 'healthy' | 'warning' | 'degraded' | 'unavailable' | null;
+  allocationStatus: 'eligible' | 'draining' | 'full' | 'blocked' | null;
+  targetAccountCount: number | null;
+  allocatedAccountCount: number | null;
+  observedAccountCount: number | null;
+  storageBytes: number | null;
+  activeAssignmentCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyLookupShard {
+  lookupShardId: string;
+  desiredResourceId: string;
+  databaseName: string;
+  providerDatabaseId: string | null;
+  residencyPartition: string;
+  status: 'requested' | 'provisioning' | 'ready' | 'active' | 'draining' | 'retired' | 'failed';
+  capacityWeight: number;
+  activeBucketCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyOperation {
+  operationId: string;
+  tenantId: string | null;
+  dataRole: ControlTenantShardDataRole | 'lookup';
+  databaseName: string;
+  providerDatabaseId: string | null;
+  provisioningState:
+    | 'requested'
+    | 'creating'
+    | 'ready'
+    | 'active'
+    | 'degraded'
+    | 'failed'
+    | 'deleting'
+    | 'deleted';
+  status: ControlOperationStatus;
+  attemptCount: number;
+  lastErrorCode: string | null;
+  decidedAt: number;
+  createStartedAt: number | null;
+  readyAt: number | null;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyProviderDatabase {
+  databaseId: string;
+  databaseName: string;
+  createdAt: string | null;
+  fileSizeBytes: number | null;
+  managedByControl: boolean;
+}
+
+export interface ControlStorageTopology {
+  environmentId: string;
+  generatedAt: number;
+  policy: ControlStorageTopologyPolicy;
+  summary: ControlStorageTopologySummary;
+  tenants: readonly ControlStorageTopologyTenant[];
+  tenantShards: readonly ControlStorageTopologyTenantShard[];
+  lookupShards: readonly ControlStorageTopologyLookupShard[];
+  operations: readonly ControlStorageTopologyOperation[];
+  providerDatabases: readonly ControlStorageTopologyProviderDatabase[];
+}
+
 export type ControlTenantShardDataRole = 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
 export type ControlTenantIsolationPolicy = 'shared_pool' | 'tenant_exclusive';
 export type ControlTenantShardAllocationScope = 'shared_pool' | 'tenant_exclusive';
@@ -1295,6 +1413,7 @@ export interface ControlServiceBinding {
     request: ControlReleaseRolloutRetryTargetRequest
   ): Promise<ControlReleaseRolloutStatus>;
   getProvisioningAuthorityStatus?(): Promise<ControlProvisioningAuthorityStatus>;
+  getStorageTopology?(): Promise<ControlStorageTopology>;
   previewCapacityProvisioning(
     request: ControlCapacityProfileRequest
   ): Promise<ControlCapacityProvisioningPreview>;

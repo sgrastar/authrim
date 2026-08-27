@@ -15,6 +15,7 @@ import {
   type ControlProvisioningAuthorityStatus,
   type ControlReleaseRolloutStatus,
   type ControlReleaseRolloutRetryTargetRequest,
+  type ControlStorageTopology,
   type ControlShardCleanupApprovalRequest,
   type ControlShardCleanupRetryRequest,
   type ControlShardCleanupView,
@@ -124,6 +125,99 @@ const LOOKUP_HMAC_STATES = new Set([
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const SAFE_D1_BINDING = /^[A-Z][A-Z0-9_]*_TDB_[A-Z0-9_]{1,123}$/u;
 const SAFE_DATABASE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/u;
+const STORAGE_TOPOLOGY_KEYS = new Set([
+  'environmentId',
+  'generatedAt',
+  'policy',
+  'summary',
+  'tenants',
+  'tenantShards',
+  'lookupShards',
+  'operations',
+  'providerDatabases',
+]);
+const STORAGE_POLICY_KEYS = new Set([
+  'maxConcurrentProvisioning',
+  'maxReadySpares',
+  'maxD1Resources',
+  'dailyD1CreateBudget',
+  'targetAccountCount',
+]);
+const STORAGE_SUMMARY_KEYS = new Set([
+  'providerInventoryAvailable',
+  'providerD1Count',
+  'controlManagedD1Count',
+  'tenantShardCount',
+  'lookupShardCount',
+  'activeTenantShardCount',
+  'readySpareCount',
+  'provisioningD1Count',
+  'failedD1Count',
+  'accountCount',
+  'inFlightOperationCount',
+  'blockedOperationCount',
+]);
+const STORAGE_TENANT_KEYS = new Set([
+  'tenantId',
+  'isolationPolicy',
+  'policyState',
+  'accountCount',
+  'assignedShardCount',
+]);
+const STORAGE_TENANT_SHARD_KEYS = new Set([
+  'shardId',
+  'desiredResourceId',
+  'databaseName',
+  'providerDatabaseId',
+  'dataRole',
+  'allocationScope',
+  'ownerTenantId',
+  'residencyPartition',
+  'status',
+  'healthStatus',
+  'allocationStatus',
+  'targetAccountCount',
+  'allocatedAccountCount',
+  'observedAccountCount',
+  'storageBytes',
+  'activeAssignmentCount',
+  'createdAt',
+  'updatedAt',
+]);
+const STORAGE_LOOKUP_SHARD_KEYS = new Set([
+  'lookupShardId',
+  'desiredResourceId',
+  'databaseName',
+  'providerDatabaseId',
+  'residencyPartition',
+  'status',
+  'capacityWeight',
+  'activeBucketCount',
+  'createdAt',
+  'updatedAt',
+]);
+const STORAGE_OPERATION_KEYS = new Set([
+  'operationId',
+  'tenantId',
+  'dataRole',
+  'databaseName',
+  'providerDatabaseId',
+  'provisioningState',
+  'status',
+  'attemptCount',
+  'lastErrorCode',
+  'decidedAt',
+  'createStartedAt',
+  'readyAt',
+  'updatedAt',
+]);
+const STORAGE_PROVIDER_DATABASE_KEYS = new Set([
+  'databaseId',
+  'databaseName',
+  'createdAt',
+  'fileSizeBytes',
+  'managedByControl',
+]);
 const SHARD_CLEANUP_KEYS = new Set([
   'environmentId',
   'shardId',
@@ -781,6 +875,218 @@ function parseProvisioningAuthorityStatus(value: unknown): ControlProvisioningAu
   }
   assertControlPlaneRecordIsSecretFree(status);
   return status as unknown as ControlProvisioningAuthorityStatus;
+}
+
+function storageRecord(value: unknown, keys: ReadonlySet<string>): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? exactKeys(value as Record<string, unknown>, keys)
+      ? (value as Record<string, unknown>)
+      : null
+    : null;
+}
+
+function storageCount(value: unknown): boolean {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function storageNullableCount(value: unknown): boolean {
+  return value === null || storageCount(value);
+}
+
+function storageNullableId(value: unknown): boolean {
+  return value === null || (typeof value === 'string' && SAFE_IDEMPOTENCY_KEY.test(value));
+}
+
+function parseStorageTopology(
+  value: unknown,
+  expectedEnvironmentId: string
+): ControlStorageTopology {
+  const topology = storageRecord(value, STORAGE_TOPOLOGY_KEYS);
+  if (
+    !topology ||
+    topology.environmentId !== expectedEnvironmentId ||
+    !storageCount(topology.generatedAt)
+  ) {
+    throw new Error('control_plane_storage_topology_invalid');
+  }
+  const policy = storageRecord(topology.policy, STORAGE_POLICY_KEYS);
+  const summary = storageRecord(topology.summary, STORAGE_SUMMARY_KEYS);
+  if (
+    !policy ||
+    Object.values(policy).some((entry) => !storageCount(entry)) ||
+    !summary ||
+    typeof summary.providerInventoryAvailable !== 'boolean' ||
+    !storageNullableCount(summary.providerD1Count) ||
+    Object.entries(summary).some(
+      ([key, entry]) =>
+        key !== 'providerInventoryAvailable' && key !== 'providerD1Count' && !storageCount(entry)
+    ) ||
+    summary.providerInventoryAvailable !== (summary.providerD1Count !== null) ||
+    !Array.isArray(topology.tenants) ||
+    topology.tenants.length > 1000 ||
+    !Array.isArray(topology.tenantShards) ||
+    topology.tenantShards.length > 1000 ||
+    !Array.isArray(topology.lookupShards) ||
+    topology.lookupShards.length > 1000 ||
+    !Array.isArray(topology.operations) ||
+    topology.operations.length > 100 ||
+    !Array.isArray(topology.providerDatabases) ||
+    topology.providerDatabases.length > 1000
+  ) {
+    throw new Error('control_plane_storage_topology_invalid');
+  }
+
+  for (const candidate of topology.tenants) {
+    const tenant = storageRecord(candidate, STORAGE_TENANT_KEYS);
+    if (
+      !tenant ||
+      typeof tenant.tenantId !== 'string' ||
+      !SAFE_ENVIRONMENT_ID.test(tenant.tenantId) ||
+      !['shared_pool', 'tenant_exclusive'].includes(String(tenant.isolationPolicy)) ||
+      !['provisioning', 'active', 'migrating', 'retired'].includes(String(tenant.policyState)) ||
+      !storageCount(tenant.accountCount) ||
+      !storageCount(tenant.assignedShardCount)
+    ) {
+      throw new Error('control_plane_storage_topology_invalid');
+    }
+  }
+  for (const candidate of topology.tenantShards) {
+    const shard = storageRecord(candidate, STORAGE_TENANT_SHARD_KEYS);
+    if (
+      !shard ||
+      typeof shard.shardId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(shard.shardId) ||
+      typeof shard.desiredResourceId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(shard.desiredResourceId) ||
+      typeof shard.databaseName !== 'string' ||
+      !SAFE_DATABASE_NAME.test(shard.databaseName) ||
+      !storageNullableId(shard.providerDatabaseId) ||
+      !['tenant_core/default', 'tenant_core/users', 'tenant_pii'].includes(
+        String(shard.dataRole)
+      ) ||
+      !['shared_pool', 'tenant_exclusive'].includes(String(shard.allocationScope)) ||
+      !storageNullableId(shard.ownerTenantId) ||
+      (shard.allocationScope === 'shared_pool' && shard.ownerTenantId !== null) ||
+      (shard.allocationScope === 'tenant_exclusive' && shard.ownerTenantId === null) ||
+      typeof shard.residencyPartition !== 'string' ||
+      !SAFE_ENVIRONMENT_ID.test(shard.residencyPartition) ||
+      ![
+        'requested',
+        'provisioning',
+        'ready',
+        'active',
+        'degraded',
+        'failed',
+        'retired',
+        'deleting',
+        'deleted',
+      ].includes(String(shard.status)) ||
+      (shard.healthStatus !== null &&
+        !['unknown', 'healthy', 'warning', 'degraded', 'unavailable'].includes(
+          String(shard.healthStatus)
+        )) ||
+      (shard.allocationStatus !== null &&
+        !['eligible', 'draining', 'full', 'blocked'].includes(String(shard.allocationStatus))) ||
+      !storageNullableCount(shard.targetAccountCount) ||
+      !storageNullableCount(shard.allocatedAccountCount) ||
+      !storageNullableCount(shard.observedAccountCount) ||
+      !storageNullableCount(shard.storageBytes) ||
+      !storageCount(shard.activeAssignmentCount) ||
+      !storageCount(shard.createdAt) ||
+      !storageCount(shard.updatedAt)
+    ) {
+      throw new Error('control_plane_storage_topology_invalid');
+    }
+  }
+  for (const candidate of topology.lookupShards) {
+    const shard = storageRecord(candidate, STORAGE_LOOKUP_SHARD_KEYS);
+    if (
+      !shard ||
+      typeof shard.lookupShardId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(shard.lookupShardId) ||
+      typeof shard.desiredResourceId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(shard.desiredResourceId) ||
+      typeof shard.databaseName !== 'string' ||
+      !SAFE_DATABASE_NAME.test(shard.databaseName) ||
+      !storageNullableId(shard.providerDatabaseId) ||
+      typeof shard.residencyPartition !== 'string' ||
+      !SAFE_ENVIRONMENT_ID.test(shard.residencyPartition) ||
+      !['requested', 'provisioning', 'ready', 'active', 'draining', 'retired', 'failed'].includes(
+        String(shard.status)
+      ) ||
+      typeof shard.capacityWeight !== 'number' ||
+      !Number.isFinite(shard.capacityWeight) ||
+      shard.capacityWeight <= 0 ||
+      !storageCount(shard.activeBucketCount) ||
+      !storageCount(shard.createdAt) ||
+      !storageCount(shard.updatedAt)
+    ) {
+      throw new Error('control_plane_storage_topology_invalid');
+    }
+  }
+  for (const candidate of topology.operations) {
+    const operation = storageRecord(candidate, STORAGE_OPERATION_KEYS);
+    if (
+      !operation ||
+      typeof operation.operationId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(operation.operationId) ||
+      !storageNullableId(operation.tenantId) ||
+      !['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'].includes(
+        String(operation.dataRole)
+      ) ||
+      typeof operation.databaseName !== 'string' ||
+      !SAFE_DATABASE_NAME.test(operation.databaseName) ||
+      !storageNullableId(operation.providerDatabaseId) ||
+      ![
+        'requested',
+        'creating',
+        'ready',
+        'active',
+        'degraded',
+        'failed',
+        'deleting',
+        'deleted',
+      ].includes(String(operation.provisioningState)) ||
+      !['queued', 'running', 'waiting_retry', 'succeeded', 'blocked', 'canceled'].includes(
+        String(operation.status)
+      ) ||
+      !storageCount(operation.attemptCount) ||
+      (operation.lastErrorCode !== null &&
+        (typeof operation.lastErrorCode !== 'string' ||
+          !SAFE_ENVIRONMENT_ID.test(operation.lastErrorCode))) ||
+      !storageCount(operation.decidedAt) ||
+      !storageNullableCount(operation.createStartedAt) ||
+      !storageNullableCount(operation.readyAt) ||
+      !storageCount(operation.updatedAt)
+    ) {
+      throw new Error('control_plane_storage_topology_invalid');
+    }
+  }
+  for (const candidate of topology.providerDatabases) {
+    const database = storageRecord(candidate, STORAGE_PROVIDER_DATABASE_KEYS);
+    if (
+      !database ||
+      typeof database.databaseId !== 'string' ||
+      !SAFE_IDEMPOTENCY_KEY.test(database.databaseId) ||
+      typeof database.databaseName !== 'string' ||
+      !SAFE_DATABASE_NAME.test(database.databaseName) ||
+      (database.createdAt !== null &&
+        (typeof database.createdAt !== 'string' || database.createdAt.length > 64)) ||
+      !storageNullableCount(database.fileSizeBytes) ||
+      typeof database.managedByControl !== 'boolean'
+    ) {
+      throw new Error('control_plane_storage_topology_invalid');
+    }
+  }
+
+  if (
+    summary.providerD1Count !== topology.providerDatabases.length &&
+    summary.providerD1Count !== null
+  ) {
+    throw new Error('control_plane_storage_topology_invalid');
+  }
+  assertControlPlaneRecordIsSecretFree(topology);
+  return topology as unknown as ControlStorageTopology;
 }
 
 function parseShardCleanup(
@@ -2237,6 +2543,24 @@ controlPlaneOperationsRouter.get('/provisioning-authority', async (c) => {
     });
   } catch {
     return error(c, 503, 'CONTROL_PLANE_PROVISIONING_AUTHORITY_UNAVAILABLE');
+  }
+});
+
+controlPlaneOperationsRouter.get('/storage-topology', async (c) => {
+  if (!hasControlPlanePermission(auth(c), 'read')) {
+    return error(c, 403, 'CONTROL_PLANE_PLATFORM_AUTHORITY_REQUIRED');
+  }
+  const control = c.env.CONTROL;
+  if (!control?.getStorageTopology) {
+    return error(c, 503, 'CONTROL_PLANE_CONTROL_UNAVAILABLE');
+  }
+  try {
+    const expectedEnvironmentId = environmentId(c.env);
+    return c.json({
+      topology: parseStorageTopology(await control.getStorageTopology(), expectedEnvironmentId),
+    });
+  } catch {
+    return error(c, 503, 'CONTROL_PLANE_STORAGE_TOPOLOGY_UNAVAILABLE');
   }
 });
 

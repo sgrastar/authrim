@@ -87,6 +87,7 @@ import {
   releaseInitialBootstrapAcceleration,
 } from './bootstrap-accelerator';
 import { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
+import { getControlStorageTopology } from './storage-topology';
 import {
   getR2BucketMetricInventory,
   reportR2BucketMetrics,
@@ -1141,6 +1142,30 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       const caller = authorizedCaller(this.ctx.props);
       return service(this.env).getProvisioningAuthorityStatus(caller.environmentId);
     });
+  }
+
+  getStorageTopology() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      let providerDatabases = null;
+      try {
+        providerDatabases = await createControlApiClients(this.env).d1.listD1Databases();
+      } catch (error) {
+        log.warn('Cloudflare D1 inventory unavailable for storage topology', {
+          action: 'get_storage_topology',
+          errorType:
+            error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+              ? error.name
+              : 'NonErrorThrow',
+        });
+      }
+      return getControlStorageTopology({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        generatedAt: Math.floor(Date.now() / 1000),
+        providerDatabases,
+      });
+    }, 'get_storage_topology');
   }
 
   ensureTenantShardCapacity(input: unknown) {

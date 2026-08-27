@@ -7,6 +7,7 @@ import type {
   ControlLookupHmacRotationView,
   ControlProvisioningOperationDetail,
   ControlShardCleanupView,
+  ControlStorageTopology,
   ControlTenantDisasterRecoveryView,
   ControlTenantDisasterRecoveryStartRequest,
   ControlTenantPlacementPolicyActivationRequest,
@@ -122,6 +123,110 @@ const capacityResult: ControlCapacityProvisioningResult = {
       lastErrorCode: 'operator_action_required',
       createdAt: 1_800_000_000,
       updatedAt: 1_800_000_000,
+    },
+  ],
+};
+
+const storageTopology: ControlStorageTopology = {
+  environmentId: 'test',
+  generatedAt: 1_800_000_000,
+  policy: {
+    maxConcurrentProvisioning: 2,
+    maxReadySpares: 1,
+    maxD1Resources: 100,
+    dailyD1CreateBudget: 50,
+    targetAccountCount: 500,
+  },
+  summary: {
+    providerInventoryAvailable: true,
+    providerD1Count: 2,
+    controlManagedD1Count: 2,
+    tenantShardCount: 1,
+    lookupShardCount: 1,
+    activeTenantShardCount: 1,
+    readySpareCount: 0,
+    provisioningD1Count: 0,
+    failedD1Count: 0,
+    accountCount: 1,
+    inFlightOperationCount: 0,
+    blockedOperationCount: 0,
+  },
+  tenants: [
+    {
+      tenantId: 'tenant-1',
+      isolationPolicy: 'shared_pool',
+      policyState: 'active',
+      accountCount: 1,
+      assignedShardCount: 1,
+    },
+  ],
+  tenantShards: [
+    {
+      shardId: 'shard-1',
+      desiredResourceId: 'desired-1',
+      databaseName: 'test-authrim-users-1',
+      providerDatabaseId: 'database-1',
+      dataRole: 'tenant_core/users',
+      allocationScope: 'shared_pool',
+      ownerTenantId: null,
+      residencyPartition: 'default',
+      status: 'active',
+      healthStatus: 'healthy',
+      allocationStatus: 'eligible',
+      targetAccountCount: 500,
+      allocatedAccountCount: 1,
+      observedAccountCount: 1,
+      storageBytes: 4096,
+      activeAssignmentCount: 1,
+      createdAt: 100,
+      updatedAt: 110,
+    },
+  ],
+  lookupShards: [
+    {
+      lookupShardId: 'lookup-1',
+      desiredResourceId: 'desired-lookup-1',
+      databaseName: 'test-authrim-lookup-1',
+      providerDatabaseId: 'database-lookup-1',
+      residencyPartition: 'default',
+      status: 'active',
+      capacityWeight: 1,
+      activeBucketCount: 4096,
+      createdAt: 100,
+      updatedAt: 110,
+    },
+  ],
+  operations: [
+    {
+      operationId: 'operation-storage-1',
+      tenantId: null,
+      dataRole: 'tenant_core/users',
+      databaseName: 'test-authrim-users-1',
+      providerDatabaseId: 'database-1',
+      provisioningState: 'active',
+      status: 'succeeded',
+      attemptCount: 1,
+      lastErrorCode: null,
+      decidedAt: 100,
+      createStartedAt: 101,
+      readyAt: 110,
+      updatedAt: 110,
+    },
+  ],
+  providerDatabases: [
+    {
+      databaseId: 'database-1',
+      databaseName: 'test-authrim-users-1',
+      createdAt: '2026-08-28T00:00:00.000Z',
+      fileSizeBytes: 4096,
+      managedByControl: true,
+    },
+    {
+      databaseId: 'database-lookup-1',
+      databaseName: 'test-authrim-lookup-1',
+      createdAt: '2026-08-28T00:00:01.000Z',
+      fileSizeBytes: 2048,
+      managedByControl: true,
     },
   ],
 };
@@ -356,6 +461,7 @@ function createApp(input?: {
     automaticExecutionAvailable: false,
     activeExecutor: 'setup_operator' as const,
   }));
+  const getStorageTopology = vi.fn(async () => storageTopology);
   const previewCapacityProvisioning = vi.fn(async () => capacityPreview);
   const requestCapacityProvisioning = vi.fn(async () => capacityResult);
   const retryProvisioningOperationStep = vi.fn(async () => retriedOperation);
@@ -438,6 +544,7 @@ function createApp(input?: {
     reviewWorkerInventoryDriftFinding,
     getProvisioningOperation,
     getProvisioningAuthorityStatus,
+    getStorageTopology,
     previewCapacityProvisioning,
     requestCapacityProvisioning,
     retryProvisioningOperationStep,
@@ -494,6 +601,7 @@ function createApp(input?: {
     getReleaseMigrationRolloutStatus,
     retryReleaseMigrationRolloutTarget,
     getProvisioningAuthorityStatus,
+    getStorageTopology,
     previewCapacityProvisioning,
     requestCapacityProvisioning,
     retryProvisioningOperationStep,
@@ -607,6 +715,46 @@ describe('control-plane operations admin router', () => {
       },
     });
     expect(JSON.stringify(payload)).not.toContain('tokenValue');
+  });
+
+  it('returns a secret-free storage topology for Control Plane readers', async () => {
+    const target = createApp({ roles: ['viewer'], permissions: ['admin:control_plane:read'] });
+    const response = await target.app.request(
+      '/api/admin/platform/control-plane/storage-topology',
+      {},
+      target.env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ topology: storageTopology });
+    expect(target.getStorageTopology).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed for malformed storage topology and unauthorized machines', async () => {
+    const malformed = createApp({
+      control: {
+        getStorageTopology: vi.fn(async () => ({ ...storageTopology, bootstrapToken: 'secret' })),
+      },
+    });
+    const malformedResponse = await malformed.app.request(
+      '/api/admin/platform/control-plane/storage-topology',
+      {},
+      malformed.env
+    );
+    expect(malformedResponse.status).toBe(503);
+
+    const unauthorized = createApp({
+      roles: [],
+      permissions: [],
+      actorType: 'machine',
+      authMethod: 'machine_access_token',
+    });
+    const unauthorizedResponse = await unauthorized.app.request(
+      '/api/admin/platform/control-plane/storage-topology',
+      {},
+      unauthorized.env
+    );
+    expect(unauthorizedResponse.status).toBe(403);
   });
 
   it('returns release migration progress for Admin UI polling', async () => {

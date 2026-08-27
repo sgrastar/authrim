@@ -14558,6 +14558,38 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/platform/control-plane/storage-topology:
+    get:
+      tags:
+        - Database Connections
+      operationId: getApiAdminPlatformControlPlaneStorageTopology
+      summary: Inspect the current D1 storage topology.
+      description: >-
+        Returns a secret-free Control snapshot of tenant and Lookup shards, account-capacity
+        utilization, ready spares, recent provisioning operations, and the environment-scoped
+        Cloudflare D1 inventory. If the Cloudflare inventory API is temporarily unavailable, the
+        Control snapshot remains available and providerInventoryAvailable is false.
+      responses:
+        '200':
+          description: Current D1 storage topology.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [topology]
+                properties:
+                  topology:
+                    $ref: '#/components/schemas/AdminControlStorageTopology'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/platform/control-plane/capacity/preview:
     post:
       tags:
@@ -57514,6 +57546,344 @@ components:
         migrationStreamId:
           type: string
           enum: [d1-core, d1-pii, d1-lookup]
+    AdminControlStorageTopology:
+      type: object
+      additionalProperties: false
+      required:
+        - environmentId
+        - generatedAt
+        - policy
+        - summary
+        - tenants
+        - tenantShards
+        - lookupShards
+        - operations
+        - providerDatabases
+      properties:
+        environmentId:
+          type: string
+          maxLength: 128
+        generatedAt:
+          type: integer
+          format: int64
+          minimum: 0
+        policy:
+          $ref: '#/components/schemas/AdminControlStorageTopologyPolicy'
+        summary:
+          $ref: '#/components/schemas/AdminControlStorageTopologySummary'
+        tenants:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/AdminControlStorageTopologyTenant'
+        tenantShards:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/AdminControlStorageTopologyTenantShard'
+        lookupShards:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/AdminControlStorageTopologyLookupShard'
+        operations:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AdminControlStorageTopologyOperation'
+        providerDatabases:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/AdminControlStorageTopologyProviderDatabase'
+    AdminControlStorageTopologyPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - maxConcurrentProvisioning
+        - maxReadySpares
+        - maxD1Resources
+        - dailyD1CreateBudget
+        - targetAccountCount
+      properties:
+        maxConcurrentProvisioning:
+          type: integer
+          minimum: 0
+        maxReadySpares:
+          type: integer
+          minimum: 0
+        maxD1Resources:
+          type: integer
+          minimum: 0
+        dailyD1CreateBudget:
+          type: integer
+          minimum: 0
+        targetAccountCount:
+          type: integer
+          minimum: 0
+    AdminControlStorageTopologySummary:
+      type: object
+      additionalProperties: false
+      required:
+        - providerInventoryAvailable
+        - providerD1Count
+        - controlManagedD1Count
+        - tenantShardCount
+        - lookupShardCount
+        - activeTenantShardCount
+        - readySpareCount
+        - provisioningD1Count
+        - failedD1Count
+        - accountCount
+        - inFlightOperationCount
+        - blockedOperationCount
+      properties:
+        providerInventoryAvailable:
+          type: boolean
+        providerD1Count:
+          type: [integer, 'null']
+          minimum: 0
+        controlManagedD1Count:
+          type: integer
+          minimum: 0
+        tenantShardCount:
+          type: integer
+          minimum: 0
+        lookupShardCount:
+          type: integer
+          minimum: 0
+        activeTenantShardCount:
+          type: integer
+          minimum: 0
+        readySpareCount:
+          type: integer
+          minimum: 0
+        provisioningD1Count:
+          type: integer
+          minimum: 0
+        failedD1Count:
+          type: integer
+          minimum: 0
+        accountCount:
+          type: integer
+          minimum: 0
+        inFlightOperationCount:
+          type: integer
+          minimum: 0
+        blockedOperationCount:
+          type: integer
+          minimum: 0
+    AdminControlStorageTopologyTenant:
+      type: object
+      additionalProperties: false
+      required: [tenantId, isolationPolicy, policyState, accountCount, assignedShardCount]
+      properties:
+        tenantId:
+          type: string
+          maxLength: 128
+        isolationPolicy:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+        policyState:
+          type: string
+          enum: [provisioning, active, migrating, retired]
+        accountCount:
+          type: integer
+          minimum: 0
+        assignedShardCount:
+          type: integer
+          minimum: 0
+    AdminControlStorageTopologyTenantShard:
+      type: object
+      additionalProperties: false
+      required:
+        - shardId
+        - desiredResourceId
+        - databaseName
+        - providerDatabaseId
+        - dataRole
+        - allocationScope
+        - ownerTenantId
+        - residencyPartition
+        - status
+        - healthStatus
+        - allocationStatus
+        - targetAccountCount
+        - allocatedAccountCount
+        - observedAccountCount
+        - storageBytes
+        - activeAssignmentCount
+        - createdAt
+        - updatedAt
+      properties:
+        shardId:
+          type: string
+        desiredResourceId:
+          type: string
+        databaseName:
+          type: string
+        providerDatabaseId:
+          type: [string, 'null']
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii]
+        allocationScope:
+          type: string
+          enum: [shared_pool, tenant_exclusive]
+        ownerTenantId:
+          type: [string, 'null']
+        residencyPartition:
+          type: string
+        status:
+          type: string
+          enum:
+            [requested, provisioning, ready, active, degraded, failed, retired, deleting, deleted]
+        healthStatus:
+          type: [string, 'null']
+          enum: [unknown, healthy, warning, degraded, unavailable, null]
+        allocationStatus:
+          type: [string, 'null']
+          enum: [eligible, draining, full, blocked, null]
+        targetAccountCount:
+          type: [integer, 'null']
+          minimum: 0
+        allocatedAccountCount:
+          type: [integer, 'null']
+          minimum: 0
+        observedAccountCount:
+          type: [integer, 'null']
+          minimum: 0
+        storageBytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+        activeAssignmentCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminControlStorageTopologyLookupShard:
+      type: object
+      additionalProperties: false
+      required:
+        - lookupShardId
+        - desiredResourceId
+        - databaseName
+        - providerDatabaseId
+        - residencyPartition
+        - status
+        - capacityWeight
+        - activeBucketCount
+        - createdAt
+        - updatedAt
+      properties:
+        lookupShardId:
+          type: string
+        desiredResourceId:
+          type: string
+        databaseName:
+          type: string
+        providerDatabaseId:
+          type: [string, 'null']
+        residencyPartition:
+          type: string
+        status:
+          type: string
+          enum: [requested, provisioning, ready, active, draining, retired, failed]
+        capacityWeight:
+          type: number
+          exclusiveMinimum: 0
+        activeBucketCount:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: integer
+          format: int64
+          minimum: 0
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminControlStorageTopologyOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - tenantId
+        - dataRole
+        - databaseName
+        - providerDatabaseId
+        - provisioningState
+        - status
+        - attemptCount
+        - lastErrorCode
+        - decidedAt
+        - createStartedAt
+        - readyAt
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+        tenantId:
+          type: [string, 'null']
+        dataRole:
+          type: string
+          enum: [tenant_core/default, tenant_core/users, tenant_pii, lookup]
+        databaseName:
+          type: string
+        providerDatabaseId:
+          type: [string, 'null']
+        provisioningState:
+          type: string
+          enum: [requested, creating, ready, active, degraded, failed, deleting, deleted]
+        status:
+          type: string
+          enum: [queued, running, waiting_retry, succeeded, blocked, canceled]
+        attemptCount:
+          type: integer
+          minimum: 0
+        lastErrorCode:
+          type: [string, 'null']
+        decidedAt:
+          type: integer
+          format: int64
+          minimum: 0
+        createStartedAt:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+        readyAt:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 0
+    AdminControlStorageTopologyProviderDatabase:
+      type: object
+      additionalProperties: false
+      required: [databaseId, databaseName, createdAt, fileSizeBytes, managedByControl]
+      properties:
+        databaseId:
+          type: string
+        databaseName:
+          type: string
+        createdAt:
+          type: [string, 'null']
+          format: date-time
+        fileSizeBytes:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+        managedByControl:
+          type: boolean
     AdminControlCapacityProvisioningPreview:
       type: object
       additionalProperties: false
