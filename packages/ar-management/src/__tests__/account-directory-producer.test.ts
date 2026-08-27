@@ -203,8 +203,15 @@ describe('account directory producer', () => {
     expect(ensureTenantShardCapacity).not.toHaveBeenCalled();
   });
 
-  it('expands the assigned shard set only after allocation reports capacity exhaustion', async () => {
+  it('invokes the capacity RPC without binding its Cloudflare service proxy', async () => {
     const { workerEnv, allocateAccountRoute, ensureTenantShardCapacity } = env();
+    const bindTrap = vi.fn(() => {
+      throw new TypeError('The RPC receiver does not implement the method "bind".');
+    });
+    Object.defineProperty(ensureTenantShardCapacity, 'bind', {
+      configurable: true,
+      value: bindTrap,
+    });
     allocateAccountRoute
       .mockRejectedValueOnce(new Error('control_account_allocation_capacity_unavailable'))
       .mockResolvedValueOnce({
@@ -242,6 +249,7 @@ describe('account directory producer', () => {
     ).resolves.toMatchObject({ accountId: 'account-a' });
 
     expect(allocateAccountRoute).toHaveBeenCalledTimes(2);
+    expect(bindTrap).not.toHaveBeenCalled();
     expect(ensureTenantShardCapacity).toHaveBeenCalledTimes(2);
     expect(ensureTenantShardCapacity).toHaveBeenCalledWith(
       expect.objectContaining({ tenantId: 'tenant-a', dataRole: 'tenant_core/users' })

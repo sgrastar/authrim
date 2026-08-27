@@ -99,17 +99,16 @@ async function allocateAccountRouteWithElasticCapacity(
   try {
     return await control.allocateAccountRoute(request);
   } catch (error) {
-    const ensureCapacity = control.ensureTenantShardCapacity?.bind(control);
     if (
       !(error instanceof Error) ||
       error.message !== 'control_account_allocation_capacity_unavailable' ||
-      !ensureCapacity
+      typeof control.ensureTenantShardCapacity !== 'function'
     ) {
       throw error;
     }
     const capacity = await Promise.all(
       dataRoles.map((dataRole) =>
-        ensureCapacity({
+        control.ensureTenantShardCapacity!({
           tenantId: input.tenantId,
           dataRole,
           residencyPolicyId: input.residencyPolicyId,
