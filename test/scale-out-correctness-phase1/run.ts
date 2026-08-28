@@ -392,14 +392,14 @@ async function requestOnce(input: {
   }
   if (input.item.mode === 'create' && response.status === 503) {
     const code = safeErrorCode(payload, 'http_503');
-    return code === CAPACITY_ERROR
-      ? {
-          kind: 'retry',
-          status: 503,
-          retryAfterMs: retryAfterMs(response) ?? undefined,
-          errorCode: code,
-        }
-      : { kind: 'terminal', status: 503, errorCode: code };
+    if (code === CAPACITY_ERROR) {
+      return {
+        kind: 'retry',
+        status: 503,
+        retryAfterMs: retryAfterMs(response) ?? undefined,
+        errorCode: code,
+      };
+    }
   }
   if (input.item.mode === 'create' && response.status >= 500) {
     return {

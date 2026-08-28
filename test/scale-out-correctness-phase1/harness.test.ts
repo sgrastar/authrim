@@ -1146,6 +1146,59 @@ describe('Phase 1 runner', () => {
     expect(() => assertPhase1EvidenceIsSecretFree(events)).not.toThrow();
   });
 
+  it('replays a fail-closed release status 503 with Retry-After and the same identity', async () => {
+    let now = Date.parse('2026-08-27T00:00:00.000Z');
+    const requests: Array<{ body: string; key: string; at: number }> = [];
+    const responses = [
+      new Response(JSON.stringify({ error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE' }), {
+        status: 503,
+        headers: { 'Retry-After': '5' },
+      }),
+      new Response(JSON.stringify({ user: { id: 'user-1' } }), { status: 201 }),
+    ];
+    const events: Phase1RequestEvent[] = [];
+    const result = await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-release-status-503-replay',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        nowMs: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        random: () => 0.5,
+        fetcher: async (_url, init) => {
+          const headers = new Headers(init?.headers);
+          if (typeof init?.body !== 'string') throw new Error('fixture_body_invalid');
+          requests.push({
+            body: init.body,
+            key: headers.get('Idempotency-Key') ?? '',
+            at: now,
+          });
+          return responses.shift() ?? new Response(null, { status: 500 });
+        },
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.metrics).toMatchObject({ server5xx: 1, retries: 1, terminalFailures: 0 });
+    expect(result.accounts[0]).toMatchObject({ userId: 'user-1', attempts: 2, retries: 1 });
+    expect(requests[0]?.body).toBe(requests[1]?.body);
+    expect(requests[0]?.key).toBe(requests[1]?.key);
+    expect((requests[1]?.at ?? 0) - (requests[0]?.at ?? 0)).toBe(5_000);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'server_5xx',
+        status: 503,
+        errorCode: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+      })
+    );
+  });
+
   it('applies Retry-After as a runner-wide capacity gate', async () => {
     let now = Date.parse('2026-08-27T00:00:00.000Z');
     const startedAt = now;

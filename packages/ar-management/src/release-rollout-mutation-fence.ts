@@ -34,6 +34,8 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
     }
     const control = c.env.CONTROL;
     if (!control?.getReleaseMigrationRolloutStatus) {
+      c.header('Cache-Control', 'no-store');
+      c.header('Retry-After', '5');
       return c.json(
         {
           error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
@@ -47,6 +49,8 @@ export function releaseRolloutMutationFenceMiddleware(): MiddlewareHandler<{
     try {
       status = await control.getReleaseMigrationRolloutStatus();
     } catch {
+      c.header('Cache-Control', 'no-store');
+      c.header('Retry-After', '5');
       return c.json(
         {
           error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',

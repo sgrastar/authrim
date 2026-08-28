@@ -122,6 +122,8 @@ describe('release rollout mutation fence', () => {
 
     const response = await router.request('/api/admin/settings', { method: 'PUT' }, env);
     expect(response.status).toBe(503);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Retry-After')).toBe('5');
     await expect(response.json()).resolves.toMatchObject({
       error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
     });
@@ -132,6 +134,8 @@ describe('release rollout mutation fence', () => {
 
     const response = await router.request('/api/admin/settings', { method: 'PUT' }, env);
     expect(response.status).toBe(503);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(response.headers.get('Retry-After')).toBe('5');
     await expect(response.json()).resolves.toMatchObject({
       error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
     });
