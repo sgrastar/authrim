@@ -38,6 +38,11 @@ import { createPhase1AdminTokenProvider } from './admin-token.js';
 
 const DEFAULT_RUNS_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), 'runs');
 const CAPACITY_ERROR = 'temporarily_unavailable';
+const RELEASE_ROLLOUT_UNAVAILABLE = 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE';
+
+function isRetryableProvisioning503(errorCode: string): boolean {
+  return errorCode === CAPACITY_ERROR || errorCode === RELEASE_ROLLOUT_UNAVAILABLE;
+}
 
 export interface Phase1AccountResult {
   accountIndex: number;
@@ -406,7 +411,7 @@ async function requestOnce(input: {
   }
   if (input.item.mode === 'create' && response.status === 503) {
     const code = safeErrorCode(payload, 'http_503');
-    if (code === CAPACITY_ERROR) {
+    if (isRetryableProvisioning503(code)) {
       return {
         kind: 'retry',
         status: 503,
@@ -656,7 +661,11 @@ export async function runAccountCreation(input: {
             item.mode = 'create';
           }
         }
-        if (outcome.status === 503 && outcome.errorCode === CAPACITY_ERROR) {
+        if (
+          outcome.status === 503 &&
+          outcome.errorCode !== undefined &&
+          isRetryableProvisioning503(outcome.errorCode)
+        ) {
           metrics.capacity503 += 1;
           item.capacity503 += 1;
           await input.dependencies.writeEvent({
@@ -670,7 +679,7 @@ export async function runAccountCreation(input: {
             attempt: item.attempt,
             status: 503,
             latencyMs: completedAtMs - attemptStartedAt,
-            errorCode: CAPACITY_ERROR,
+            errorCode: outcome.errorCode,
           });
         } else if (outcome.status !== undefined && outcome.status >= 500) {
           metrics.server5xx += 1;
@@ -694,7 +703,11 @@ export async function runAccountCreation(input: {
           item.retries += 1;
           metrics.retries += 1;
           const delay = outcome.retryAfterMs ?? backoffMs(item, random);
-          if (outcome.status === 503 && outcome.errorCode === CAPACITY_ERROR) {
+          if (
+            outcome.status === 503 &&
+            outcome.errorCode !== undefined &&
+            isRetryableProvisioning503(outcome.errorCode)
+          ) {
             capacityBlockedUntil = Math.max(capacityBlockedUntil, completedAtMs + delay);
           }
           item.dueAt = completedAtMs + delay;

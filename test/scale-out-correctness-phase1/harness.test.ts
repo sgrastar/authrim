@@ -1174,7 +1174,12 @@ describe('Phase 1 runner', () => {
       },
     });
 
-    expect(result.metrics).toMatchObject({ server5xx: 1, retries: 1, terminalFailures: 0 });
+    expect(result.metrics).toMatchObject({
+      capacity503: 0,
+      server5xx: 1,
+      retries: 1,
+      terminalFailures: 0,
+    });
     expect(result.accounts[0]).toMatchObject({ userId: 'user-1', attempts: 2, retries: 1 });
     expect(requests[0]).toEqual(requests[1]);
     expect(events).toContainEqual(expect.objectContaining({ kind: 'server_5xx', status: 500 }));
@@ -1220,14 +1225,19 @@ describe('Phase 1 runner', () => {
       },
     });
 
-    expect(result.metrics).toMatchObject({ server5xx: 1, retries: 1, terminalFailures: 0 });
+    expect(result.metrics).toMatchObject({
+      capacity503: 1,
+      server5xx: 0,
+      retries: 1,
+      terminalFailures: 0,
+    });
     expect(result.accounts[0]).toMatchObject({ userId: 'user-1', attempts: 2, retries: 1 });
     expect(requests[0]?.body).toBe(requests[1]?.body);
     expect(requests[0]?.key).toBe(requests[1]?.key);
     expect((requests[1]?.at ?? 0) - (requests[0]?.at ?? 0)).toBe(5_000);
     expect(events).toContainEqual(
       expect.objectContaining({
-        kind: 'server_5xx',
+        kind: 'capacity_503',
         status: 503,
         errorCode: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
       })
