@@ -11904,7 +11904,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     async function resumeInitialDeploymentFromEnvironment() {
-      if (!selectedEnvForDetail) return;
+      const envName = selectedEnvForDetail?.env || config?.env;
+      if (!envName) return;
       const button = document.getElementById('btn-resume-initial-deploy');
       const spinner = button.querySelector('.inline-action-spinner');
       button.disabled = true;
@@ -11912,12 +11913,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       spinner?.classList.remove('hidden');
       try {
         const recoveryStatus = await api(
-          '/deploy/recovery/' + encodeURIComponent(selectedEnvForDetail.env)
+          '/deploy/recovery/' + encodeURIComponent(envName)
         );
         if (recoveryStatus.success !== true || recoveryStatus.canResume !== true) {
           throw new Error(describeInitialDeploymentRecovery(recoveryStatus));
         }
-        const response = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
+        const response = await api('/config?env=' + encodeURIComponent(envName));
         if (!response.exists || !response.config) {
           throw new Error(t('web.loadConfig.provisionedValid'));
         }

@@ -360,6 +360,9 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('class="inline-action-spinner hidden"');
     expect(html).toContain("spinner?.classList.remove('hidden')");
     expect(html).toContain("button.setAttribute('aria-busy', 'true')");
+    expect(html).toContain('const envName = selectedEnvForDetail?.env || config?.env');
+    expect(html).toContain("'/deploy/recovery/' + encodeURIComponent(envName)");
+    expect(html).toContain("'/config?env=' + encodeURIComponent(envName)");
     expect(html).toContain('recoveryStatus.requiresBootstrapToken !== true');
     expect(html).toContain('!resumeControlBootstrapReady');
   });

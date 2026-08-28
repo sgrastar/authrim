@@ -301,7 +301,12 @@ export function getDeployKeysDirHint(input: {
 }): string | undefined {
   if (input.explicitKeysDir) return input.explicitKeysDir;
   if (!input.configuredKeysDir) return undefined;
-  return existsSync(resolve(input.baseDir, input.configuredKeysDir))
+  const configuredPath = resolve(input.baseDir, input.configuredKeysDir);
+  // Fresh-install configs retain ./keys/ as a portable placeholder while generated secrets live
+  // under .authrim-keys/{env}. Never let an unrelated legacy/root keys directory shadow the
+  // environment-scoped discovery performed by resolveDownstreamIntrospectionKeysDir().
+  if (configuredPath === resolve(input.baseDir, 'keys')) return undefined;
+  return existsSync(configuredPath)
     ? input.configuredKeysDir
     : undefined;
 }

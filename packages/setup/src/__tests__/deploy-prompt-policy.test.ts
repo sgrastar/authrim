@@ -109,11 +109,13 @@ describe('deploy prompt policy', () => {
 
   it('falls back from a stale configured key path but preserves an explicit override', () => {
     const baseDir = mkdtempSync(join(tmpdir(), 'authrim-deploy-keys-'));
+    mkdirSync(join(baseDir, 'keys'));
     mkdirSync(join(baseDir, 'existing-keys'));
 
     expect(
       getDeployKeysDirHint({ baseDir, configuredKeysDir: './missing-legacy-keys/' })
     ).toBeUndefined();
+    expect(getDeployKeysDirHint({ baseDir, configuredKeysDir: './keys/' })).toBeUndefined();
     expect(getDeployKeysDirHint({ baseDir, configuredKeysDir: './existing-keys/' })).toBe(
       './existing-keys/'
     );
