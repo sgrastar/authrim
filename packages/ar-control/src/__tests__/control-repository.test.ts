@@ -292,6 +292,12 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/003_worker_binding_patch_intent_recovery.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -2892,6 +2898,45 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(currentLease.fencingToken).toBe(firstLease.fencingToken + 1);
     await expect(bindingRepository.leaseIsCurrent(firstLease, 134)).resolves.toBe(false);
     await expect(bindingRepository.leaseIsCurrent(currentLease, 134)).resolves.toBe(true);
+
+    await bindingRepository.recordPatchStarted({
+      target,
+      lease: currentLease,
+      previousDeploymentId: 'deployment-before',
+      restoreSettingsJson: JSON.stringify({ bindings: [] }),
+      now: 135,
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT mutation_started, mutation_started_at
+             FROM control_worker_deployment_leases
+            WHERE owner_operation_id = ? AND worker_script_name = ?`
+        )
+        .get(target.operationId, target.workerScriptName)
+    ).toEqual({ mutation_started: 1, mutation_started_at: 135 });
+    await expect(
+      bindingRepository.rearmPatchIntent({ target, lease: firstLease, now: 136 })
+    ).resolves.toBe(false);
+    await expect(
+      bindingRepository.rearmPatchIntent({ target, lease: currentLease, now: 136 })
+    ).resolves.toBe(true);
+    await expect(
+      bindingRepository.rearmPatchIntent({ target, lease: currentLease, now: 136 })
+    ).resolves.toBe(false);
+    expect(
+      database
+        .prepare(
+          `SELECT mutation_started, mutation_started_at, previous_deployment_id
+             FROM control_worker_deployment_leases
+            WHERE owner_operation_id = ? AND worker_script_name = ?`
+        )
+        .get(target.operationId, target.workerScriptName)
+    ).toEqual({
+      mutation_started: 0,
+      mutation_started_at: null,
+      previous_deployment_id: null,
+    });
 
     await bindingRepository.recordAlreadySatisfied({
       target,

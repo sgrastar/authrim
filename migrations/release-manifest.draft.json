@@ -67,6 +67,10 @@
         {
           "path": "002_lookup_predictive_scale_out.sql",
           "checksum": "c11ccb9625973f173a90b341f0f4377359082c8593bda5d9847b434a26080bbb"
+        },
+        {
+          "path": "003_worker_binding_patch_intent_recovery.sql",
+          "checksum": "b310039f59e9cc2d8615970c90ad8d6fa1b95b638ae644067ef24d30b592b134"
         }
       ]
     },

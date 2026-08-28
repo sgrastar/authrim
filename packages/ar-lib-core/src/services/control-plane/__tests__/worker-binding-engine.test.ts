@@ -32,6 +32,7 @@ const target = {
 const lease = {
   expectedSourceVersionId: 'version-old',
   mutationStarted: false,
+  mutationStartedAt: null as number | null,
   previousDeploymentId: null as string | null,
 };
 
@@ -40,6 +41,7 @@ function state(): WorkerBindingPatchState<typeof target, typeof lease> {
     leaseIsCurrent: vi.fn().mockResolvedValue(true),
     recordAlreadySatisfied: vi.fn().mockResolvedValue(undefined),
     recordPatchStarted: vi.fn().mockResolvedValue(undefined),
+    rearmPatchIntent: vi.fn().mockResolvedValue(true),
     recordPatchResult: vi.fn().mockResolvedValue(undefined),
     recordTransientError: vi.fn().mockResolvedValue(undefined),
     markRollbackRequired: vi.fn().mockResolvedValue(undefined),
@@ -229,7 +231,12 @@ describe('shared Worker binding provisioning effect', () => {
     await expect(
       ensureWorkerBindingPatched({
         target: restoredTarget,
-        lease: { ...lease, mutationStarted: true, previousDeploymentId: 'deployment-old' },
+        lease: {
+          ...lease,
+          mutationStarted: true,
+          mutationStartedAt: 100,
+          previousDeploymentId: 'deployment-old',
+        },
         deploymentsBefore: [newDeployment, oldDeployment],
         activeBefore: activeWorkerDeployment([newDeployment, oldDeployment]),
         api,
@@ -240,6 +247,53 @@ describe('shared Worker binding provisioning effect', () => {
     expect(api.patchWorkerSettings).not.toHaveBeenCalled();
     expect(persistence.recordPatchStarted).not.toHaveBeenCalled();
     expect(persistence.recordPatchResult).toHaveBeenCalledTimes(1);
+  });
+
+  it('rearms a lost settings mutation only after the propagation grace window', async () => {
+    const persistence = state();
+    const api = {
+      getWorkerSettings: vi.fn().mockResolvedValue({
+        bindings: [{ name: 'DB', type: 'd1', database_id: 'shared-db' }],
+      }),
+      patchWorkerSettings: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+    };
+
+    await expect(
+      ensureWorkerBindingPatched({
+        target,
+        lease: {
+          ...lease,
+          mutationStarted: true,
+          mutationStartedAt: 100,
+          previousDeploymentId: 'deployment-old',
+        },
+        deploymentsBefore: [oldDeployment],
+        activeBefore: activeWorkerDeployment([oldDeployment]),
+        api,
+        state: persistence,
+        now: () => 200,
+      })
+    ).resolves.toEqual({ state: 'deferred', target: null });
+    expect(api.patchWorkerSettings).not.toHaveBeenCalled();
+    expect(persistence.rearmPatchIntent).toHaveBeenCalledTimes(1);
+
+    persistence.rearmPatchIntent.mockClear();
+    await ensureWorkerBindingPatched({
+      target,
+      lease: {
+        ...lease,
+        mutationStarted: true,
+        mutationStartedAt: 170,
+        previousDeploymentId: 'deployment-old',
+      },
+      deploymentsBefore: [oldDeployment],
+      activeBefore: activeWorkerDeployment([oldDeployment]),
+      api,
+      state: persistence,
+      now: () => 200,
+    });
+    expect(persistence.rearmPatchIntent).not.toHaveBeenCalled();
   });
 
   it('fails closed when latest changes immediately before the settings patch', async () => {

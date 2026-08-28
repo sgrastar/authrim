@@ -56,6 +56,7 @@ SELECT o.operation_id, o.environment_id, i.worker_script_name, s.shard_id,
 export interface WorkerBindingPatchLease {
   expectedSourceVersionId: string;
   mutationStarted: boolean;
+  mutationStartedAt?: number | null;
   previousDeploymentId: string | null;
 }
 
@@ -91,6 +92,7 @@ export interface WorkerBindingPatchState<TTarget, TLease> {
     restoreSettingsJson: string;
     now: number;
   }): Promise<void>;
+  rearmPatchIntent?(input: { target: TTarget; lease: TLease; now: number }): Promise<boolean>;
   recordPatchResult(input: {
     target: TTarget;
     lease: TLease;
@@ -111,6 +113,8 @@ export interface WorkerBindingPatchState<TTarget, TLease> {
 export type WorkerBindingPatchResult<TTarget> =
   | { state: 'patched'; target: TTarget }
   | { state: 'deferred' | 'rollback_required' | 'blocked'; target: null };
+
+const PATCH_RESPONSE_PROPAGATION_GRACE_SECONDS = 60;
 
 export function activeWorkerDeployment(
   deployments: readonly CloudflareWorkerDeployment[]
@@ -174,14 +178,12 @@ export async function ensureWorkerBindingsPatched<
   }
   const currentSettings = await input.api.getWorkerSettings(input.target.workerScriptName);
   const desiredBindings = input.desiredBindings;
-  if (
-    verifyWorkerSettingsPreserved({
-      before: currentSettings,
-      after: currentSettings,
-      desiredBindings,
-    }).length === 0 &&
-    !input.lease.mutationStarted
-  ) {
+  const desiredBindingIssues = verifyWorkerSettingsPreserved({
+    before: currentSettings,
+    after: currentSettings,
+    desiredBindings,
+  });
+  if (desiredBindingIssues.length === 0 && !input.lease.mutationStarted) {
     const reflectedActive = activeWorkerDeployment(
       await input.api.listWorkerDeployments(input.target.workerScriptName)
     );
@@ -212,6 +214,19 @@ export async function ensureWorkerBindingsPatched<
 
   if (input.lease.mutationStarted) {
     if (input.activeBefore.versionId === input.lease.expectedSourceVersionId) {
+      if (
+        desiredBindingIssues.length > 0 &&
+        input.lease.mutationStartedAt !== null &&
+        input.lease.mutationStartedAt !== undefined &&
+        input.state.rearmPatchIntent !== undefined &&
+        now - input.lease.mutationStartedAt >= PATCH_RESPONSE_PROPAGATION_GRACE_SECONDS
+      ) {
+        await input.state.rearmPatchIntent({
+          target: input.target,
+          lease: input.lease,
+          now,
+        });
+      }
       return { state: 'deferred', target: null };
     }
     const previousIndex = input.deploymentsBefore

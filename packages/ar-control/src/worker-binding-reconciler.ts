@@ -53,6 +53,7 @@ type WorkerBindingStateRepository = Pick<
   | 'releaseDeploymentLease'
   | 'recordAlreadySatisfied'
   | 'recordPatchStarted'
+  | 'rearmPatchIntent'
   | 'recordPatchResult'
   | 'recordSmokeProgress'
   | 'adoptSupersedingSmokeDeployment'

@@ -144,6 +144,7 @@ interface LeaseRow {
   patch_result_version_id: string | null;
   patch_result_deployment_id: string | null;
   mutation_started: number;
+  mutation_started_at: number | null;
 }
 
 interface WorkerSettingsApi {
@@ -197,6 +198,7 @@ function lease(row: LeaseRow): DeploymentLease {
     patchResultVersionId: row.patch_result_version_id,
     patchResultDeploymentId: row.patch_result_deployment_id,
     mutationStarted: row.mutation_started === 1,
+    mutationStartedAt: row.mutation_started_at,
   };
 }
 
@@ -640,6 +642,9 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
            mutation_started = CASE
              WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
              THEN control_worker_deployment_leases.mutation_started ELSE 0 END,
+           mutation_started_at = CASE
+             WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
+             THEN control_worker_deployment_leases.mutation_started_at ELSE NULL END,
            previous_deployment_id = CASE
              WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
              THEN control_worker_deployment_leases.previous_deployment_id ELSE NULL END,
@@ -751,11 +756,13 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
       this.db
         .prepare(
           `UPDATE control_worker_deployment_leases
-              SET mutation_started = 1, previous_deployment_id = ?, updated_at = ?
+              SET mutation_started = 1, mutation_started_at = COALESCE(mutation_started_at, ?),
+                  previous_deployment_id = ?, updated_at = ?
             WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
               AND fencing_token = ? AND lease_expires_at > ?`
         )
         .bind(
+          input.now,
           input.previousDeploymentId,
           input.now,
           input.lease.environmentId,
@@ -794,6 +801,33 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
     if (results.some((result) => Number(result.meta?.changes ?? 0) !== 1)) {
       throw new Error('plugin_resource_binding_fence_lost');
     }
+  }
+
+  async rearmPatchIntent(input: {
+    target: PluginResourceBindingTarget;
+    lease: DeploymentLease;
+    now: number;
+  }): Promise<boolean> {
+    const changed = await this.db
+      .prepare(
+        `UPDATE control_worker_deployment_leases
+            SET mutation_started = 0, mutation_started_at = NULL,
+                previous_deployment_id = NULL, updated_at = ?
+          WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+            AND fencing_token = ? AND lease_expires_at > ?
+            AND mutation_started = 1 AND patch_result_version_id IS NULL
+            AND patch_result_deployment_id IS NULL`
+      )
+      .bind(
+        input.now,
+        input.lease.environmentId,
+        input.lease.workerScriptName,
+        input.lease.ownerOperationId,
+        input.lease.fencingToken,
+        input.now
+      )
+      .run();
+    return Number(changed.meta?.changes ?? 0) === 1;
   }
 
   async recordPatchResult(input: {

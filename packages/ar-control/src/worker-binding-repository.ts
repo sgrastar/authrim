@@ -42,6 +42,7 @@ export interface WorkerDeploymentLease {
   fencingToken: number;
   expectedSourceVersionId: string;
   mutationStarted: boolean;
+  mutationStartedAt: number | null;
   previousDeploymentId: string | null;
   patchResultVersionId: string | null;
   patchResultDeploymentId: string | null;
@@ -81,6 +82,7 @@ interface WorkerDeploymentLeaseRow {
   fencing_token: number;
   expected_source_version_id: string;
   mutation_started: number;
+  mutation_started_at: number | null;
   previous_deployment_id: string | null;
   patch_result_version_id: string | null;
   patch_result_deployment_id: string | null;
@@ -120,6 +122,7 @@ function leaseFromRow(row: WorkerDeploymentLeaseRow): WorkerDeploymentLease {
     fencingToken: row.fencing_token,
     expectedSourceVersionId: row.expected_source_version_id,
     mutationStarted: row.mutation_started === 1,
+    mutationStartedAt: row.mutation_started_at,
     previousDeploymentId: row.previous_deployment_id,
     patchResultVersionId: row.patch_result_version_id,
     patchResultDeploymentId: row.patch_result_deployment_id,
@@ -480,6 +483,11 @@ export class D1WorkerBindingRepository {
              THEN control_worker_deployment_leases.mutation_started
              ELSE 0
            END,
+           mutation_started_at = CASE
+             WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
+             THEN control_worker_deployment_leases.mutation_started_at
+             ELSE NULL
+           END,
            previous_deployment_id = CASE
              WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
              THEN control_worker_deployment_leases.previous_deployment_id
@@ -550,7 +558,8 @@ export class D1WorkerBindingRepository {
     const row = await this.db
       .prepare(
         `SELECT environment_id, worker_script_name, owner_operation_id, fencing_token,
-                expected_source_version_id, mutation_started, previous_deployment_id,
+                expected_source_version_id, mutation_started, mutation_started_at,
+                previous_deployment_id,
                 patch_result_version_id, patch_result_deployment_id
            FROM control_worker_deployment_leases
           WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?`
@@ -596,11 +605,13 @@ export class D1WorkerBindingRepository {
       this.db
         .prepare(
           `UPDATE control_worker_deployment_leases
-              SET mutation_started = 1, previous_deployment_id = ?, updated_at = ?
+              SET mutation_started = 1, mutation_started_at = COALESCE(mutation_started_at, ?),
+                  previous_deployment_id = ?, updated_at = ?
             WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
               AND fencing_token = ? AND lease_expires_at > ? AND mutation_started = 0`
         )
         .bind(
+          input.now,
           input.previousDeploymentId,
           input.now,
           input.lease.environmentId,
@@ -647,6 +658,33 @@ export class D1WorkerBindingRepository {
     if ((results[0]?.meta.changes ?? 0) !== 1 || (results[1]?.meta.changes ?? 0) !== 1) {
       throw new Error('control_worker_binding_stale_fencing_token');
     }
+  }
+
+  async rearmPatchIntent(input: {
+    target: WorkerBindingTarget;
+    lease: WorkerDeploymentLease;
+    now: number;
+  }): Promise<boolean> {
+    const changed = await this.db
+      .prepare(
+        `UPDATE control_worker_deployment_leases
+            SET mutation_started = 0, mutation_started_at = NULL,
+                previous_deployment_id = NULL, updated_at = ?
+          WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+            AND fencing_token = ? AND lease_expires_at > ?
+            AND mutation_started = 1 AND patch_result_version_id IS NULL
+            AND patch_result_deployment_id IS NULL`
+      )
+      .bind(
+        input.now,
+        input.lease.environmentId,
+        input.lease.workerScriptName,
+        input.lease.operationId,
+        input.lease.fencingToken,
+        input.now
+      )
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
   }
 
   async recordAlreadySatisfied(input: {
