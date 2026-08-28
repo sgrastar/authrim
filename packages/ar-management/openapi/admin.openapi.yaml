@@ -359,7 +359,9 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
         '503':
-          description: Account capacity is being provisioned. Retry the same idempotent request.
+          description: >-
+            Account capacity is being provisioned or the private Control binding is temporarily
+            unavailable during rollout. Retry the same idempotent request.
           headers:
             Retry-After:
               description: Minimum suggested delay before retrying, in seconds.
@@ -375,8 +377,9 @@ paths:
         Allocate an account route and create a user in the selected tenant. Returns 201 only after
         Lookup directory publication is active. A transient publication delay returns 202 with a
         durable operation identifier that can be resumed by retrying the same request and
-        Idempotency-Key. While elastic D1 capacity is being provisioned, the endpoint returns 503
-        with Retry-After; clients must retry the same request and Idempotency-Key after that delay.
+        Idempotency-Key. While elastic D1 capacity is being provisioned, or when the private Control
+        binding is temporarily unavailable during rollout, the endpoint returns 503 with
+        Retry-After; clients must retry the same request and Idempotency-Key after that delay.
       security:
         - adminBearer: []
         - adminSessionCookie: []

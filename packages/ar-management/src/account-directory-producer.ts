@@ -80,6 +80,39 @@ export interface DurableInitialAccountDirectoryWriteResult extends InitialAccoun
   operation: AccountCreationOperation;
 }
 
+type ControlAccountAllocationRpcStage =
+  | 'try_allocate'
+  | 'allocate'
+  | 'ensure_capacity'
+  | 'commit'
+  | 'release';
+
+async function callControlAccountAllocationRpc<T>(
+  stage: ControlAccountAllocationRpcStage,
+  call: () => Promise<T>
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    // The legacy allocation RPC reports exhausted capacity by throwing this stable domain error.
+    // Preserve it so the caller can start idempotent capacity provisioning. Any other rejection at
+    // this private RPC boundary means that no validated Control response was received and is safe
+    // to retry through the durable account-creation operation.
+    if (
+      error instanceof Error &&
+      error.message === 'control_account_allocation_capacity_unavailable'
+    ) {
+      throw error;
+    }
+    log.warn(
+      'Control account allocation RPC rejected',
+      { stage },
+      error instanceof Error ? error : new Error('unknown_control_rpc_rejection')
+    );
+    throw new Error('control_account_allocation_rpc_unavailable', { cause: error });
+  }
+}
+
 async function allocateAccountRouteWithElasticCapacity(
   env: Env,
   input: InitialAccountDirectoryPublicationInput,
@@ -98,7 +131,9 @@ async function allocateAccountRouteWithElasticCapacity(
   };
   const allocateOnce = async () => {
     if (typeof control.tryAllocateAccountRoute === 'function') {
-      const attempt = await control.tryAllocateAccountRoute(request);
+      const attempt = await callControlAccountAllocationRpc('try_allocate', () =>
+        control.tryAllocateAccountRoute!(request)
+      );
       if (attempt.state === 'capacity_unavailable') {
         throw new Error('control_account_allocation_capacity_unavailable');
       }
@@ -107,7 +142,7 @@ async function allocateAccountRouteWithElasticCapacity(
       }
       return attempt.allocation;
     }
-    return control.allocateAccountRoute(request);
+    return callControlAccountAllocationRpc('allocate', () => control.allocateAccountRoute(request));
   };
   try {
     return await allocateOnce();
@@ -121,13 +156,15 @@ async function allocateAccountRouteWithElasticCapacity(
     }
     const capacity = await Promise.all(
       dataRoles.map((dataRole) =>
-        control.ensureTenantShardCapacity!({
-          tenantId: input.tenantId,
-          dataRole,
-          residencyPolicyId: input.residencyPolicyId,
-          residencyPartition: input.residencyPartition,
-          idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
-        })
+        callControlAccountAllocationRpc('ensure_capacity', () =>
+          control.ensureTenantShardCapacity!({
+            tenantId: input.tenantId,
+            dataRole,
+            residencyPolicyId: input.residencyPolicyId,
+            residencyPartition: input.residencyPartition,
+            idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
+          })
+        )
       )
     );
     for (const [index, result] of capacity.entries()) {
@@ -308,7 +345,9 @@ async function commitInitialAccountRouteAllocation(
   const dataRoles = ['tenant_core/users', 'tenant_pii'] as const;
   const request = accountRouteAllocationRequest(publication);
   const committed = validateControlAccountRouteAllocationResult(
-    await env.CONTROL.commitAccountRoute({ ...request, dataRoles: [...dataRoles] }),
+    await callControlAccountAllocationRpc('commit', () =>
+      env.CONTROL!.commitAccountRoute!({ ...request, dataRoles: [...dataRoles] })
+    ),
     {
       tenantId: publication.tenantId,
       residencyPolicyId: publication.routeProjection.residencyPolicyId,
@@ -341,7 +380,9 @@ async function releaseInitialAccountRouteAllocation(
     throw new Error('account_directory_allocation_release_unavailable');
   }
   const request = accountRouteAllocationRequest(publication);
-  await env.CONTROL.releaseAccountRoute({ ...request, dataRoles: [...request.dataRoles] });
+  await callControlAccountAllocationRpc('release', () =>
+    env.CONTROL!.releaseAccountRoute!({ ...request, dataRoles: [...request.dataRoles] })
+  );
 }
 
 async function rollbackInitialReservations(

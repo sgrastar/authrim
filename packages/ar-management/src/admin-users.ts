@@ -1302,7 +1302,6 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
-    logSanitizedError('Admin user create error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
     if (
@@ -1331,6 +1330,17 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         503
       );
     }
+    if (error instanceof Error && error.message === 'control_account_allocation_rpc_unavailable') {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+          error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+    }
+    logSanitizedError('Admin user create error', error);
     return c.json(
       {
         error: 'server_error',

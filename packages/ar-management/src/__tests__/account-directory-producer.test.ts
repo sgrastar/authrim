@@ -318,6 +318,52 @@ describe('account directory producer', () => {
     expect(allocateAccountRoute).toHaveBeenCalledTimes(1);
   });
 
+  it('classifies a rejected Control allocation RPC separately from invalid responses', async () => {
+    const { workerEnv, ensureTenantShardCapacity } = env();
+    const tryAllocateAccountRoute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('service binding temporarily unavailable'));
+    Object.assign(workerEnv.CONTROL!, { tryAllocateAccountRoute });
+
+    await expect(
+      buildInitialAccountDirectoryPublication(workerEnv, {
+        tenantId: 'tenant-a',
+        accountId: 'account-a',
+        residencyPolicyId: 'policy-a',
+        residencyPartition: 'jp',
+        idempotencyKey: 'create-account-a',
+        operationId: 'operation-account-a',
+      })
+    ).rejects.toThrow('control_account_allocation_rpc_unavailable');
+
+    expect(tryAllocateAccountRoute).toHaveBeenCalledTimes(1);
+    expect(ensureTenantShardCapacity).not.toHaveBeenCalled();
+  });
+
+  it('classifies a rejected capacity-provisioning RPC as retryable', async () => {
+    const { workerEnv, ensureTenantShardCapacity } = env();
+    const tryAllocateAccountRoute = vi.fn().mockResolvedValueOnce({
+      state: 'capacity_unavailable',
+    });
+    ensureTenantShardCapacity.mockRejectedValueOnce(
+      new Error('service binding temporarily unavailable')
+    );
+    Object.assign(workerEnv.CONTROL!, { tryAllocateAccountRoute });
+
+    await expect(
+      buildInitialAccountDirectoryPublication(workerEnv, {
+        tenantId: 'tenant-a',
+        accountId: 'account-a',
+        residencyPolicyId: 'policy-a',
+        residencyPartition: 'jp',
+        idempotencyKey: 'create-account-a',
+        operationId: 'operation-account-a',
+      })
+    ).rejects.toThrow('control_account_allocation_rpc_unavailable');
+
+    expect(ensureTenantShardCapacity).toHaveBeenCalled();
+  });
+
   it('fails closed when the capacity response does not match the requested role', async () => {
     const { workerEnv, allocateAccountRoute, ensureTenantShardCapacity } = env();
     allocateAccountRoute.mockRejectedValueOnce(
@@ -635,7 +681,7 @@ describe('account directory producer', () => {
           },
         }
       )
-    ).rejects.toThrow('control_commit_unavailable');
+    ).rejects.toThrow('control_account_allocation_rpc_unavailable');
     expect(core.getOutboxStatus()).toBe('prepared');
     expect(order).toEqual(['reserve', 'write']);
     expect(publishAccountDirectory).not.toHaveBeenCalled();

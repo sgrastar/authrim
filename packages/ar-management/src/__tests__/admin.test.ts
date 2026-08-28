@@ -2874,6 +2874,57 @@ describe('Admin API Handlers', () => {
       );
       expect(c._responseHeaders.get('Retry-After')).toBe('10');
     });
+
+    it('should report a rejected Control allocation RPC as a retryable rollout state', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('control_account_allocation_rpc_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-control-rpc-unavailable' },
+        body: { email: 'control-rpc@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+          error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('5');
+    });
+
+    it('should keep an invalid Control allocation response as a server error', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('account_directory_capacity_response_invalid')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-invalid-capacity-response' },
+        body: { email: 'invalid-capacity-response@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create user',
+          details: 'account_directory_capacity_response_invalid',
+        },
+        500
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBeUndefined();
+    });
   });
 
   describe('adminUserCreationOperationHandler', () => {
