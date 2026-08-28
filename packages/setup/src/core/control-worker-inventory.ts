@@ -359,6 +359,10 @@ export function buildControlWorkerInventoryRegistrationPlan(input: {
   const residencyPartition = requiredResidencyPartition(
     input.environmentBootstrap?.defaultResidencyPartition ?? 'default'
   );
+  const lookupCapacityDomainId = requiredSafeIdentifier(
+    `lookup:${residencyPolicyId}:${residencyPartition}`,
+    'lookup_capacity_domain_id'
+  );
   const automaticProvisioning = input.environmentBootstrap?.automaticProvisioning === true;
   const disableMissingSql =
     input.disableMissing === false
@@ -422,18 +426,24 @@ INSERT OR IGNORE INTO control_environment_resource_policies (
   ${sqlString(environmentId)}, 2, 2, 1000, 20, 100000, ${now}, ${now}
 );
 
-INSERT OR IGNORE INTO control_residency_partitions (
+INSERT INTO control_residency_partitions (
   environment_id, residency_policy_id, residency_partition,
   jurisdiction, location_hint, status, created_at, updated_at,
   lookup_capacity_domain_id
-) SELECT
+) VALUES (
   ${sqlString(environmentId)}, ${sqlString(residencyPolicyId)},
   ${sqlString(residencyPartition)}, NULL, NULL, 'active', ${now}, ${now},
-  ${sqlString(`lookup:${residencyPolicyId}:${residencyPartition}`)}
-WHERE NOT EXISTS (
-  SELECT 1 FROM control_residency_partitions
-   WHERE environment_id = ${sqlString(environmentId)}
-);
+  ${sqlString(lookupCapacityDomainId)}
+)
+ON CONFLICT(environment_id, residency_policy_id, residency_partition) DO UPDATE SET
+  lookup_capacity_domain_id = COALESCE(
+    control_residency_partitions.lookup_capacity_domain_id,
+    excluded.lookup_capacity_domain_id
+  ),
+  updated_at = CASE
+    WHEN control_residency_partitions.lookup_capacity_domain_id IS NULL THEN excluded.updated_at
+    ELSE control_residency_partitions.updated_at
+  END;
 
 INSERT OR IGNORE INTO control_operations (
   operation_id, environment_id, operation_kind, idempotency_key, status,

@@ -23,6 +23,16 @@ ALTER TABLE control_residency_partitions
     CHECK (lookup_capacity_domain_id IS NULL OR
            (length(lookup_capacity_domain_id) BETWEEN 1 AND 128));
 
+-- The built-in default partition can already exist when this forward migration is applied.
+-- Its capacity domain is deterministic, so backfill it without guessing how operator-defined
+-- residency partitions should share or isolate Lookup capacity.
+UPDATE control_residency_partitions
+   SET lookup_capacity_domain_id = 'lookup:builtin:residency:default:default',
+       updated_at = unixepoch()
+ WHERE residency_policy_id = 'builtin:residency:default'
+   AND residency_partition = 'default'
+   AND lookup_capacity_domain_id IS NULL;
+
 CREATE TABLE control_lookup_scale_out_forecasts (
   environment_id TEXT NOT NULL,
   lookup_capacity_domain_id TEXT NOT NULL

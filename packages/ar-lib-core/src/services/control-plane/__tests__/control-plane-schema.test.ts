@@ -41,6 +41,41 @@ function controlDatabase(): DatabaseSync {
 function applyLookupGeneratedBindingMigration(db: DatabaseSync): void {}
 
 describe('Control D1 schema', () => {
+  it('backfills only the deterministic built-in Lookup capacity domain', () => {
+    const db = controlDatabase();
+    db.exec(
+      `INSERT INTO control_residency_partitions (
+         environment_id, residency_policy_id, residency_partition, created_at, updated_at
+       ) VALUES
+         ('env-1', 'builtin:residency:default', 'default', 1, 1),
+         ('env-1', 'operator:regional', 'apac', 1, 1);`
+    );
+
+    db.exec(migration('migrations/control/002_lookup_predictive_scale_out.sql'));
+
+    expect(
+      db
+        .prepare(
+          `SELECT residency_policy_id, residency_partition, lookup_capacity_domain_id
+             FROM control_residency_partitions
+            ORDER BY residency_policy_id`
+        )
+        .all()
+    ).toEqual([
+      {
+        residency_policy_id: 'builtin:residency:default',
+        residency_partition: 'default',
+        lookup_capacity_domain_id: 'lookup:builtin:residency:default:default',
+      },
+      {
+        residency_policy_id: 'operator:regional',
+        residency_partition: 'apac',
+        lookup_capacity_domain_id: null,
+      },
+    ]);
+    db.close();
+  });
+
   it('exports additional physical Lookup shards to every Worker requiring the lookup role', () => {
     const db = controlDatabase();
     db.exec(

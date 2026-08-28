@@ -108,6 +108,49 @@ describe('control worker desired inventory registration', () => {
       },
     ]);
 
+    database.exec(
+      `UPDATE control_residency_partitions
+          SET lookup_capacity_domain_id = NULL, updated_at = 50
+        WHERE environment_id = 'env-test'
+          AND residency_policy_id = 'builtin:residency:default'
+          AND residency_partition = 'default';`
+    );
+    database.exec(plan.bootstrapSql);
+    expect(
+      database
+        .prepare(
+          `SELECT lookup_capacity_domain_id, updated_at
+             FROM control_residency_partitions
+            WHERE environment_id = 'env-test'
+              AND residency_policy_id = 'builtin:residency:default'
+              AND residency_partition = 'default'`
+        )
+        .get()
+    ).toEqual({
+      lookup_capacity_domain_id: 'lookup:builtin:residency:default:default',
+      updated_at: 100,
+    });
+
+    database.exec(
+      `UPDATE control_residency_partitions
+          SET lookup_capacity_domain_id = 'lookup:operator:shared', updated_at = 200
+        WHERE environment_id = 'env-test'
+          AND residency_policy_id = 'builtin:residency:default'
+          AND residency_partition = 'default';`
+    );
+    database.exec(plan.bootstrapSql);
+    expect(
+      database
+        .prepare(
+          `SELECT lookup_capacity_domain_id, updated_at
+             FROM control_residency_partitions
+            WHERE environment_id = 'env-test'
+              AND residency_policy_id = 'builtin:residency:default'
+              AND residency_partition = 'default'`
+        )
+        .get()
+    ).toEqual({ lookup_capacity_domain_id: 'lookup:operator:shared', updated_at: 200 });
+
     const inventory = database
       .prepare(
         `SELECT worker_script_name, package_name, status, review_state
