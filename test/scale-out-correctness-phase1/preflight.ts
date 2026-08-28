@@ -162,6 +162,7 @@ export function evaluatePhase1Preflight(input: {
   const expected = config.expectedPolicy;
   const policyMatches =
     number(policy, 'target_account_count') === expected.targetAccountCount &&
+    number(policy, 'max_concurrent_provisioning') === expected.maxConcurrentProvisioning &&
     number(policy, 'max_ready_spares') === expected.maxReadySpares &&
     number(policy, 'max_d1_resources') === expected.maxD1Resources &&
     number(policy, 'daily_d1_create_budget') === expected.dailyD1CreateBudget &&

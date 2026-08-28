@@ -106,6 +106,7 @@ Use this only to validate the runner, observer, verifier, and cleanup procedure 
 | Setting                                           |                     Value |
 | ------------------------------------------------- | ------------------------: |
 | Target accounts per shard                         |                       100 |
+| Maximum concurrent provisioning operations        |                         4 |
 | Accounts to create                                |                     1,000 |
 | Target creation rate                              |         5 accounts/second |
 | Maximum in-flight requests                        |                        20 |
@@ -126,6 +127,7 @@ test acceleration setting; the production scale-out code path and state machine 
 | Setting                                                    |                     Value |
 | ---------------------------------------------------------- | ------------------------: |
 | Target accounts per shard                                  |                       500 |
+| Maximum concurrent provisioning operations                 |                         8 |
 | Accounts to create                                         |                     5,000 |
 | Target creation rate                                       |        15 accounts/second |
 | Maximum in-flight requests                                 |                        64 |
@@ -146,6 +148,7 @@ cutover grace to make a result pass.
 | Setting                                                    |                     Value |
 | ---------------------------------------------------------- | ------------------------: |
 | Target accounts per shard                                  |                     5,000 |
+| Maximum concurrent provisioning operations                 |                         8 |
 | Accounts to create                                         |                    50,000 |
 | Target creation rate                                       |        15 accounts/second |
 | Maximum in-flight requests                                 |                        64 |
@@ -182,7 +185,8 @@ The runner must fail before creating any account unless all preflight checks pas
   once for `shared_pool` and once for `tenant_exclusive`.
 - No pending, waiting, blocked, migration, cleanup, or placement operation exists for the tenant or
   target shard roles.
-- The configured account target and spare policy match the selected test profile.
+- The configured account target, provisioning concurrency, and spare policy match the selected test
+  profile.
 - The Lookup target route count, forecast horizon, EWMA alpha, headroom, policy generation, and
   physical-shard capacity weights match the selected profile and are read back exactly.
 - Every participating Lookup residency policy has an explicit capacity domain. Policies sharing a
@@ -197,9 +201,10 @@ The runner must fail before creating any account unless all preflight checks pas
 - The planned run ID, tenant ID, generated email namespace, initial D1 IDs, policy values, and source
   commit are captured before traffic starts.
 
-Changing the account or Lookup target is permitted only in this disposable environment through an
-explicit, audited test-fixture step. The step must update both the environment policy and the
-baseline `control_shard_capacity` rows for `tenant_core/users` and `tenant_pii`; changing only the
+Changing the account target, provisioning concurrency, or Lookup target is permitted only in this
+disposable environment through an explicit, audited test-fixture step. The step must update both the
+environment policy and the baseline `control_shard_capacity` rows for `tenant_core/users` and
+`tenant_pii`; changing only the
 environment default is insufficient for already-created account shards. Lookup forecast policy is
 changed only in its environment policy row and its policy generation must advance. Previous values
 must be recorded, and every affected row must be read back exactly. Abort if an unexpected role,

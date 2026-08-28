@@ -74,6 +74,7 @@ function config(overrides: Partial<Phase1HarnessConfig['load']> = {}): Phase1Har
     },
     expectedPolicy: {
       targetAccountCount: 100,
+      maxConcurrentProvisioning: 8,
       maxReadySpares: 1,
       maxD1Resources: 100,
       dailyD1CreateBudget: 50,
@@ -115,6 +116,7 @@ function snapshot(): Phase1ControlSnapshot {
     },
     resourcePolicy: {
       target_account_count: 100,
+      max_concurrent_provisioning: 8,
       max_ready_spares: 1,
       max_d1_resources: 100,
       daily_d1_create_budget: 50,
@@ -309,6 +311,15 @@ describe('Phase 1 evidence contracts', () => {
     expect(() => parsePhase1HarnessConfig(invalid)).toThrow('phase1_ready_spares_invalid');
   });
 
+  it('rejects a provisioning concurrency outside the Control policy range', () => {
+    const invalid = structuredClone(config());
+    invalid.expectedPolicy.maxConcurrentProvisioning = 33;
+
+    expect(() => parsePhase1HarnessConfig(invalid)).toThrow(
+      'phase1_max_concurrent_provisioning_invalid'
+    );
+  });
+
   it('rejects a retry window shorter than the quiescence timeout', () => {
     const invalid = structuredClone(config());
     invalid.load.retryWindowSeconds = 9;
@@ -436,6 +447,7 @@ describe('Phase 1 evidence contracts', () => {
       environment_id: 'phase1-test',
       lifecycle_state: 'active',
       target_account_count: 100_000,
+      max_concurrent_provisioning: 2,
       max_ready_spares: 1,
       max_d1_resources: 1_000,
       daily_d1_create_budget: 20,
@@ -456,6 +468,7 @@ describe('Phase 1 evidence contracts', () => {
     const desiredPolicy = {
       ...previousPolicy,
       target_account_count: 100,
+      max_concurrent_provisioning: 8,
       max_d1_resources: 100,
       daily_d1_create_budget: 50,
       lookup_target_active_route_count: 250,
@@ -499,6 +512,7 @@ describe('Phase 1 evidence contracts', () => {
 
     expect(evidence.executed).toBe(true);
     expect(evidence.previous.policy.lookup_scale_out_policy_generation).toBe(1);
+    expect(evidence.requested.maxConcurrentProvisioning).toBe(8);
     expect(evidence.readback?.policy.lookup_scale_out_policy_generation).toBe(2);
     expect(batches[0]?.[1]?.params).toEqual([
       'phase1-test',
@@ -508,6 +522,7 @@ describe('Phase 1 evidence contracts', () => {
       'tenant-test',
     ]);
     expect(batches[1]).toHaveLength(3);
+    expect(batches[1]?.[0]?.params?.[1]).toBe(8);
     expect(batches[1]?.[0]?.sql).toContain(
       'lookup_scale_out_policy_generation = ?, updated_at = ?'
     );
@@ -528,6 +543,7 @@ describe('Phase 1 evidence contracts', () => {
               environment_id: 'phase1-test',
               lifecycle_state: 'active',
               target_account_count: 100_000,
+              max_concurrent_provisioning: 2,
               max_ready_spares: 1,
               max_d1_resources: 1_000,
               daily_d1_create_budget: 20,
@@ -568,6 +584,7 @@ describe('Phase 1 evidence contracts', () => {
               environment_id: 'phase1-test',
               lifecycle_state: 'active',
               target_account_count: 100_000,
+              max_concurrent_provisioning: 2,
               max_ready_spares: 1,
               max_d1_resources: 1_000,
               daily_d1_create_budget: 20,

@@ -37,6 +37,7 @@ function baseConfig() {
     },
     expectedPolicy: {
       targetAccountCount: 100,
+      maxConcurrentProvisioning: 8,
       maxReadySpares: 1,
       maxD1Resources: 100,
       dailyD1CreateBudget: 50,

@@ -38,6 +38,7 @@ export interface Phase1HarnessConfig {
   };
   expectedPolicy: {
     targetAccountCount: number;
+    maxConcurrentProvisioning: number;
     maxReadySpares: number;
     maxD1Resources: number;
     dailyD1CreateBudget: number;
@@ -425,6 +426,12 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
         1,
         10_000_000,
         'phase1_target_account_count_invalid'
+      ),
+      maxConcurrentProvisioning: integer(
+        expectedPolicy.maxConcurrentProvisioning,
+        1,
+        32,
+        'phase1_max_concurrent_provisioning_invalid'
       ),
       maxReadySpares: integer(expectedPolicy.maxReadySpares, 1, 32, 'phase1_ready_spares_invalid'),
       maxD1Resources: integer(

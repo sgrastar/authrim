@@ -29,6 +29,7 @@ interface PolicyRow extends Record<string, unknown> {
   environment_id: string;
   lifecycle_state: string;
   target_account_count: number;
+  max_concurrent_provisioning: number;
   max_ready_spares: number;
   max_d1_resources: number;
   daily_d1_create_budget: number;
@@ -53,6 +54,7 @@ export interface Phase1PolicyPreparation {
   previous: { policy: PolicyRow; shardCapacities: CapacityRow[] };
   requested: {
     targetAccountCount: number;
+    maxConcurrentProvisioning: number;
     maxReadySpares: number;
     maxD1Resources: number;
     dailyD1CreateBudget: number;
@@ -66,7 +68,8 @@ export interface Phase1PolicyPreparation {
 }
 
 const READ_POLICY_SQL = `SELECT e.environment_id, e.lifecycle_state,
-       p.target_account_count, p.max_ready_spares, p.max_d1_resources,
+       p.target_account_count, p.max_concurrent_provisioning,
+       p.max_ready_spares, p.max_d1_resources,
        p.daily_d1_create_budget,
        p.lookup_target_active_route_count, p.lookup_forecast_horizon_seconds,
        p.lookup_registration_ewma_alpha_bps, p.lookup_scale_out_headroom_bps,
@@ -118,6 +121,7 @@ function policyRow(row: Record<string, unknown>): PolicyRow {
     environment_id: string(row, 'environment_id'),
     lifecycle_state: string(row, 'lifecycle_state'),
     target_account_count: integer(row, 'target_account_count'),
+    max_concurrent_provisioning: integer(row, 'max_concurrent_provisioning'),
     max_ready_spares: integer(row, 'max_ready_spares'),
     max_d1_resources: integer(row, 'max_d1_resources'),
     daily_d1_create_budget: integer(row, 'daily_d1_create_budget'),
@@ -175,6 +179,7 @@ async function readCurrent(input: {
 function requested(config: Phase1HarnessConfig): Phase1PolicyPreparation['requested'] {
   return {
     targetAccountCount: config.expectedPolicy.targetAccountCount,
+    maxConcurrentProvisioning: config.expectedPolicy.maxConcurrentProvisioning,
     maxReadySpares: config.expectedPolicy.maxReadySpares,
     maxD1Resources: config.expectedPolicy.maxD1Resources,
     dailyD1CreateBudget: config.expectedPolicy.dailyD1CreateBudget,
@@ -193,6 +198,7 @@ function assertReadback(
   const policy = value.policy;
   if (
     policy.target_account_count !== expected.targetAccountCount ||
+    policy.max_concurrent_provisioning !== expected.maxConcurrentProvisioning ||
     policy.max_ready_spares !== expected.maxReadySpares ||
     policy.max_d1_resources !== expected.maxD1Resources ||
     policy.daily_d1_create_budget !== expected.dailyD1CreateBudget ||
@@ -250,7 +256,8 @@ export async function preparePhase1Policy(input: {
     [
       {
         sql: `UPDATE control_environment_resource_policies
-                 SET target_account_count = ?, max_ready_spares = ?,
+                 SET target_account_count = ?, max_concurrent_provisioning = ?,
+                     max_ready_spares = ?,
                      max_d1_resources = ?, daily_d1_create_budget = ?,
                      lookup_target_active_route_count = ?, lookup_forecast_horizon_seconds = ?,
                      lookup_registration_ewma_alpha_bps = ?, lookup_scale_out_headroom_bps = ?,
@@ -258,6 +265,7 @@ export async function preparePhase1Policy(input: {
                WHERE environment_id = ? AND lookup_scale_out_policy_generation = ?`,
         params: [
           desired.targetAccountCount,
+          desired.maxConcurrentProvisioning,
           desired.maxReadySpares,
           desired.maxD1Resources,
           desired.dailyD1CreateBudget,
