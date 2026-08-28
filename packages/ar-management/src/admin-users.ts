@@ -897,6 +897,20 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    if (
+      error instanceof Error &&
+      (error.message === 'lookup_route_binding_generation_stale' ||
+        error.message === 'lookup_route_binding_unavailable')
+    ) {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The tenant runtime route is refreshing; retry shortly',
+        },
+        503
+      );
+    }
     logSanitizedError('Admin users list error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }

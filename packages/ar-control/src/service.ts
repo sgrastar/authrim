@@ -698,11 +698,23 @@ export class ControlService {
       residencyPolicyId,
       residencyPartition,
     });
-    const requiredRoles = new Set<TenantShardDataRole>(TENANT_DATA_ROLES);
+    const roleCounts = new Map<TenantShardDataRole, number>(
+      [...TENANT_DATA_ROLES].map((role) => [role, 0])
+    );
+    const shardIds = new Set<string>();
+    const bindingRefs = new Set<string>();
+    for (const target of targets) {
+      roleCounts.set(target.dataRole, (roleCounts.get(target.dataRole) ?? 0) + 1);
+      if (shardIds.has(target.shardId) || bindingRefs.has(target.bindingRef)) {
+        throw new Error('control_tenant_shard_assignment_incomplete');
+      }
+      shardIds.add(target.shardId);
+      bindingRefs.add(target.bindingRef);
+    }
     if (
-      targets.length !== requiredRoles.size ||
-      targets.some((target) => !requiredRoles.delete(target.dataRole)) ||
-      requiredRoles.size !== 0
+      roleCounts.get('tenant_core/default') !== 1 ||
+      (roleCounts.get('tenant_core/users') ?? 0) < 1 ||
+      (roleCounts.get('tenant_pii') ?? 0) < 1
     ) {
       throw new Error('control_tenant_shard_assignment_incomplete');
     }

@@ -330,13 +330,25 @@ paths:
         '409':
           $ref: '#/components/responses/Error'
         '503':
-          $ref: '#/components/responses/Error'
+          description: >-
+            The tenant runtime route is being refreshed after a storage topology change. Retry
+            the exact search after the Retry-After delay.
+          headers:
+            Retry-After:
+              description: Minimum suggested delay before retrying, in seconds.
+              schema: { type: integer, minimum: 1, example: 5 }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
       description: >-
         List canonical runtime users in the current tenant with optional search, verification, PII
         status, and lifecycle filters. Sharded assignments use bounded fan-out and an opaque
         cursor. Exact identifier search resolves one account route through Lookup instead of
         scanning all shards. A cursor whose signed shard-set generation is stale returns
-        `cursor_stale`; clients should restart from the first page.
+        `cursor_stale`; clients should restart from the first page. While a newly provisioned shard
+        is being published to the signed runtime registry, exact search returns retryable 503
+        instead of a generic internal error.
       security:
         - adminBearer: []
         - adminSessionCookie: []

@@ -1789,6 +1789,36 @@ describe('Admin API Handlers', () => {
       expect(listCrossShardAccounts).not.toHaveBeenCalled();
     });
 
+    it('returns retryable 503 while a scale-out route is waiting for registry publication', async () => {
+      findExactCrossShardAccounts.mockRejectedValue(
+        new Error('lookup_route_binding_generation_stale')
+      );
+      const core = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        query: { search: 'scaleout@example.com' },
+        db: core,
+        dbPII: core,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          coreDb: core,
+          route: {
+            allocationScope: 'shared_pool',
+            source: core,
+          },
+        },
+      });
+      const response = await adminUsersListHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After') ?? c._responseHeaders.get('Retry-After')).toBe(
+        '5'
+      );
+      await expect(response.json()).resolves.toEqual({
+        error: 'temporarily_unavailable',
+        error_description: 'The tenant runtime route is refreshing; retry shortly',
+      });
+    });
+
     it('returns 400 for malformed pagination instead of reaching a database', async () => {
       const response = await adminUsersListHandler(
         createMockContext({ query: { page: '1', limit: 'not-a-number' } })

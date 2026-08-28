@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildControlQueryBatch,
   diffControlSnapshots,
@@ -43,6 +43,7 @@ import {
   recomputeLookupForecastTransition,
   reconcilePublicationCounterSeries,
   verifyLookupForecastEvents,
+  waitForExactLookupRouteReadiness,
   waitForPhase1Quiescence,
 } from './verify.js';
 
@@ -1472,6 +1473,52 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
 
     expect(final).toEqual(snapshot());
     expect(attempts).toBe(4);
+  });
+
+  it('waits for a retryable runtime route refresh before exact Lookup verification', async () => {
+    let now = 0;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'temporarily_unavailable' }), {
+          status: 503,
+          headers: { 'Retry-After': '1', 'Content-Type': 'application/json' },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ users: [{ id: 'user-1' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+    await expect(
+      waitForExactLookupRouteReadiness({
+        config: config(),
+        runId: 'phase1-readiness',
+        seed: 'readiness-seed',
+        account: {
+          accountIndex: 1,
+          emailDigest: 'a'.repeat(64),
+          requestDigest: 'b'.repeat(64),
+          userId: 'user-1',
+          operationId: null,
+          firstResponseStatus: 503,
+          attempts: 2,
+          retries: 1,
+          capacity503: 1,
+          terminalErrorCode: null,
+          completedAt: '2026-01-01T00:00:00.000Z',
+        },
+        getToken: async () => 'token',
+        fetcher,
+        nowMs: () => now,
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+      })
+    ).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('includes baseline Lookup routes when budgeting predicted D1 additions', () => {

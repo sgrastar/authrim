@@ -30,6 +30,7 @@ import { evaluatePhase1Preflight } from './preflight.js';
 import {
   verifyPhase1Run,
   waitForPhase1Quiescence,
+  waitForExactLookupRouteReadiness,
   collectLookupBucketSnapshot,
   type Phase1VerificationClient,
 } from './verify.js';
@@ -1052,6 +1053,18 @@ export async function executePhase1Harness(input: {
   let finalControl: Phase1ControlSnapshot;
   try {
     finalControl = await waitForPhase1Quiescence({ config: input.config, client });
+    const readinessAccount = [...checkpointWriter.values()]
+      .filter((account) => account.userId !== null)
+      .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))[0];
+    if (!readinessAccount) throw new Error('phase1_lookup_readiness_account_missing');
+    await waitForExactLookupRouteReadiness({
+      config: input.config,
+      runId: id,
+      seed,
+      account: readinessAccount,
+      getToken: () => adminTokenProvider.getToken(),
+      fetcher: input.fetcher,
+    });
   } finally {
     observerController.abort();
     await observation;

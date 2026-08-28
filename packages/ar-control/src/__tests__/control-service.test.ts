@@ -935,7 +935,7 @@ describe('ControlService tenant shard provisioning', () => {
     expect(repository.operations.size).toBe(1);
   });
 
-  it('returns the exact three server-owned runtime route targets', async () => {
+  it('returns every server-owned runtime route target for a scaled-out tenant', async () => {
     const repository = new FakeRepository();
     repository.runtimeRouteTargets = (
       ['tenant_core/default', 'tenant_core/users', 'tenant_pii'] as const
@@ -952,6 +952,24 @@ describe('ControlService tenant shard provisioning', () => {
       ownerTenantId: null,
       assignmentGeneration: 1,
     }));
+    repository.runtimeRouteTargets.push(
+      {
+        ...repository.runtimeRouteTargets[1]!,
+        shardId: 'shard-users-2',
+        bindingRef: 'TDB_ROUTE_USERS_2_CORE',
+        databaseId: 'database-users-2',
+        databaseName: 'database-name-users-2',
+        assignmentGeneration: 2,
+      },
+      {
+        ...repository.runtimeRouteTargets[2]!,
+        shardId: 'shard-pii-2',
+        bindingRef: 'TDB_ROUTE_PII_2_CORE',
+        databaseId: 'database-pii-2',
+        databaseName: 'database-name-pii-2',
+        assignmentGeneration: 2,
+      }
+    );
     const service = new ControlService({ repository, env: env(), now: () => NOW });
 
     await expect(
@@ -1128,6 +1146,18 @@ describe('ControlService tenant shard provisioning', () => {
     }));
     await expect(service.getTenantRuntimeRouteTargets(request, 'env-test')).rejects.toThrow(
       'control_tenant_shard_assignment_owner_mismatch'
+    );
+
+    repository.runtimeRouteTargets = repository.runtimeRouteTargets.map((target) => ({
+      ...target,
+      ownerTenantId: 'tenant-test',
+    }));
+    repository.runtimeRouteTargets.push({
+      ...repository.runtimeRouteTargets[1]!,
+      shardId: 'shard-users-duplicate-binding',
+    });
+    await expect(service.getTenantRuntimeRouteTargets(request, 'env-test')).rejects.toThrow(
+      'control_tenant_shard_assignment_incomplete'
     );
   });
 

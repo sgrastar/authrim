@@ -208,10 +208,28 @@ function providerDatabaseIds(
   snapshot: Phase1ControlSnapshot,
   role: 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii'
 ): string[] {
+  const relevantShardIds =
+    role === 'tenant_core/default'
+      ? new Set(
+          snapshot.tenantAssignments
+            .filter((row) => row.data_role === role && row.assignment_state === 'active')
+            .map((row) => String(row.shard_id))
+        )
+      : new Set(
+          snapshot.tenantAllocations
+            .filter(
+              (row) =>
+                row.row_kind === 'distribution' &&
+                row.data_role === role &&
+                row.reservation_state === 'committed'
+            )
+            .map((row) => String(row.selected_shard_id))
+        );
   return snapshot.shardCapacities
     .filter(
       (row) =>
         row.data_role === role &&
+        relevantShardIds.has(String(row.shard_id)) &&
         (row.status === 'active' || row.status === 'ready') &&
         typeof row.provider_resource_id === 'string'
     )
@@ -446,6 +464,75 @@ export async function verifyExactLookupRoutes(input: {
     }
   );
   return mismatches.reduce<number>((sum, value) => sum + value, 0);
+}
+
+export async function waitForExactLookupRouteReadiness(input: {
+  config: Phase1HarnessConfig;
+  runId: string;
+  seed: string;
+  account: Phase1AccountResult;
+  getToken(): Promise<string>;
+  fetcher?: typeof fetch;
+  nowMs?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<void> {
+  if (!input.account.userId) throw new Error('phase1_lookup_readiness_account_invalid');
+  const fetcher = input.fetcher ?? fetch;
+  const nowMs = input.nowMs ?? Date.now;
+  const sleep = input.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const deadline =
+    nowMs() + Math.min(input.config.observation.quiescenceTimeoutSeconds, 30 * 60) * 1_000;
+  const identity = deriveLogicalAccountIdentity({
+    seed: input.seed,
+    runId: input.runId,
+    accountIndex: input.account.accountIndex,
+    emailDomain: input.config.environment.emailDomain,
+  });
+  while (nowMs() <= deadline) {
+    const response = await fetcher(
+      new URL(
+        `/api/admin/users?search=${encodeURIComponent(identity.email)}`,
+        input.config.environment.baseUrl
+      ),
+      {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${await input.getToken()}`,
+          'X-Tenant-Id': input.config.environment.tenantId,
+        },
+        redirect: 'error',
+        signal: AbortSignal.timeout(input.config.load.requestTimeoutMs),
+      }
+    );
+    if (response.ok) {
+      const payload: unknown = await response.json();
+      const users =
+        payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? (payload as { users?: unknown }).users
+          : null;
+      if (
+        Array.isArray(users) &&
+        users.filter(
+          (user) =>
+            !!user &&
+            typeof user === 'object' &&
+            !Array.isArray(user) &&
+            (user as { id?: unknown }).id === input.account.userId
+        ).length === 1
+      ) {
+        return;
+      }
+      throw new Error('phase1_lookup_readiness_route_mismatch');
+    }
+    if (response.status !== 503) {
+      throw new Error(`phase1_lookup_readiness_http_${response.status}`);
+    }
+    const retryAfter = Number(response.headers.get('Retry-After') ?? '5');
+    await sleep(
+      Math.max(1_000, Math.min(Number.isFinite(retryAfter) ? retryAfter * 1_000 : 5_000, 30_000))
+    );
+  }
+  throw new Error('phase1_lookup_readiness_timeout');
 }
 
 function capacityVector(snapshot: Phase1ControlSnapshot): string {
@@ -918,7 +1005,8 @@ export async function verifyPhase1Run(input: {
     if (role !== 'tenant_core/users' && role !== 'tenant_pii') return false;
     const databaseId =
       typeof row.provider_resource_id === 'string' ? row.provider_resource_id : null;
-    if (!databaseId) return true;
+    const relevantDatabaseIds = role === 'tenant_core/users' ? coreDatabaseIds : piiDatabaseIds;
+    if (!databaseId || !relevantDatabaseIds.includes(databaseId)) return false;
     const physical =
       role === 'tenant_core/users' ? coreCounts.get(databaseId) : piiCounts.get(databaseId);
     return (
