@@ -13,7 +13,12 @@ import { buildPhase1CleanupPlan } from './cleanup.js';
 import { evaluatePhase1Preflight } from './preflight.js';
 import { PHASE1_PREPARE_CONFIRMATION, preparePhase1Policy } from './prepare.js';
 import { buildPhase1ProvisioningEvidence, buildPhase1Report } from './report.js';
-import { executePhase1Harness, runAccountCreation } from './run.js';
+import {
+  executePhase1Harness,
+  phase1ResumeAccountIndices,
+  runAccountCreation,
+  type Phase1AccountResult,
+} from './run.js';
 import {
   PHASE1_EXECUTION_CONFIRMATION,
   assertPhase1EvidenceIsSecretFree,
@@ -1070,6 +1075,36 @@ describe('Phase 1 evidence contracts', () => {
 });
 
 describe('Phase 1 runner', () => {
+  it('retries terminal checkpoint entries while preserving successful accounts on resume', () => {
+    const result = (overrides: Partial<Phase1AccountResult>): Phase1AccountResult => ({
+      accountIndex: 0,
+      emailDigest: 'email-digest',
+      requestDigest: 'request-digest',
+      userId: 'user-0',
+      operationId: null,
+      firstResponseStatus: 201,
+      attempts: 1,
+      retries: 0,
+      capacity503: 0,
+      terminalErrorCode: null,
+      completedAt: '2026-08-28T00:00:00.000Z',
+      ...overrides,
+    });
+
+    expect(
+      phase1ResumeAccountIndices(4, [
+        result({ accountIndex: 0 }),
+        result({
+          accountIndex: 1,
+          userId: null,
+          firstResponseStatus: 503,
+          terminalErrorCode: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+        }),
+        result({ accountIndex: 3 }),
+      ])
+    ).toEqual([1, 2]);
+  });
+
   it('replays a capacity 503 with the exact same request and idempotency key', async () => {
     let now = Date.parse('2026-08-27T00:00:00.000Z');
     const requests: Array<{ body: string; key: string }> = [];

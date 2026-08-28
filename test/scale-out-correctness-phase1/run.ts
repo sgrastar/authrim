@@ -69,6 +69,20 @@ export interface Phase1RunnerResult {
   };
 }
 
+export function phase1ResumeAccountIndices(
+  accountCount: number,
+  checkpointAccounts: readonly Phase1AccountResult[]
+): number[] {
+  const succeeded = new Set(
+    checkpointAccounts
+      .filter((result) => result.userId !== null && result.terminalErrorCode === null)
+      .map((result) => result.accountIndex)
+  );
+  return Array.from({ length: accountCount }, (_, index) => index).filter(
+    (index) => !succeeded.has(index)
+  );
+}
+
 interface QueueItem {
   identity: LogicalAccountIdentity;
   dueAt: number;
@@ -972,11 +986,10 @@ export async function executePhase1Harness(input: {
       writeCheckpoint: (result) => checkpointWriter.record(result),
     };
     if (resumeRunDirectory) {
-      const completed = new Set(checkpointWriter.values().map((result) => result.accountIndex));
-      const missing = Array.from(
-        { length: input.config.load.accountCount },
-        (_, index) => index
-      ).filter((index) => !completed.has(index));
+      const missing = phase1ResumeAccountIndices(
+        input.config.load.accountCount,
+        checkpointWriter.values()
+      );
       await runAccountCreation({
         config: input.config,
         runId: id,
