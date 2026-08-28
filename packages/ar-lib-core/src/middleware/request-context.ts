@@ -474,13 +474,15 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         );
       } catch (error) {
         if (error instanceof TenantDatabaseResolverError) {
+          const generationPropagating = error.code === 'snapshot_generation_propagating';
+          if (generationPropagating) c.header('Retry-After', '1');
           return c.json(
             {
               error: error.code,
               route: c.req.path,
               tenant_id: tenantId,
             },
-            409
+            generationPropagating ? 503 : 409
           );
         }
         const code = error instanceof Error ? error.message : 'tenant_metadata_source_unavailable';

@@ -1018,6 +1018,43 @@ describe('tenant-database-resolver', () => {
     expect(repo.getActivePointer).not.toHaveBeenCalled();
   });
 
+  it('retries a valid signed snapshot while its generation marker is still propagating', async () => {
+    const { privateJwk, publicJwk } = await generateEd25519Jwks();
+    const signedSnapshot = await signTenantRuntimeRegistrySnapshot(
+      createRuntimeRegistrySnapshot(),
+      { privateJwk, keyId: 'runtime-registry-key-1' },
+      '2026-05-16T00:00:00.000Z'
+    );
+    const adminAdapter = createAdminAdapter();
+    const repo = createRepository({ pointer: createPointer(), row: createRow() });
+
+    await expectResolverCode(
+      resolveTenantDatabaseSourceFromRegistry(
+        {
+          DB_ADMIN: adminAdapter,
+          TENANT_RUNTIME_REGISTRY: {
+            get: vi.fn(async (key: string) =>
+              key.includes(':runtime-registry:generation:')
+                ? createRuntimeGenerationDocument(7)
+                : JSON.stringify(signedSnapshot)
+            ),
+          },
+          TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+          AUTHRIM_DEPLOYMENT_TARGET: 'edge-a',
+        },
+        {
+          tenantId: 'tenant-a',
+          role: 'tenant_core',
+        },
+        repo
+      ),
+      'snapshot_generation_propagating'
+    );
+
+    expect(adminAdapter.execute).not.toHaveBeenCalled();
+    expect(repo.getActivePointer).not.toHaveBeenCalled();
+  });
+
   it('invalidates worker memory cache when the lightweight runtime generation key changes', async () => {
     const firstBinding = createD1Binding();
     const secondBinding = createD1Binding();

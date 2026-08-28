@@ -33,6 +33,7 @@ import {
 export type TenantDatabaseResolverErrorCode =
   | 'missing_snapshot'
   | 'missing_generation'
+  | 'snapshot_generation_propagating'
   | 'expired_snapshot'
   | 'invalid_snapshot_signature'
   | 'quarantined_route'
@@ -122,7 +123,9 @@ export type ResolvedTenantDatabaseSource = ResolvedTenantStore;
 
 type RuntimeSnapshotResolveResult =
   | { status: 'resolved'; resolved: ResolvedTenantStore }
-  | { status: 'missing' | 'expired' | 'invalid' | 'invalid_contract' };
+  | {
+      status: 'missing' | 'generation_mismatch' | 'expired' | 'invalid' | 'invalid_contract';
+    };
 
 export const DEFAULT_TENANT_DATABASE_RESOLVER_MEMORY_CACHE_TTL_MS = 60_000;
 export const DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS = 1_000;
@@ -916,12 +919,6 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       lightweightGeneration.quarantineDenyGeneration
     );
   }
-  if (
-    lightweightGeneration === null ||
-    lightweightGeneration.runtimeGeneration !== snapshot.runtimeGeneration
-  ) {
-    return { status: 'invalid' };
-  }
   let signatureStatus: Awaited<ReturnType<typeof verifyTenantRuntimeRegistrySnapshotSignature>>;
   try {
     signatureStatus = await verifyTenantRuntimeRegistrySnapshotSignature(
@@ -947,6 +944,16 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       runtimeGeneration: snapshot.runtimeGeneration,
     });
     return { status: 'invalid' };
+  }
+  if (
+    lightweightGeneration === null ||
+    lightweightGeneration.runtimeGeneration !== snapshot.runtimeGeneration
+  ) {
+    // Runtime snapshot and generation marker are stored under separate KV keys. Even though the
+    // publisher writes the signed snapshot first, edge propagation is not atomic and readers can
+    // temporarily observe two individually valid generations. Never consume the stale snapshot,
+    // but classify this as unavailable so callers retry instead of reporting a signature attack.
+    return { status: 'generation_mismatch' };
   }
   if (snapshot.routeStatus !== 'active') {
     throw createQuarantinedRouteError(
@@ -1087,6 +1094,13 @@ function createRequiredSnapshotError(
     return new TenantDatabaseResolverError(
       'invalid_route_contract',
       `Runtime registry snapshot contract is invalid for ${options.tenantId}/${options.role}`,
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (status === 'generation_mismatch') {
+    return new TenantDatabaseResolverError(
+      'snapshot_generation_propagating',
+      `Runtime registry generation is propagating for ${options.tenantId}/${options.role}`,
       { tenantId: options.tenantId, role: options.role }
     );
   }
