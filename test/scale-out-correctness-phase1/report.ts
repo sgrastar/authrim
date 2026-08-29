@@ -400,7 +400,9 @@ Finished: ${input.runner.finishedAt}
 | Excess Core provisioning | ${input.integrity.excessCoreProvisioning} |
 | Excess PII provisioning | ${input.integrity.excessPiiProvisioning} |
 | Capacity 503 responses retried | ${input.runner.metrics.capacity503} |
-| Server 5xx responses retried | ${input.runner.metrics.server5xx} |
+| Registry propagation 503 responses retried | ${input.runner.metrics.registryPropagation503} |
+| Runtime binding propagation 503 responses retried | ${input.runner.metrics.bindingPropagation503} |
+| Unexpected server 5xx responses retried | ${input.runner.metrics.server5xx} |
 | Total retries | ${input.runner.metrics.retries} |
 
 ## Provisioning timing evidence

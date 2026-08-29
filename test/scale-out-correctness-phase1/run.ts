@@ -40,9 +40,27 @@ import { createPhase1AdminTokenProvider } from './admin-token.js';
 const DEFAULT_RUNS_DIRECTORY = resolve(dirname(fileURLToPath(import.meta.url)), 'runs');
 const CAPACITY_ERROR = 'temporarily_unavailable';
 const RELEASE_ROLLOUT_UNAVAILABLE = 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE';
+const REGISTRY_GENERATION_PROPAGATING = 'snapshot_generation_propagating';
+const RUNTIME_BINDING_PROPAGATING = 'runtime_binding_propagating';
 
 function isRetryableProvisioning503(errorCode: string): boolean {
   return errorCode === CAPACITY_ERROR || errorCode === RELEASE_ROLLOUT_UNAVAILABLE;
+}
+
+function isRegistryPropagation503(errorCode: string): boolean {
+  return errorCode === REGISTRY_GENERATION_PROPAGATING;
+}
+
+function isBindingPropagation503(errorCode: string): boolean {
+  return errorCode === RUNTIME_BINDING_PROPAGATING;
+}
+
+function isExpectedRetryable503(errorCode: string): boolean {
+  return (
+    isRetryableProvisioning503(errorCode) ||
+    isRegistryPropagation503(errorCode) ||
+    isBindingPropagation503(errorCode)
+  );
 }
 
 export interface Phase1AccountResult {
@@ -69,6 +87,8 @@ export interface Phase1RunnerResult {
     accepted201: number;
     accepted202: number;
     capacity503: number;
+    registryPropagation503: number;
+    bindingPropagation503: number;
     server5xx: number;
     retries: number;
     terminalFailures: number;
@@ -298,7 +318,22 @@ function runnerFromEvidence(input: {
       accepted201: input.events.filter((event) => event.kind === 'accepted_201').length,
       accepted202: uniqueAccepted202.size,
       capacity503: input.events.filter((event) => event.kind === 'capacity_503').length,
-      server5xx: input.events.filter((event) => event.kind === 'server_5xx').length,
+      registryPropagation503: input.events.filter(
+        (event) =>
+          event.kind === 'registry_propagation_503' ||
+          (event.kind === 'server_5xx' && event.errorCode === REGISTRY_GENERATION_PROPAGATING)
+      ).length,
+      bindingPropagation503: input.events.filter(
+        (event) =>
+          event.kind === 'binding_propagation_503' ||
+          (event.kind === 'server_5xx' && event.errorCode === RUNTIME_BINDING_PROPAGATING)
+      ).length,
+      server5xx: input.events.filter(
+        (event) =>
+          event.kind === 'server_5xx' &&
+          event.errorCode !== REGISTRY_GENERATION_PROPAGATING &&
+          event.errorCode !== RUNTIME_BINDING_PROPAGATING
+      ).length,
       retries: input.events.filter((event) => event.kind === 'retry_scheduled').length,
       terminalFailures: input.accounts.filter((account) => account.userId === null).length,
     },
@@ -516,6 +551,8 @@ export async function runAccountCreation(input: {
     accepted201: 0,
     accepted202: 0,
     capacity503: 0,
+    registryPropagation503: 0,
+    bindingPropagation503: 0,
     server5xx: 0,
     retries: 0,
     terminalFailures: 0,
@@ -682,6 +719,44 @@ export async function runAccountCreation(input: {
             latencyMs: completedAtMs - attemptStartedAt,
             errorCode: outcome.errorCode,
           });
+        } else if (
+          outcome.status === 503 &&
+          outcome.errorCode !== undefined &&
+          isRegistryPropagation503(outcome.errorCode)
+        ) {
+          metrics.registryPropagation503 += 1;
+          await input.dependencies.writeEvent({
+            schemaVersion: PHASE1_SCHEMA_VERSION,
+            kind: 'registry_propagation_503',
+            at: new Date(completedAtMs).toISOString(),
+            runId: input.runId,
+            accountIndex: item.identity.accountIndex,
+            emailDigest: item.identity.emailDigest,
+            requestDigest: item.identity.requestDigest,
+            attempt: item.attempt,
+            status: 503,
+            latencyMs: completedAtMs - attemptStartedAt,
+            errorCode: outcome.errorCode,
+          });
+        } else if (
+          outcome.status === 503 &&
+          outcome.errorCode !== undefined &&
+          isBindingPropagation503(outcome.errorCode)
+        ) {
+          metrics.bindingPropagation503 += 1;
+          await input.dependencies.writeEvent({
+            schemaVersion: PHASE1_SCHEMA_VERSION,
+            kind: 'binding_propagation_503',
+            at: new Date(completedAtMs).toISOString(),
+            runId: input.runId,
+            accountIndex: item.identity.accountIndex,
+            emailDigest: item.identity.emailDigest,
+            requestDigest: item.identity.requestDigest,
+            attempt: item.attempt,
+            status: 503,
+            latencyMs: completedAtMs - attemptStartedAt,
+            errorCode: outcome.errorCode,
+          });
         } else if (outcome.status !== undefined && outcome.status >= 500) {
           metrics.server5xx += 1;
           await input.dependencies.writeEvent({
@@ -707,7 +782,7 @@ export async function runAccountCreation(input: {
           if (
             outcome.status === 503 &&
             outcome.errorCode !== undefined &&
-            isRetryableProvisioning503(outcome.errorCode)
+            isExpectedRetryable503(outcome.errorCode)
           ) {
             capacityBlockedUntil = Math.max(capacityBlockedUntil, completedAtMs + delay);
           }
@@ -1054,7 +1129,10 @@ export async function executePhase1Harness(input: {
   try {
     finalControl = await waitForPhase1Quiescence({ config: input.config, client });
     const readinessAccount = [...checkpointWriter.values()]
-      .filter((account) => account.userId !== null)
+      .filter(
+        (account): account is Phase1AccountResult & { userId: string; completedAt: string } =>
+          account.userId !== null && account.completedAt !== null
+      )
       .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))[0];
     if (!readinessAccount) throw new Error('phase1_lookup_readiness_account_missing');
     await waitForExactLookupRouteReadiness({

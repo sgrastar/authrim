@@ -373,7 +373,8 @@ paths:
         '503':
           description: >-
             Account capacity is being provisioned or the private Control binding is temporarily
-            unavailable during rollout. Retry the same idempotent request.
+            unavailable during rollout, or a newly deployed runtime database binding is still
+            propagating. Retry the same idempotent request.
           headers:
             Retry-After:
               description: Minimum suggested delay before retrying, in seconds.
@@ -390,8 +391,9 @@ paths:
         Lookup directory publication is active. A transient publication delay returns 202 with a
         durable operation identifier that can be resumed by retrying the same request and
         Idempotency-Key. While elastic D1 capacity is being provisioned, or when the private Control
-        binding is temporarily unavailable during rollout, the endpoint returns 503 with
-        Retry-After; clients must retry the same request and Idempotency-Key after that delay.
+        binding is temporarily unavailable during rollout, or while a newly deployed runtime
+        database binding is propagating, the endpoint returns 503 with Retry-After; clients must
+        retry the same request and Idempotency-Key after that delay.
       security:
         - adminBearer: []
         - adminSessionCookie: []

@@ -55,6 +55,7 @@ import {
   executeDurableInitialAccountDirectoryWrite,
   resolveInitialAccountDirectoryWriteTargets,
 } from './account-directory-producer';
+import { isAccountDirectoryWriteBindingUnavailable } from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -1350,6 +1351,16 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
           error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+    }
+    if (isAccountDirectoryWriteBindingUnavailable(error)) {
+      c.header('Retry-After', '1');
+      return c.json(
+        {
+          error: 'runtime_binding_propagating',
+          error_description: 'Runtime database binding is propagating; retry shortly',
         },
         503
       );

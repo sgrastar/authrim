@@ -63,6 +63,7 @@ const canonicalRuntimeState = vi.hoisted(() => ({
 const accountCreationState = vi.hoisted(() => ({
   deliveryStatus: 201 as 201 | 202,
   capacityUnavailable: false,
+  bindingUnavailable: false,
   calls: [] as Array<Record<string, unknown>>,
   pause: null as null | (() => Promise<void>),
   inFlight: 0,
@@ -289,11 +290,16 @@ vi.mock('../account-directory-producer', () => ({
       };
     }
   ),
-  resolveInitialAccountDirectoryWriteTargets: vi.fn(async (env: any) => ({
-    tenantCoreUsers: env.DB,
-    tenantPii: env.DB_PII,
-    residencyPartition: 'default',
-  })),
+  resolveInitialAccountDirectoryWriteTargets: vi.fn(async (env: any) => {
+    if (accountCreationState.bindingUnavailable) {
+      throw new Error('account_directory_write_binding_unavailable');
+    }
+    return {
+      tenantCoreUsers: env.DB,
+      tenantPii: env.DB_PII,
+      residencyPartition: 'default',
+    };
+  }),
 }));
 
 // Mock scim-auth middleware at module level (now from @authrim/ar-lib-scim package)
@@ -605,6 +611,7 @@ describe('SCIM 2.0 Endpoints', () => {
     vi.clearAllMocks();
     accountCreationState.deliveryStatus = 201;
     accountCreationState.capacityUnavailable = false;
+    accountCreationState.bindingUnavailable = false;
     accountCreationState.calls = [];
     accountCreationState.pause = null;
     accountCreationState.inFlight = 0;
@@ -1597,6 +1604,27 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.detail).not.toContain('capacity.user@example.com');
     });
 
+    it('returns a retryable SCIM error while a runtime binding is propagating', async () => {
+      accountCreationState.bindingUnavailable = true;
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'binding-user',
+          emails: [{ value: 'binding.user@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('1');
+      await expect(res.json()).resolves.toMatchObject({
+        status: '503',
+        detail: 'Runtime database binding is propagating; retry shortly',
+      });
+    });
+
     it('publishes normalized userName in the tenant-scoped SCIM subject namespace', async () => {
       const req = createRequest('/scim/v2/Users', {
         method: 'POST',
@@ -2448,6 +2476,45 @@ describe('SCIM 2.0 Endpoints', () => {
       expect(body.Operations[0].status).toBe('201');
       expect(body.Operations[0].bulkId).toBe('user1');
       expect(body.Operations[0].location).toBeDefined();
+    });
+
+    it('returns a retryable per-operation error while a runtime binding is propagating', async () => {
+      accountCreationState.bindingUnavailable = true;
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [
+              {
+                method: 'POST',
+                path: '/Users',
+                bulkId: 'binding-propagating-user',
+                data: {
+                  schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+                  userName: 'binding-propagating-user',
+                  emails: [{ value: 'binding-propagating@example.com', primary: true }],
+                },
+              },
+            ],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        Operations: [
+          {
+            bulkId: 'binding-propagating-user',
+            status: '503',
+            response: {
+              status: '503',
+              detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          },
+        ],
+      });
     });
 
     it('returns per-operation 400 errors for missing resource schemas', async () => {

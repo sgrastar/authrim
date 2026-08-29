@@ -79,6 +79,8 @@ export type RequestEventKind =
   | 'accepted_201'
   | 'accepted_202'
   | 'capacity_503'
+  | 'registry_propagation_503'
+  | 'binding_propagation_503'
   | 'server_5xx'
   | 'retry_scheduled'
   | 'operation_poll'
@@ -249,6 +251,8 @@ export interface Phase1Summary {
     accepted201: number;
     accepted202: number;
     capacity503: number;
+    registryPropagation503: number;
+    bindingPropagation503: number;
     server5xx: number;
     retries: number;
     terminalFailures: number;

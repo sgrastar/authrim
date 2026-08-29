@@ -17,6 +17,7 @@ import {
   type AccountCreationOperation,
 } from './account-creation-operation';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
+import { ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE } from './account-directory-errors';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
@@ -188,7 +189,7 @@ async function allocateAccountRouteWithElasticCapacity(
 function d1Binding(env: Env, bindingRef: string): D1Database {
   const value = (env as unknown as Record<string, unknown>)[bindingRef];
   if (!value || typeof value !== 'object') {
-    throw new Error('account_directory_write_binding_unavailable');
+    throw new Error(ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE);
   }
   const binding = value as Partial<D1Database>;
   if (
@@ -196,7 +197,7 @@ function d1Binding(env: Env, bindingRef: string): D1Database {
     typeof binding.batch !== 'function' ||
     typeof binding.withSession !== 'function'
   ) {
-    throw new Error('account_directory_write_binding_unavailable');
+    throw new Error(ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE);
   }
   return value as D1Database;
 }

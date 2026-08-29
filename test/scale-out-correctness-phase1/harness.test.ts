@@ -650,6 +650,8 @@ describe('Phase 1 evidence contracts', () => {
         accepted201: 0,
         accepted202: 0,
         capacity503: 0,
+        registryPropagation503: 0,
+        bindingPropagation503: 0,
         server5xx: 0,
         retries: 0,
         terminalFailures: 1,
@@ -1177,6 +1179,8 @@ describe('Phase 1 runner', () => {
 
     expect(result.metrics).toMatchObject({
       capacity503: 0,
+      registryPropagation503: 0,
+      bindingPropagation503: 0,
       server5xx: 1,
       retries: 1,
       terminalFailures: 0,
@@ -1185,6 +1189,98 @@ describe('Phase 1 runner', () => {
     expect(requests[0]).toEqual(requests[1]);
     expect(events).toContainEqual(expect.objectContaining({ kind: 'server_5xx', status: 500 }));
     expect(() => assertPhase1EvidenceIsSecretFree(events)).not.toThrow();
+  });
+
+  it('records registry propagation 503 separately from unexpected server 5xx', async () => {
+    let now = Date.parse('2026-08-27T00:00:00.000Z');
+    const responses = [
+      new Response(JSON.stringify({ error: 'snapshot_generation_propagating' }), {
+        status: 503,
+        headers: { 'Retry-After': '1' },
+      }),
+      new Response(JSON.stringify({ user: { id: 'user-1' } }), { status: 201 }),
+    ];
+    const events: Phase1RequestEvent[] = [];
+    const result = await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-registry-propagation-503-replay',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        nowMs: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        random: () => 0.5,
+        fetcher: async () => responses.shift() ?? new Response(null, { status: 500 }),
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.metrics).toMatchObject({
+      capacity503: 0,
+      registryPropagation503: 1,
+      bindingPropagation503: 0,
+      server5xx: 0,
+      retries: 1,
+      terminalFailures: 0,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'registry_propagation_503',
+        status: 503,
+        errorCode: 'snapshot_generation_propagating',
+      })
+    );
+  });
+
+  it('records runtime binding propagation 503 separately from unexpected server 5xx', async () => {
+    let now = Date.parse('2026-08-27T00:00:00.000Z');
+    const responses = [
+      new Response(JSON.stringify({ error: 'runtime_binding_propagating' }), {
+        status: 503,
+        headers: { 'Retry-After': '1' },
+      }),
+      new Response(JSON.stringify({ user: { id: 'user-1' } }), { status: 201 }),
+    ];
+    const events: Phase1RequestEvent[] = [];
+    const result = await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-binding-propagation-503-replay',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        nowMs: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        random: () => 0.5,
+        fetcher: async () => responses.shift() ?? new Response(null, { status: 500 }),
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.metrics).toMatchObject({
+      capacity503: 0,
+      registryPropagation503: 0,
+      bindingPropagation503: 1,
+      server5xx: 0,
+      retries: 1,
+      terminalFailures: 0,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'binding_propagation_503',
+        status: 503,
+        errorCode: 'runtime_binding_propagating',
+      })
+    );
   });
 
   it('replays a fail-closed release status 503 with Retry-After and the same identity', async () => {
@@ -1228,6 +1324,8 @@ describe('Phase 1 runner', () => {
 
     expect(result.metrics).toMatchObject({
       capacity503: 1,
+      registryPropagation503: 0,
+      bindingPropagation503: 0,
       server5xx: 0,
       retries: 1,
       terminalFailures: 0,
@@ -1771,6 +1869,8 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
           accepted201: 2,
           accepted202: 0,
           capacity503: 0,
+          registryPropagation503: 0,
+          bindingPropagation503: 0,
           server5xx: 0,
           retries: 0,
           terminalFailures: 0,
@@ -1967,6 +2067,8 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
           accepted201: 1,
           accepted202: 0,
           capacity503: 1,
+          registryPropagation503: 0,
+          bindingPropagation503: 0,
           server5xx: 0,
           retries: 1,
           terminalFailures: 0,

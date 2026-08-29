@@ -229,6 +229,60 @@ describe('LookupBucketMigrationService', () => {
     await expect(service.planNextAutomaticMigration('test', snapshot)).resolves.toBeNull();
   });
 
+  it('prefers an empty active shard when load-improvement scores tie', async () => {
+    database.exec(
+      `INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, provisioning_state,
+         origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES (
+         'resource-d', 'test', 'd1', 'lookup-d', 'lookup-d', 'fingerprint-d', 'active', 'seed',
+         '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+         1, 1
+       );
+       INSERT INTO control_lookup_physical_shards (
+         lookup_shard_id, environment_id, residency_partition, binding_ref,
+         d1_desired_resource_id, status, created_at, updated_at
+       ) VALUES ('lookup-d', 'test', 'default', 'LOOKUP_D', 'resource-d', 'active', 1, 1);
+       INSERT INTO control_lookup_bucket_assignments (
+         environment_id, virtual_bucket, lookup_shard_id, assignment_generation, state, updated_at
+       ) VALUES ('test', 10, 'lookup-b', 1, 'active', 1);`
+    );
+
+    const planned = await service.planNextAutomaticMigration('test', {
+      ownerId: 'management-planner',
+      observedAt: now,
+      buckets: [
+        ...[7, 8, 9].map((virtualBucket) => ({
+          virtualBucket,
+          lookupShardId: 'lookup-a',
+          assignmentGeneration: virtualBucket === 7 ? 3 : 1,
+          activeIdentifierCount: 10,
+          activeAliasCount: 0,
+          successfulRoutePublicationCount: 10,
+          publicationCounterUpdatedAt: now,
+          counterUpdatedAt: now,
+        })),
+        {
+          virtualBucket: 10,
+          lookupShardId: 'lookup-b',
+          assignmentGeneration: 1,
+          activeIdentifierCount: 1,
+          activeAliasCount: 0,
+          successfulRoutePublicationCount: 1,
+          publicationCounterUpdatedAt: now,
+          counterUpdatedAt: now,
+        },
+      ],
+    });
+
+    expect(planned).toMatchObject({
+      source: { lookupShardId: 'lookup-a' },
+      target: { lookupShardId: 'lookup-d' },
+      state: 'dual_write',
+    });
+  });
+
   it('compares shard load after normalizing by configured capacity weight', async () => {
     database.exec(
       `UPDATE control_lookup_physical_shards SET capacity_weight = 2

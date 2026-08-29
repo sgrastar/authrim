@@ -316,6 +316,7 @@ export class LookupBucketMigrationService {
     let selected:
       | {
           improvement: number;
+          targetLoad: number;
           source: string;
           target: string;
           virtualBucket: number;
@@ -343,6 +344,7 @@ export class LookupBucketMigrationService {
           if (improvement <= 0) continue;
           const next = {
             improvement,
+            targetLoad: target.total / target.capacityWeight,
             source: source.lookupShardId,
             target: target.lookupShardId,
             virtualBucket: candidate.virtualBucket,
@@ -352,8 +354,12 @@ export class LookupBucketMigrationService {
           if (
             !selected ||
             next.improvement > selected.improvement ||
-            (next.improvement === selected.improvement && next.count > selected.count) ||
+            (next.improvement === selected.improvement && next.targetLoad < selected.targetLoad) ||
             (next.improvement === selected.improvement &&
+              next.targetLoad === selected.targetLoad &&
+              next.count > selected.count) ||
+            (next.improvement === selected.improvement &&
+              next.targetLoad === selected.targetLoad &&
               next.count === selected.count &&
               `${next.source}\0${next.target}\0${next.virtualBucket}` <
                 `${selected.source}\0${selected.target}\0${selected.virtualBucket}`)
