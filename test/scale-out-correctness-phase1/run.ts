@@ -486,7 +486,8 @@ async function requestOnce(input: {
     return {
       kind: 'retry',
       status: response.status,
-      errorCode: `operation_http_${response.status}`,
+      retryAfterMs: retryAfterMs(response) ?? undefined,
+      errorCode: safeErrorCode(payload, `operation_http_${response.status}`),
     };
   }
   return {

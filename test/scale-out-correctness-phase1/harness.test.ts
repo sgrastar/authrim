@@ -1418,6 +1418,114 @@ describe('Phase 1 runner', () => {
     expect(stableString(events)).not.toContain('/api/admin/users/operations/operation-1');
   });
 
+  it('classifies a named rollout 503 while polling as expected capacity retry', async () => {
+    let now = Date.parse('2026-08-27T00:00:00.000Z');
+    const requests: Array<{ method: string; at: number }> = [];
+    const events: Phase1RequestEvent[] = [];
+    const responses = [
+      new Response(
+        JSON.stringify({
+          status: 'pending',
+          operation_id: 'operation-rollout-retry',
+          status_url: '/api/admin/users/operations/operation-rollout-retry',
+        }),
+        { status: 202 }
+      ),
+      new Response(JSON.stringify({ error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE' }), {
+        status: 503,
+        headers: { 'Retry-After': '5' },
+      }),
+      new Response(JSON.stringify({ state: 'succeeded', user_id: 'user-1' }), { status: 200 }),
+    ];
+    const result = await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-pending-rollout-retry',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        nowMs: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        fetcher: async (_url, init) => {
+          requests.push({ method: init?.method ?? 'GET', at: now });
+          return responses.shift() ?? new Response(null, { status: 500 });
+        },
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.metrics).toMatchObject({
+      accepted202: 1,
+      capacity503: 1,
+      server5xx: 0,
+      retries: 2,
+      terminalFailures: 0,
+    });
+    expect(result.accounts[0]).toMatchObject({ userId: 'user-1', attempts: 3, retries: 2 });
+    expect(requests.map((request) => request.method)).toEqual(['POST', 'GET', 'GET']);
+    expect((requests[2]?.at ?? 0) - (requests[1]?.at ?? 0)).toBe(5_000);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'capacity_503',
+        status: 503,
+        errorCode: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+      })
+    );
+  });
+
+  it('preserves a named unexpected server error while polling', async () => {
+    let now = Date.parse('2026-08-27T00:00:00.000Z');
+    const events: Phase1RequestEvent[] = [];
+    const responses = [
+      new Response(
+        JSON.stringify({
+          status: 'pending',
+          operation_id: 'operation-server-error',
+          status_url: '/api/admin/users/operations/operation-server-error',
+        }),
+        { status: 202 }
+      ),
+      new Response(JSON.stringify({ error: 'server_error' }), { status: 503 }),
+      new Response(JSON.stringify({ state: 'succeeded', user_id: 'user-1' }), { status: 200 }),
+    ];
+    const result = await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-pending-server-error',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        nowMs: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        fetcher: async () => responses.shift() ?? new Response(null, { status: 500 }),
+        writeEvent: async (event) => {
+          events.push(event);
+        },
+      },
+    });
+
+    expect(result.metrics).toMatchObject({
+      accepted202: 1,
+      capacity503: 0,
+      server5xx: 1,
+      retries: 2,
+      terminalFailures: 0,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'server_5xx',
+        status: 503,
+        errorCode: 'server_error',
+      })
+    );
+  });
+
   it('periodically resumes a pending operation with the original request identity', async () => {
     let now = Date.parse('2026-08-27T00:00:00.000Z');
     let responseIndex = 0;
