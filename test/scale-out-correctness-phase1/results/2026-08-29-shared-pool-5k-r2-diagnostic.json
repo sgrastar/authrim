@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-08-29",
+  "environment": "scaleout",
+  "scenario": "shared-pool",
+  "profile": "accelerated-5k",
+  "tenantId": "phase1-shared-5k-r2",
+  "runId": "phase1-20260829085234-0b8f43aa",
+  "sourceCommit": "d26c344c7bb8f3c83f7bb18765d4551a3ccde12c",
+  "evidenceStatus": "diagnostic_failed_lookup_forecast_and_unexpected_server_5xx",
+  "startedAt": "2026-08-29T08:52:39.682Z",
+  "injectionFinishedAt": "2026-08-29T10:22:37.046Z",
+  "scaleOutQuiescedAt": "2026-08-29T10:30:44.000Z",
+  "evidenceObservedThrough": "2026-08-29T10:32:19.802Z",
+  "submittedAccounts": 5000,
+  "createdAccounts": 5000,
+  "uniqueUserIds": 5000,
+  "attempts": 26428,
+  "immediate201": 4978,
+  "acceptedAsync202": 23,
+  "capacity503": 15668,
+  "registryPropagation503": 5634,
+  "operationPolling503": 30,
+  "transportRetrySchedules": 64,
+  "terminalFailures": 0,
+  "integrity": {
+    "lostAccounts": 0,
+    "duplicateCoreAccounts": 0,
+    "duplicatePiiAccounts": 0,
+    "nonCommittedAllocations": 0,
+    "duplicateProvisioningDecisions": 0,
+    "duplicateProviderLinks": 0,
+    "duplicateProviderNames": 0,
+    "orphanManagedD1Resources": 0,
+    "providerMissingManagedD1Resources": 0,
+    "stuckD1Resources": 0,
+    "nonTerminalControlOperations": 0
+  },
+  "sharedPool": {
+    "tenantCoreUsers": {
+      "baselineShards": 5,
+      "finalShards": 15,
+      "physicalAdditions": 10,
+      "baselineCapacityAccounts": 2500,
+      "finalCapacityAccounts": 7500,
+      "baselineAllocatedAccounts": 2000,
+      "finalAllocatedAccounts": 7000,
+      "baselineReadySpares": 1,
+      "finalReadySpares": 1,
+      "tenantAllocations": 5000
+    },
+    "tenantPii": {
+      "baselineShards": 5,
+      "finalShards": 15,
+      "physicalAdditions": 10,
+      "baselineCapacityAccounts": 2500,
+      "finalCapacityAccounts": 7500,
+      "baselineAllocatedAccounts": 2000,
+      "finalAllocatedAccounts": 7000,
+      "baselineReadySpares": 1,
+      "finalReadySpares": 1,
+      "tenantAllocations": 5000
+    },
+    "manualScaleSystemIntervention": 0
+  },
+  "provisioning": {
+    "operationCount": 20,
+    "succeeded": 20,
+    "failed": 0,
+    "operationsRequiringRetry": 20,
+    "attemptCountPerOperation": 2,
+    "decisionToReadySeconds": {
+      "minimum": 245,
+      "p50": 419,
+      "p95": 560,
+      "maximum": 561,
+      "mean": 413.3
+    },
+    "byRoleAndGeneration": [
+      {
+        "generation": 5,
+        "tenantCoreUsersSeconds": 368,
+        "tenantPiiSeconds": 542
+      },
+      {
+        "generation": 6,
+        "tenantCoreUsersSeconds": 304,
+        "tenantPiiSeconds": 484
+      },
+      {
+        "generation": 7,
+        "tenantCoreUsersSeconds": 416,
+        "tenantPiiSeconds": 309
+      },
+      {
+        "generation": 8,
+        "tenantCoreUsersSeconds": 382,
+        "tenantPiiSeconds": 561
+      },
+      {
+        "generation": 9,
+        "tenantCoreUsersSeconds": 560,
+        "tenantPiiSeconds": 300
+      },
+      {
+        "generation": 10,
+        "tenantCoreUsersSeconds": 444,
+        "tenantPiiSeconds": 503
+      },
+      {
+        "generation": 11,
+        "tenantCoreUsersSeconds": 417,
+        "tenantPiiSeconds": 421
+      },
+      {
+        "generation": 12,
+        "tenantCoreUsersSeconds": 314,
+        "tenantPiiSeconds": 437
+      },
+      {
+        "generation": 13,
+        "tenantCoreUsersSeconds": 482,
+        "tenantPiiSeconds": 296
+      },
+      {
+        "generation": 14,
+        "tenantCoreUsersSeconds": 481,
+        "tenantPiiSeconds": 245
+      }
+    ],
+    "transientControlEvents": {
+      "runtimeSmokeBindingUnavailable": 58,
+      "workerBindingReconciliationFailed": 39,
+      "workerDeploymentLeaseBusy": 3,
+      "operationsExposingTransientParentError": 20
+    }
+  },
+  "lookupPredictiveScaleOut": {
+    "result": "failed_no_fresh_observation_or_transition",
+    "physicalAdditions": 0,
+    "assignmentTransitionsToNewLookupD1": 0,
+    "lastObservedAt": "2026-08-29T08:40:54.000Z",
+    "observedActiveRoutes": 55945,
+    "forecastNewRoutes": 4,
+    "activeCapacityUnits": 24,
+    "decisionGeneration": 23,
+    "finalState": "stable",
+    "requestedOperation": null,
+    "lastError": null,
+    "schedulerTimingEvidence": [
+      {
+        "scheduledAt": "2026-08-29T10:00:41.000Z",
+        "lookupExecutionAt": "2026-08-29T10:01:01.000Z"
+      },
+      {
+        "scheduledAt": "2026-08-29T10:02:41.000Z",
+        "lookupExecutionAt": "2026-08-29T10:03:43.000Z"
+      }
+    ]
+  },
+  "providerInventory": {
+    "environmentNamedD1Resources": 197,
+    "controlManagedD1Resources": 192,
+    "fixedPlatformD1ResourcesExcluded": 5,
+    "managedIdSetMatched": true
+  },
+  "limitations": [
+    "The local harness stopped at 2,500 accounts after the test workstation filesystem reached ENOSPC and was resumed from its durable checkpoint.",
+    "The request log contains 7,500 scheduled records because the resumed half was scheduled again; accepted results and the checkpoint converge to exactly 5,000 unique accounts.",
+    "All 20 provisioning operations converged, but each exposed at least one transient binding or deployment error before succeeding on attempt 2.",
+    "The Lookup predictive observation remained stale, so no new Lookup D1 or assignment transition was produced during this run.",
+    "Thirty operation-status polls returned HTTP 503. Every associated asynchronous account operation eventually converged, but the strict zero-unexpected-5xx criterion failed.",
+    "This diagnostic run is not a publishable Phase 1 pass; a fresh uninterrupted rerun with the corrections deployed remains required."
+  ],
+  "result": "failed",
+  "passedChecks": [
+    "all_unique_accounts_eventually_created",
+    "core_shared_pool_scale_out",
+    "pii_shared_pool_scale_out",
+    "ready_spare_preserved",
+    "duplicate_d1_zero",
+    "orphan_managed_resource_zero",
+    "stuck_provisioning_zero",
+    "manual_scale_system_intervention_zero"
+  ],
+  "failedChecks": [
+    "lookup_predictive_scale_out",
+    "unexpected_server_5xx_zero",
+    "uninterrupted_harness_execution"
+  ]
+}
