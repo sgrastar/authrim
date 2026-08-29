@@ -451,6 +451,15 @@ The longer tail is Worker binding deployment and propagation, not D1 creation. T
 `control_worker_deployment_lease_busy` and `runtime_smoke_binding_unavailable` states were retained
 as retryable progress and cleared automatically.
 
+### 9.2 Tenant-exclusive 5,000-account remediation evidence (2026-08-29)
+
+The first 5,000-account run and its post-change live probes are recorded in
+[`results/2026-08-29-tenant-exclusive-5k-r4.md`](./results/2026-08-29-tenant-exclusive-5k-r4.md).
+The first run remains a failed run because it observed 50 unexpected 5xx responses. The linked
+evidence records the exact failure, the post-change zero-5xx probes, predictive Lookup capacity
+evidence, a completed Lookup bucket cutover, and provider-to-Control inventory reconciliation. It is
+remediation evidence and does not replace the required independently named clean 5,000-account runs.
+
 ## 10. Evidence artifacts
 
 Each run writes to a new timestamped directory and never overwrites prior evidence.
