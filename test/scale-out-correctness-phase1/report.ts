@@ -8,6 +8,7 @@ import {
   parsePhase1HarnessConfig,
   type Phase1HarnessConfig,
   type Phase1Baseline,
+  type Phase1ControlSnapshot,
   type Phase1IntegrityResult,
   type Phase1ProvisioningEvidence,
   type Phase1ProvisioningEventEvidence,
@@ -72,6 +73,7 @@ function percentile(sorted: readonly number[], fraction: number): number | null 
 export function buildPhase1ProvisioningEvidence(input: {
   baseline?: Phase1Baseline;
   controlEvents?: Array<Record<string, unknown>>;
+  finalControl?: Phase1ControlSnapshot;
 }): Phase1ProvisioningEvidence {
   const baselineResources = new Set(
     input.baseline?.control.desiredResources.map((row) => String(row.desired_resource_id)) ?? []
@@ -138,6 +140,30 @@ export function buildPhase1ProvisioningEvidence(input: {
         existing?.readyAt ??
         (current.provisioning_state === 'ready' ? (internalReadyAt ?? observedAt) : null),
       timingSource,
+    });
+  }
+  const finalObservedAt = observedTimestamp(input.finalControl?.observedAt);
+  for (const current of input.finalControl?.desiredResources ?? []) {
+    const desiredResourceId = current.desired_resource_id;
+    if (typeof desiredResourceId !== 'string' || baselineResources.has(desiredResourceId)) continue;
+    const existing = resources.get(desiredResourceId);
+    const internalCreatedAt = controlTimestamp(current.created_at);
+    const decisionAt = existing?.decisionAt ?? internalCreatedAt ?? finalObservedAt;
+    if (decisionAt === null) continue;
+    const internalReadyAt =
+      current.provisioning_state === 'ready' ? controlTimestamp(current.updated_at) : null;
+    resources.set(desiredResourceId, {
+      operationId:
+        existing?.operationId ??
+        (typeof current.origin_operation_id === 'string' ? current.origin_operation_id : null),
+      dataRole: existing?.dataRole ?? dataRole(current),
+      deterministicName:
+        existing?.deterministicName ??
+        (typeof current.deterministic_name === 'string' ? current.deterministic_name : 'unknown'),
+      decisionAt,
+      readyAt: existing?.readyAt ?? internalReadyAt,
+      timingSource:
+        existing?.timingSource ?? (internalCreatedAt === null ? 'observer' : 'control_state'),
     });
   }
   const provisioningEvents = [...resources.entries()]
@@ -331,6 +357,7 @@ export function buildPhase1Report(input: {
   runId: string;
   baseline?: Phase1Baseline;
   controlEvents?: Array<Record<string, unknown>>;
+  finalControl?: Phase1ControlSnapshot;
 }): { summary: Phase1Summary; markdown: string } {
   const eventualSuccessRate =
     input.runner.metrics.scheduled === 0
@@ -344,6 +371,7 @@ export function buildPhase1Report(input: {
   const provisioning = buildPhase1ProvisioningEvidence({
     baseline: input.baseline,
     controlEvents: input.controlEvents,
+    finalControl: input.finalControl,
   });
   const summary: Phase1Summary = {
     schemaVersion: PHASE1_SCHEMA_VERSION,

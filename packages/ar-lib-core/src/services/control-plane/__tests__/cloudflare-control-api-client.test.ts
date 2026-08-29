@@ -182,6 +182,51 @@ describe('CloudflareControlApiClient', () => {
     );
   });
 
+  it('retries a transiently inconsistent D1 pagination snapshot from the first page', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        success(
+          [
+            { uuid: 'db-1', name: 'test-authrim-db-1' },
+            { uuid: 'db-2', name: 'test-authrim-db-2' },
+          ],
+          { page: 1, per_page: 1000, count: 2, total_count: 1 }
+        )
+      )
+      .mockResolvedValueOnce(
+        success(
+          [
+            { uuid: 'db-1', name: 'test-authrim-db-1' },
+            { uuid: 'db-2', name: 'test-authrim-db-2' },
+          ],
+          { page: 1, per_page: 1000, count: 2, total_count: 2 }
+        )
+      );
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    await expect(client.listD1Databases()).resolves.toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed after bounded retries when D1 pagination remains inconsistent', async () => {
+    const fetcher = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        success(
+          [
+            { uuid: 'db-1', name: 'test-authrim-db-1' },
+            { uuid: 'db-2', name: 'test-authrim-db-2' },
+          ],
+          { page: 1, per_page: 1000, count: 2, total_count: 1 }
+        )
+      )
+    );
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    await expect(client.listD1Databases()).rejects.toThrow('cloudflare_d1_list_pagination_invalid');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it('sends Worker settings as multipart and uses the Workers token', async () => {
     const fetcher = vi.fn().mockResolvedValue(success({ bindings: [] }));
     const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });

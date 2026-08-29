@@ -1727,6 +1727,9 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
         '"kind":"control_observation_retry"'
       );
       expect(phase1ObservationRetryCode(new Error('schema mismatch'))).toBeNull();
+      expect(phase1ObservationRetryCode(new Error('cloudflare_d1_list_pagination_invalid'))).toBe(
+        'cloudflare_inventory_pagination_inconsistent'
+      );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -2130,6 +2133,17 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
     };
     const evidence = buildPhase1ProvisioningEvidence({
       baseline,
+      finalControl: {
+        ...snapshot(),
+        desiredResources: [
+          ...snapshot().desiredResources,
+          {
+            ...desired,
+            provisioning_state: 'ready',
+            updated_at: 1_787_770_008,
+          },
+        ],
+      },
       controlEvents: [
         {
           entity: 'lookupForecasts',
@@ -2151,15 +2165,6 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
           entity: 'desiredResources',
           observedAt: '2026-08-27T00:00:01.000Z',
           current: desired,
-        },
-        {
-          entity: 'desiredResources',
-          observedAt: '2026-08-27T00:00:09.000Z',
-          current: {
-            ...desired,
-            provisioning_state: 'ready',
-            updated_at: 1_787_770_008,
-          },
         },
       ],
     });

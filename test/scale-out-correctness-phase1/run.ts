@@ -1198,6 +1198,7 @@ export async function executePhase1Harness(input: {
     runId: id,
     baseline,
     controlEvents,
+    finalControl,
   });
   const timelineSvg = buildPhase1TimelineSvg({
     baseline,

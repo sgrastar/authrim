@@ -14,6 +14,7 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const JSON_REQUEST_LIMIT_BYTES = 4 * 1024 * 1024;
 const D1_LIST_PAGE_SIZE = 1_000;
 const D1_LIST_MAX_PAGES = 1_000;
+const D1_LIST_MAX_ATTEMPTS = 3;
 const D1_LOCATION_HINTS = new Set(['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc']);
 const D1_JURISDICTIONS = new Set(['eu', 'fedramp']);
 
@@ -316,6 +317,23 @@ export class CloudflareControlApiClient {
   }
 
   async listD1Databases(): Promise<CloudflareD1Database[]> {
+    for (let attempt = 1; attempt <= D1_LIST_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.listD1DatabasesOnce();
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== 'cloudflare_d1_list_pagination_invalid' ||
+          attempt === D1_LIST_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('cloudflare_d1_list_pagination_invalid');
+  }
+
+  private async listD1DatabasesOnce(): Promise<CloudflareD1Database[]> {
     const databases: CloudflareD1Database[] = [];
     const seen = new Map<string, string>();
     for (let page = 1; page <= D1_LIST_MAX_PAGES; page += 1) {

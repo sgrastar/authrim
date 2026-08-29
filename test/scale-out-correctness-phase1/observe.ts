@@ -430,6 +430,9 @@ export function phase1ObservationRetryCode(error: unknown): string | null {
     return 'cloudflare_request_timeout';
   }
   if (error.message === 'fetch failed') return 'cloudflare_network_error';
+  if (error.message === 'cloudflare_d1_list_pagination_invalid') {
+    return 'cloudflare_inventory_pagination_inconsistent';
+  }
   return null;
 }
 
