@@ -63,6 +63,36 @@ interface ForecastRow {
   requested_lookup_shard_status: string | null;
 }
 
+interface ProvisioningReconciliationRow {
+  environment_id: string;
+  lookup_capacity_domain_id: string;
+  residency_policy_id: string;
+  residency_partition: string;
+  policy_generation: number | string;
+  decision_generation: number | string;
+  projected_active_route_count: number | string;
+  requested_operation_id: string;
+  requested_operation_status: string;
+  requested_operation_error_code: string | null;
+  lookup_target_active_route_count: number | string;
+  lookup_scale_out_headroom_bps: number | string;
+}
+
+interface ProvisioningCapacityRow {
+  capacity_unit_count: number | string;
+  capacity_weight_milliunits: number | string;
+  reflected_target_count: number | string;
+}
+
+interface UnlinkedCapacityRequestRow {
+  environment_id: string;
+  lookup_capacity_domain_id: string;
+  residency_policy_id: string;
+  residency_partition: string;
+  capacity_request_idempotency_key: string;
+  decision_generation: number | string;
+}
+
 interface CapacityDomainObservation {
   lookupCapacityDomainId: string;
   residencyPolicyId: string;
@@ -88,6 +118,12 @@ export interface LookupScaleOutForecastResult {
   capacityRequest: LookupScaleOutCapacityRequest | null;
 }
 
+export interface LookupScaleOutReconciliationResult {
+  settledCount: number;
+  blockedCount: number;
+  capacityRequests: Array<LookupScaleOutCapacityRequest & { environmentId: string }>;
+}
+
 function primary(db: D1Database): D1DatabaseSession {
   if (typeof db.withSession !== 'function') throw new Error('d1_sessions_api_required');
   return db.withSession('first-primary');
@@ -106,6 +142,10 @@ function integer(value: unknown, minimum: number, code: string): number {
 
 function safeAdd(left: number, right: number, code: string): number {
   return integer(left + right, 0, code);
+}
+
+function safeProduct(left: number, right: number, code: string): number {
+  return integer(left * right, 0, code);
 }
 
 async function digest(value: unknown): Promise<string> {
@@ -688,6 +728,310 @@ export class LookupScaleOutForecastService {
       throw new Error('lookup_scale_out_observation_stale');
     }
     return { views, capacityRequest };
+  }
+
+  async reconcileProvisioningOperations(): Promise<LookupScaleOutReconciliationResult> {
+    const session = primary(this.db);
+    const [unlinkedResult, candidateResult] = await Promise.all([
+      session
+        .prepare(
+          `SELECT environment_id, lookup_capacity_domain_id, residency_policy_id,
+                  residency_partition, capacity_request_idempotency_key,
+                  decision_generation
+             FROM control_lookup_scale_out_forecasts
+            WHERE decision_state = 'provisioning'
+              AND requested_operation_id IS NULL
+              AND capacity_request_idempotency_key IS NOT NULL
+            ORDER BY updated_at, environment_id, lookup_capacity_domain_id
+            LIMIT 8`
+        )
+        .bind()
+        .all<UnlinkedCapacityRequestRow>(),
+      session
+        .prepare(
+          `SELECT forecast.environment_id, forecast.lookup_capacity_domain_id,
+                forecast.residency_policy_id, forecast.residency_partition,
+                forecast.policy_generation,
+                forecast.decision_generation, forecast.projected_active_route_count,
+                forecast.requested_operation_id,
+                operation.status AS requested_operation_status,
+                operation.last_error_code AS requested_operation_error_code,
+                policy.lookup_target_active_route_count,
+                policy.lookup_scale_out_headroom_bps
+           FROM control_lookup_scale_out_forecasts forecast
+           JOIN control_operations operation
+             ON operation.environment_id = forecast.environment_id
+            AND operation.operation_id = forecast.requested_operation_id
+            AND operation.operation_kind = 'provision_shard'
+           JOIN control_environment_resource_policies policy
+             ON policy.environment_id = forecast.environment_id
+          WHERE forecast.decision_state = 'provisioning'
+            AND forecast.requested_operation_id IS NOT NULL
+            AND operation.status IN ('succeeded', 'blocked', 'canceled')
+          ORDER BY forecast.updated_at, forecast.environment_id,
+                   forecast.lookup_capacity_domain_id
+          LIMIT 8`
+        )
+        .bind()
+        .all<ProvisioningReconciliationRow>(),
+    ]);
+    const unlinked = unlinkedResult.results;
+    const candidates = candidateResult.results;
+    const pendingCapacityRequests = unlinked.map((row) => ({
+      environmentId: safeId(row.environment_id, 'lookup_scale_out_environment_invalid'),
+      lookupCapacityDomainId: safeId(
+        row.lookup_capacity_domain_id,
+        'lookup_scale_out_state_invalid'
+      ),
+      residencyPolicyId: safeId(row.residency_policy_id, 'lookup_scale_out_residency_invalid'),
+      residencyPartition: safeId(row.residency_partition, 'lookup_scale_out_residency_invalid'),
+      idempotencyKey: safeId(
+        row.capacity_request_idempotency_key,
+        'lookup_scale_out_idempotency_key_invalid'
+      ),
+      decisionGeneration: integer(row.decision_generation, 0, 'lookup_scale_out_state_invalid'),
+    }));
+    if (candidates.length === 0) {
+      return { settledCount: 0, blockedCount: 0, capacityRequests: pendingCapacityRequests };
+    }
+
+    const capacityResults = await session.batch<ProvisioningCapacityRow>(
+      candidates.map((candidate) =>
+        session
+          .prepare(
+            `SELECT COUNT(*) AS capacity_unit_count,
+                    COALESCE(SUM(CAST(ROUND(shard.capacity_weight * ?) AS INTEGER)), 0)
+                      AS capacity_weight_milliunits,
+                    COALESCE(SUM(CASE
+                      WHEN desired.origin_operation_id = ? AND shard.status = 'active' THEN 1
+                      ELSE 0
+                    END), 0) AS reflected_target_count
+               FROM control_lookup_physical_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.environment_id = shard.environment_id
+                AND desired.desired_resource_id = shard.d1_desired_resource_id
+               JOIN control_residency_partitions residency
+                 ON residency.environment_id = shard.environment_id
+                AND residency.residency_policy_id =
+                    json_extract(desired.desired_spec_json, '$.residency_policy_id')
+                AND residency.residency_partition = shard.residency_partition
+              WHERE shard.environment_id = ?
+                AND shard.status IN ('requested', 'provisioning', 'ready', 'active')
+                AND COALESCE(
+                      json_extract(desired.desired_spec_json, '$.lookup_capacity_domain_id'),
+                      residency.lookup_capacity_domain_id,
+                      'lookup:' || residency.residency_policy_id || ':' ||
+                        residency.residency_partition
+                    ) = ?`
+          )
+          .bind(
+            CAPACITY_WEIGHT_SCALE,
+            candidate.requested_operation_id,
+            candidate.environment_id,
+            candidate.lookup_capacity_domain_id
+          )
+      )
+    );
+
+    const now = this.now();
+    const updates: Array<{
+      statement: D1PreparedStatement;
+      outcome: 'settled' | 'blocked' | 'request';
+      request?: LookupScaleOutCapacityRequest & { environmentId: string };
+    }> = [];
+    for (const [index, candidate] of candidates.entries()) {
+      const environmentId = safeId(
+        candidate.environment_id,
+        'lookup_scale_out_environment_invalid'
+      );
+      const lookupCapacityDomainId = safeId(
+        candidate.lookup_capacity_domain_id,
+        'lookup_scale_out_state_invalid'
+      );
+      const residencyPolicyId = safeId(
+        candidate.residency_policy_id,
+        'lookup_scale_out_residency_invalid'
+      );
+      const residencyPartition = safeId(
+        candidate.residency_partition,
+        'lookup_scale_out_residency_invalid'
+      );
+      const operationId = safeId(
+        candidate.requested_operation_id,
+        'lookup_scale_out_operation_invalid'
+      );
+      const decisionGeneration = integer(
+        candidate.decision_generation,
+        0,
+        'lookup_scale_out_state_invalid'
+      );
+      const policyGeneration = integer(
+        candidate.policy_generation,
+        1,
+        'lookup_scale_out_policy_invalid'
+      );
+      const capacity = capacityResults[index]?.results[0];
+      if (!capacity) throw new Error('lookup_scale_out_capacity_invalid');
+      const capacityUnitCount = integer(
+        capacity.capacity_unit_count,
+        0,
+        'lookup_scale_out_capacity_invalid'
+      );
+      const capacityWeightMilliunits = integer(
+        capacity.capacity_weight_milliunits,
+        0,
+        'lookup_scale_out_capacity_invalid'
+      );
+      const reflectedTargetCount = integer(
+        capacity.reflected_target_count,
+        0,
+        'lookup_scale_out_capacity_invalid'
+      );
+      const targetActiveRouteCount = integer(
+        candidate.lookup_target_active_route_count,
+        1,
+        'lookup_scale_out_policy_invalid'
+      );
+      const headroomBps = integer(
+        candidate.lookup_scale_out_headroom_bps,
+        0,
+        'lookup_scale_out_policy_invalid'
+      );
+      if (headroomBps > 9_000) throw new Error('lookup_scale_out_policy_invalid');
+      const usablePerStandardUnit = Math.floor(
+        safeProduct(
+          targetActiveRouteCount,
+          10_000 - headroomBps,
+          'lookup_scale_out_capacity_invalid'
+        ) / 10_000
+      );
+      const usableCapacityRouteCount = Math.floor(
+        safeProduct(
+          usablePerStandardUnit,
+          capacityWeightMilliunits,
+          'lookup_scale_out_capacity_invalid'
+        ) / CAPACITY_WEIGHT_SCALE
+      );
+
+      const terminalFailure =
+        candidate.requested_operation_status === 'blocked' ||
+        candidate.requested_operation_status === 'canceled';
+      if (terminalFailure || reflectedTargetCount === 0) {
+        const errorCode = terminalFailure
+          ? candidate.requested_operation_error_code &&
+            SAFE_ID.test(candidate.requested_operation_error_code)
+            ? candidate.requested_operation_error_code
+            : 'lookup_scale_out_capacity_operation_blocked'
+          : 'lookup_scale_out_capacity_reflection_missing';
+        updates.push({
+          outcome: 'blocked',
+          statement: session
+            .prepare(
+              `UPDATE control_lookup_scale_out_forecasts
+                  SET decision_state = 'blocked', last_error_code = ?,
+                      capacity_unit_count = ?, usable_capacity_route_count = ?, updated_at = ?
+                WHERE environment_id = ? AND lookup_capacity_domain_id = ?
+                  AND decision_generation = ? AND decision_state = 'provisioning'
+                  AND requested_operation_id = ?`
+            )
+            .bind(
+              errorCode,
+              capacityUnitCount,
+              usableCapacityRouteCount,
+              now,
+              environmentId,
+              lookupCapacityDomainId,
+              decisionGeneration,
+              operationId
+            ),
+        });
+        continue;
+      }
+
+      const projectedActiveRouteCount = integer(
+        candidate.projected_active_route_count,
+        0,
+        'lookup_scale_out_forecast_overflow'
+      );
+      if (projectedActiveRouteCount <= usableCapacityRouteCount) {
+        updates.push({
+          outcome: 'settled',
+          statement: session
+            .prepare(
+              `UPDATE control_lookup_scale_out_forecasts
+                  SET decision_state = 'stable', capacity_request_idempotency_key = NULL,
+                      requested_operation_id = NULL, last_error_code = NULL,
+                      capacity_unit_count = ?, usable_capacity_route_count = ?, updated_at = ?
+                WHERE environment_id = ? AND lookup_capacity_domain_id = ?
+                  AND decision_generation = ? AND decision_state = 'provisioning'
+                  AND requested_operation_id = ?`
+            )
+            .bind(
+              capacityUnitCount,
+              usableCapacityRouteCount,
+              now,
+              environmentId,
+              lookupCapacityDomainId,
+              decisionGeneration,
+              operationId
+            ),
+        });
+        continue;
+      }
+
+      const nextDecisionGeneration = decisionGeneration + 1;
+      const nextIdempotencyKey = await idempotencyKey({
+        lookupCapacityDomainId,
+        policyGeneration,
+        decisionGeneration: nextDecisionGeneration,
+      });
+      const request = {
+        environmentId,
+        lookupCapacityDomainId,
+        residencyPolicyId,
+        residencyPartition,
+        idempotencyKey: nextIdempotencyKey,
+        decisionGeneration: nextDecisionGeneration,
+      };
+      updates.push({
+        outcome: 'request',
+        request,
+        statement: session
+          .prepare(
+            `UPDATE control_lookup_scale_out_forecasts
+                SET decision_generation = ?, capacity_request_idempotency_key = ?,
+                    requested_operation_id = NULL, last_error_code = NULL,
+                    capacity_unit_count = ?, usable_capacity_route_count = ?, updated_at = ?
+              WHERE environment_id = ? AND lookup_capacity_domain_id = ?
+                AND decision_generation = ? AND decision_state = 'provisioning'
+                AND requested_operation_id = ?`
+          )
+          .bind(
+            nextDecisionGeneration,
+            nextIdempotencyKey,
+            capacityUnitCount,
+            usableCapacityRouteCount,
+            now,
+            environmentId,
+            lookupCapacityDomainId,
+            decisionGeneration,
+            operationId
+          ),
+      });
+    }
+
+    const results = await session.batch(updates.map((update) => update.statement));
+    const applied = updates.filter((_update, index) => (results[index]?.meta.changes ?? 0) === 1);
+    return {
+      settledCount: applied.filter((update) => update.outcome === 'settled').length,
+      blockedCount: applied.filter((update) => update.outcome === 'blocked').length,
+      capacityRequests: [
+        ...pendingCapacityRequests,
+        ...applied.flatMap((update) =>
+          update.outcome === 'request' && update.request ? [update.request] : []
+        ),
+      ],
+    };
   }
 
   async recordProvisioningOperation(

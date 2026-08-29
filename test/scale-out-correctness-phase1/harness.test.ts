@@ -1573,6 +1573,53 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
     expect(attempts).toBe(4);
   });
 
+  it('does not declare quiescence before a Lookup assignment reaches a new shard', async () => {
+    let attempts = 0;
+    let now = 0;
+    const initial = snapshot();
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control: initial,
+      provider: provider(),
+      runId: 'run-lookup-transition-quiescence',
+      now: new Date('2026-08-27T00:00:00.000Z'),
+    });
+    const transitioned = structuredClone(initial);
+    transitioned.lookupShards.push({
+      lookup_shard_id: 'lookup-2',
+      status: 'active',
+      capacity_weight: 1,
+      d1_desired_resource_id: 'lookup-desired-2',
+      deterministic_name: 'lookup-2',
+      provider_resource_id: 'lookup-db-2',
+    });
+    transitioned.lookupAssignments[0] = {
+      ...transitioned.lookupAssignments[0],
+      lookup_shard_id: 'lookup-2',
+      assignment_generation: 2,
+    };
+
+    const final = await waitForPhase1Quiescence({
+      config: config(),
+      client: {
+        queryD1Batch: async () => [],
+        listD1Databases: async () => [],
+      },
+      baseline,
+      nowMs: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      collectControl: async () => {
+        attempts += 1;
+        return attempts === 1 ? initial : transitioned;
+      },
+    });
+
+    expect(final).toEqual(transitioned);
+    expect(attempts).toBe(4);
+  });
+
   it('waits for a retryable runtime route refresh before exact Lookup verification', async () => {
     let now = 0;
     const fetcher = vi

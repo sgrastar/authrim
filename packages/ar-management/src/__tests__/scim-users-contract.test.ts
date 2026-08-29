@@ -372,4 +372,23 @@ describeScimTestHarness('SCIM Users HTTP contract', (harness) => {
     expect(JSON.stringify(error)).not.toContain('control_account_allocation_capacity_unavailable');
     expect(JSON.stringify(error)).not.toContain('capacity.private@example.com');
   });
+
+  it('does not expose a propagating binding name or submitted PII', async () => {
+    harness.accountCreation.bindingUnavailable = true;
+    const response = await fetchScim('/scim/v2/Users', {
+      method: 'POST',
+      body: JSON.stringify(
+        userBody({
+          userName: 'binding-user',
+          emails: [{ value: 'binding.private@example.com', primary: true }],
+        })
+      ),
+    });
+
+    const error = await expectScimError(response, 503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(error.detail).toBe('Runtime database binding is propagating; retry shortly');
+    expect(JSON.stringify(error)).not.toContain('account_directory_write_binding_unavailable');
+    expect(JSON.stringify(error)).not.toContain('binding.private@example.com');
+  });
 });

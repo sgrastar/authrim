@@ -59,6 +59,7 @@ const canonicalRuntimeState = vi.hoisted(() => ({
 const accountCreationState = vi.hoisted(() => ({
   deliveryStatus: 201 as 201 | 202,
   capacityUnavailable: false,
+  bindingUnavailable: false,
   calls: [] as Array<Record<string, unknown>>,
   reservedSubjects: new Set<string>(),
 }));
@@ -335,11 +336,16 @@ vi.mock('../account-directory-producer', () => ({
       };
     }
   ),
-  resolveInitialAccountDirectoryWriteTargets: vi.fn(async (env: any) => ({
-    tenantCoreUsers: env.DB,
-    tenantPii: env.DB_PII,
-    residencyPartition: 'default',
-  })),
+  resolveInitialAccountDirectoryWriteTargets: vi.fn(async (env: any) => {
+    if (accountCreationState.bindingUnavailable) {
+      throw new Error('account_directory_write_binding_unavailable');
+    }
+    return {
+      tenantCoreUsers: env.DB,
+      tenantPii: env.DB_PII,
+      residencyPartition: 'default',
+    };
+  }),
 }));
 
 // Mock scim-auth middleware at module level (now from @authrim/ar-lib-scim package)
@@ -682,6 +688,7 @@ export function describeScimTestHarness(
       vi.clearAllMocks();
       accountCreationState.deliveryStatus = 201;
       accountCreationState.capacityUnavailable = false;
+      accountCreationState.bindingUnavailable = false;
       accountCreationState.calls = [];
       accountCreationState.reservedSubjects.clear();
       accountOperationState.operation = null;

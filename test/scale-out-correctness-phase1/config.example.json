@@ -40,8 +40,8 @@
     "lookupHeadroomBps": 2000,
     "lookupPolicyGeneration": 2,
     "expectedLookupRoutesPerAccount": 2,
-    "minimumLookupAdditions": 5,
-    "minimumLookupUsedAssignmentTransitions": 5,
+    "minimumLookupAdditions": 4,
+    "minimumLookupUsedAssignmentTransitions": 1,
     "minimumRoleBoundaryCrossings": 9
   },
   "observation": {

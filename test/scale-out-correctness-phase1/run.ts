@@ -1127,7 +1127,7 @@ export async function executePhase1Harness(input: {
   if (preQuiescenceObservationError instanceof Error) throw preQuiescenceObservationError;
   let finalControl: Phase1ControlSnapshot;
   try {
-    finalControl = await waitForPhase1Quiescence({ config: input.config, client });
+    finalControl = await waitForPhase1Quiescence({ config: input.config, client, baseline });
     const readinessAccount = [...checkpointWriter.values()]
       .filter(
         (account): account is Phase1AccountResult & { userId: string; completedAt: string } =>

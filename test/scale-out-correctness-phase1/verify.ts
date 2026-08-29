@@ -560,9 +560,39 @@ export function countInProgressControlOperations(snapshot: Phase1ControlSnapshot
   ).length;
 }
 
+export function countLookupAssignmentTransitionsToNewShards(
+  baseline: Phase1Baseline,
+  current: Phase1ControlSnapshot
+): number {
+  const baselineShardIds = new Set(
+    baseline.control.lookupShards.map((row) => String(row.lookup_shard_id))
+  );
+  const newShardIds = new Set(
+    current.lookupShards
+      .filter(
+        (row) => row.status === 'active' && !baselineShardIds.has(String(row.lookup_shard_id))
+      )
+      .map((row) => String(row.lookup_shard_id))
+  );
+  const baselineAssignments = new Map(
+    baseline.control.lookupAssignments.map((row) => [Number(row.virtual_bucket), row] as const)
+  );
+  return current.lookupAssignments.filter((row) => {
+    const previous = baselineAssignments.get(Number(row.virtual_bucket));
+    return (
+      !!previous &&
+      row.state === 'active' &&
+      previous.lookup_shard_id !== row.lookup_shard_id &&
+      Number(row.assignment_generation) > Number(previous.assignment_generation) &&
+      newShardIds.has(String(row.lookup_shard_id))
+    );
+  }).length;
+}
+
 export async function waitForPhase1Quiescence(input: {
   config: Phase1HarnessConfig;
   client: Phase1ObservationClient;
+  baseline?: Phase1Baseline;
   nowMs?: () => number;
   sleep?: (ms: number) => Promise<void>;
   collectControl?: () => Promise<Phase1ControlSnapshot>;
@@ -589,11 +619,16 @@ export async function waitForPhase1Quiescence(input: {
     const provisioningForecasts = latest.lookupForecasts.filter(
       (row) => row.decision_state === 'provisioning'
     ).length;
+    const requiredLookupTransitionsReached =
+      !input.baseline ||
+      countLookupAssignmentTransitionsToNewShards(input.baseline, latest) >=
+        input.config.expectedPolicy.minimumLookupUsedAssignmentTransitions;
     const vector = capacityVector(latest);
     if (
       inProgressOperations === 0 &&
       movingBuckets === 0 &&
       provisioningForecasts === 0 &&
+      requiredLookupTransitionsReached &&
       vector === previousVector
     ) {
       stableWindows += 1;
@@ -902,7 +937,11 @@ export async function verifyPhase1Run(input: {
 }): Promise<Phase1IntegrityResult> {
   const finalControl =
     input.finalControl ??
-    (await waitForPhase1Quiescence({ config: input.config, client: input.client }));
+    (await waitForPhase1Quiescence({
+      config: input.config,
+      client: input.client,
+      baseline: input.baseline,
+    }));
   const finalProvider =
     input.finalProvider ?? (await collectProviderSnapshot({ client: input.client }));
   const finalLookupBuckets =

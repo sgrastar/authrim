@@ -2644,6 +2644,61 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         Math.floor(Date.now() / 1000)
       );
       tasks.push(
+        scheduledTask(
+          'lookup_scale_out_forecast_reconciliation',
+          (async () => {
+            const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
+              Math.floor(Date.now() / 1000)
+            );
+            const reconciliation = await forecast.reconcileProvisioningOperations();
+            for (const request of reconciliation.capacityRequests) {
+              let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
+              try {
+                capacity = await control.requestLookupScaleOutCapacity(
+                  request,
+                  request.environmentId
+                );
+              } catch (error) {
+                const terminalErrorCode =
+                  error instanceof Error &&
+                  /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
+                    error.message
+                  )
+                    ? error.message
+                    : null;
+                if (terminalErrorCode) {
+                  await forecast.blockCapacityRequest(
+                    request.environmentId,
+                    request,
+                    terminalErrorCode
+                  );
+                } else {
+                  await forecast.recordCapacityRequestRetry(
+                    request.environmentId,
+                    request,
+                    'lookup_scale_out_capacity_request_retry'
+                  );
+                }
+                continue;
+              }
+              if (!capacity.operation) {
+                await forecast.recordCapacityRequestRetry(
+                  request.environmentId,
+                  request,
+                  'lookup_scale_out_capacity_operation_pending'
+                );
+                continue;
+              }
+              await forecast.recordProvisioningOperation(
+                request.environmentId,
+                request,
+                capacity.operation.operationId,
+                capacity.operation.status,
+                capacity.operation.lastErrorCode
+              );
+            }
+          })()
+        ),
         scheduledTask('low_watermark_replenishment', control.replenishLowWatermark()),
         scheduledTask('worker_inventory_reconciliation', workerInventory.reconcile()),
         scheduledTask(

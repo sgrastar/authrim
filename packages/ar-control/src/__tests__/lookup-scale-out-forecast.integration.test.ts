@@ -197,6 +197,11 @@ describe('LookupScaleOutForecastService', () => {
       decisionGeneration: 1,
     });
     if (!second.capacityRequest) throw new Error('expected_capacity_request');
+    await expect(service.reconcileProvisioningOperations()).resolves.toEqual({
+      settledCount: 0,
+      blockedCount: 0,
+      capacityRequests: [{ environmentId: 'test', ...second.capacityRequest }],
+    });
 
     await service.recordCapacityRequestRetry(
       'test',
@@ -471,6 +476,219 @@ describe('LookupScaleOutForecastService', () => {
       status: 'stable',
       requestedOperationId: null,
       capacityUnitCount: 2,
+    });
+  });
+
+  it('settles a completed reflected capacity decision without requiring another load snapshot', async () => {
+    await service.observe('test', snapshot(70_000, 1_000));
+    now += 600;
+    const forecast = await service.observe('test', snapshot(72_000, 7_000));
+    const request = forecast.capacityRequest;
+    if (!request) throw new Error('expected_capacity_request');
+    database.exec(
+      `INSERT INTO control_operations (
+         operation_id, environment_id, operation_kind, idempotency_key, status,
+         requested_by_type, attempt_count, created_at, completed_at, updated_at
+       ) VALUES ('completed-forecast-operation', 'test', 'provision_shard',
+                 'lookup-forecast:lookup:global:default:1:1', 'succeeded', 'scheduler', 1,
+                 10600, 10600, 10600);
+       INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, provisioning_state,
+         origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES ('resource-completed', 'test', 'd1', 'lookup-completed',
+                 'lookup-completed', 'fingerprint-completed', 'ready',
+                 'completed-forecast-operation',
+                 '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+                 10600, 10600);
+       INSERT INTO control_lookup_physical_shards (
+         lookup_shard_id, environment_id, residency_partition, binding_ref,
+         d1_desired_resource_id, status, created_at, updated_at
+       ) VALUES ('lookup-completed', 'test', 'default', 'LOOKUP_COMPLETED',
+                 'resource-completed', 'active', 10600, 10600);`
+    );
+    await service.recordProvisioningOperation(
+      'test',
+      request,
+      'completed-forecast-operation',
+      'succeeded'
+    );
+
+    now += 60;
+    await expect(service.reconcileProvisioningOperations()).resolves.toEqual({
+      settledCount: 1,
+      blockedCount: 0,
+      capacityRequests: [],
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT decision_state, requested_operation_id, capacity_request_idempotency_key,
+                  capacity_unit_count, usable_capacity_route_count, last_error_code
+             FROM control_lookup_scale_out_forecasts WHERE environment_id = 'test'`
+        )
+        .get()
+    ).toEqual({
+      decision_state: 'stable',
+      requested_operation_id: null,
+      capacity_request_idempotency_key: null,
+      capacity_unit_count: 2,
+      usable_capacity_route_count: 160_000,
+      last_error_code: null,
+    });
+  });
+
+  it('advances to an idempotent next decision when one completed Lookup D1 is insufficient', async () => {
+    await service.observe('test', snapshot(70_000, 1_000));
+    now += 600;
+    const forecast = await service.observe('test', snapshot(72_000, 101_000));
+    const request = forecast.capacityRequest;
+    if (!request) throw new Error('expected_capacity_request');
+    database.exec(
+      `INSERT INTO control_operations (
+         operation_id, environment_id, operation_kind, idempotency_key, status,
+         requested_by_type, attempt_count, created_at, completed_at, updated_at
+       ) VALUES ('insufficient-forecast-operation', 'test', 'provision_shard',
+                 'lookup-forecast:lookup:global:default:1:1', 'succeeded', 'scheduler', 1,
+                 10600, 10600, 10600);
+       INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, provisioning_state,
+         origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES ('resource-insufficient', 'test', 'd1', 'lookup-insufficient',
+                 'lookup-insufficient', 'fingerprint-insufficient', 'ready',
+                 'insufficient-forecast-operation',
+                 '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+                 10600, 10600);
+       INSERT INTO control_lookup_physical_shards (
+         lookup_shard_id, environment_id, residency_partition, binding_ref,
+         d1_desired_resource_id, status, created_at, updated_at
+       ) VALUES ('lookup-insufficient', 'test', 'default', 'LOOKUP_INSUFFICIENT',
+                 'resource-insufficient', 'active', 10600, 10600);`
+    );
+    await service.recordProvisioningOperation(
+      'test',
+      request,
+      'insufficient-forecast-operation',
+      'succeeded'
+    );
+
+    now += 60;
+    const reconciliation = await service.reconcileProvisioningOperations();
+    expect(reconciliation).toEqual({
+      settledCount: 0,
+      blockedCount: 0,
+      capacityRequests: [
+        {
+          environmentId: 'test',
+          lookupCapacityDomainId: 'lookup:global:default',
+          residencyPolicyId: 'global',
+          residencyPartition: 'default',
+          idempotencyKey: 'lookup-forecast:lookup:global:default:1:2',
+          decisionGeneration: 2,
+        },
+      ],
+    });
+    expect(await service.reconcileProvisioningOperations()).toEqual({
+      settledCount: 0,
+      blockedCount: 0,
+      capacityRequests: reconciliation.capacityRequests,
+    });
+  });
+
+  it('surfaces a linked operation that becomes terminal between load snapshots', async () => {
+    await service.observe('test', snapshot(70_000, 1_000));
+    now += 600;
+    const forecast = await service.observe('test', snapshot(72_000, 7_000));
+    const request = forecast.capacityRequest;
+    if (!request) throw new Error('expected_capacity_request');
+    database.exec(
+      `INSERT INTO control_operations (
+         operation_id, environment_id, operation_kind, idempotency_key, status,
+         requested_by_type, attempt_count, created_at, updated_at
+       ) VALUES ('later-blocked-operation', 'test', 'provision_shard',
+                 'lookup-forecast:lookup:global:default:1:1', 'running', 'scheduler', 1,
+                 10600, 10600);`
+    );
+    await service.recordProvisioningOperation('test', request, 'later-blocked-operation');
+    database.exec(
+      `UPDATE control_operations
+          SET status = 'blocked', last_error_code = 'control_d1_resource_limit',
+              completed_at = 10660, updated_at = 10660
+        WHERE operation_id = 'later-blocked-operation'`
+    );
+
+    now += 60;
+    await expect(service.reconcileProvisioningOperations()).resolves.toEqual({
+      settledCount: 0,
+      blockedCount: 1,
+      capacityRequests: [],
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT decision_state, requested_operation_id, last_error_code
+             FROM control_lookup_scale_out_forecasts WHERE environment_id = 'test'`
+        )
+        .get()
+    ).toEqual({
+      decision_state: 'blocked',
+      requested_operation_id: 'later-blocked-operation',
+      last_error_code: 'control_d1_resource_limit',
+    });
+  });
+
+  it('blocks a succeeded operation whose Lookup shard was not activated', async () => {
+    await service.observe('test', snapshot(70_000, 1_000));
+    now += 600;
+    const forecast = await service.observe('test', snapshot(72_000, 7_000));
+    const request = forecast.capacityRequest;
+    if (!request) throw new Error('expected_capacity_request');
+    database.exec(
+      `INSERT INTO control_operations (
+         operation_id, environment_id, operation_kind, idempotency_key, status,
+         requested_by_type, attempt_count, created_at, completed_at, updated_at
+       ) VALUES ('unreflected-operation', 'test', 'provision_shard',
+                 'lookup-forecast:lookup:global:default:1:1', 'succeeded', 'scheduler', 1,
+                 10600, 10660, 10660);
+       INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, provisioning_state,
+         origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES ('resource-unreflected', 'test', 'd1', 'lookup-unreflected',
+                 'lookup-unreflected', 'fingerprint-unreflected', 'ready',
+                 'unreflected-operation',
+                 '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+                 10600, 10660);
+       INSERT INTO control_lookup_physical_shards (
+         lookup_shard_id, environment_id, residency_partition, binding_ref,
+         d1_desired_resource_id, status, created_at, updated_at
+       ) VALUES ('lookup-unreflected', 'test', 'default', 'LOOKUP_UNREFLECTED',
+                 'resource-unreflected', 'ready', 10600, 10660);`
+    );
+    await service.recordProvisioningOperation(
+      'test',
+      request,
+      'unreflected-operation',
+      'succeeded'
+    );
+
+    now += 60;
+    await expect(service.reconcileProvisioningOperations()).resolves.toEqual({
+      settledCount: 0,
+      blockedCount: 1,
+      capacityRequests: [],
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT decision_state, last_error_code
+             FROM control_lookup_scale_out_forecasts WHERE environment_id = 'test'`
+        )
+        .get()
+    ).toEqual({
+      decision_state: 'blocked',
+      last_error_code: 'lookup_scale_out_capacity_reflection_missing',
     });
   });
 

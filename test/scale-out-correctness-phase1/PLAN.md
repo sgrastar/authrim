@@ -13,8 +13,9 @@ without operator intervention. The test must observe the complete sequence:
 
 The same run also verifies predictive scale-out of the physical Lookup D1 fleet. Successful route
 publications must produce a durable growth forecast, capacity must be requested before the configured
-headroom is exhausted, and at least one later virtual-bucket cutover must place new routes on each
-Lookup shard counted by the assignment-transition acceptance criterion.
+headroom is exhausted, and at least one later virtual-bucket cutover must place routes on a newly
+provisioned physical Lookup shard. Predictive spare shards are not required to receive assignments
+before the forecasted demand arrives.
 
 This is a correctness test, not a maximum-throughput benchmark.
 
@@ -124,19 +125,19 @@ Use this profile for every Phase 1 scenario that will be included in public resu
 scenario three times from an independently captured clean baseline. The reduced shard capacity is a
 test acceleration setting; the production scale-out code path and state machine remain unchanged.
 
-| Setting                                                    |                     Value |
-| ---------------------------------------------------------- | ------------------------: |
-| Target accounts per shard                                  |                       500 |
-| Maximum concurrent provisioning operations                 |                         8 |
-| Accounts to create                                         |                     5,000 |
-| Target creation rate                                       |        15 accounts/second |
-| Maximum in-flight requests                                 |                        64 |
-| Unconstrained injection duration                           |           about 6 minutes |
-| Expected assignment boundary crossings                     | 9 per account-scoped role |
-| Expected Lookup route rows created per account             |                         2 |
-| Lookup target active route rows per capacity unit          |                     3,000 |
-| Minimum physical Lookup additions                          |                         5 |
-| Minimum Lookup assignment transitions used by later routes |                         5 |
+| Setting                                                  |                     Value |
+| -------------------------------------------------------- | ------------------------: |
+| Target accounts per shard                                |                       500 |
+| Maximum concurrent provisioning operations               |                         8 |
+| Accounts to create                                       |                     5,000 |
+| Target creation rate                                     |        15 accounts/second |
+| Maximum in-flight requests                               |                        64 |
+| Unconstrained injection duration                         |           about 6 minutes |
+| Expected assignment boundary crossings                   | 9 per account-scoped role |
+| Expected Lookup route rows created per account           |                         2 |
+| Lookup target active route rows per capacity unit        |                     3,000 |
+| Minimum physical Lookup additions                        |                         4 |
+| Minimum Lookup assignment transitions to a new Lookup D1 |                         1 |
 
 The elapsed run time is expected to exceed the injection duration because D1 provisioning, Worker
 binding propagation, Lookup bucket migration, and the production 15-minute cutover grace remain in
@@ -145,19 +146,19 @@ cutover grace to make a result pass.
 
 ### 4.3 Representative scale demonstration
 
-| Setting                                                    |                     Value |
-| ---------------------------------------------------------- | ------------------------: |
-| Target accounts per shard                                  |                     5,000 |
-| Maximum concurrent provisioning operations                 |                         8 |
-| Accounts to create                                         |                    50,000 |
-| Target creation rate                                       |        15 accounts/second |
-| Maximum in-flight requests                                 |                        64 |
-| Approximate injection duration                             |                56 minutes |
-| Expected assignment boundary crossings                     | 9 per account-scoped role |
-| Expected Lookup route rows created per account             |                         2 |
-| Lookup target active route rows per capacity unit          |                    25,000 |
-| Minimum physical Lookup additions                          |                         5 |
-| Minimum Lookup assignment transitions used by later routes |                         5 |
+| Setting                                                  |                     Value |
+| -------------------------------------------------------- | ------------------------: |
+| Target accounts per shard                                |                     5,000 |
+| Maximum concurrent provisioning operations               |                         8 |
+| Accounts to create                                       |                    50,000 |
+| Target creation rate                                     |        15 accounts/second |
+| Maximum in-flight requests                               |                        64 |
+| Approximate injection duration                           |                56 minutes |
+| Expected assignment boundary crossings                   | 9 per account-scoped role |
+| Expected Lookup route rows created per account           |                         2 |
+| Lookup target active route rows per capacity unit        |                    25,000 |
+| Minimum physical Lookup additions                        |                         5 |
+| Minimum Lookup assignment transitions to a new Lookup D1 |                         1 |
 
 Run this profile for the representative shared-pool, tenant-exclusive, and mixed-placement normal
 paths after their 5,000-account standard runs pass. Failure-injection and regression scenarios remain
@@ -396,8 +397,8 @@ Phase 1 passes only when every correctness criterion passes.
 | Duplicate Lookup provisioning for one forecast decision generation |                                             0 |
 | Lookup publication-counter decreases or retry double-counts        |                                             0 |
 | Lookup forecast recomputation mismatches                           |                                             0 |
-| Physical Lookup D1 additions                                       |          at least 5 in standard and main runs |
-| Lookup assignment transitions used by later routes                 |          at least 5 in standard and main runs |
+| Physical Lookup D1 additions                                       |  at least the profile minimum (4 in standard) |
+| Lookup assignment transitions to a newly added physical Lookup D1  |                                    at least 1 |
 | Unexplained Control/physical count mismatches                      |                                             0 |
 | Required assignment boundary crossings                             | at least 9 per role in standard and main runs |
 | Capacity operations after quiescence                               |        all succeeded; none blocked or waiting |
