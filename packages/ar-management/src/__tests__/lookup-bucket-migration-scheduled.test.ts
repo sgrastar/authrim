@@ -1,6 +1,9 @@
 import type { ControlLookupBucketMigrationView, Env } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { processNextLookupBucketMigration } from '../lookup-bucket-migration-scheduled';
+import {
+  isLookupScaleOutObservationDue,
+  processNextLookupBucketMigration,
+} from '../lookup-bucket-migration-scheduled';
 
 const workerMocks = vi.hoisted(() => ({
   copyNext: vi.fn(),
@@ -93,6 +96,11 @@ describe('processNextLookupBucketMigration', () => {
     });
   });
 
+  it('derives planning cadence from the scheduled timestamp', () => {
+    expect(isLookupScaleOutObservationDue(600)).toBe(true);
+    expect(isLookupScaleOutObservationDue(661)).toBe(false);
+  });
+
   it('is idle during staged deployment without the migration RPC capability', async () => {
     await expect(processNextLookupBucketMigration({} as Env)).resolves.toEqual({
       status: 'idle',
@@ -179,6 +187,24 @@ describe('processNextLookupBucketMigration', () => {
     ).resolves.toMatchObject({ status: 'idle' });
     expect(loadMocks.collect).not.toHaveBeenCalled();
     expect(plan).not.toHaveBeenCalled();
+  });
+
+  it('keeps a scheduled planning boundary when earlier cron work delays observation', async () => {
+    const planned = env(null);
+    const plan = vi.fn(async () => null);
+    (
+      planned.workerEnv.CONTROL as { planNextLookupBucketMigration?: typeof plan }
+    ).planNextLookupBucketMigration = plan;
+
+    await expect(
+      processNextLookupBucketMigration(planned.workerEnv, {
+        ownerId: 'scheduler-1',
+        now: () => 661,
+        observationDue: true,
+      })
+    ).resolves.toMatchObject({ status: 'idle' });
+    expect(loadMocks.collect).toHaveBeenCalledWith(planned.workerEnv, 'scheduler-1', 661);
+    expect(plan).toHaveBeenCalledWith(expect.objectContaining({ observedAt: 600 }));
   });
 
   it('keeps observing scale-out while an existing bucket migration progresses', async () => {

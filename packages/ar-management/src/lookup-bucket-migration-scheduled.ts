@@ -13,6 +13,10 @@ const MAX_VERIFICATION_ATTEMPTS = 3;
 const MAX_PAGES_PER_INVOCATION = 8;
 const PLAN_INTERVAL_MINUTES = 10;
 
+export function isLookupScaleOutObservationDue(timestampSeconds: number): boolean {
+  return Math.floor(timestampSeconds / 60) % PLAN_INTERVAL_MINUTES === 0;
+}
+
 export interface LookupBucketMigrationScheduledResult {
   status: 'idle' | 'progressed' | 'waiting_grace' | 'completed' | 'blocked';
   operationId: string | null;
@@ -121,7 +125,7 @@ function validateView(view: ControlLookupBucketMigrationView): void {
 
 export async function processNextLookupBucketMigration(
   env: Env,
-  options: { ownerId?: string; now?: () => number } = {}
+  options: { ownerId?: string; now?: () => number; observationDue?: boolean } = {}
 ): Promise<LookupBucketMigrationScheduledResult> {
   const ownerId = options.ownerId ?? `management-migration:${crypto.randomUUID()}`;
   if (!SAFE_ID.test(ownerId)) throw new Error('lookup_bucket_migration_owner_invalid');
@@ -129,7 +133,7 @@ export async function processNextLookupBucketMigration(
   const rpc = control(env);
   if (!rpc) return { status: 'idle', operationId: null, state: null, processedRows: 0 };
   const observedAt = now();
-  const observationDue = Math.floor(observedAt / 60) % PLAN_INTERVAL_MINUTES === 0;
+  const observationDue = options.observationDue ?? isLookupScaleOutObservationDue(observedAt);
   let snapshot: Awaited<ReturnType<typeof collectLookupBucketLoadSnapshot>> | null = null;
   let capacityState: LookupBucketMigrationScheduledResult | null = null;
   if (
