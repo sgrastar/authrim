@@ -97,4 +97,44 @@ describe('Lookup HMAC runtime key loader', () => {
       })
     ).rejects.toThrow('lookup_hmac_key_state_unavailable');
   });
+
+  it('coalesces concurrent cache misses into one verified registry read', async () => {
+    const runtimeEnv = await env();
+    const store = runtimeEnv.TENANT_RUNTIME_REGISTRY!;
+    const originalGet = store.get.bind(store);
+    let releaseFirstRead!: () => void;
+    const firstRead = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let calls = 0;
+    runtimeEnv.TENANT_RUNTIME_REGISTRY = {
+      get: async (...args: Parameters<typeof store.get>) => {
+        calls += 1;
+        if (calls === 1) await firstRead;
+        return originalGet(...args);
+      },
+    } as typeof store;
+
+    const first = loadLookupHmacRuntimeKeys(runtimeEnv, { nowMs: NOW_MS });
+    await Promise.resolve();
+    const second = loadLookupHmacRuntimeKeys(runtimeEnv, { nowMs: NOW_MS });
+    releaseFirstRead();
+
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(calls).toBe(2);
+  });
+
+  it('maps registry transport failures to a stable diagnostic code', async () => {
+    const runtimeEnv = await env();
+    runtimeEnv.TENANT_RUNTIME_REGISTRY = {
+      get: async () => {
+        throw new Error('provider response contained sensitive details');
+      },
+    } as unknown as Env['TENANT_RUNTIME_REGISTRY'];
+
+    await expect(
+      loadLookupHmacRuntimeKeys(runtimeEnv, { nowMs: NOW_MS, bypassCache: true })
+    ).rejects.toThrow('lookup_hmac_key_state_load_failed');
+  });
 });

@@ -239,6 +239,38 @@ describe('account creation operation repository', () => {
     expect(JSON.parse(stored.publication_json)).toEqual(value);
   });
 
+  it('persists a preparation failure and clears it once publication succeeds', async () => {
+    const operation = await acquire();
+
+    const failed = await repository.recordPreparationFailure(
+      operation,
+      'lookup_hmac_key_state_snapshot_unavailable',
+      101
+    );
+    expect(failed).toMatchObject({
+      status: 'preparing',
+      publication: null,
+      lastErrorCode: 'lookup_hmac_key_state_snapshot_unavailable',
+    });
+
+    const value = await publication({
+      operationId: operation.operationId,
+      accountId: operation.accountId,
+      idempotencyKey: operation.allocationIdempotencyKey,
+    });
+    const recorded = await repository.recordPublication(failed, value, 102);
+
+    expect(recorded.lastErrorCode).toBeNull();
+    expect(
+      database
+        .prepare(
+          `SELECT status, publication_json IS NOT NULL AS has_publication, last_error_code
+             FROM account_creation_operations`
+        )
+        .get()
+    ).toEqual({ status: 'preparing', has_publication: 1, last_error_code: null });
+  });
+
   it('rejects a publication belonging to another operation', async () => {
     const operation = await acquire();
     await expect(

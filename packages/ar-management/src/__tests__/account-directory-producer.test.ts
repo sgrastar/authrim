@@ -16,6 +16,7 @@ import type {
 import {
   attemptImmediateAccountDirectoryPublication,
   buildInitialAccountDirectoryPublication,
+  classifyAccountCreationPreparationError,
   executeDurableInitialAccountDirectoryWrite,
   executeInitialAccountDirectoryWrite,
   resolveInitialAccountDirectoryWriteTargets,
@@ -173,6 +174,17 @@ function env() {
 }
 
 describe('account directory producer', () => {
+  it('redacts unknown preparation failures but preserves stable subsystem codes', () => {
+    expect(
+      classifyAccountCreationPreparationError(
+        new Error('lookup_hmac_key_state_snapshot_unavailable')
+      )
+    ).toBe('lookup_hmac_key_state_snapshot_unavailable');
+    expect(classifyAccountCreationPreparationError(new Error('secret=value'))).toBe(
+      'account_creation_preparation_failed'
+    );
+  });
+
   it('allocates routes and returns only blind identifier indexes', async () => {
     const { workerEnv, allocateAccountRoute, ensureTenantShardCapacity } = env();
     const publication = await buildInitialAccountDirectoryPublication(workerEnv, {
@@ -805,6 +817,56 @@ describe('account directory producer', () => {
     ).rejects.toThrow('directory_identifier_reservation_conflict');
     expect(releaseIdentifiers).toHaveBeenCalledTimes(2);
     expect(releaseAccountRoute).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists the safe preparation error before returning a retryable failure', async () => {
+    const { workerEnv } = env();
+    delete (workerEnv as unknown as Record<string, unknown>).TENANT_RUNTIME_REGISTRY;
+    const operation: AccountCreationOperation = {
+      operationId: 'operation-preparation-failure',
+      tenantId: 'tenant-a',
+      actorId: 'admin-a',
+      idempotencyKey: 'request-preparation-failure',
+      allocationIdempotencyKey: `account-create:${'e'.repeat(64)}`,
+      requestHash: 'f'.repeat(64),
+      userId: 'user-preparation-failure',
+      accountId: 'account:user-preparation-failure',
+      status: 'preparing',
+      publication: null,
+    };
+    const recordPreparationFailure = vi.fn(async () => operation);
+    const dependencies = {
+      operationRepository: {
+        acquire: vi.fn(async () => operation),
+        recordPreparationFailure,
+      } as never,
+      now: () => 100,
+      writeAuthoritative: vi.fn(),
+    };
+
+    await expect(
+      executeDurableInitialAccountDirectoryWrite(
+        workerEnv,
+        {
+          tenantId: operation.tenantId,
+          actorId: operation.actorId,
+          idempotencyKey: operation.idempotencyKey,
+          requestHash: operation.requestHash,
+          candidateOperationId: operation.operationId,
+          candidateUserId: operation.userId,
+          email: 'person@example.com',
+          residencyPolicyId: 'policy-a',
+          residencyPartition: 'jp',
+        },
+        dependencies
+      )
+    ).rejects.toThrow('lookup_hmac_key_state_unavailable');
+    expect(recordPreparationFailure).toHaveBeenCalledWith(
+      operation,
+      'lookup_hmac_key_state_unavailable',
+      100
+    );
+    expect(dependencies.writeAuthoritative).not.toHaveBeenCalled();
   });
 
   it('resumes a durable directory-pending operation without reallocating or rewriting', async () => {

@@ -22,6 +22,14 @@ import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
 const log = createLogger().module('ACCOUNT-DIRECTORY-PRODUCER');
+const SAFE_PREPARATION_ERROR =
+  /^(?:account_directory|control_account_allocation|lookup_hmac_key)_[a-z0-9_:-]{1,96}$/u;
+
+export function classifyAccountCreationPreparationError(error: unknown): string {
+  return error instanceof Error && SAFE_PREPARATION_ERROR.test(error.message)
+    ? error.message
+    : 'account_creation_preparation_failed';
+}
 
 export interface InitialAccountDirectoryPublicationInput {
   tenantId: string;
@@ -464,16 +472,33 @@ export async function executeDurableInitialAccountDirectoryWrite(
   }
   let publication = operation.publication;
   if (!publication) {
-    publication = await buildInitialAccountDirectoryPublication(env, {
-      tenantId: operation.tenantId,
-      accountId: operation.accountId,
-      email: input.email,
-      externalSubject: input.externalSubject,
-      residencyPolicyId: input.residencyPolicyId,
-      residencyPartition: input.residencyPartition,
-      idempotencyKey: operation.allocationIdempotencyKey,
-      operationId: operation.operationId,
-    });
+    try {
+      publication = await buildInitialAccountDirectoryPublication(env, {
+        tenantId: operation.tenantId,
+        accountId: operation.accountId,
+        email: input.email,
+        externalSubject: input.externalSubject,
+        residencyPolicyId: input.residencyPolicyId,
+        residencyPartition: input.residencyPartition,
+        idempotencyKey: operation.allocationIdempotencyKey,
+        operationId: operation.operationId,
+      });
+    } catch (error) {
+      try {
+        await dependencies.operationRepository.recordPreparationFailure(
+          operation,
+          classifyAccountCreationPreparationError(error),
+          now
+        );
+      } catch (recordError) {
+        log.warn(
+          'Account creation preparation failure could not be persisted',
+          { stage: 'preparation_failure_persistence' },
+          recordError instanceof Error ? recordError : new Error('unknown_persistence_failure')
+        );
+      }
+      throw error;
+    }
     operation = await dependencies.operationRepository.recordPublication(
       operation,
       publication,

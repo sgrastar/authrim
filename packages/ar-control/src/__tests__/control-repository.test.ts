@@ -2406,6 +2406,52 @@ describe('D1ControlRepository lease and budget integration', () => {
       last_error_code: 'control_worker_settings_request_failed',
       last_error_redacted: 'control_worker_settings_request_failed',
     });
+
+    await bindingRepository.ensurePendingTargets(221);
+    expect(
+      database
+        .prepare(
+          `SELECT status, last_error_code, last_error_redacted
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({
+      status: 'waiting_retry',
+      last_error_code: 'control_worker_settings_request_failed',
+      last_error_redacted: 'control_worker_settings_request_failed',
+    });
+
+    database
+      .prepare(
+        `UPDATE control_worker_binding_reconciliations
+            SET state = 'pending', last_error_code = NULL, updated_at = 221
+          WHERE operation_id = ?`
+      )
+      .run(shardPlan.operationId);
+    database
+      .prepare(
+        `UPDATE control_operations
+            SET last_error_code = 'control_worker_binding_reconciliation_failed',
+                last_error_redacted = 'control_worker_binding_reconciliation_failed',
+                updated_at = 221
+          WHERE operation_id = ?`
+      )
+      .run(shardPlan.operationId);
+
+    await bindingRepository.ensurePendingTargets(222);
+
+    expect(
+      database
+        .prepare(
+          `SELECT status, last_error_code, last_error_redacted
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({
+      status: 'waiting_retry',
+      last_error_code: null,
+      last_error_redacted: null,
+    });
   });
 
   it('does not offer restore when blocked binding failures require different repairs', async () => {

@@ -954,7 +954,7 @@ describe('ControlService tenant shard provisioning', () => {
     }));
     repository.runtimeRouteTargets.push(
       {
-        ...repository.runtimeRouteTargets[1]!,
+        ...repository.runtimeRouteTargets[1],
         shardId: 'shard-users-2',
         bindingRef: 'TDB_ROUTE_USERS_2_CORE',
         databaseId: 'database-users-2',
@@ -962,7 +962,7 @@ describe('ControlService tenant shard provisioning', () => {
         assignmentGeneration: 2,
       },
       {
-        ...repository.runtimeRouteTargets[2]!,
+        ...repository.runtimeRouteTargets[2],
         shardId: 'shard-pii-2',
         bindingRef: 'TDB_ROUTE_PII_2_CORE',
         databaseId: 'database-pii-2',
@@ -1153,7 +1153,7 @@ describe('ControlService tenant shard provisioning', () => {
       ownerTenantId: 'tenant-test',
     }));
     repository.runtimeRouteTargets.push({
-      ...repository.runtimeRouteTargets[1]!,
+      ...repository.runtimeRouteTargets[1],
       shardId: 'shard-users-duplicate-binding',
     });
     await expect(service.getTenantRuntimeRouteTargets(request, 'env-test')).rejects.toThrow(

@@ -343,6 +343,37 @@ export class D1WorkerBindingRepository {
               )`
         )
         .bind(now),
+      // A target-level transient failure can be replaced by normal lease or propagation progress
+      // before the parent operation runs again. Re-derive the aggregate error from the current
+      // non-terminal targets so Admin does not expose that stale failure while retry is healthy.
+      this.db
+        .prepare(
+          `UPDATE control_operations
+              SET last_error_code = NULL, last_error_redacted = NULL, updated_at = ?
+            WHERE operation_kind = 'provision_shard'
+              AND status IN ('running', 'waiting_retry')
+              AND last_error_code = 'control_worker_binding_reconciliation_failed'
+              AND EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = control_operations.operation_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = control_operations.operation_id
+                   AND (
+                     target.state IN ('rollback_required', 'blocked') OR
+                     (target.state NOT IN ('succeeded', 'rolled_back', 'blocked')
+                      AND target.last_error_code IS NOT NULL
+                      AND target.last_error_code NOT IN (
+                        'control_worker_deployment_lease_busy',
+                        'control_worker_deployment_lease_lost',
+                        'control_worker_patch_propagating',
+                        'runtime_smoke_binding_unavailable'
+                      ))
+                   )
+              )`
+        )
+        .bind(now),
       this.db
         .prepare(
           `UPDATE control_tenant_shards SET status = 'failed', updated_at = ?
