@@ -2,7 +2,10 @@
 
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import type { CloudflareD1QueryResult } from '../../packages/ar-lib-core/src/services/control-plane/index.js';
+import {
+  getTenantDatabaseResourcePrefix,
+  type CloudflareD1QueryResult,
+} from '../../packages/ar-lib-core/src/services/control-plane/index.js';
 import { planLookupScaleOut } from '../../packages/ar-control/src/lookup-scale-out-planner.js';
 import {
   collectControlSnapshot,
@@ -1130,8 +1133,18 @@ export async function verifyPhase1Run(input: {
   const baselineProvider = new Set(
     input.baseline.provider.databases.map((database) => database.uuid)
   );
+  const environmentName =
+    typeof finalControl.environment?.environment_name === 'string'
+      ? finalControl.environment.environment_name
+      : null;
+  const providerPrefix = environmentName
+    ? `${getTenantDatabaseResourcePrefix(environmentName)}-`
+    : null;
   const providerAdditions = finalProvider.databases.filter(
-    (database) => !baselineProvider.has(database.uuid)
+    (database) =>
+      !baselineProvider.has(database.uuid) &&
+      providerPrefix !== null &&
+      database.name.startsWith(providerPrefix)
   );
   const controlledProviderIds = new Set(
     [...finalControl.shardCapacities, ...finalControl.lookupShards].flatMap((row) =>
@@ -1179,6 +1192,7 @@ export async function verifyPhase1Run(input: {
   const logicalProviderIds = new Set<string>();
   const deterministicNames = new Set<string>();
   let resourceMappingMismatches = 0;
+  if (providerPrefix === null) resourceMappingMismatches += 1;
   for (const resource of logicalResources) {
     if (
       typeof resource.logicalId !== 'string' ||

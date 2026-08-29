@@ -192,6 +192,8 @@ export interface ControlStorageTopologyPolicy {
   maxReadySpares: number;
   maxD1Resources: number;
   dailyD1CreateBudget: number;
+  dailyD1CreateUsed: number;
+  dailyD1CreateRemaining: number;
   targetAccountCount: number;
 }
 

@@ -87,6 +87,12 @@ export function evaluatePhase1Preflight(input: {
   );
   check(
     checks,
+    'environment_resource_prefix_available',
+    (text(environment, 'environment_name')?.length ?? 0) > 0,
+    text(environment, 'environment_name') ?? 'missing'
+  );
+  check(
+    checks,
     'automatic_provisioning_ready',
     number(environment, 'automatic_provisioning_enabled') === 1 &&
       text(environment, 'provisioning_capability_state') === 'ready' &&
@@ -306,18 +312,25 @@ export function evaluatePhase1Preflight(input: {
 
   const expectedMinimumD1Creates = coreCreates + piiCreates + theoreticalLookupAdditions;
   const dailyBudget = number(policy, 'daily_d1_create_budget') ?? -1;
+  const dailyBudgetUsed = number(environment, 'daily_d1_create_used') ?? -1;
+  const remainingDailyBudget = dailyBudget - dailyBudgetUsed;
   check(
     checks,
-    'daily_d1_create_budget',
-    dailyBudget >= expectedMinimumD1Creates + 2,
-    `${dailyBudget}:${expectedMinimumD1Creates + 2}`
+    'remaining_daily_d1_create_budget',
+    dailyBudget >= 0 &&
+      dailyBudgetUsed >= 0 &&
+      remainingDailyBudget >= expectedMinimumD1Creates + 2,
+    `${remainingDailyBudget}:${expectedMinimumD1Creates + 2}:used=${dailyBudgetUsed}:limit=${dailyBudget}`
   );
   const maxResources = number(policy, 'max_d1_resources') ?? -1;
+  const currentEnvironmentResources = number(environment, 'current_environment_d1_count') ?? -1;
   check(
     checks,
     'environment_d1_resource_limit',
-    maxResources >= provider.databases.length + expectedMinimumD1Creates + 2,
-    `${maxResources}:${provider.databases.length + expectedMinimumD1Creates + 2}`
+    maxResources >= 0 &&
+      currentEnvironmentResources >= 0 &&
+      maxResources >= currentEnvironmentResources + expectedMinimumD1Creates + 2,
+    `${maxResources}:${currentEnvironmentResources + expectedMinimumD1Creates + 2}:current=${currentEnvironmentResources}`
   );
 
   const providerIds = new Set(provider.databases.map((database) => database.uuid));

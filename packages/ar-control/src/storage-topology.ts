@@ -16,6 +16,7 @@ interface PolicyRow {
   max_ready_spares: number;
   max_d1_resources: number;
   daily_d1_create_budget: number;
+  daily_d1_create_used: number;
   target_account_count: number;
 }
 
@@ -77,6 +78,12 @@ interface OperationRow {
   updated_at: number;
 }
 
+interface OperationAggregateRow {
+  provisioning_d1_count: number;
+  in_flight_operation_count: number;
+  blocked_operation_count: number;
+}
+
 function integer(value: number, field: string): number {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`control_storage_topology_${field}_invalid`);
@@ -94,22 +101,32 @@ export async function getControlStorageTopology(input: {
   generatedAt: number;
   providerDatabases?: readonly CloudflareD1Database[] | null;
 }): Promise<ControlStorageTopology> {
-  const [policyResult, tenantResult, tenantShardResult, lookupShardResult, operationResult] =
-    await input.database.batch([
-      input.database
-        .prepare(
-          `SELECT environment.environment_name, policy.max_concurrent_provisioning,
+  const [
+    policyResult,
+    tenantResult,
+    tenantShardResult,
+    lookupShardResult,
+    operationResult,
+    operationAggregateResult,
+  ] = await input.database.batch([
+    input.database
+      .prepare(
+        `SELECT environment.environment_name, policy.max_concurrent_provisioning,
                   policy.max_ready_spares, policy.max_d1_resources,
-                  policy.daily_d1_create_budget, policy.target_account_count
+                  policy.daily_d1_create_budget, policy.target_account_count,
+                  (SELECT COUNT(*) FROM control_d1_create_budget_reservations reservation
+                    WHERE reservation.environment_id = environment.environment_id
+                      AND reservation.budget_day = CAST(unixepoch() / 86400 AS INTEGER))
+                    AS daily_d1_create_used
              FROM control_environments environment
              JOIN control_environment_resource_policies policy
                ON policy.environment_id = environment.environment_id
             WHERE environment.environment_id = ?`
-        )
-        .bind(input.environmentId),
-      input.database
-        .prepare(
-          `SELECT placement.tenant_id, placement.isolation_policy, placement.policy_state,
+      )
+      .bind(input.environmentId),
+    input.database
+      .prepare(
+        `SELECT placement.tenant_id, placement.isolation_policy, placement.policy_state,
                   (SELECT COUNT(*)
                      FROM control_tenant_shard_allocations allocation
                     WHERE allocation.environment_id = placement.environment_id
@@ -124,11 +141,11 @@ export async function getControlStorageTopology(input: {
              FROM control_tenant_placement_policies placement
             WHERE placement.environment_id = ?
             ORDER BY placement.tenant_id`
-        )
-        .bind(input.environmentId),
-      input.database
-        .prepare(
-          `SELECT shard.shard_id, desired.desired_resource_id,
+      )
+      .bind(input.environmentId),
+    input.database
+      .prepare(
+        `SELECT shard.shard_id, desired.desired_resource_id,
                   desired.deterministic_name AS database_name,
                   observed.provider_resource_id AS provider_database_id,
                   shard.data_role, shard.allocation_scope, shard.owner_tenant_id,
@@ -153,11 +170,11 @@ export async function getControlStorageTopology(input: {
             WHERE shard.environment_id = ?
             ORDER BY shard.allocation_scope, shard.owner_tenant_id, shard.data_role,
                      shard.created_at, shard.shard_id`
-        )
-        .bind(input.environmentId),
-      input.database
-        .prepare(
-          `SELECT lookup.lookup_shard_id, desired.desired_resource_id,
+      )
+      .bind(input.environmentId),
+    input.database
+      .prepare(
+        `SELECT lookup.lookup_shard_id, desired.desired_resource_id,
                   desired.deterministic_name AS database_name,
                   observed.provider_resource_id AS provider_database_id,
                   lookup.residency_partition, lookup.status, lookup.capacity_weight,
@@ -176,11 +193,11 @@ export async function getControlStorageTopology(input: {
               AND observed.observed_resource_id = desired.observed_resource_id
             WHERE lookup.environment_id = ?
             ORDER BY lookup.created_at, lookup.lookup_shard_id`
-        )
-        .bind(input.environmentId),
-      input.database
-        .prepare(
-          `SELECT operation.operation_id, desired.tenant_id,
+      )
+      .bind(input.environmentId),
+    input.database
+      .prepare(
+        `SELECT operation.operation_id, desired.tenant_id,
                   CASE WHEN lookup.lookup_shard_id IS NOT NULL THEN 'lookup'
                        ELSE shard.data_role END AS data_role,
                   desired.deterministic_name AS database_name,
@@ -208,9 +225,30 @@ export async function getControlStorageTopology(input: {
             WHERE operation.environment_id = ? AND operation.operation_kind = 'provision_shard'
             ORDER BY operation.created_at DESC, operation.operation_id DESC
             LIMIT 100`
-        )
-        .bind(input.environmentId),
-    ]);
+      )
+      .bind(input.environmentId),
+    input.database
+      .prepare(
+        `SELECT
+                  COUNT(DISTINCT CASE
+                    WHEN operation.status IN ('queued', 'running', 'waiting_retry')
+                    THEN operation.operation_id
+                  END) AS provisioning_d1_count,
+                  COUNT(DISTINCT CASE
+                    WHEN operation.status IN ('queued', 'running', 'waiting_retry')
+                    THEN operation.operation_id
+                  END) AS in_flight_operation_count,
+                  COUNT(DISTINCT CASE WHEN operation.status = 'blocked'
+                    THEN operation.operation_id END) AS blocked_operation_count
+             FROM control_operations operation
+             JOIN control_desired_resources desired
+               ON desired.environment_id = operation.environment_id
+              AND desired.origin_operation_id = operation.operation_id
+              AND desired.resource_kind = 'd1'
+            WHERE operation.environment_id = ? AND operation.operation_kind = 'provision_shard'`
+      )
+      .bind(input.environmentId),
+  ]);
 
   const policy = (policyResult.results ?? [])[0] as PolicyRow | undefined;
   if (!policy) throw new Error('control_storage_topology_policy_missing');
@@ -269,6 +307,10 @@ export async function getControlStorageTopology(input: {
     readyAt: nullableInteger(row.ready_at, 'operation_ready_at'),
     updatedAt: integer(row.updated_at, 'operation_updated_at'),
   }));
+  const operationAggregate = (operationAggregateResult.results ?? [])[0] as
+    | OperationAggregateRow
+    | undefined;
+  if (!operationAggregate) throw new Error('control_storage_topology_operation_aggregate_missing');
 
   const managedProviderIds = new Set(
     [...tenantShards, ...lookupShards].flatMap((shard) =>
@@ -287,8 +329,6 @@ export async function getControlStorageTopology(input: {
         database.file_size === undefined ? null : integer(database.file_size, 'provider_file_size'),
       managedByControl: managedProviderIds.has(database.uuid),
     }));
-  const activeOperationStatuses = new Set(['queued', 'running', 'waiting_retry']);
-  const activeProvisioningStates = new Set(['requested', 'creating']);
   const summary = {
     providerInventoryAvailable:
       input.providerDatabases !== undefined && input.providerDatabases !== null,
@@ -303,24 +343,21 @@ export async function getControlStorageTopology(input: {
     lookupShardCount: lookupShards.filter((shard) => shard.status !== 'retired').length,
     activeTenantShardCount: tenantShards.filter((shard) => shard.status === 'active').length,
     readySpareCount: tenantShards.filter(
-      (shard) =>
-        shard.allocationScope === 'shared_pool' &&
-        shard.status === 'ready' &&
-        shard.activeAssignmentCount === 0
+      (shard) => shard.status === 'ready' && shard.activeAssignmentCount === 0
     ).length,
-    provisioningD1Count: operations.filter(
-      (operation) =>
-        activeOperationStatuses.has(operation.status) ||
-        activeProvisioningStates.has(operation.provisioningState)
-    ).length,
+    provisioningD1Count: integer(operationAggregate.provisioning_d1_count, 'provisioning_d1_count'),
     failedD1Count:
       tenantShards.filter((shard) => shard.status === 'failed').length +
       lookupShards.filter((shard) => shard.status === 'failed').length,
     accountCount: tenants.reduce((total, tenant) => total + tenant.accountCount, 0),
-    inFlightOperationCount: operations.filter((operation) =>
-      activeOperationStatuses.has(operation.status)
-    ).length,
-    blockedOperationCount: operations.filter((operation) => operation.status === 'blocked').length,
+    inFlightOperationCount: integer(
+      operationAggregate.in_flight_operation_count,
+      'in_flight_operation_count'
+    ),
+    blockedOperationCount: integer(
+      operationAggregate.blocked_operation_count,
+      'blocked_operation_count'
+    ),
   };
   const topology: ControlStorageTopology = {
     environmentId: input.environmentId,
@@ -333,6 +370,12 @@ export async function getControlStorageTopology(input: {
       maxReadySpares: integer(policy.max_ready_spares, 'max_ready_spares'),
       maxD1Resources: integer(policy.max_d1_resources, 'max_d1_resources'),
       dailyD1CreateBudget: integer(policy.daily_d1_create_budget, 'daily_d1_create_budget'),
+      dailyD1CreateUsed: integer(policy.daily_d1_create_used, 'daily_d1_create_used'),
+      dailyD1CreateRemaining: Math.max(
+        0,
+        integer(policy.daily_d1_create_budget, 'daily_d1_create_budget') -
+          integer(policy.daily_d1_create_used, 'daily_d1_create_used')
+      ),
       targetAccountCount: integer(policy.target_account_count, 'target_account_count'),
     },
     summary,

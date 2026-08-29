@@ -114,11 +114,14 @@ function snapshot(): Phase1ControlSnapshot {
     observedAt: '2026-08-27T00:00:00.000Z',
     environment: {
       environment_id: 'phase1-test',
+      environment_name: 'phase1-test',
       lifecycle_state: 'active',
       automatic_provisioning_enabled: 1,
       provisioning_capability_state: 'ready',
       provisioning_token_ownership: 'account',
       active_tenant_count: 1,
+      current_environment_d1_count: 4,
+      daily_d1_create_used: 0,
     },
     resourcePolicy: {
       target_account_count: 100,
@@ -279,10 +282,30 @@ function provider(): Phase1ProviderSnapshot {
     schemaVersion: 1,
     observedAt: '2026-08-27T00:00:00.000Z',
     databases: [
-      { uuid: 'default-core-db', name: 'default-core', createdAt: null, fileSize: 1 },
-      { uuid: 'core-db', name: 'core', createdAt: null, fileSize: 1 },
-      { uuid: 'pii-db', name: 'pii', createdAt: null, fileSize: 1 },
-      { uuid: 'lookup-db', name: 'lookup', createdAt: null, fileSize: 1 },
+      {
+        uuid: 'default-core-db',
+        name: 'phase1-test-authrim-tenant-default-core',
+        createdAt: null,
+        fileSize: 1,
+      },
+      {
+        uuid: 'core-db',
+        name: 'phase1-test-authrim-tenant-users-core',
+        createdAt: null,
+        fileSize: 1,
+      },
+      {
+        uuid: 'pii-db',
+        name: 'phase1-test-authrim-tenant-pii',
+        createdAt: null,
+        fileSize: 1,
+      },
+      {
+        uuid: 'lookup-db',
+        name: 'phase1-test-authrim-tenant-lookup',
+        createdAt: null,
+        fileSize: 1,
+      },
     ],
   };
 }
@@ -405,13 +428,60 @@ describe('Phase 1 evidence contracts', () => {
     ).toBe(false);
   });
 
+  it('rejects a run when the remaining daily D1 create budget is insufficient', () => {
+    const control = snapshot();
+    if (!control.environment) throw new Error('fixture_environment_missing');
+    control.environment.daily_d1_create_used = 49;
+
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control,
+      provider: provider(),
+      runId: 'run-exhausted-daily-budget',
+      now: new Date(),
+    });
+
+    expect(
+      baseline.preflight.checks.find((check) => check.name === 'remaining_daily_d1_create_budget')
+    ).toMatchObject({ passed: false });
+  });
+
+  it('uses the environment-managed D1 count instead of unrelated account inventory', () => {
+    const providerSnapshot = provider();
+    providerSnapshot.databases.push(
+      ...Array.from({ length: 200 }, (_, index) => ({
+        uuid: `unrelated-${index}`,
+        name: `another-app-${index}`,
+        createdAt: null,
+        fileSize: 1,
+      }))
+    );
+
+    const baseline = evaluatePhase1Preflight({
+      config: config(),
+      control: snapshot(),
+      provider: providerSnapshot,
+      runId: 'run-account-inventory-noise',
+      now: new Date(),
+    });
+
+    expect(
+      baseline.preflight.checks.find((check) => check.name === 'environment_d1_resource_limit')
+    ).toMatchObject({ passed: true });
+  });
+
   it('observes allocation integrity as bounded aggregates instead of raw account rows', () => {
-    const allocationQuery = buildControlQueryBatch(config()).at(-1)?.sql ?? '';
+    const allocationStatement = buildControlQueryBatch(config()).at(-1);
+    const allocationQuery = allocationStatement?.sql ?? '';
 
     expect(allocationQuery).toContain("'summary' AS row_kind");
     expect(allocationQuery).toContain('COUNT(DISTINCT account_id_blind_digest)');
     expect(allocationQuery).toContain("a.data_role IN ('tenant_core/users', 'tenant_pii')");
     expect(allocationQuery).not.toMatch(/SELECT\s+allocation_id/iu);
+    expect(allocationStatement?.params).toEqual(['phase1-test', 'tenant-test', 1]);
+    expect(
+      buildControlQueryBatch(config(), { includeTenantAllocations: false }).at(-1)?.params
+    ).toEqual(['phase1-test', 'tenant-test', 0]);
   });
 
   it('ignores historical blocked operations but rejects blocks inside the intervention window', () => {
@@ -903,9 +973,14 @@ describe('Phase 1 evidence contracts', () => {
         if (providerReads++ === 0) return baseline;
         return [
           ...baseline,
-          { uuid: 'core-db-2', name: 'core-2', file_size: 1 },
-          { uuid: 'pii-db-2', name: 'pii-2', file_size: 1 },
-          { uuid: 'lookup-db-2', name: 'lookup-2', file_size: 1 },
+          {
+            uuid: 'core-db-2',
+            name: 'phase1-test-authrim-tenant-users-core-2',
+            file_size: 1,
+          },
+          { uuid: 'pii-db-2', name: 'phase1-test-authrim-tenant-pii-2', file_size: 1 },
+          { uuid: 'lookup-db-2', name: 'phase1-test-authrim-tenant-lookup-2', file_size: 1 },
+          { uuid: 'other-app-db', name: 'another-app-created-during-run', file_size: 1 },
         ];
       },
       async queryD1(databaseId: string, sql: string, params: unknown[] = []) {

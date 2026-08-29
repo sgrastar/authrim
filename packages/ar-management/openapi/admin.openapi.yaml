@@ -57621,6 +57621,8 @@ components:
         - maxReadySpares
         - maxD1Resources
         - dailyD1CreateBudget
+        - dailyD1CreateUsed
+        - dailyD1CreateRemaining
         - targetAccountCount
       properties:
         maxConcurrentProvisioning:
@@ -57633,6 +57635,12 @@ components:
           type: integer
           minimum: 0
         dailyD1CreateBudget:
+          type: integer
+          minimum: 0
+        dailyD1CreateUsed:
+          type: integer
+          minimum: 0
+        dailyD1CreateRemaining:
           type: integer
           minimum: 0
         targetAccountCount:

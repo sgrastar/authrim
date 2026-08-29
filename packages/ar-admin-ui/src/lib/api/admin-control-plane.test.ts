@@ -112,6 +112,8 @@ const storageTopology = {
 		maxReadySpares: 1,
 		maxD1Resources: 200,
 		dailyD1CreateBudget: 50,
+		dailyD1CreateUsed: 4,
+		dailyD1CreateRemaining: 46,
 		targetAccountCount: 500
 	},
 	summary: {
@@ -293,6 +295,24 @@ describe('admin control-plane API', () => {
 			new Response(
 				JSON.stringify({
 					topology: { ...storageTopology, cloudflareApiToken: 'forbidden' }
+				})
+			)
+		);
+
+		await expect(adminControlPlaneAPI.getStorageTopology()).rejects.toMatchObject({
+			status: 502,
+			message: 'CONTROL_PLANE_RESPONSE_INVALID'
+		});
+	});
+
+	it('fails closed when the daily D1 remaining budget is internally inconsistent', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					topology: {
+						...storageTopology,
+						policy: { ...storageTopology.policy, dailyD1CreateRemaining: 47 }
+					}
 				})
 			)
 		);

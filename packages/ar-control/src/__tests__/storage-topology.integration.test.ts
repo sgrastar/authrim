@@ -150,7 +150,10 @@ describe('Control storage topology', () => {
         'desired-lookup', 'active', 1, 12, 21);
       INSERT INTO control_lookup_bucket_assignments (
         environment_id, virtual_bucket, lookup_shard_id, assignment_generation, state, updated_at
-      ) VALUES ('env-test', 0, 'lookup-a', 1, 'active', 21);`);
+      ) VALUES ('env-test', 0, 'lookup-a', 1, 'active', 21);
+      INSERT INTO control_d1_create_budget_reservations (
+        operation_id, environment_id, budget_day, created_at
+      ) VALUES ('op-pending', 'env-test', CAST(unixepoch() / 86400 AS INTEGER), 30);`);
   });
 
   afterEach(() => database.close());
@@ -175,12 +178,17 @@ describe('Control storage topology', () => {
       tenantShardCount: 2,
       lookupShardCount: 1,
       activeTenantShardCount: 1,
-      readySpareCount: 0,
+      readySpareCount: 1,
       provisioningD1Count: 1,
       failedD1Count: 0,
       accountCount: 1,
       inFlightOperationCount: 1,
       blockedOperationCount: 0,
+    });
+    expect(topology.policy).toMatchObject({
+      dailyD1CreateBudget: 50,
+      dailyD1CreateUsed: 1,
+      dailyD1CreateRemaining: 49,
     });
     expect(topology.tenants).toEqual([
       expect.objectContaining({ tenantId: 'tenant-a', accountCount: 1, assignedShardCount: 1 }),
@@ -217,5 +225,61 @@ describe('Control storage topology', () => {
     expect(topology.summary.providerD1Count).toBeNull();
     expect(topology.providerDatabases).toEqual([]);
     expect(topology.summary.controlManagedD1Count).toBe(3);
+  });
+
+  it('keeps all-operation aggregates accurate when the recent table is capped at 100 rows', async () => {
+    database.exec(
+      `UPDATE control_environment_resource_policies SET max_d1_resources = 1000
+        WHERE environment_id = 'env-test'`
+    );
+    const insertOperation = database.prepare(
+      `INSERT INTO control_operations (
+         operation_id, environment_id, operation_kind, idempotency_key, status,
+         requested_by_type, attempt_count, created_at, completed_at, updated_at
+       ) VALUES (?, 'env-test', 'provision_shard', ?, 'succeeded', 'scheduler', 1, ?, ?, ?)`
+    );
+    const insertDesired = database.prepare(
+      `INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, desired_state, provisioning_state,
+         origin_operation_id, created_at, updated_at
+       ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'present', 'ready', ?, ?, ?)`
+    );
+    for (let index = 0; index < 100; index += 1) {
+      const operationId = `op-new-${index}`;
+      const desiredId = `desired-new-${index}`;
+      const timestamp = 100 + index;
+      insertOperation.run(operationId, `new-${index}`, timestamp, timestamp, timestamp);
+      insertDesired.run(
+        desiredId,
+        `logical-new-${index}`,
+        `test-authrim-new-${index}`,
+        `fingerprint-${index}`,
+        operationId,
+        timestamp,
+        timestamp
+      );
+    }
+    database.exec(
+      `UPDATE control_operations
+          SET status = 'blocked', last_error_code = 'control_d1_resource_limit',
+              completed_at = 30, updated_at = 30
+        WHERE operation_id = 'op-pending'`
+    );
+
+    const topology = await getControlStorageTopology({
+      database: d1(database),
+      environmentId: 'env-test',
+      generatedAt: 300,
+      providerDatabases: null,
+    });
+
+    expect(topology.operations).toHaveLength(100);
+    expect(topology.operations.some((operation) => operation.operationId === 'op-pending')).toBe(
+      false
+    );
+    expect(topology.summary.blockedOperationCount).toBe(1);
+    expect(topology.summary.inFlightOperationCount).toBe(0);
+    expect(topology.summary.provisioningD1Count).toBe(0);
   });
 });

@@ -207,7 +207,12 @@
 			</div>
 			<div>
 				<dt>Daily create budget</dt>
-				<dd>{formatCount(topology.policy.dailyD1CreateBudget)}</dd>
+				<dd>
+					{formatCount(topology.policy.dailyD1CreateUsed)} used / {formatCount(
+						topology.policy.dailyD1CreateBudget
+					)} limit
+				</dd>
+				<small>{formatCount(topology.policy.dailyD1CreateRemaining)} remaining today</small>
 			</div>
 		</dl>
 

@@ -9,8 +9,14 @@ const tokens = {
   r2: 'r2-token',
 };
 
-function success(result: unknown): Response {
-  return Response.json({ success: true, errors: [], messages: [], result });
+function success(result: unknown, resultInfo?: Record<string, unknown>): Response {
+  return Response.json({
+    success: true,
+    errors: [],
+    messages: [],
+    result,
+    ...(resultInfo ? { result_info: resultInfo } : {}),
+  });
 }
 
 describe('CloudflareControlApiClient', () => {
@@ -90,6 +96,74 @@ describe('CloudflareControlApiClient', () => {
     expect(init.method).toBe('PUT');
     expect(new Headers(init.headers).get('Authorization')).toBe('Bearer d1-token');
     expect(JSON.parse(String(init.body))).toEqual({ read_replication: { mode: 'auto' } });
+  });
+
+  it('loads every D1 inventory page so idempotent provisioning can adopt existing databases', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        success(
+          [
+            { uuid: 'db-1', name: 'test-authrim-db-1' },
+            { uuid: 'db-2', name: 'test-authrim-db-2' },
+          ],
+          { page: 1, per_page: 2, total_count: 3, total_pages: 2 }
+        )
+      )
+      .mockResolvedValueOnce(
+        success([{ uuid: 'db-3', name: 'test-authrim-db-3' }], {
+          page: 2,
+          per_page: 2,
+          total_count: 3,
+          total_pages: 2,
+        })
+      );
+    const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
+
+    await expect(client.listD1Databases()).resolves.toEqual([
+      { uuid: 'db-1', name: 'test-authrim-db-1' },
+      { uuid: 'db-2', name: 'test-authrim-db-2' },
+      { uuid: 'db-3', name: 'test-authrim-db-3' },
+    ]);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?page=1&per_page=1000`,
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database?page=2&per_page=1000`,
+    ]);
+  });
+
+  it('fails closed on malformed or conflicting paginated D1 inventory', async () => {
+    const malformed = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi.fn().mockResolvedValue(success([{ uuid: 'db-1' }])),
+    });
+    await expect(malformed.listD1Databases()).rejects.toThrow('cloudflare_d1_list_invalid_result');
+
+    const conflicting = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi
+        .fn()
+        .mockResolvedValueOnce(
+          success([{ uuid: 'db-1', name: 'first' }], {
+            page: 1,
+            per_page: 1,
+            total_count: 2,
+            total_pages: 2,
+          })
+        )
+        .mockResolvedValueOnce(
+          success([{ uuid: 'db-1', name: 'second' }], {
+            page: 2,
+            per_page: 1,
+            total_count: 2,
+            total_pages: 2,
+          })
+        ),
+    });
+    await expect(conflicting.listD1Databases()).rejects.toThrow(
+      'cloudflare_d1_list_duplicate_conflict'
+    );
   });
 
   it('sends Worker settings as multipart and uses the Workers token', async () => {

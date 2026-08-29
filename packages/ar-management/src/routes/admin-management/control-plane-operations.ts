@@ -141,6 +141,8 @@ const STORAGE_POLICY_KEYS = new Set([
   'maxReadySpares',
   'maxD1Resources',
   'dailyD1CreateBudget',
+  'dailyD1CreateUsed',
+  'dailyD1CreateRemaining',
   'targetAccountCount',
 ]);
 const STORAGE_SUMMARY_KEYS = new Set([
@@ -932,6 +934,12 @@ function parseStorageTopology(
     topology.operations.length > 100 ||
     !Array.isArray(topology.providerDatabases) ||
     topology.providerDatabases.length > 1000
+  ) {
+    throw new Error('control_plane_storage_topology_invalid');
+  }
+  if (
+    policy.dailyD1CreateRemaining !==
+    Math.max(0, Number(policy.dailyD1CreateBudget) - Number(policy.dailyD1CreateUsed))
   ) {
     throw new Error('control_plane_storage_topology_invalid');
   }

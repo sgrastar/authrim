@@ -135,6 +135,8 @@ const storageTopology: ControlStorageTopology = {
     maxReadySpares: 1,
     maxD1Resources: 100,
     dailyD1CreateBudget: 50,
+    dailyD1CreateUsed: 4,
+    dailyD1CreateRemaining: 46,
     targetAccountCount: 500,
   },
   summary: {
@@ -742,6 +744,21 @@ describe('control-plane operations admin router', () => {
       malformed.env
     );
     expect(malformedResponse.status).toBe(503);
+
+    const inconsistentBudget = createApp({
+      control: {
+        getStorageTopology: vi.fn(async () => ({
+          ...storageTopology,
+          policy: { ...storageTopology.policy, dailyD1CreateRemaining: 47 },
+        })),
+      },
+    });
+    const inconsistentBudgetResponse = await inconsistentBudget.app.request(
+      '/api/admin/platform/control-plane/storage-topology',
+      {},
+      inconsistentBudget.env
+    );
+    expect(inconsistentBudgetResponse.status).toBe(503);
 
     const unauthorized = createApp({
       roles: [],

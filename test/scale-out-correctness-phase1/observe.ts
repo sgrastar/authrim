@@ -30,6 +30,14 @@ const CONTROL_QUERIES = [
           ,(SELECT COUNT(*) FROM control_tenant_placement_policies tenants
              WHERE tenants.environment_id = e.environment_id
                AND tenants.policy_state = 'active') AS active_tenant_count
+          ,(SELECT COUNT(*) FROM control_desired_resources desired
+             WHERE desired.environment_id = e.environment_id
+               AND desired.resource_kind = 'd1'
+               AND desired.desired_state = 'present') AS current_environment_d1_count
+          ,(SELECT COUNT(*) FROM control_d1_create_budget_reservations reservation
+             WHERE reservation.environment_id = e.environment_id
+               AND reservation.budget_day = CAST(unixepoch() / 86400 AS INTEGER))
+             AS daily_d1_create_used
      FROM control_environments e
      LEFT JOIN control_environment_resource_policies p
        ON p.environment_id = e.environment_id
@@ -127,6 +135,7 @@ const CONTROL_QUERIES = [
          LEFT JOIN control_tenant_shards s ON s.shard_id = a.selected_shard_id
         WHERE a.environment_id = ? AND a.tenant_id = ?
           AND a.data_role IN ('tenant_core/users', 'tenant_pii')
+          AND ? = 1
      ), account_integrity AS (
        SELECT account_id_blind_digest
          FROM scoped
@@ -196,7 +205,10 @@ function rows(results: CloudflareD1QueryResult[], index: number): Record<string,
   });
 }
 
-export function buildControlQueryBatch(config: Phase1HarnessConfig) {
+export function buildControlQueryBatch(
+  config: Phase1HarnessConfig,
+  options: { includeTenantAllocations?: boolean } = {}
+) {
   const environmentId = config.environment.environmentId;
   const tenantId = config.environment.tenantId;
   return CONTROL_QUERIES.map((sql, index) => ({
@@ -204,9 +216,11 @@ export function buildControlQueryBatch(config: Phase1HarnessConfig) {
     params:
       index === LOOKUP_ASSIGNMENT_QUERY_INDEX
         ? [environmentId, LOOKUP_ASSIGNMENT_PAGE_SIZE, 0]
-        : index === 1 || index === 4 || index === 13
-          ? [environmentId, tenantId]
-          : [environmentId],
+        : index === 13
+          ? [environmentId, tenantId, options.includeTenantAllocations === false ? 0 : 1]
+          : index === 1 || index === 4
+            ? [environmentId, tenantId]
+            : [environmentId],
   }));
 }
 
@@ -214,8 +228,11 @@ export async function collectControlSnapshot(input: {
   config: Phase1HarnessConfig;
   client: Phase1ObservationClient;
   now?: () => Date;
+  includeTenantAllocations?: boolean;
 }): Promise<Phase1ControlSnapshot> {
-  const batch = buildControlQueryBatch(input.config);
+  const batch = buildControlQueryBatch(input.config, {
+    includeTenantAllocations: input.includeTenantAllocations,
+  });
   const assignmentQuery = batch[LOOKUP_ASSIGNMENT_QUERY_INDEX];
   const regularBatch = batch.filter((_, index) => index !== LOOKUP_ASSIGNMENT_QUERY_INDEX);
   const groups = Array.from(
@@ -472,6 +489,7 @@ export async function observePhase1(input: {
       currentControl = await collectControlSnapshot({
         config: input.config,
         client: input.client,
+        includeTenantAllocations: false,
       });
     } catch (error) {
       const retryCode = phase1ObservationRetryCode(error);
@@ -483,6 +501,10 @@ export async function observePhase1(input: {
       });
       continue;
     }
+    // Allocation integrity is deliberately collected only at preflight, quiescence, and final
+    // verification. Re-scanning every account allocation on each observation interval would make
+    // the observer part of the load under test and distort publishable scale-out measurements.
+    currentControl.tenantAllocations = latestControl.tenantAllocations;
     const controlEvents = diffControlSnapshots(latestControl, currentControl);
     for (const event of controlEvents) {
       assertPhase1EvidenceIsSecretFree(event);

@@ -8,6 +8,8 @@ export interface ControlStorageTopology {
 		maxReadySpares: number;
 		maxD1Resources: number;
 		dailyD1CreateBudget: number;
+		dailyD1CreateUsed: number;
+		dailyD1CreateRemaining: number;
 		targetAccountCount: number;
 	};
 	summary: {
@@ -645,6 +647,8 @@ const STORAGE_POLICY_KEYS = new Set([
 	'maxReadySpares',
 	'maxD1Resources',
 	'dailyD1CreateBudget',
+	'dailyD1CreateUsed',
+	'dailyD1CreateRemaining',
 	'targetAccountCount'
 ]);
 const STORAGE_SUMMARY_KEYS = new Set([
@@ -1485,6 +1489,15 @@ function parseStorageTopologyResponse(value: unknown): { topology: ControlStorag
 		topology.operations.length > 100 ||
 		!Array.isArray(topology.providerDatabases) ||
 		topology.providerDatabases.length > 1000
+	) {
+		invalidResponse();
+	}
+	if (
+		topology.policy.dailyD1CreateRemaining !==
+		Math.max(
+			0,
+			Number(topology.policy.dailyD1CreateBudget) - Number(topology.policy.dailyD1CreateUsed)
+		)
 	) {
 		invalidResponse();
 	}
