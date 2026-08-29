@@ -104,7 +104,16 @@ describe('CloudflareControlApiClient', () => {
       .mockResolvedValueOnce(
         success(
           [
-            { uuid: 'db-1', name: 'test-authrim-db-1' },
+            {
+              uuid: 'db-1',
+              name: 'test-authrim-db-1',
+              created_at: '2026-08-29T14:30:59.873Z',
+              file_size: 360448,
+              num_tables: 0,
+              jurisdiction: null,
+              version: 'production',
+              read_replication: null,
+            },
             { uuid: 'db-2', name: 'test-authrim-db-2' },
           ],
           { page: 1, per_page: 2, total_count: 3, total_pages: 2 }
@@ -121,7 +130,14 @@ describe('CloudflareControlApiClient', () => {
     const client = new CloudflareControlApiClient({ accountId, tokens, fetcher });
 
     await expect(client.listD1Databases()).resolves.toEqual([
-      { uuid: 'db-1', name: 'test-authrim-db-1' },
+      {
+        uuid: 'db-1',
+        name: 'test-authrim-db-1',
+        created_at: '2026-08-29T14:30:59.873Z',
+        file_size: 360448,
+        num_tables: 0,
+        version: 'production',
+      },
       { uuid: 'db-2', name: 'test-authrim-db-2' },
       { uuid: 'db-3', name: 'test-authrim-db-3' },
     ]);

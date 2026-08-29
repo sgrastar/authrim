@@ -184,19 +184,20 @@ function parseD1ListDatabase(value: unknown): CloudflareD1Database {
     throw new Error('cloudflare_d1_list_invalid_result');
   }
   const row = value as Record<string, unknown>;
+  const hasValue = (field: unknown): boolean => field !== undefined && field !== null;
   if (
     typeof row.uuid !== 'string' ||
     row.uuid.length === 0 ||
     typeof row.name !== 'string' ||
     row.name.length === 0 ||
-    (row.created_at !== undefined && typeof row.created_at !== 'string') ||
-    (row.file_size !== undefined &&
+    (hasValue(row.created_at) && typeof row.created_at !== 'string') ||
+    (hasValue(row.file_size) &&
       (!Number.isSafeInteger(row.file_size) || Number(row.file_size) < 0)) ||
-    (row.num_tables !== undefined &&
+    (hasValue(row.num_tables) &&
       (!Number.isSafeInteger(row.num_tables) || Number(row.num_tables) < 0)) ||
-    (row.jurisdiction !== undefined && typeof row.jurisdiction !== 'string') ||
-    (row.version !== undefined && typeof row.version !== 'string') ||
-    (row.read_replication !== undefined &&
+    (hasValue(row.jurisdiction) && typeof row.jurisdiction !== 'string') ||
+    (hasValue(row.version) && typeof row.version !== 'string') ||
+    (hasValue(row.read_replication) &&
       (!row.read_replication ||
         typeof row.read_replication !== 'object' ||
         Array.isArray(row.read_replication) ||
@@ -209,18 +210,18 @@ function parseD1ListDatabase(value: unknown): CloudflareD1Database {
   return {
     uuid: row.uuid,
     name: row.name,
-    ...(row.created_at === undefined ? {} : { created_at: row.created_at }),
-    ...(row.file_size === undefined ? {} : { file_size: Number(row.file_size) }),
-    ...(row.num_tables === undefined ? {} : { num_tables: Number(row.num_tables) }),
-    ...(row.jurisdiction === undefined ? {} : { jurisdiction: row.jurisdiction }),
-    ...(row.version === undefined ? {} : { version: row.version }),
-    ...(row.read_replication === undefined
-      ? {}
-      : {
+    ...(hasValue(row.created_at) ? { created_at: row.created_at as string } : {}),
+    ...(hasValue(row.file_size) ? { file_size: Number(row.file_size) } : {}),
+    ...(hasValue(row.num_tables) ? { num_tables: Number(row.num_tables) } : {}),
+    ...(hasValue(row.jurisdiction) ? { jurisdiction: row.jurisdiction as string } : {}),
+    ...(hasValue(row.version) ? { version: row.version as string } : {}),
+    ...(hasValue(row.read_replication)
+      ? {
           read_replication: {
             mode: (row.read_replication as { mode: 'auto' | 'disabled' }).mode,
           },
-        }),
+        }
+      : {}),
   };
 }
 
