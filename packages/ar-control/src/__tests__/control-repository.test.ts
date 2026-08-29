@@ -298,6 +298,12 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/004_worker_binding_reconciler_lease.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -2363,11 +2369,42 @@ describe('D1ControlRepository lease and budget integration', () => {
       220,
       202
     );
+    expect(
+      database
+        .prepare(
+          `SELECT status, last_error_code, last_error_redacted
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({
+      status: 'waiting_retry',
+      last_error_code: null,
+      last_error_redacted: null,
+    });
     await expect(bindingRepository.listDueTargets(10, 203)).resolves.toEqual([]);
     const [retriedTarget] = await bindingRepository.listDueTargets(10, 220);
     expect(retriedTarget).toMatchObject({
       lastErrorCode: 'control_worker_deployment_lease_busy',
       manualSettingsRestoreRequested: true,
+    });
+    if (!retriedTarget) throw new Error('expected_retried_restore_target');
+    await bindingRepository.recordTransientError(
+      retriedTarget,
+      'control_worker_settings_request_failed',
+      240,
+      220
+    );
+    expect(
+      database
+        .prepare(
+          `SELECT status, last_error_code, last_error_redacted
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId)
+    ).toEqual({
+      status: 'waiting_retry',
+      last_error_code: 'control_worker_settings_request_failed',
+      last_error_redacted: 'control_worker_settings_request_failed',
     });
   });
 
@@ -2601,6 +2638,42 @@ describe('D1ControlRepository lease and budget integration', () => {
     ) VALUES ('env-test', 'test-ar-auth', 'tenant_core/users', '${'d'.repeat(64)}', 131);`);
 
     const bindingRepository = new D1WorkerBindingRepository(d1Adapter(database));
+    await expect(
+      bindingRepository.acquireReconcilerLease({
+        environmentId: 'env-test',
+        ownerId: 'run-1',
+        now: 100,
+        ttlSeconds: 300,
+      })
+    ).resolves.toBe(true);
+    await expect(
+      bindingRepository.acquireReconcilerLease({
+        environmentId: 'env-test',
+        ownerId: 'run-2',
+        now: 101,
+        ttlSeconds: 300,
+      })
+    ).resolves.toBe(false);
+    await expect(
+      bindingRepository.releaseReconcilerLease({
+        environmentId: 'env-test',
+        ownerId: 'run-2',
+      })
+    ).resolves.toBe(false);
+    await expect(
+      bindingRepository.acquireReconcilerLease({
+        environmentId: 'env-test',
+        ownerId: 'run-2',
+        now: 400,
+        ttlSeconds: 300,
+      })
+    ).resolves.toBe(true);
+    await expect(
+      bindingRepository.releaseReconcilerLease({
+        environmentId: 'env-test',
+        ownerId: 'run-2',
+      })
+    ).resolves.toBe(true);
     await bindingRepository.ensurePendingTargets(132);
     database
       .prepare(

@@ -71,6 +71,10 @@
         {
           "path": "003_worker_binding_patch_intent_recovery.sql",
           "checksum": "b310039f59e9cc2d8615970c90ad8d6fa1b95b638ae644067ef24d30b592b134"
+        },
+        {
+          "path": "004_worker_binding_reconciler_lease.sql",
+          "checksum": "5a0ba05be8f8ad21bd6ad4f69cc1444915350c63282141dc6e4080b36ef54615"
         }
       ]
     },

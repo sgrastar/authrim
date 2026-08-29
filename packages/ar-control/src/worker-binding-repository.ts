@@ -137,6 +137,44 @@ function safeLimit(limit: number): number {
 export class D1WorkerBindingRepository {
   constructor(private readonly db: D1Database) {}
 
+  async acquireReconcilerLease(input: {
+    environmentId: string;
+    ownerId: string;
+    now: number;
+    ttlSeconds: number;
+  }): Promise<boolean> {
+    const expiresAt = input.now + Math.max(30, Math.min(input.ttlSeconds, 900));
+    const changed = await this.db
+      .prepare(
+        `INSERT INTO control_worker_binding_reconciler_leases (
+           environment_id, owner_id, lease_expires_at, updated_at
+         ) VALUES (?, ?, ?, ?)
+         ON CONFLICT(environment_id) DO UPDATE SET
+           owner_id = excluded.owner_id,
+           lease_expires_at = excluded.lease_expires_at,
+           updated_at = excluded.updated_at
+         WHERE control_worker_binding_reconciler_leases.lease_expires_at <= excluded.updated_at
+            OR control_worker_binding_reconciler_leases.owner_id = excluded.owner_id`
+      )
+      .bind(input.environmentId, input.ownerId, expiresAt, input.now)
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
+  }
+
+  async releaseReconcilerLease(input: {
+    environmentId: string;
+    ownerId: string;
+  }): Promise<boolean> {
+    const changed = await this.db
+      .prepare(
+        `DELETE FROM control_worker_binding_reconciler_leases
+          WHERE environment_id = ? AND owner_id = ?`
+      )
+      .bind(input.environmentId, input.ownerId)
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
+  }
+
   async ensurePendingTargets(now: number): Promise<void> {
     await this.db.batch([
       this.db.prepare(CONTROL_ENSURE_WORKER_BINDING_TARGETS_SQL).bind(now, now),
@@ -1258,6 +1296,11 @@ export class D1WorkerBindingRepository {
     nextAttemptAt: number,
     now: number
   ): Promise<void> {
+    const normalProgress =
+      errorCode === 'control_worker_deployment_lease_busy' ||
+      errorCode === 'control_worker_deployment_lease_lost' ||
+      errorCode === 'control_worker_patch_propagating' ||
+      errorCode === 'runtime_smoke_binding_unavailable';
     await this.db.batch([
       this.db
         .prepare(
@@ -1270,10 +1313,17 @@ export class D1WorkerBindingRepository {
       this.db
         .prepare(
           `UPDATE control_operations
-              SET status = 'waiting_retry', next_attempt_at = ?, last_error_code = ?, updated_at = ?
+              SET status = 'waiting_retry', next_attempt_at = ?, last_error_code = ?,
+                  last_error_redacted = ?, updated_at = ?
             WHERE operation_id = ? AND status IN ('waiting_retry', 'running')`
         )
-        .bind(nextAttemptAt, errorCode, now, target.operationId),
+        .bind(
+          nextAttemptAt,
+          normalProgress ? null : errorCode,
+          normalProgress ? null : errorCode,
+          now,
+          target.operationId
+        ),
     ]);
   }
 

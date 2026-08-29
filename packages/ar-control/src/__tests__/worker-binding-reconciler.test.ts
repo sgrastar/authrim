@@ -96,6 +96,8 @@ function repositoryMock(targets: WorkerBindingTarget[], deploymentLease = lease(
   return {
     ensurePendingTargets: vi.fn().mockResolvedValue(undefined),
     listDueTargets: vi.fn().mockResolvedValue(targets),
+    acquireReconcilerLease: vi.fn().mockResolvedValue(true),
+    releaseReconcilerLease: vi.fn().mockResolvedValue(true),
     acquireDeploymentLease: vi.fn().mockResolvedValue(deploymentLease),
     leaseIsCurrent: vi.fn().mockResolvedValue(true),
     releaseDeploymentLease: vi.fn().mockResolvedValue(true),
@@ -269,6 +271,36 @@ describe('WorkerBindingReconciler', () => {
       deferred: 2,
       blocked: 0,
     });
+    expect(repository.releaseReconcilerLease).toHaveBeenCalledOnce();
+  });
+
+  it('defers an overlapping scheduled run without exposing a target error', async () => {
+    const repository = repositoryMock([target()]);
+    repository.acquireReconcilerLease.mockResolvedValue(false);
+    const api = {
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+      createWorkerDeployment: vi.fn(),
+    };
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      api,
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toEqual({
+      attempted: 1,
+      succeeded: 0,
+      deferred: 1,
+      blocked: 0,
+    });
+    expect(repository.recordTransientError).not.toHaveBeenCalled();
+    expect(repository.acquireDeploymentLease).not.toHaveBeenCalled();
+    expect(repository.releaseReconcilerLease).not.toHaveBeenCalled();
+    expect(api.listWorkerDeployments).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -375,6 +407,32 @@ describe('WorkerBindingReconciler', () => {
       1_800_000_000
     );
     expect(repository.markBlocked).not.toHaveBeenCalled();
+  });
+
+  it('preserves the safe lease-loss reason for an idempotent retry', async () => {
+    const pending = target();
+    const repository = repositoryMock([pending]);
+    repository.leaseIsCurrent.mockResolvedValue(false);
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        listWorkerDeployments: vi.fn().mockResolvedValue([oldDeployment]),
+        getWorkerSettings: vi.fn().mockResolvedValue(beforeSettings),
+        patchWorkerSettings: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
+    expect(repository.recordTransientError).toHaveBeenCalledWith(
+      pending,
+      'control_worker_deployment_lease_lost',
+      1_800_000_015,
+      1_800_000_000
+    );
   });
 
   it('patches only the desired D1 binding and requires three signed smoke successes', async () => {
