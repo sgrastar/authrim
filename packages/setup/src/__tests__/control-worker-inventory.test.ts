@@ -26,12 +26,6 @@ describe('control worker desired inventory registration', () => {
     database.exec(
       readFileSync(resolve(ROOT_DIR, 'migrations/control/001_pre_1_0_control_baseline.sql'), 'utf8')
     );
-    database.exec(
-      readFileSync(
-        resolve(ROOT_DIR, 'migrations/control/002_lookup_predictive_scale_out.sql'),
-        'utf8'
-      )
-    );
   });
 
   afterEach(() => database.close());

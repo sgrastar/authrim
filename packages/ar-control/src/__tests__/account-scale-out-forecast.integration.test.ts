@@ -74,12 +74,6 @@ describe('AccountScaleOutForecastService', () => {
         'utf8'
       )
     );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/005_account_predictive_scale_out.sql'),
-        'utf8'
-      )
-    );
     database.exec(`
       INSERT INTO control_environments (
         environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at

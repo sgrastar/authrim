@@ -297,12 +297,6 @@ describe('tenant disaster recovery Lookup reprojection', () => {
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
-    lookup.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
-        'utf8'
-      )
-    );
     await seedSources(users, pii);
     mocks.lookup = d1(lookup);
   });

@@ -41,17 +41,17 @@ function controlDatabase(): DatabaseSync {
 function applyLookupGeneratedBindingMigration(db: DatabaseSync): void {}
 
 describe('Control D1 schema', () => {
-  it('backfills only the deterministic built-in Lookup capacity domain', () => {
+  it('keeps the built-in Lookup capacity domain explicit without constraining operator domains', () => {
     const db = controlDatabase();
     db.exec(
       `INSERT INTO control_residency_partitions (
-         environment_id, residency_policy_id, residency_partition, created_at, updated_at
+         environment_id, residency_policy_id, residency_partition,
+         lookup_capacity_domain_id, created_at, updated_at
        ) VALUES
-         ('env-1', 'builtin:residency:default', 'default', 1, 1),
-         ('env-1', 'operator:regional', 'apac', 1, 1);`
+         ('env-1', 'builtin:residency:default', 'default',
+          'lookup:builtin:residency:default:default', 1, 1),
+         ('env-1', 'operator:regional', 'apac', NULL, 1, 1);`
     );
-
-    db.exec(migration('migrations/control/002_lookup_predictive_scale_out.sql'));
 
     expect(
       db

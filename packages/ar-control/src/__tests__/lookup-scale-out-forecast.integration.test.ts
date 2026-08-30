@@ -107,12 +107,6 @@ describe('LookupScaleOutForecastService', () => {
       )
     );
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/002_lookup_predictive_scale_out.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('test', 'test', 'urn:authrim:control:test', 'active', 1, 1);

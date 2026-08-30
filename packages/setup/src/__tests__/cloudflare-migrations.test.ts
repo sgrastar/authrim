@@ -326,7 +326,7 @@ describe('calculateD1MigrationChecksum', () => {
   it('keeps the generated pre-1.0 core baseline checksum stable', () => {
     expect(
       calculateD1MigrationChecksum(join(rootMigrationsDir, '001_pre_1_0_core_baseline.sql'))
-    ).toBe('775e2c11e1f508595f7db02e129ea91817ac40038b04ab4ec1083e500bf5f532');
+    ).toBe('3891d1101810b9bafbbf33554641e26fa9d1dfafbec7c9c6c4f286c6e4219c4f');
   });
 
   it('changes when rendered migration SQL changes', () => {

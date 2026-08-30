@@ -3740,12 +3740,6 @@ WHEN OLD.state <> 'pending'
 BEGIN
   SELECT RAISE(ABORT, 'notification_delivery_intent_payload_immutable');
 END;
-CREATE TRIGGER trg_tenant_placement_policy_no_scope_weakening
-BEFORE UPDATE OF isolation_policy ON tenants
-WHEN OLD.isolation_policy = 'tenant_exclusive' AND NEW.isolation_policy <> 'tenant_exclusive'
-BEGIN
-  SELECT RAISE(ABORT, 'tenant_placement_policy_scope_weakening');
-END;
 CREATE TRIGGER trg_tenant_placement_capture_one_active_insert
 BEFORE INSERT ON tenant_placement_migration_captures
 WHEN NEW.capture_state IN ('capturing', 'write_fenced', 'cutover_committed') AND EXISTS (
@@ -3958,6 +3952,18 @@ WHEN EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'account_support_context_legal_hold_active');
+END;
+CREATE TRIGGER trg_tenant_placement_policy_no_scope_weakening
+BEFORE UPDATE OF isolation_policy ON tenants
+WHEN OLD.isolation_policy = 'tenant_exclusive'
+  AND NEW.isolation_policy <> 'tenant_exclusive'
+  AND NOT (
+    OLD.id = 'default'
+    AND OLD.created_at = OLD.updated_at
+    AND (SELECT COUNT(*) FROM tenants) = 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'tenant_placement_policy_scope_weakening');
 END;
 CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
 CREATE UNIQUE INDEX idx_trust_groups_tenant_id ON trust_groups(tenant_id, id);
