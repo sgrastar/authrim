@@ -1,0 +1,120 @@
+{
+  "formatVersion": 1,
+  "productVersion": "0.4.0",
+  "databaseCompatibility": "fresh_install_only",
+  "rollout": {
+    "databaseExecution": "setup_then_control",
+    "workerActivation": "after_required_databases",
+    "adminMutationMode": "read_only"
+  },
+  "streams": [
+    {
+      "id": "d1-core",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "core",
+        "tenant_core"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_core_baseline.sql",
+          "checksum": "3891d1101810b9bafbbf33554641e26fa9d1dfafbec7c9c6c4f286c6e4219c4f"
+        }
+      ]
+    },
+    {
+      "id": "d1-pii",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "pii",
+        "tenant_pii"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_pii_baseline.sql",
+          "checksum": "f275d20282c0649c8fba83184334545a1bf6e90e98e915a3a69590ef57f12771"
+        }
+      ]
+    },
+    {
+      "id": "d1-admin",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "admin"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_admin_baseline.sql",
+          "checksum": "825d5f507121e184da98b48a9478057d12cd639e6d80a22990db36db0a12439a"
+        }
+      ]
+    },
+    {
+      "id": "d1-control",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "control"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_control_baseline.sql",
+          "checksum": "5da88c4b18e3c7a124963d30ba4b385562415e83fec502d990a87882921bfaf4"
+        }
+      ]
+    },
+    {
+      "id": "d1-lookup",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "lookup"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_lookup_baseline.sql",
+          "checksum": "fb2a0bd0b45d9d95ed9c8d24c2885d6da2b5ad2c5e2c96c2590a3b3e840c64a2"
+        }
+      ]
+    },
+    {
+      "id": "d1-plugin-runner",
+      "dialect": "sqlite",
+      "logicalRoles": [
+        "plugin_runner"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_plugin_runner_baseline.sql",
+          "checksum": "34ce8fa8e868f52440db6327eb3e0c09df30ff2f6d0819b20c074d927c87329a"
+        }
+      ]
+    },
+    {
+      "id": "external-postgres-core",
+      "dialect": "postgres",
+      "logicalRoles": [
+        "core",
+        "custom",
+        "policy"
+      ],
+      "files": [
+        {
+          "path": "001_pre_1_0_external_postgres_core_baseline.sql",
+          "checksum": "759812af42a04525f5cc0e68659061009c558f132461c147533096a47bd98e1d"
+        }
+      ]
+    },
+    {
+      "id": "external-postgres-pii",
+      "dialect": "postgres",
+      "logicalRoles": [
+        "pii"
+      ],
+      "files": [
+        {
+          "path": "002_pre_1_0_external_postgres_pii_baseline.sql",
+          "checksum": "2b45c381f63ed1840f5dc4f2cf6f2a34101c50ada762afc06065be020c8ef375"
+        }
+      ]
+    }
+  ]
+}
