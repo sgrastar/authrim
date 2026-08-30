@@ -55,7 +55,10 @@ import {
   executeDurableInitialAccountDirectoryWrite,
   resolveInitialAccountDirectoryWriteTargets,
 } from './account-directory-producer';
-import { isAccountDirectoryWriteBindingUnavailable } from './account-directory-errors';
+import {
+  isAccountDirectoryWriteBindingUnavailable,
+  isLookupRegistryGenerationPropagating,
+} from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -1361,6 +1364,16 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         {
           error: 'runtime_binding_propagating',
           error_description: 'Runtime database binding is propagating; retry shortly',
+        },
+        503
+      );
+    }
+    if (isLookupRegistryGenerationPropagating(error)) {
+      c.header('Retry-After', '1');
+      return c.json(
+        {
+          error: 'snapshot_generation_propagating',
+          error_description: 'Runtime lookup registry generation is propagating; retry shortly',
         },
         503
       );

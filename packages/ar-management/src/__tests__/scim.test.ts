@@ -63,6 +63,7 @@ const canonicalRuntimeState = vi.hoisted(() => ({
 const accountCreationState = vi.hoisted(() => ({
   deliveryStatus: 201 as 201 | 202,
   capacityUnavailable: false,
+  registryGenerationPropagating: false,
   bindingUnavailable: false,
   calls: [] as Array<Record<string, unknown>>,
   pause: null as null | (() => Promise<void>),
@@ -229,6 +230,9 @@ vi.mock('../account-directory-producer', () => ({
       accountCreationState.inFlight -= 1;
       if (accountCreationState.capacityUnavailable) {
         throw new Error('control_account_allocation_capacity_unavailable');
+      }
+      if (accountCreationState.registryGenerationPropagating) {
+        throw new Error('lookup_registry_generation_mismatch');
       }
       if (
         input.email &&
@@ -611,6 +615,7 @@ describe('SCIM 2.0 Endpoints', () => {
     vi.clearAllMocks();
     accountCreationState.deliveryStatus = 201;
     accountCreationState.capacityUnavailable = false;
+    accountCreationState.registryGenerationPropagating = false;
     accountCreationState.bindingUnavailable = false;
     accountCreationState.calls = [];
     accountCreationState.pause = null;
@@ -1625,6 +1630,27 @@ describe('SCIM 2.0 Endpoints', () => {
       });
     });
 
+    it('returns a retryable SCIM error while the lookup registry generation is propagating', async () => {
+      accountCreationState.registryGenerationPropagating = true;
+      const req = createRequest('/scim/v2/Users', {
+        method: 'POST',
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'lookup-registry-user',
+          emails: [{ value: 'lookup.registry@example.com', primary: true }],
+        }),
+      });
+
+      const res = await app.fetch(req, mockEnv as Env);
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('1');
+      await expect(res.json()).resolves.toMatchObject({
+        status: '503',
+        detail: 'Runtime lookup registry generation is propagating; retry shortly',
+      });
+    });
+
     it('publishes normalized userName in the tenant-scoped SCIM subject namespace', async () => {
       const req = createRequest('/scim/v2/Users', {
         method: 'POST',
@@ -2511,6 +2537,45 @@ describe('SCIM 2.0 Endpoints', () => {
             response: {
               status: '503',
               detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          },
+        ],
+      });
+    });
+
+    it('returns a retryable per-operation error while lookup registry generation propagates', async () => {
+      accountCreationState.registryGenerationPropagating = true;
+      const res = await app.fetch(
+        createRequest('/scim/v2/Bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+            Operations: [
+              {
+                method: 'POST',
+                path: '/Users',
+                bulkId: 'lookup-registry-propagating-user',
+                data: {
+                  schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+                  userName: 'lookup-registry-propagating-user',
+                  emails: [{ value: 'lookup-registry-propagating@example.com', primary: true }],
+                },
+              },
+            ],
+          }),
+        }),
+        mockEnv as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({
+        Operations: [
+          {
+            bulkId: 'lookup-registry-propagating-user',
+            status: '503',
+            response: {
+              status: '503',
+              detail: 'Runtime lookup registry generation is propagating; retry shortly',
             },
           },
         ],

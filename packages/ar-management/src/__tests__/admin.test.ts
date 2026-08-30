@@ -2930,6 +2930,31 @@ describe('Admin API Handlers', () => {
       expect(c._responseHeaders.get('Retry-After')).toBe('1');
     });
 
+    it('should report lookup registry generation propagation as retryable', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('lookup_registry_generation_mismatch')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-lookup-registry-propagating' },
+        body: { email: 'lookup-registry-propagating@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'snapshot_generation_propagating',
+          error_description: 'Runtime lookup registry generation is propagating; retry shortly',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('1');
+    });
+
     it('should report a rejected Control allocation RPC as a retryable rollout state', async () => {
       const mockDB = createMockDB({ runResult: { success: true } });
       (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
