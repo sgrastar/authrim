@@ -38,6 +38,10 @@ interface PolicyRow extends Record<string, unknown> {
   lookup_registration_ewma_alpha_bps: number;
   lookup_scale_out_headroom_bps: number;
   lookup_scale_out_policy_generation: number;
+  account_forecast_horizon_seconds: number;
+  account_registration_ewma_alpha_bps: number;
+  account_scale_out_headroom_bps: number;
+  account_scale_out_policy_generation: number;
 }
 
 interface CapacityRow extends Record<string, unknown> {
@@ -63,6 +67,10 @@ export interface Phase1PolicyPreparation {
     lookupEwmaAlphaBps: number;
     lookupHeadroomBps: number;
     lookupPolicyGeneration: number;
+    accountForecastHorizonSeconds: number;
+    accountEwmaAlphaBps: number;
+    accountHeadroomBps: number;
+    accountPolicyGeneration: number;
   };
   readback: { policy: PolicyRow; shardCapacities: CapacityRow[] } | null;
 }
@@ -73,7 +81,9 @@ const READ_POLICY_SQL = `SELECT e.environment_id, e.lifecycle_state,
        p.daily_d1_create_budget,
        p.lookup_target_active_route_count, p.lookup_forecast_horizon_seconds,
        p.lookup_registration_ewma_alpha_bps, p.lookup_scale_out_headroom_bps,
-       p.lookup_scale_out_policy_generation
+       p.lookup_scale_out_policy_generation,
+       p.account_forecast_horizon_seconds, p.account_registration_ewma_alpha_bps,
+       p.account_scale_out_headroom_bps, p.account_scale_out_policy_generation
   FROM control_environments e
   JOIN control_environment_resource_policies p ON p.environment_id = e.environment_id
  WHERE e.environment_id = ?`;
@@ -130,6 +140,10 @@ function policyRow(row: Record<string, unknown>): PolicyRow {
     lookup_registration_ewma_alpha_bps: integer(row, 'lookup_registration_ewma_alpha_bps'),
     lookup_scale_out_headroom_bps: integer(row, 'lookup_scale_out_headroom_bps'),
     lookup_scale_out_policy_generation: integer(row, 'lookup_scale_out_policy_generation'),
+    account_forecast_horizon_seconds: integer(row, 'account_forecast_horizon_seconds'),
+    account_registration_ewma_alpha_bps: integer(row, 'account_registration_ewma_alpha_bps'),
+    account_scale_out_headroom_bps: integer(row, 'account_scale_out_headroom_bps'),
+    account_scale_out_policy_generation: integer(row, 'account_scale_out_policy_generation'),
   };
 }
 
@@ -188,6 +202,10 @@ function requested(config: Phase1HarnessConfig): Phase1PolicyPreparation['reques
     lookupEwmaAlphaBps: config.expectedPolicy.lookupEwmaAlphaBps,
     lookupHeadroomBps: config.expectedPolicy.lookupHeadroomBps,
     lookupPolicyGeneration: config.expectedPolicy.lookupPolicyGeneration,
+    accountForecastHorizonSeconds: config.expectedPolicy.accountForecastHorizonSeconds,
+    accountEwmaAlphaBps: config.expectedPolicy.accountEwmaAlphaBps,
+    accountHeadroomBps: config.expectedPolicy.accountHeadroomBps,
+    accountPolicyGeneration: config.expectedPolicy.accountPolicyGeneration,
   };
 }
 
@@ -207,6 +225,10 @@ function assertReadback(
     policy.lookup_registration_ewma_alpha_bps !== expected.lookupEwmaAlphaBps ||
     policy.lookup_scale_out_headroom_bps !== expected.lookupHeadroomBps ||
     policy.lookup_scale_out_policy_generation !== expected.lookupPolicyGeneration ||
+    policy.account_forecast_horizon_seconds !== expected.accountForecastHorizonSeconds ||
+    policy.account_registration_ewma_alpha_bps !== expected.accountEwmaAlphaBps ||
+    policy.account_scale_out_headroom_bps !== expected.accountHeadroomBps ||
+    policy.account_scale_out_policy_generation !== expected.accountPolicyGeneration ||
     value.shardCapacities.some(
       (capacity) => capacity.target_account_count !== expected.targetAccountCount
     )
@@ -230,7 +252,10 @@ export async function preparePhase1Policy(input: {
     throw new Error('phase1_prepare_environment_not_active');
   }
   const desired = requested(input.config);
-  if (desired.lookupPolicyGeneration !== previous.policy.lookup_scale_out_policy_generation + 1) {
+  if (
+    desired.lookupPolicyGeneration !== previous.policy.lookup_scale_out_policy_generation + 1 ||
+    desired.accountPolicyGeneration !== previous.policy.account_scale_out_policy_generation + 1
+  ) {
     throw new Error('phase1_prepare_policy_generation_not_next');
   }
   const preparedAt = (input.now ?? (() => new Date()))().toISOString();
@@ -261,8 +286,11 @@ export async function preparePhase1Policy(input: {
                      max_d1_resources = ?, daily_d1_create_budget = ?,
                      lookup_target_active_route_count = ?, lookup_forecast_horizon_seconds = ?,
                      lookup_registration_ewma_alpha_bps = ?, lookup_scale_out_headroom_bps = ?,
-                     lookup_scale_out_policy_generation = ?, updated_at = ?
-               WHERE environment_id = ? AND lookup_scale_out_policy_generation = ?`,
+                     lookup_scale_out_policy_generation = ?, account_forecast_horizon_seconds = ?,
+                     account_registration_ewma_alpha_bps = ?, account_scale_out_headroom_bps = ?,
+                     account_scale_out_policy_generation = ?, updated_at = ?
+               WHERE environment_id = ? AND lookup_scale_out_policy_generation = ?
+                 AND account_scale_out_policy_generation = ?`,
         params: [
           desired.targetAccountCount,
           desired.maxConcurrentProvisioning,
@@ -274,9 +302,14 @@ export async function preparePhase1Policy(input: {
           desired.lookupEwmaAlphaBps,
           desired.lookupHeadroomBps,
           desired.lookupPolicyGeneration,
+          desired.accountForecastHorizonSeconds,
+          desired.accountEwmaAlphaBps,
+          desired.accountHeadroomBps,
+          desired.accountPolicyGeneration,
           Math.floor(Date.parse(preparedAt) / 1000),
           input.config.environment.environmentId,
           previous.policy.lookup_scale_out_policy_generation,
+          previous.policy.account_scale_out_policy_generation,
         ],
       },
       ...previous.shardCapacities.map((capacity) => ({

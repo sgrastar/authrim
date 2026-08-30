@@ -176,7 +176,11 @@ export function evaluatePhase1Preflight(input: {
     number(policy, 'lookup_forecast_horizon_seconds') === expected.lookupForecastHorizonSeconds &&
     number(policy, 'lookup_registration_ewma_alpha_bps') === expected.lookupEwmaAlphaBps &&
     number(policy, 'lookup_scale_out_headroom_bps') === expected.lookupHeadroomBps &&
-    number(policy, 'lookup_scale_out_policy_generation') === expected.lookupPolicyGeneration;
+    number(policy, 'lookup_scale_out_policy_generation') === expected.lookupPolicyGeneration &&
+    number(policy, 'account_forecast_horizon_seconds') === expected.accountForecastHorizonSeconds &&
+    number(policy, 'account_registration_ewma_alpha_bps') === expected.accountEwmaAlphaBps &&
+    number(policy, 'account_scale_out_headroom_bps') === expected.accountHeadroomBps &&
+    number(policy, 'account_scale_out_policy_generation') === expected.accountPolicyGeneration;
   check(
     checks,
     'resource_policy_exact_match',

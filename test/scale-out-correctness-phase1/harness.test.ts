@@ -89,6 +89,10 @@ function config(overrides: Partial<Phase1HarnessConfig['load']> = {}): Phase1Har
       lookupEwmaAlphaBps: 2_500,
       lookupHeadroomBps: 2_000,
       lookupPolicyGeneration: 2,
+      accountForecastHorizonSeconds: 900,
+      accountEwmaAlphaBps: 5_000,
+      accountHeadroomBps: 2_000,
+      accountPolicyGeneration: 2,
       expectedLookupRoutesPerAccount: 2,
       minimumLookupAdditions: 1,
       minimumLookupUsedAssignmentTransitions: 1,
@@ -134,6 +138,10 @@ function snapshot(): Phase1ControlSnapshot {
       lookup_registration_ewma_alpha_bps: 2_500,
       lookup_scale_out_headroom_bps: 2_000,
       lookup_scale_out_policy_generation: 2,
+      account_forecast_horizon_seconds: 900,
+      account_registration_ewma_alpha_bps: 5_000,
+      account_scale_out_headroom_bps: 2_000,
+      account_scale_out_policy_generation: 2,
     },
     tenantPolicy: {
       tenant_id: 'tenant-test',
@@ -360,6 +368,17 @@ describe('Phase 1 evidence contracts', () => {
     );
   });
 
+  it('accepts a fractional arrival rate for provisioning-aware slow runs', () => {
+    const slow = structuredClone(config());
+    slow.load.ratePerSecond = 0.2;
+    slow.load.maximumInFlight = 1;
+
+    expect(parsePhase1HarnessConfig(slow).load.ratePerSecond).toBe(0.2);
+
+    slow.load.ratePerSecond = 0;
+    expect(() => parsePhase1HarnessConfig(slow)).toThrow('phase1_rate_invalid');
+  });
+
   it('accepts ready user-owned automatic provisioning credentials', () => {
     const control = snapshot();
     if (control.environment) control.environment.provisioning_token_ownership = 'user';
@@ -537,6 +556,10 @@ describe('Phase 1 evidence contracts', () => {
       lookup_registration_ewma_alpha_bps: 2_500,
       lookup_scale_out_headroom_bps: 2_000,
       lookup_scale_out_policy_generation: 1,
+      account_forecast_horizon_seconds: 900,
+      account_registration_ewma_alpha_bps: 5_000,
+      account_scale_out_headroom_bps: 2_000,
+      account_scale_out_policy_generation: 1,
     };
     const previousCapacities = [
       {
@@ -555,6 +578,8 @@ describe('Phase 1 evidence contracts', () => {
       lookup_target_active_route_count: 250,
       lookup_forecast_horizon_seconds: 300,
       lookup_scale_out_policy_generation: 2,
+      account_forecast_horizon_seconds: 900,
+      account_scale_out_policy_generation: 2,
     };
     const desiredCapacities = previousCapacities.map((row) => ({
       ...row,
@@ -595,6 +620,7 @@ describe('Phase 1 evidence contracts', () => {
     expect(evidence.previous.policy.lookup_scale_out_policy_generation).toBe(1);
     expect(evidence.requested.maxConcurrentProvisioning).toBe(8);
     expect(evidence.readback?.policy.lookup_scale_out_policy_generation).toBe(2);
+    expect(evidence.readback?.policy.account_scale_out_policy_generation).toBe(2);
     expect(batches[0]?.[1]?.params).toEqual([
       'phase1-test',
       'shared_pool',
@@ -605,7 +631,7 @@ describe('Phase 1 evidence contracts', () => {
     expect(batches[1]).toHaveLength(3);
     expect(batches[1]?.[0]?.params?.[1]).toBe(8);
     expect(batches[1]?.[0]?.sql).toContain(
-      'lookup_scale_out_policy_generation = ?, updated_at = ?'
+      'lookup_scale_out_policy_generation = ?, account_forecast_horizon_seconds = ?'
     );
     expect(
       batches[1]?.slice(1).every((query) => query.sql.includes('control_shard_capacity'))
@@ -633,6 +659,10 @@ describe('Phase 1 evidence contracts', () => {
               lookup_registration_ewma_alpha_bps: 2_500,
               lookup_scale_out_headroom_bps: 2_000,
               lookup_scale_out_policy_generation: 1,
+              account_forecast_horizon_seconds: 900,
+              account_registration_ewma_alpha_bps: 5_000,
+              account_scale_out_headroom_bps: 2_000,
+              account_scale_out_policy_generation: 1,
             },
           ],
         },
@@ -674,6 +704,10 @@ describe('Phase 1 evidence contracts', () => {
               lookup_registration_ewma_alpha_bps: 2_500,
               lookup_scale_out_headroom_bps: 2_000,
               lookup_scale_out_policy_generation: 1,
+              account_forecast_horizon_seconds: 900,
+              account_registration_ewma_alpha_bps: 5_000,
+              account_scale_out_headroom_bps: 2_000,
+              account_scale_out_policy_generation: 1,
             },
           ],
         },

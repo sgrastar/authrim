@@ -47,6 +47,10 @@ export interface Phase1HarnessConfig {
     lookupEwmaAlphaBps: number;
     lookupHeadroomBps: number;
     lookupPolicyGeneration: number;
+    accountForecastHorizonSeconds: number;
+    accountEwmaAlphaBps: number;
+    accountHeadroomBps: number;
+    accountPolicyGeneration: number;
     expectedLookupRoutesPerAccount: number;
     minimumLookupAdditions: number;
     minimumLookupUsedAssignmentTransitions: number;
@@ -304,6 +308,13 @@ function integer(value: unknown, minimum: number, maximum: number, error: string
   return value as number;
 }
 
+function finiteNumber(value: unknown, minimum: number, maximum: number, error: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(error);
+  }
+  return value;
+}
+
 function booleanTrue(value: unknown, error: string): true {
   if (value !== true) throw new Error(error);
   return true;
@@ -425,7 +436,7 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
     },
     load: {
       accountCount: integer(load.accountCount, 1, 10_000_000, 'phase1_account_count_invalid'),
-      ratePerSecond: integer(load.ratePerSecond, 1, 10_000, 'phase1_rate_invalid'),
+      ratePerSecond: finiteNumber(load.ratePerSecond, 0.01, 10_000, 'phase1_rate_invalid'),
       maximumInFlight: integer(load.maximumInFlight, 1, 1_000, 'phase1_in_flight_invalid'),
       retryWindowSeconds: integer(
         load.retryWindowSeconds,
@@ -495,6 +506,30 @@ export function parsePhase1HarnessConfig(value: unknown): Phase1HarnessConfig {
         1,
         1_000_000,
         'phase1_lookup_policy_generation_invalid'
+      ),
+      accountForecastHorizonSeconds: integer(
+        expectedPolicy.accountForecastHorizonSeconds,
+        60,
+        2_592_000,
+        'phase1_account_horizon_invalid'
+      ),
+      accountEwmaAlphaBps: integer(
+        expectedPolicy.accountEwmaAlphaBps,
+        1,
+        10_000,
+        'phase1_account_alpha_invalid'
+      ),
+      accountHeadroomBps: integer(
+        expectedPolicy.accountHeadroomBps,
+        0,
+        9_000,
+        'phase1_account_headroom_invalid'
+      ),
+      accountPolicyGeneration: integer(
+        expectedPolicy.accountPolicyGeneration,
+        1,
+        1_000_000,
+        'phase1_account_policy_generation_invalid'
       ),
       expectedLookupRoutesPerAccount: integer(
         expectedPolicy.expectedLookupRoutesPerAccount,
