@@ -40,6 +40,7 @@ import {
   duplicateForecastDecisions,
   evaluateRoleProvisioningBound,
   normalizePhase1EpochSeconds,
+  peakProjectedAccountCountFromEvents,
   recomputeLookupForecastTransition,
   reconcilePublicationCounterSeries,
   verifyLookupForecastEvents,
@@ -2283,6 +2284,69 @@ describe('Phase 1 observation, forecast, and report calculations', () => {
         submittedAccounts: 20,
       })
     ).toEqual({ physicalAdditions: 3, maximumAdditions: 2, excessProvisioning: 1 });
+  });
+
+  it('bounds predictive Core/PII additions by peak projected demand and headroom', () => {
+    const baseline = snapshot();
+    const baselineCore = baseline.shardCapacities.find(
+      (row) => row.data_role === 'tenant_core/users'
+    );
+    if (!baselineCore) throw new Error('expected_core_shard');
+    baselineCore.owner_tenant_id = null;
+    baselineCore.allocated_account_count = 0;
+    const current = structuredClone(baseline);
+    current.shardCapacities.push(
+      ...Array.from({ length: 16 }, (_, index) => ({
+        ...structuredClone(baselineCore),
+        shard_id: `predictive-core-${index}`,
+        d1_desired_resource_id: `predictive-core-desired-${index}`,
+        provider_resource_id: `predictive-core-db-${index}`,
+        deterministic_name: `predictive-core-${index}`,
+        allocated_account_count: 0,
+      }))
+    );
+
+    expect(
+      evaluateRoleProvisioningBound({
+        baseline,
+        current,
+        config: config({ accountCount: 1_000 }),
+        role: 'tenant_core/users',
+        submittedAccounts: 1_000,
+        peakProjectedAccountCount: 1_284,
+        headroomBps: 2_000,
+      })
+    ).toEqual({ physicalAdditions: 16, maximumAdditions: 17, excessProvisioning: 0 });
+  });
+
+  it('extracts tenant-scoped peak account projections from control evidence', () => {
+    expect(
+      peakProjectedAccountCountFromEvents({
+        events: [
+          {
+            entity: 'accountForecasts',
+            current: {
+              allocation_scope: 'shared_pool',
+              owner_tenant_id: null,
+              data_role: 'tenant_core/users',
+              projected_account_count: 1_284,
+            },
+          },
+          {
+            entity: 'accountForecasts',
+            current: {
+              allocation_scope: 'tenant_exclusive',
+              owner_tenant_id: 'another-tenant',
+              data_role: 'tenant_core/users',
+              projected_account_count: 9_999,
+            },
+          },
+        ],
+        config: config({ accountCount: 1_000 }),
+        role: 'tenant_core/users',
+        minimum: 1_000,
+      })
+    ).toBe(1_284);
   });
 
   it('ignores historical blocked operations when checking run capacity convergence', () => {

@@ -853,6 +853,8 @@ export function evaluateRoleProvisioningBound(input: {
   config: Phase1HarnessConfig;
   role: 'tenant_core/users' | 'tenant_pii';
   submittedAccounts: number;
+  peakProjectedAccountCount?: number;
+  headroomBps?: number;
 }): { physicalAdditions: number; maximumAdditions: number; excessProvisioning: number } {
   const baseline = roleInventory(input.baseline, input.config, input.role);
   const current = roleInventory(input.current, input.config, input.role);
@@ -862,7 +864,22 @@ export function evaluateRoleProvisioningBound(input: {
     0
   );
   const target = input.config.expectedPolicy.targetAccountCount;
-  const minimumUnits = Math.ceil((allocated + input.submittedAccounts) / target);
+  const headroomBps = input.headroomBps ?? 0;
+  if (!Number.isSafeInteger(headroomBps) || headroomBps < 0 || headroomBps > 9_000) {
+    throw new Error('phase1_account_provisioning_headroom_invalid');
+  }
+  const usablePerUnit = Math.floor((target * (10_000 - headroomBps)) / 10_000);
+  if (usablePerUnit < 1) throw new Error('phase1_account_provisioning_capacity_invalid');
+  const observedDemand = allocated + input.submittedAccounts;
+  const suppliedPeakProjectedDemand = input.peakProjectedAccountCount ?? observedDemand;
+  if (!Number.isSafeInteger(suppliedPeakProjectedDemand) || suppliedPeakProjectedDemand < 0) {
+    throw new Error('phase1_account_provisioning_projection_invalid');
+  }
+  const peakProjectedDemand = Math.max(observedDemand, suppliedPeakProjectedDemand);
+  // Predictive scale-out provisions against projected demand and deliberately discounts raw shard
+  // capacity by the configured headroom. Bounding only by submitted accounts / raw target marks
+  // valid forecast-driven additions as excess provisioning.
+  const minimumUnits = Math.ceil(peakProjectedDemand / usablePerUnit);
   const minimumAdditions = Math.max(0, minimumUnits - baseline.length);
   const maxReadySpares =
     typeof input.current.resourcePolicy?.max_ready_spares === 'number'
@@ -875,6 +892,32 @@ export function evaluateRoleProvisioningBound(input: {
     maximumAdditions,
     excessProvisioning: Math.max(0, physicalAdditions - maximumAdditions),
   };
+}
+
+export function peakProjectedAccountCountFromEvents(input: {
+  events: Array<Record<string, unknown>>;
+  config: Phase1HarnessConfig;
+  role: 'tenant_core/users' | 'tenant_pii';
+  minimum: number;
+}): number {
+  let peak = input.minimum;
+  for (const event of input.events) {
+    if (event.entity !== 'accountForecasts') continue;
+    const current = event.current;
+    if (!current || typeof current !== 'object' || Array.isArray(current)) continue;
+    const row = current as Record<string, unknown>;
+    const ownerMatches =
+      input.config.environment.placementPolicy === 'shared_pool'
+        ? row.allocation_scope === 'shared_pool' && row.owner_tenant_id === null
+        : row.allocation_scope === 'tenant_exclusive' &&
+          row.owner_tenant_id === input.config.environment.tenantId;
+    if (!ownerMatches || row.data_role !== input.role) continue;
+    const projected = row.projected_account_count;
+    if (typeof projected === 'number' && Number.isSafeInteger(projected) && projected >= 0) {
+      peak = Math.max(peak, projected);
+    }
+  }
+  return peak;
 }
 
 export function reconcilePublicationCounterSeries(input: {
@@ -1234,6 +1277,7 @@ export async function verifyPhase1Run(input: {
     }
   }
   const provisionedD1Resources = providerAdditions.length - orphanD1Resources;
+  const controlEvents = input.controlEventsPath ? await readJsonl(input.controlEventsPath) : [];
   const manualIntervention = countManualInterventions({
     baseline: input.baseline,
     finalControl,
@@ -1249,6 +1293,16 @@ export async function verifyPhase1Run(input: {
     config: input.config,
     role: 'tenant_core/users',
     submittedAccounts,
+    peakProjectedAccountCount: peakProjectedAccountCountFromEvents({
+      events: controlEvents,
+      config: input.config,
+      role: 'tenant_core/users',
+      minimum: submittedAccounts,
+    }),
+    headroomBps:
+      typeof finalControl.resourcePolicy?.account_scale_out_headroom_bps === 'number'
+        ? finalControl.resourcePolicy.account_scale_out_headroom_bps
+        : 0,
   });
   const piiProvisioning = evaluateRoleProvisioningBound({
     baseline: input.baseline.control,
@@ -1256,6 +1310,16 @@ export async function verifyPhase1Run(input: {
     config: input.config,
     role: 'tenant_pii',
     submittedAccounts,
+    peakProjectedAccountCount: peakProjectedAccountCountFromEvents({
+      events: controlEvents,
+      config: input.config,
+      role: 'tenant_pii',
+      minimum: submittedAccounts,
+    }),
+    headroomBps:
+      typeof finalControl.resourcePolicy?.account_scale_out_headroom_bps === 'number'
+        ? finalControl.resourcePolicy.account_scale_out_headroom_bps
+        : 0,
   });
   let lookupForecastMismatches = finalControl.lookupForecasts.filter((row) => {
     const observed = row.observed_active_route_count;
@@ -1269,15 +1333,14 @@ export async function verifyPhase1Run(input: {
     );
   }).length;
   if (input.controlEventsPath) {
-    const events = await readJsonl(input.controlEventsPath);
     const transitionMismatches = verifyLookupForecastEvents({
-      events,
+      events: controlEvents,
       policy: finalControl.resourcePolicy ?? {},
     });
     lookupForecastMismatches += transitionMismatches;
     if (
       input.config.expectedPolicy.minimumLookupAdditions > 0 &&
-      !events.some((event) => event.entity === 'lookupForecasts')
+      !controlEvents.some((event) => event.entity === 'lookupForecasts')
     ) {
       lookupForecastMismatches += 1;
     }
