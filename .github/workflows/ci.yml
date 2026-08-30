@@ -139,12 +139,12 @@ jobs:
 
       - name: Run canonical integration tests
         env:
-          AUTHRIM_TEST_REPORT: ci-reports/authrim-integration-tests.json
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-integration-tests.json
         run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:integration
 
       - name: Run OAuth and OIDC regression gate
         env:
-          AUTHRIM_TEST_REPORT: ci-reports/authrim-oauth-oidc-regressions.json
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-oauth-oidc-regressions.json
         run: pnpm run test:oauth-oidc-regressions
 
       - name: Type-check security matrices
@@ -152,17 +152,17 @@ jobs:
 
       - name: Run security matrices
         env:
-          AUTHRIM_TEST_REPORT: ci-reports/authrim-security-matrices.json
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-security-matrices.json
         run: pnpm run test:security-matrices
 
       - name: Run Phase 1 scale-out correctness tests
         env:
-          AUTHRIM_TEST_REPORT: ci-reports/authrim-scale-out-phase1-tests.json
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-scale-out-phase1-tests.json
         run: pnpm run test:scale-out-phase1
 
       - name: Export compact package coverage summary
         env:
-          AUTHRIM_COVERAGE_STATS_OUTPUT: ci-reports/authrim-package-coverage.json
+          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
         run: node scripts/ci-pr-coverage-comment.mjs
 
       - name: Upload API coverage and repository suite reports
@@ -230,7 +230,7 @@ jobs:
 
       - name: Run tenant D1 control-plane tests
         env:
-          AUTHRIM_TEST_REPORT: ci-reports/authrim-control-plane-tests.json
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-control-plane-tests.json
         run: pnpm run control-plane:test
 
       - name: Run Phase 9 local release gate
