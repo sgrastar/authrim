@@ -195,12 +195,6 @@ describe('directory routing outbox processor', () => {
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
-    lookupDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
-        'utf8'
-      )
-    );
     tenant = new SqliteD1(tenantDatabase);
     lookup = new SqliteD1(lookupDatabase);
     value = await publication();

@@ -205,7 +205,7 @@ CREATE TABLE control_worker_deployment_leases (
   previous_deployment_id TEXT,
   patch_result_deployment_id TEXT,
   mutation_started INTEGER NOT NULL DEFAULT 0 CHECK (mutation_started IN (0, 1)),
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, mutation_started_at INTEGER,
   PRIMARY KEY (environment_id, worker_script_name),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE,
   FOREIGN KEY (owner_operation_id, environment_id)
@@ -256,7 +256,15 @@ CREATE TABLE control_environment_resource_policies (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL, lookup_rebalance_concurrency INTEGER NOT NULL DEFAULT 1
     CHECK (lookup_rebalance_concurrency BETWEEN 1 AND 4), lookup_forecast_horizon_seconds INTEGER NOT NULL DEFAULT 86400
-    CHECK (lookup_forecast_horizon_seconds BETWEEN 300 AND 2592000),
+    CHECK (lookup_forecast_horizon_seconds BETWEEN 300 AND 2592000), lookup_target_active_route_count INTEGER NOT NULL DEFAULT 100000
+    CHECK (lookup_target_active_route_count >= 1), lookup_scale_out_headroom_bps INTEGER NOT NULL DEFAULT 2000
+    CHECK (lookup_scale_out_headroom_bps BETWEEN 0 AND 9000), lookup_registration_ewma_alpha_bps INTEGER NOT NULL DEFAULT 2500
+    CHECK (lookup_registration_ewma_alpha_bps BETWEEN 1 AND 10000), lookup_scale_out_policy_generation INTEGER NOT NULL DEFAULT 1
+    CHECK (lookup_scale_out_policy_generation >= 1), account_forecast_horizon_seconds INTEGER NOT NULL DEFAULT 900
+    CHECK (account_forecast_horizon_seconds BETWEEN 60 AND 2592000), account_scale_out_headroom_bps INTEGER NOT NULL DEFAULT 2000
+    CHECK (account_scale_out_headroom_bps BETWEEN 0 AND 9000), account_registration_ewma_alpha_bps INTEGER NOT NULL DEFAULT 5000
+    CHECK (account_registration_ewma_alpha_bps BETWEEN 1 AND 10000), account_scale_out_policy_generation INTEGER NOT NULL DEFAULT 1
+    CHECK (account_scale_out_policy_generation >= 1),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE
 );
 CREATE TABLE control_d1_create_budget_reservations (
@@ -276,7 +284,9 @@ CREATE TABLE control_residency_partitions (
   location_hint TEXT CHECK (location_hint IN ('wnam', 'enam', 'weur', 'eeur', 'apac', 'oc')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, lookup_capacity_domain_id TEXT
+    CHECK (lookup_capacity_domain_id IS NULL OR
+           (length(lookup_capacity_domain_id) BETWEEN 1 AND 128)),
   PRIMARY KEY (environment_id, residency_policy_id, residency_partition),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE,
   CHECK (jurisdiction IS NULL OR location_hint IS NULL)
@@ -2002,6 +2012,119 @@ CREATE TABLE control_r2_metric_scan_state (
   PRIMARY KEY (environment_id, binding),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE
 );
+CREATE TABLE control_lookup_scale_out_forecasts (
+  environment_id TEXT NOT NULL,
+  lookup_capacity_domain_id TEXT NOT NULL
+    CHECK (length(lookup_capacity_domain_id) BETWEEN 1 AND 128),
+  residency_policy_id TEXT NOT NULL,
+  residency_partition TEXT NOT NULL,
+  policy_generation INTEGER NOT NULL CHECK (policy_generation >= 1),
+  observed_at INTEGER NOT NULL CHECK (observed_at >= 1),
+  observed_active_route_count INTEGER NOT NULL CHECK (observed_active_route_count >= 0),
+  observed_successful_publication_count INTEGER NOT NULL
+    CHECK (observed_successful_publication_count >= 0),
+  sample_interval_seconds INTEGER NOT NULL CHECK (sample_interval_seconds >= 0),
+  sample_rate_microrows_per_second INTEGER NOT NULL
+    CHECK (sample_rate_microrows_per_second >= 0),
+  ewma_rate_microrows_per_second INTEGER NOT NULL
+    CHECK (ewma_rate_microrows_per_second >= 0),
+  forecast_horizon_seconds INTEGER NOT NULL
+    CHECK (forecast_horizon_seconds BETWEEN 300 AND 2592000),
+  forecast_new_route_count INTEGER NOT NULL CHECK (forecast_new_route_count >= 0),
+  projected_active_route_count INTEGER NOT NULL CHECK (projected_active_route_count >= 0),
+  usable_capacity_route_count INTEGER NOT NULL CHECK (usable_capacity_route_count >= 0),
+  capacity_unit_count INTEGER NOT NULL CHECK (capacity_unit_count >= 0),
+  decision_generation INTEGER NOT NULL CHECK (decision_generation >= 0),
+  decision_state TEXT NOT NULL
+    CHECK (decision_state IN ('warming', 'stable', 'provisioning', 'blocked')),
+  snapshot_digest TEXT NOT NULL
+    CHECK (length(snapshot_digest) = 64 AND snapshot_digest NOT GLOB '*[^0-9a-f]*'),
+  capacity_request_idempotency_key TEXT
+    CHECK (capacity_request_idempotency_key IS NULL OR
+           (length(capacity_request_idempotency_key) BETWEEN 1 AND 128)),
+  requested_operation_id TEXT,
+  last_error_code TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (environment_id, lookup_capacity_domain_id),
+  FOREIGN KEY (environment_id)
+    REFERENCES control_environments(environment_id) ON DELETE CASCADE,
+  FOREIGN KEY (requested_operation_id, environment_id)
+    REFERENCES control_operations(operation_id, environment_id),
+  CHECK (projected_active_route_count >= observed_active_route_count),
+  CHECK ((decision_state IN ('warming', 'stable') AND requested_operation_id IS NULL) OR
+         decision_state NOT IN ('warming', 'stable'))
+);
+CREATE TABLE control_worker_binding_reconciler_leases (
+  environment_id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  lease_expires_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE
+);
+CREATE TABLE control_account_scale_out_forecasts (
+  environment_id TEXT NOT NULL,
+  allocation_scope TEXT NOT NULL
+    CHECK (allocation_scope IN ('shared_pool', 'tenant_exclusive')),
+  owner_tenant_key TEXT NOT NULL CHECK (length(owner_tenant_key) <= 128),
+  owner_tenant_id TEXT,
+  data_role TEXT NOT NULL CHECK (data_role IN ('tenant_core/users', 'tenant_pii')),
+  residency_policy_id TEXT NOT NULL,
+  residency_partition TEXT NOT NULL,
+  policy_generation INTEGER NOT NULL CHECK (policy_generation >= 1),
+  successful_allocation_count INTEGER NOT NULL DEFAULT 0
+    CHECK (successful_allocation_count >= 0),
+  observed_at INTEGER NOT NULL CHECK (observed_at >= 1),
+  observed_successful_allocation_count INTEGER NOT NULL DEFAULT 0
+    CHECK (observed_successful_allocation_count >= 0),
+  sample_interval_seconds INTEGER NOT NULL DEFAULT 0
+    CHECK (sample_interval_seconds >= 0),
+  sample_rate_microaccounts_per_second INTEGER NOT NULL DEFAULT 0
+    CHECK (sample_rate_microaccounts_per_second >= 0),
+  ewma_rate_microaccounts_per_second INTEGER NOT NULL DEFAULT 0
+    CHECK (ewma_rate_microaccounts_per_second >= 0),
+  forecast_horizon_seconds INTEGER NOT NULL
+    CHECK (forecast_horizon_seconds BETWEEN 60 AND 2592000),
+  forecast_new_account_count INTEGER NOT NULL DEFAULT 0
+    CHECK (forecast_new_account_count >= 0),
+  observed_allocated_account_count INTEGER NOT NULL DEFAULT 0
+    CHECK (observed_allocated_account_count >= 0),
+  projected_account_count INTEGER NOT NULL DEFAULT 0
+    CHECK (projected_account_count >= 0),
+  usable_capacity_account_count INTEGER NOT NULL DEFAULT 0
+    CHECK (usable_capacity_account_count >= 0),
+  capacity_unit_count INTEGER NOT NULL DEFAULT 0
+    CHECK (capacity_unit_count >= 0),
+  decision_generation INTEGER NOT NULL DEFAULT 0 CHECK (decision_generation >= 0),
+  decision_state TEXT NOT NULL DEFAULT 'warming'
+    CHECK (decision_state IN ('warming', 'stable', 'provisioning', 'blocked')),
+  snapshot_digest TEXT NOT NULL
+    CHECK (length(snapshot_digest) = 64 AND snapshot_digest NOT GLOB '*[^0-9a-f]*'),
+  capacity_request_idempotency_key TEXT
+    CHECK (capacity_request_idempotency_key IS NULL OR
+           length(capacity_request_idempotency_key) BETWEEN 1 AND 128),
+  requested_operation_id TEXT,
+  last_error_code TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (
+    environment_id, allocation_scope, owner_tenant_key, data_role,
+    residency_policy_id, residency_partition
+  ),
+  FOREIGN KEY (environment_id)
+    REFERENCES control_environments(environment_id) ON DELETE CASCADE,
+  FOREIGN KEY (requested_operation_id, environment_id)
+    REFERENCES control_operations(operation_id, environment_id),
+  CHECK (
+    (allocation_scope = 'shared_pool' AND owner_tenant_key = '' AND owner_tenant_id IS NULL) OR
+    (allocation_scope = 'tenant_exclusive' AND owner_tenant_key = owner_tenant_id AND
+     owner_tenant_id IS NOT NULL)
+  ),
+  CHECK (observed_successful_allocation_count <= successful_allocation_count),
+  CHECK (projected_account_count >= observed_allocated_account_count),
+  CHECK ((decision_state IN ('warming', 'stable') AND requested_operation_id IS NULL) OR
+         decision_state NOT IN ('warming', 'stable'))
+);
 CREATE VIEW control_generated_lock_resources AS
 SELECT
   d.environment_id,
@@ -3340,6 +3463,160 @@ WHEN NEW.state NOT IN ('completed', 'blocked') AND EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'control_lookup_rebalance_active_conflict');
 END;
+CREATE TRIGGER trg_control_account_capacity_assigns_ready_spare
+AFTER UPDATE OF allocated_account_count ON control_shard_capacity
+WHEN NEW.allocated_account_count > OLD.allocated_account_count
+ AND NEW.shard_id IN (
+   SELECT shard.shard_id
+     FROM control_tenant_shards shard
+    WHERE shard.data_role IN ('tenant_core/users', 'tenant_pii')
+ )
+ AND (NEW.target_account_count - NEW.allocated_account_count) * 5 < NEW.target_account_count
+BEGIN
+  INSERT OR IGNORE INTO control_tenant_shard_assignments (
+    environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
+    shard_id, assignment_generation, assignment_state, source_operation_id,
+    created_at, activated_at, updated_at
+  )
+  SELECT source.environment_id, source.tenant_id, source.data_role,
+         source.residency_policy_id, source.residency_partition, spare.shard_id,
+         COALESCE((
+           SELECT MAX(existing.assignment_generation) + 1
+             FROM control_tenant_shard_assignments existing
+            WHERE existing.environment_id = source.environment_id
+              AND existing.tenant_id = source.tenant_id
+              AND existing.data_role = source.data_role
+              AND existing.residency_partition = source.residency_partition
+         ), 1),
+         'active', desired.origin_operation_id,
+         NEW.updated_at, NEW.updated_at, NEW.updated_at
+    FROM control_tenant_shard_assignments source
+    JOIN control_tenant_shard_allocations pending_allocation
+      ON pending_allocation.environment_id = source.environment_id
+     AND pending_allocation.tenant_id = source.tenant_id
+     AND pending_allocation.data_role = source.data_role
+     AND pending_allocation.residency_partition = source.residency_partition
+     AND pending_allocation.selected_shard_id = source.shard_id
+     AND pending_allocation.reservation_state IN ('reserved', 'committed')
+     AND pending_allocation.capacity_counted_at IS NULL
+    JOIN control_tenant_placement_policies placement
+      ON placement.environment_id = source.environment_id
+     AND placement.tenant_id = source.tenant_id
+     AND placement.policy_state IN ('provisioning', 'active', 'migrating')
+    JOIN control_tenant_shards current_shard
+      ON current_shard.environment_id = source.environment_id
+     AND current_shard.shard_id = source.shard_id
+     AND current_shard.status = 'active'
+    JOIN control_tenant_shards spare
+      ON spare.environment_id = source.environment_id
+     AND spare.data_role = source.data_role
+     AND spare.residency_policy_id = source.residency_policy_id
+     AND spare.residency_partition = source.residency_partition
+     AND spare.status = 'active'
+     AND spare.quarantine_state = 'none'
+     AND spare.shard_id <> source.shard_id
+    JOIN control_shard_capacity spare_capacity
+      ON spare_capacity.shard_id = spare.shard_id
+     AND spare_capacity.health_status = 'healthy'
+     AND spare_capacity.allocation_status = 'eligible'
+     AND spare_capacity.allocated_account_count < spare_capacity.target_account_count
+    JOIN control_desired_resources desired
+      ON desired.environment_id = spare.environment_id
+     AND desired.desired_resource_id = spare.d1_desired_resource_id
+     AND desired.desired_state = 'present'
+     AND desired.provisioning_state = 'ready'
+   WHERE source.shard_id = NEW.shard_id
+     AND source.assignment_state = 'active'
+     AND current_shard.data_role = source.data_role
+     AND current_shard.residency_policy_id = source.residency_policy_id
+     AND current_shard.residency_partition = source.residency_partition
+     AND (
+       (placement.isolation_policy = 'shared_pool'
+        AND current_shard.allocation_scope = 'shared_pool'
+        AND current_shard.owner_tenant_id IS NULL
+        AND spare.allocation_scope = 'shared_pool'
+        AND spare.owner_tenant_id IS NULL) OR
+       (placement.isolation_policy = 'tenant_exclusive'
+        AND current_shard.allocation_scope = 'tenant_exclusive'
+        AND current_shard.owner_tenant_id = source.tenant_id
+        AND spare.allocation_scope = 'tenant_exclusive'
+        AND spare.owner_tenant_id = source.tenant_id)
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM control_tenant_shard_assignments existing_spare
+        WHERE existing_spare.environment_id = source.environment_id
+          AND existing_spare.tenant_id = source.tenant_id
+          AND existing_spare.data_role = source.data_role
+          AND existing_spare.residency_partition = source.residency_partition
+          AND existing_spare.shard_id = spare.shard_id
+     )
+     AND NOT EXISTS (
+       SELECT 1
+         FROM control_tenant_shard_assignments assigned
+         JOIN control_tenant_shards assigned_shard
+           ON assigned_shard.environment_id = assigned.environment_id
+          AND assigned_shard.shard_id = assigned.shard_id
+         JOIN control_shard_capacity assigned_capacity
+           ON assigned_capacity.shard_id = assigned.shard_id
+        WHERE assigned.environment_id = source.environment_id
+          AND assigned.tenant_id = source.tenant_id
+          AND assigned.data_role = source.data_role
+          AND assigned.residency_policy_id = source.residency_policy_id
+          AND assigned.residency_partition = source.residency_partition
+          AND assigned.assignment_state = 'active'
+          AND assigned.shard_id <> source.shard_id
+          AND assigned_shard.status = 'active'
+          AND assigned_shard.quarantine_state = 'none'
+          AND assigned_capacity.health_status = 'healthy'
+          AND assigned_capacity.allocation_status = 'eligible'
+          AND (assigned_capacity.target_account_count -
+               assigned_capacity.allocated_account_count) * 5 >=
+              assigned_capacity.target_account_count
+     )
+     AND spare.shard_id = (
+       SELECT candidate.shard_id
+         FROM control_tenant_shards candidate
+         JOIN control_shard_capacity candidate_capacity
+           ON candidate_capacity.shard_id = candidate.shard_id
+         JOIN control_desired_resources candidate_desired
+           ON candidate_desired.environment_id = candidate.environment_id
+          AND candidate_desired.desired_resource_id = candidate.d1_desired_resource_id
+        WHERE candidate.environment_id = source.environment_id
+          AND candidate.data_role = source.data_role
+          AND candidate.residency_policy_id = source.residency_policy_id
+          AND candidate.residency_partition = source.residency_partition
+          AND candidate.status = 'active'
+          AND candidate.quarantine_state = 'none'
+          AND candidate_capacity.health_status = 'healthy'
+          AND candidate_capacity.allocation_status = 'eligible'
+          AND candidate_capacity.allocated_account_count < candidate_capacity.target_account_count
+          AND candidate_desired.desired_state = 'present'
+          AND candidate_desired.provisioning_state = 'ready'
+          AND (
+            (placement.isolation_policy = 'shared_pool'
+             AND candidate.allocation_scope = 'shared_pool'
+             AND candidate.owner_tenant_id IS NULL) OR
+            (placement.isolation_policy = 'tenant_exclusive'
+             AND candidate.allocation_scope = 'tenant_exclusive'
+             AND candidate.owner_tenant_id = source.tenant_id)
+          )
+          AND NOT EXISTS (
+            SELECT 1
+              FROM control_tenant_shard_assignments existing_candidate
+             WHERE existing_candidate.environment_id = source.environment_id
+               AND existing_candidate.tenant_id = source.tenant_id
+               AND existing_candidate.data_role = source.data_role
+               AND existing_candidate.residency_partition = source.residency_partition
+               AND existing_candidate.shard_id = candidate.shard_id
+          )
+        ORDER BY (1.0 * candidate_capacity.allocated_account_count /
+                  candidate_capacity.target_account_count),
+                 candidate_capacity.allocated_account_count,
+                 candidate.shard_id
+        LIMIT 1
+     );
+END;
 CREATE INDEX idx_control_operations_runnable
   ON control_operations(status, next_attempt_at, created_at);
 CREATE INDEX idx_control_operations_environment
@@ -3455,5 +3732,15 @@ CREATE INDEX idx_control_lookup_rebalance_bucket_runnable
   ON control_lookup_rebalance_bucket_targets(state, updated_at, operation_id, virtual_bucket);
 CREATE INDEX idx_control_lookup_retention_target_runnable
   ON control_lookup_retention_targets(state, lease_expires_at, updated_at, operation_id);
+CREATE INDEX idx_control_lookup_scale_out_forecasts_state
+  ON control_lookup_scale_out_forecasts(environment_id, decision_state, updated_at);
+CREATE INDEX idx_control_account_scale_out_forecasts_state
+  ON control_account_scale_out_forecasts(environment_id, decision_state, updated_at);
+CREATE INDEX idx_control_account_allocations_pending_capacity
+  ON control_tenant_shard_allocations(
+    selected_shard_id, capacity_counted_at, tenant_id, data_role, residency_partition
+  )
+  WHERE capacity_counted_at IS NULL
+    AND reservation_state IN ('reserved', 'committed');
 
 PRAGMA foreign_keys = ON;

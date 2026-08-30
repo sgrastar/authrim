@@ -119,12 +119,6 @@ describe('PluginResourceBindingReconciler', () => {
         'utf8'
       )
     );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/003_worker_binding_patch_intent_recovery.sql'),
-        'utf8'
-      )
-    );
     now = 100;
     database.exec(`
       INSERT INTO control_environments (
