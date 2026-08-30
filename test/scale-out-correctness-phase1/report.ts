@@ -79,6 +79,10 @@ export function buildPhase1ProvisioningEvidence(input: {
     input.baseline?.control.desiredResources.map((row) => String(row.desired_resource_id)) ?? []
   );
   const forecastsByOperation = new Map<string, Phase1ProvisioningEventEvidence['lookupForecast']>();
+  const accountForecastsByOperation = new Map<
+    string,
+    Phase1ProvisioningEventEvidence['accountForecast']
+  >();
   const resources = new Map<
     string,
     {
@@ -114,6 +118,26 @@ export function buildPhase1ProvisioningEvidence(input: {
         forecastNewRouteCount: numeric(current.forecast_new_route_count),
         projectedActiveRouteCount: numeric(current.projected_active_route_count),
         usableCapacityRouteCount: numeric(current.usable_capacity_route_count),
+      });
+      continue;
+    }
+    if (event.entity === 'accountForecasts') {
+      const operationId = current.requested_operation_id;
+      if (typeof operationId !== 'string' || accountForecastsByOperation.has(operationId)) {
+        continue;
+      }
+      accountForecastsByOperation.set(operationId, {
+        observedAt: isoTimestamp(observedAt),
+        decisionGeneration: numeric(current.decision_generation),
+        observedAllocatedAccountCount: numeric(current.observed_allocated_account_count),
+        observedSuccessfulAllocationCount: numeric(current.observed_successful_allocation_count),
+        sampleRateMicroaccountsPerSecond: numeric(current.sample_rate_microaccounts_per_second),
+        ewmaRateMicroaccountsPerSecond: numeric(current.ewma_rate_microaccounts_per_second),
+        forecastHorizonSeconds: numeric(current.forecast_horizon_seconds),
+        forecastNewAccountCount: numeric(current.forecast_new_account_count),
+        projectedAccountCount: numeric(current.projected_account_count),
+        usableCapacityAccountCount: numeric(current.usable_capacity_account_count),
+        capacityUnitCount: numeric(current.capacity_unit_count),
       });
       continue;
     }
@@ -182,6 +206,10 @@ export function buildPhase1ProvisioningEvidence(input: {
           resource.operationId === null
             ? null
             : (forecastsByOperation.get(resource.operationId) ?? null),
+        accountForecast:
+          resource.operationId === null
+            ? null
+            : (accountForecastsByOperation.get(resource.operationId) ?? null),
       })
     )
     .sort(

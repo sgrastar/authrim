@@ -208,6 +208,7 @@ async function buildRcObservation(
         obs.rejectionLayer = 'route';
         break;
       case 'missing_generation':
+      case 'snapshot_generation_propagating':
         obs.rejectionLayer = 'generation';
         break;
       case 'invalid_snapshot_signature':

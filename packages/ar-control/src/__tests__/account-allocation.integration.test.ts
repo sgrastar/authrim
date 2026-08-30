@@ -118,6 +118,12 @@ describe('account route allocation', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/005_account_predictive_scale_out.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -334,6 +340,17 @@ describe('account route allocation', () => {
     expect(database.prepare(`SELECT COUNT(*) AS count FROM control_audit_events`).get()).toEqual({
       count: 2,
     });
+    expect(
+      database
+        .prepare(
+          `SELECT data_role, successful_allocation_count
+             FROM control_account_scale_out_forecasts ORDER BY data_role`
+        )
+        .all()
+    ).toEqual([
+      { data_role: 'tenant_core/users', successful_allocation_count: 1 },
+      { data_role: 'tenant_pii', successful_allocation_count: 1 },
+    ]);
   });
 
   it('commits both account route reservations atomically and replays idempotently', async () => {

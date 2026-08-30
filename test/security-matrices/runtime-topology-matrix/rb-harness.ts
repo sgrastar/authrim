@@ -313,6 +313,7 @@ export function deriveRbRejectionLayer(
 ): RbObservation['rejectionLayer'] {
   switch (errorCode) {
     case 'missing_generation':
+    case 'snapshot_generation_propagating':
       return 'generation';
     case 'missing_snapshot':
       return 'snapshot';

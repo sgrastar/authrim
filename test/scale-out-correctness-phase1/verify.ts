@@ -554,6 +554,15 @@ function capacityVector(snapshot: Phase1ControlSnapshot): string {
       generation: row.decision_generation,
       operation: row.requested_operation_id,
     })),
+    accountForecasts: snapshot.accountForecasts.map((row) => ({
+      scope: row.allocation_scope,
+      owner: row.owner_tenant_key,
+      role: row.data_role,
+      state: row.decision_state,
+      generation: row.decision_generation,
+      operation: row.requested_operation_id,
+      units: row.capacity_unit_count,
+    })),
   });
 }
 
@@ -622,6 +631,9 @@ export async function waitForPhase1Quiescence(input: {
     const provisioningForecasts = latest.lookupForecasts.filter(
       (row) => row.decision_state === 'provisioning'
     ).length;
+    const provisioningAccountForecasts = latest.accountForecasts.filter(
+      (row) => row.decision_state === 'provisioning'
+    ).length;
     const requiredLookupTransitionsReached =
       !input.baseline ||
       countLookupAssignmentTransitionsToNewShards(input.baseline, latest) >=
@@ -631,6 +643,7 @@ export async function waitForPhase1Quiescence(input: {
       inProgressOperations === 0 &&
       movingBuckets === 0 &&
       provisioningForecasts === 0 &&
+      provisioningAccountForecasts === 0 &&
       requiredLookupTransitionsReached &&
       vector === previousVector
     ) {

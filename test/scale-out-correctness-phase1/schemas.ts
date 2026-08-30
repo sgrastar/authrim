@@ -120,6 +120,7 @@ export interface Phase1ControlSnapshot {
   desiredResources: Record<string, unknown>[];
   observedResources: Record<string, unknown>[];
   lookupForecasts: Record<string, unknown>[];
+  accountForecasts: Record<string, unknown>[];
   lookupShards: Record<string, unknown>[];
   lookupAssignments: Record<string, unknown>[];
   workerBindingDrift: Record<string, unknown>[];
@@ -214,6 +215,20 @@ export interface Phase1LookupForecastDecisionEvidence {
   usableCapacityRouteCount: number | null;
 }
 
+export interface Phase1AccountForecastDecisionEvidence {
+  observedAt: string;
+  decisionGeneration: number | null;
+  observedAllocatedAccountCount: number | null;
+  observedSuccessfulAllocationCount: number | null;
+  sampleRateMicroaccountsPerSecond: number | null;
+  ewmaRateMicroaccountsPerSecond: number | null;
+  forecastHorizonSeconds: number | null;
+  forecastNewAccountCount: number | null;
+  projectedAccountCount: number | null;
+  usableCapacityAccountCount: number | null;
+  capacityUnitCount: number | null;
+}
+
 export interface Phase1ProvisioningEventEvidence {
   desiredResourceId: string;
   operationId: string | null;
@@ -224,6 +239,7 @@ export interface Phase1ProvisioningEventEvidence {
   decisionToReadyMs: number | null;
   timingSource: 'control_state' | 'observer';
   lookupForecast: Phase1LookupForecastDecisionEvidence | null;
+  accountForecast: Phase1AccountForecastDecisionEvidence | null;
 }
 
 export interface Phase1ProvisioningEvidence {

@@ -257,6 +257,7 @@ function snapshot(): Phase1ControlSnapshot {
       },
     ],
     lookupForecasts: [],
+    accountForecasts: [],
     lookupShards: [
       {
         lookup_shard_id: 'lookup-1',
@@ -471,7 +472,9 @@ describe('Phase 1 evidence contracts', () => {
   });
 
   it('observes allocation integrity as bounded aggregates instead of raw account rows', () => {
-    const allocationStatement = buildControlQueryBatch(config()).at(-1);
+    const allocationStatement = buildControlQueryBatch(config()).find((statement) =>
+      statement.sql.includes("'summary' AS row_kind")
+    );
     const allocationQuery = allocationStatement?.sql ?? '';
 
     expect(allocationQuery).toContain("'summary' AS row_kind");
@@ -480,7 +483,9 @@ describe('Phase 1 evidence contracts', () => {
     expect(allocationQuery).not.toMatch(/SELECT\s+allocation_id/iu);
     expect(allocationStatement?.params).toEqual(['phase1-test', 'tenant-test', 1]);
     expect(
-      buildControlQueryBatch(config(), { includeTenantAllocations: false }).at(-1)?.params
+      buildControlQueryBatch(config(), { includeTenantAllocations: false }).find((statement) =>
+        statement.sql.includes("'summary' AS row_kind")
+      )?.params
     ).toEqual(['phase1-test', 'tenant-test', 0]);
   });
 
@@ -2355,5 +2360,6 @@ function controlResults(value: Phase1ControlSnapshot) {
     queryResult(value.lookupAssignments)[0],
     queryResult(value.workerBindingDrift)[0],
     queryResult(value.tenantAllocations)[0],
+    queryResult(value.accountForecasts)[0],
   ];
 }

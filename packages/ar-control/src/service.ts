@@ -28,6 +28,7 @@ import {
 } from '@authrim/ar-lib-core/control-plane';
 import type { ControlRepository } from './repository';
 import type { LookupScaleOutCapacityRequest } from './lookup-scale-out-forecast';
+import type { AccountScaleOutCapacityRequest } from './account-scale-out-forecast';
 import { ApiMigrationEngine, cloudflareMigrationExecutor } from './migration-engine';
 import { MigrationReleaseArtifactReader, R2ReleaseArtifactStore } from './release-artifact';
 import { createControlApiClients } from './control-api-clients';
@@ -1168,6 +1169,42 @@ export class ControlService {
           };
     assertControlPlaneRecordIsSecretFree(result);
     return result;
+  }
+
+  async requestAccountScaleOutCapacity(
+    request: AccountScaleOutCapacityRequest,
+    expectedEnvironmentId: string
+  ): Promise<TenantShardRequestResult> {
+    const environmentId = requiredSafeId(expectedEnvironmentId, 'environment_id');
+    if (request.environmentId !== environmentId) {
+      throw new Error('account_scale_out_environment_mismatch');
+    }
+    const ownerTenantId =
+      request.ownerTenantId === null
+        ? null
+        : requiredSafeId(request.ownerTenantId, 'owner_tenant_id');
+    if (
+      (request.allocationScope === 'shared_pool' && ownerTenantId !== null) ||
+      (request.allocationScope === 'tenant_exclusive' && ownerTenantId === null)
+    ) {
+      throw new Error('account_scale_out_scope_invalid');
+    }
+    return this.requestTenantShardAs(
+      {
+        environmentId,
+        ...(ownerTenantId ? { tenantId: ownerTenantId } : {}),
+        dataRole: request.dataRole,
+        residencyPolicyId: request.residencyPolicyId,
+        residencyPartition: request.residencyPartition,
+        allocationScope: request.allocationScope,
+        ownerTenantId,
+        idempotencyKey: request.idempotencyKey,
+      },
+      'scheduler',
+      environmentId,
+      false,
+      true
+    );
   }
 
   private async requestTenantShardAs(

@@ -10,6 +10,7 @@ import {
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const SAFE_PARTITION = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
+const EMPTY_FORECAST_DIGEST = '0'.repeat(64);
 const ACCOUNT_DATA_ROLES = new Set<ControlAccountDataRole>(['tenant_core/users', 'tenant_pii']);
 
 interface AccountAllocationRow {
@@ -309,6 +310,47 @@ export class D1AccountAllocationRepository {
     const statements = [
       ...(allocationStatement ? [allocationStatement] : []),
       ...plans.flatMap((plan) => [
+        this.db
+          .prepare(
+            `INSERT INTO control_account_scale_out_forecasts (
+               environment_id, allocation_scope, owner_tenant_key, owner_tenant_id,
+               data_role, residency_policy_id, residency_partition, policy_generation,
+               successful_allocation_count, observed_at,
+               observed_successful_allocation_count, sample_interval_seconds,
+               sample_rate_microaccounts_per_second,
+               ewma_rate_microaccounts_per_second, forecast_horizon_seconds,
+               forecast_new_account_count, observed_allocated_account_count,
+               projected_account_count, usable_capacity_account_count, capacity_unit_count,
+               decision_generation, decision_state, snapshot_digest,
+               capacity_request_idempotency_key, requested_operation_id, last_error_code,
+               created_at, updated_at
+             )
+             SELECT allocation.environment_id, shard.allocation_scope,
+                    CASE WHEN shard.allocation_scope = 'tenant_exclusive'
+                         THEN allocation.tenant_id ELSE '' END,
+                    CASE WHEN shard.allocation_scope = 'tenant_exclusive'
+                         THEN allocation.tenant_id ELSE NULL END,
+                    allocation.data_role, shard.residency_policy_id,
+                    allocation.residency_partition,
+                    policy.account_scale_out_policy_generation,
+                    1, ?, 1, 0, 0, 0, policy.account_forecast_horizon_seconds,
+                    0, 0, 0, 0, 0, 0, 'warming', ?, NULL, NULL, NULL, ?, ?
+               FROM control_tenant_shard_allocations allocation
+               JOIN control_tenant_shards shard
+                 ON shard.environment_id = allocation.environment_id
+                AND shard.shard_id = allocation.selected_shard_id
+               JOIN control_environment_resource_policies policy
+                 ON policy.environment_id = allocation.environment_id
+              WHERE allocation.allocation_id = ? AND allocation.capacity_counted_at IS NULL
+             ON CONFLICT (
+               environment_id, allocation_scope, owner_tenant_key, data_role,
+               residency_policy_id, residency_partition
+             ) DO UPDATE SET
+               successful_allocation_count =
+                 control_account_scale_out_forecasts.successful_allocation_count + 1,
+               updated_at = excluded.updated_at`
+          )
+          .bind(now, EMPTY_FORECAST_DIGEST, now, now, plan.allocationId),
         this.db
           .prepare(
             `UPDATE control_shard_capacity

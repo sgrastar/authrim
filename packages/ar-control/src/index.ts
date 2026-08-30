@@ -54,6 +54,10 @@ import { LookupHmacKeyStateService, validateLookupHmacKeyMetadata } from './look
 import { PluginRunnerRegistryPublisher } from './plugin-runner-registry-publisher';
 import { LookupBucketMigrationService } from './lookup-bucket-migration';
 import { LookupScaleOutForecastService } from './lookup-scale-out-forecast';
+import {
+  AccountScaleOutForecastService,
+  type AccountScaleOutForecastView,
+} from './account-scale-out-forecast';
 import { LookupRetentionProjectionService } from './lookup-retention-projection';
 import { ReadReplicationService } from './read-replication';
 import {
@@ -100,6 +104,67 @@ function service(env: ControlEnv): ControlService {
     env,
     now: () => Math.floor(Date.now() / 1000),
   });
+}
+
+const ACCOUNT_SCALE_OUT_TERMINAL_ERROR =
+  /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|residency_partition_not_found|resource_policy_not_found|tenant_placement_policy_missing|operation_idempotency_conflict))$/u;
+
+async function reconcileAccountScaleOut(
+  env: ControlEnv,
+  environmentId: string,
+  tenantId?: string
+): Promise<AccountScaleOutForecastView[]> {
+  const now = () => Math.floor(Date.now() / 1000);
+  const forecast = new AccountScaleOutForecastService(env.CONTROL_DB, now);
+  const reconciliation = await forecast.observe(environmentId, tenantId);
+  if (reconciliation.capacityRequests.length === 0) return reconciliation.views;
+
+  const d1Token = env.CLOUDFLARE_D1_API_TOKEN?.trim();
+  const workersToken = env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+  if (
+    env.AUTHRIM_AUTOMATIC_PROVISIONING !== 'true' ||
+    !d1Token ||
+    !workersToken ||
+    d1Token === workersToken
+  ) {
+    return reconciliation.views;
+  }
+  const repository = new D1ControlRepository(env.CONTROL_DB);
+  if (!(await repository.hasReadyAutomaticProvisioning())) return reconciliation.views;
+  const control = new ControlService({ repository, env, now });
+
+  for (const request of reconciliation.capacityRequests) {
+    let capacity: Awaited<ReturnType<ControlService['requestAccountScaleOutCapacity']>>;
+    try {
+      capacity = await control.requestAccountScaleOutCapacity(request, environmentId);
+    } catch (error) {
+      const terminalErrorCode =
+        error instanceof Error && ACCOUNT_SCALE_OUT_TERMINAL_ERROR.test(error.message)
+          ? error.message
+          : null;
+      await forecast.recordCapacityRequestFailure(
+        request,
+        terminalErrorCode ?? 'account_scale_out_capacity_request_retry',
+        terminalErrorCode !== null
+      );
+      continue;
+    }
+    if (!capacity.operation) {
+      await forecast.recordCapacityRequestFailure(
+        request,
+        'account_scale_out_capacity_operation_pending',
+        false
+      );
+      continue;
+    }
+    await forecast.recordProvisioningOperation({
+      request,
+      operationId: capacity.operation.operationId,
+      operationStatus: capacity.operation.status,
+      lastErrorCode: capacity.operation.lastErrorCode,
+    });
+  }
+  return reconciliation.views;
 }
 
 const log = createLogger().module('CONTROL_RPC');
@@ -1863,22 +1928,54 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   allocateAccountRoute(input: unknown) {
-    return rpcResult(() => {
+    return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
-      return new ControlAccountAllocationService(
+      const allocation = await new ControlAccountAllocationService(
         new D1AccountAllocationRepository(this.env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).allocate(input, caller.environmentId);
+      this.ctx.waitUntil(
+        reconcileAccountScaleOut(this.env, caller.environmentId, allocation.tenantId).catch(
+          (error) => {
+            log.warn('Account scale-out forecast deferred after allocation', {
+              action: 'allocateAccountRoute',
+              errorType:
+                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                  ? error.name
+                  : 'NonErrorThrow',
+            });
+          }
+        )
+      );
+      return allocation;
     });
   }
 
   tryAllocateAccountRoute(input: unknown) {
-    return rpcResult(() => {
+    return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
-      return new ControlAccountAllocationService(
+      const attempt = await new ControlAccountAllocationService(
         new D1AccountAllocationRepository(this.env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
       ).tryAllocate(input, caller.environmentId);
+      if (attempt.state === 'allocated') {
+        this.ctx.waitUntil(
+          reconcileAccountScaleOut(
+            this.env,
+            caller.environmentId,
+            attempt.allocation.tenantId
+          ).catch((error) => {
+            log.warn('Account scale-out forecast deferred after allocation', {
+              action: 'tryAllocateAccountRoute',
+              errorType:
+                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                  ? error.name
+                  : 'NonErrorThrow',
+            });
+          })
+        );
+      }
+      return attempt;
     });
   }
 
@@ -2644,6 +2741,12 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         Math.floor(Date.now() / 1000)
       );
       tasks.push(
+        scheduledTask(
+          'account_scale_out_forecast_reconciliation',
+          this.env.AUTHRIM_ENVIRONMENT_NAME
+            ? reconcileAccountScaleOut(this.env, this.env.AUTHRIM_ENVIRONMENT_NAME)
+            : Promise.resolve()
+        ),
         scheduledTask(
           'lookup_scale_out_forecast_reconciliation',
           (async () => {

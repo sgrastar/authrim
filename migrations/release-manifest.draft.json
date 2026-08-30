@@ -75,6 +75,10 @@
         {
           "path": "004_worker_binding_reconciler_lease.sql",
           "checksum": "5a0ba05be8f8ad21bd6ad4f69cc1444915350c63282141dc6e4080b36ef54615"
+        },
+        {
+          "path": "005_account_predictive_scale_out.sql",
+          "checksum": "f0e01c55e0675a0a5e9875da33e1dfcac5e13c25898c8c53062bb08cc0fb5b6f"
         }
       ]
     },

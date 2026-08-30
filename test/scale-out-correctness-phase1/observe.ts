@@ -27,6 +27,8 @@ const CONTROL_QUERIES = [
           p.lookup_rebalance_concurrency, p.lookup_forecast_horizon_seconds,
           p.lookup_target_active_route_count, p.lookup_scale_out_headroom_bps,
           p.lookup_registration_ewma_alpha_bps, p.lookup_scale_out_policy_generation
+          ,p.account_forecast_horizon_seconds, p.account_scale_out_headroom_bps
+          ,p.account_registration_ewma_alpha_bps, p.account_scale_out_policy_generation
           ,(SELECT COUNT(*) FROM control_tenant_placement_policies tenants
              WHERE tenants.environment_id = e.environment_id
                AND tenants.policy_state = 'active') AS active_tenant_count
@@ -159,7 +161,7 @@ const CONTROL_QUERIES = [
           (SELECT COUNT(*) FROM account_integrity) AS invalid_account_role_count
      FROM scoped
     UNION ALL
-   SELECT 'distribution' AS row_kind, data_role, selected_shard_id, reservation_state,
+  SELECT 'distribution' AS row_kind, data_role, selected_shard_id, reservation_state,
           COUNT(*) AS allocation_count,
           COUNT(DISTINCT account_id_blind_digest) AS distinct_account_count,
           COALESCE(SUM(CASE WHEN reservation_state <> 'committed' THEN 1 ELSE 0 END), 0)
@@ -175,6 +177,21 @@ const CONTROL_QUERIES = [
      FROM scoped
     GROUP BY data_role, selected_shard_id, reservation_state
     ORDER BY row_kind DESC, data_role, selected_shard_id, reservation_state`,
+  `SELECT environment_id, allocation_scope, owner_tenant_key, owner_tenant_id,
+          data_role, residency_policy_id, residency_partition, policy_generation,
+          successful_allocation_count, observed_at,
+          observed_successful_allocation_count, sample_interval_seconds,
+          sample_rate_microaccounts_per_second, ewma_rate_microaccounts_per_second,
+          forecast_horizon_seconds, forecast_new_account_count,
+          observed_allocated_account_count, projected_account_count,
+          usable_capacity_account_count, capacity_unit_count, decision_generation,
+          decision_state, snapshot_digest, capacity_request_idempotency_key,
+          requested_operation_id, last_error_code, updated_at
+     FROM control_account_scale_out_forecasts
+    WHERE environment_id = ?
+      AND (allocation_scope = 'shared_pool' OR owner_tenant_id = ?)
+    ORDER BY allocation_scope, owner_tenant_key, data_role,
+             residency_policy_id, residency_partition`,
 ] as const;
 
 const CONTROL_QUERY_BATCH_SIZE = 4;
@@ -218,9 +235,11 @@ export function buildControlQueryBatch(
         ? [environmentId, LOOKUP_ASSIGNMENT_PAGE_SIZE, 0]
         : index === 13
           ? [environmentId, tenantId, options.includeTenantAllocations === false ? 0 : 1]
-          : index === 1 || index === 4
+          : index === 14
             ? [environmentId, tenantId]
-            : [environmentId],
+            : index === 1 || index === 4
+              ? [environmentId, tenantId]
+              : [environmentId],
   }));
 }
 
@@ -287,6 +306,7 @@ export async function collectControlSnapshot(input: {
     desiredResources: rows(results, 7),
     observedResources: rows(results, 8),
     lookupForecasts: rows(results, 9),
+    accountForecasts: rows(results, 14),
     lookupShards: rows(results, 10),
     lookupAssignments: rows(results, 11),
     workerBindingDrift: rows(results, 12),
@@ -337,6 +357,13 @@ const ENTITY_KEYS: Record<
   desiredResources: ['desired_resource_id'],
   observedResources: ['observed_resource_id'],
   lookupForecasts: ['lookup_capacity_domain_id'],
+  accountForecasts: [
+    'allocation_scope',
+    'owner_tenant_key',
+    'data_role',
+    'residency_policy_id',
+    'residency_partition',
+  ],
   lookupShards: ['lookup_shard_id'],
   lookupAssignments: ['virtual_bucket'],
   workerBindingDrift: ['finding_id'],
