@@ -124,6 +124,12 @@ describe('account route allocation', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/006_account_spare_assignment_threshold.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
@@ -278,6 +284,168 @@ describe('account route allocation', () => {
         shardId: 'users-a',
         routeGeneration: 3,
       }),
+    ]);
+  });
+
+  it('assigns a ready shared spare at the headroom threshold before capacity is exhausted', async () => {
+    database.exec(
+      `DELETE FROM control_tenant_shard_assignments
+        WHERE environment_id = 'env-test' AND tenant_id = 'tenant-a'
+          AND ((data_role = 'tenant_core/users' AND shard_id = 'users-b')
+            OR (data_role = 'tenant_pii' AND shard_id = 'pii-b'));
+       INSERT INTO control_tenant_shard_assignments (
+         environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
+         shard_id, assignment_generation, assignment_state, source_operation_id,
+         created_at, activated_at, updated_at
+       ) VALUES (
+         'env-test', 'tenant-b', 'tenant_core/users', 'default-policy', 'default',
+         'users-a', 1, 'active', 'tenant-create-b', 1, 1, 1
+       );
+       UPDATE control_shard_capacity SET allocated_account_count = 80 WHERE shard_id = 'users-a';
+       UPDATE control_shard_capacity SET allocated_account_count = 8 WHERE shard_id = 'pii-a';
+       UPDATE control_shard_capacity SET allocated_account_count = 0
+        WHERE shard_id IN ('users-b', 'pii-b');`
+    );
+
+    const threshold = await service.allocate(
+      request({
+        accountIdBlindDigest: 'd'.repeat(64),
+        idempotencyKey: 'create-account-threshold',
+      }),
+      'env-test'
+    );
+    expect(threshold.targets).toEqual([
+      expect.objectContaining({ dataRole: 'tenant_core/users', shardId: 'users-a' }),
+      expect.objectContaining({ dataRole: 'tenant_pii', shardId: 'pii-a' }),
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT data_role, shard_id, assignment_generation, source_operation_id
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = 'env-test' AND tenant_id = 'tenant-a'
+              AND shard_id IN ('users-b', 'pii-b')
+            ORDER BY data_role`
+        )
+        .all()
+    ).toEqual([
+      {
+        data_role: 'tenant_core/users',
+        shard_id: 'users-b',
+        assignment_generation: 2,
+        source_operation_id: 'op-seed',
+      },
+      {
+        data_role: 'tenant_pii',
+        shard_id: 'pii-b',
+        assignment_generation: 2,
+        source_operation_id: 'op-seed',
+      },
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = 'env-test' AND tenant_id = 'tenant-b'
+              AND shard_id IN ('users-b', 'pii-b')`
+        )
+        .get()
+    ).toEqual({ count: 0 });
+
+    const afterThreshold = await service.allocate(
+      request({
+        accountIdBlindDigest: 'e'.repeat(64),
+        idempotencyKey: 'create-account-after-threshold',
+      }),
+      'env-test'
+    );
+    expect(afterThreshold.targets).toEqual([
+      expect.objectContaining({ dataRole: 'tenant_core/users', shardId: 'users-b' }),
+      expect.objectContaining({ dataRole: 'tenant_pii', shardId: 'pii-b' }),
+    ]);
+    expect(d1Observer.batchErrors).toEqual([]);
+  });
+
+  it('assigns only a same-owner exclusive spare at the headroom threshold', async () => {
+    database.exec(
+      `INSERT INTO control_tenant_placement_policies (
+         environment_id, tenant_id, isolation_policy, policy_generation, policy_state,
+         source_operation_id, idempotency_key, activated_at, created_at, updated_at
+       ) VALUES
+         ('env-test', 'tenant-exclusive', 'tenant_exclusive', 1, 'active',
+          'tenant-create-exclusive', 'tenant-placement-exclusive', 1, 1, 1),
+         ('env-test', 'tenant-other', 'tenant_exclusive', 1, 'active',
+          'tenant-create-other', 'tenant-placement-other', 1, 1, 1);
+       INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
+         provisioning_state, origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES
+         ('resource-exclusive-users-a', 'env-test', 'd1', 'exclusive-users-a',
+          'tenant', 'tenant-exclusive', 'exclusive-users-a', 'fp-exclusive-users-a',
+          'ready', 'op-seed', '{}', 1, 1),
+         ('resource-exclusive-users-b', 'env-test', 'd1', 'exclusive-users-b',
+          'tenant', 'tenant-exclusive', 'exclusive-users-b', 'fp-exclusive-users-b',
+          'ready', 'op-seed', '{}', 1, 1),
+         ('resource-other-users', 'env-test', 'd1', 'other-users',
+          'tenant', 'tenant-other', 'other-users', 'fp-other-users',
+          'ready', 'op-seed', '{}', 1, 1);
+       INSERT INTO control_tenant_shards (
+         shard_id, environment_id, data_role, residency_policy_id, residency_partition,
+         generation, logical_shard_id, binding_ref, d1_desired_resource_id,
+         allocation_scope, owner_tenant_id, status, created_at, updated_at
+       ) VALUES
+         ('exclusive-users-a', 'env-test', 'tenant_core/users', 'default-policy', 'default',
+          8, 'exclusive-users-a', 'TDB_EXCLUSIVE_USERS_A', 'resource-exclusive-users-a',
+          'tenant_exclusive', 'tenant-exclusive', 'active', 1, 1),
+         ('exclusive-users-b', 'env-test', 'tenant_core/users', 'default-policy', 'default',
+          9, 'exclusive-users-b', 'TDB_EXCLUSIVE_USERS_B', 'resource-exclusive-users-b',
+          'tenant_exclusive', 'tenant-exclusive', 'active', 1, 1),
+         ('other-users', 'env-test', 'tenant_core/users', 'default-policy', 'default',
+          10, 'other-users', 'TDB_OTHER_USERS', 'resource-other-users',
+          'tenant_exclusive', 'tenant-other', 'active', 1, 1);
+       INSERT INTO control_shard_capacity (
+         shard_id, target_account_count, allocated_account_count,
+         health_status, allocation_status, updated_at
+       ) VALUES
+         ('exclusive-users-a', 100, 80, 'healthy', 'eligible', 1),
+         ('exclusive-users-b', 100, 0, 'healthy', 'eligible', 1),
+         ('other-users', 100, 0, 'healthy', 'eligible', 1);
+       INSERT INTO control_tenant_shard_assignments (
+         environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
+         shard_id, assignment_generation, assignment_state, source_operation_id,
+         created_at, activated_at, updated_at
+       ) VALUES (
+         'env-test', 'tenant-exclusive', 'tenant_core/users', 'default-policy', 'default',
+         'exclusive-users-a', 1, 'active', 'tenant-create-exclusive', 1, 1, 1
+       );`
+    );
+
+    const threshold = await service.allocate(
+      request({
+        tenantId: 'tenant-exclusive',
+        accountIdBlindDigest: 'f'.repeat(64),
+        idempotencyKey: 'create-exclusive-threshold',
+        dataRoles: ['tenant_core/users'],
+      }),
+      'env-test'
+    );
+    expect(threshold.targets).toEqual([
+      expect.objectContaining({ dataRole: 'tenant_core/users', shardId: 'exclusive-users-a' }),
+    ]);
+    expect(
+      database
+        .prepare(
+          `SELECT shard_id, assignment_generation
+             FROM control_tenant_shard_assignments
+            WHERE environment_id = 'env-test' AND tenant_id = 'tenant-exclusive'
+            ORDER BY assignment_generation`
+        )
+        .all()
+    ).toEqual([
+      { shard_id: 'exclusive-users-a', assignment_generation: 1 },
+      { shard_id: 'exclusive-users-b', assignment_generation: 2 },
     ]);
   });
 
